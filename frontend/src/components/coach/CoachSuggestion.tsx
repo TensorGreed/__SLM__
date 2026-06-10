@@ -173,7 +173,26 @@ const NAVIGATE_TARGET_URLS: Record<
     // Training Config is its own page too (separate from the
     // pipeline tab) — same fix as recipe-picker. The Phase 6d
     // curriculum nudge + Phase 9d auto-RAG nudge both emit this.
-    'training-config': (projectId) => `/project/${projectId}/training-config`,
+    // Quality-Lift phase 7 slice 3 — the variance nudge sets
+    // ``expand_multi_seed`` (+ optional ``suggested_num_seeds``) so
+    // the URL signals TrainingPanel to expand the multi-seed
+    // section + pre-fill the count on mount. We forward as query
+    // params; TrainingPanel reads them in a useEffect.
+    'training-config': (projectId, params) => {
+        const expand = params['expand_multi_seed'] === true
+            || params['expand_multi_seed'] === 'true'
+            || params['expand_multi_seed'] === 1
+            || params['expand_multi_seed'] === '1';
+        const suggested = Number(params['suggested_num_seeds']);
+        const query: string[] = [];
+        if (expand) query.push('expand_multi_seed=1');
+        if (Number.isFinite(suggested) && suggested >= 2 && suggested <= 8) {
+            query.push(`suggested_num_seeds=${Math.trunc(suggested)}`);
+        }
+        const qs = query.length ? `?${query.join('&')}` : '';
+        const hash = expand ? '#multi-seed' : '';
+        return `/project/${projectId}/training-config${qs}${hash}`;
+    },
     // Base-model swap target emitted by the trainability-forecast
     // coach suggestion ("Consider Qwen/..."). The params carry
     // `recommended_base_model`; we forward it as a URL query so
@@ -398,6 +417,33 @@ export default function CoachSuggestionCard({
                         }),
                     );
                 }
+            }
+            // Quality-Lift phase 7 slice 3 — variance nudge same-page
+            // dispatch. Mirrors the recommended-base-model pattern:
+            // when the user is already on training-config, react-
+            // router's same-path navigate() doesn't remount the panel
+            // so the URL-param-on-mount read never re-fires. The
+            // CustomEvent gives us a re-fireable signal.
+            if (
+                target === 'training-config'
+                && typeof window !== 'undefined'
+                && (suggestion.action.params['expand_multi_seed'] === true
+                    || suggestion.action.params['expand_multi_seed'] === 'true')
+            ) {
+                const suggestedRaw = Number(suggestion.action.params['suggested_num_seeds']);
+                window.dispatchEvent(
+                    new CustomEvent('brewslm:expand-multi-seed', {
+                        detail: {
+                            suggestedNumSeeds: (
+                                Number.isFinite(suggestedRaw)
+                                && suggestedRaw >= 2
+                                && suggestedRaw <= 8
+                                    ? Math.trunc(suggestedRaw)
+                                    : undefined
+                            ),
+                        },
+                    }),
+                );
             }
             if (typeof target === 'string' && target in NAVIGATE_TARGET_URLS) {
                 navigate(

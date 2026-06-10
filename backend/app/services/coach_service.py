@@ -1364,6 +1364,17 @@ async def _training_stage_suggestions(
     if active_learning_nudge:
         suggestions.append(active_learning_nudge)
 
+    # Quality-Lift phase 7 slice 3 — multi-seed variance nudge. Fires
+    # when the latest run was single-seed AND either (a) a prior
+    # multi-seed run on this project measured high relative std on a
+    # gated metric (variance is *hidden* by going back to one seed),
+    # or (b) the project has run eval but never run multi-seed
+    # (variance is *unknown*). Both nudges deep-link to the
+    # training-config page with the multi-seed section auto-expanded.
+    variance_nudge = await _multi_seed_variance_nudge(db, project.id)
+    if variance_nudge:
+        suggestions.append(variance_nudge)
+
     # Phase 8c — archetype-drift nudge runs alongside the curriculum
     # nudge and BEFORE the forecast logic (so it surfaces even when
     # forecast is likely_pass and returns early below). Different
@@ -1495,6 +1506,202 @@ async def _training_stage_suggestions(
         suggestions.append(sweep_nudge)
 
     return suggestions
+
+
+_VARIANCE_REL_STD_THRESHOLD = 0.10
+
+
+def _find_worst_relative_std(
+    metrics: dict[str, Any],
+) -> tuple[str, float, float] | None:
+    """Walk an aggregate row's metrics dict, returning
+    ``(name, std, mean)`` for the metric with the highest std/|mean|
+    ratio that also exceeds ``_VARIANCE_REL_STD_THRESHOLD``.
+
+    Recurses into nested dicts so per-class metrics (introduced by the
+    Gap-#6 work) participate too — e.g. ``classes.positive.precision``
+    is a valid leaf path. ``None`` when no leaf exceeds the threshold.
+
+    The threshold is deliberately conservative — 10% relative std is
+    far enough above pure noise that "your gate verdict could flip on
+    a re-run" is a falsifiable claim. The nudge body cites the actual
+    mean/std so the user can audit it (no-vanity-metrics rule).
+    """
+    worst: tuple[str, float, float] | None = None
+    worst_ratio = _VARIANCE_REL_STD_THRESHOLD
+
+    def walk(d: dict[str, Any], prefix: str = "") -> None:
+        nonlocal worst, worst_ratio
+        for k, v in d.items():
+            path = f"{prefix}.{k}" if prefix else str(k)
+            if isinstance(v, dict):
+                if "mean" in v and "std" in v:
+                    try:
+                        mean_f = float(v["mean"])
+                        std_f = float(v["std"])
+                    except (TypeError, ValueError):
+                        continue
+                    abs_mean = abs(mean_f)
+                    if abs_mean < 1e-6:
+                        continue
+                    ratio = std_f / abs_mean
+                    if ratio > worst_ratio:
+                        worst_ratio = ratio
+                        worst = (path, std_f, mean_f)
+                else:
+                    walk(v, prefix=path)
+
+    walk(metrics)
+    return worst
+
+
+async def _multi_seed_variance_nudge(
+    db: AsyncSession, project_id: int,
+) -> dict[str, Any] | None:
+    """Quality-Lift phase 7 slice 3 — surface multi-seed authoring so
+    the variance gates phases 1+ shipped become user-reachable without
+    hand-rolling the API.
+
+    Two nudge IDs share a single surface:
+
+    * ``training:variance-hidden`` (warning) — a prior multi-seed
+      aggregate row on this project showed ≥10% relative std on at
+      least one metric AND the latest run was single-seed. Re-running
+      with one seed hides variance the user already proved exists; the
+      gate's mean−std lower bound goes back to looking artificially
+      tight.
+    * ``training:variance-unknown`` (info) — the project has a
+      completed single-seed run with eval results but has never run
+      multi-seed. The verdict is unmeasured, not safe.
+
+    Silences when the latest run was already multi-seed (the user is
+    doing the right thing — re-asserting it would be noise) or when
+    no eval has ever run (nothing to compare against). Both nudges
+    deep-link to the training-config page with the multi-seed
+    section auto-expanded (``params.expand_multi_seed=True``).
+    """
+    # Lazy imports — Experiment / EvalResult pull in a deeper graph
+    # than the rest of coach_service touches; avoid hoisting that
+    # cost into every coach module import.
+    from app.models.experiment import (
+        EvalResult,
+        Experiment,
+        ExperimentStatus,
+    )
+
+    terminal_statuses = (
+        ExperimentStatus.COMPLETED,
+        ExperimentStatus.FAILED,
+        ExperimentStatus.CANCELLED,
+    )
+
+    # 1. Find the latest terminal experiment to learn whether the
+    # user is currently doing single- or multi-seed.
+    latest = await db.execute(
+        select(Experiment)
+        .where(Experiment.project_id == project_id)
+        .where(Experiment.status.in_(terminal_statuses))
+        .order_by(Experiment.created_at.desc())
+        .limit(1)
+    )
+    latest_exp = latest.scalar_one_or_none()
+    if latest_exp is None:
+        # No training has happened yet — the multi-seed surface
+        # appears in TrainingPanel itself; no need to nudge.
+        return None
+    if latest_exp.seed_group_id:
+        # Most recent run was multi-seed → user already doing the
+        # right thing. Silence so the nudge isn't ambient noise.
+        return None
+
+    # 2. Hard signal — any prior aggregate row on this project
+    # showing high relative std on a metric? Walk the most recent 5
+    # aggregates so a one-off noisy run doesn't get drowned out by
+    # newer well-behaved ones.
+    agg_result = await db.execute(
+        select(EvalResult)
+        .join(Experiment, EvalResult.experiment_id == Experiment.id)
+        .where(Experiment.project_id == project_id)
+        .where(EvalResult.is_aggregate.is_(True))
+        .order_by(EvalResult.created_at.desc())
+        .limit(5)
+    )
+    worst_finding: tuple[str, float, float] | None = None
+    for agg in agg_result.scalars():
+        metrics = agg.metrics if isinstance(agg.metrics, dict) else {}
+        found = _find_worst_relative_std(metrics)
+        if found is not None:
+            worst_finding = found
+            break
+
+    if worst_finding is not None:
+        name, std_val, mean_val = worst_finding
+        rel_pct = (std_val / max(abs(mean_val), 1e-9)) * 100.0
+        return {
+            "id": "training:variance-hidden",
+            "title": (
+                f"Last run was single-seed but {name} had "
+                f"{rel_pct:.1f}% std across seeds in a prior run"
+            ),
+            "body": (
+                f"The {name} metric showed std={std_val:.3f} on "
+                f"mean={mean_val:.3f} the last time you ran "
+                "multi-seed — a {rel_pct:.1f}% relative spread. Going "
+                "back to num_seeds=1 hides that variance: the gate's "
+                "mean−std lower bound (phase 1) goes back to looking "
+                "artificially tight, and a re-run could flip the "
+                "verdict. Set num_seeds≥3 to keep the verdict honest."
+            ).format(rel_pct=rel_pct),
+            "severity": "warning",
+            "action": {
+                "kind": "navigate",
+                "label": "Open multi-seed config",
+                "params": {
+                    "target": "training-config",
+                    "expand_multi_seed": True,
+                    "suggested_num_seeds": 3,
+                },
+            },
+            "context": {
+                "worst_metric": name,
+                "std": float(std_val),
+                "mean": float(mean_val),
+                "rel_std_pct": rel_pct,
+            },
+        }
+
+    # 3. Soft signal — has the project ever produced an EvalResult on
+    # a single-seed experiment? If yes, ask the user to measure
+    # variance. If no eval has run at all there's nothing to nudge on.
+    eval_exists = await db.execute(
+        select(EvalResult.id)
+        .join(Experiment, EvalResult.experiment_id == Experiment.id)
+        .where(Experiment.project_id == project_id)
+        .where(EvalResult.is_aggregate.is_(False))
+        .limit(1)
+    )
+    if eval_exists.first() is None:
+        return None
+    return {
+        "id": "training:variance-unknown",
+        "title": "Last run was single-seed — variance is unmeasured",
+        "body": (
+            "The gate verdicts on your latest run came from a single "
+            "seed, so you don't know whether each metric reflects the "
+            "model or the seed. Re-run with num_seeds=3 to get a "
+            "mean−std lower-bound verdict (no-vanity-metrics rule)."
+        ),
+        "severity": "info",
+        "action": {
+            "kind": "navigate",
+            "label": "Open multi-seed config",
+            "params": {
+                "target": "training-config",
+                "expand_multi_seed": True,
+                "suggested_num_seeds": 3,
+            },
+        },
+    }
 
 
 async def _inconclusive_sweep_nudge(

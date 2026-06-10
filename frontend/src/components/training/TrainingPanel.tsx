@@ -767,7 +767,18 @@ type ConfigFieldKey =
   | 'observability_log_steps'
   | 'observability_max_layers'
   | 'observability_probe_attention'
-  | 'observability_probe_top_k';
+  | 'observability_probe_top_k'
+  // Quality-Lift phase 7 slice 3 — multi-seed variance reporting.
+  // ``seed`` is the base PRNG seed; ``num_seeds`` ≥ 2 fans the run
+  // out into a seed-group; ``seeds`` overrides the derived list with
+  // explicit values; ``parallel_seeds`` runs the children concurrently
+  // (multi-GPU only). The four keys plumb through ``includeField`` the
+  // same way every other config field does — ``training_service``
+  // already reads them from the experiment.config payload.
+  | 'seed'
+  | 'num_seeds'
+  | 'seeds'
+  | 'parallel_seeds';
 
 type TrainingWorkspaceView = 'overview' | 'setup' | 'runs';
 type TrainingSetupTab = 'basics' | 'config' | 'power' | 'review';
@@ -864,6 +875,24 @@ export default function TrainingPanel({
   const [observabilityMaxLayers, setObservabilityMaxLayers] = useState(12);
   const [observabilityProbeAttention, setObservabilityProbeAttention] = useState(true);
   const [observabilityProbeTopK, setObservabilityProbeTopK] = useState(6);
+  // Quality-Lift phase 7 slice 3 — multi-seed variance reporting.
+  // ``seed`` is the base PRNG seed (also reused as the single-seed
+  // value when ``numSeeds === 1``); ``numSeeds`` ≥ 2 fans the run out
+  // into a seed-group whose EvalResults get rolled into one
+  // mean±std aggregate that gates judge by mean−std (no vanity
+  // metrics). ``seedsExplicit`` is a comma-separated override that
+  // wins over the derived list when non-empty. ``parallelSeeds``
+  // dispatches children concurrently — off by default since single-GPU
+  // boxes just queue + risk OOM.
+  const [seed, setSeed] = useState(42);
+  const [numSeeds, setNumSeeds] = useState(1);
+  const [seedsExplicit, setSeedsExplicit] = useState('');
+  const [parallelSeeds, setParallelSeeds] = useState(false);
+  // Section starts collapsed because the default (num_seeds=1) is the
+  // single-run UX every existing user already knows. The coach nudge
+  // and the URL query ``?expand_multi_seed=1`` both flip this true so
+  // a deep-linked user lands with the section pre-opened.
+  const [multiSeedExpanded, setMultiSeedExpanded] = useState(false);
   const [useProfileDefaults, setUseProfileDefaults] = useState(true);
   const [touchedConfig, setTouchedConfig] = useState<Record<ConfigFieldKey, boolean>>({
     training_mode: false,
@@ -907,6 +936,10 @@ export default function TrainingPanel({
     observability_max_layers: false,
     observability_probe_attention: false,
     observability_probe_top_k: false,
+    seed: false,
+    num_seeds: false,
+    seeds: false,
+    parallel_seeds: false,
   });
   const [lastCreateSummary, setLastCreateSummary] = useState<{
     domainPackApplied: string | null;
@@ -1456,6 +1489,30 @@ export default function TrainingPanel({
       config.observability_probe_attention = observabilityProbeAttention;
     }
     if (includeField('observability_probe_top_k')) config.observability_probe_top_k = observabilityProbeTopK;
+    // Quality-Lift phase 7 slice 3 — multi-seed variance reporting.
+    // ``seed`` always rides (base PRNG seed; backend defaults to 42
+    // matching the schema if we omit it, but explicit keeps the
+    // payload deterministic for the user). ``num_seeds`` only when >1
+    // — sending 1 every time would clutter the experiment config and
+    // confuse drill-down. ``seeds`` (explicit comma list) wins over
+    // num_seeds in the backend resolver; only forward when the user
+    // typed something parseable. ``parallel_seeds`` only when multi-
+    // seed is active — meaningless when num_seeds=1.
+    const isMultiSeed = numSeeds > 1;
+    const parsedExplicitSeeds = seedsExplicit
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => Number(s))
+      .filter((n) => Number.isFinite(n) && Number.isInteger(n));
+    if (includeField('seed')) config.seed = seed;
+    if (includeField('num_seeds') && isMultiSeed) config.num_seeds = numSeeds;
+    if (includeField('seeds') && parsedExplicitSeeds.length > 1) {
+      config.seeds = parsedExplicitSeeds;
+    }
+    if (includeField('parallel_seeds') && (isMultiSeed || parsedExplicitSeeds.length > 1)) {
+      config.parallel_seeds = parallelSeeds;
+    }
     return config;
   };
 
@@ -1538,6 +1595,26 @@ export default function TrainingPanel({
       parseBoolean(config.observability_probe_attention, observabilityProbeAttention),
     );
     setObservabilityProbeTopK(Math.max(1, parseNumber(config.observability_probe_top_k, observabilityProbeTopK)));
+    // Quality-Lift phase 7 slice 3 — multi-seed.
+    setSeed(Math.max(0, Math.trunc(parseNumber(config.seed, seed))));
+    const suggestedNumSeeds = Math.max(
+      1, Math.min(8, Math.trunc(parseNumber(config.num_seeds, numSeeds))),
+    );
+    setNumSeeds(suggestedNumSeeds);
+    if (Array.isArray(config.seeds)) {
+      setSeedsExplicit(
+        config.seeds
+          .map((item) => String(item).trim())
+          .filter(Boolean)
+          .join(', '),
+      );
+    }
+    setParallelSeeds(parseBoolean(config.parallel_seeds, parallelSeeds));
+    // Auto-expand the multi-seed section so the suggested values are
+    // visible — same affordance the coach deep-link uses.
+    if (suggestedNumSeeds > 1) {
+      setMultiSeedExpanded(true);
+    }
 
     setUseProfileDefaults(false);
     setTouchedConfig((prev) => {
@@ -2511,6 +2588,44 @@ export default function TrainingPanel({
     };
   }, []);
 
+  // Quality-Lift phase 7 slice 3 — Coach Mode's variance nudge deep-
+  // links here with ``?expand_multi_seed=1`` (URL fallback for the
+  // first mount) AND a window CustomEvent (for the same-page click
+  // when the user is already on training-config). The URL path also
+  // covers a coach card consumed from a different page that
+  // react-router navigates from. ``suggested_num_seeds`` (default 3)
+  // sets the count + opens the section so the user lands ready to
+  // launch.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('expand_multi_seed') === '1') {
+      setMultiSeedExpanded(true);
+      const sn = Number(params.get('suggested_num_seeds') || '');
+      if (Number.isFinite(sn) && sn >= 2 && sn <= 8) {
+        setNumSeeds(Math.trunc(sn));
+        setTouchedConfig((prev) => ({ ...prev, num_seeds: true }));
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ suggestedNumSeeds?: number }>).detail;
+      setMultiSeedExpanded(true);
+      const sn = Number(detail?.suggestedNumSeeds);
+      if (Number.isFinite(sn) && sn >= 2 && sn <= 8) {
+        setNumSeeds(Math.trunc(sn));
+        setTouchedConfig((prev) => ({ ...prev, num_seeds: true }));
+      }
+    };
+    window.addEventListener('brewslm:expand-multi-seed', handler);
+    return () => {
+      window.removeEventListener('brewslm:expand-multi-seed', handler);
+    };
+  }, []);
+
   useEffect(() => {
     if (forceCreateVisible || !canViewRuns) {
       setWorkspaceView('setup');
@@ -2591,6 +2706,10 @@ export default function TrainingPanel({
       observability_max_layers: false,
       observability_probe_attention: false,
       observability_probe_top_k: false,
+      seed: false,
+      num_seeds: false,
+      seeds: false,
+      parallel_seeds: false,
     });
     setLastCreateSummary(null);
     setEffectivePreview(null);
@@ -5403,6 +5522,137 @@ export default function TrainingPanel({
                       </>
                     )}
                   </div>
+
+                  {showSetupPower && (
+                  <div
+                    id="multi-seed"
+                    className="training-multi-seed"
+                    data-testid="training-multi-seed-section"
+                  >
+                    <h4
+                      className="training-config-section-title"
+                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                    >
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => setMultiSeedExpanded((v) => !v)}
+                        aria-label={multiSeedExpanded ? 'Collapse multi-seed section' : 'Expand multi-seed section'}
+                        data-testid="training-multi-seed-toggle"
+                      >
+                        {multiSeedExpanded ? '▼' : '▶'}
+                      </button>
+                      Multi-seed variance (Quality-Lift phase 1)
+                      {numSeeds > 1 && (
+                        <span
+                          className="badge badge-info"
+                          data-testid="training-multi-seed-active-badge"
+                          style={{ marginLeft: 8 }}
+                        >
+                          {numSeeds} seeds
+                        </span>
+                      )}
+                    </h4>
+                    {multiSeedExpanded && (
+                      <div id="multi-seed-body" data-testid="training-multi-seed-body">
+                        <p className="form-hint" style={{ marginTop: 0 }}>
+                          Run N independent trainings with different
+                          seeds, then judge gates by mean − std (no
+                          vanity metrics). Default 1 keeps single-run
+                          behavior.
+                        </p>
+                        <div className="training-grid-2">
+                          <div className="form-group">
+                            <label className="form-label">Base seed</label>
+                            <input
+                              className="input"
+                              type="number"
+                              min={0}
+                              value={seed}
+                              onChange={(e) => {
+                                setSeed(Math.max(0, Math.trunc(Number(e.target.value) || 0)));
+                                setTouchedConfig((prev) => ({ ...prev, seed: true }));
+                              }}
+                              data-testid="training-multi-seed-base"
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Number of seeds (1–8)</label>
+                            <input
+                              className="input"
+                              type="number"
+                              min={1}
+                              max={8}
+                              value={numSeeds}
+                              onChange={(e) => {
+                                const v = Math.max(1, Math.min(8, Math.trunc(Number(e.target.value) || 1)));
+                                setNumSeeds(v);
+                                setTouchedConfig((prev) => ({ ...prev, num_seeds: true }));
+                              }}
+                              data-testid="training-multi-seed-count"
+                            />
+                          </div>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">
+                            Explicit seeds (comma-separated, overrides count)
+                          </label>
+                          <input
+                            className="input"
+                            value={seedsExplicit}
+                            onChange={(e) => {
+                              setSeedsExplicit(e.target.value);
+                              setTouchedConfig((prev) => ({ ...prev, seeds: true }));
+                            }}
+                            placeholder="42, 1337, 7"
+                            data-testid="training-multi-seed-explicit"
+                          />
+                        </div>
+                        <div className="form-group training-toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={parallelSeeds}
+                            onChange={(e) => {
+                              setParallelSeeds(e.target.checked);
+                              setTouchedConfig((prev) => ({ ...prev, parallel_seeds: true }));
+                            }}
+                            data-testid="training-multi-seed-parallel"
+                          />
+                          <label className="form-label form-label-inline-tight">
+                            Run children in parallel (multi-GPU only)
+                          </label>
+                        </div>
+                        {(numSeeds > 1
+                          || seedsExplicit
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter(Boolean).length > 1) && (
+                          <div
+                            className="callout callout-info"
+                            data-testid="training-multi-seed-variance-preview"
+                            style={{ marginTop: 8 }}
+                          >
+                            Will run{' '}
+                            {seedsExplicit
+                              .split(',')
+                              .map((s) => s.trim())
+                              .filter(Boolean).length > 1
+                              ? seedsExplicit
+                                  .split(',')
+                                  .map((s) => s.trim())
+                                  .filter(Boolean).length
+                              : numSeeds}{' '}
+                            independent trainings under one{' '}
+                            <code>seed_group_id</code>; gates will
+                            judge the run by <code>mean − std</code>{' '}
+                            (the lower bound) so a vanity-good seed
+                            can't paper over a flaky run.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  )}
 
                   {showSetupPower && (
                   <div>

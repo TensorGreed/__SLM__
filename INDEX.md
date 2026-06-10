@@ -672,6 +672,7 @@ session-start guidance.
 - `backend/tests/test_multi_seed_aggregation.py` — Tests for Quality-Lift phase 1, slice 2 — multi-seed dispatch + aggregation.
 - `backend/tests/test_multi_seed_gate_variance.py` — Tests for Quality-Lift phase 1, slice 3 — variance-aware gate evaluator.
 - `backend/tests/test_multi_seed_schema.py` — Tests for Quality-Lift phase 1, slice 1 — multi-seed schema foundation.
+- `backend/tests/test_multi_seed_variance_nudge.py` — Quality-Lift phase 7 slice 3 — Coach Mode multi-seed variance nudge.
 - `backend/tests/test_nl2pipeline.py` — Tests for natural language to pipeline recipe creation.
 - `backend/tests/test_pareto_frontier.py` — Unit tests for the model-sweep Pareto frontier annotation (Epic C).
 - `backend/tests/test_phase100_handler_stop_sequences.py` — Phase 100 — handler stop sequences.
@@ -938,6 +939,7 @@ session-start guidance.
 - `frontend/src/components/training/TokenLengthDistributionPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainAnywayButton.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainabilityForecastPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/TrainingPanel.multiSeed.test.tsx` — Quality-Lift phase 7 slice 3 — MultiSeedConfigSection tests.
 - `frontend/src/components/training/TrainingPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WarmStartDeltaChart.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WhyThisPlanPanel.test.tsx` — _(no docstring)_
