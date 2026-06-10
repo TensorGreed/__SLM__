@@ -540,6 +540,16 @@ class CoachServiceCleaningStageTests(unittest.IsolatedAsyncioTestCase):
         async def _async_status(*_a, **_k):
             return status_counts
 
+        async def _no_nudge(*_a, **_k):
+            # Quality-Lift phase 4 slice 2 added label-noise nudges to
+            # the cleaning stage that read the LabelNoiseScan table
+            # via ``db.execute``. This class passes ``db=None`` because
+            # the tests are scoped to the pii + doc-error branches —
+            # silence the label-noise sibling nudges so the assertions
+            # stay focused. Dedicated coverage for the label-noise
+            # nudges lives in tests/test_label_noise_slice1.py.
+            return None
+
         with (
             patch(
                 "app.services.coach_service._read_pii_stats",
@@ -548,6 +558,14 @@ class CoachServiceCleaningStageTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "app.services.coach_service._read_doc_status_breakdown",
                 side_effect=_async_status,
+            ),
+            patch(
+                "app.services.coach_service._label_noise_results_pending_nudge",
+                side_effect=_no_nudge,
+            ),
+            patch(
+                "app.services.coach_service._label_noise_scan_ready_nudge",
+                side_effect=_no_nudge,
             ),
         ):
             return await _cleaning_stage_suggestions(
@@ -1066,6 +1084,23 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
             # a sweep to keep the assertion counts honest.
             return None
 
+        async def _no_active_learning_nudge(*_a, **_k):
+            # Quality-Lift phase 3 slice 2's nudge dereferences ``db``
+            # to look up the latest snapshot-carrying experiment. The
+            # forecast tests in this class pass ``db=None`` because
+            # they're scoped to the forecast branches — patch the nudge
+            # off here so the focused assertions stay decoupled. The
+            # nudge has its own dedicated coverage in
+            # tests/test_annotation_active_learning_phase2.py.
+            return None
+
+        async def _no_variance_nudge(*_a, **_k):
+            # Quality-Lift phase 7 slice 3's multi-seed variance nudge
+            # also dereferences ``db``. Same rationale as the active-
+            # learning stub above — dedicated coverage lives in
+            # tests/test_multi_seed_variance_nudge.py.
+            return None
+
         with (
             patch(
                 "app.services.trainability_forecast_service.forecast_training",
@@ -1078,6 +1113,14 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "app.services.coach_service._inconclusive_sweep_nudge",
                 side_effect=_no_sweep_nudge,
+            ),
+            patch(
+                "app.services.coach_service._active_learning_ready_nudge",
+                side_effect=_no_active_learning_nudge,
+            ),
+            patch(
+                "app.services.coach_service._multi_seed_variance_nudge",
+                side_effect=_no_variance_nudge,
             ),
         ):
             return await _training_stage_suggestions(
@@ -1178,9 +1221,31 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
         async def _raise(*_a, **_k):
             raise ValueError("project gone")
 
-        with patch(
-            "app.services.trainability_forecast_service.forecast_training",
-            side_effect=_raise,
+        async def _no_nudge(*_a, **_k):
+            # The other training-stage nudges (active-learning, multi-
+            # seed variance, sweep) all dereference ``db``. This test
+            # only cares about the forecast's value-error swallowing,
+            # so silence the sibling nudges to keep the assertion
+            # focused. Each has its own dedicated test class / file.
+            return None
+
+        with (
+            patch(
+                "app.services.trainability_forecast_service.forecast_training",
+                side_effect=_raise,
+            ),
+            patch(
+                "app.services.coach_service._active_learning_ready_nudge",
+                side_effect=_no_nudge,
+            ),
+            patch(
+                "app.services.coach_service._multi_seed_variance_nudge",
+                side_effect=_no_nudge,
+            ),
+            patch(
+                "app.services.coach_service._inconclusive_sweep_nudge",
+                side_effect=_no_nudge,
+            ),
         ):
             result = await _training_stage_suggestions(
                 db=None,  # type: ignore[arg-type]
@@ -1405,6 +1470,19 @@ class CoachServiceEvalStageTests(unittest.IsolatedAsyncioTestCase):
                 "remediation_plans": [],
             }
 
+        async def _no_nudge(*_a, **_k):
+            # Gap-#6 + Quality-Lift phases 5 / 6 added three eval-stage
+            # nudges (missing per-class gates, behavioral-without-gates,
+            # behavioral-without-per-slice-gates) that all dereference
+            # ``db``. The tests in this class pass ``db=None`` because
+            # they're scoped to the pass-rate / cluster-lookup branches
+            # — silence the sibling nudges so the assertion counts
+            # stay focused. Each nudge has its own dedicated coverage
+            # file (test_coach_per_class_gates_*,
+            # test_behavioral_coach_nudge_slice3,
+            # test_behavioral_per_slice_coach_nudge_slice3).
+            return None
+
         with (
             patch(
                 "app.services.coach_service._read_latest_eval_result",
@@ -1413,6 +1491,18 @@ class CoachServiceEvalStageTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "app.services.failure_cluster_service.cluster_eval_result_failures",
                 side_effect=_async_clusters,
+            ),
+            patch(
+                "app.services.coach_service._missing_per_class_gates_nudge",
+                side_effect=_no_nudge,
+            ),
+            patch(
+                "app.services.coach_service._behavioral_tests_without_gates_nudge",
+                side_effect=_no_nudge,
+            ),
+            patch(
+                "app.services.coach_service._behavioral_tests_without_per_slice_gates_nudge",
+                side_effect=_no_nudge,
             ),
         ):
             return await _eval_stage_suggestions(

@@ -62,8 +62,16 @@ export default function FrontierComparisonPanel({
     }, [load, refreshToken]);
 
     if (error) return null; // 4xx/5xx → self-hide rather than nag the Eval tab
+    // Defensive: the panel's body assumes ``data.frontier_model``
+    // (and quality/cost/latency) are fully shaped. When a server
+    // bug, a partial-shape mock (test harnesses commonly return
+    // ``{ data: {} }`` for unmocked endpoints), or an in-flight
+    // schema change hands us a truthy-but-incomplete envelope, hide
+    // the panel rather than crash the whole eval tab — same
+    // self-hide policy the 4xx branch above uses.
+    if (data && !data.frontier_model) return null;
 
-    const frontierName = data?.frontier_model.display_name || 'a frontier model';
+    const frontierName = data?.frontier_model?.display_name || 'a frontier model';
 
     return (
         <div className="card frontier-cmp" data-testid="frontier-comparison">
