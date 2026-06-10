@@ -508,6 +508,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/ActiveLearningPanel.tsx` — Active-learning recommender panel (Theme 8 Epic 2).
 - `frontend/src/components/evaluation/AggregateRunBadge.tsx` — Quality-Lift phase 8 slice 1 — AggregateRunBadge.
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.tsx` — AutoRagComparisonPanel — USER-SUCCESS Epic 9 Phase 9d.
+- `frontend/src/components/evaluation/BehavioralResultsTable.tsx` — Quality-Lift phase 8 slice 3 — BehavioralResultsTable.
 - `frontend/src/components/evaluation/BehavioralTestsSection.tsx` — Quality-Lift phase 7 slice 2 — Behavioral tests editor section.
 - `frontend/src/components/evaluation/ClassificationChartsPanel.tsx` — ClassificationChartsPanel — V1 of the ML-native visualisations arc.
 - `frontend/src/components/evaluation/DriftReviewQueuePanel.tsx` — DriftReviewQueuePanel — UI for E4's drift-triggered hallucination
@@ -888,6 +889,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/ActiveLearningPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/AggregateRunBadge.test.tsx` — Quality-Lift phase 8 slice 1 — AggregateRunBadge tests.
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.test.tsx` — AutoRagComparisonPanel — Hardening tests for the "Run comparison"
+- `frontend/src/components/evaluation/BehavioralResultsTable.test.tsx` — Quality-Lift phase 8 slice 3 — BehavioralResultsTable tests.
 - `frontend/src/components/evaluation/BehavioralTestsSection.test.tsx` — Quality-Lift phase 7 slice 2 — BehavioralTestsSection tests.
 - `frontend/src/components/evaluation/ClassificationChartsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/DriftReviewQueuePanel.test.tsx` — _(no docstring)_

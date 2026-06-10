@@ -16,6 +16,7 @@ import './ClassificationChartsPanel.css';
 import ScorecardPanel from './ScorecardPanel';
 import AggregateRunBadge from './AggregateRunBadge';
 import PerSliceMetricsTable from './PerSliceMetricsTable';
+import BehavioralResultsTable from './BehavioralResultsTable';
 import GoldSetWorkbenchPanel from './GoldSetWorkbenchPanel';
 import EvalPackScaffoldPanel from './EvalPackScaffoldPanel';
 import DriftReviewQueuePanel from './DriftReviewQueuePanel';
@@ -1766,6 +1767,26 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                         projectId={projectId}
                         metrics={r.metrics as Record<string, unknown>}
                         gateChecks={gateReport?.checks ?? []}
+                    />
+                ))}
+
+            {/* Quality-Lift phase 8 slice 3 — behavioral-results table.
+                Reads ``metrics["behavioral"]`` off each EvalResult so
+                every authored INV/DIR/MFT test gets a pass-rate row
+                even when no gate references it. The ScorecardPanel
+                still owns the *gate* view (failed-row drill-down); the
+                table here is the *test catalog* view (every test,
+                gated or not). One table per EvalResult that carries a
+                behavioral block; silent on rows without it. */}
+            {evalResults
+                .filter((r) => {
+                    const b = (r.metrics as Record<string, unknown>)?.['behavioral'];
+                    return typeof b === 'object' && b !== null;
+                })
+                .map((r) => (
+                    <BehavioralResultsTable
+                        key={`bt-${r.id}`}
+                        metrics={r.metrics as Record<string, unknown>}
                     />
                 ))}
 
