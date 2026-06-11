@@ -1,4 +1,4 @@
-"""Training Config Gap scanner + patch engine — Coach-stage-2 phases 1 + 2.
+"""Training Config Gap scanner + patch engine — Coach-stage-2 phases 1 + 2 + 3.
 
 Parallel to ``data_health_service`` but for the *training configuration*
 side of the project. Where Data Health asks "is the data ready?", this
@@ -46,6 +46,7 @@ endpoint fast (~10ms) so it can poll from the training page.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 from sqlalchemy import select
@@ -81,6 +82,37 @@ SMALL_DATA_WARN_ROWS = 100
 SMALL_DATA_BLOCK_ROWS = 50
 EPOCHS_WARN_FOR_SMALL = 5
 EPOCHS_BLOCK_FOR_TINY = 8
+
+# Phase 3 — text-sampling signals.
+#
+# Sample size for both truncation + OOV. 100 rows is enough to
+# distinguish "occasional outlier" from "structurally truncating"; the
+# JSONL streaming + chars/4 path runs in <20ms for that size.
+TEXT_SAMPLE_SIZE = 100
+
+# Chars-per-token approximation. Modern byte-BPE tokenizers land
+# around 3.5-4.0 chars/token for English; we use 4 as a conservative
+# upper bound so phase 3 doesn't over-report truncation. Real tokenizer
+# pass lives in the OOV signal (already loads the tokenizer); the
+# truncation signal stays cheap so the gap endpoint stays fast.
+CHARS_PER_TOKEN_APPROX = 4
+
+# Truncation rate brackets. Anything > 10% loses meaningful training
+# signal; > 25% means the trainer is silently dropping the tail of most
+# rows and the user thinks they're training on full sequences when
+# they're not.
+TRUNCATION_WARN_FRAC = 0.10
+TRUNCATION_BLOCK_FRAC = 0.25
+
+# Tokenizer OOV rate brackets. SentencePiece byte-BPE tokenizers
+# (SmolLM2, Qwen2.5, Llama3, modern HF defaults) emit ZERO unk tokens
+# because byte fallback handles every input — those tokenizers have
+# ``unk_token=None``. For tokenizers with an explicit unk (older BERT-
+# style WordPiece, some multilingual variants), > 5% unk rate means
+# the chosen base model's vocab doesn't match this domain and the
+# model has no way to represent meaningful chunks of the input.
+OOV_WARN_FRAC = 0.05
+OOV_BLOCK_FRAC = 0.15
 
 # Warmup-vs-LR loss-spike risk. Empirical: runs with > 500 update steps,
 # LR > 5e-4, and warmup < 2% of steps show the classic loss-spike-then-
@@ -141,6 +173,14 @@ _LAYMAN: dict[str, dict[str, str]] = {
     "training_config.warmup_low_for_aggressive_lr": {
         "plain": "You're combining a long training run, a high learning rate, and almost no warmup window.",
         "why": "Without warmup the optimiser takes its first updates at full learning rate and the loss usually spikes — sometimes recovers, sometimes diverges. A 3-5% warmup ratio almost always smooths the start.",
+    },
+    "training_config.max_seq_truncation_risk": {
+        "plain": "A meaningful share of your training rows are longer than the trainer's max sequence length — the trainer silently drops everything past the cap.",
+        "why": "When rows get truncated mid-sequence the model never sees the end (the answer, the closing tag, the rationale, etc.). You end up training a model on questions whose answers were cut off. Either raise max_seq_length to cover the longest rows, or shorten the rows upstream.",
+    },
+    "training_config.tokenizer_oov_high": {
+        "plain": "The base model's tokenizer hits its 'unknown' fallback on a meaningful share of your training tokens.",
+        "why": "Tokens the tokenizer can't represent get collapsed to a single placeholder; the model can never learn to predict them and never sees the right input context. High unk rates usually mean the chosen base model was trained on a different language or character set than your data — pick a base whose vocab matches.",
     },
 }
 
@@ -280,6 +320,79 @@ def _effective_training_config(project: Project) -> TrainingConfig:
         if field in overrides:
             init_kwargs[field] = overrides[field]
     return TrainingConfig(**init_kwargs)
+
+
+async def _sample_training_text(
+    db: AsyncSession, project_id: int, *, limit: int = TEXT_SAMPLE_SIZE,
+) -> list[str]:
+    """Read up to ``limit`` text blobs from the project's largest
+    labelled dataset. Picks the biggest CLEANED/SYNTHETIC/TRAIN dataset
+    by record_count so we sample from the source that will dominate
+    training. Empty result is fine — callers degrade gracefully (no
+    sample → no signal, since we can't fairly score what we can't read).
+    """
+    result = await db.execute(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type.in_([
+                DatasetType.CLEANED,
+                DatasetType.SYNTHETIC,
+                DatasetType.TRAIN,
+            ]),
+        )
+    )
+    datasets = sorted(
+        result.scalars(),
+        key=lambda d: int(d.record_count or 0),
+        reverse=True,
+    )
+    for dataset in datasets:
+        if not dataset.file_path:
+            continue
+        path = Path(dataset.file_path)
+        if not path.exists():
+            continue
+        # Lazy import: dataset_service pulls heavy deps; only load when
+        # we actually have a path to read.
+        from app.services.dataset_service import _load_records_from_file
+        records = _load_records_from_file(path, max_records=limit)
+        texts: list[str] = []
+        for row in records:
+            if not isinstance(row, dict):
+                continue
+            text = _row_to_text(row)
+            if text:
+                texts.append(text)
+            if len(texts) >= limit:
+                break
+        if texts:
+            return texts
+    return []
+
+
+def _row_to_text(row: dict[str, Any]) -> str:
+    """Coerce a row dict to a single text blob. Mirrors the same helper
+    in trainability_forecast_service so the two surfaces sample the
+    same fields. Kept local rather than imported to avoid coupling
+    against the heavy forecast module.
+    """
+    parts: list[str] = []
+    for key in (
+        "input", "expected", "question", "answer",
+        "text", "prompt", "response", "output",
+    ):
+        value = row.get(key)
+        if isinstance(value, dict):
+            for sub_value in value.values():
+                if isinstance(sub_value, str):
+                    parts.append(sub_value)
+        elif isinstance(value, str):
+            parts.append(value)
+    if not parts:
+        for value in row.values():
+            if isinstance(value, str):
+                parts.append(value)
+    return " ".join(parts)
 
 
 def _approx_total_steps(
@@ -561,6 +674,216 @@ def _warmup_signal(
     )
 
 
+def _truncation_signal(
+    text_samples: list[str], cfg: TrainingConfig,
+) -> dict[str, Any]:
+    """Signal: a meaningful share of rows would be truncated.
+
+    Uses chars/CHARS_PER_TOKEN_APPROX as a token-count approximation
+    (cheap; no tokenizer load). Errs on the conservative side — modern
+    BPE tokenizers actually compress more aggressively, so a row whose
+    chars/4 says "fits" almost certainly does fit, and a row whose
+    chars/4 says "truncates" is at risk under any tokenizer.
+    """
+    if not text_samples:
+        return _make_signal(
+            id="training_config.max_seq_truncation_risk",
+            severity="ok",
+            headline=(
+                "No training rows available to sample — skipping "
+                "truncation check."
+            ),
+            context={"sample_size": 0, "max_seq_length": cfg.max_seq_length},
+        )
+    cap = cfg.max_seq_length
+    truncated = sum(
+        1 for text in text_samples
+        if len(text) // CHARS_PER_TOKEN_APPROX > cap
+    )
+    frac = truncated / len(text_samples)
+    sample_size = len(text_samples)
+
+    if frac < TRUNCATION_WARN_FRAC:
+        return _make_signal(
+            id="training_config.max_seq_truncation_risk",
+            severity="ok",
+            headline=(
+                f"{truncated} of {sample_size} sampled rows would be "
+                f"truncated at max_seq_length={cap} (~{frac:.1%})."
+            ),
+            context={
+                "sample_size": sample_size,
+                "truncated_count": truncated,
+                "truncation_fraction": round(frac, 4),
+                "max_seq_length": cap,
+            },
+        )
+
+    severity: Severity = "block" if frac >= TRUNCATION_BLOCK_FRAC else "warn"
+    # Suggest a max_seq_length that covers the 95th-percentile sample.
+    # Sort lengths, pick the 95th-pct and round up to the next 256.
+    token_lens = sorted(
+        len(t) // CHARS_PER_TOKEN_APPROX for t in text_samples
+    )
+    p95_idx = max(0, int(len(token_lens) * 0.95) - 1)
+    p95_tokens = token_lens[p95_idx]
+    suggested = max(cap * 2, ((p95_tokens // 256) + 1) * 256)
+    return _make_signal(
+        id="training_config.max_seq_truncation_risk",
+        severity=severity,
+        headline=(
+            f"{truncated} of {sample_size} sampled rows ({frac:.0%}) "
+            f"would be truncated at max_seq_length={cap}."
+        ),
+        suggested_action={
+            "kind": "navigate",
+            "label": f"Raise max_seq_length to {suggested}",
+            "target": "training-config",
+            "params": {"recommended_max_seq_length": suggested},
+        },
+        context={
+            "sample_size": sample_size,
+            "truncated_count": truncated,
+            "truncation_fraction": round(frac, 4),
+            "max_seq_length": cap,
+            "p95_approx_tokens": p95_tokens,
+            "recommended_max_seq_length": suggested,
+        },
+    )
+
+
+def _tokenizer_oov_signal(
+    text_samples: list[str], cfg: TrainingConfig,
+) -> dict[str, Any]:
+    """Signal: the base model's tokenizer can't represent a meaningful
+    share of training tokens.
+
+    Loads the tokenizer for ``cfg.base_model`` and tokenizes a sample
+    of training rows. Three outcomes:
+
+    1. Tokenizer load fails (offline, missing model, etc.) → ``ok``
+       with a "skipped" note. We don't fabricate signals from missing
+       data.
+    2. Tokenizer's ``unk_token`` is None (modern byte-BPE: SmolLM2,
+       Qwen2.5, Llama3, etc.) → ``ok`` with a "byte fallback covers
+       everything" note. There IS no OOV concept for these tokenizers.
+    3. Tokenizer emits unks → measure rate vs. ``OOV_WARN_FRAC`` /
+       ``OOV_BLOCK_FRAC``.
+    """
+    base_model = cfg.base_model
+    if not text_samples:
+        return _make_signal(
+            id="training_config.tokenizer_oov_high",
+            severity="ok",
+            headline=(
+                "No training rows available to sample — skipping OOV check."
+            ),
+            context={"sample_size": 0, "base_model": base_model},
+        )
+
+    # Defensive tokenizer load. Don't fail the whole gap report when
+    # the model can't be fetched (offline dev box, private model
+    # behind auth, etc.) — emit ok with a skipped note.
+    try:
+        from transformers import AutoTokenizer  # type: ignore
+        tokenizer = AutoTokenizer.from_pretrained(base_model)
+    except Exception as exc:
+        return _make_signal(
+            id="training_config.tokenizer_oov_high",
+            severity="ok",
+            headline=(
+                f"Tokenizer for {base_model} not available locally — "
+                f"skipping OOV check."
+            ),
+            context={
+                "sample_size": len(text_samples),
+                "base_model": base_model,
+                "skipped_reason": str(exc)[:160],
+            },
+        )
+
+    unk_token = getattr(tokenizer, "unk_token", None)
+    unk_token_id = getattr(tokenizer, "unk_token_id", None)
+    if unk_token is None or unk_token_id is None:
+        return _make_signal(
+            id="training_config.tokenizer_oov_high",
+            severity="ok",
+            headline=(
+                f"{base_model}'s tokenizer uses byte fallback — every "
+                f"input has a representation, OOV is not a concern."
+            ),
+            context={
+                "sample_size": len(text_samples),
+                "base_model": base_model,
+                "byte_fallback": True,
+            },
+        )
+
+    total_tokens = 0
+    unk_count = 0
+    for text in text_samples:
+        try:
+            ids = tokenizer.encode(text, add_special_tokens=False)
+        except Exception:
+            continue
+        total_tokens += len(ids)
+        unk_count += sum(1 for i in ids if i == unk_token_id)
+
+    if total_tokens == 0:
+        return _make_signal(
+            id="training_config.tokenizer_oov_high",
+            severity="ok",
+            headline="Sample yielded zero tokens — skipping OOV check.",
+            context={
+                "sample_size": len(text_samples),
+                "base_model": base_model,
+                "total_tokens": 0,
+            },
+        )
+
+    frac = unk_count / total_tokens
+    if frac < OOV_WARN_FRAC:
+        return _make_signal(
+            id="training_config.tokenizer_oov_high",
+            severity="ok",
+            headline=(
+                f"{base_model}'s tokenizer covers your sample ({frac:.2%} "
+                f"unk over {total_tokens} tokens)."
+            ),
+            context={
+                "sample_size": len(text_samples),
+                "base_model": base_model,
+                "total_tokens": total_tokens,
+                "unk_count": unk_count,
+                "unk_fraction": round(frac, 4),
+            },
+        )
+
+    severity: Severity = "block" if frac >= OOV_BLOCK_FRAC else "warn"
+    return _make_signal(
+        id="training_config.tokenizer_oov_high",
+        severity=severity,
+        headline=(
+            f"{base_model}'s tokenizer emits {unk_count} unk tokens over "
+            f"{total_tokens} sampled tokens ({frac:.1%}) — vocabulary "
+            f"mismatch with this domain."
+        ),
+        suggested_action={
+            "kind": "navigate",
+            "label": "Pick a base model whose vocab covers this domain",
+            "target": "training-base-model-picker",
+            "params": {},
+        },
+        context={
+            "sample_size": len(text_samples),
+            "base_model": base_model,
+            "total_tokens": total_tokens,
+            "unk_count": unk_count,
+            "unk_fraction": round(frac, 4),
+        },
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Public entry point.
 # ─────────────────────────────────────────────────────────────────────
@@ -611,6 +934,11 @@ async def scan_training_config_gaps(
         signals.append(_eval_cadence_signal(labelled_rows, cfg))
         signals.append(_epochs_overfit_signal(labelled_rows, cfg))
         signals.append(_warmup_signal(labelled_rows, cfg))
+        # Phase 3 — text-sampling signals. Both share one sample read
+        # so the JSONL pass + row-to-text coercion is amortized.
+        text_samples = await _sample_training_text(db, project_id)
+        signals.append(_truncation_signal(text_samples, cfg))
+        signals.append(_tokenizer_oov_signal(text_samples, cfg))
 
     group = {
         "id": "training_config",

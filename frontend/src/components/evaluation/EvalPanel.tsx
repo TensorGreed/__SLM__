@@ -28,6 +28,7 @@ import FrontierComparisonPanel from './FrontierComparisonPanel';
 import AutoRagComparisonPanel from './AutoRagComparisonPanel';
 import RerouteRecommendationPanel from './RerouteRecommendationPanel';
 import CoachStrip from '../coach/CoachStrip';
+import EvalGapsPanel from './EvalGapsPanel';
 import './EvalPanel.css';
 
 type EvalSubTab = 'runs' | 'workbench';
@@ -997,6 +998,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
             <CoachStrip projectId={projectId} stage="eval" />
+            <EvalGapsPanel projectId={projectId} />
             <div className="eval-subtab-switch" role="tablist" aria-label="Evaluation sections">
                 <button
                     type="button"

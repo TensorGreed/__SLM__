@@ -199,6 +199,24 @@ const NAVIGATE_TARGET_URLS: Record<
     // for phase 1.
     'training-config-gaps-panel': (projectId) =>
         `/project/${projectId}/training-config#training-config-gaps-panel`,
+    // Coach-stage-2 phase 3 — eval-gap roll-up nudge lands on the
+    // eval pipeline tab where EvalGapsPanel mounts above EvalPanel.
+    'eval-gaps-panel': (projectId) =>
+        `/project/${projectId}/pipeline/eval#eval-gaps-panel`,
+    // Phase 3 — archetype-coverage signal action target. The
+    // ArchetypeComparisonPanel lives on the training-config page
+    // today; users coming from the eval-gap panel land there.
+    'archetype-comparison-panel': (projectId) =>
+        `/project/${projectId}/training-config#archetype-comparison-panel`,
+    // Phase 3 — regression-baseline signal action target. Lands on
+    // the training-config page's CheckpointsPanel where the user
+    // can promote a checkpoint as baseline.
+    'checkpoints-panel': (projectId) =>
+        `/project/${projectId}/training-config#checkpoints-panel`,
+    // Phase 3 — train/eval label-KL signal action target. Lands on
+    // the Data Studio splits tab (Splits tab is the splits surface).
+    'data-studio-splits': (projectId) =>
+        `/project/${projectId}/data-studio#splits`,
     // Base-model swap target emitted by the trainability-forecast
     // coach suggestion ("Consider Qwen/..."). The params carry
     // `recommended_base_model`; we forward it as a URL query so

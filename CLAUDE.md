@@ -281,7 +281,10 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   is the training-side parallel to `data_health_service`: given
   (project, recipe, labelled-row count, effective `TrainingConfig`) it
   emits severity-scored signals for base-model sizing, eval cadence,
-  epochs-vs-rows memorisation risk, and warmup-vs-LR loss-spike risk.
+  epochs-vs-rows memorisation risk, warmup-vs-LR loss-spike risk,
+  **max_seq_length truncation rate (chars/4 approximation), and
+  tokenizer OOV % (byte-fallback aware via defensive
+  `AutoTokenizer.from_pretrained`)**.
   `TrainingConfigGapsPanel` renders the report on `/project/{id}/training-config`;
   Coach training stage adds a single roll-up nudge
   (`training:config-gaps-rollup`) deep-linking to the panel.
@@ -296,9 +299,21 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   overrides on mount via `GET /training-config-gaps/overrides` and via
   the `brewslm:training-overrides-applied` DOM event for same-page
   sync — `applySuggestedConfig` pipes the dict into the form so the
-  visible config matches what the trainer will use. Phase 3 will
-  expand the gap surface (truncation rate, tokenizer OOV, eval-side
-  gaps). See `ROADMAP.md` Epic E0.
+  visible config matches what the trainer will use. See `ROADMAP.md`
+  Epic E0.
+- **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
+  parallel covering signals the training-config side can't see: gold-
+  set archetype coverage (delegates to
+  `archetype_service.compare_project_to_archetype`, counts below-band
+  features), regression baseline (`promoted_at` on any Checkpoint
+  under the project — self-silences until a run completes), and
+  classification train/eval label-KL (KL divergence between the
+  TRAIN/CLEANED/SYNTHETIC label distribution and the GOLD_DEV/GOLD_TEST
+  label distribution). `EvalGapsPanel` renders the report above
+  `EvalPanel` on the eval pipeline tab; Coach eval stage adds a single
+  roll-up nudge (`eval:gaps-rollup`) deep-linking to the panel. Read-
+  only in phase 3 — phase 4 may add patch actions for the eval-side
+  signals that have an unambiguous one-click fix.
 - **Evaluation** — `evaluation_service` runs eval packs; results land in
   `EvalResult` rows. Failure clusters, remediation plans, post-eval
   decision engine for reroute recommendations.

@@ -1521,6 +1521,15 @@ class CoachServiceEvalStageTests(unittest.IsolatedAsyncioTestCase):
                 "app.services.coach_service._behavioral_tests_without_per_slice_gates_nudge",
                 side_effect=_no_nudge,
             ),
+            patch(
+                # Coach-stage-2 phase 3 — eval-gap roll-up nudge also
+                # dereferences ``db``. Stub off here so the existing
+                # eval-stage tests stay scoped to the cluster /
+                # pass-rate branches; dedicated coverage lives in
+                # test_eval_gap_service.py.
+                "app.services.coach_service._eval_gaps_rollup_nudge",
+                side_effect=_no_nudge,
+            ),
         ):
             return await _eval_stage_suggestions(
                 db=None,  # type: ignore[arg-type]

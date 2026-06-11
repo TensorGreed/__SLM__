@@ -2428,6 +2428,90 @@ async def _behavioral_tests_without_gates_nudge(
     }
 
 
+async def _eval_gaps_rollup_nudge(
+    db: AsyncSession, project_id: int,
+) -> dict[str, Any] | None:
+    """Coach-stage-2 phase 3 — Eval-stage Coach nudge:
+    "Your eval setup has N gaps (M blocking)."
+
+    Same shape as ``_training_config_gaps_rollup_nudge``: pulls signals
+    from ``eval_gap_service.scan_eval_gaps`` and surfaces a single
+    rolled-up coach card linking to the ``EvalGapsPanel`` rather than
+    spamming the strip with one card per signal.
+
+    Silences when all gap signals are ``ok``. Fires even when no eval
+    result exists yet — archetype-coverage + train/eval-KL gaps are
+    detectable pre-first-eval, and the regression-baseline signal
+    self-silences until a run has completed.
+    """
+    from app.services.eval_gap_service import scan_eval_gaps
+
+    try:
+        report = await scan_eval_gaps(db, project_id)
+    except ValueError:
+        return None
+
+    summary = report.get("severity_summary") or {}
+    warn = int(summary.get("warn") or 0)
+    block = int(summary.get("block") or 0)
+    if warn == 0 and block == 0:
+        return None
+
+    severity: Severity = "critical" if block > 0 else "warning"
+    groups = report.get("groups") or []
+    top_headline = ""
+    for group in groups:
+        for sig in group.get("signals", []):
+            if sig.get("severity") == "block" and not top_headline:
+                top_headline = sig.get("headline", "")
+                break
+        if top_headline:
+            break
+    if not top_headline:
+        for group in groups:
+            for sig in group.get("signals", []):
+                if sig.get("severity") == "warn" and not top_headline:
+                    top_headline = sig.get("headline", "")
+                    break
+            if top_headline:
+                break
+
+    pieces: list[str] = []
+    if block:
+        pieces.append(f"{block} blocker{'s' if block != 1 else ''}")
+    if warn:
+        pieces.append(f"{warn} warning{'s' if warn != 1 else ''}")
+    count_phrase = " and ".join(pieces)
+
+    body = (
+        f"The Eval Gap scanner flagged {count_phrase}. Top item: {top_headline}"
+        if top_headline
+        else f"The Eval Gap scanner flagged {count_phrase}."
+    )
+
+    return {
+        "id": "eval:gaps-rollup",
+        "title": (
+            f"Eval setup has {count_phrase}"
+            if count_phrase
+            else "Eval gaps detected"
+        ),
+        "body": body,
+        "severity": severity,
+        "action": {
+            "kind": "navigate",
+            "label": "Open Eval Gaps panel",
+            "params": {"target": "eval-gaps-panel"},
+        },
+        "rule_id": "eval-gaps.rollup",
+        "context": {
+            "warn_count": warn,
+            "block_count": block,
+            "total_signals": int(report.get("total_signals") or 0),
+        },
+    }
+
+
 async def _eval_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -2442,6 +2526,10 @@ async def _eval_stage_suggestions(
     Phase 9d adds an info-severity auto-RAG nudge for struggling
     qa-sft projects (fires independently of the failure-cluster
     suggestion; both can render together).
+
+    Coach-stage-2 phase 3 prepends an eval-gap roll-up nudge that
+    fires even before any eval has run — covers gold-set archetype
+    coverage, regression-baseline pinning, and train/eval label KL.
     """
     from app.services.failure_cluster_service import (
         cluster_eval_result_failures,
@@ -2449,12 +2537,20 @@ async def _eval_stage_suggestions(
 
     suggestions: list[dict[str, Any]] = []
 
+    # Coach-stage-2 phase 3 — eval-gap roll-up. Fires regardless of
+    # whether the project has eval results yet (archetype + KL gaps
+    # are pre-eval concerns).
+    eval_gaps_nudge = await _eval_gaps_rollup_nudge(db, project.id)
+    if eval_gaps_nudge:
+        suggestions.append(eval_gaps_nudge)
+
     latest = await _read_latest_eval_result(db, project.id)
     if latest is None:
-        # No eval run yet — nothing to coach against. The strip stays
-        # mounted (showing "looks healthy") which doubles as a hint
-        # that running an eval is the next move.
-        return []
+        # No eval run yet — return whatever pre-eval gap roll-up
+        # produced. The strip stays mounted (showing "looks healthy"
+        # when empty) which doubles as a hint that running an eval is
+        # the next move.
+        return suggestions
 
     pass_rate = latest.pass_rate
 
