@@ -1195,6 +1195,95 @@ def _curriculum_training_suggestion(
     }
 
 
+async def _training_config_gaps_rollup_nudge(
+    db: AsyncSession, project_id: int,
+) -> dict[str, Any] | None:
+    """Coach-stage-2 phase 1 — Training-stage Coach nudge:
+    "Your training config has N gaps (M blocking)."
+
+    Pulls signals from ``training_config_gap_service.scan_training_config_gaps``
+    and surfaces a single rolled-up coach card linking to the
+    ``TrainingConfigGapsPanel``. We roll up rather than emit one
+    coach card per signal so the strip doesn't spam — the panel itself
+    is where users go to see the per-signal detail + remediation
+    pointer.
+
+    Silences when all gap signals are ``ok``. ``severity=warning`` when
+    only warns fire; ``critical`` if anything blocks.
+    """
+    from app.services.training_config_gap_service import (
+        scan_training_config_gaps,
+    )
+
+    try:
+        report = await scan_training_config_gaps(db, project_id)
+    except ValueError:
+        return None
+
+    summary = report.get("severity_summary") or {}
+    warn = int(summary.get("warn") or 0)
+    block = int(summary.get("block") or 0)
+    if warn == 0 and block == 0:
+        return None
+
+    severity: Severity = "critical" if block > 0 else "warning"
+    # Pull the top-severity signal's headline so the card has a concrete
+    # hook rather than only counts.
+    groups = report.get("groups") or []
+    top_headline = ""
+    for group in groups:
+        for sig in group.get("signals", []):
+            if sig.get("severity") == "block" and not top_headline:
+                top_headline = sig.get("headline", "")
+                break
+        if top_headline:
+            break
+    if not top_headline:
+        for group in groups:
+            for sig in group.get("signals", []):
+                if sig.get("severity") == "warn" and not top_headline:
+                    top_headline = sig.get("headline", "")
+                    break
+            if top_headline:
+                break
+
+    pieces: list[str] = []
+    if block:
+        pieces.append(f"{block} blocker{'s' if block != 1 else ''}")
+    if warn:
+        pieces.append(f"{warn} warning{'s' if warn != 1 else ''}")
+    count_phrase = " and ".join(pieces)
+
+    body = (
+        f"The Training Config gap scanner flagged {count_phrase}. "
+        f"Top item: {top_headline}"
+        if top_headline
+        else f"The Training Config gap scanner flagged {count_phrase}."
+    )
+
+    return {
+        "id": "training:config-gaps-rollup",
+        "title": (
+            f"Training config has {count_phrase}"
+            if count_phrase
+            else "Training config gaps detected"
+        ),
+        "body": body,
+        "severity": severity,
+        "action": {
+            "kind": "navigate",
+            "label": "Open Training Config gaps panel",
+            "params": {"target": "training-config-gaps-panel"},
+        },
+        "rule_id": "training-config-gaps.rollup",
+        "context": {
+            "warn_count": warn,
+            "block_count": block,
+            "total_signals": int(report.get("total_signals") or 0),
+        },
+    }
+
+
 async def _active_learning_ready_nudge(
     db: AsyncSession, project_id: int,
 ) -> dict[str, Any] | None:
@@ -1363,6 +1452,17 @@ async def _training_stage_suggestions(
     active_learning_nudge = await _active_learning_ready_nudge(db, project.id)
     if active_learning_nudge:
         suggestions.append(active_learning_nudge)
+
+    # Coach-stage-2 phase 1 — Training Config gap scanner roll-up.
+    # Pulls signals from training_config_gap_service and surfaces a
+    # single card linking to TrainingConfigGapsPanel rather than spamming
+    # the strip with one card per signal. Different framing from the
+    # forecast nudge (which asks "will this run pass?"); the gap
+    # scanner asks "are the knobs themselves a good fit?" — both can
+    # render together.
+    config_gaps_nudge = await _training_config_gaps_rollup_nudge(db, project.id)
+    if config_gaps_nudge:
+        suggestions.append(config_gaps_nudge)
 
     # Quality-Lift phase 7 slice 3 — multi-seed variance nudge. Fires
     # when the latest run was single-seed AND either (a) a prior

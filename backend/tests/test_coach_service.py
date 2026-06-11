@@ -1101,6 +1101,15 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
             # tests/test_multi_seed_variance_nudge.py.
             return None
 
+        async def _no_config_gaps_nudge(*_a, **_k):
+            # Coach-stage-2 phase 1's training-config gaps roll-up nudge
+            # calls scan_training_config_gaps(db, project_id) which
+            # dereferences ``db``. Same pattern as the variance /
+            # active-learning stubs above — these forecast tests pass
+            # ``db=None`` so we stub off; the nudge has its own coverage
+            # in test_training_config_gap_service.py.
+            return None
+
         with (
             patch(
                 "app.services.trainability_forecast_service.forecast_training",
@@ -1121,6 +1130,10 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "app.services.coach_service._multi_seed_variance_nudge",
                 side_effect=_no_variance_nudge,
+            ),
+            patch(
+                "app.services.coach_service._training_config_gaps_rollup_nudge",
+                side_effect=_no_config_gaps_nudge,
             ),
         ):
             return await _training_stage_suggestions(
@@ -1244,6 +1257,10 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch(
                 "app.services.coach_service._inconclusive_sweep_nudge",
+                side_effect=_no_nudge,
+            ),
+            patch(
+                "app.services.coach_service._training_config_gaps_rollup_nudge",
                 side_effect=_no_nudge,
             ),
         ):

@@ -193,6 +193,12 @@ const NAVIGATE_TARGET_URLS: Record<
         const hash = expand ? '#multi-seed' : '';
         return `/project/${projectId}/training-config${qs}${hash}`;
     },
+    // Coach-stage-2 phase 1 — training-config gap roll-up nudge
+    // sends the user to the TrainingConfigGapsPanel via its anchor.
+    // The panel auto-loads on mount; no extra query params needed
+    // for phase 1.
+    'training-config-gaps-panel': (projectId) =>
+        `/project/${projectId}/training-config#training-config-gaps-panel`,
     // Base-model swap target emitted by the trainability-forecast
     // coach suggestion ("Consider Qwen/..."). The params carry
     // `recommended_base_model`; we forward it as a URL query so

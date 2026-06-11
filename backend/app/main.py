@@ -26,6 +26,7 @@ from app.api.pipeline import router as pipeline_router
 from app.api.ingestion import router as ingestion_router
 from app.api.cleaning import router as cleaning_router
 from app.api.data_health import router as data_health_router
+from app.api.training_config_gaps import router as training_config_gaps_router
 from app.api.distillation import router as distillation_router
 from app.api.hardware import router as hardware_router
 from app.api.dataset import router as dataset_router
@@ -369,6 +370,7 @@ app.include_router(ingestion_router, prefix="/api", dependencies=API_DEPENDENCIE
 app.include_router(hardware_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(cleaning_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(data_health_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(training_config_gaps_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(distillation_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(dataset_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(data_studio_router, prefix="/api", dependencies=API_DEPENDENCIES)

@@ -277,6 +277,16 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
 - **Training** — `training_service.start_training` dispatches to
   simulate / external subprocess runtime. Watcher Job mirrors progress
   into the bell. Trainability forecast precedes the launch.
+- **Training Config Gaps** — `training_config_gap_service.scan_training_config_gaps`
+  is the training-side parallel to `data_health_service`: given
+  (project, recipe, labelled-row count, effective `TrainingConfig`) it
+  emits severity-scored signals for base-model sizing, eval cadence,
+  epochs-vs-rows memorisation risk, and warmup-vs-LR loss-spike risk.
+  `TrainingConfigGapsPanel` renders the report on `/project/{id}/training-config`;
+  Coach training stage adds a single roll-up nudge
+  (`training:config-gaps-rollup`) deep-linking to the panel. Phase 1 is
+  advisory only — phase 2 will add `apply_config_patch` for one-click
+  remediation. See `ROADMAP.md` Epic E0.
 - **Evaluation** — `evaluation_service` runs eval packs; results land in
   `EvalResult` rows. Failure clusters, remediation plans, post-eval
   decision engine for reroute recommendations.
