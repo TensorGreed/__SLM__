@@ -325,9 +325,20 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   TRAIN/CLEANED/SYNTHETIC label distribution and the GOLD_DEV/GOLD_TEST
   label distribution). `EvalGapsPanel` renders the report above
   `EvalPanel` on the eval pipeline tab; Coach eval stage adds a single
-  roll-up nudge (`eval:gaps-rollup`) deep-linking to the panel. Read-
-  only in phase 3 — phase 4 may add patch actions for the eval-side
-  signals that have an unambiguous one-click fix.
+  roll-up nudge (`eval:gaps-rollup`) deep-linking to the panel.
+  **Phase 5 (one-click remediation):** the regression-baseline and
+  label-KL signals carry `apply_patch_kind`
+  (`regression_baseline_promote_last_green` and
+  `label_kl_rebalance_eval`). The Apply button opens
+  `EvalGapPatchPreviewModal` → `POST /eval-gaps/patch/{preview|apply}`.
+  Baseline-promote walks Experiments newest-first, picks the most
+  recent COMPLETED run with `pass_rate ≥ 0.5`, sets `promoted_at` on
+  its best Checkpoint. Label-KL rebalance trims over-represented
+  classes in GOLD_DEV toward the train proportion (trim-only — no
+  upsampling); GOLD_TEST is **never touched** (held-out integrity).
+  Per-class floor at `REBALANCE_PER_CLASS_FLOOR=5` to preserve
+  learning signal. The preview returns the projected post-trim KL so
+  the user sees ahead of time whether the patch will close the gap.
 - **Evaluation** — `evaluation_service` runs eval packs; results land in
   `EvalResult` rows. Failure clusters, remediation plans, post-eval
   decision engine for reroute recommendations.

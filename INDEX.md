@@ -45,7 +45,7 @@ session-start guidance.
 - `backend/app/api/domain_packs.py` — Domain pack API routes.
 - `backend/app/api/domain_profiles.py` — Domain profile API routes.
 - `backend/app/api/drift.py` — Project-scoped drift API (E4).
-- `backend/app/api/eval_gaps.py` — Eval Gap API — Coach-stage-2 phase 3.
+- `backend/app/api/eval_gaps.py` — Eval Gap API — Coach-stage-2 phases 3 + 5.
 - `backend/app/api/evaluation.py` — Evaluation API routes.
 - `backend/app/api/export.py` — Export API routes.
 - `backend/app/api/extensions.py` — Extensions API — plugin contract validators + scaffold generator
@@ -151,7 +151,7 @@ session-start guidance.
 - `backend/app/services/domain_profile_service.py` — Domain profile service for contract persistence and project assignment.
 - `backend/app/services/domain_runtime_service.py` — Runtime resolution for effective domain defaults (core + profile + pack overlay).
 - `backend/app/services/drift_trap_refresh_service.py` — Drift-triggered hallucination-trap refresh (E4).
-- `backend/app/services/eval_gap_service.py` — Eval Gap scanner — Coach-stage-2 phase 3.
+- `backend/app/services/eval_gap_service.py` — Eval Gap scanner + patch engine — Coach-stage-2 phases 3 + 5.
 - `backend/app/services/eval_jobs_service.py` — Job-runner wrappers for long-running evaluation endpoints.
 - `backend/app/services/eval_pack_scaffold_service.py` — Recipe-aware evaluation-pack scaffolder (E5).
 - `backend/app/services/eval_task_handler_service.py` — Task-aware evaluation dispatcher (Phase 5.3.0).
@@ -398,7 +398,7 @@ session-start guidance.
 - `frontend/src/api/datasetImport.ts` — Typed wrappers around the Phase A–E dataset-import API.
 - `frontend/src/api/drift.ts` — Typed client for the drift API (E4 UI).
 - `frontend/src/api/errors.ts` — Shared error parsing + types for the platform's structured error
-- `frontend/src/api/evalGaps.ts` — Eval Gaps API client — Coach-stage-2 phase 3.
+- `frontend/src/api/evalGaps.ts` — Eval Gaps API client — Coach-stage-2 phases 3 + 5.
 - `frontend/src/api/evalPackScaffold.ts` — Typed client for the recipe-aware eval-pack scaffolder (E5).
 - `frontend/src/api/experimentCompare.ts` — Typed client for the eval-aware experiment comparison endpoint (E3).
 - `frontend/src/api/frontierComparison.ts` — Typed wrapper for the Track 1 Epic D SLM-vs-frontier benchmark report.
@@ -518,6 +518,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/BehavioralTestsSection.tsx` — Quality-Lift phase 7 slice 2 — Behavioral tests editor section.
 - `frontend/src/components/evaluation/ClassificationChartsPanel.tsx` — ClassificationChartsPanel — V1 of the ML-native visualisations arc.
 - `frontend/src/components/evaluation/DriftReviewQueuePanel.tsx` — DriftReviewQueuePanel — UI for E4's drift-triggered hallucination
+- `frontend/src/components/evaluation/EvalGapPatchPreviewModal.tsx` — EvalGapPatchPreviewModal — Coach-stage-2 phase 5.
 - `frontend/src/components/evaluation/EvalGapsPanel.tsx` — EvalGapsPanel — Coach-stage-2 phase 3.
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.tsx` — EvalPackScaffoldPanel — recipe-aware draft eval-pack with inline
 - `frontend/src/components/evaluation/EvalPanel.tsx` — Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
@@ -665,6 +666,7 @@ session-start guidance.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
 - `backend/tests/test_domain_hook_builtins.py` — Unit tests for the Gap-#1/#2 slice 1 built-in domain hooks.
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).
+- `backend/tests/test_eval_gap_patch.py` — Eval Gap patch engine — Coach-stage-2 phase 5.
 - `backend/tests/test_eval_gap_service.py` — Eval Gap scanner — Coach-stage-2 phase 3.
 - `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).
 - `backend/tests/test_evaluation_adopt_gate.py` — Tests for the adopt-gate-from-cluster action (Gap #5 slice 3).
@@ -908,6 +910,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/BehavioralTestsSection.test.tsx` — Quality-Lift phase 7 slice 2 — BehavioralTestsSection tests.
 - `frontend/src/components/evaluation/ClassificationChartsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/DriftReviewQueuePanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/EvalGapPatchPreviewModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalGapsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPanel.alignment.test.tsx` — Phase 5.3.6 — Sample Predictions card with AlignmentHandler enrichment.

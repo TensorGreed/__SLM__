@@ -24,10 +24,12 @@ import { parseErrorEnvelope } from '../../api/errors';
 import ErrorPanel from '../shared/ErrorPanel';
 import {
     fetchEvalGaps,
+    type EvalGapPatchResult,
     type EvalGapReport,
     type EvalGapSeverity,
 } from '../../api/evalGaps';
 import type { GapSuggestedAction } from '../../api/trainingConfigGaps';
+import EvalGapPatchPreviewModal from './EvalGapPatchPreviewModal';
 import '../training/TrainingConfigGapsPanel.css';
 
 interface EvalGapsPanelProps {
@@ -71,6 +73,13 @@ export default function EvalGapsPanel({ projectId }: EvalGapsPanelProps) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<ErrorEnvelope | null>(null);
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
+    // Phase 5 — patch modal state. signalId = open the patch preview;
+    // null = closed. After apply we re-fetch the panel + surface a
+    // small toast confirming what landed.
+    const [patchSignalId, setPatchSignalId] = useState<string | null>(null);
+    const [lastApplied, setLastApplied] = useState<EvalGapPatchResult | null>(
+        null,
+    );
 
     const refresh = useCallback(async () => {
         setLoading(true);
@@ -98,6 +107,14 @@ export default function EvalGapsPanel({ projectId }: EvalGapsPanelProps) {
             return next;
         });
     };
+
+    const handlePatchApplied = useCallback(
+        async (result: EvalGapPatchResult) => {
+            setLastApplied(result);
+            await refresh();
+        },
+        [refresh],
+    );
 
     if (loading && !data) {
         return (
@@ -243,6 +260,20 @@ export default function EvalGapsPanel({ projectId }: EvalGapsPanelProps) {
                                                     )}
                                                 </div>
                                                 <div className="tcg-panel__actions">
+                                                    {sig.apply_patch_kind && (
+                                                        <button
+                                                            type="button"
+                                                            className="tcg-panel__action btn btn-sm"
+                                                            onClick={() => {
+                                                                setLastApplied(null);
+                                                                setPatchSignalId(sig.id);
+                                                            }}
+                                                            data-testid={`eval-gaps-apply-${sig.id}`}
+                                                            title="Preview the patch before applying"
+                                                        >
+                                                            Apply fix
+                                                        </button>
+                                                    )}
                                                     {sig.suggested_action?.label && (
                                                         <button
                                                             type="button"
@@ -272,6 +303,24 @@ export default function EvalGapsPanel({ projectId }: EvalGapsPanelProps) {
                 </div>
             )}
 
+            {lastApplied && (
+                <div
+                    className="tcg-panel__apply-toast"
+                    data-testid="eval-gaps-apply-toast"
+                    role="status"
+                >
+                    <strong>Applied:</strong> {lastApplied.patch_label}.
+                    <button
+                        type="button"
+                        className="tcg-panel__apply-toast-dismiss"
+                        onClick={() => setLastApplied(null)}
+                        aria-label="Dismiss apply summary"
+                    >
+                        ×
+                    </button>
+                </div>
+            )}
+
             <footer className="tcg-panel__foot">
                 Computed at {new Date(data.computed_at).toLocaleTimeString()}.{' '}
                 <button
@@ -283,6 +332,15 @@ export default function EvalGapsPanel({ projectId }: EvalGapsPanelProps) {
                     Refresh
                 </button>
             </footer>
+
+            {patchSignalId && (
+                <EvalGapPatchPreviewModal
+                    projectId={projectId}
+                    signalId={patchSignalId}
+                    onClose={() => setPatchSignalId(null)}
+                    onApplied={(r) => void handlePatchApplied(r)}
+                />
+            )}
         </section>
     );
 }

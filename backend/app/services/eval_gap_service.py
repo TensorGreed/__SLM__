@@ -1,4 +1,4 @@
-"""Eval Gap scanner — Coach-stage-2 phase 3.
+"""Eval Gap scanner + patch engine — Coach-stage-2 phases 3 + 5.
 
 Parallel to ``training_config_gap_service`` but for the *evaluation*
 side of the project. Where training-config gaps ask "is the trainer
@@ -24,9 +24,29 @@ Three signals in phase 3:
    via KL divergence. High KL = your eval set doesn't reflect your
    train set, so the F1 you ship doesn't predict prod F1.
 
-Read-only in phase 3. Phase 4 may add patch actions (snapshot last
-green checkpoint as baseline, augment gold set to match train
-distribution, etc.).
+Phase 3 was read-only — every signal's ``suggested_action`` was a
+``navigate`` pointer. Phase 5 adds one-click remediation for two of
+them via ``apply_patch_kind``, mirroring the training-config patch
+engine from phase 2:
+
+- ``regression_baseline_promote_last_green`` — finds the most recent
+  completed Experiment with a passing EvalResult and promotes its
+  best Checkpoint (sets ``promoted_at = now``). One DB write, fully
+  reversible (the unpromote isn't shipped here but is a trivial
+  follow-up — clearing the column).
+- ``label_kl_rebalance_eval`` — trims over-represented classes in
+  GOLD_DEV to match the train label distribution proportionally.
+  Modifies GOLD_DEV only — GOLD_TEST is the frozen held-out set and
+  is *never* touched (contamination guard). No upsampling: classes
+  under-represented vs. train are left alone since duplicating gold
+  rows would be vanity data. The preview reports the projected KL
+  after the trim so the user sees ahead of time whether the patch
+  will close the gap.
+
+The eval_gap scanner overlays nothing onto a project state column —
+the patches mutate either the Checkpoint row (baseline) or GOLD_DEV
+JSONL files (rebalance) directly, so the re-scan after Apply reflects
+the persistent change automatically.
 """
 
 from __future__ import annotations
@@ -121,9 +141,13 @@ def _make_signal(
     context: dict | None = None,
     plain_english: str | None = None,
     why_it_matters: str | None = None,
+    apply_patch_kind: str | None = None,
 ) -> dict[str, Any]:
     """Build a signal payload. Same shape as training_config_gap and
-    data_health; phase 3 is read-only so no apply_patch_kind."""
+    data_health. ``apply_patch_kind`` (phase 5) flags signals the
+    patch engine can resolve in one click; signals without one keep
+    their phase-3 navigate-only behavior.
+    """
     layman = _layman_for(id)
     return {
         "id": id,
@@ -137,7 +161,22 @@ def _make_signal(
         ),
         "suggested_action": suggested_action,
         "context": context or {},
+        "apply_patch_kind": apply_patch_kind,
     }
+
+
+# Phase 5 — pass-rate threshold for "passing" runs the baseline-promote
+# fix considers. 0.5 is the conservative healthy threshold the data-
+# health report uses for ok-vs-warn; matches what users expect from a
+# "green" run. Users with stricter requirements can promote manually.
+BASELINE_PROMOTE_MIN_PASS_RATE = 0.5
+
+# Phase 5 — per-class floor for the rebalance trim. We won't shrink a
+# class below this absolute count even if the train proportion says we
+# should; below it the variance dominates the metric anyway. Mirrors
+# the trainability forecast's PER_CLASS_MINIMUM threshold so the two
+# surfaces stay aligned.
+REBALANCE_PER_CLASS_FLOOR = 5
 
 
 def _recipe_id_for(project: Project) -> str | None:
@@ -306,6 +345,11 @@ async def _regression_baseline_signal(
             "params": {},
         },
         context={"has_completed_runs": True},
+        # Phase 5 — one-click promote of the most recent green run's
+        # best checkpoint. The patch engine reads back through completed
+        # experiments to find one with a passing eval, picks its best
+        # checkpoint, and sets promoted_at.
+        apply_patch_kind="regression_baseline_promote_last_green",
     )
 
 
@@ -497,6 +541,11 @@ async def _train_eval_label_kl_signal(
                 round(biggest_delta[1], 4) if biggest_delta else None
             ),
         },
+        # Phase 5 — one-click trim GOLD_DEV to match the train label
+        # distribution. Trim-only, no upsampling (duplicating gold rows
+        # is vanity data); GOLD_TEST is the frozen held-out set and is
+        # never touched.
+        apply_patch_kind="label_kl_rebalance_eval",
     )
 
 
@@ -565,3 +614,355 @@ async def scan_eval_gaps(
         "total_signals": len(signals),
         "groups": [group],
     }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Phase 5 — patch registry + endpoints.
+#
+# Two patches today:
+#   * regression_baseline_promote_last_green: writes Checkpoint.promoted_at
+#     on the best checkpoint of the most recent green-passing run.
+#   * label_kl_rebalance_eval: rewrites GOLD_DEV jsonl(s) to trim
+#     over-represented classes toward the train label distribution.
+#     GOLD_TEST is never touched (held-out integrity).
+# ─────────────────────────────────────────────────────────────────────
+
+
+PATCH_KINDS: tuple[str, ...] = (
+    "regression_baseline_promote_last_green",
+    "label_kl_rebalance_eval",
+)
+
+
+def _resolve_signal(
+    report: dict[str, Any], signal_id: str,
+) -> dict[str, Any] | None:
+    for group in report.get("groups", []):
+        for sig in group.get("signals", []):
+            if sig.get("id") == signal_id:
+                return sig
+    return None
+
+
+# Signal -> patch kind it should resolve. Used by the dispatcher to
+# look up the right patch from a signal_id at the preview/apply
+# entry points, mirroring training_config_gap_service's pattern.
+_SIGNAL_TO_PATCH_KIND: dict[str, str] = {
+    "eval_gaps.no_regression_baseline":
+        "regression_baseline_promote_last_green",
+    "eval_gaps.train_eval_label_kl_high": "label_kl_rebalance_eval",
+}
+
+
+async def _find_promote_candidate(
+    db: AsyncSession, project_id: int,
+) -> tuple[Experiment, Checkpoint, float] | None:
+    """Walk completed Experiments newest-first; for each, find the
+    eval result with the highest pass_rate and check if it clears the
+    threshold; if yes, pick the experiment's best Checkpoint (is_best
+    if any, else highest-step). Returns (exp, ckpt, pass_rate) or
+    None when no candidate exists.
+    """
+    from app.models.experiment import EvalResult
+
+    exp_rows = await db.execute(
+        select(Experiment)
+        .where(
+            Experiment.project_id == project_id,
+            Experiment.status == ExperimentStatus.COMPLETED,
+        )
+        .order_by(Experiment.completed_at.desc())
+    )
+    experiments = list(exp_rows.scalars())
+    for exp in experiments:
+        eval_rows = await db.execute(
+            select(EvalResult).where(
+                EvalResult.experiment_id == exp.id,
+            ).order_by(EvalResult.pass_rate.desc().nullslast())
+        )
+        eval_results = list(eval_rows.scalars())
+        if not eval_results:
+            continue
+        top_eval = eval_results[0]
+        pass_rate = top_eval.pass_rate
+        if pass_rate is None or pass_rate < BASELINE_PROMOTE_MIN_PASS_RATE:
+            continue
+        # Pick best Checkpoint: prefer is_best, else max-step.
+        ckpt_rows = await db.execute(
+            select(Checkpoint).where(
+                Checkpoint.experiment_id == exp.id,
+            ).order_by(Checkpoint.is_best.desc(), Checkpoint.step.desc())
+        )
+        ckpt = ckpt_rows.scalars().first()
+        if ckpt is None:
+            continue
+        return (exp, ckpt, float(pass_rate))
+    return None
+
+
+def _compute_rebalance_plan(
+    train_labels: list[str], eval_labels: list[str],
+) -> tuple[dict[str, int], dict[str, int], float, float]:
+    """Pure planner: given train + eval label lists, return
+    (current_eval_counts, target_eval_counts, kl_before, kl_after_projected).
+
+    Target counts are derived by scaling the train proportion against
+    the current eval total. Trim-only — classes whose eval count is
+    already at or below the target stay untouched. Floors each class
+    at REBALANCE_PER_CLASS_FLOOR to preserve learning signal.
+    """
+    train_counts = Counter(train_labels)
+    eval_counts = Counter(eval_labels)
+    n_train = sum(train_counts.values()) or 1
+    n_eval = sum(eval_counts.values()) or 1
+    train_dist = {k: v / n_train for k, v in train_counts.items()}
+    eval_dist = {k: v / n_eval for k, v in eval_counts.items()}
+    kl_before = _kl_divergence(eval_dist, train_dist)
+
+    target: dict[str, int] = {}
+    for label, current in eval_counts.items():
+        ideal = int(round(train_dist.get(label, 0.0) * n_eval))
+        # Trim-only: never push the count UP (no upsampling).
+        target[label] = min(current, max(ideal, REBALANCE_PER_CLASS_FLOOR))
+        # Don't trim below the floor.
+        target[label] = max(target[label], min(current, REBALANCE_PER_CLASS_FLOOR))
+
+    # Project the post-trim KL using the planned target counts.
+    new_total = sum(target.values()) or 1
+    new_dist = {k: v / new_total for k, v in target.items()}
+    kl_after = _kl_divergence(new_dist, train_dist)
+    return dict(eval_counts), target, kl_before, kl_after
+
+
+async def _load_gold_dev_jsonl(
+    db: AsyncSession, project_id: int,
+) -> tuple[Path | None, list[dict[str, Any]]]:
+    """Return (path, rows) for the project's GOLD_DEV file. There's
+    usually one; if multiple, we pick the lowest-id (oldest) which is
+    typically the canonical one. Returns (None, []) when nothing
+    exists.
+    """
+    import json
+    result = await db.execute(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type == DatasetType.GOLD_DEV,
+        ).order_by(Dataset.id.asc())
+    )
+    datasets = list(result.scalars())
+    for ds in datasets:
+        if not ds.file_path:
+            continue
+        path = Path(ds.file_path)
+        if not path.exists():
+            continue
+        rows: list[dict[str, Any]] = []
+        with path.open(encoding="utf-8") as fp:
+            for line in fp:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict):
+                    rows.append(row)
+        return (path, rows)
+    return (None, [])
+
+
+async def preview_patch(
+    db: AsyncSession, project_id: int, signal_id: str,
+) -> dict[str, Any]:
+    """Build the would-change diff for a patch without mutating
+    anything. Raises ValueError for missing project / unknown signal /
+    signal-with-no-patch / patch builder rejecting the current state."""
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    report = await scan_eval_gaps(db, project_id)
+    signal = _resolve_signal(report, signal_id)
+    if signal is None:
+        raise ValueError(
+            f"Signal {signal_id!r} not in the current gap report."
+        )
+    kind = signal.get("apply_patch_kind")
+    if not kind or kind not in PATCH_KINDS:
+        raise ValueError(
+            f"Signal {signal_id!r} has no one-click patch available."
+        )
+
+    if kind == "regression_baseline_promote_last_green":
+        candidate = await _find_promote_candidate(db, project_id)
+        if candidate is None:
+            raise ValueError(
+                "No completed run with pass_rate ≥ "
+                f"{BASELINE_PROMOTE_MIN_PASS_RATE} found — nothing to "
+                "promote. Train a run that clears the gate first."
+            )
+        exp, ckpt, pass_rate = candidate
+        return {
+            "project_id": int(project_id),
+            "signal_id": signal_id,
+            "patch_kind": kind,
+            "patch_label": "Promote last-green checkpoint as baseline",
+            "plain_english": (
+                "Sets promoted_at on the best checkpoint of your most "
+                "recent passing run. Future runs compare their eval "
+                "numbers against it as the regression baseline."
+            ),
+            "before": {
+                "promoted_checkpoint_id": None,
+                "promoted_experiment_id": None,
+                "promoted_step": None,
+            },
+            "after": {
+                "promoted_checkpoint_id": int(ckpt.id),
+                "promoted_experiment_id": int(exp.id),
+                "promoted_step": int(ckpt.step),
+            },
+            "candidate": {
+                "experiment_id": int(exp.id),
+                "experiment_name": exp.name,
+                "checkpoint_id": int(ckpt.id),
+                "checkpoint_step": int(ckpt.step),
+                "checkpoint_is_best": bool(ckpt.is_best),
+                "pass_rate": round(pass_rate, 4),
+            },
+            "safe_to_apply": True,
+        }
+
+    if kind == "label_kl_rebalance_eval":
+        train_labels = await _load_labels_from_datasets(
+            db, project_id,
+            [DatasetType.TRAIN, DatasetType.CLEANED, DatasetType.SYNTHETIC],
+        )
+        eval_labels = await _load_labels_from_datasets(
+            db, project_id,
+            [DatasetType.GOLD_DEV],
+        )
+        if (
+            len(train_labels) < KL_MIN_TRAIN_ROWS
+            or len(eval_labels) < KL_MIN_EVAL_ROWS
+        ):
+            raise ValueError(
+                "Not enough labelled rows in TRAIN + GOLD_DEV to plan "
+                f"a rebalance (need ≥ {KL_MIN_TRAIN_ROWS} train and "
+                f"≥ {KL_MIN_EVAL_ROWS} dev rows)."
+            )
+        current, target, kl_before, kl_after = _compute_rebalance_plan(
+            train_labels, eval_labels,
+        )
+        rows_dropped = sum(
+            max(0, current[k] - target[k]) for k in current
+        )
+        gold_path, _ = await _load_gold_dev_jsonl(db, project_id)
+        return {
+            "project_id": int(project_id),
+            "signal_id": signal_id,
+            "patch_kind": kind,
+            "patch_label": "Trim GOLD_DEV toward train distribution",
+            "plain_english": (
+                "Drops over-represented rows from GOLD_DEV so its "
+                "label distribution matches your training set. "
+                "GOLD_TEST is intentionally untouched (held-out "
+                "integrity). Trim-only — under-represented classes "
+                "are left alone to avoid duplicate-row vanity data."
+            ),
+            "before": {"counts": current, "kl_nats": round(kl_before, 4)},
+            "after": {"counts": target, "kl_nats": round(kl_after, 4)},
+            "rows_to_drop": int(rows_dropped),
+            "gold_dev_path": str(gold_path) if gold_path else None,
+            "safe_to_apply": rows_dropped > 0,
+            "skipped_reason": (
+                "Nothing to trim — every class already at or below its "
+                "train-proportion target."
+                if rows_dropped == 0 else None
+            ),
+        }
+
+    # pragma: no cover — guarded by PATCH_KINDS check above
+    raise ValueError(f"Unknown patch kind {kind!r}.")
+
+
+async def apply_patch(
+    db: AsyncSession, project_id: int, signal_id: str,
+) -> dict[str, Any]:
+    """Apply the patch the preview describes. The caller commits."""
+    import json
+    import random as _random
+
+    preview = await preview_patch(db, project_id, signal_id)
+    kind = preview["patch_kind"]
+
+    if kind == "regression_baseline_promote_last_green":
+        candidate = preview["candidate"]
+        ckpt = await db.get(Checkpoint, int(candidate["checkpoint_id"]))
+        if ckpt is None:
+            raise ValueError(
+                "Candidate checkpoint disappeared between preview and "
+                "apply — re-fetch the gap report and try again."
+            )
+        ckpt.promoted_at = _utcnow()
+        return {**preview, "applied": True}
+
+    if kind == "label_kl_rebalance_eval":
+        path = preview.get("gold_dev_path")
+        target_counts = preview["after"]["counts"]
+        if not path:
+            raise ValueError("No GOLD_DEV file found to rewrite.")
+        gold_path = Path(path)
+        _, rows = await _load_gold_dev_jsonl(db, project_id)
+        # Group rows by label; sample down to the target per class.
+        # Random sampling is deterministic given the seed so re-applying
+        # against the same input produces the same output (idempotent
+        # under stable input).
+        rng = _random.Random(42)
+        by_label: dict[str, list[dict[str, Any]]] = {}
+        unlabelled: list[dict[str, Any]] = []
+        for row in rows:
+            label = _row_to_label(row)
+            if label is None:
+                unlabelled.append(row)
+                continue
+            by_label.setdefault(label, []).append(row)
+
+        kept: list[dict[str, Any]] = []
+        for label, label_rows in by_label.items():
+            keep_n = min(
+                int(target_counts.get(label, len(label_rows))),
+                len(label_rows),
+            )
+            if keep_n >= len(label_rows):
+                kept.extend(label_rows)
+                continue
+            picked = rng.sample(label_rows, keep_n)
+            kept.extend(picked)
+        kept.extend(unlabelled)  # rows we couldn't label-extract pass through
+
+        # Rewrite the file atomically (temp + replace) so a crash mid-
+        # write doesn't leave the gold set half-emptied.
+        tmp = gold_path.with_suffix(gold_path.suffix + ".tmp")
+        with tmp.open("w", encoding="utf-8") as fp:
+            for row in kept:
+                fp.write(json.dumps(row, ensure_ascii=False) + "\n")
+        tmp.replace(gold_path)
+
+        # Update the dataset row's record_count so other surfaces
+        # (gap scanner row counts, etc.) see the new size.
+        ds_result = await db.execute(
+            select(Dataset).where(
+                Dataset.project_id == project_id,
+                Dataset.dataset_type == DatasetType.GOLD_DEV,
+            )
+        )
+        for ds in ds_result.scalars():
+            if ds.file_path and Path(ds.file_path) == gold_path:
+                ds.record_count = len(kept)
+
+        return {**preview, "applied": True, "rows_after": len(kept)}
+
+    # pragma: no cover — guarded above
+    raise ValueError(f"Unknown patch kind {kind!r}.")

@@ -60,6 +60,7 @@ const WARN_REPORT = {
                         params: {},
                     },
                     context: { has_completed_runs: true },
+                    apply_patch_kind: 'regression_baseline_promote_last_green',
                 },
                 {
                     id: 'eval_gaps.train_eval_label_kl_high',
@@ -136,6 +137,92 @@ describe('EvalGapsPanel', () => {
         expect(navigateMock).toHaveBeenCalledWith(
             '/project/42/data-studio#splits',
         );
+    });
+
+    it('renders Apply button only for signals carrying apply_patch_kind', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: WARN_REPORT });
+        renderPanel();
+        await waitFor(() => {
+            expect(
+                screen.getByTestId(
+                    'eval-gaps-apply-eval_gaps.no_regression_baseline',
+                ),
+            ).toBeInTheDocument();
+        });
+        // The archetype-coverage signal in WARN_REPORT has no
+        // apply_patch_kind (it's ok / no-action) → no Apply button.
+        expect(
+            screen.queryByTestId(
+                'eval-gaps-apply-eval_gaps.archetype_coverage_low',
+            ),
+        ).not.toBeInTheDocument();
+    });
+
+    it('opens the patch modal, applies, and re-fetches the report', async () => {
+        // Sequence: panel GET (warn) → modal preview POST → apply POST →
+        // panel re-GET (ok).
+        const OK_REPORT = {
+            ...WARN_REPORT,
+            overall: 'ok' as const,
+            severity_summary: { ok: 3, warn: 0, block: 0 },
+            groups: WARN_REPORT.groups.map((g) => ({
+                ...g,
+                signals: g.signals.map((s) => ({ ...s, severity: 'ok' as const })),
+            })),
+        };
+        const PATCH_PREVIEW = {
+            project_id: 42,
+            signal_id: 'eval_gaps.no_regression_baseline',
+            patch_kind: 'regression_baseline_promote_last_green',
+            patch_label: 'Promote last-green checkpoint as baseline',
+            plain_english: 'Sets promoted_at on the best checkpoint.',
+            before: {
+                promoted_checkpoint_id: null,
+                promoted_experiment_id: null,
+                promoted_step: null,
+            },
+            after: {
+                promoted_checkpoint_id: 17,
+                promoted_experiment_id: 5,
+                promoted_step: 200,
+            },
+            candidate: {
+                experiment_id: 5,
+                experiment_name: 'green-1',
+                checkpoint_id: 17,
+                checkpoint_step: 200,
+                checkpoint_is_best: true,
+                pass_rate: 0.85,
+            },
+            safe_to_apply: true,
+        };
+        const APPLIED = { ...PATCH_PREVIEW, applied: true };
+
+        apiMock.get
+            .mockResolvedValueOnce({ data: WARN_REPORT })
+            .mockResolvedValueOnce({ data: OK_REPORT });
+        apiMock.post
+            .mockResolvedValueOnce({ data: PATCH_PREVIEW })
+            .mockResolvedValueOnce({ data: APPLIED });
+
+        renderPanel();
+        await userEvent.click(
+            await screen.findByTestId(
+                'eval-gaps-apply-eval_gaps.no_regression_baseline',
+            ),
+        );
+        // Modal Apply.
+        await userEvent.click(
+            await screen.findByTestId('eval-patch-apply'),
+        );
+        // Apply toast surfaces.
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('eval-gaps-apply-toast'),
+            ).toBeInTheDocument();
+        });
+        // Panel re-fetched (2 GETs).
+        expect(apiMock.get).toHaveBeenCalledTimes(2);
     });
 
     it('toggles why-this-matters for a signal that carries one', async () => {
