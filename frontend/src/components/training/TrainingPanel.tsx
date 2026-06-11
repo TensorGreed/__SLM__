@@ -32,6 +32,11 @@ import CheckpointsPanel from './CheckpointsPanel';
 import PreRunConfirmModal from './PreRunConfirmModal';
 import { buildWsUrl } from '../../utils/ws';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
+import {
+    fetchOverrides,
+    TRAINING_OVERRIDES_APPLIED_EVENT,
+    type TrainingOverridesAppliedDetail,
+} from '../../api/trainingConfigGaps';
 import './TrainingPanel.css';
 import './WaveDPanels.css';
 
@@ -2625,6 +2630,55 @@ export default function TrainingPanel({
       window.removeEventListener('brewslm:expand-multi-seed', handler);
     };
   }, []);
+
+  // Coach-stage-2 phase 2 — Training Config Gap patches persist as a
+  // partial dict under project.runtime_config.training_config_overrides.
+  // Read them on mount so the form shows the same values the gap
+  // scanner reports as effective. Without this, a user who applied
+  // `eval_steps=10` from the gap panel + then opened the form would
+  // see eval_steps=100 in the field, train with 100, and blow past
+  // the fix — credibility-killer.
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetchOverrides(projectId);
+        if (cancelled) return;
+        const overrides = res.overrides || {};
+        if (Object.keys(overrides).length === 0) return;
+        applySuggestedConfig(overrides);
+      } catch {
+        // Endpoint failure is non-fatal — the form just shows defaults.
+        // The gap panel surface will still flag the gap, and the
+        // existing toast/error stack already covers the rare case
+        // where the endpoint itself is broken.
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  // Same-page sync: when the gap panel's apply succeeds it dispatches
+  // a DOM event carrying the new overrides dict. Pipe it straight into
+  // applySuggestedConfig so the form updates without a re-mount.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<TrainingOverridesAppliedDetail>)
+        .detail;
+      if (!detail || detail.projectId !== projectId) return;
+      if (!detail.overrides) return;
+      applySuggestedConfig(detail.overrides);
+    };
+    window.addEventListener(TRAINING_OVERRIDES_APPLIED_EVENT, handler);
+    return () => {
+      window.removeEventListener(TRAINING_OVERRIDES_APPLIED_EVENT, handler);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   useEffect(() => {
     if (forceCreateVisible || !canViewRuns) {

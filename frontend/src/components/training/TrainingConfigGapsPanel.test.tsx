@@ -44,6 +44,7 @@ const WARN_REPORT = {
                     why_it_matters: '',
                     suggested_action: null,
                     context: { current_params_m: 135, params_floor_m: 135 },
+                    apply_patch_kind: null,
                 },
                 {
                     id: 'training_config.eval_cadence_too_sparse',
@@ -66,6 +67,7 @@ const WARN_REPORT = {
                         eval_observations: 0,
                         recommended_eval_steps: 10,
                     },
+                    apply_patch_kind: 'eval_steps_recommend',
                 },
                 {
                     id: 'training_config.epochs_high_for_small_data',
@@ -81,10 +83,39 @@ const WARN_REPORT = {
                         params: { recommended_num_epochs: 3 },
                     },
                     context: { num_epochs: 3, labelled_rows: 20 },
+                    apply_patch_kind: 'num_epochs_recommend',
                 },
             ],
         },
     ],
+};
+
+const OK_REPORT = {
+    ...WARN_REPORT,
+    overall: 'ok' as const,
+    severity_summary: { ok: 3, warn: 0, block: 0 },
+    groups: WARN_REPORT.groups.map((g) => ({
+        ...g,
+        signals: g.signals.map((s) => ({ ...s, severity: 'ok' as const })),
+    })),
+};
+
+const PREVIEW = {
+    project_id: 42,
+    signal_id: 'training_config.eval_cadence_too_sparse',
+    patch_kind: 'eval_steps_recommend',
+    patch_label: 'Tighten eval cadence',
+    plain_english: 'Bumps eval_steps so the trainer can draw a curve.',
+    patch: { eval_steps: 10 },
+    before: { eval_steps: 100 },
+    after: { eval_steps: 10 },
+    safe_to_apply: true,
+};
+
+const APPLY_RESULT = {
+    ...PREVIEW,
+    applied: true,
+    overrides_after: { eval_steps: 10 },
 };
 
 describe('TrainingConfigGapsPanel', () => {
@@ -142,6 +173,80 @@ describe('TrainingConfigGapsPanel', () => {
         expect(navigateMock).toHaveBeenCalledWith(
             '/project/42/training-config?recommended_eval_steps=10',
         );
+    });
+
+    it('renders an Apply button only for signals carrying apply_patch_kind', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: WARN_REPORT });
+        renderPanel();
+        await waitFor(() => {
+            expect(
+                screen.getByTestId(
+                    'training-config-gaps-apply-training_config.eval_cadence_too_sparse',
+                ),
+            ).toBeInTheDocument();
+        });
+        expect(
+            screen.getByTestId(
+                'training-config-gaps-apply-training_config.epochs_high_for_small_data',
+            ),
+        ).toBeInTheDocument();
+        // The base-model-undersized signal has no apply_patch_kind →
+        // no Apply button is rendered for it (only its navigate chip,
+        // which is absent here because that signal is ok with no
+        // suggested_action).
+        expect(
+            screen.queryByTestId(
+                'training-config-gaps-apply-training_config.base_model_undersized',
+            ),
+        ).not.toBeInTheDocument();
+    });
+
+    it('opens the patch modal, applies, dispatches the DOM event, and re-fetches', async () => {
+        // Sequence: initial GET (warn), then preview POST, then apply
+        // POST, then second GET after the panel re-fetches (ok).
+        apiMock.get
+            .mockResolvedValueOnce({ data: WARN_REPORT })
+            .mockResolvedValueOnce({ data: OK_REPORT });
+        apiMock.post
+            .mockResolvedValueOnce({ data: PREVIEW })
+            .mockResolvedValueOnce({ data: APPLY_RESULT });
+
+        const eventSpy = vi.fn();
+        window.addEventListener(
+            'brewslm:training-overrides-applied',
+            eventSpy,
+        );
+        try {
+            renderPanel();
+            // Open the modal by clicking Apply on the eval-cadence signal.
+            const applyButton = await screen.findByTestId(
+                'training-config-gaps-apply-training_config.eval_cadence_too_sparse',
+            );
+            await userEvent.click(applyButton);
+            // Modal opens; click its Apply.
+            const modalApply = await screen.findByTestId(
+                'training-config-patch-apply',
+            );
+            await userEvent.click(modalApply);
+            // Apply toast appears.
+            await waitFor(() => {
+                expect(
+                    screen.getByTestId('training-config-gaps-apply-toast'),
+                ).toBeInTheDocument();
+            });
+            // DOM event fired with the patched overrides.
+            expect(eventSpy).toHaveBeenCalled();
+            const detail = (eventSpy.mock.calls[0][0] as CustomEvent).detail;
+            expect(detail.projectId).toBe(42);
+            expect(detail.overrides).toEqual({ eval_steps: 10 });
+            // Panel re-fetched: 2 GET calls in total.
+            expect(apiMock.get).toHaveBeenCalledTimes(2);
+        } finally {
+            window.removeEventListener(
+                'brewslm:training-overrides-applied',
+                eventSpy,
+            );
+        }
     });
 
     it('toggles the why-this-matters expander for a signal that carries one', async () => {

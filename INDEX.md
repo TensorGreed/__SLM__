@@ -74,7 +74,7 @@ session-start guidance.
 - `backend/app/api/targets.py` — Hardware target catalog API — list deploy-target profiles and check base-model compatibility against them.
 - `backend/app/api/tokenization.py` — Tokenization analysis API routes.
 - `backend/app/api/training.py` — Training API routes.
-- `backend/app/api/training_config_gaps.py` — Training Config Gap API — Coach-stage-2 phase 1.
+- `backend/app/api/training_config_gaps.py` — Training Config Gap API — Coach-stage-2 phases 1 + 2.
 
 ## Backend · Services (business logic)
 
@@ -250,7 +250,7 @@ session-start guidance.
 - `backend/app/services/timeline_service.py` — Unified timeline service (priority.md P32, Wave G).
 - `backend/app/services/tokenization_service.py` — Tokenization service — tokenizer management and dataset statistics.
 - `backend/app/services/trainability_forecast_service.py` — Trainability forecast service — USER-SUCCESS Epic 1.
-- `backend/app/services/training_config_gap_service.py` — Training Config Gap scanner — Coach-stage-2 phase 1.
+- `backend/app/services/training_config_gap_service.py` — Training Config Gap scanner + patch engine — Coach-stage-2 phases 1 + 2.
 - `backend/app/services/training_data_gate.py` — Pre-training data-shape gate.
 - `backend/app/services/training_manifest_service.py` — P14 — Capture + read immutable training-run manifests.
 - `backend/app/services/training_preflight_service.py` — Training capability matrix and preflight checks.
@@ -414,7 +414,7 @@ session-start guidance.
 - `frontend/src/api/studentTeacherComparison.ts` — Typed wrapper for the Track 1 Epic A slice 3 student-vs-teacher comparison.
 - `frontend/src/api/synthPlaybook.ts` — Typed API wrapper for the synth playbook framework
 - `frontend/src/api/trainabilityForecast.ts` — Typed API wrapper for the trainability forecast endpoint
-- `frontend/src/api/trainingConfigGaps.ts` — Training Config Gaps API client — Coach-stage-2 phase 1.
+- `frontend/src/api/trainingConfigGaps.ts` — Training Config Gaps API client — Coach-stage-2 phases 1 + 2.
 
 ## Frontend · Zustand stores
 
@@ -590,6 +590,7 @@ session-start guidance.
 - `frontend/src/components/training/TrainAnywayButton.tsx` — TrainAnywayButton — USER-SUCCESS Epic 1 supplement.
 - `frontend/src/components/training/TrainabilityForecastPanel.tsx` — TrainabilityForecastPanel — USER-SUCCESS Epic 1.
 - `frontend/src/components/training/TrainingConfigGapsPanel.tsx` — TrainingConfigGapsPanel — Coach-stage-2 phase 1.
+- `frontend/src/components/training/TrainingConfigPatchPreviewModal.tsx` — TrainingConfigPatchPreviewModal — Coach-stage-2 phase 2.
 - `frontend/src/components/training/TrainingPanel.tsx` — Training orchestrator panel — config editor, run launcher, live metrics, checkpoints, and post-run review.
 - `frontend/src/components/training/WarmStartDeltaChart.tsx` — WarmStartDeltaChart — Track 1, Epic B/C.
 - `frontend/src/components/training/WhyThisPlanPanel.tsx` — WhyThisPlanPanel — P20 Training Planner reproducibility & cost view.
@@ -837,6 +838,7 @@ session-start guidance.
 - `backend/tests/test_theme5_epic1_video_flow_cli.py` — Theme 5 Epic 1 — brewslm CLI gap-fill commands for the 11-video flow.
 - `backend/tests/test_tokenization_analyze_splits.py` — V3 of the ML-native visualisations arc — POST /tokenization/analyze-splits.
 - `backend/tests/test_trainability_forecast_service.py` — Tests for the trainability forecast service (USER-SUCCESS Epic 1).
+- `backend/tests/test_training_config_gap_patch.py` — Training Config Gap patch engine — Coach-stage-2 phase 2.
 - `backend/tests/test_training_config_gap_service.py` — Training Config Gap scanner — Coach-stage-2 phase 1.
 - `backend/tests/test_training_config_gaps_coach_rollup.py` — Coach-stage-2 phase 1 — Coach training-stage roll-up nudge.
 - `backend/tests/test_training_data_gate.py` — Pre-training data-shape gate (training_data_gate).
@@ -954,6 +956,7 @@ session-start guidance.
 - `frontend/src/components/training/TrainAnywayButton.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainabilityForecastPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingConfigGapsPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/TrainingConfigPatchPreviewModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingPanel.multiSeed.test.tsx` — Quality-Lift phase 7 slice 3 — MultiSeedConfigSection tests.
 - `frontend/src/components/training/TrainingPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WarmStartDeltaChart.test.tsx` — _(no docstring)_

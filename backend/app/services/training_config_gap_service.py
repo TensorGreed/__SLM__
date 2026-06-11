@@ -1,4 +1,4 @@
-"""Training Config Gap scanner — Coach-stage-2 phase 1.
+"""Training Config Gap scanner + patch engine — Coach-stage-2 phases 1 + 2.
 
 Parallel to ``data_health_service`` but for the *training configuration*
 side of the project. Where Data Health asks "is the data ready?", this
@@ -6,11 +6,21 @@ asks "is the config ready?" — given the project's selected recipe,
 base model, and labelled-row count, are the hyperparameters the trainer
 will use actually a good fit?
 
-Phase 1 is read-only (advisory only). Every signal's ``suggested_action``
-is a ``navigate`` pointer to the relevant config surface — the user still
-clicks through and edits. Phase 2 will add an ``apply_config_patch``
-action kind so a signal like "max_seq_length truncates 23% of rows" can
-be one-click bumped.
+Phase 1 was read-only (advisory only). Phase 2 adds one-click
+remediation: signals where the recommended patch is unambiguous (eval
+cadence, epochs trim, warmup bump) carry an ``apply_patch_kind`` field,
+and the matching ``POST /training-config-gaps/patch/{preview|apply}``
+endpoints persist the change as a partial dict under
+``project.runtime_config["training_config_overrides"]``. The gap
+scanner overlays that block onto ``TrainingConfig()`` defaults so a
+re-scan after Apply flips the signal severity to ``ok``. TrainingPanel
+reads the same block on mount via ``GET /training-config-gaps/overrides``
+and prefills its form via the existing ``applySuggestedConfig`` hook —
+the override is the single source of truth across surfaces.
+
+The base-model-undersized signal stays as a ``navigate`` for now
+because the swap is a bigger lift (different parameter counts, possibly
+different tokenizer); phase 3 may revisit.
 
 Signals:
 
@@ -150,10 +160,15 @@ def _make_signal(
     context: dict | None = None,
     plain_english: str | None = None,
     why_it_matters: str | None = None,
+    apply_patch_kind: str | None = None,
 ) -> dict[str, Any]:
-    """Build a signal payload. Same shape as data_health_service's
-    ``_make_signal`` minus the ``autofix_kind`` field — phase 1 is
-    read-only. Phase 2 will introduce ``apply_config_patch``.
+    """Build a signal payload.
+
+    ``apply_patch_kind`` (phase 2) flags signals the patch engine can
+    resolve in one click. The frontend renders an "Apply fix" button
+    when this is set, calling ``POST /training-config-gaps/patch/preview``
+    with the signal id as the payload. ``None`` = the signal is
+    informational only (no safe patch exists yet for it).
     """
     layman = _layman_for(id)
     return {
@@ -168,6 +183,7 @@ def _make_signal(
         ),
         "suggested_action": suggested_action,
         "context": context or {},
+        "apply_patch_kind": apply_patch_kind,
     }
 
 
@@ -199,14 +215,43 @@ async def _count_labelled_rows(db: AsyncSession, project_id: int) -> int:
     return sum(int(ds.record_count or 0) for ds in result.scalars())
 
 
+OVERRIDES_KEY = "training_config_overrides"
+# Fields the patch engine is allowed to write. Anything not in here is
+# rejected at apply time, so a malformed signal_context can't silently
+# poison unrelated fields.
+PATCHABLE_FIELDS: frozenset[str] = frozenset({
+    "eval_steps",
+    "num_epochs",
+    "warmup_ratio",
+})
+
+
+def _get_overrides(project: Project) -> dict[str, Any]:
+    """Read the persistent training-config overrides block from the
+    project's ``runtime_config``. Returns an empty dict when nothing has
+    been applied yet — never ``None`` so callers can ``.get`` cleanly.
+    """
+    runtime = project.runtime_config or {}
+    if not isinstance(runtime, dict):
+        return {}
+    block = runtime.get(OVERRIDES_KEY)
+    if not isinstance(block, dict):
+        return {}
+    # Defensive copy so callers can't accidentally mutate the model
+    # column in place.
+    return {k: v for k, v in block.items() if k in PATCHABLE_FIELDS}
+
+
 def _effective_training_config(project: Project) -> TrainingConfig:
     """Compose the config the trainer will actually use.
 
-    Phase 1 keeps this simple: start from ``TrainingConfig()`` defaults
-    and only override ``base_model`` (which is the field that already
-    has its own column on ``Project``). When phase 2 introduces a
-    project-level training-config override block, this is where it
-    layers in.
+    Layering (highest precedence first):
+      1. ``runtime_config["training_config_overrides"]`` — what the user
+         applied via phase-2 patches.
+      2. ``project.base_model_name`` — the dedicated column.
+      3. Recipe-suggested base model when the project hasn't committed
+         to one.
+      4. ``TrainingConfig()`` defaults.
     """
     base = (project.base_model_name or "").strip()
     if not base:
@@ -225,7 +270,16 @@ def _effective_training_config(project: Project) -> TrainingConfig:
                 base = ""
     if not base:
         base = "HuggingFaceTB/SmolLM2-135M-Instruct"
-    return TrainingConfig(base_model=base)
+
+    overrides = _get_overrides(project)
+    init_kwargs: dict[str, Any] = {"base_model": base}
+    # Only carry overrides that match a TrainingConfig field. Pydantic
+    # already validates ranges (eval_steps ≥ 1, warmup 0-1, etc.) so a
+    # bad override raises ValidationError at apply time, not here.
+    for field in PATCHABLE_FIELDS:
+        if field in overrides:
+            init_kwargs[field] = overrides[field]
+    return TrainingConfig(**init_kwargs)
 
 
 def _approx_total_steps(
@@ -366,7 +420,12 @@ def _eval_cadence_signal(
         )
 
     severity: Severity = "block" if eval_obs <= EVAL_OBS_BLOCK else "warn"
-    suggested_eval_steps = max(10, total_steps // 5)
+    # Pick the largest eval_steps that still produces ≥ EVAL_OBS_WARN
+    # observations. Floor at 1 (the trainer can eval every step on
+    # very short runs — annoying but honest). Phase 1 used a floor of
+    # 10 which didn't actually close the gap on short runs; phase 2's
+    # patch engine relies on this being a valid closure.
+    suggested_eval_steps = max(1, total_steps // EVAL_OBS_WARN)
     headline = (
         f"Eval will only fire ≈ {eval_obs} time"
         f"{'s' if eval_obs != 1 else ''} across "
@@ -389,6 +448,7 @@ def _eval_cadence_signal(
             "eval_observations": eval_obs,
             "recommended_eval_steps": suggested_eval_steps,
         },
+        apply_patch_kind="eval_steps_recommend",
     )
 
 
@@ -436,6 +496,7 @@ def _epochs_overfit_signal(
             "labelled_rows": labelled_rows,
             "recommended_num_epochs": suggested_epochs,
         },
+        apply_patch_kind="num_epochs_recommend",
     )
 
 
@@ -496,6 +557,7 @@ def _warmup_signal(
             "total_steps": total_steps,
             "recommended_warmup_ratio": suggested_warmup,
         },
+        apply_patch_kind="warmup_ratio_recommend",
     )
 
 
@@ -577,3 +639,205 @@ async def scan_training_config_gaps(
         "total_signals": len(signals),
         "groups": [group],
     }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Patch registry — phase 2.
+#
+# Each entry maps an ``apply_patch_kind`` to:
+#   - the signal_id that emits it (for the preview's "resolves: ..." line)
+#   - a builder that takes the signal's ``context`` dict and returns the
+#     partial patch to write into runtime_config["training_config_overrides"]
+#   - a human-facing label so the preview modal reads cleanly
+#
+# Three patches today. Each writes a single field; the gap scanner
+# re-scan after Apply confirms the gap is closed.
+# ─────────────────────────────────────────────────────────────────────
+
+
+PATCH_KINDS: tuple[str, ...] = (
+    "eval_steps_recommend",
+    "num_epochs_recommend",
+    "warmup_ratio_recommend",
+)
+
+
+def _resolve_signal(
+    report: dict[str, Any], signal_id: str
+) -> dict[str, Any] | None:
+    for group in report.get("groups", []):
+        for sig in group.get("signals", []):
+            if sig.get("id") == signal_id:
+                return sig
+    return None
+
+
+def _patch_for_eval_steps(ctx: dict[str, Any]) -> dict[str, Any]:
+    rec = int(ctx.get("recommended_eval_steps") or 0)
+    if rec < 1:
+        raise ValueError(
+            "Signal context is missing a valid recommended_eval_steps."
+        )
+    return {"eval_steps": rec}
+
+
+def _patch_for_num_epochs(ctx: dict[str, Any]) -> dict[str, Any]:
+    rec = int(ctx.get("recommended_num_epochs") or 0)
+    if rec < 1:
+        raise ValueError(
+            "Signal context is missing a valid recommended_num_epochs."
+        )
+    return {"num_epochs": rec}
+
+
+def _patch_for_warmup_ratio(ctx: dict[str, Any]) -> dict[str, Any]:
+    rec = float(ctx.get("recommended_warmup_ratio") or 0.0)
+    if not (0.0 <= rec <= 1.0):
+        raise ValueError(
+            "Signal context is missing a valid recommended_warmup_ratio."
+        )
+    return {"warmup_ratio": rec}
+
+
+# kind → (signal_id, patch_builder, human_label, plain_english_summary)
+_PATCH_REGISTRY: dict[
+    str,
+    tuple[str, Any, str, str],
+] = {
+    "eval_steps_recommend": (
+        "training_config.eval_cadence_too_sparse",
+        _patch_for_eval_steps,
+        "Tighten eval cadence",
+        (
+            "Bumps eval_steps so the trainer checks itself often enough "
+            "to draw a learning curve."
+        ),
+    ),
+    "num_epochs_recommend": (
+        "training_config.epochs_high_for_small_data",
+        _patch_for_num_epochs,
+        "Reduce epochs",
+        (
+            "Cuts num_epochs to a value that won't overfit your current "
+            "labelled-row count."
+        ),
+    ),
+    "warmup_ratio_recommend": (
+        "training_config.warmup_low_for_aggressive_lr",
+        _patch_for_warmup_ratio,
+        "Bump warmup",
+        (
+            "Raises warmup_ratio to 3% so the optimizer eases into the "
+            "aggressive LR without spiking."
+        ),
+    ),
+}
+
+
+def _patch_label(kind: str) -> str:
+    entry = _PATCH_REGISTRY.get(kind)
+    return entry[2] if entry else kind
+
+
+async def preview_patch(
+    db: AsyncSession, project_id: int, signal_id: str
+) -> dict[str, Any]:
+    """Build the before → after diff a patch *would* apply, without
+    mutating anything.
+
+    Resolves the signal in the current gap report, looks up its
+    ``apply_patch_kind``, builds the patch from the signal's context, and
+    returns the proposed change paired with the current effective value.
+
+    Raises ``ValueError`` with a human-meaningful message when:
+      - the project is missing (404 at the API layer)
+      - the signal is not in the current report
+      - the signal has no ``apply_patch_kind`` (i.e. no safe patch exists
+        for it yet)
+      - the patch builder rejects the signal's context (bad recommended)
+    """
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    report = await scan_training_config_gaps(db, project_id)
+    signal = _resolve_signal(report, signal_id)
+    if signal is None:
+        raise ValueError(
+            f"Signal {signal_id!r} not in the current gap report."
+        )
+    kind = signal.get("apply_patch_kind")
+    if not kind or kind not in _PATCH_REGISTRY:
+        raise ValueError(
+            f"Signal {signal_id!r} has no one-click patch available."
+        )
+
+    _, builder, label, plain = _PATCH_REGISTRY[kind]
+    patch = builder(signal.get("context") or {})
+    # Sanity-check every patched field is in the allow-list. Defensive
+    # — the builders all return allow-listed keys today, but a future
+    # builder typo shouldn't silently land an unknown field on the
+    # project's runtime_config.
+    bad = set(patch.keys()) - PATCHABLE_FIELDS
+    if bad:
+        raise ValueError(
+            f"Patch produced disallowed field(s) {sorted(bad)}; "
+            f"allow-list is {sorted(PATCHABLE_FIELDS)}."
+        )
+
+    current_cfg = _effective_training_config(project)
+    before = {k: getattr(current_cfg, k) for k in patch.keys()}
+    after = {**before, **patch}
+    return {
+        "project_id": int(project_id),
+        "signal_id": signal_id,
+        "patch_kind": kind,
+        "patch_label": label,
+        "plain_english": plain,
+        "patch": patch,
+        "before": before,
+        "after": after,
+        "safe_to_apply": True,
+    }
+
+
+async def apply_patch(
+    db: AsyncSession, project_id: int, signal_id: str
+) -> dict[str, Any]:
+    """Persist the patch onto ``project.runtime_config[OVERRIDES_KEY]``.
+
+    Idempotent: applying the same patch twice writes the same value the
+    second time and the scanner re-emits the signal as ``ok`` either
+    way. Caller commits the session (the API endpoint does this once,
+    so multiple patches per request would batch cleanly if we ever
+    needed bulk apply).
+    """
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    preview = await preview_patch(db, project_id, signal_id)
+    patch: dict[str, Any] = dict(preview["patch"])
+
+    runtime = dict(project.runtime_config or {})
+    existing = runtime.get(OVERRIDES_KEY)
+    block = dict(existing) if isinstance(existing, dict) else {}
+    block.update(patch)
+    runtime[OVERRIDES_KEY] = block
+    # Reassigning the whole dict (rather than mutating in place) tells
+    # SQLAlchemy's JSON column the value changed. JSON columns don't
+    # track in-place mutation; this is the standard workaround.
+    project.runtime_config = runtime
+    return {
+        **preview,
+        "applied": True,
+        "overrides_after": block,
+    }
+
+
+def read_overrides(project: Project) -> dict[str, Any]:
+    """Public helper for the ``GET /overrides`` endpoint. Returns a
+    plain dict the frontend can plumb directly into
+    ``applySuggestedConfig``.
+    """
+    return _get_overrides(project)

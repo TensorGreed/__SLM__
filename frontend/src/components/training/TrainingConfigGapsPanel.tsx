@@ -21,10 +21,14 @@ import { parseErrorEnvelope } from '../../api/errors';
 import ErrorPanel from '../shared/ErrorPanel';
 import {
     fetchTrainingConfigGaps,
+    TRAINING_OVERRIDES_APPLIED_EVENT,
     type GapSeverity,
     type GapSuggestedAction,
     type TrainingConfigGapReport,
+    type TrainingConfigPatchResult,
+    type TrainingOverridesAppliedDetail,
 } from '../../api/trainingConfigGaps';
+import TrainingConfigPatchPreviewModal from './TrainingConfigPatchPreviewModal';
 import './TrainingConfigGapsPanel.css';
 
 interface TrainingConfigGapsPanelProps {
@@ -93,6 +97,14 @@ export default function TrainingConfigGapsPanel({
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<ErrorEnvelope | null>(null);
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
+    // Phase 2 — patch modal state. Holds the signal id we're previewing
+    // (null when closed). The modal handles preview + apply; on apply
+    // we re-fetch the panel + dispatch a DOM event the TrainingPanel
+    // listens for so the form state syncs without a page reload.
+    const [patchSignalId, setPatchSignalId] = useState<string | null>(null);
+    const [lastApplied, setLastApplied] = useState<TrainingConfigPatchResult | null>(
+        null,
+    );
 
     const refresh = useCallback(async () => {
         setLoading(true);
@@ -120,6 +132,30 @@ export default function TrainingConfigGapsPanel({
             return next;
         });
     };
+
+    const handlePatchApplied = useCallback(
+        async (result: TrainingConfigPatchResult) => {
+            setLastApplied(result);
+            // Notify any mounted TrainingPanel so its form state catches
+            // up. The TrainingPanel listener pipes
+            // result.overrides_after straight into applySuggestedConfig
+            // — no extra fetch needed when the user is on the same page.
+            if (typeof window !== 'undefined') {
+                const detail: TrainingOverridesAppliedDetail = {
+                    projectId,
+                    overrides: result.overrides_after,
+                };
+                window.dispatchEvent(
+                    new CustomEvent(TRAINING_OVERRIDES_APPLIED_EVENT, {
+                        detail,
+                    }),
+                );
+            }
+            // Re-fetch so the just-patched signal's severity updates.
+            await refresh();
+        },
+        [projectId, refresh],
+    );
 
     if (loading && !data) {
         return (
@@ -268,6 +304,20 @@ export default function TrainingConfigGapsPanel({
                                                     )}
                                                 </div>
                                                 <div className="tcg-panel__actions">
+                                                    {sig.apply_patch_kind && (
+                                                        <button
+                                                            type="button"
+                                                            className="tcg-panel__action btn btn-sm"
+                                                            onClick={() => {
+                                                                setLastApplied(null);
+                                                                setPatchSignalId(sig.id);
+                                                            }}
+                                                            data-testid={`training-config-gaps-apply-${sig.id}`}
+                                                            title="Preview the patch before applying"
+                                                        >
+                                                            Apply fix
+                                                        </button>
+                                                    )}
                                                     {sig.suggested_action?.label && (
                                                         <button
                                                             type="button"
@@ -297,6 +347,28 @@ export default function TrainingConfigGapsPanel({
                 </div>
             )}
 
+            {lastApplied && (
+                <div
+                    className="tcg-panel__apply-toast"
+                    data-testid="training-config-gaps-apply-toast"
+                    role="status"
+                >
+                    <strong>Applied:</strong> {lastApplied.patch_label} —{' '}
+                    {Object.entries(lastApplied.patch)
+                        .map(([k, v]) => `${k} = ${v}`)
+                        .join(', ')}
+                    .
+                    <button
+                        type="button"
+                        className="tcg-panel__apply-toast-dismiss"
+                        onClick={() => setLastApplied(null)}
+                        aria-label="Dismiss apply summary"
+                    >
+                        ×
+                    </button>
+                </div>
+            )}
+
             <footer className="tcg-panel__foot">
                 Computed at {new Date(data.computed_at).toLocaleTimeString()}.{' '}
                 <button
@@ -308,6 +380,15 @@ export default function TrainingConfigGapsPanel({
                     Refresh
                 </button>
             </footer>
+
+            {patchSignalId && (
+                <TrainingConfigPatchPreviewModal
+                    projectId={projectId}
+                    signalId={patchSignalId}
+                    onClose={() => setPatchSignalId(null)}
+                    onApplied={(r) => void handlePatchApplied(r)}
+                />
+            )}
         </section>
     );
 }

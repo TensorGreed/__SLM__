@@ -284,9 +284,21 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   epochs-vs-rows memorisation risk, and warmup-vs-LR loss-spike risk.
   `TrainingConfigGapsPanel` renders the report on `/project/{id}/training-config`;
   Coach training stage adds a single roll-up nudge
-  (`training:config-gaps-rollup`) deep-linking to the panel. Phase 1 is
-  advisory only — phase 2 will add `apply_config_patch` for one-click
-  remediation. See `ROADMAP.md` Epic E0.
+  (`training:config-gaps-rollup`) deep-linking to the panel.
+  **Phase 2 (one-click remediation):** signals with a safe patch carry
+  an `apply_patch_kind` field (`eval_steps_recommend`,
+  `num_epochs_recommend`, `warmup_ratio_recommend`). The Apply button
+  on each row opens `TrainingConfigPatchPreviewModal` →
+  `POST /training-config-gaps/patch/{preview|apply}` writes a partial
+  dict to `project.runtime_config["training_config_overrides"]`. The
+  gap scanner overlays that block onto `TrainingConfig()` defaults so a
+  re-scan after Apply flips the signal to ok. `TrainingPanel` reads
+  overrides on mount via `GET /training-config-gaps/overrides` and via
+  the `brewslm:training-overrides-applied` DOM event for same-page
+  sync — `applySuggestedConfig` pipes the dict into the form so the
+  visible config matches what the trainer will use. Phase 3 will
+  expand the gap surface (truncation rate, tokenizer OOV, eval-side
+  gaps). See `ROADMAP.md` Epic E0.
 - **Evaluation** — `evaluation_service` runs eval packs; results land in
   `EvalResult` rows. Failure clusters, remediation plans, post-eval
   decision engine for reroute recommendations.

@@ -1,0 +1,98 @@
+/* TrainingConfigPatchPreviewModal — Coach-stage-2 phase 2. */
+
+.tcg-patch-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.tcg-patch-modal {
+    background: var(--bg-elevated, #ffffff);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    min-width: 360px;
+    max-width: 540px;
+    width: 90%;
+    padding: 16px 20px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+
+.tcg-patch-modal__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tcg-patch-modal__title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.tcg-patch-modal__close {
+    background: none;
+    border: none;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--text-secondary);
+    padding: 0 4px;
+}
+
+.tcg-patch-modal__loading {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.tcg-patch-modal__plain {
+    margin: 0 0 12px;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.tcg-patch-modal__diff {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 16px;
+    font-size: 13px;
+}
+
+.tcg-patch-modal__diff th,
+.tcg-patch-modal__diff td {
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tcg-patch-modal__diff th {
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.tcg-patch-modal__diff code {
+    background: var(--bg-base, transparent);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+}
+
+.tcg-patch-modal__foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-color);
+}
