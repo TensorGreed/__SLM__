@@ -138,6 +138,12 @@ const AUTOFIX_LABEL: Record<string, string> = {
     dedupe_duplicate_docs: 'Dedupe duplicates',
     redact_pii: 'Redact PII',
     canonicalise_labels: 'Merge label variants',
+    // Phase 4 — five new "rewrite cleaned text" fixes.
+    near_duplicate_dedup: 'Dedupe near-duplicates',
+    normalize_whitespace: 'Normalize whitespace',
+    strip_html: 'Strip HTML',
+    length_cap: 'Cap length',
+    normalize_schema: 'Normalize gold schema',
 };
 
 export default function DataHealthReportPanel({ projectId }: DataHealthReportPanelProps) {

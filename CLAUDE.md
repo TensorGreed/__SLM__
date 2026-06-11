@@ -301,6 +301,20 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   sync — `applySuggestedConfig` pipes the dict into the form so the
   visible config matches what the trainer will use. See `ROADMAP.md`
   Epic E0.
+- **Autofix engine** — `data_health_autofix_service` exposes 9 safe
+  one-click transforms via `POST /data-health/autofix/{preview|apply}`.
+  Original four (drop_failed_docs, dedupe_duplicate_docs, redact_pii,
+  canonicalise_labels) plus Coach-stage-2 phase 4's five "rewrite
+  cleaned text" fixes: `near_duplicate_dedup` (aggressively-normalised
+  500-char-prefix hash), `normalize_whitespace`, `strip_html`,
+  `length_cap` (truncates to `max_seq_length × CHARS_PER_TOKEN_APPROX`
+  — closes the gap the phase-3 truncation signal flags),
+  `normalize_schema` (renames gold-row variants `class→label`,
+  `text→input`, `target→label`, `prompt→input`). Each is idempotent —
+  second run finds nothing to change. Signals in `data_health_service`
+  emit the matching `autofix_kind` (sampled-read for the cleaned-text
+  signals to keep the poll endpoint fast). See `ROADMAP.md` Epic E0
+  phase 4.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

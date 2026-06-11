@@ -651,6 +651,7 @@ session-start guidance.
 - `backend/tests/test_curriculum_service.py` — Tests for the curriculum-ranking service (USER-SUCCESS Epic 6 Phase 6a).
 - `backend/tests/test_curriculum_training_integration.py` — Tests for the curriculum training-pipeline integration
 - `backend/tests/test_data_health_autofix.py` — D3 + D4 of the data-quality arc — safe auto-fix engine.
+- `backend/tests/test_data_health_autofix_phase4.py` — Phase-4 additions to the data-side autofix engine.
 - `backend/tests/test_data_health_service.py` — D1 of the data-quality arc — aggregated Data Health Report.
 - `backend/tests/test_data_studio_overview.py` — Data Studio overview endpoint tests.
 - `backend/tests/test_dataset_auto_exclude_cleaned.py` — ``resolve_training_dataset_types`` contract.

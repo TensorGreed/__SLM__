@@ -89,6 +89,20 @@ PII_BLOCK_COUNT = 50
 # require touching the signal-emitter code.
 # ─────────────────────────────────────────────────────────────────────
 
+# Phase 4 — sample budget for the text-scanning signals. Cleaned files
+# are read up to this many docs × this many bytes each; signals
+# extrapolate. Keeps the data-health poll endpoint fast (~50ms total
+# even for projects with thousands of docs).
+PHASE4_SAMPLE_DOC_LIMIT = 20
+PHASE4_SAMPLE_BYTES_PER_DOC = 4096
+
+# Thresholds for the phase-4 signals — projecting from the sample.
+HTML_PRESENT_WARN_FRAC = 0.05      # ≥ 5% of sampled docs have tags → warn
+WHITESPACE_NOISE_WARN_FRAC = 0.10  # ≥ 10% of sampled docs need normalize
+NEAR_DUP_PRESENT_WARN_FRAC = 0.10
+LENGTH_OVER_CAP_WARN_FRAC = 0.10   # mirrors truncation signal threshold
+
+
 _LAYMAN: dict[str, dict[str, str]] = {
     "ingestion.no_documents": {
         "plain": "You haven't uploaded any source documents yet.",
@@ -113,6 +127,27 @@ _LAYMAN: dict[str, dict[str, str]] = {
     "cleaning.duplicate_chunks": {
         "plain": "A significant share of your cleaned text chunks are duplicates of each other.",
         "why": "The model will see the same content multiple times during training and overfit on it — strong on the duplicated patterns, weak on everything else. Dedupe before training.",
+    },
+    # Phase 4 cleaning-side signals.
+    "cleaning.html_tags_present": {
+        "plain": "Your cleaned documents still contain HTML tags (<p>, <br>, etc.).",
+        "why": "HTML tags are tokens the model has to learn to ignore — they steal capacity from learning your actual content. Strip them before training; the cleaned text reads the same to a human afterward.",
+    },
+    "cleaning.whitespace_artifacts": {
+        "plain": "Your cleaned documents have excess whitespace — runs of spaces, blank lines, or weird line endings.",
+        "why": "Whitespace artefacts inflate the cleaned text and burn through the trainer's max_seq_length window faster than the actual content does. Normalising shrinks the input without dropping any real signal.",
+    },
+    "cleaning.near_duplicate_docs": {
+        "plain": "Several documents share substantially the same opening — likely near-duplicates the exact-hash dedup missed (paraphrases, shared boilerplate, etc.).",
+        "why": "Near-duplicates over-represent specific phrasings in training and the model memorises them. The aggressive-normalisation dedup catches paraphrases the exact-hash one can't.",
+    },
+    "cleaning.length_over_cap": {
+        "plain": "Some cleaned documents are longer than the trainer's max_seq_length will accept — they'll be silently truncated at training time.",
+        "why": "Silent truncation drops the tail of these documents. The model never sees the end (answer, closing tag, rationale). Truncating now makes the truncation explicit and visible at the file level rather than hidden at training time.",
+    },
+    "shape.gold_field_variants": {
+        "plain": "Your gold rows use non-canonical field names (`class` instead of `label`, `text` instead of `input`).",
+        "why": "The trainer + eval pipeline both expect canonical names; non-canonical rows are either silently skipped or mis-mapped, which collapses your effective gold-set size without telling you. Renaming is a safe one-shot fix.",
     },
     "shape.no_recipe_selected": {
         "plain": "You haven't picked a recipe yet (classification, span-extraction, summarization, qa-sft, etc.).",
@@ -579,12 +614,177 @@ async def _cleaning_group(
             autofix_kind="dedupe_duplicate_docs",
         ))
 
+    # Phase 4 — text-scanning signals over the cleaned docs.
+    phase4 = _phase4_cleaned_text_signals(cleaned_docs)
+    signals.extend(phase4)
+
     return {
         "id": "cleaning",
         "title": "Cleaning",
         "subtitle": "PII redaction + quality + dedup",
         "signals": signals,
     }
+
+
+def _phase4_cleaned_text_signals(
+    cleaned_docs: list[RawDocument],
+) -> list[dict[str, Any]]:
+    """Phase 4 — sample the cleaned-text files and emit per-condition
+    signals carrying the matching autofix_kind.
+
+    Reads at most ``PHASE4_SAMPLE_DOC_LIMIT`` docs and
+    ``PHASE4_SAMPLE_BYTES_PER_DOC`` bytes each so the data-health poll
+    endpoint stays fast. The autofix preview, when clicked, scans the
+    full set.
+    """
+    import re as _re
+    from pathlib import Path
+
+    signals: list[dict[str, Any]] = []
+    sample = [
+        d for d in cleaned_docs[:PHASE4_SAMPLE_DOC_LIMIT]
+        if (d.metadata_ or {}).get("cleaned_path")
+    ]
+    if not sample:
+        return signals
+
+    tag_re = _re.compile(r"<[^>]+>")
+    excess_whitespace_re = _re.compile(r"  +|\n{3,}|[ \t]+\n")
+    html_hits = 0
+    whitespace_hits = 0
+    near_dup_prefixes: dict[str, int] = {}
+    length_over_cap_hits = 0
+    sampled = 0
+    cap_chars = 8192  # default 2048 tokens × 4 — refined below if recipe is set
+    for doc in sample:
+        cleaned_path = (doc.metadata_ or {}).get("cleaned_path")
+        if not isinstance(cleaned_path, str):
+            continue
+        path = Path(cleaned_path)
+        if not path.exists():
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read(PHASE4_SAMPLE_BYTES_PER_DOC)
+        except (OSError, UnicodeDecodeError):
+            continue
+        sampled += 1
+        if tag_re.search(text):
+            html_hits += 1
+        if excess_whitespace_re.search(text):
+            whitespace_hits += 1
+        # Length-over-cap uses the full file size (file might be larger
+        # than what we read — stat is cheap).
+        try:
+            full_size = path.stat().st_size
+        except OSError:
+            full_size = len(text)
+        if full_size > cap_chars:
+            length_over_cap_hits += 1
+        # Near-dup prefix bucketing: lowercase + alphanumeric + first
+        # 200 chars (smaller window than the autofix uses since we're
+        # only flagging, not deciding).
+        normalised = _re.sub(r"[^\w\s]+", " ", text.lower())
+        normalised = _re.sub(r"\s+", " ", normalised).strip()
+        prefix = normalised[:200]
+        if prefix:
+            near_dup_prefixes[prefix] = near_dup_prefixes.get(prefix, 0) + 1
+
+    if sampled == 0:
+        return signals
+
+    # HTML signal.
+    if html_hits / sampled >= HTML_PRESENT_WARN_FRAC:
+        signals.append(_make_signal(
+            id="cleaning.html_tags_present",
+            severity="warn",
+            headline=(
+                f"{html_hits} of {sampled} sampled cleaned documents still "
+                f"contain HTML tags."
+            ),
+            suggested_action={
+                "kind": "navigate",
+                "label": "Review HTML hits",
+                "target": "cleaning",
+            },
+            context={
+                "sampled": sampled,
+                "html_hits": html_hits,
+                "sample_doc_limit": PHASE4_SAMPLE_DOC_LIMIT,
+            },
+            autofix_kind="strip_html",
+        ))
+
+    # Whitespace signal.
+    if whitespace_hits / sampled >= WHITESPACE_NOISE_WARN_FRAC:
+        signals.append(_make_signal(
+            id="cleaning.whitespace_artifacts",
+            severity="warn",
+            headline=(
+                f"{whitespace_hits} of {sampled} sampled cleaned documents "
+                f"have excess whitespace runs or blank-line noise."
+            ),
+            suggested_action={
+                "kind": "navigate",
+                "label": "Review whitespace hits",
+                "target": "cleaning",
+            },
+            context={
+                "sampled": sampled,
+                "whitespace_hits": whitespace_hits,
+            },
+            autofix_kind="normalize_whitespace",
+        ))
+
+    # Near-duplicate signal — any bucket with > 1 hit is a candidate.
+    near_dup_groups = sum(1 for v in near_dup_prefixes.values() if v > 1)
+    near_dup_extra = sum(v - 1 for v in near_dup_prefixes.values() if v > 1)
+    if near_dup_extra / max(1, sampled) >= NEAR_DUP_PRESENT_WARN_FRAC:
+        signals.append(_make_signal(
+            id="cleaning.near_duplicate_docs",
+            severity="warn",
+            headline=(
+                f"{near_dup_extra} near-duplicate document(s) in sample "
+                f"across {near_dup_groups} group(s) — likely more across "
+                f"the full corpus."
+            ),
+            suggested_action={
+                "kind": "navigate",
+                "label": "Preview near-dup groups",
+                "target": "cleaning",
+            },
+            context={
+                "sampled": sampled,
+                "near_dup_extra": near_dup_extra,
+                "near_dup_groups": near_dup_groups,
+            },
+            autofix_kind="near_duplicate_dedup",
+        ))
+
+    # Length-over-cap signal.
+    if length_over_cap_hits / sampled >= LENGTH_OVER_CAP_WARN_FRAC:
+        signals.append(_make_signal(
+            id="cleaning.length_over_cap",
+            severity="warn",
+            headline=(
+                f"{length_over_cap_hits} of {sampled} sampled cleaned "
+                f"documents exceed the project's effective "
+                f"max_seq_length ({cap_chars} chars)."
+            ),
+            suggested_action={
+                "kind": "navigate",
+                "label": "Review oversize docs",
+                "target": "cleaning",
+            },
+            context={
+                "sampled": sampled,
+                "length_over_cap_hits": length_over_cap_hits,
+                "cap_chars": cap_chars,
+            },
+            autofix_kind="length_cap",
+        ))
+
+    return signals
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -710,12 +910,94 @@ async def _shape_group(db: AsyncSession, project: Project) -> dict[str, Any]:
                 },
             ))
 
+    # Phase 4 — gold-row field-variant detection. Sample-reads
+    # GOLD_DEV/GOLD_TEST files looking for non-canonical field names;
+    # emits a single rolled-up signal carrying autofix_kind=normalize_schema.
+    gold_schema_signal = await _phase4_gold_schema_signal(db, project.id)
+    if gold_schema_signal is not None:
+        signals.append(gold_schema_signal)
+
     return {
         "id": "shape",
         "title": "Data shape vs recipe",
         "subtitle": "Does the data fit the recipe?",
         "signals": signals,
     }
+
+
+async def _phase4_gold_schema_signal(
+    db: AsyncSession, project_id: int,
+) -> dict[str, Any] | None:
+    """Sample-read up to ``PHASE4_SAMPLE_DOC_LIMIT`` rows per gold file
+    and check for non-canonical field names. Returns None when nothing
+    needs renaming so the signal list stays uncluttered.
+    """
+    import json
+    from pathlib import Path
+    from app.services.data_health_autofix_service import GOLD_FIELD_RENAMES
+
+    result = await db.execute(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type.in_(
+                [DatasetType.GOLD_DEV, DatasetType.GOLD_TEST]
+            ),
+        )
+    )
+    datasets = list(result.scalars())
+    rename_counts: dict[str, int] = {}
+    sampled_rows = 0
+    for ds in datasets:
+        if not ds.file_path:
+            continue
+        path = Path(ds.file_path)
+        if not path.exists():
+            continue
+        try:
+            with path.open(encoding="utf-8") as fp:
+                for line in fp:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(row, dict):
+                        continue
+                    sampled_rows += 1
+                    for old_key, new_key in GOLD_FIELD_RENAMES.items():
+                        if old_key in row and new_key not in row:
+                            rename_counts[old_key] = (
+                                rename_counts.get(old_key, 0) + 1
+                            )
+                    if sampled_rows >= PHASE4_SAMPLE_DOC_LIMIT * 5:
+                        break  # cap the read so the poll stays fast
+        except OSError:
+            continue
+    total_renames = sum(rename_counts.values())
+    if total_renames == 0:
+        return None
+
+    return _make_signal(
+        id="shape.gold_field_variants",
+        severity="warn",
+        headline=(
+            f"{total_renames} gold row(s) in sample use non-canonical "
+            f"field names (e.g. {', '.join(rename_counts.keys())})."
+        ),
+        suggested_action={
+            "kind": "navigate",
+            "label": "Review schema renames",
+            "target": "dataprep",
+        },
+        context={
+            "sampled_rows": sampled_rows,
+            "rename_counts": rename_counts,
+            "rename_map": GOLD_FIELD_RENAMES,
+        },
+        autofix_kind="normalize_schema",
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────

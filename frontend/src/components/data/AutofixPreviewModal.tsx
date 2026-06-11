@@ -74,6 +74,25 @@ const FIX_HEADLINE: Record<string, string> = {
     canonicalise_labels:
         'These label groups are fragmented by case or whitespace. '
         + 'Applying merges every variant into the most common form.',
+    // Phase 4.
+    near_duplicate_dedup:
+        'These documents share an aggressively-normalised opening — '
+        + 'likely paraphrases or boilerplate-shared docs the exact-hash '
+        + 'dedup missed. The lowest-id copy in each group is kept.',
+    normalize_whitespace:
+        'These cleaned files have excess whitespace runs, blank-line '
+        + 'noise, or non-LF line endings. Applying rewrites them with '
+        + 'whitespace normalised.',
+    strip_html:
+        'These cleaned files still contain HTML tags. Applying strips '
+        + 'the tags and decodes common entities (&amp; → &, etc.).',
+    length_cap:
+        'These cleaned files exceed the project\'s effective '
+        + 'max_seq_length and would be silently truncated at training '
+        + 'time. Applying truncates them now so the cut is visible.',
+    normalize_schema:
+        'These gold rows use non-canonical field names (class → label, '
+        + 'text → input, etc.). Applying renames them in place.',
 };
 
 export default function AutofixPreviewModal({
@@ -343,6 +362,123 @@ function PreviewItems({ fixKind, items }: PreviewItemsProps) {
                         </span>
                     </li>
                 ))}
+            </ul>
+        );
+    }
+
+    // Phase 4 — near_duplicate_dedup reuses the dedup-group layout
+    // (same {keep, drop} shape, just keyed by soft_hash).
+    if (fixKind === 'near_duplicate_dedup') {
+        return (
+            <ul className="autofix-modal__list" data-testid="autofix-modal-list">
+                {items.map((it, idx) => {
+                    const keep = (it.keep as { id: number; filename: string }) || null;
+                    const drops = (it.drop as Array<{ id: number; filename: string }>) || [];
+                    return (
+                        <li
+                            key={String(it.soft_hash ?? idx)}
+                            className="autofix-modal__group"
+                        >
+                            <div className="autofix-modal__group-head">
+                                Near-dup set #{idx + 1}
+                            </div>
+                            {keep && (
+                                <div className="autofix-modal__row autofix-modal__row--keep">
+                                    <span className="autofix-modal__row-icon" aria-hidden="true">✓</span>
+                                    <span className="autofix-modal__row-name">{keep.filename}</span>
+                                    <span className="autofix-modal__row-meta">keep</span>
+                                </div>
+                            )}
+                            {drops.map((d) => (
+                                <div
+                                    key={d.id}
+                                    className="autofix-modal__row autofix-modal__row--drop"
+                                >
+                                    <span className="autofix-modal__row-icon" aria-hidden="true">−</span>
+                                    <span className="autofix-modal__row-name">{d.filename}</span>
+                                    <span className="autofix-modal__row-meta">drop</span>
+                                </div>
+                            ))}
+                        </li>
+                    );
+                })}
+            </ul>
+        );
+    }
+
+    // Phase 4 — single-row-per-doc kinds (whitespace / html / length_cap)
+    // each render a filename + a before→after char-count chip.
+    if (
+        fixKind === 'normalize_whitespace'
+        || fixKind === 'strip_html'
+        || fixKind === 'length_cap'
+    ) {
+        return (
+            <ul className="autofix-modal__list" data-testid="autofix-modal-list">
+                {items.map((it) => {
+                    const before = Number(it.chars_before ?? 0);
+                    const after = Number(it.chars_after ?? 0);
+                    const tags = Number(it.tags_to_strip ?? 0);
+                    const dropped = Number(it.chars_dropped ?? 0);
+                    return (
+                        <li
+                            key={String(it.id ?? it.filename)}
+                            className="autofix-modal__row"
+                        >
+                            <span className="autofix-modal__row-icon" aria-hidden="true">⟲</span>
+                            <span className="autofix-modal__row-name">
+                                {String(it.filename ?? '(unnamed)')}
+                            </span>
+                            <span className="autofix-modal__row-meta">
+                                {fixKind === 'strip_html' && tags > 0 && (
+                                    <>{tags} tag{tags === 1 ? '' : 's'} · </>
+                                )}
+                                {fixKind === 'length_cap' && dropped > 0 && (
+                                    <>−{dropped} chars · </>
+                                )}
+                                {before} → {after} chars
+                            </span>
+                        </li>
+                    );
+                })}
+            </ul>
+        );
+    }
+
+    // Phase 4 — schema-normalize items are per-file (not per-row),
+    // with a renames-per-field map.
+    if (fixKind === 'normalize_schema') {
+        return (
+            <ul className="autofix-modal__list" data-testid="autofix-modal-list">
+                {items.map((it, idx) => {
+                    const file = String(it.file ?? '(unnamed)');
+                    const renames = (it.renames_per_field as Record<string, number>) || {};
+                    const rowCount = Number(it.row_count ?? 0);
+                    return (
+                        <li
+                            key={`${file}-${idx}`}
+                            className="autofix-modal__group"
+                        >
+                            <div className="autofix-modal__group-head">
+                                {file} · {rowCount} row{rowCount === 1 ? '' : 's'}
+                            </div>
+                            {Object.entries(renames).map(([oldField, count]) => (
+                                <div
+                                    key={oldField}
+                                    className="autofix-modal__row"
+                                >
+                                    <span className="autofix-modal__row-icon" aria-hidden="true">→</span>
+                                    <span className="autofix-modal__row-name">
+                                        <code>{oldField}</code>
+                                    </span>
+                                    <span className="autofix-modal__row-meta">
+                                        {count} row{count === 1 ? '' : 's'}
+                                    </span>
+                                </div>
+                            ))}
+                        </li>
+                    );
+                })}
             </ul>
         );
     }
