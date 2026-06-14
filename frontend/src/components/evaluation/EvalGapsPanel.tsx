@@ -149,9 +149,13 @@ export default function EvalGapsPanel({ projectId }: EvalGapsPanelProps) {
         );
     }
 
-    if (!data) return null;
+    // Defensive: also bail when the payload is truthy but missing
+    // the expected shape (e.g. parent test harnesses returning a
+    // generic `{ data: {} }` fallback for unknown URLs). Treat it
+    // like "no data" rather than crashing on `.groups.filter`.
+    if (!data || !Array.isArray(data.groups)) return null;
 
-    const populatedGroups = data.groups.filter((g) => g.signals.length > 0);
+    const populatedGroups = data.groups.filter((g) => g.signals?.length > 0);
 
     return (
         <section

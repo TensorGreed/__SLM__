@@ -193,9 +193,12 @@ export default function TrainingConfigGapsPanel({
         );
     }
 
-    if (!data) return null;
+    // Defensive: also bail when the payload is truthy but missing
+    // the expected shape (matches the EvalGapsPanel guard for the
+    // same generic-fallback test harness case).
+    if (!data || !Array.isArray(data.groups)) return null;
 
-    const populatedGroups = data.groups.filter((g) => g.signals.length > 0);
+    const populatedGroups = data.groups.filter((g) => g.signals?.length > 0);
 
     return (
         <section
