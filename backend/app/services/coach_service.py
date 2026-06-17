@@ -1486,6 +1486,57 @@ async def _training_stage_suggestions(
             },
         }]
 
+    # Prepared-split leakage leads: training on a set that overlaps your
+    # val/test splits makes the metrics you'll judge this run by a lie,
+    # so flag it before any forecast/base-model advice. Mirrors the
+    # gold-set stage's gold_set:train-leakage nudge; guarded so a
+    # malformed split file never blanks the rest of the stage.
+    from app.services.data_health_service import scan_prepared_split_leakage
+
+    try:
+        split_leak = await scan_prepared_split_leakage(db, project.id)
+    except Exception:
+        split_leak = None
+    if split_leak is not None and split_leak["severity"] in ("warn", "block"):
+        worst_pair = max(
+            split_leak["per_pair"].items(),
+            key=lambda kv: kv[1]["leaked"],
+        )[0]
+        pretty = worst_pair.replace("_in_", " rows also in ")
+        leak_sev: Severity = (
+            "critical" if split_leak["severity"] == "block" else "warning"
+        )
+        suggestions.append({
+            "id": "training:split-leakage",
+            "title": "Your train / val / test splits overlap",
+            "body": (
+                f"{split_leak['total_leaked']} row(s) are shared across your "
+                f"prepared splits (worst: {pretty}). A row that's in both train "
+                "and validation makes the validation metric optimistic, so "
+                "early-stopping and checkpoint selection pick the wrong model — "
+                "and a test-split overlap inflates the final grade. Re-split "
+                "with deduplication before you train."
+            ),
+            "severity": leak_sev,
+            "action": {
+                "kind": "navigate",
+                "label": "Open dataset splits",
+                "params": {"target": "data-studio-splits"},
+            },
+            "rule_id": (
+                "split-leakage.block"
+                if split_leak["severity"] == "block"
+                else "split-leakage.warn"
+            ),
+            "context": {
+                "leaked": split_leak["total_leaked"],
+                "scanned": split_leak["total_scanned"],
+                "worst_fraction": split_leak["worst_frac"],
+                "per_pair": split_leak["per_pair"],
+                "examples": split_leak["examples"],
+            },
+        })
+
     # Phase 6d — curriculum-learning nudge runs independently of the
     # trainability forecast (curriculum can lift F1 whether forecast
     # says pass / borderline / fail). Append now so it's surfaced

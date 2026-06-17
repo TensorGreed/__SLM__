@@ -59,6 +59,7 @@ session-start guidance.
 - `backend/app/api/manifest.py` — Pipeline-as-code manifest API (priority.md P21 + P22).
 - `backend/app/api/models.py` — Universal base-model registry + compatibility API routes.
 - `backend/app/api/pipeline.py` — Pipeline status API routes.
+- `backend/app/api/probe_packs.py` — Probe Pack API — Coach-stage-2 phase 8.
 - `backend/app/api/project_templates.py` — Project template catalog + instantiation API.
 - `backend/app/api/projects.py` — Project CRUD API routes.
 - `backend/app/api/quickstart.py` — Project-guide quickstart endpoints (Theme 1 Epic 4 + Theme 8 Epic 1).
@@ -192,6 +193,7 @@ session-start guidance.
 - `backend/app/services/plugin_contract_service.py` — Plugin contract orchestration service (priority.md P37, Wave H).
 - `backend/app/services/plugin_contracts.py` — Plugin contract definitions for BrewSLM extension modules (priority.md P37, Wave H).
 - `backend/app/services/post_eval_decision_engine_service.py` — Post-eval decision engine (USER-SUCCESS Epic 7 Phase 7a).
+- `backend/app/services/probe_pack_service.py` — Platform-authored held-out probe packs (Coach-stage-2 phase 8).
 - `backend/app/services/project_smoke_test_service.py` — Project smoke-test service (Diagnostics Intervention C).
 - `backend/app/services/project_template_service.py` — Project templates — cloneable starting kits for new projects.
 - `backend/app/services/rag_project_service.py` — RAG-skeleton project service (USER-SUCCESS Epic 7 Phase 7b).
@@ -405,6 +407,7 @@ session-start guidance.
 - `frontend/src/api/gamification.ts` — Typed wrappers for the Lab Journal (gamification) API.
 - `frontend/src/api/goal.ts` — Arc H — Project end-goal contract + progress ledger client.
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
+- `frontend/src/api/probePack.ts` — Probe Pack API client — Coach-stage-2 phase 8.
 - `frontend/src/api/projectTemplates.ts` — Typed wrappers for the project-template catalog + instantiation API.
 - `frontend/src/api/quickstart.ts` — Typed wrappers for the project-guide quickstart endpoints
 - `frontend/src/api/recipes.ts` — Typed wrappers around the Theme 2 recipe registry + shape sniffer.
@@ -527,6 +530,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.
 - `frontend/src/components/evaluation/PackSectionEditor.tsx` — Quality-Lift phase 7 slice 1 — Generic pack section editor.
 - `frontend/src/components/evaluation/PerSliceMetricsTable.tsx` — Quality-Lift phase 8 slice 2 — PerSliceMetricsTable.
+- `frontend/src/components/evaluation/ProbePackPanel.tsx` — ProbePackPanel — Coach-stage-2 phase 8.
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.tsx` — RerouteRecommendationPanel — USER-SUCCESS Epic 7 Phase 7c.
 - `frontend/src/components/evaluation/ScorecardPanel.tsx` — Quality gate reporter showing pass/fail decisions with missing-metric detection.
 - `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Did SFT help?" lift summary panel (Theme 8 Epic 4).
@@ -814,6 +818,7 @@ session-start guidance.
 - `backend/tests/test_phase9_tokenization.py` — Tests for the tokenization service — tokenizer loading and analysis.
 - `backend/tests/test_phase9_training_runtime_compat.py` — Compatibility tests for external training runtime adapters.
 - `backend/tests/test_post_eval_decision_engine.py` — Tests for the post-eval decision engine service
+- `backend/tests/test_probe_pack_service.py` — Coach-stage-2 phase 8 — platform-authored held-out probe packs.
 - `backend/tests/test_project_smoke_test.py` — Tests for the project smoke-test service (Diagnostics Intervention C).
 - `backend/tests/test_project_template_service.py` — Tests for the project_template service + endpoints.
 - `backend/tests/test_quickstart_endpoints.py` — Tests for the project-guide quickstart endpoints (Theme 1 Epic 4 +
@@ -924,6 +929,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/PackSectionEditor.test.tsx` — Quality-Lift phase 7 slice 1 — Generic PackSectionEditor tests.
 - `frontend/src/components/evaluation/PerSliceMetricsTable.test.tsx` — Quality-Lift phase 8 slice 2 — PerSliceMetricsTable tests.
+- `frontend/src/components/evaluation/ProbePackPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ScorecardPanel.test.tsx` — Quality-Lift phase 1, slice 3 — ScorecardPanel variance + drill-down.
 - `frontend/src/components/evaluation/SftLiftPanel.test.tsx` — _(no docstring)_

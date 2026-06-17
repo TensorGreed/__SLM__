@@ -335,6 +335,23 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   (any signal whose `context.examples` is populated renders an expandable
   table of split / match-kind / leaked-row / matched-source-row). The
   shared matcher core is `_build_leakage_index` + `_match_row_against_index`.
+  **Phase 8** adds the training-stage Coach nudge `training:split-leakage`
+  (mirrors `gold_set:train-leakage`) for prepared-split leakage.
+- **Probe pack (held-out, platform-authored)** — `probe_pack_service`
+  is the independent ruler that complements the *user-authored* gold set
+  (Coach-stage-2 phase 8). Because the platform can't know the user's
+  domain labels/answers, every probe is **property-based**, not answer-
+  key-based: it asserts invariants that hold for any model on the task
+  shape — `prediction_stable_vs_base` (robustness), `refuses_or_declines`
+  (safety/injection), `no_fabrication_when_unsupported` (grounding),
+  `handles_degenerate_gracefully`. Packs are keyed by **task_profile**
+  (classification / instruction_sft / rag_qa / structured_extraction /
+  summarization). `GET /api/projects/{id}/probe-pack` →
+  `ProbePackPanel` (read-only, mounted on the eval tab below
+  `EvalGapsPanel`). **Status `ready_not_run`** — the pack is assembled +
+  inspectable; *running* it against the model and folding an independent
+  `probe_pass_rate` into the gate is the next slice (the panel is honest
+  that no score is computed yet). See `ROADMAP.md` Epic E0 phase 8.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

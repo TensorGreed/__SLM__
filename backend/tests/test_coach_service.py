@@ -1089,6 +1089,7 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
         with_recipe: bool = True,
         alt_base_models: list[str] | None = None,
         current_base: str = "HuggingFaceTB/SmolLM2-135M-Instruct",
+        split_leak: dict | None = None,
     ) -> list[dict]:
         from unittest.mock import MagicMock, patch
 
@@ -1155,6 +1156,12 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
             # in test_training_config_gap_service.py.
             return None
 
+        async def _async_split_leak(*_a, **_k):
+            # Phase 8 prepared-split leakage nudge. Defaults to None
+            # (not applicable) so the forecast-focused tests see no
+            # leakage nudge; pass ``split_leak=`` to exercise it.
+            return split_leak
+
         with (
             patch(
                 "app.services.trainability_forecast_service.forecast_training",
@@ -1180,6 +1187,10 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
                 "app.services.coach_service._training_config_gaps_rollup_nudge",
                 side_effect=_no_config_gaps_nudge,
             ),
+            patch(
+                "app.services.data_health_service.scan_prepared_split_leakage",
+                side_effect=_async_split_leak,
+            ),
         ):
             return await _training_stage_suggestions(
                 db=None,  # type: ignore[arg-type]
@@ -1201,6 +1212,43 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
             overall="likely_pass", confidence_pct=85
         )
         self.assertEqual(suggestions, [])
+
+    async def test_split_leakage_block_emits_critical_nudge_leading(self):
+        # A blocking prepared-split leak → critical nudge routing to the
+        # splits tab, surfaced even on a likely_pass forecast (it's a
+        # correctness blocker, independent of the forecast).
+        leak = {
+            "severity": "block",
+            "total_leaked": 6,
+            "total_scanned": 30,
+            "worst_frac": 0.6,
+            "per_pair": {
+                "val_in_train": {"scanned": 10, "leaked": 6, "frac": 0.6},
+                "test_in_train": {"scanned": 10, "leaked": 0, "frac": 0.0},
+                "test_in_val": {"scanned": 10, "leaked": 0, "frac": 0.0},
+            },
+            "examples": [],
+        }
+        suggestions = await self._suggestions(
+            overall="likely_pass", confidence_pct=85, split_leak=leak
+        )
+        nudges = [s for s in suggestions if s["id"] == "training:split-leakage"]
+        self.assertEqual(len(nudges), 1)
+        n = nudges[0]
+        self.assertEqual(n["severity"], "critical")
+        self.assertEqual(n["action"]["params"]["target"], "data-studio-splits")
+        self.assertEqual(n["rule_id"], "split-leakage.block")
+        self.assertIn("val rows also in train", n["body"])
+
+    async def test_no_split_leakage_emits_no_nudge(self):
+        ok_leak = {"severity": "ok", "total_leaked": 0, "total_scanned": 30,
+                   "worst_frac": 0.0, "per_pair": {}, "examples": []}
+        suggestions = await self._suggestions(
+            overall="likely_pass", confidence_pct=85, split_leak=ok_leak
+        )
+        self.assertEqual(
+            [s for s in suggestions if s["id"] == "training:split-leakage"], []
+        )
 
     async def test_likely_fail_emits_critical_with_base_model_hint(self):
         suggestions = await self._suggestions(

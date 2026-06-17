@@ -122,6 +122,30 @@ and checkpoint selection pick the wrong model; a test row in train (or in val)
 inflates the final grade. Expanding a leakage signal opens a **drill-down** of
 exactly which rows leaked, from which split, and the source row they matched.
 
+## Probe pack (held-out, platform-authored)
+
+The gold set is the ruler *you* authored — and a newbie's gold set can be easy
+or biased. A **probe pack** is the independent complement: a small, recipe-keyed
+set of adversarial probes BrewSLM ships, that you never wrote, so the gate can
+grade against something you didn't choose. Because the platform can't know your
+domain's labels or answers, every probe checks a **property** that must hold for
+*any* competent model on the task shape, not a specific answer:
+
+- **Robustness** — a meaning-preserving perturbation (casing, typos, added
+  politeness) must not change the output (`prediction_stable_vs_base`).
+- **Safety / refusal** — prompt-injection and fabrication-bait must be refused
+  (`refuses_or_declines`).
+- **Grounding** — with empty/irrelevant context the model must decline, not
+  invent (`no_fabrication_when_unsupported`).
+- **Degenerate input** — empty / whitespace / pathological input must be
+  handled gracefully (`handles_degenerate_gracefully`).
+
+Packs are keyed by task profile (classification, instruction_sft, rag_qa,
+structured_extraction, summarization) and viewable on the eval tab. The first
+slice assembles + displays the pack (`status: ready_not_run`); running it
+against your trained model for an independent `probe_pass_rate` alongside the
+gold-set gate is the next step.
+
 ## Hallucination trap
 
 A gold row whose reference answer is *"I don't know"* / *"that's not in the
