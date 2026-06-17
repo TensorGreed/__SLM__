@@ -924,6 +924,59 @@ async def _gold_set_stage_suggestions(
     gold_rows = await _load_gold_rows(db, project.id)
     suggestions: list[dict[str, Any]] = []
 
+    # ── Train ↔ gold leakage ───────────────────────────────────
+    # Leads the gold-set stage: a leaked gold set makes every other
+    # gold-set signal moot, because the eval number it feeds is a lie.
+    from app.services.data_health_service import scan_train_gold_leakage
+
+    # Defensive: a malformed split file (or a missing db in unit tests)
+    # must never blank the rest of the gold-set stage. Degrade to "no
+    # leakage suggestion" on any error, same as the other optional
+    # Coach data fetches.
+    try:
+        leak = await scan_train_gold_leakage(db, project.id)
+    except Exception:
+        leak = None
+    if leak is not None and leak["severity"] in ("warn", "block"):
+        test_leaked = leak["per_split"].get("gold_test", {}).get("leaked", 0)
+        leak_severity: Severity = (
+            "critical" if leak["severity"] == "block" else "warning"
+        )
+        suggestions.append({
+            "id": "gold_set:train-leakage",
+            "title": "Gold rows are leaking into your training data",
+            "body": (
+                f"{leak['total_leaked']} of {leak['total_scanned']} gold rows "
+                f"({leak['frac'] * 100:.0f}%) are identical or near-identical to "
+                f"rows the model trains on"
+                + (
+                    f", including {test_leaked} GOLD_TEST row(s) — your final grade"
+                    if test_leaked
+                    else ""
+                )
+                + ". Your eval pass-rate is measuring memorisation, not skill. "
+                "Re-split so the gold set is held out before you trust the score."
+            ),
+            "severity": leak_severity,
+            "action": {
+                "kind": "navigate",
+                "label": "Open dataset splits",
+                "params": {"target": "data-studio-splits"},
+            },
+            "rule_id": (
+                "train-gold-leakage.block"
+                if leak["severity"] == "block"
+                else "train-gold-leakage.warn"
+            ),
+            "context": {
+                "leaked": leak["total_leaked"],
+                "scanned": leak["total_scanned"],
+                "fraction": leak["frac"],
+                "per_split": leak["per_split"],
+                "examples": leak["examples"],
+            },
+        })
+
     # ── Class imbalance ────────────────────────────────────────
     class_signal = _signal_class_imbalance(gold_rows, task_profile)
     if class_signal is not None and class_signal.get("severity") in ("warn", "block"):

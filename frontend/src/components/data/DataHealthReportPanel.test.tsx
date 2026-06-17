@@ -460,6 +460,67 @@ describe('DataHealthReportPanel', () => {
         );
     });
 
+    it('expands a leaked-row drill-down for leakage signals carrying examples', async () => {
+        const LEAK_REPORT = {
+            project_id: 42,
+            computed_at: '2026-06-17T22:00:00Z',
+            overall: 'block' as const,
+            severity_summary: { ok: 0, warn: 0, block: 1 },
+            total_signals: 1,
+            groups: [
+                {
+                    id: 'leakage',
+                    title: 'Leakage',
+                    subtitle: 'Are eval rows held out of training?',
+                    signals: [
+                        {
+                            id: 'leakage.gold_train_overlap',
+                            severity: 'block' as const,
+                            headline: '3 of 5 gold rows (60%) also appear in training data — including 2 GOLD_TEST row(s) (your final grade).',
+                            plain_english: 'Some of your gold-set rows also appear in your training data.',
+                            why_it_matters: 'The gold set is the ruler that decides whether your model works.',
+                            suggested_action: { kind: 'navigate', label: 'Re-split so gold is held out', target: 'dataprep' },
+                            context: {
+                                examples: [
+                                    { source: 'train', split: 'gold_test', match_kind: 'exact', jaccard: 1.0, excerpt: 'refund request for order 123', matched_excerpt: 'refund request for order 123' },
+                                    { source: 'train', split: 'gold_dev', match_kind: 'near_duplicate', jaccard: 0.93, excerpt: 'cancel my subscription please', matched_excerpt: 'cancel my subscription now please' },
+                                ],
+                            },
+                        },
+                    ],
+                },
+            ],
+        };
+        apiMock.get.mockResolvedValueOnce({ data: LEAK_REPORT });
+        const user = userEvent.setup();
+        renderPanel();
+
+        const toggle = await screen.findByTestId('data-health-examples-toggle-leakage.gold_train_overlap');
+        expect(toggle).toHaveTextContent('Show leaked rows (2)');
+        // Collapsed by default — the table is not rendered yet.
+        expect(screen.queryByTestId('data-health-examples-leakage.gold_train_overlap')).not.toBeInTheDocument();
+
+        await user.click(toggle);
+        const table = screen.getByTestId('data-health-examples-leakage.gold_train_overlap');
+        expect(table).toBeInTheDocument();
+        // The leaked-row text + which split + match kind + matched
+        // source row are all visible.
+        expect(table).toHaveTextContent('gold_test');
+        expect(table).toHaveTextContent('exact');
+        expect(table).toHaveTextContent('refund request for order 123');
+        expect(table).toHaveTextContent('~0.93');
+        expect(table).toHaveTextContent('train: cancel my subscription now please');
+    });
+
+    it('renders no drill-down toggle for signals without examples', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: BLOCK_REPORT });
+        renderPanel();
+        await screen.findByTestId('data-health-signal-ingestion.no_documents');
+        expect(
+            screen.queryByTestId('data-health-examples-toggle-ingestion.no_documents'),
+        ).not.toBeInTheDocument();
+    });
+
     it('renders an error fallback when the API call fails', async () => {
         apiMock.get.mockRejectedValueOnce({
             response: { data: { detail: 'Project not found' } },

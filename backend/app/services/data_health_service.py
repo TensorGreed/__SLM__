@@ -81,6 +81,41 @@ DUPLICATE_CHUNK_BLOCK_FRAC = 0.30
 PII_WARN_COUNT = 5
 PII_BLOCK_COUNT = 50
 
+# ── Train ↔ gold leakage ──────────────────────────────────────────
+# The single most dangerous data-health failure for a newbie: gold
+# rows that also appear in the training set. When that happens the
+# eval pass-rate measures memorisation, not generalisation — a green
+# gate that is a lie the user cannot see. We catch both exact
+# duplicates (the common bad-split / copy-paste case) and near-
+# duplicates (synthetic paraphrases of gold rows bleeding into train)
+# via token-set Jaccard.
+#
+# Jaccard ≥ this between a gold row and any training row = "the same
+# example." 0.9 tolerates trivial edits (punctuation, a swapped word)
+# while staying clear of merely topically-similar rows.
+LEAKAGE_FUZZY_THRESHOLD = 0.9
+# Leaked-gold fraction → severity. Any leakage at all warns (see
+# _scan_leakage_rows); at or above this fraction it's a hard blocker
+# because the pass-rate the gold set feeds is now untrustworthy.
+LEAKAGE_BLOCK_FRAC = 0.10
+# Bounded-compute caps so the data-health poll endpoint stays fast on
+# big corpora. Training rows are indexed once; gold rows are matched
+# against an inverted token index, so each gold row only compares
+# against candidate training rows that share tokens, not the whole set.
+LEAKAGE_GOLD_SCAN_CAP = 2000
+LEAKAGE_TRAIN_SCAN_CAP = 5000
+LEAKAGE_MAX_POSTINGS = 256       # cap an inverted-index posting list
+LEAKAGE_MAX_CANDIDATES = 400     # cap fuzzy candidates per gold row
+# Rows shorter than this (in tokens) are too short to judge fuzzy
+# overlap reliably — one shared word swings Jaccard wildly — so they're
+# matched on exact-normalised equality only.
+LEAKAGE_MIN_TOKENS = 4
+# How many leaked-row examples to surface for the drill-down (each
+# carries the leaked excerpt + the source row it matched). Short
+# excerpts, loaded on the data tab (not a 4s poll), so the budget can
+# be generous enough to actually inspect the leak.
+LEAKAGE_EXAMPLE_LIMIT = 25
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Layman translation tables. Keyed on the technical signal id; each
@@ -144,6 +179,22 @@ _LAYMAN: dict[str, dict[str, str]] = {
     "cleaning.length_over_cap": {
         "plain": "Some cleaned documents are longer than the trainer's max_seq_length will accept — they'll be silently truncated at training time.",
         "why": "Silent truncation drops the tail of these documents. The model never sees the end (answer, closing tag, rationale). Truncating now makes the truncation explicit and visible at the file level rather than hidden at training time.",
+    },
+    "leakage.gold_train_overlap": {
+        "plain": "Some of your gold-set rows also appear in your training data — identical or near-identical copies.",
+        "why": "The gold set is the ruler that decides whether your model works. If the model already saw those rows during training, it can recite the answers from memory and the eval pass-rate is inflated — a green score that doesn't mean the model generalises. Hold the gold set out: remove the leaked rows from training, or re-split so the gold rows are never trained on. A GOLD_TEST leak is the worst kind — that split is your final grade.",
+    },
+    "leakage.no_overlap": {
+        "plain": "Your gold-set rows are held out — none of them appear in the training data.",
+        "why": "",
+    },
+    "leakage.split_overlap": {
+        "plain": "Some rows are shared across your prepared train / validation / test splits — identical or near-identical copies.",
+        "why": "The three splits must be disjoint to mean anything. A validation row that's also in train makes your validation metric optimistic, so early-stopping and checkpoint selection pick the wrong model. A test row that's also in train (or in validation) inflates the final grade. Re-split with deduplication so every row lands in exactly one split.",
+    },
+    "leakage.splits_held_out": {
+        "plain": "Your train / validation / test splits are disjoint — no rows are shared across them.",
+        "why": "",
     },
     "shape.gold_field_variants": {
         "plain": "Your gold rows use non-canonical field names (`class` instead of `label`, `text` instead of `input`).",
@@ -1075,6 +1126,489 @@ async def _balance_group(db: AsyncSession, project: Project) -> dict[str, Any]:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Leakage group — train ↔ gold contamination.
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _normalise_for_exact(text: str) -> str:
+    """Lowercase + collapse whitespace — the key for exact-duplicate
+    detection that ignores trivial formatting differences."""
+    return " ".join((text or "").lower().split())
+
+
+async def _load_training_corpus_rows(
+    db: AsyncSession, project_id: int, *, cap: int
+) -> tuple[list[dict[str, Any]], bool]:
+    """Load the rows the trainer will actually see: TRAIN ∪ CLEANED ∪
+    SYNTHETIC. Pending-review synthetic rows are excluded by the loader
+    (they're gated out of training until reviewed), so they can't
+    produce a phantom leak. Returns ``(rows, truncated)`` where
+    ``truncated`` is True when ``cap`` was hit.
+    """
+    from pathlib import Path
+    from app.services.dataset_service import _load_records_from_file
+
+    result = await db.execute(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type.in_(
+                [DatasetType.TRAIN, DatasetType.CLEANED, DatasetType.SYNTHETIC]
+            ),
+        )
+    )
+    rows: list[dict[str, Any]] = []
+    truncated = False
+    for ds in result.scalars():
+        if not ds.file_path:
+            continue
+        path = Path(ds.file_path)
+        if not path.exists():
+            continue
+        for row in _load_records_from_file(path):
+            if isinstance(row, dict):
+                rows.append(row)
+            if len(rows) >= cap:
+                truncated = True
+                break
+        if truncated:
+            break
+    return rows, truncated
+
+
+async def _load_gold_rows_by_split(
+    db: AsyncSession, project_id: int
+) -> dict[str, list[dict[str, Any]]]:
+    """Load GOLD_DEV + GOLD_TEST rows keyed by split so the leakage
+    report can call out test contamination (the worst kind) separately
+    from dev contamination."""
+    from pathlib import Path
+    from app.services.dataset_service import _load_records_from_file
+
+    result = await db.execute(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type.in_([DatasetType.GOLD_DEV, DatasetType.GOLD_TEST]),
+        )
+    )
+    out: dict[str, list[dict[str, Any]]] = {"gold_dev": [], "gold_test": []}
+    for ds in result.scalars():
+        if not ds.file_path:
+            continue
+        path = Path(ds.file_path)
+        if not path.exists():
+            continue
+        split = ds.dataset_type.value
+        out.setdefault(split, []).extend(
+            r for r in _load_records_from_file(path) if isinstance(r, dict)
+        )
+    return out
+
+
+def _excerpt(text: str) -> str:
+    """Whitespace-collapsed, length-capped row text for drill-down."""
+    return " ".join((text or "").split())[:200]
+
+
+def _build_leakage_index(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build the haystack: exact-text map + inverted token index +
+    per-row token sets + texts (for matched-row excerpts). Shared by
+    the gold scan and the prepared-split scan."""
+    from app.services.trainability_forecast_service import _row_to_text, _tokenize
+
+    token_sets: list[frozenset[str]] = []
+    texts: list[str] = []
+    exact_map: dict[str, int] = {}
+    inverted: dict[str, list[int]] = {}
+    for idx, row in enumerate(rows):
+        text = _row_to_text(row)
+        texts.append(text)
+        norm = _normalise_for_exact(text)
+        if norm not in exact_map:
+            exact_map[norm] = idx
+        toks = _tokenize(text)
+        token_sets.append(toks)
+        for tok in toks:
+            postings = inverted.setdefault(tok, [])
+            if len(postings) < LEAKAGE_MAX_POSTINGS:
+                postings.append(idx)
+    return {
+        "token_sets": token_sets,
+        "texts": texts,
+        "exact_map": exact_map,
+        "inverted": inverted,
+    }
+
+
+def _match_row_against_index(
+    text: str, index: dict[str, Any]
+) -> tuple[str | None, float, int]:
+    """Match one row's text against a haystack index. Returns
+    ``(match_kind, jaccard, matched_idx)`` — exact-normalised equality
+    first, then fuzzy token-set Jaccard against candidates gathered
+    from the rarest tokens. ``(None, 0.0, -1)`` when no match."""
+    from app.services.trainability_forecast_service import _jaccard, _tokenize
+
+    norm = _normalise_for_exact(text)
+    hit = index["exact_map"].get(norm)
+    if hit is not None:
+        return "exact", 1.0, hit
+
+    toks = _tokenize(text)
+    if len(toks) < LEAKAGE_MIN_TOKENS:
+        return None, 0.0, -1
+
+    inverted = index["inverted"]
+    token_sets = index["token_sets"]
+    toks_by_rarity = sorted(toks, key=lambda t: len(inverted.get(t, ())))
+    cand: set[int] = set()
+    for tok in toks_by_rarity:
+        for j in inverted.get(tok, ()):
+            cand.add(j)
+            if len(cand) >= LEAKAGE_MAX_CANDIDATES:
+                break
+        if len(cand) >= LEAKAGE_MAX_CANDIDATES:
+            break
+
+    best = 0.0
+    best_j = -1
+    for j in cand:
+        s = _jaccard(toks, token_sets[j])
+        if s > best:
+            best = s
+            best_j = j
+            if best >= 0.999:
+                break
+    if best >= LEAKAGE_FUZZY_THRESHOLD:
+        return "near_duplicate", round(best, 3), best_j
+    return None, 0.0, -1
+
+
+def _severity_for_frac(total_leaked: int, frac: float) -> "Severity":
+    if total_leaked == 0:
+        return "ok"
+    if frac >= LEAKAGE_BLOCK_FRAC:
+        return "block"
+    return "warn"
+
+
+def _scan_leakage_rows(
+    train_rows: list[dict[str, Any]],
+    gold_by_split: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Gold ↔ training-corpus leakage. Indexes the training rows once,
+    then scans each gold split against it (sharing the gold scan cap).
+
+    Returns ``total_scanned`` / ``total_leaked`` / ``frac`` /
+    ``per_split`` / ``examples`` / ``test_leaked`` / ``severity``.
+    """
+    from app.services.trainability_forecast_service import _row_to_text
+
+    index = _build_leakage_index(train_rows)
+    examples: list[dict[str, Any]] = []
+    per_split: dict[str, dict[str, int]] = {}
+    total_scanned = 0
+    total_leaked = 0
+
+    for split, rows in gold_by_split.items():
+        scanned = 0
+        leaked = 0
+        for row in rows:
+            if total_scanned >= LEAKAGE_GOLD_SCAN_CAP:
+                break
+            text = _row_to_text(row)
+            if not text.strip():
+                continue
+            scanned += 1
+            total_scanned += 1
+            kind, jacc, midx = _match_row_against_index(text, index)
+            if kind:
+                leaked += 1
+                total_leaked += 1
+                if len(examples) < LEAKAGE_EXAMPLE_LIMIT:
+                    examples.append({
+                        "source": "train",
+                        "split": split,
+                        "match_kind": kind,
+                        "jaccard": jacc,
+                        "excerpt": _excerpt(text),
+                        "matched_excerpt": (
+                            _excerpt(index["texts"][midx]) if midx >= 0 else ""
+                        ),
+                    })
+        per_split[split] = {"scanned": scanned, "leaked": leaked}
+
+    frac = (total_leaked / total_scanned) if total_scanned else 0.0
+    return {
+        "total_scanned": total_scanned,
+        "total_leaked": total_leaked,
+        "frac": round(frac, 4),
+        "test_leaked": per_split.get("gold_test", {}).get("leaked", 0),
+        "per_split": per_split,
+        "examples": examples,
+        "severity": _severity_for_frac(total_leaked, frac),
+    }
+
+
+# Prepared-split leakage pairs: each held-out split must be disjoint
+# from the splits the model already saw. (source, needle): a ``needle``
+# row found in ``source`` is contamination. We do NOT compare against
+# CLEANED/SYNTHETIC here — the splits are *derived* from those pools, so
+# a match there is the split's origin, not a leak.
+_PREPARED_SPLIT_PAIRS: tuple[tuple[str, str], ...] = (
+    ("train", "val"),
+    ("train", "test"),
+    ("val", "test"),
+)
+
+
+def _scan_prepared_split_pairs(
+    splits: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Train↔val / train↔test / val↔test leakage over the prepared
+    splits. Returns per-pair leaked counts + examples + severity."""
+    from app.services.trainability_forecast_service import _row_to_text
+
+    indices: dict[str, dict[str, Any]] = {}
+    per_pair: dict[str, dict[str, Any]] = {}
+    examples: list[dict[str, Any]] = []
+    total_scanned = 0
+    total_leaked = 0
+    worst_frac = 0.0
+
+    for source_name, needle_name in _PREPARED_SPLIT_PAIRS:
+        source_rows = splits.get(source_name) or []
+        needle_rows = splits.get(needle_name) or []
+        if not source_rows or not needle_rows:
+            continue
+        if source_name not in indices:
+            indices[source_name] = _build_leakage_index(
+                source_rows[:LEAKAGE_TRAIN_SCAN_CAP]
+            )
+        index = indices[source_name]
+        scanned = 0
+        leaked = 0
+        for row in needle_rows[:LEAKAGE_GOLD_SCAN_CAP]:
+            text = _row_to_text(row)
+            if not text.strip():
+                continue
+            scanned += 1
+            total_scanned += 1
+            kind, jacc, midx = _match_row_against_index(text, index)
+            if kind:
+                leaked += 1
+                total_leaked += 1
+                if len(examples) < LEAKAGE_EXAMPLE_LIMIT:
+                    examples.append({
+                        "source": source_name,
+                        "split": needle_name,
+                        "match_kind": kind,
+                        "jaccard": jacc,
+                        "excerpt": _excerpt(text),
+                        "matched_excerpt": (
+                            _excerpt(index["texts"][midx]) if midx >= 0 else ""
+                        ),
+                    })
+        pair_frac = (leaked / scanned) if scanned else 0.0
+        worst_frac = max(worst_frac, pair_frac)
+        per_pair[f"{needle_name}_in_{source_name}"] = {
+            "scanned": scanned,
+            "leaked": leaked,
+            "frac": round(pair_frac, 4),
+        }
+
+    return {
+        "total_scanned": total_scanned,
+        "total_leaked": total_leaked,
+        "worst_frac": round(worst_frac, 4),
+        "per_pair": per_pair,
+        "examples": examples,
+        "severity": _severity_for_frac(total_leaked, worst_frac),
+    }
+
+
+async def scan_train_gold_leakage(
+    db: AsyncSession, project_id: int
+) -> dict[str, Any] | None:
+    """Public leakage analysis used by both the data-health group and
+    Coach Mode. Returns ``None`` when the check isn't applicable yet
+    (no gold set, no training rows, or no gold row had scannable text) —
+    the absence of those is flagged by the shape/ingestion groups, so
+    leakage stays silent rather than emitting a misleading "all clear."
+    """
+    gold_by_split = await _load_gold_rows_by_split(db, project_id)
+    if sum(len(v) for v in gold_by_split.values()) == 0:
+        return None
+    train_rows, truncated = await _load_training_corpus_rows(
+        db, project_id, cap=LEAKAGE_TRAIN_SCAN_CAP
+    )
+    if not train_rows:
+        return None
+    result = _scan_leakage_rows(train_rows, gold_by_split)
+    if result["total_scanned"] == 0:
+        return None
+    result["train_rows_scanned"] = len(train_rows)
+    result["train_truncated"] = truncated
+    return result
+
+
+async def _load_prepared_splits(
+    db: AsyncSession, project_id: int
+) -> dict[str, list[dict[str, Any]]]:
+    """Load the prepared TRAIN / VALIDATION / TEST split rows keyed by
+    short split name (``train`` / ``val`` / ``test``)."""
+    from pathlib import Path
+    from app.services.dataset_service import _load_records_from_file
+
+    type_to_key = {
+        DatasetType.TRAIN: "train",
+        DatasetType.VALIDATION: "val",
+        DatasetType.TEST: "test",
+    }
+    result = await db.execute(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type.in_(list(type_to_key.keys())),
+        )
+    )
+    out: dict[str, list[dict[str, Any]]] = {"train": [], "val": [], "test": []}
+    for ds in result.scalars():
+        if not ds.file_path:
+            continue
+        path = Path(ds.file_path)
+        if not path.exists():
+            continue
+        key = type_to_key[ds.dataset_type]
+        out[key].extend(
+            r for r in _load_records_from_file(path) if isinstance(r, dict)
+        )
+    return out
+
+
+async def scan_prepared_split_leakage(
+    db: AsyncSession, project_id: int
+) -> dict[str, Any] | None:
+    """Public train↔val / train↔test / val↔test leakage analysis.
+    Returns ``None`` until at least two of the three prepared splits
+    exist (no pair to compare) or nothing scannable was found."""
+    splits = await _load_prepared_splits(db, project_id)
+    present = [k for k, v in splits.items() if v]
+    if len(present) < 2:
+        return None
+    result = _scan_prepared_split_pairs(splits)
+    if result["total_scanned"] == 0:
+        return None
+    return result
+
+
+async def _leakage_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
+    """Leakage group: gold↔training-corpus + prepared-split (train/val/
+    test) contamination. Each signal self-hides until its inputs exist."""
+    signals: list[dict[str, Any]] = []
+
+    # ── Gold ↔ training corpus ─────────────────────────────────
+    scan = await scan_train_gold_leakage(db, project_id)
+    if scan is not None:
+        scanned = scan["total_scanned"]
+        leaked = scan["total_leaked"]
+        test_leaked = scan["test_leaked"]
+        context = {
+            "scanned": scanned,
+            "leaked": leaked,
+            "fraction": scan["frac"],
+            "per_split": scan["per_split"],
+            "examples": scan["examples"],
+            "train_rows_scanned": scan["train_rows_scanned"],
+            "train_truncated": scan["train_truncated"],
+            "fuzzy_threshold": LEAKAGE_FUZZY_THRESHOLD,
+        }
+        if scan["severity"] == "ok":
+            signals.append(_make_signal(
+                id="leakage.no_overlap",
+                severity="ok",
+                headline=(
+                    f"No leakage — {scanned} gold rows checked against "
+                    f"{scan['train_rows_scanned']} training rows, none overlap."
+                ),
+                context=context,
+            ))
+        else:
+            test_note = (
+                f" — including {test_leaked} GOLD_TEST row(s) (your final grade)"
+                if test_leaked
+                else ""
+            )
+            signals.append(_make_signal(
+                id="leakage.gold_train_overlap",
+                severity=scan["severity"],
+                headline=(
+                    f"{leaked} of {scanned} gold rows ({scan['frac'] * 100:.0f}%) "
+                    f"also appear in training data{test_note}."
+                ),
+                suggested_action={
+                    "kind": "navigate",
+                    "label": "Re-split so gold is held out",
+                    "target": "dataprep",
+                },
+                context=context,
+                # No autofix_kind: removing rows from the gold set or the
+                # training set is a judgement call (which copy is
+                # canonical?), never a safe one-click delete.
+            ))
+
+    # ── Prepared splits (train / val / test) ───────────────────
+    split_scan = await scan_prepared_split_leakage(db, project_id)
+    if split_scan is not None:
+        leaked = split_scan["total_leaked"]
+        scanned = split_scan["total_scanned"]
+        context = {
+            "scanned": scanned,
+            "leaked": leaked,
+            "worst_fraction": split_scan["worst_frac"],
+            "per_pair": split_scan["per_pair"],
+            "examples": split_scan["examples"],
+            "fuzzy_threshold": LEAKAGE_FUZZY_THRESHOLD,
+        }
+        if split_scan["severity"] == "ok":
+            signals.append(_make_signal(
+                id="leakage.splits_held_out",
+                severity="ok",
+                headline=(
+                    f"Train / val / test splits are disjoint — "
+                    f"{scanned} held-out rows checked, none shared."
+                ),
+                context=context,
+            ))
+        else:
+            # Name the worst-leaking pair in the headline.
+            worst_pair = max(
+                split_scan["per_pair"].items(),
+                key=lambda kv: kv[1]["leaked"],
+            )[0]
+            pretty = worst_pair.replace("_in_", " rows also in ")
+            signals.append(_make_signal(
+                id="leakage.split_overlap",
+                severity=split_scan["severity"],
+                headline=(
+                    f"{leaked} row(s) shared across prepared splits "
+                    f"(worst: {pretty})."
+                ),
+                suggested_action={
+                    "kind": "navigate",
+                    "label": "Re-split with dedup",
+                    "target": "dataprep",
+                },
+                context=context,
+            ))
+
+    return {
+        "id": "leakage",
+        "title": "Leakage",
+        "subtitle": "Are eval rows held out of training?",
+        "signals": signals,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Public entry point.
 # ─────────────────────────────────────────────────────────────────────
 
@@ -1101,6 +1635,7 @@ async def compute_data_health_report(
         await _ingestion_group(db, project_id),
         await _cleaning_group(db, project_id, task_profile=task_profile),
         await _shape_group(db, project),
+        await _leakage_group(db, project_id),
         await _balance_group(db, project),
     ]
 

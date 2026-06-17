@@ -289,3 +289,37 @@
     font-size: 11px;
     background: rgba(148, 163, 184, 0.04);
 }
+
+/* Leaked-row drill-down table (phase 7). Generic on any signal that
+   carries context.examples — leakage signals populate it today. */
+.data-health__examples {
+    margin-top: 6px;
+}
+
+.data-health__examples-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 6px;
+    font-size: 11px;
+}
+
+.data-health__examples-table th,
+.data-health__examples-table td {
+    text-align: left;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: top;
+}
+
+.data-health__examples-table th {
+    color: var(--text-muted);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.data-health__examples-text {
+    font-family: var(--font-mono, monospace);
+    color: var(--text-secondary, var(--text-muted));
+    max-width: 320px;
+    word-break: break-word;
+}

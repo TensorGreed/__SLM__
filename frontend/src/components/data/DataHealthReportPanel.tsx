@@ -48,6 +48,25 @@ interface SuggestedAction {
     target?: string;
 }
 
+// A single leaked-row example carried in a signal's context (the
+// leakage signals populate this; the renderer is generic on its
+// presence). Every field is optional + defensively read — a malformed
+// payload must degrade, not throw (matches the gap-panel guard).
+interface LeakageExample {
+    source?: string;
+    split?: string;
+    match_kind?: string;
+    jaccard?: number;
+    excerpt?: string;
+    matched_excerpt?: string;
+}
+
+function readExamples(context: Record<string, unknown>): LeakageExample[] {
+    const raw = (context as { examples?: unknown }).examples;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((e): e is LeakageExample => !!e && typeof e === 'object');
+}
+
 interface HealthSignal {
     id: string;
     severity: Severity;
@@ -351,6 +370,71 @@ export default function DataHealthReportPanel({ projectId }: DataHealthReportPan
                                                             {sig.why_it_matters}
                                                         </p>
                                                     )}
+                                                    {(() => {
+                                                        // Drill-down: when a signal carries
+                                                        // leaked-row examples, let the user expand
+                                                        // exactly which rows leaked, from which
+                                                        // split, and what they matched.
+                                                        const examples = readExamples(sig.context);
+                                                        if (examples.length === 0) return null;
+                                                        const exKey = `${sig.id}::examples`;
+                                                        const exOpen = expanded.has(exKey);
+                                                        return (
+                                                            <div className="data-health__examples">
+                                                                <button
+                                                                    type="button"
+                                                                    className="data-health__why-toggle"
+                                                                    onClick={() => toggleExpanded(exKey)}
+                                                                    data-testid={`data-health-examples-toggle-${sig.id}`}
+                                                                    aria-label={
+                                                                        exOpen
+                                                                            ? `Hide leaked rows for ${sig.id}`
+                                                                            : `Show ${examples.length} leaked rows for ${sig.id}`
+                                                                    }
+                                                                >
+                                                                    {exOpen
+                                                                        ? '− Hide leaked rows'
+                                                                        : `+ Show leaked rows (${examples.length})`}
+                                                                </button>
+                                                                {exOpen && (
+                                                                    <table
+                                                                        className="data-health__examples-table"
+                                                                        data-testid={`data-health-examples-${sig.id}`}
+                                                                    >
+                                                                        <thead>
+                                                                            <tr>
+                                                                                <th>Held-out split</th>
+                                                                                <th>Match</th>
+                                                                                <th>Leaked row</th>
+                                                                                <th>Matched source row</th>
+                                                                            </tr>
+                                                                        </thead>
+                                                                        <tbody>
+                                                                            {examples.map((ex, i) => (
+                                                                                <tr key={i} data-testid={`data-health-example-row-${sig.id}-${i}`}>
+                                                                                    <td>
+                                                                                        {String(ex.split ?? '?')}
+                                                                                    </td>
+                                                                                    <td>
+                                                                                        {ex.match_kind === 'exact'
+                                                                                            ? 'exact'
+                                                                                            : `~${typeof ex.jaccard === 'number' ? ex.jaccard.toFixed(2) : '?'}`}
+                                                                                    </td>
+                                                                                    <td className="data-health__examples-text">
+                                                                                        {String(ex.excerpt ?? '')}
+                                                                                    </td>
+                                                                                    <td className="data-health__examples-text">
+                                                                                        {ex.source ? `${ex.source}: ` : ''}
+                                                                                        {String(ex.matched_excerpt ?? '')}
+                                                                                    </td>
+                                                                                </tr>
+                                                                            ))}
+                                                                        </tbody>
+                                                                    </table>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })()}
                                                 </div>
                                                 <div className="data-health__actions">
                                                     {sig.autofix_kind && (

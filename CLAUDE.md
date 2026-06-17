@@ -315,6 +315,26 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   emit the matching `autofix_kind` (sampled-read for the cleaned-text
   signals to keep the poll endpoint fast). See `ROADMAP.md` Epic E0
   phase 4.
+- **Train↔gold leakage** — `data_health_service.scan_train_gold_leakage`
+  is the honesty guard on the eval gate: it scans GOLD_DEV/GOLD_TEST
+  rows against the training corpus (TRAIN ∪ CLEANED ∪ SYNTHETIC) and
+  flags any that are identical (exact-normalised) or near-identical
+  (token-set Jaccard ≥ `LEAKAGE_FUZZY_THRESHOLD` 0.9, via an inverted
+  index for bounded compute) — a leaked gold set makes the pass-rate
+  measure memorisation, not skill. Renders as the `leakage` group's
+  `leakage.gold_train_overlap` signal (any overlap warns, ≥10% of gold
+  rows blocks; GOLD_TEST contamination called out separately). **No
+  `autofix_kind`** — deleting a gold/train row is a judgement call, not
+  a safe one-click delete; the Coach gold-set nudge
+  (`gold_set:train-leakage`) routes to `data-studio-splits` to re-split.
+  Self-hides until both a gold set and a training corpus exist.
+  **Phase 7** adds `scan_prepared_split_leakage` (train↔val / train↔test
+  / val↔test over the *prepared* TRAIN/VAL/TEST splits — NOT against
+  CLEANED/SYNTHETIC, which the splits derive from) → `leakage.split_overlap`
+  signal, and a generic leaked-row **drill-down** in `DataHealthReportPanel`
+  (any signal whose `context.examples` is populated renders an expandable
+  table of split / match-kind / leaked-row / matched-source-row). The
+  shared matcher core is `_build_leakage_index` + `_match_row_against_index`.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

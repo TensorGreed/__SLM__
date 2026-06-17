@@ -312,5 +312,213 @@ class DataHealthTests(unittest.TestCase):
         self.assertGreaterEqual(body["severity_summary"]["block"], 2)
 
 
+    # ── Train ↔ gold leakage ─────────────────────────────────────
+
+    def _add_jsonl_dataset(
+        self,
+        project_id: int,
+        dataset_type: DatasetType,
+        rows: list[dict],
+    ) -> None:
+        """Write ``rows`` to a JSONL file under DATA_DIR and register a
+        Dataset row pointing at it — mirrors how dataset-prep / import
+        land train + gold splits on disk."""
+        out_dir = TEST_DATA_DIR / f"proj-{project_id}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        fname = f"{dataset_type.value}-{uuid.uuid4().hex[:8]}.jsonl"
+        path = out_dir / fname
+        with path.open("w", encoding="utf-8") as fp:
+            for row in rows:
+                fp.write(json.dumps(row) + "\n")
+
+        async def _add():
+            async with async_session_factory() as db:
+                db.add(Dataset(
+                    project_id=project_id,
+                    name=dataset_type.value,
+                    dataset_type=dataset_type,
+                    file_path=str(path),
+                    record_count=len(rows),
+                ))
+                await db.commit()
+        asyncio.run(_add())
+
+    def test_leakage_block_when_gold_test_rows_in_train(self):
+        """Gold-test rows that are exact copies of training rows →
+        leakage.gold_train_overlap block, overall block, headline calls
+        out GOLD_TEST."""
+        pid = self._create_project()
+        shared = [{"input": f"customer ticket number {i} about a refund request"}
+                  for i in range(8)]
+        self._add_jsonl_dataset(pid, DatasetType.TRAIN, shared)
+        # All 5 gold-test rows are copied straight out of the train set.
+        self._add_jsonl_dataset(pid, DatasetType.GOLD_TEST, shared[:5])
+
+        body = self.client.get(f"/api/projects/{pid}/data-health").json()
+        sig = _signal_by_id(body, "leakage.gold_train_overlap")
+        self.assertIsNotNone(sig, _all_signal_ids(body))
+        assert sig is not None
+        self.assertEqual(sig["severity"], "block")
+        self.assertEqual(sig["context"]["leaked"], 5)
+        self.assertEqual(sig["context"]["per_split"]["gold_test"]["leaked"], 5)
+        self.assertIn("GOLD_TEST", sig["headline"])
+        self.assertEqual(body["overall"], "block")
+        # Honest contract: plain-English + why carry through.
+        self.assertTrue(sig["plain_english"])
+        self.assertTrue(sig["why_it_matters"])
+        # No unsafe one-click delete offered.
+        self.assertIsNone(sig["autofix_kind"])
+
+    def test_leakage_detects_near_duplicate_paraphrase(self):
+        """A gold row that's a one-word paraphrase of a train row
+        (Jaccard ≥ 0.9) is caught as a near-duplicate leak — the sneaky
+        synthetic-paraphrase case, not just exact copies."""
+        pid = self._create_project()
+        base = "the quick brown fox jumps over the lazy dog near the river"
+        train = [{"input": base}] + [
+            {"input": f"unrelated training sentence number {i} entirely"}
+            for i in range(9)
+        ]
+        self._add_jsonl_dataset(pid, DatasetType.TRAIN, train)
+        # One extra token → near-duplicate, not exact.
+        self._add_jsonl_dataset(
+            pid, DatasetType.GOLD_DEV, [{"input": base + " bank"}]
+        )
+
+        body = self.client.get(f"/api/projects/{pid}/data-health").json()
+        sig = _signal_by_id(body, "leakage.gold_train_overlap")
+        self.assertIsNotNone(sig, _all_signal_ids(body))
+        assert sig is not None
+        self.assertEqual(sig["context"]["leaked"], 1)
+        self.assertEqual(
+            sig["context"]["examples"][0]["match_kind"], "near_duplicate"
+        )
+
+    def test_no_leakage_when_gold_disjoint_from_train(self):
+        """Disjoint gold + train → leakage.no_overlap ok signal, not the
+        overlap signal."""
+        pid = self._create_project()
+        self._add_jsonl_dataset(pid, DatasetType.TRAIN, [
+            {"input": f"training example {i} talking about widgets"}
+            for i in range(10)
+        ])
+        self._add_jsonl_dataset(pid, DatasetType.GOLD_TEST, [
+            {"input": f"held out gold example {i} about gadgets"}
+            for i in range(5)
+        ])
+
+        body = self.client.get(f"/api/projects/{pid}/data-health").json()
+        self.assertIsNone(_signal_by_id(body, "leakage.gold_train_overlap"))
+        ok_sig = _signal_by_id(body, "leakage.no_overlap")
+        self.assertIsNotNone(ok_sig, _all_signal_ids(body))
+        assert ok_sig is not None
+        self.assertEqual(ok_sig["severity"], "ok")
+
+    def test_leakage_self_hides_without_both_sides(self):
+        """No leakage signal at all when there's a gold set but no
+        training corpus (or vice-versa) — the absence is flagged by
+        other groups, not by a misleading 'all clear'."""
+        pid = self._create_project()
+        # Gold only, no train/cleaned/synthetic.
+        self._add_jsonl_dataset(pid, DatasetType.GOLD_TEST, [
+            {"input": f"gold only example {i}"} for i in range(5)
+        ])
+        body = self.client.get(f"/api/projects/{pid}/data-health").json()
+        ids = _all_signal_ids(body)
+        self.assertNotIn("leakage.gold_train_overlap", ids)
+        self.assertNotIn("leakage.no_overlap", ids)
+
+    def test_prepared_split_val_in_train_blocks(self):
+        """Validation rows copied straight out of the train split →
+        leakage.split_overlap block, per-pair val_in_train recorded,
+        worst-pair named in the headline."""
+        pid = self._create_project()
+        train = [{"input": f"prepared training row {i} about shipping"}
+                 for i in range(10)]
+        self._add_jsonl_dataset(pid, DatasetType.TRAIN, train)
+        # All 5 val rows are also in train → 100% of val leaks.
+        self._add_jsonl_dataset(pid, DatasetType.VALIDATION, train[:5])
+
+        body = self.client.get(f"/api/projects/{pid}/data-health").json()
+        sig = _signal_by_id(body, "leakage.split_overlap")
+        self.assertIsNotNone(sig, _all_signal_ids(body))
+        assert sig is not None
+        self.assertEqual(sig["severity"], "block")
+        self.assertEqual(sig["context"]["per_pair"]["val_in_train"]["leaked"], 5)
+        self.assertIn("val rows also in train", sig["headline"])
+        # Drill-down example carries source + matched excerpt.
+        ex = sig["context"]["examples"][0]
+        self.assertEqual(ex["source"], "train")
+        self.assertEqual(ex["split"], "val")
+        self.assertTrue(ex["matched_excerpt"])
+        self.assertEqual(body["overall"], "block")
+
+    def test_prepared_split_test_in_val_detected(self):
+        """Test rows shared with validation (train disjoint) → the
+        val↔test pair is what fires, not train↔test."""
+        pid = self._create_project()
+        self._add_jsonl_dataset(pid, DatasetType.TRAIN, [
+            {"input": f"unique train row {i} on returns"} for i in range(10)
+        ])
+        val = [{"input": f"shared eval row {i} on cancellations"}
+               for i in range(6)]
+        self._add_jsonl_dataset(pid, DatasetType.VALIDATION, val)
+        self._add_jsonl_dataset(pid, DatasetType.TEST, val[:3])
+
+        body = self.client.get(f"/api/projects/{pid}/data-health").json()
+        sig = _signal_by_id(body, "leakage.split_overlap")
+        self.assertIsNotNone(sig, _all_signal_ids(body))
+        assert sig is not None
+        self.assertEqual(sig["context"]["per_pair"]["test_in_val"]["leaked"], 3)
+        self.assertEqual(sig["context"]["per_pair"]["test_in_train"]["leaked"], 0)
+
+    def test_prepared_splits_disjoint_emit_ok(self):
+        pid = self._create_project()
+        self._add_jsonl_dataset(pid, DatasetType.TRAIN, [
+            {"input": f"train {i} alpha"} for i in range(10)])
+        self._add_jsonl_dataset(pid, DatasetType.VALIDATION, [
+            {"input": f"val {i} beta"} for i in range(5)])
+        self._add_jsonl_dataset(pid, DatasetType.TEST, [
+            {"input": f"test {i} gamma"} for i in range(5)])
+
+        body = self.client.get(f"/api/projects/{pid}/data-health").json()
+        self.assertIsNone(_signal_by_id(body, "leakage.split_overlap"))
+        ok_sig = _signal_by_id(body, "leakage.splits_held_out")
+        self.assertIsNotNone(ok_sig, _all_signal_ids(body))
+        assert ok_sig is not None
+        self.assertEqual(ok_sig["severity"], "ok")
+
+    def test_prepared_split_self_hides_with_single_split(self):
+        """Only a train split → no pair to compare → no split signal."""
+        pid = self._create_project()
+        self._add_jsonl_dataset(pid, DatasetType.TRAIN, [
+            {"input": f"train only {i}"} for i in range(8)])
+        body = self.client.get(f"/api/projects/{pid}/data-health").json()
+        ids = _all_signal_ids(body)
+        self.assertNotIn("leakage.split_overlap", ids)
+        self.assertNotIn("leakage.splits_held_out", ids)
+
+    def test_leakage_below_block_fraction_warns_not_blocks(self):
+        """A small leak (< 10% of gold) is a loud warning, not a hard
+        block — but it never silently passes."""
+        pid = self._create_project()
+        train = [{"input": f"training row {i} about onboarding flows"}
+                 for i in range(40)]
+        self._add_jsonl_dataset(pid, DatasetType.TRAIN, train)
+        # 1 leaked of 20 gold = 5% < 10% block fraction.
+        gold = [{"input": "training row 0 about onboarding flows"}] + [
+            {"input": f"clean held out gold {i} about billing"}
+            for i in range(19)
+        ]
+        self._add_jsonl_dataset(pid, DatasetType.GOLD_DEV, gold)
+
+        body = self.client.get(f"/api/projects/{pid}/data-health").json()
+        sig = _signal_by_id(body, "leakage.gold_train_overlap")
+        self.assertIsNotNone(sig, _all_signal_ids(body))
+        assert sig is not None
+        self.assertEqual(sig["severity"], "warn")
+        self.assertEqual(sig["context"]["leaked"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

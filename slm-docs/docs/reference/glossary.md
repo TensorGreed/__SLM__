@@ -99,6 +99,29 @@ Both surfaces share the same on-disk JSONL — workbench rows materialize
 into it, gold-set-tab rows append to it. The evaluator reads either path.
 See [Evaluation + remediation](../workflows/evaluation-and-remediation.md).
 
+## Train ↔ gold leakage
+
+When rows in your gold set (the ruler that decides "does the model work?")
+also appear in the training data — identical or near-identical copies. A
+leaked gold set makes the eval pass-rate a lie: the model can recite the
+answers from memory, so a green gate no longer means the model generalises.
+The **Data Health Report** scans for it (`leakage.gold_train_overlap`),
+catching both exact duplicates (the common bad-split / copy-paste case) and
+near-duplicates (synthetic paraphrases of gold rows bleeding into train,
+detected via token-set Jaccard ≥ 0.9). Any overlap warns; ≥ 10% of gold rows
+blocks. A `GOLD_TEST` leak — the held-out final grade — is called out
+separately as the worst kind. There is no one-click auto-fix (deciding which
+copy is canonical is a judgement call); the Coach nudge routes you to re-split
+so the gold set is held out. See
+[Evaluation + remediation](../workflows/evaluation-and-remediation.md).
+
+The same scanner also checks the **prepared splits** (`leakage.split_overlap`):
+train↔validation, train↔test, and val↔test must be disjoint. A validation row
+that's also in train makes your validation metric optimistic, so early-stopping
+and checkpoint selection pick the wrong model; a test row in train (or in val)
+inflates the final grade. Expanding a leakage signal opens a **drill-down** of
+exactly which rows leaked, from which split, and the source row they matched.
+
 ## Hallucination trap
 
 A gold row whose reference answer is *"I don't know"* / *"that's not in the

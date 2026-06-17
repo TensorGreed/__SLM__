@@ -651,6 +651,7 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
         task_profile: str | None = "classification",
         with_recipe: bool = True,
         review_queue: dict | None = None,
+        leak: dict | None = None,
     ) -> list[dict]:
         from unittest.mock import MagicMock, patch
 
@@ -680,6 +681,11 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
         async def _async_queue(*_a, **_k):
             return queue_payload
 
+        # Leakage scan defaults to None (not applicable) so existing
+        # tests see no leakage nudge; pass ``leak=`` to exercise it.
+        async def _async_leak(*_a, **_k):
+            return leak
+
         with (
             patch(
                 "app.services.trainability_forecast_service._load_gold_rows",
@@ -692,6 +698,10 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "app.services.synth_review_queue_service.list_review_queue",
                 side_effect=_async_queue,
+            ),
+            patch(
+                "app.services.data_health_service.scan_train_gold_leakage",
+                side_effect=_async_leak,
             ),
         ):
             return await _gold_set_stage_suggestions(
@@ -708,6 +718,41 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s["id"], "gold_set:no-recipe")
         self.assertEqual(s["action"]["kind"], "navigate")
         self.assertEqual(s["action"]["params"]["target"], "recipe-picker")
+
+    async def test_train_gold_leakage_block_emits_critical_nudge(self):
+        # A blocking leak → critical nudge that leads the stage and
+        # routes the user to re-split.
+        leak = {
+            "severity": "block",
+            "total_leaked": 7,
+            "total_scanned": 20,
+            "frac": 0.35,
+            "test_leaked": 4,
+            "per_split": {
+                "gold_dev": {"scanned": 10, "leaked": 3},
+                "gold_test": {"scanned": 10, "leaked": 4},
+            },
+            "examples": [],
+        }
+        suggestions = await self._suggestions(gold_rows=[], leak=leak)
+        nudges = [s for s in suggestions if s["id"] == "gold_set:train-leakage"]
+        self.assertEqual(len(nudges), 1)
+        n = nudges[0]
+        self.assertEqual(n["severity"], "critical")
+        self.assertEqual(n["action"]["params"]["target"], "data-studio-splits")
+        self.assertEqual(n["rule_id"], "train-gold-leakage.block")
+        # GOLD_TEST contamination is called out explicitly.
+        self.assertIn("GOLD_TEST", n["body"])
+        self.assertEqual(n["context"]["leaked"], 7)
+
+    async def test_no_leakage_emits_no_nudge(self):
+        # severity ok → no nudge (and None → no nudge, the default).
+        ok_leak = {"severity": "ok", "total_leaked": 0, "total_scanned": 20,
+                   "frac": 0.0, "test_leaked": 0, "per_split": {}, "examples": []}
+        suggestions = await self._suggestions(gold_rows=[], leak=ok_leak)
+        self.assertEqual(
+            [s for s in suggestions if s["id"] == "gold_set:train-leakage"], []
+        )
 
     async def test_severe_class_imbalance_triggers_critical(self):
         # 90/10 split → very low Shannon entropy → "block" severity
