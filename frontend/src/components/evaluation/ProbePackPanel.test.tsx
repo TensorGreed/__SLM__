@@ -70,6 +70,8 @@ describe('ProbePackPanel', () => {
         );
         // Kind summary chips.
         expect(screen.getByTestId('probe-pack-kinds')).toHaveTextContent('Safety / refusal');
+        // Anchor id present so the Coach divergence nudge can deep-link here.
+        expect(screen.getByTestId('probe-pack')).toHaveAttribute('id', 'probe-pack-panel');
     });
 
     it('expands a probe to show input + rationale, and base_input for stability probes', async () => {

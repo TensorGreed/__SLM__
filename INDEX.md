@@ -649,6 +649,7 @@ session-start guidance.
 - `backend/tests/test_cleaning_async_task.py` — Cleaning background-task pattern (Phase F UX fix for 100K-row cleans).
 - `backend/tests/test_cleaning_chunks_pagination.py` — GET /cleaning/chunks pagination + sampling contract.
 - `backend/tests/test_cluster_explanation_service.py` — Tests for the per-cluster failure explanation service
+- `backend/tests/test_coach_probe_divergence.py` — Coach-stage-2 phase 11 — probe-vs-gold divergence nudge.
 - `backend/tests/test_coach_reroute_nudge.py` — Tests for the Phase 7d Coach Mode reroute nudge.
 - `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
 - `backend/tests/test_curriculum_ab.py` — Tests for the Phase 6c A/B harness (pure-function pieces).

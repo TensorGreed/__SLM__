@@ -113,7 +113,7 @@ export default function ProbePackPanel({ projectId }: ProbePackPanelProps) {
 
     if (!pack.applicable) {
         return (
-            <section className="probe-pack probe-pack--inapplicable" data-testid="probe-pack" data-applicable="false">
+            <section id="probe-pack-panel" className="probe-pack probe-pack--inapplicable" data-testid="probe-pack" data-applicable="false">
                 <header className="probe-pack__head">
                     <h3 className="probe-pack__title">Independent probe pack</h3>
                 </header>
@@ -127,6 +127,7 @@ export default function ProbePackPanel({ projectId }: ProbePackPanelProps) {
 
     return (
         <section
+            id="probe-pack-panel"
             className="probe-pack"
             data-testid="probe-pack"
             data-applicable="true"

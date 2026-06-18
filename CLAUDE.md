@@ -365,7 +365,14 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   path — so the **refusal / grounding / format probes actually execute**.
   Refusal/decline scoring is heuristic marker-based (documented as
   conservative; an LLM judge can replace it without touching the runner).
-  See `ROADMAP.md` Epic E0 phases 8–10.
+  **Phase 11 (the payoff)** — the Coach eval stage fires
+  `eval:probe-gold-divergence` (`_probe_gold_divergence_nudge`, pure) when
+  the gold-set `pass_rate` leads `probe_pass_rate` by ≥
+  `PROBE_GOLD_DIVERGENCE_THRESHOLD` (0.15; critical at 0.30): "your gold
+  set says green but the independent ruler disagrees," deep-linking to the
+  failing probes via the `probe-pack-panel` navigate target (anchor
+  `#probe-pack-panel` on `ProbePackPanel`). Both rates come off the same
+  latest EvalResult. See `ROADMAP.md` Epic E0 phases 8–11.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

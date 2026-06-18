@@ -203,6 +203,10 @@ const NAVIGATE_TARGET_URLS: Record<
     // eval pipeline tab where EvalGapsPanel mounts above EvalPanel.
     'eval-gaps-panel': (projectId) =>
         `/project/${projectId}/pipeline/eval#eval-gaps-panel`,
+    // Phase 11 — deep-link to the held-out probe pack panel so the
+    // probe-vs-gold divergence nudge lands on the failing probes.
+    'probe-pack-panel': (projectId) =>
+        `/project/${projectId}/pipeline/eval#probe-pack-panel`,
     // Phase 3 — archetype-coverage signal action target. The
     // ArchetypeComparisonPanel lives on the training-config page
     // today; users coming from the eval-gap panel land there.

@@ -2616,6 +2616,91 @@ async def _eval_gaps_rollup_nudge(
     }
 
 
+# Coach-stage-2 phase 11 — probe-vs-gold divergence thresholds (in
+# pass-rate points, 0..1). When the held-out, platform-authored probe
+# pack scores materially below the user's own gold set, the gold set is
+# likely too easy / biased / blind to what the probes catch — the "your
+# gold set says green but the independent ruler disagrees" moment.
+PROBE_GOLD_DIVERGENCE_THRESHOLD = 0.15
+PROBE_GOLD_DIVERGENCE_CRITICAL = 0.30
+
+
+def _probe_gold_divergence_nudge(
+    project_id: int, latest_eval: Any
+) -> dict[str, Any] | None:
+    """Fire when the gold-set pass-rate leads the independent probe
+    pass-rate by more than the threshold. Both numbers come off the same
+    latest EvalResult (the probe run is folded in during evaluation).
+
+    Pure + sync so it's unit-testable with a stub eval row. Returns
+    ``None`` when there's no probe run, no gold pass-rate, or the gap is
+    within tolerance (incl. probe ≥ gold — nothing to warn about)."""
+    if latest_eval is None:
+        return None
+    metrics = getattr(latest_eval, "metrics", None)
+    if not isinstance(metrics, dict):
+        return None
+    probe = metrics.get("probe")
+    if not isinstance(probe, dict):
+        return None
+    probe_rate = probe.get("probe_pass_rate")
+    gold_rate = getattr(latest_eval, "pass_rate", None)
+    if gold_rate is None:
+        gold_rate = metrics.get("pass_rate")
+    if not isinstance(gold_rate, (int, float)) or not isinstance(
+        probe_rate, (int, float)
+    ):
+        return None
+
+    divergence = float(gold_rate) - float(probe_rate)
+    if divergence < PROBE_GOLD_DIVERGENCE_THRESHOLD:
+        return None
+
+    results = probe.get("results") or []
+    failing_ids = [
+        r.get("id")
+        for r in results
+        if isinstance(r, dict) and not r.get("passed") and r.get("id")
+    ]
+    severity: Severity = (
+        "critical" if divergence >= PROBE_GOLD_DIVERGENCE_CRITICAL else "warning"
+    )
+    shown = ", ".join(failing_ids[:3])
+    more = f" +{len(failing_ids) - 3} more" if len(failing_ids) > 3 else ""
+    return {
+        "id": "eval:probe-gold-divergence",
+        "title": "Your gold set says green, but the independent ruler disagrees",
+        "body": (
+            f"Your gold-set pass-rate is {gold_rate * 100:.0f}%, but the held-out "
+            f"probe pack — adversarial probes you didn't author — scored only "
+            f"{probe_rate * 100:.0f}%, a {divergence * 100:.0f}-point gap. "
+            f"{len(failing_ids)} probe(s) failed"
+            + (f" ({shown}{more})" if shown else "")
+            + ". Your gold set may be too easy, or blind to what the probes catch "
+            "(robustness, refusal, grounding). Inspect the failing probes before "
+            "you trust the green gate."
+        ),
+        "severity": severity,
+        "action": {
+            "kind": "navigate",
+            "label": "Inspect failing probes",
+            "params": {"target": "probe-pack-panel"},
+        },
+        "rule_id": (
+            "probe-gold-divergence.critical"
+            if divergence >= PROBE_GOLD_DIVERGENCE_CRITICAL
+            else "probe-gold-divergence.warn"
+        ),
+        "context": {
+            "gold_pass_rate": round(float(gold_rate), 6),
+            "probe_pass_rate": round(float(probe_rate), 6),
+            "divergence": round(divergence, 6),
+            "failing_probe_ids": failing_ids,
+            "failing_count": len(failing_ids),
+        },
+    }
+
+
 async def _eval_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -2657,6 +2742,14 @@ async def _eval_stage_suggestions(
         return suggestions
 
     pass_rate = latest.pass_rate
+
+    # Coach-stage-2 phase 11 — probe-vs-gold divergence leads the
+    # post-eval nudges: it's the honesty headline of the whole arc. When
+    # the independent probe pack disagrees with the user's gold set, that
+    # outranks the lower-stakes auto-RAG / cluster nudges below.
+    divergence_nudge = _probe_gold_divergence_nudge(project.id, latest)
+    if divergence_nudge:
+        suggestions.append(divergence_nudge)
 
     # Phase 9d — auto-RAG nudge runs independently of the failure-
     # cluster suggestion (different lever on different timeline).
