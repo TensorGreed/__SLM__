@@ -148,6 +148,77 @@ class ProbePackApiTests(unittest.TestCase):
         resp = self.client.get("/api/projects/99887766/probe-pack")
         self.assertEqual(resp.status_code, 404)
 
+    def test_pack_is_ready_not_run_before_any_eval(self):
+        pid = self._create_project(recipe_id="classification")
+        body = self.client.get(f"/api/projects/{pid}/probe-pack").json()
+        self.assertEqual(body["status"], "ready_not_run")
+        self.assertNotIn("run", body)
+
+    def test_pack_flips_to_graded_after_a_run_lands_in_eval_metrics(self):
+        pid = self._create_project(recipe_id="classification")
+
+        async def _seed():
+            async with async_session_factory() as db:
+                from app.models.experiment import (
+                    EvalResult, Experiment, ExperimentStatus, TrainingMode,
+                )
+                exp = Experiment(
+                    project_id=pid,
+                    name="exp",
+                    base_model="HuggingFaceTB/SmolLM2-135M-Instruct",
+                    status=ExperimentStatus.COMPLETED,
+                    training_mode=TrainingMode.SFT,
+                )
+                db.add(exp)
+                await db.flush()
+                db.add(EvalResult(
+                    experiment_id=exp.id,
+                    dataset_name="gold_test",
+                    eval_type="classification",
+                    pass_rate=0.92,
+                    metrics={
+                        "pass_rate": 0.92,
+                        "probe_pass_rate": 0.75,
+                        "probe": {
+                            "probe_pass_rate": 0.75,
+                            "passed": 3,
+                            "total": 4,
+                            "per_property": {
+                                "prediction_stable_vs_base": {
+                                    "passed": 2, "total": 2, "pass_rate": 1.0,
+                                },
+                                "handles_degenerate_gracefully": {
+                                    "passed": 1, "total": 2, "pass_rate": 0.5,
+                                },
+                            },
+                            "results": [
+                                {
+                                    "id": "clf.robust.casing",
+                                    "probe_kind": "robustness",
+                                    "property": "prediction_stable_vs_base",
+                                    "passed": True,
+                                    "output": "billing",
+                                    "base_output": "billing",
+                                    "reason": "stable",
+                                },
+                            ],
+                        },
+                    },
+                ))
+                await db.commit()
+        asyncio.run(_seed())
+
+        body = self.client.get(f"/api/projects/{pid}/probe-pack").json()
+        # The pack now reflects the independent run.
+        self.assertEqual(body["status"], "graded")
+        self.assertIn("run", body)
+        run = body["run"]
+        self.assertEqual(run["probe_pass_rate"], 0.75)
+        self.assertEqual(run["passed"], 3)
+        self.assertEqual(run["total"], 4)
+        self.assertIn("prediction_stable_vs_base", run["per_property"])
+        self.assertEqual(run["results"][0]["id"], "clf.robust.casing")
+
 
 if __name__ == "__main__":
     unittest.main()

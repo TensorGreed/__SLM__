@@ -35,6 +35,34 @@ export interface Probe {
     base_input?: string;
 }
 
+export interface ProbeResult {
+    id: string;
+    probe_kind: ProbeKind;
+    property: ProbeProperty;
+    passed: boolean;
+    output: string;
+    base_output: string | null;
+    reason: string;
+}
+
+export interface ProbePropertyScore {
+    passed: number;
+    total: number;
+    pass_rate: number;
+}
+
+export interface ProbeRun {
+    status: 'graded';
+    probe_pass_rate: number;
+    passed: number;
+    total: number;
+    per_property: Record<string, ProbePropertyScore>;
+    results: ProbeResult[];
+    run_at: string | null;
+    eval_result_id?: number;
+    experiment_id?: number;
+}
+
 export interface ProbePack {
     project_id?: number;
     task_profile: string | null;
@@ -43,8 +71,11 @@ export interface ProbePack {
     probe_count: number;
     kind_summary: Record<string, number>;
     probes: Probe[];
-    status: 'ready_not_run' | 'no_pack_for_profile';
+    /** "graded" once the pack has been run against a trained checkpoint. */
+    status: 'ready_not_run' | 'no_pack_for_profile' | 'graded';
     note: string;
+    /** Present once the pack has been run — the independent result. */
+    run?: ProbeRun;
 }
 
 export async function fetchProbePack(projectId: number): Promise<ProbePack> {

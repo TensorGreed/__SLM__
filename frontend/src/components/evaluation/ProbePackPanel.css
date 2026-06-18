@@ -142,3 +142,55 @@
     color: var(--text-muted);
     font-style: italic;
 }
+
+/* Graded state (phase 9) — independent probe pass-rate + per-probe verdicts. */
+.probe-pack__badge--graded {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--success, #15803d);
+}
+
+.probe-pack__score {
+    margin-top: 8px;
+}
+
+.probe-pack__score-headline {
+    font-size: 13px;
+}
+
+.probe-pack__props {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    list-style: none;
+    padding: 0;
+    margin: 6px 0 0;
+}
+
+.probe-pack__prop-chip {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.12);
+}
+
+.probe-pack__score-note {
+    margin: 6px 0 0;
+    font-size: 11px;
+    font-style: italic;
+    color: var(--text-muted);
+}
+
+.probe-pack__verdict {
+    font-weight: 700;
+    width: 16px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.probe-pack__verdict--pass {
+    color: var(--success, #15803d);
+}
+
+.probe-pack__verdict--fail {
+    color: var(--danger, #b91c1c);
+}

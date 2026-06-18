@@ -141,10 +141,16 @@ domain's labels or answers, every probe checks a **property** that must hold for
   handled gracefully (`handles_degenerate_gracefully`).
 
 Packs are keyed by task profile (classification, instruction_sft, rag_qa,
-structured_extraction, summarization) and viewable on the eval tab. The first
-slice assembles + displays the pack (`status: ready_not_run`); running it
-against your trained model for an independent `probe_pass_rate` alongside the
-gold-set gate is the next step.
+structured_extraction, summarization) and viewable on the eval tab. When you run
+an evaluation, the pack runs against the trained model, scores each property,
+and folds an independent `probe_pass_rate` into the eval metrics beside your
+gold-set pass-rate — the panel flips from "Assembled · not yet graded" to a real
+per-property result with a ✓/✕ per probe. Classification packs are graded with a
+classifier-head predictor (robustness + degenerate probes); generative shapes
+(instruction_sft, rag_qa, structured_extraction, summarization) are graded with
+a text-generation predictor, so the refusal / grounding / format probes execute
+too. The refusal/decline checks are heuristic (keyword markers) and conservative
+by design — a future slice can swap in an LLM judge.
 
 ## Hallucination trap
 

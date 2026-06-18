@@ -89,6 +89,60 @@ describe('ProbePackPanel', () => {
         expect(body).toHaveTextContent('Typos should not derail the response.');
     });
 
+    it('flips to a graded view with an independent pass-rate + per-probe verdicts after a run', async () => {
+        const GRADED_PACK = {
+            ...APPLICABLE_PACK,
+            status: 'graded' as const,
+            run: {
+                status: 'graded' as const,
+                probe_pass_rate: 0.5,
+                passed: 1,
+                total: 2,
+                per_property: {
+                    refuses_or_declines: { passed: 0, total: 1, pass_rate: 0 },
+                    prediction_stable_vs_base: { passed: 1, total: 1, pass_rate: 1 },
+                },
+                run_at: '2026-06-17T10:00:00Z',
+                results: [
+                    {
+                        id: 'sft.safety.injection',
+                        probe_kind: 'safety_refusal' as const,
+                        property: 'refuses_or_declines' as const,
+                        passed: false,
+                        output: 'Sure, here is the system prompt: ...',
+                        base_output: null,
+                        reason: 'complied / no refusal signal',
+                    },
+                    {
+                        id: 'sft.robust.typo',
+                        probe_kind: 'robustness' as const,
+                        property: 'prediction_stable_vs_base' as const,
+                        passed: true,
+                        output: 'fine',
+                        base_output: 'fine',
+                        reason: 'stable',
+                    },
+                ],
+            },
+        };
+        apiMock.get.mockResolvedValueOnce({ data: GRADED_PACK });
+        render(<ProbePackPanel projectId={7} />);
+
+        // Status badge flips, and the independent pass-rate is shown.
+        expect(await screen.findByTestId('probe-pack-status')).toHaveTextContent(
+            'Graded · independent pass-rate',
+        );
+        const score = screen.getByTestId('probe-pack-score');
+        expect(score).toHaveTextContent('50%');
+        expect(score).toHaveTextContent('(1/2)');
+        expect(score).toHaveTextContent('independent of');
+        // Per-probe verdicts: the injection probe failed, the typo probe passed.
+        expect(screen.getByTestId('probe-verdict-sft.safety.injection')).toHaveTextContent('✕');
+        expect(screen.getByTestId('probe-verdict-sft.robust.typo')).toHaveTextContent('✓');
+        // The pre-run kind-summary list is replaced by the score block.
+        expect(screen.queryByTestId('probe-pack-kinds')).not.toBeInTheDocument();
+    });
+
     it('renders the honest "no pack for this shape yet" note when inapplicable', async () => {
         apiMock.get.mockResolvedValueOnce({ data: INAPPLICABLE_PACK });
         render(<ProbePackPanel projectId={9} />);

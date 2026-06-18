@@ -315,14 +315,51 @@ def _resolve_task_profile_id(project: Any) -> str | None:
         return None
 
 
+async def _latest_probe_run(
+    db: AsyncSession, project_id: int
+) -> dict[str, Any] | None:
+    """Return the most recent eval run that carried a probe-pack result
+    (``metrics["probe"]``), shaped for the panel. ``None`` until the
+    pack has actually been run against a trained checkpoint."""
+    from sqlalchemy import desc, select
+
+    from app.models.experiment import EvalResult, Experiment
+
+    result = await db.execute(
+        select(EvalResult)
+        .join(Experiment, Experiment.id == EvalResult.experiment_id)
+        .where(Experiment.project_id == project_id)
+        .order_by(desc(EvalResult.created_at))
+        .limit(25)
+    )
+    for row in result.scalars():
+        probe = (row.metrics or {}).get("probe")
+        if isinstance(probe, dict) and probe.get("total"):
+            return {
+                "status": "graded",
+                "probe_pass_rate": probe.get("probe_pass_rate"),
+                "passed": probe.get("passed"),
+                "total": probe.get("total"),
+                "per_property": probe.get("per_property", {}),
+                "results": probe.get("results", []),
+                "run_at": row.created_at.isoformat() if row.created_at else None,
+                "eval_result_id": row.id,
+                "experiment_id": row.experiment_id,
+            }
+    return None
+
+
 async def get_probe_pack_for_project(
     db: AsyncSession, project_id: int
 ) -> dict[str, Any]:
-    """Resolve a project's recipe → task_profile → probe pack.
+    """Resolve a project's recipe → task_profile → probe pack, enriched
+    with the latest probe run when one exists.
 
     Raises ``ValueError`` if the project doesn't exist (the API maps it
     to 404). Returns the ``applicable=False`` payload when the project
-    has no recipe or no pack exists for its shape.
+    has no recipe or no pack exists for its shape. When the pack has
+    been run against a trained checkpoint, ``pack["run"]`` carries the
+    independent per-property result and ``status`` flips to ``graded``.
     """
     from app.models.project import Project
 
@@ -332,4 +369,9 @@ async def get_probe_pack_for_project(
     task_profile = _resolve_task_profile_id(project)
     pack = get_probe_pack(task_profile)
     pack["project_id"] = int(project_id)
+    if pack.get("applicable"):
+        run = await _latest_probe_run(db, project_id)
+        if run is not None:
+            pack["run"] = run
+            pack["status"] = "graded"
     return pack

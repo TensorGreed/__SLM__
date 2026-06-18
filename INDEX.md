@@ -194,6 +194,7 @@ session-start guidance.
 - `backend/app/services/plugin_contracts.py` — Plugin contract definitions for BrewSLM extension modules (priority.md P37, Wave H).
 - `backend/app/services/post_eval_decision_engine_service.py` — Post-eval decision engine (USER-SUCCESS Epic 7 Phase 7a).
 - `backend/app/services/probe_pack_service.py` — Platform-authored held-out probe packs (Coach-stage-2 phase 8).
+- `backend/app/services/probe_runner.py` — Probe runner — Coach-stage-2 phase 9.
 - `backend/app/services/project_smoke_test_service.py` — Project smoke-test service (Diagnostics Intervention C).
 - `backend/app/services/project_template_service.py` — Project templates — cloneable starting kits for new projects.
 - `backend/app/services/rag_project_service.py` — RAG-skeleton project service (USER-SUCCESS Epic 7 Phase 7b).
@@ -818,7 +819,9 @@ session-start guidance.
 - `backend/tests/test_phase9_tokenization.py` — Tests for the tokenization service — tokenizer loading and analysis.
 - `backend/tests/test_phase9_training_runtime_compat.py` — Compatibility tests for external training runtime adapters.
 - `backend/tests/test_post_eval_decision_engine.py` — Tests for the post-eval decision engine service
+- `backend/tests/test_probe_pack_generative.py` — Coach-stage-2 phase 10 — generative predict_fn wiring for probes.
 - `backend/tests/test_probe_pack_service.py` — Coach-stage-2 phase 8 — platform-authored held-out probe packs.
+- `backend/tests/test_probe_runner.py` — Coach-stage-2 phase 9 — probe runner scoring + aggregation.
 - `backend/tests/test_project_smoke_test.py` — Tests for the project smoke-test service (Diagnostics Intervention C).
 - `backend/tests/test_project_template_service.py` — Tests for the project_template service + endpoints.
 - `backend/tests/test_quickstart_endpoints.py` — Tests for the project-guide quickstart endpoints (Theme 1 Epic 4 +

@@ -348,10 +348,24 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   (classification / instruction_sft / rag_qa / structured_extraction /
   summarization). `GET /api/projects/{id}/probe-pack` →
   `ProbePackPanel` (read-only, mounted on the eval tab below
-  `EvalGapsPanel`). **Status `ready_not_run`** — the pack is assembled +
-  inspectable; *running* it against the model and folding an independent
-  `probe_pass_rate` into the gate is the next slice (the panel is honest
-  that no score is computed yet). See `ROADMAP.md` Epic E0 phase 8.
+  `EvalGapsPanel`). **Phase 9** wires the runner: `probe_runner.run_probe_pack`
+  (pure, injectable `predict_fn` like `behavioral_test_runner`) scores
+  each probe by property; `evaluation_service._safe_run_probe_pack` runs
+  it against the trained checkpoint during `run_evaluation` and folds
+  `metrics["probe"]` + a top-level `metrics["probe_pass_rate"]` in beside
+  the gold-set `pass_rate` (gate-resolvable). `get_probe_pack_for_project`
+  enriches the panel payload with the latest run so `ProbePackPanel`
+  flips `ready_not_run → graded` (per-property pass-rates + per-probe
+  ✓/✕ + model output). **Two predict paths** (phase 10): classification
+  uses `build_classifier_predict_fn` (robustness + degenerate probes);
+  generative profiles (`instruction_sft` / `rag_qa` /
+  `structured_extraction` / `summarization`, in
+  `_GENERATIVE_PROBE_PROFILES`) use `_build_generative_predict_fn` —
+  greedy text generation via the shared `_run_transformers_inference`
+  path — so the **refusal / grounding / format probes actually execute**.
+  Refusal/decline scoring is heuristic marker-based (documented as
+  conservative; an LLM judge can replace it without touching the runner).
+  See `ROADMAP.md` Epic E0 phases 8–10.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

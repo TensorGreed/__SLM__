@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { fetchProbePack } from '../../api/probePack';
-import type { Probe, ProbePack } from '../../api/probePack';
+import type { Probe, ProbePack, ProbeResult } from '../../api/probePack';
 import './ProbePackPanel.css';
 
 interface ProbePackPanelProps {
@@ -80,6 +80,18 @@ export default function ProbePackPanel({ projectId }: ProbePackPanelProps) {
         [pack],
     );
 
+    // Per-probe run result keyed by id, when the pack has been graded.
+    const resultById = useMemo(() => {
+        const map = new Map<string, ProbeResult>();
+        const results = pack?.run?.results;
+        if (Array.isArray(results)) {
+            for (const r of results) {
+                if (r && typeof r.id === 'string') map.set(r.id, r);
+            }
+        }
+        return map;
+    }, [pack]);
+
     if (loading && !pack) {
         return (
             <section className="probe-pack probe-pack--loading" data-testid="probe-pack">
@@ -110,35 +122,72 @@ export default function ProbePackPanel({ projectId }: ProbePackPanelProps) {
         );
     }
 
+    const run = pack.run;
+    const graded = !!run;
+
     return (
-        <section className="probe-pack" data-testid="probe-pack" data-applicable="true">
+        <section
+            className="probe-pack"
+            data-testid="probe-pack"
+            data-applicable="true"
+            data-graded={graded ? 'true' : 'false'}
+        >
             <header className="probe-pack__head">
                 <div className="probe-pack__head-line">
-                    <span className="probe-pack__badge" data-testid="probe-pack-status">
-                        Assembled · not yet graded
+                    <span
+                        className={`probe-pack__badge probe-pack__badge--${graded ? 'graded' : 'pending'}`}
+                        data-testid="probe-pack-status"
+                    >
+                        {graded ? 'Graded · independent pass-rate' : 'Assembled · not yet graded'}
                     </span>
                     <h3 className="probe-pack__title">
                         Independent probe pack ({pack.probe_count})
                     </h3>
                 </div>
                 <p className="probe-pack__note">{pack.note}</p>
-                <ul className="probe-pack__kinds" data-testid="probe-pack-kinds">
-                    {Object.entries(pack.kind_summary || {}).map(([kind, n]) => (
-                        <li key={kind} className="probe-pack__kind-chip">
-                            {kindLabel(kind)}: <strong>{n}</strong>
-                        </li>
-                    ))}
-                </ul>
+                {graded && run ? (
+                    <div className="probe-pack__score" data-testid="probe-pack-score">
+                        <span className="probe-pack__score-headline">
+                            Probe pass-rate:{' '}
+                            <strong>{Math.round((run.probe_pass_rate ?? 0) * 100)}%</strong>{' '}
+                            ({run.passed}/{run.total})
+                        </span>
+                        <ul className="probe-pack__props" data-testid="probe-pack-props">
+                            {Object.entries(run.per_property || {}).map(([prop, score]) => (
+                                <li key={prop} className="probe-pack__prop-chip">
+                                    {PROPERTY_LABEL[prop] ?? prop}:{' '}
+                                    <strong>
+                                        {score.passed}/{score.total}
+                                    </strong>
+                                </li>
+                            ))}
+                        </ul>
+                        <p className="probe-pack__score-note">
+                            Graded against probes you didn't author — independent of
+                            your gold-set pass-rate.
+                        </p>
+                    </div>
+                ) : (
+                    <ul className="probe-pack__kinds" data-testid="probe-pack-kinds">
+                        {Object.entries(pack.kind_summary || {}).map(([kind, n]) => (
+                            <li key={kind} className="probe-pack__kind-chip">
+                                {kindLabel(kind)}: <strong>{n}</strong>
+                            </li>
+                        ))}
+                    </ul>
+                )}
             </header>
 
             <ul className="probe-pack__list">
                 {probes.map((p) => {
                     const open = expanded.has(p.id);
+                    const result = resultById.get(p.id);
                     return (
                         <li
                             key={p.id}
                             className="probe-pack__probe"
                             data-testid={`probe-${p.id}`}
+                            data-passed={result ? String(result.passed) : undefined}
                         >
                             <button
                                 type="button"
@@ -146,6 +195,14 @@ export default function ProbePackPanel({ projectId }: ProbePackPanelProps) {
                                 onClick={() => toggle(p.id)}
                                 aria-label={open ? `Collapse ${p.id}` : `Expand ${p.id}`}
                             >
+                                {result && (
+                                    <span
+                                        className={`probe-pack__verdict probe-pack__verdict--${result.passed ? 'pass' : 'fail'}`}
+                                        data-testid={`probe-verdict-${p.id}`}
+                                    >
+                                        {result.passed ? '✓' : '✕'}
+                                    </span>
+                                )}
                                 <span className={`probe-pack__kind probe-pack__kind--${p.probe_kind}`}>
                                     {kindLabel(p.probe_kind)}
                                 </span>
@@ -168,6 +225,26 @@ export default function ProbePackPanel({ projectId }: ProbePackPanelProps) {
                                         </span>
                                         <code>{p.input === '' ? '(empty string)' : p.input}</code>
                                     </p>
+                                    {result && (
+                                        <>
+                                            {result.base_output != null && (
+                                                <p className="probe-pack__io">
+                                                    <span className="probe-pack__io-label">Out (clean)</span>
+                                                    <code>{result.base_output || '(empty)'}</code>
+                                                </p>
+                                            )}
+                                            <p className="probe-pack__io">
+                                                <span className="probe-pack__io-label">Model out</span>
+                                                <code>{result.output || '(empty)'}</code>
+                                            </p>
+                                            <p className="probe-pack__io">
+                                                <span className="probe-pack__io-label">Verdict</span>
+                                                <code>
+                                                    {result.passed ? 'PASS' : 'FAIL'} — {result.reason}
+                                                </code>
+                                            </p>
+                                        </>
+                                    )}
                                     <p className="probe-pack__rationale">{p.rationale}</p>
                                 </div>
                             )}

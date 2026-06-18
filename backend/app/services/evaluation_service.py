@@ -472,6 +472,119 @@ async def _safe_run_behavioral_tests(
         return {}
 
 
+# Task profiles whose probe pack is graded with a generative text
+# predict_fn (vs the classifier-head path). Phase 10.
+_GENERATIVE_PROBE_PROFILES = frozenset(
+    {"instruction_sft", "rag_qa", "structured_extraction", "summarization"}
+)
+
+
+def _build_generative_predict_fn(
+    model_path: str,
+    *,
+    max_new_tokens: int = 128,
+    temperature: float = 0.0,
+):
+    """Phase 10 — a text ``predict_fn`` (``Sequence[str] -> list[str]``)
+    backed by the same transformers generation path eval uses
+    (``_run_transformers_inference``), so refusal / grounding / format
+    probes can execute against generative checkpoints.
+
+    Greedy (temperature 0) for reproducible probe verdicts. The model is
+    loaded per batched call — ``run_probe_pack`` fires one call per run,
+    so that's one load per probe run. Chat template applied so the model
+    sees the prompt shape it was tuned on.
+    """
+    def _predict(texts: "Sequence[str]") -> list[str]:
+        pairs = [{"prompt": str(t), "reference": ""} for t in texts]
+        preds, _runtime = _run_transformers_inference(
+            model_path,
+            pairs,
+            max_new_tokens,
+            temperature,
+            apply_chat_template=True,
+        )
+        return [str(p.get("prediction", "")) for p in preds]
+
+    return _predict
+
+
+async def _safe_run_probe_pack(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    experiment: Experiment,
+    task_profile: str | None,
+) -> dict[str, Any]:
+    """Coach-stage-2 phase 9 — run the platform-authored held-out probe
+    pack against the trained checkpoint and return the runner snapshot
+    for ``metrics["probe"]`` (+ a top-level ``metrics["probe_pass_rate"]``).
+
+    The probe pack is the *independent* ruler — platform-authored,
+    property-based — so an inflated gold-set pass-rate (easy/biased/
+    leaked gold set) is caught by a number the user didn't author.
+
+    Empty dict on every failure path (same fire-and-forget contract as
+    ``_safe_run_behavioral_tests``): no checkpoint, no label space, or
+    predict_fn build raises → ``metrics["probe"]`` stays absent and the
+    panel keeps its honest ``ready_not_run`` state.
+
+    Two predict paths by task profile: **classification** uses the
+    classifier-head ``predict_fn`` (robustness + degenerate probes);
+    **generative** profiles (instruction_sft / rag_qa /
+    structured_extraction / summarization) use a text-generation
+    ``predict_fn`` so the refusal / grounding / format probes actually
+    execute. The pure runner is identical for both — only the predict_fn
+    differs.
+    """
+    try:
+        from pathlib import Path
+
+        from app.services.probe_pack_service import get_probe_pack
+        from app.services.probe_runner import run_probe_pack
+
+        profile = (task_profile or "").strip().lower()
+
+        pack = get_probe_pack(task_profile)
+        probes = pack.get("probes") or []
+        if not pack.get("applicable") or not probes:
+            return {}
+
+        ckpt_path = (experiment.output_dir or "").strip()
+        if not ckpt_path or not Path(ckpt_path).exists():
+            return {}
+
+        if profile == "classification":
+            from app.services.behavioral_test_runner import build_classifier_predict_fn
+            from app.services.trainability_forecast_service import (
+                _extract_classification_labels,
+                _load_gold_rows,
+            )
+
+            gold_rows = await _load_gold_rows(db, project_id)
+            labels = _extract_classification_labels(gold_rows)
+            label_space = sorted({lab for lab in labels if isinstance(lab, str) and lab})
+            if not label_space:
+                return {}
+            predict_fn = build_classifier_predict_fn(
+                model_path=ckpt_path,
+                label_space=label_space,
+            )
+        elif profile in _GENERATIVE_PROBE_PROFILES:
+            predict_fn = _build_generative_predict_fn(ckpt_path)
+        else:
+            return {}
+
+        return run_probe_pack(list(probes), predict_fn)
+    except Exception as exc:  # noqa: BLE001 — never block eval completion
+        print(
+            f"[probe_pack] run_failed project_id={project_id} "
+            f"experiment_id={experiment.id}: {exc}",
+            flush=True,
+        )
+        return {}
+
+
 async def run_evaluation(
     db: AsyncSession,
     project_id: int,
@@ -542,6 +655,21 @@ async def run_evaluation(
     )
     if behavioral_metrics:
         metrics["behavioral"] = behavioral_metrics
+
+    # Coach-stage-2 phase 9 — run the platform-authored held-out probe
+    # pack and fold an independent ``probe_pass_rate`` in beside the
+    # gold-set pass-rate. Best-effort: absence leaves the panel in its
+    # honest ready_not_run state. ``probe_pass_rate`` is a top-level
+    # metric key so an eval gate can reference it directly.
+    probe_metrics = await _safe_run_probe_pack(
+        db,
+        project_id=project_id,
+        experiment=exp,
+        task_profile=eval_ctx.task_profile,
+    )
+    if probe_metrics:
+        metrics["probe"] = probe_metrics
+        metrics["probe_pass_rate"] = probe_metrics.get("probe_pass_rate")
 
     hook_state = await resolve_project_domain_hooks(db, project_id)
     metrics = apply_evaluator_hook(
