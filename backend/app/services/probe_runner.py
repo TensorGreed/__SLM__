@@ -29,6 +29,7 @@ can swap in an LLM judge without touching the runner's shape.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Awaitable, Callable, Sequence
 
 from app.services.probe_pack_service import PROBE_PACK_VERSION
@@ -210,10 +211,25 @@ def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _judge_cache_key(probe_id: str, probe_input: str, output: str) -> str:
+    """Stable key for a judge verdict over (probe id, probe input, model
+    output). Identical outputs across re-evals (greedy decoding →
+    deterministic) hash to the same key, so the judge is called once and
+    reused. The probe *input* is in the key too: editing a probe's wording
+    (which the judge sees) invalidates its cached verdicts even if a model
+    output coincidentally matches."""
+    digest = hashlib.sha256(
+        f"{probe_id}\x00{probe_input}\x00{output}".encode("utf-8")
+    )
+    return digest.hexdigest()[:32]
+
+
 async def apply_llm_judge(
     snapshot: dict[str, Any],
     probes: list[dict[str, Any]],
     judge_fn: JudgeFn,
+    *,
+    cache: Any | None = None,
 ) -> dict[str, Any]:
     """Re-score the judge-eligible (refusal / grounding) results with an
     injected LLM judge, overriding the keyword heuristic. Deterministic
@@ -224,20 +240,44 @@ async def apply_llm_judge(
     that returns ``None`` — or raises — leaves the heuristic verdict in
     place, so a flaky/absent judge can only *improve* on the heuristic,
     never erase it. Aggregates are recomputed from the merged verdicts.
+
+    ``cache`` (phase 18) is an optional verdict cache (``get(key)`` /
+    ``set(key, verdict)``, keyed by ``_judge_cache_key``). A hit reuses
+    the stored verdict without a judge call. ``judge_calls`` /
+    ``judge_cached`` are stamped on the snapshot so the LLM-judge cost is
+    visible per run.
     """
     by_id = {p["id"]: p for p in probes}
+    judge_calls = 0
+    judge_cached = 0
     for r in snapshot.get("results", []):
         if r.get("property") not in JUDGE_ELIGIBLE_PROPERTIES:
             continue
         probe = by_id.get(r["id"])
         if probe is None:
             continue
-        # Hand the judge the probe with the actual model output attached.
-        probe_with_output = {**probe, "_model_output": r.get("output", "")}
-        try:
-            verdict = await judge_fn(probe_with_output)
-        except Exception:
-            verdict = None
+        output = r.get("output", "")
+        key = _judge_cache_key(str(r["id"]), str(probe.get("input", "")), output)
+
+        verdict = None
+        if cache is not None:
+            cached = cache.get(key)
+            if cached is not None:
+                verdict = cached
+                judge_cached += 1
+
+        if verdict is None:
+            # Hand the judge the probe with the actual model output.
+            probe_with_output = {**probe, "_model_output": output}
+            try:
+                verdict = await judge_fn(probe_with_output)
+            except Exception:
+                verdict = None
+            if verdict is not None:
+                judge_calls += 1
+                if cache is not None:
+                    cache.set(key, verdict)
+
         if verdict is None:
             continue
         passed, reason = verdict
@@ -250,4 +290,6 @@ async def apply_llm_judge(
     merged["judged"] = sum(
         1 for r in merged["results"] if r.get("scored_by") == "judge"
     )
+    merged["judge_calls"] = judge_calls
+    merged["judge_cached"] = judge_cached
     return merged

@@ -211,6 +211,18 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                             Graded against probes you didn't author — independent of
                             your gold-set pass-rate.
                         </p>
+                        {(typeof run.judge_calls === 'number' ||
+                            typeof run.judge_cached === 'number') && (
+                            <p
+                                className="probe-pack__judge-cost"
+                                data-testid="probe-pack-judge-cost"
+                            >
+                                LLM judge: {run.judge_calls ?? 0} call
+                                {(run.judge_calls ?? 0) === 1 ? '' : 's'}
+                                {(run.judge_cached ?? 0) > 0 &&
+                                    ` · ${run.judge_cached} reused from cache`}
+                            </p>
+                        )}
                     </div>
                 ) : (
                     <ul className="probe-pack__kinds" data-testid="probe-pack-kinds">

@@ -304,3 +304,10 @@
     font-style: italic;
     opacity: 0.8;
 }
+
+/* LLM-judge cost accounting line (phase 18). */
+.probe-pack__judge-cost {
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: var(--text-muted);
+}

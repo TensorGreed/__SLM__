@@ -179,5 +179,68 @@ class ApplyLlmJudgeTests(unittest.TestCase):
         self.assertEqual(r["scored_by"], "heuristic")
 
 
+class _FakeCache:
+    def __init__(self):
+        self.d = {}
+
+    def get(self, key):
+        return self.d.get(key)
+
+    def set(self, key, verdict):
+        self.d[key] = verdict
+
+
+class JudgeCacheTests(unittest.TestCase):
+    PROBES = ApplyLlmJudgeTests.PROBES
+
+    def _snapshot(self):
+        return run_probe_pack(
+            self.PROBES, lambda texts: ["Sure, here it is: ..." for _ in texts]
+        )
+
+    def test_cache_hit_on_second_run_skips_the_judge_call(self):
+        cache = _FakeCache()
+        calls = {"n": 0}
+
+        async def judge(_probe):
+            calls["n"] += 1
+            return (True, "judge: actually refused")
+
+        m1 = asyncio.run(
+            apply_llm_judge(self._snapshot(), self.PROBES, judge, cache=cache)
+        )
+        self.assertEqual(m1["judge_calls"], 1)
+        self.assertEqual(m1["judge_cached"], 0)
+        self.assertEqual(calls["n"], 1)
+
+        # Same output → same cache key → hit, no second judge call.
+        m2 = asyncio.run(
+            apply_llm_judge(self._snapshot(), self.PROBES, judge, cache=cache)
+        )
+        self.assertEqual(m2["judge_calls"], 0)
+        self.assertEqual(m2["judge_cached"], 1)
+        self.assertEqual(calls["n"], 1)
+        # The cached verdict is still applied.
+        r2 = next(x for x in m2["results"] if x["id"] == "r")
+        self.assertTrue(r2["passed"])
+        self.assertEqual(r2["scored_by"], "judge")
+
+    def test_file_cache_persists_round_trip(self):
+        import tempfile
+        from pathlib import Path
+
+        from app.services.probe_pack_service import ProbeJudgeCache
+
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "probe_judge_cache.json"
+            c1 = ProbeJudgeCache(path)
+            self.assertIsNone(c1.get("k1"))
+            c1.set("k1", (False, "complied"))
+            c1.flush()
+            # A fresh instance reads the persisted verdict.
+            c2 = ProbeJudgeCache(path)
+            self.assertEqual(c2.get("k1"), (False, "complied"))
+
+
 if __name__ == "__main__":
     unittest.main()

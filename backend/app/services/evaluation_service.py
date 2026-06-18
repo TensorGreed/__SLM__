@@ -725,7 +725,16 @@ async def _safe_run_probe_pack(
         if any(p.get("property") in JUDGE_ELIGIBLE_PROPERTIES for p in probes):
             judge_fn = await _build_probe_judge_fn(db, project_id)
             if judge_fn is not None:
-                snapshot = await apply_llm_judge(snapshot, list(probes), judge_fn)
+                # Phase 18 — reuse verdicts for identical (probe, output)
+                # pairs across re-evals so re-running the same checkpoint
+                # costs no judge calls.
+                from app.services.probe_pack_service import build_probe_judge_cache
+
+                cache = build_probe_judge_cache(project_id)
+                snapshot = await apply_llm_judge(
+                    snapshot, list(probes), judge_fn, cache=cache
+                )
+                cache.flush()
         return snapshot
     except Exception as exc:  # noqa: BLE001 — never block eval completion
         print(

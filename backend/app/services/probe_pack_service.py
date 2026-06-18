@@ -475,6 +475,81 @@ def divergence_streak(history: list[dict[str, Any]], threshold: float) -> int:
     return streak
 
 
+class ProbeJudgeCache:
+    """File-backed verdict cache for the probe LLM-judge (phase 18).
+
+    Keyed by ``probe_runner._judge_cache_key(probe_id, output)``. Greedy
+    decoding makes probe outputs deterministic, so re-evaluating the same
+    checkpoint hits the cache for every probe → zero judge calls (and
+    zero cost). Best-effort: any load/write error degrades to an empty
+    (or non-persisted) cache rather than failing the eval."""
+
+    MAX_ENTRIES = 2000
+
+    def __init__(self, path: Any) -> None:
+        self._path = path
+        self._data: dict[str, dict[str, Any]] = {}
+        self._dirty = False
+        try:
+            if path.exists():
+                import json
+
+                with path.open(encoding="utf-8") as fp:
+                    loaded = json.load(fp)
+                if isinstance(loaded, dict):
+                    self._data = {
+                        k: v for k, v in loaded.items() if isinstance(v, dict)
+                    }
+        except Exception:
+            self._data = {}
+
+    def get(self, key: str) -> "tuple[bool, str] | None":
+        v = self._data.get(key)
+        if isinstance(v, dict) and "passed" in v:
+            return (bool(v["passed"]), str(v.get("reason", "")))
+        return None
+
+    def set(self, key: str, verdict: "tuple[bool, str]") -> None:
+        passed, reason = verdict
+        self._data[key] = {"passed": bool(passed), "reason": str(reason)}
+        self._dirty = True
+        if len(self._data) > self.MAX_ENTRIES:
+            # Bound growth — evict the oldest entry (dicts keep insertion
+            # order). The cache is an optimisation, never a source of
+            # truth, so eviction is always safe.
+            self._data.pop(next(iter(self._data)), None)
+
+    def flush(self) -> None:
+        if not self._dirty:
+            return
+        try:
+            import json
+
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._path.with_suffix(".json.tmp")
+            with tmp.open("w", encoding="utf-8") as fp:
+                json.dump(self._data, fp)
+            tmp.replace(self._path)
+            self._dirty = False
+        except Exception:
+            pass
+
+
+def build_probe_judge_cache(project_id: int) -> ProbeJudgeCache:
+    """Construct the project's file-backed judge cache."""
+    from pathlib import Path
+
+    from app.config import settings
+
+    path = (
+        Path(settings.DATA_DIR)
+        / "projects"
+        / str(project_id)
+        / "probe_judge_cache.json"
+    )
+    return ProbeJudgeCache(path)
+
+
 async def get_probe_pack_for_project(
     db: AsyncSession, project_id: int
 ) -> dict[str, Any]:

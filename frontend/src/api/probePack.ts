@@ -61,6 +61,9 @@ export interface ProbeRun {
     run_at: string | null;
     eval_result_id?: number;
     experiment_id?: number;
+    /** Phase 18 — LLM-judge cost accounting for this run. */
+    judge_calls?: number;
+    judge_cached?: number;
 }
 
 export interface ProbeGateConfig {

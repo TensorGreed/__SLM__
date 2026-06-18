@@ -409,8 +409,16 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   `pack["divergence_history"]`. **Phase 17** — the sparkline is
   interactive: each run is a clickable point (`onOpenRun` prop → EvalPanel
   `loadResults(experiment_id)` + scroll to `#experiment-scorecard`) with a
-  hover readout (gold/probe/gap/date) + native `<title>` tooltip. See
-  `ROADMAP.md` Epic E0 phases 8–17.
+  hover readout (gold/probe/gap/date) + native `<title>` tooltip. **Phase 18
+  (judge cost + caching)** — `probe_runner.apply_llm_judge` takes a cache
+  (`get`/`set` keyed by `_judge_cache_key(probe_id, output)`); identical
+  outputs across re-evals (greedy decoding → deterministic) hit it, so
+  re-running the same checkpoint costs zero judge calls. The cache is
+  `probe_pack_service.ProbeJudgeCache` (file-backed at
+  `data/projects/<id>/probe_judge_cache.json`, best-effort, MAX_ENTRIES
+  evict-oldest). The snapshot carries `judge_calls`/`judge_cached`, shown
+  as a "LLM judge: N calls · M reused from cache" line in `ProbePackPanel`.
+  See `ROADMAP.md` Epic E0 phases 8–18.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

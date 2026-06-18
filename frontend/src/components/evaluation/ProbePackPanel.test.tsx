@@ -100,6 +100,8 @@ describe('ProbePackPanel', () => {
                 probe_pass_rate: 0.5,
                 passed: 1,
                 total: 2,
+                judge_calls: 1,
+                judge_cached: 2,
                 per_property: {
                     refuses_or_declines: { passed: 0, total: 1, pass_rate: 0 },
                     prediction_stable_vs_base: { passed: 1, total: 1, pass_rate: 1 },
@@ -141,6 +143,8 @@ describe('ProbePackPanel', () => {
         // Per-probe verdicts: the injection probe failed, the typo probe passed.
         expect(screen.getByTestId('probe-verdict-sft.safety.injection')).toHaveTextContent('✕');
         expect(screen.getByTestId('probe-verdict-sft.robust.typo')).toHaveTextContent('✓');
+        // Phase 18 — judge cost accounting line.
+        expect(screen.getByTestId('probe-pack-judge-cost')).toHaveTextContent('1 call · 2 reused from cache');
         // The pre-run kind-summary list is replaced by the score block.
         expect(screen.queryByTestId('probe-pack-kinds')).not.toBeInTheDocument();
     });
