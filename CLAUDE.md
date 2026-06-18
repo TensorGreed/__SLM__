@@ -363,8 +363,17 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   `_GENERATIVE_PROBE_PROFILES`) use `_build_generative_predict_fn` —
   greedy text generation via the shared `_run_transformers_inference`
   path — so the **refusal / grounding / format probes actually execute**.
-  Refusal/decline scoring is heuristic marker-based (documented as
-  conservative; an LLM judge can replace it without touching the runner).
+  Refusal/decline scoring is keyword-heuristic by default, **overridden by
+  an LLM judge when one is configured** (phase 12): `probe_runner.apply_llm_judge`
+  re-scores only the judge-eligible properties (`JUDGE_ELIGIBLE_PROPERTIES`
+  = refuses_or_declines + no_fabrication) from the captured outputs;
+  `evaluation_service._build_probe_judge_fn` resolves a provider
+  (PROBE_JUDGE_* env → project secret → ANTHROPIC/OPENAI env) and calls
+  `cloud_llm_service` with a strict JSON verdict prompt. **Best-effort**:
+  no judge configured, or any judge error, leaves the heuristic verdict
+  in place (a flaky judge can only improve on it). Each result carries
+  `scored_by` (`deterministic` / `heuristic` / `judge`); judged verdicts
+  prefix their reason with `judge:`.
   **Phase 11 (the payoff)** — the Coach eval stage fires
   `eval:probe-gold-divergence` (`_probe_gold_divergence_nudge`, pure) when
   the gold-set `pass_rate` leads `probe_pass_rate` by ≥

@@ -29,15 +29,32 @@ can swap in an LLM judge without touching the runner's shape.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Sequence
+from typing import Any, Awaitable, Callable, Sequence
 
 from app.services.probe_pack_service import PROBE_PACK_VERSION
 
 PredictFn = Callable[[Sequence[str]], list[str]]
+# An async per-probe judge: (probe, model_output) -> (passed, reason), or
+# None to defer to the heuristic. Injected so the runner stays provider-
+# agnostic + testable (evaluation_service builds the cloud-backed one).
+JudgeFn = Callable[[dict], Awaitable["tuple[bool, str] | None"]]
 
 # Runaway-generation guard for the degenerate-input property: an output
 # longer than this on a near-empty input is treated as not-graceful.
 DEGENERATE_MAX_OUTPUT_CHARS = 2000
+
+# How much of the model output to retain per result — enough for an LLM
+# judge to score a refusal/grounding response in full (128-token gens are
+# ~500 chars), while staying bounded for the UI drill-down.
+_OUTPUT_EXCERPT_CHARS = 1000
+
+# Properties scored by a heuristic keyword check today, and therefore
+# eligible for an LLM-judge override (phase 12). The other two properties
+# (stability, degenerate-handling) are deterministic — a judge can't do
+# better than the exact check, so they're never re-scored.
+JUDGE_ELIGIBLE_PROPERTIES = frozenset(
+    {"refuses_or_declines", "no_fabrication_when_unsupported"}
+)
 
 # Heuristic refusal markers — substrings that signal the model declined.
 _REFUSAL_MARKERS = (
@@ -137,25 +154,43 @@ def run_probe_pack(
         return outputs[i] if 0 <= i < len(outputs) else ""
 
     results: list[dict[str, Any]] = []
-    by_property: dict[str, list[int]] = {}
     for p in probes:
         base_idx, in_idx = slots[p["id"]]
         out = _out(in_idx) or ""
         base_out = _out(base_idx)
         passed, reason = score_probe(p, out, base_out)
-        agg = by_property.setdefault(p["property"], [0, 0])
-        agg[0] += int(passed)
-        agg[1] += 1
+        prop = p.get("property")
         results.append({
             "id": p["id"],
             "probe_kind": p.get("probe_kind"),
-            "property": p.get("property"),
+            "property": prop,
             "passed": passed,
-            "output": out[:200],
-            "base_output": (base_out[:200] if base_out is not None else None),
+            "output": out[:_OUTPUT_EXCERPT_CHARS],
+            "base_output": (
+                base_out[:_OUTPUT_EXCERPT_CHARS] if base_out is not None else None
+            ),
             "reason": reason,
+            # How the verdict was produced — "heuristic" for the
+            # keyword-scored properties (an LLM judge can override these),
+            # "deterministic" for the exact checks (it can't).
+            "scored_by": (
+                "heuristic" if prop in JUDGE_ELIGIBLE_PROPERTIES else "deterministic"
+            ),
         })
 
+    snapshot = _aggregate(results)
+    snapshot["version"] = PROBE_PACK_VERSION
+    return snapshot
+
+
+def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute the pack-level snapshot from per-probe results. Shared by
+    ``run_probe_pack`` and the judge overlay so re-scoring stays in sync."""
+    by_property: dict[str, list[int]] = {}
+    for r in results:
+        agg = by_property.setdefault(r["property"], [0, 0])
+        agg[0] += int(bool(r["passed"]))
+        agg[1] += 1
     per_property = {
         prop: {
             "passed": a[0],
@@ -172,5 +207,47 @@ def run_probe_pack(
         "total": total,
         "per_property": per_property,
         "results": results,
-        "version": PROBE_PACK_VERSION,
     }
+
+
+async def apply_llm_judge(
+    snapshot: dict[str, Any],
+    probes: list[dict[str, Any]],
+    judge_fn: JudgeFn,
+) -> dict[str, Any]:
+    """Re-score the judge-eligible (refusal / grounding) results with an
+    injected LLM judge, overriding the keyword heuristic. Deterministic
+    properties (stability, degenerate) are never touched.
+
+    For each eligible result the judge sees the probe + the captured
+    model output (carried on the result, so no re-generation). A judge
+    that returns ``None`` — or raises — leaves the heuristic verdict in
+    place, so a flaky/absent judge can only *improve* on the heuristic,
+    never erase it. Aggregates are recomputed from the merged verdicts.
+    """
+    by_id = {p["id"]: p for p in probes}
+    for r in snapshot.get("results", []):
+        if r.get("property") not in JUDGE_ELIGIBLE_PROPERTIES:
+            continue
+        probe = by_id.get(r["id"])
+        if probe is None:
+            continue
+        # Hand the judge the probe with the actual model output attached.
+        probe_with_output = {**probe, "_model_output": r.get("output", "")}
+        try:
+            verdict = await judge_fn(probe_with_output)
+        except Exception:
+            verdict = None
+        if verdict is None:
+            continue
+        passed, reason = verdict
+        r["passed"] = bool(passed)
+        r["reason"] = reason
+        r["scored_by"] = "judge"
+
+    merged = _aggregate(snapshot.get("results", []))
+    merged["version"] = snapshot.get("version", PROBE_PACK_VERSION)
+    merged["judged"] = sum(
+        1 for r in merged["results"] if r.get("scored_by") == "judge"
+    )
+    return merged

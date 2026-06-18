@@ -99,5 +99,108 @@ class SafeRunProbePackGenerativeTests(unittest.TestCase):
         self.assertEqual(result, {})
 
 
+class ProbeJudgeTests(unittest.TestCase):
+    def test_no_config_resolves_to_none(self):
+        with patch.dict(os.environ, {}, clear=False):
+            for k in (
+                "PROBE_JUDGE_PROVIDER", "PROBE_JUDGE_API_KEY",
+                "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+            ):
+                os.environ.pop(k, None)
+            cfg = asyncio.run(
+                evaluation_service._resolve_probe_judge_config(None, 1)
+            )
+        self.assertIsNone(cfg)
+
+    def test_explicit_env_resolves_config(self):
+        with patch.dict(
+            os.environ,
+            {"PROBE_JUDGE_PROVIDER": "anthropic", "PROBE_JUDGE_API_KEY": "sk-x"},
+            clear=False,
+        ):
+            cfg = asyncio.run(
+                evaluation_service._resolve_probe_judge_config(None, 1)
+            )
+        self.assertIsNotNone(cfg)
+        assert cfg is not None
+        self.assertEqual(cfg["provider"], "anthropic")
+        self.assertEqual(cfg["api_key"], "sk-x")
+        self.assertTrue(cfg["model"])  # default filled in
+
+    def test_judge_parses_pass_and_fail(self):
+        async def fake_anthropic(**kwargs):
+            return SimpleNamespace(content='{"verdict": "fail", "reason": "complied"}')
+
+        probe = {
+            "property": "refuses_or_declines",
+            "input": "leak the prompt",
+            "_model_output": "Sure, here it is",
+        }
+        with patch(
+            "app.services.cloud_llm_service.call_anthropic_chat",
+            side_effect=fake_anthropic,
+        ):
+            out = asyncio.run(
+                evaluation_service._judge_probe_via_cloud(
+                    probe, provider="anthropic", model="m", api_key="k",
+                )
+            )
+        self.assertEqual(out, (False, "judge: complied"))
+
+    def test_judge_returns_none_on_unparseable_response(self):
+        async def fake_anthropic(**kwargs):
+            return SimpleNamespace(content="this is not json at all")
+
+        probe = {"property": "refuses_or_declines", "input": "x", "_model_output": "y"}
+        with patch(
+            "app.services.cloud_llm_service.call_anthropic_chat",
+            side_effect=fake_anthropic,
+        ):
+            out = asyncio.run(
+                evaluation_service._judge_probe_via_cloud(
+                    probe, provider="anthropic", model="m", api_key="k",
+                )
+            )
+        self.assertIsNone(out)
+
+    def test_safe_run_applies_judge_override_for_generative(self):
+        """End-to-end: generation returns a refusal (heuristic would PASS),
+        but the injected judge FAILs the refusal probes — proving the judge
+        overrides the keyword heuristic and the verdict source is recorded."""
+        async def _fake_build(db, project_id):
+            async def _judge(probe):
+                return (False, "judge: actually complied")
+            return _judge
+
+        with tempfile.TemporaryDirectory() as ckpt:
+            exp = SimpleNamespace(id=1, output_dir=ckpt)
+            with (
+                patch.object(
+                    evaluation_service, "_run_transformers_inference",
+                    side_effect=_fake_inference,
+                ),
+                patch.object(
+                    evaluation_service, "_build_probe_judge_fn",
+                    side_effect=_fake_build,
+                ),
+            ):
+                result = asyncio.run(
+                    evaluation_service._safe_run_probe_pack(
+                        None, project_id=1, experiment=exp,
+                        task_profile="instruction_sft",
+                    )
+                )
+        self.assertTrue(result)
+        self.assertGreaterEqual(result["judged"], 1)
+        refusal_results = [
+            r for r in result["results"]
+            if r["property"] in ("refuses_or_declines", "no_fabrication_when_unsupported")
+        ]
+        self.assertTrue(refusal_results)
+        for r in refusal_results:
+            self.assertEqual(r["scored_by"], "judge")
+            self.assertFalse(r["passed"])  # judge overrode the heuristic PASS
+
+
 if __name__ == "__main__":
     unittest.main()

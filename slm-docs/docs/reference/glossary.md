@@ -149,8 +149,12 @@ per-property result with a ✓/✕ per probe. Classification packs are graded wi
 classifier-head predictor (robustness + degenerate probes); generative shapes
 (instruction_sft, rag_qa, structured_extraction, summarization) are graded with
 a text-generation predictor, so the refusal / grounding / format probes execute
-too. The refusal/decline checks are heuristic (keyword markers) and conservative
-by design — a future slice can swap in an LLM judge.
+too. The refusal/decline checks default to a conservative keyword heuristic, but
+are **upgraded to an LLM judge** whenever a cloud-LLM key is configured (project
+secret or `PROBE_JUDGE_*` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` env). The
+judge is best-effort: if it's absent or errors, the heuristic verdict stands, so
+it can only sharpen the result, never break it. Each probe records whether its
+verdict came from the `deterministic` check, the `heuristic`, or the `judge`.
 
 ## Hallucination trap
 
