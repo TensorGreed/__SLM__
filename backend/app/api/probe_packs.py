@@ -19,6 +19,7 @@ from app.services.probe_pack_service import (
     PROBE_GATE_DEFAULT_THRESHOLD,
     get_probe_pack_for_project,
     set_probe_gate,
+    set_probe_kind_weights,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/probe-pack", tags=["Probe Pack"])
@@ -30,6 +31,12 @@ class ProbeGateConfig(BaseModel):
     enabled: bool = False
     min_pass_rate: float = Field(default=PROBE_GATE_DEFAULT_THRESHOLD, ge=0.0, le=1.0)
     required: bool = True
+
+
+class ProbeKindWeightsBody(BaseModel):
+    """Phase 22 — per-project probe-kind weight overrides. Unknown kinds
+    and out-of-range values are dropped server-side."""
+    weights: dict[str, float] = Field(default_factory=dict)
 
 
 @router.get("")
@@ -59,5 +66,18 @@ async def put_probe_gate(
             min_pass_rate=body.min_pass_rate,
             required=body.required,
         )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.put("/kind-weights")
+async def put_probe_kind_weights(
+    project_id: int,
+    body: ProbeKindWeightsBody,
+    db: AsyncSession = Depends(get_db),
+):
+    """Set per-kind weight overrides; returns the effective (merged) map."""
+    try:
+        return await set_probe_kind_weights(db, project_id, body.weights)
     except ValueError as e:
         raise HTTPException(404, str(e))

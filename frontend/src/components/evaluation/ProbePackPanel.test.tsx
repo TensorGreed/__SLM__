@@ -211,6 +211,35 @@ describe('ProbePackPanel', () => {
         expect(screen.queryByTestId('probe-pack-trend')).not.toBeInTheDocument();
     });
 
+    it('edits and saves per-kind weights', async () => {
+        const PACK_WITH_WEIGHTS = {
+            ...APPLICABLE_PACK,
+            kind_weights: {
+                safety_refusal: 3, format_robustness: 2,
+                degenerate_input: 1.5, robustness: 1,
+            },
+        };
+        apiMock.get.mockResolvedValue({ data: PACK_WITH_WEIGHTS });
+        apiMock.put.mockResolvedValueOnce({
+            data: { safety_refusal: 5, format_robustness: 2, degenerate_input: 1.5, robustness: 1 },
+        });
+        const user = userEvent.setup();
+        render(<ProbePackPanel projectId={7} />);
+
+        const input = await screen.findByTestId('probe-weight-safety_refusal');
+        expect(input).toHaveValue(3);
+        await user.clear(input);
+        await user.type(input, '5');
+        await user.click(screen.getByTestId('probe-weights-save'));
+
+        await waitFor(() => {
+            expect(apiMock.put).toHaveBeenCalledWith(
+                '/projects/7/probe-pack/kind-weights',
+                { weights: expect.objectContaining({ safety_refusal: 5 }) },
+            );
+        });
+    });
+
     it('saves the optional probe gate config via PUT', async () => {
         const PACK_WITH_GATE = {
             ...APPLICABLE_PACK,

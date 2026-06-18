@@ -151,6 +151,8 @@ def score_probe(
 def run_probe_pack(
     probes: list[dict[str, Any]],
     predict_fn: PredictFn,
+    *,
+    weights: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Run every probe through ``predict_fn`` (one batched call) and
     score by property. Returns a snapshot:
@@ -177,6 +179,12 @@ def run_probe_pack(
 
     outputs = list(predict_fn(inputs)) if inputs else []
 
+    # Per-project kind weights (phase 22) override the defaults; a
+    # per-probe ``weight`` field overrides even those.
+    effective_weights = (
+        weights if isinstance(weights, dict) and weights else PROBE_KIND_WEIGHTS
+    )
+
     def _out(i: int | None) -> str | None:
         if i is None:
             return None
@@ -197,7 +205,7 @@ def run_probe_pack(
             "weight": (
                 float(p["weight"])
                 if isinstance(p.get("weight"), (int, float))
-                else _kind_weight(p.get("probe_kind"))
+                else float(effective_weights.get(str(p.get("probe_kind")), 1.0))
             ),
             "output": out[:_OUTPUT_EXCERPT_CHARS],
             "base_output": (

@@ -329,3 +329,32 @@
     background: rgba(99, 102, 241, 0.1);
     color: var(--accent, #4f46e5);
 }
+
+/* Per-kind weight editor (phase 22). */
+.probe-pack__weights-editor {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px dashed var(--border-color);
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.probe-pack__weights-editor-label {
+    font-weight: 600;
+}
+
+.probe-pack__weight-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-muted);
+}
+
+.probe-pack__weight-input {
+    width: 52px;
+    padding: 2px 4px;
+}

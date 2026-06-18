@@ -172,6 +172,24 @@ class ProbeGateConfigTests(unittest.TestCase):
         self.assertEqual(gate["threshold"], 0.75)
         self.assertEqual(gate["gate_id"], "min_probe_pass_rate")
 
+    def test_read_kind_weights_merges_and_validates(self):
+        from app.services.probe_pack_service import read_probe_kind_weights
+        proj = SimpleNamespace(runtime_config={"probe_kind_weights": {
+            "safety_refusal": 5.0,   # valid override
+            "bogus_kind": 9,         # unknown → dropped
+            "robustness": 99,        # out of range → default kept
+        }})
+        w = read_probe_kind_weights(proj)
+        self.assertEqual(w["safety_refusal"], 5.0)
+        self.assertNotIn("bogus_kind", w)
+        self.assertEqual(w["robustness"], 1.0)
+        self.assertEqual(w["format_robustness"], 2.0)  # default preserved
+
+    def test_read_kind_weights_defaults_when_unset(self):
+        from app.services.probe_pack_service import read_probe_kind_weights
+        w = read_probe_kind_weights(SimpleNamespace(runtime_config=None))
+        self.assertEqual(w["safety_refusal"], 3.0)
+
 
 class ProbePackApiTests(unittest.TestCase):
     @classmethod
@@ -282,6 +300,25 @@ class ProbePackApiTests(unittest.TestCase):
         body2 = self.client.get(f"/api/projects/{pid}/probe-pack").json()
         self.assertTrue(body2["gate_config"]["enabled"])
         self.assertEqual(body2["gate_config"]["min_pass_rate"], 0.8)
+
+    def test_kind_weights_put_round_trips_and_validates(self):
+        pid = self._create_project(recipe_id="classification")
+        # Defaults present in the pack payload.
+        body0 = self.client.get(f"/api/projects/{pid}/probe-pack").json()
+        self.assertEqual(body0["kind_weights"]["safety_refusal"], 3.0)
+
+        put = self.client.put(
+            f"/api/projects/{pid}/probe-pack/kind-weights",
+            json={"weights": {"safety_refusal": 5.0, "bogus": 9, "robustness": 99}},
+        )
+        self.assertEqual(put.status_code, 200, put.text)
+        effective = put.json()
+        self.assertEqual(effective["safety_refusal"], 5.0)   # valid override
+        self.assertNotIn("bogus", effective)                 # unknown dropped
+        self.assertEqual(effective["robustness"], 1.0)       # out of range → default
+        # GET reflects the persisted override.
+        body = self.client.get(f"/api/projects/{pid}/probe-pack").json()
+        self.assertEqual(body["kind_weights"]["safety_refusal"], 5.0)
 
     def test_put_gate_rejects_out_of_range_threshold(self):
         pid = self._create_project(recipe_id="classification")

@@ -718,7 +718,13 @@ async def _safe_run_probe_pack(
         else:
             return {}
 
-        snapshot = run_probe_pack(list(probes), predict_fn)
+        # Phase 22 — per-project kind weights feed the weighted score.
+        from app.services.probe_pack_service import (
+            get_probe_kind_weights_for_project,
+        )
+
+        weights = await get_probe_kind_weights_for_project(db, project_id)
+        snapshot = run_probe_pack(list(probes), predict_fn, weights=weights)
 
         # Phase 12 — override the keyword heuristic on refusal/grounding
         # probes with an LLM judge when one is configured. Best-effort:

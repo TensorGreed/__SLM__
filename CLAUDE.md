@@ -429,7 +429,14 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   `weight` override allowed), so a safety failure outweighs a robustness
   nit. The snapshot also carries `unweighted_pass_rate` (shown raw for
   honesty) + `weighted_by_kind`; the gate + divergence read the weighted
-  rate. See `ROADMAP.md` Epic E0 phases 8–21.
+  rate. **Phase 22** makes the weights **per-project**: overrides in
+  `runtime_config["probe_kind_weights"]` (validated to known kinds, 0–10),
+  merged over the defaults by `probe_pack_service.read_probe_kind_weights`
+  and injected into `run_probe_pack(..., weights=...)` via
+  `get_probe_kind_weights_for_project`. `PUT
+  /api/projects/{id}/probe-pack/kind-weights` sets them; the pack payload
+  carries the effective `kind_weights`; `ProbePackPanel` has a per-kind
+  weight editor. See `ROADMAP.md` Epic E0 phases 8–22.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

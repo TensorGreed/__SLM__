@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { fetchProbePack, setProbeGate } from '../../api/probePack';
+import { fetchProbePack, setProbeGate, setProbeKindWeights } from '../../api/probePack';
 import type {
     DivergencePoint,
     Probe,
@@ -62,6 +62,9 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
     const [gateEnabled, setGateEnabled] = useState(false);
     const [gatePct, setGatePct] = useState(70);
     const [gateSaving, setGateSaving] = useState(false);
+    // Phase 22 — per-kind weight editor state, seeded from the pack.
+    const [weights, setWeights] = useState<Record<string, number>>({});
+    const [weightsSaving, setWeightsSaving] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -88,6 +91,23 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
             setGatePct(Math.round((gc.min_pass_rate ?? 0.7) * 100));
         }
     }, [pack]);
+
+    // Seed the weights editor when a fresh pack arrives.
+    useEffect(() => {
+        if (pack?.kind_weights) setWeights({ ...pack.kind_weights });
+    }, [pack]);
+
+    const saveWeights = useCallback(async () => {
+        setWeightsSaving(true);
+        try {
+            await setProbeKindWeights(projectId, weights);
+            await load();
+        } catch {
+            setError('Could not save the weights.');
+        } finally {
+            setWeightsSaving(false);
+        }
+    }, [projectId, weights, load]);
 
     const saveGate = useCallback(async () => {
         setGateSaving(true);
@@ -379,6 +399,46 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                     <strong> blocks</strong> the eval gate — not just nudges.
                 </p>
             </div>
+
+            {Object.keys(weights).length > 0 && (
+                <div className="probe-pack__weights-editor" data-testid="probe-pack-weights-editor">
+                    <span className="probe-pack__weights-editor-label">
+                        Score weights by kind
+                    </span>
+                    {(['safety_refusal', 'format_robustness', 'degenerate_input', 'robustness'] as const)
+                        .filter((kind) => kind in weights)
+                        .map((kind) => (
+                            <label key={kind} className="probe-pack__weight-field">
+                                {kindLabel(kind)}
+                                <input
+                                    type="number"
+                                    min={0}
+                                    max={10}
+                                    step={0.5}
+                                    value={weights[kind]}
+                                    onChange={(e) =>
+                                        setWeights((w) => ({
+                                            ...w,
+                                            [kind]: Number(e.target.value),
+                                        }))
+                                    }
+                                    data-testid={`probe-weight-${kind}`}
+                                    className="probe-pack__weight-input"
+                                    aria-label={`Weight for ${kindLabel(kind)}`}
+                                />
+                            </label>
+                        ))}
+                    <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => void saveWeights()}
+                        disabled={weightsSaving}
+                        data-testid="probe-weights-save"
+                    >
+                        {weightsSaving ? 'Saving…' : 'Save weights'}
+                    </button>
+                </div>
+            )}
 
             <ul className="probe-pack__list">
                 {probes.map((p) => {

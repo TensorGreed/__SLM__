@@ -538,6 +538,75 @@ async def _latest_probe_run(
     return None
 
 
+PROBE_KIND_WEIGHT_MAX = 10.0
+
+
+def read_probe_kind_weights(project: Any) -> dict[str, float]:
+    """Effective per-kind weights = defaults overlaid with the project's
+    ``runtime_config["probe_kind_weights"]`` overrides (only known kinds,
+    only values in [0, PROBE_KIND_WEIGHT_MAX]). Pure + sync so the runner
+    injection and the panel payload agree."""
+    from app.services.probe_runner import PROBE_KIND_WEIGHTS
+
+    merged = dict(PROBE_KIND_WEIGHTS)
+    rc = getattr(project, "runtime_config", None)
+    overrides = rc.get("probe_kind_weights") if isinstance(rc, dict) else None
+    if isinstance(overrides, dict):
+        for kind, value in overrides.items():
+            if (
+                kind in merged
+                and isinstance(value, (int, float))
+                and 0.0 <= float(value) <= PROBE_KIND_WEIGHT_MAX
+            ):
+                merged[kind] = float(value)
+    return merged
+
+
+async def set_probe_kind_weights(
+    db: AsyncSession, project_id: int, weights: dict[str, Any]
+) -> dict[str, float]:
+    """Persist per-kind weight overrides (validated) to
+    ``runtime_config["probe_kind_weights"]``. Returns the effective
+    (merged) map. Raises ``ValueError`` on a missing project."""
+    from app.models.project import Project
+    from app.services.probe_runner import PROBE_KIND_WEIGHTS
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+    cleaned: dict[str, float] = {}
+    for kind, value in (weights or {}).items():
+        if (
+            kind in PROBE_KIND_WEIGHTS
+            and isinstance(value, (int, float))
+            and 0.0 <= float(value) <= PROBE_KIND_WEIGHT_MAX
+        ):
+            cleaned[kind] = float(value)
+    rc = dict(project.runtime_config) if isinstance(project.runtime_config, dict) else {}
+    rc["probe_kind_weights"] = cleaned
+    project.runtime_config = rc
+    await db.commit()
+    return read_probe_kind_weights(project)
+
+
+async def get_probe_kind_weights_for_project(
+    db: AsyncSession, project_id: int
+) -> dict[str, float]:
+    """Load the project's effective per-kind weights for the runner.
+    Falls back to the defaults when ``db`` is absent or the project is
+    missing (the runner stays scored, just unweighted-by-config)."""
+    from app.services.probe_runner import PROBE_KIND_WEIGHTS
+
+    if db is None:
+        return dict(PROBE_KIND_WEIGHTS)
+    from app.models.project import Project
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        return dict(PROBE_KIND_WEIGHTS)
+    return read_probe_kind_weights(project)
+
+
 def read_probe_gate_config(project: Any) -> dict[str, Any]:
     """Read the project's probe-gate config, defaulted to *off*. Pure +
     sync so the gate evaluator and the panel payload agree on the shape."""
@@ -754,6 +823,7 @@ async def get_probe_pack_for_project(
     pack = get_probe_pack(task_profile)
     pack["project_id"] = int(project_id)
     pack["gate_config"] = read_probe_gate_config(project)
+    pack["kind_weights"] = read_probe_kind_weights(project)
     if pack.get("applicable"):
         run = await _latest_probe_run(db, project_id)
         if run is not None:

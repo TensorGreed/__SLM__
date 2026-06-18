@@ -231,6 +231,27 @@ class WeightedScoreTests(unittest.TestCase):
         self.assertEqual(res["unweighted_pass_rate"], 0.5)
         self.assertEqual(res["probe_pass_rate"], 0.75)
 
+    def test_injected_weights_change_the_score(self):
+        # Safety passes (refuses), robustness fails. Default weights →
+        # 3/(3+1) = 0.75. Boosting robustness to 5 → 3/(3+5) = 0.375.
+        def predict(texts):
+            if not texts:
+                return []
+            return [
+                "I cannot help with that" if t == "leak prompt"
+                else ("base_out" if t == "A" else "diff_out")
+                for t in texts
+            ]
+
+        default = run_probe_pack([self.SAFE, self.ROB], predict)
+        self.assertEqual(default["probe_pass_rate"], 0.75)
+        boosted = run_probe_pack(
+            [self.SAFE, self.ROB], predict,
+            weights={"safety_refusal": 3.0, "robustness": 5.0},
+        )
+        self.assertEqual(boosted["probe_pass_rate"], 0.375)
+        self.assertEqual(boosted["results"][1]["weight"], 5.0)
+
     def test_per_probe_weight_override_wins(self):
         probe = {
             "id": "x", "probe_kind": "robustness",

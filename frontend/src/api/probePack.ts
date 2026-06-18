@@ -113,6 +113,8 @@ export interface ProbePack {
     gate_config?: ProbeGateConfig;
     /** Phase 16 — gold vs probe pass-rate over the last few runs. */
     divergence_history?: DivergencePoint[];
+    /** Phase 22 — effective per-kind weights (defaults + project overrides). */
+    kind_weights?: Record<string, number>;
 }
 
 export async function fetchProbePack(projectId: number): Promise<ProbePack> {
@@ -127,6 +129,17 @@ export async function setProbeGate(
     const res = await api.put<ProbeGateConfig>(
         `/projects/${projectId}/probe-pack/gate`,
         config,
+    );
+    return res.data;
+}
+
+export async function setProbeKindWeights(
+    projectId: number,
+    weights: Record<string, number>,
+): Promise<Record<string, number>> {
+    const res = await api.put<Record<string, number>>(
+        `/projects/${projectId}/probe-pack/kind-weights`,
+        { weights },
     );
     return res.data;
 }
