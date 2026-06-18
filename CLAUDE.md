@@ -406,7 +406,11 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   `PROBE_GOLD_DIVERGENCE_PERSISTENT_STREAK` (3) with a "still diverging
   after N evals" note + `probe-gold-divergence.persistent` rule_id, and
   `ProbePackPanel` renders a two-line sparkline (gold vs probe) from
-  `pack["divergence_history"]`. See `ROADMAP.md` Epic E0 phases 8–16.
+  `pack["divergence_history"]`. **Phase 17** — the sparkline is
+  interactive: each run is a clickable point (`onOpenRun` prop → EvalPanel
+  `loadResults(experiment_id)` + scroll to `#experiment-scorecard`) with a
+  hover readout (gold/probe/gap/date) + native `<title>` tooltip. See
+  `ROADMAP.md` Epic E0 phases 8–17.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

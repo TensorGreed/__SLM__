@@ -145,22 +145,42 @@ describe('ProbePackPanel', () => {
         expect(screen.queryByTestId('probe-pack-kinds')).not.toBeInTheDocument();
     });
 
+    const HISTORY = [
+        { run_at: '2026-06-17T10:00:00Z', experiment_id: 11, eval_result_id: 1, gold_pass_rate: 0.9, probe_pass_rate: 0.5, divergence: 0.4 },
+        { run_at: '2026-06-18T10:00:00Z', experiment_id: 12, eval_result_id: 2, gold_pass_rate: 0.92, probe_pass_rate: 0.7, divergence: 0.22 },
+    ];
+
     it('renders the two-rulers trend sparkline when history has >= 2 points', async () => {
-        const PACK_WITH_HISTORY = {
-            ...APPLICABLE_PACK,
-            divergence_history: [
-                { run_at: '2026-06-17T10:00:00Z', gold_pass_rate: 0.9, probe_pass_rate: 0.5, divergence: 0.4 },
-                { run_at: '2026-06-18T10:00:00Z', gold_pass_rate: 0.92, probe_pass_rate: 0.7, divergence: 0.22 },
-            ],
-        };
-        apiMock.get.mockResolvedValueOnce({ data: PACK_WITH_HISTORY });
+        apiMock.get.mockResolvedValueOnce({ data: { ...APPLICABLE_PACK, divergence_history: HISTORY } });
         render(<ProbePackPanel projectId={7} />);
         const trend = await screen.findByTestId('probe-pack-trend');
         expect(trend).toHaveTextContent('Two rulers over 2 runs');
-        // Latest gap (0.22) surfaced.
         expect(trend).toHaveTextContent('22pts');
-        // Two polylines (gold + probe).
         expect(trend.querySelectorAll('polyline')).toHaveLength(2);
+        // One clickable point per run.
+        expect(trend.querySelectorAll('circle')).toHaveLength(2);
+    });
+
+    it('clicking a sparkline point opens that run via onOpenRun', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: { ...APPLICABLE_PACK, divergence_history: HISTORY } });
+        const onOpenRun = vi.fn();
+        const user = userEvent.setup();
+        render(<ProbePackPanel projectId={7} onOpenRun={onOpenRun} />);
+        const point = await screen.findByTestId('probe-spark-point-1');
+        await user.click(point);
+        expect(onOpenRun).toHaveBeenCalledWith(12);
+    });
+
+    it('updates the hover readout to the hovered run', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: { ...APPLICABLE_PACK, divergence_history: HISTORY } });
+        const user = userEvent.setup();
+        render(<ProbePackPanel projectId={7} onOpenRun={vi.fn()} />);
+        const readout = await screen.findByTestId('probe-pack-trend-readout');
+        // Default readout = latest run (probe 70%).
+        expect(readout).toHaveTextContent('probe 70%');
+        // Hover the older point → readout switches to it (probe 50%).
+        await user.hover(screen.getByTestId('probe-spark-point-0'));
+        expect(screen.getByTestId('probe-pack-trend-readout')).toHaveTextContent('probe 50%');
     });
 
     it('renders no sparkline with fewer than 2 history points', async () => {

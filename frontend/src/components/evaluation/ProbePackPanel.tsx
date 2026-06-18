@@ -28,6 +28,8 @@ import './ProbePackPanel.css';
 
 interface ProbePackPanelProps {
     projectId: number;
+    /** Phase 17 — open a run's scorecard when a sparkline point is clicked. */
+    onOpenRun?: (experimentId: number) => void;
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -48,11 +50,13 @@ function kindLabel(kind: string): string {
     return KIND_LABEL[kind] ?? kind;
 }
 
-export default function ProbePackPanel({ projectId }: ProbePackPanelProps) {
+export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelProps) {
     const [pack, setPack] = useState<ProbePack | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
+    // Phase 17 — sparkline point the user is hovering (for the readout).
+    const [hoveredRun, setHoveredRun] = useState<number | null>(null);
     // Phase 13 — optional probe-gate form state, seeded from the pack.
     const [gateEnabled, setGateEnabled] = useState(false);
     const [gatePct, setGatePct] = useState(70);
@@ -254,11 +258,51 @@ export default function ProbePackPanel({ projectId }: ProbePackPanelProps) {
                         >
                             <polyline className="probe-pack__spark-gold" points={goldPts} fill="none" />
                             <polyline className="probe-pack__spark-probe" points={probePts} fill="none" />
+                            {history.map((p, i) => {
+                                const clickable = typeof p.experiment_id === 'number';
+                                return (
+                                    <circle
+                                        key={p.eval_result_id ?? i}
+                                        className={`probe-pack__spark-point${clickable ? ' probe-pack__spark-point--clickable' : ''}`}
+                                        cx={x(i)}
+                                        cy={y(p.probe_pass_rate)}
+                                        r={hoveredRun === i ? 3.5 : 2.5}
+                                        data-testid={`probe-spark-point-${i}`}
+                                        onMouseEnter={() => setHoveredRun(i)}
+                                        onMouseLeave={() => setHoveredRun(null)}
+                                        onClick={
+                                            clickable
+                                                ? () => onOpenRun?.(p.experiment_id as number)
+                                                : undefined
+                                        }
+                                    >
+                                        <title>
+                                            {`gold ${Math.round(p.gold_pass_rate * 100)}% · probe ${Math.round(p.probe_pass_rate * 100)}%`}
+                                            {p.run_at ? ` · ${new Date(p.run_at).toLocaleDateString()}` : ''}
+                                        </title>
+                                    </circle>
+                                );
+                            })}
                         </svg>
                         <div className="probe-pack__trend-legend">
                             <span className="probe-pack__legend-gold">gold set</span>
                             <span className="probe-pack__legend-probe">independent probes</span>
                         </div>
+                        {(() => {
+                            const p = hoveredRun != null ? history[hoveredRun] : latest;
+                            if (!p) return null;
+                            return (
+                                <div className="probe-pack__trend-readout" data-testid="probe-pack-trend-readout">
+                                    {p.run_at ? `${new Date(p.run_at).toLocaleDateString()}: ` : ''}
+                                    gold <strong>{Math.round(p.gold_pass_rate * 100)}%</strong>
+                                    {' · '}probe <strong>{Math.round(p.probe_pass_rate * 100)}%</strong>
+                                    {' · '}gap {Math.round(p.divergence * 100)}pts
+                                    {typeof p.experiment_id === 'number' && onOpenRun && (
+                                        <span className="probe-pack__trend-hint"> · click a point to open its scorecard</span>
+                                    )}
+                                </div>
+                            );
+                        })()}
                     </div>
                 );
             })()}

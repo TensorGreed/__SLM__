@@ -1000,7 +1000,18 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
             <CoachStrip projectId={projectId} stage="eval" />
             <EvalGapsPanel projectId={projectId} />
-            <ProbePackPanel projectId={projectId} />
+            <ProbePackPanel
+                projectId={projectId}
+                onOpenRun={(expId) => {
+                    void loadResults(expId);
+                    // Best-effort scroll to the now-selected run's scorecard.
+                    setTimeout(() => {
+                        document
+                            .getElementById('experiment-scorecard')
+                            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 0);
+                }}
+            />
             <div className="eval-subtab-switch" role="tablist" aria-label="Evaluation sections">
                 <button
                     type="button"
@@ -1795,7 +1806,9 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 ))}
 
             {selectedExp && (
-                <ScorecardPanel projectId={projectId} experimentId={selectedExp} />
+                <div id="experiment-scorecard">
+                    <ScorecardPanel projectId={projectId} experimentId={selectedExp} />
+                </div>
             )}
 
             {selectedExp && evalResults.length > 0 && (

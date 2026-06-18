@@ -280,3 +280,27 @@
 .probe-pack__legend-probe {
     color: var(--accent, #4f46e5);
 }
+
+/* Interactive sparkline points + hover readout (phase 17). */
+.probe-pack__spark-point {
+    fill: var(--accent, #6366f1);
+}
+
+.probe-pack__spark-point--clickable {
+    cursor: pointer;
+}
+
+.probe-pack__spark-point--clickable:hover {
+    fill: var(--accent-strong, #4338ca);
+}
+
+.probe-pack__trend-readout {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.probe-pack__trend-hint {
+    font-style: italic;
+    opacity: 0.8;
+}
