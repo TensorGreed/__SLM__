@@ -351,3 +351,14 @@
 .scorecard-probe-link:hover {
   text-decoration: underline;
 }
+
+/* Phase 15 — "Independent ruler" subsection header inside the gates table. */
+.scorecard-section-row td {
+  padding-top: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent, #4f46e5);
+  border-top: 2px solid var(--accent, #6366f1);
+}

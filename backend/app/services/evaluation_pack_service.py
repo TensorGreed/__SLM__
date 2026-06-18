@@ -2383,6 +2383,16 @@ async def evaluate_experiment_auto_gates(
             _attach_behavioral_details(check, behavioral_index)
             for check in checks
         ]
+    # Phase 15 — stamp each check with its gate's *origin* (e.g.
+    # "probe_pack"), distinct from the metric-provenance ``source`` dict
+    # ``_evaluate_gate`` already emits. Order-aligned with ``gates`` and
+    # applied after behavioral enrichment so it can't be dropped by a
+    # ``{**check}`` rebuild. Lets the scorecard group independent-ruler
+    # gates without sniffing metric ids.
+    for check, gate in zip(checks, gates):
+        gate_origin = gate.get("source")
+        if isinstance(gate_origin, str) and gate_origin:
+            check["gate_source"] = gate_origin
 
     failed_required = [
         str(item.get("gate_id") or "")

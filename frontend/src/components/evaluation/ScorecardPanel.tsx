@@ -66,6 +66,10 @@ interface GateCheck {
   actual: number | null;
   passed: boolean;
   reason?: string;
+  // Phase 15 — the gate's origin (e.g. "probe_pack"), distinct from the
+  // metric-provenance ``source``. Lets the panel group independent-ruler
+  // gates without sniffing metric ids.
+  gate_source?: string;
   // Multi-seed variance (phase 1 slice 3) — only present on aggregate rows.
   actual_std?: number;
   actual_min?: number;
@@ -135,12 +139,14 @@ const isSingleSliceGate = (gate: GateCheck): boolean =>
 const isBehavioralGate = (gate: GateCheck): boolean =>
   typeof gate.behavioral_test_id === 'string' && gate.behavioral_test_id.length > 0;
 
-// Phase 14 — the optional probe gate (phase 13) grades against the
-// platform-authored, held-out probe pack rather than the user's gold
-// set. Style it distinctly so it reads as an *independent* ruler, not
-// just another gold-set gate. Detected by its fixed metric/gate id.
-const isProbeGate = (gate: GateCheck): boolean =>
-  gate.metric_id === 'probe_pass_rate' || gate.gate_id === 'min_probe_pass_rate';
+// Phase 14/15 — gates sourced from the platform-authored, held-out probe
+// pack are an *independent* ruler, not a gold-set gate. Prefer the
+// phase-15 ``gate_source`` origin; fall back to the fixed probe metric/gate
+// id for older payloads (pre-source-propagation).
+const isIndependentGate = (gate: GateCheck): boolean =>
+  gate.gate_source === 'probe_pack' ||
+  gate.metric_id === 'probe_pass_rate' ||
+  gate.gate_id === 'min_probe_pass_rate';
 
 const BEHAVIORAL_KIND_COPY: Record<'INV' | 'DIR' | 'MFT', { label: string; explainer: string }> = {
   INV: {
@@ -228,6 +234,13 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
 
   const { is_ship, decision, reasons, gate_report } = scorecard;
 
+  // Phase 15 — group gates: gold-set / pack gates first, then any
+  // independent-ruler (probe-pack) gates under their own subsection.
+  const visibleGates = gate_report.checks.filter((g) => !isBehavioralGate(g));
+  const standardGates = visibleGates.filter((g) => !isIndependentGate(g));
+  const independentGates = visibleGates.filter((g) => isIndependentGate(g));
+  const orderedGates = [...standardGates, ...independentGates];
+
   return (
     <div className={`scorecard-container ${is_ship ? 'ship' : 'no-ship'}`}>
       <div className="scorecard-header">
@@ -260,7 +273,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
               </tr>
             </thead>
             <tbody>
-              {gate_report.checks.filter((g) => !isBehavioralGate(g)).map((gate) => {
+              {orderedGates.map((gate, idx) => {
                 const notMeasured = gate.actual === null;
                 const aggregate = isAggregateCheck(gate);
                 const worstSlice = isWorstSliceGate(gate);
@@ -268,7 +281,10 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                 const rowClass = notMeasured
                   ? (gate.required ? 'failed' : 'warn')
                   : (gate.passed ? 'passed' : gate.required ? 'failed' : 'warn');
-                const probeGate = isProbeGate(gate);
+                const probeGate = isIndependentGate(gate);
+                // Section header before the first independent-ruler gate.
+                const startsIndependentSection =
+                  independentGates.length > 0 && idx === standardGates.length;
                 const statusLabel = formatStatusLabel(gate, notMeasured);
                 const isExpanded = expandedGate === gate.gate_id;
                 // Multi-seed (phase 1) drill-down OR worst-slice
@@ -284,6 +300,16 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                     : undefined;
                 return (
                   <React.Fragment key={gate.gate_id}>
+                    {startsIndependentSection && (
+                      <tr
+                        className="scorecard-section-row"
+                        data-testid="scorecard-independent-section"
+                      >
+                        <td colSpan={5}>
+                          Independent ruler — graded against probes you didn't author
+                        </td>
+                      </tr>
+                    )}
                     <tr
                       className={`${rowClass}${canExpand ? ' scorecard-row--expandable' : ''}${probeGate ? ' scorecard-row--probe' : ''}`}
                       onClick={canExpand ? () => setExpandedGate(isExpanded ? null : gate.gate_id) : undefined}

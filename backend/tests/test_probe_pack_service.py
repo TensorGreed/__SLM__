@@ -256,6 +256,12 @@ class ProbePackApiTests(unittest.TestCase):
         self.assertIsNotNone(probe_check, [c.get("gate_id") for c in below["checks"]])
         assert probe_check is not None
         self.assertFalse(probe_check["passed"])  # 0.5 < 0.8
+        # Phase 15 — the gate's origin is propagated onto the check, and
+        # the probe gate is distinguishable from the pack's own gates.
+        self.assertEqual(probe_check.get("gate_source"), "probe_pack")
+        for c in below["checks"]:
+            if c.get("gate_id") != "min_probe_pass_rate":
+                self.assertNotEqual(c.get("gate_source"), "probe_pack")
 
         above = _run(0.9)
         probe_check2 = next(

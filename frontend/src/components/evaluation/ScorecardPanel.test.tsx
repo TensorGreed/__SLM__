@@ -691,7 +691,9 @@ describe('ScorecardPanel', () => {
           gate_id: 'min_probe_pass_rate', metric_id: 'probe_pass_rate',
           operator: 'gte', threshold: 0.8, required: true,
           actual: probePassed ? 0.9 : 0.5, passed: probePassed,
-          reason: probePassed ? 'ok' : 'below_threshold', source: 'probe_pack',
+          reason: probePassed ? 'ok' : 'below_threshold',
+          // Phase 15 — origin propagated from the backend.
+          gate_source: 'probe_pack',
         },
       ],
     },
@@ -715,5 +717,21 @@ describe('ScorecardPanel', () => {
     const link = await screen.findByTestId('scorecard-probe-link');
     expect(link).toHaveAttribute('href', '#probe-pack-panel');
     expect(link).toHaveTextContent('Inspect probes');
+  });
+
+  it('groups gate_source=probe_pack gates under an Independent ruler section', async () => {
+    apiMock.get.mockResolvedValueOnce({ data: scorecardWithProbeGate(true) });
+    render(<ScorecardPanel projectId={1} experimentId={7} />);
+    const section = await screen.findByTestId('scorecard-independent-section');
+    expect(section).toHaveTextContent('Independent ruler');
+    // The section header appears exactly once even with one probe gate.
+    expect(screen.getAllByTestId('scorecard-independent-section')).toHaveLength(1);
+  });
+
+  it('shows no independent section when there is no probe gate', async () => {
+    apiMock.get.mockResolvedValueOnce({ data: SCORECARD_SINGLE_SEED });
+    render(<ScorecardPanel projectId={1} experimentId={7} />);
+    await waitFor(() => expect(screen.getByText('min_f1')).toBeInTheDocument());
+    expect(screen.queryByTestId('scorecard-independent-section')).not.toBeInTheDocument();
   });
 });

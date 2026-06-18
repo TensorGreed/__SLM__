@@ -393,7 +393,12 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   — `ScorecardPanel` styles the probe gate distinctly (detected by
   `metric_id==="probe_pass_rate"`): an "Independent ruler" badge + accent
   rule, and an "Inspect probes →" link to `#probe-pack-panel` when it
-  fails. See `ROADMAP.md` Epic E0 phases 8–14.
+  fails. **Phase 15** — `evaluate_experiment_auto_gates` stamps each gate
+  check with `gate_source` (the gate's *origin*, e.g. `probe_pack`,
+  distinct from `_evaluate_gate`'s metric-provenance `source`), so the
+  scorecard groups all `gate_source==="probe_pack"` gates under an
+  "Independent ruler" subsection (detection now prefers `gate_source`,
+  falling back to the metric id). See `ROADMAP.md` Epic E0 phases 8–15.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to
