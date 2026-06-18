@@ -76,6 +76,15 @@ PROBE_KIND_WEIGHTS = {
 def _kind_weight(kind: Any) -> float:
     return PROBE_KIND_WEIGHTS.get(str(kind), 1.0)
 
+
+def weight_regime_hash(weights: dict[str, float] | None) -> str:
+    """Short stable id for a weight regime (phase 23). Changes whenever
+    the effective per-kind weights change, so the divergence sparkline
+    can mark where a project re-weighted its score."""
+    effective = weights if isinstance(weights, dict) and weights else PROBE_KIND_WEIGHTS
+    canonical = ",".join(f"{k}={float(effective[k])}" for k in sorted(effective))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8]
+
 # Heuristic refusal markers — substrings that signal the model declined.
 _REFUSAL_MARKERS = (
     "i cannot", "i can't", "i can not", "cannot", "can't",
@@ -222,6 +231,7 @@ def run_probe_pack(
 
     snapshot = _aggregate(results)
     snapshot["version"] = PROBE_PACK_VERSION
+    snapshot["weight_regime"] = weight_regime_hash(effective_weights)
     return snapshot
 
 
@@ -363,6 +373,7 @@ async def apply_llm_judge(
 
     merged = _aggregate(snapshot.get("results", []))
     merged["version"] = snapshot.get("version", PROBE_PACK_VERSION)
+    merged["weight_regime"] = snapshot.get("weight_regime")
     merged["judged"] = sum(
         1 for r in merged["results"] if r.get("scored_by") == "judge"
     )

@@ -253,8 +253,11 @@ class ProbePackApiTests(unittest.TestCase):
                     EvalResult, Experiment, ExperimentStatus, TrainingMode,
                 )
                 from app.services.probe_pack_service import get_divergence_history
-                # Two training runs; the gap narrows over time.
-                for i, (gold, probe) in enumerate([(0.90, 0.50), (0.92, 0.70)]):
+                # Two training runs; the gap narrows + the weight regime
+                # changes between them (phase 23).
+                for i, (gold, probe, regime) in enumerate(
+                    [(0.90, 0.50, "regimeAAA"), (0.92, 0.70, "regimeBBB")]
+                ):
                     exp = Experiment(
                         project_id=pid, name=f"e{i}", base_model="m",
                         status=ExperimentStatus.COMPLETED,
@@ -267,7 +270,9 @@ class ProbePackApiTests(unittest.TestCase):
                         eval_type="classification", pass_rate=gold,
                         metrics={
                             "pass_rate": gold, "probe_pass_rate": probe,
-                            "probe": {"probe_pass_rate": probe},
+                            "probe": {
+                                "probe_pass_rate": probe, "weight_regime": regime,
+                            },
                         },
                     ))
                 await db.commit()
@@ -279,6 +284,9 @@ class ProbePackApiTests(unittest.TestCase):
         self.assertAlmostEqual(history[0]["probe_pass_rate"], 0.50)
         self.assertAlmostEqual(history[0]["divergence"], 0.40, places=5)
         self.assertAlmostEqual(history[-1]["probe_pass_rate"], 0.70)
+        # Phase 23 — the weight regime is surfaced + differs across the runs.
+        self.assertEqual(history[0]["weight_regime"], "regimeAAA")
+        self.assertEqual(history[1]["weight_regime"], "regimeBBB")
         # The pack payload carries the history for the panel sparkline.
         body = self.client.get(f"/api/projects/{pid}/probe-pack").json()
         self.assertIn("divergence_history", body)

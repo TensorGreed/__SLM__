@@ -358,3 +358,14 @@
     width: 52px;
     padding: 2px 4px;
 }
+
+/* Weight-regime change marker on the sparkline (phase 23). */
+.probe-pack__spark-regime {
+    stroke: var(--warning, #b45309);
+    stroke-width: 1;
+    stroke-dasharray: 2 2;
+}
+
+.probe-pack__trend-regime-note {
+    color: var(--warning, #b45309);
+}

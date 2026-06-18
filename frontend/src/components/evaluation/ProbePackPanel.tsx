@@ -299,6 +299,20 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                                     {' '}· latest gap {Math.round(latest.divergence * 100)}pts
                                 </span>
                             )}
+                            {history.some(
+                                (p, i) =>
+                                    i > 0 &&
+                                    !!p.weight_regime &&
+                                    p.weight_regime !== history[i - 1].weight_regime,
+                            ) && (
+                                <span
+                                    className="probe-pack__trend-regime-note"
+                                    data-testid="probe-pack-regime-note"
+                                >
+                                    {' '}· ▏ marks a score-weight change (trend not
+                                    comparable across it)
+                                </span>
+                            )}
                         </div>
                         <svg
                             className="probe-pack__sparkline"
@@ -310,6 +324,26 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                         >
                             <polyline className="probe-pack__spark-gold" points={goldPts} fill="none" />
                             <polyline className="probe-pack__spark-probe" points={probePts} fill="none" />
+                            {history.map((p, i) => {
+                                if (i === 0) return null;
+                                const prev = history[i - 1];
+                                if (!p.weight_regime || p.weight_regime === prev.weight_regime) {
+                                    return null;
+                                }
+                                return (
+                                    <line
+                                        key={`regime-${i}`}
+                                        className="probe-pack__spark-regime"
+                                        x1={x(i)}
+                                        y1={PAD - 2}
+                                        x2={x(i)}
+                                        y2={H - PAD + 2}
+                                        data-testid={`probe-spark-regime-${i}`}
+                                    >
+                                        <title>Score weights changed before this run</title>
+                                    </line>
+                                );
+                            })}
                             {history.map((p, i) => {
                                 const clickable = typeof p.experiment_id === 'number';
                                 return (

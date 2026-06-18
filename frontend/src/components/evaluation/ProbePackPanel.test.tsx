@@ -161,8 +161,8 @@ describe('ProbePackPanel', () => {
     });
 
     const HISTORY = [
-        { run_at: '2026-06-17T10:00:00Z', experiment_id: 11, eval_result_id: 1, gold_pass_rate: 0.9, probe_pass_rate: 0.5, divergence: 0.4 },
-        { run_at: '2026-06-18T10:00:00Z', experiment_id: 12, eval_result_id: 2, gold_pass_rate: 0.92, probe_pass_rate: 0.7, divergence: 0.22 },
+        { run_at: '2026-06-17T10:00:00Z', experiment_id: 11, eval_result_id: 1, gold_pass_rate: 0.9, probe_pass_rate: 0.5, divergence: 0.4, weight_regime: 'aaa' },
+        { run_at: '2026-06-18T10:00:00Z', experiment_id: 12, eval_result_id: 2, gold_pass_rate: 0.92, probe_pass_rate: 0.7, divergence: 0.22, weight_regime: 'bbb' },
     ];
 
     it('renders the two-rulers trend sparkline when history has >= 2 points', async () => {
@@ -174,6 +174,22 @@ describe('ProbePackPanel', () => {
         expect(trend.querySelectorAll('polyline')).toHaveLength(2);
         // One clickable point per run.
         expect(trend.querySelectorAll('circle')).toHaveLength(2);
+        // Phase 23 — a weight-regime change is marked + flagged as not
+        // comparable across the change.
+        expect(screen.getByTestId('probe-spark-regime-1')).toBeInTheDocument();
+        expect(screen.getByTestId('probe-pack-regime-note')).toBeInTheDocument();
+    });
+
+    it('shows no regime marker when the weight regime is unchanged', async () => {
+        const SAME_REGIME = [
+            { ...HISTORY[0], weight_regime: 'aaa' },
+            { ...HISTORY[1], weight_regime: 'aaa' },
+        ];
+        apiMock.get.mockResolvedValueOnce({ data: { ...APPLICABLE_PACK, divergence_history: SAME_REGIME } });
+        render(<ProbePackPanel projectId={7} />);
+        await screen.findByTestId('probe-pack-trend');
+        expect(screen.queryByTestId('probe-spark-regime-1')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('probe-pack-regime-note')).not.toBeInTheDocument();
     });
 
     it('clicking a sparkline point opens that run via onOpenRun', async () => {

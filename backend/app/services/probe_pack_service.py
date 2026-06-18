@@ -707,6 +707,9 @@ async def get_divergence_history(
             "gold_pass_rate": round(float(gold_rate), 6),
             "probe_pass_rate": round(float(probe_rate), 6),
             "divergence": round(float(gold_rate) - float(probe_rate), 6),
+            # Phase 23 — weight regime active at this eval, so the panel
+            # can mark where the score weighting changed.
+            "weight_regime": probe.get("weight_regime"),
         })
         if len(points) >= limit:
             break

@@ -436,7 +436,12 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   `get_probe_kind_weights_for_project`. `PUT
   /api/projects/{id}/probe-pack/kind-weights` sets them; the pack payload
   carries the effective `kind_weights`; `ProbePackPanel` has a per-kind
-  weight editor. See `ROADMAP.md` Epic E0 phases 8–22.
+  weight editor. **Phase 23** stamps a `weight_regime` hash
+  (`probe_runner.weight_regime_hash`) into `metrics["probe"]` and onto each
+  divergence-history point, so the `ProbePackPanel` sparkline draws a
+  dashed vertical marker wherever consecutive runs used different weights
+  (with an honest "trend not comparable across it" note) — a weight change
+  no longer silently distorts the trend. See `ROADMAP.md` Epic E0 phases 8–23.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

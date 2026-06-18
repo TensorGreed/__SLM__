@@ -94,6 +94,9 @@ export interface DivergencePoint {
     gold_pass_rate: number;
     probe_pass_rate: number;
     divergence: number;
+    /** Phase 23 — weight regime active at this eval; a change between
+     * consecutive points means the score weighting was re-configured. */
+    weight_regime?: string | null;
 }
 
 export interface ProbePack {

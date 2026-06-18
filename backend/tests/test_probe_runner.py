@@ -261,6 +261,22 @@ class WeightedScoreTests(unittest.TestCase):
         self.assertEqual(res["results"][0]["weight"], 9.0)
         self.assertEqual(res["weighted_by_kind"]["robustness"]["weight"], 9.0)
 
+    def test_weight_regime_hash_is_stable_and_sensitive(self):
+        from app.services.probe_runner import weight_regime_hash
+        a = weight_regime_hash({"safety_refusal": 3.0, "robustness": 1.0})
+        b = weight_regime_hash({"safety_refusal": 3.0, "robustness": 1.0})
+        c = weight_regime_hash({"safety_refusal": 5.0, "robustness": 1.0})
+        self.assertEqual(a, b)
+        self.assertNotEqual(a, c)
+
+    def test_snapshot_carries_weight_regime_that_tracks_weights(self):
+        r1 = run_probe_pack([self.ROB], lambda t: ["x" for _ in t])
+        r2 = run_probe_pack(
+            [self.ROB], lambda t: ["x" for _ in t], weights={"robustness": 5.0}
+        )
+        self.assertIn("weight_regime", r1)
+        self.assertNotEqual(r1["weight_regime"], r2["weight_regime"])
+
 
 class _FakeCache:
     def __init__(self):
