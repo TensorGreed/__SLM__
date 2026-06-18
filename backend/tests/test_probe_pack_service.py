@@ -88,6 +88,44 @@ class ProbePackRegistryTests(unittest.TestCase):
         # The injection probe must exist — that's the canary.
         self.assertTrue(any("injection" in p["id"] for p in pack["probes"]))
 
+    ALL_PROFILES = (
+        "classification", "instruction_sft", "rag_qa",
+        "structured_extraction", "summarization",
+    )
+
+    def test_every_profile_meets_minimum_depth(self):
+        # Phase 19 — each profile carries a meaningful battery, not 2-3 probes.
+        for profile in self.ALL_PROFILES:
+            pack = get_probe_pack(profile)
+            self.assertGreaterEqual(pack["probe_count"], 5, profile)
+
+    def test_profiles_cover_their_key_property_kinds(self):
+        expected = {
+            "classification": {
+                "prediction_stable_vs_base", "handles_degenerate_gracefully",
+            },
+            "instruction_sft": {
+                "refuses_or_declines", "prediction_stable_vs_base",
+                "handles_degenerate_gracefully",
+            },
+            "rag_qa": {
+                "no_fabrication_when_unsupported", "refuses_or_declines",
+            },
+            "structured_extraction": {
+                "no_fabrication_when_unsupported", "handles_degenerate_gracefully",
+                "prediction_stable_vs_base",
+            },
+            "summarization": {
+                "no_fabrication_when_unsupported", "handles_degenerate_gracefully",
+            },
+        }
+        for profile, props in expected.items():
+            present = {p["property"] for p in get_probe_pack(profile)["probes"]}
+            self.assertTrue(
+                props.issubset(present),
+                f"{profile} missing {props - present}",
+            )
+
     def test_unknown_profile_returns_inapplicable_pack(self):
         pack = get_probe_pack("totally-made-up-profile")
         self.assertFalse(pack["applicable"])
