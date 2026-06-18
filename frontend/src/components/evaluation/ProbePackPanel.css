@@ -233,3 +233,50 @@
     font-size: 11px;
     color: var(--text-muted);
 }
+
+/* Two-rulers trend sparkline (phase 16). */
+.probe-pack__trend {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+
+.probe-pack__trend-head {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.probe-pack__trend-gap {
+    color: var(--danger, #b91c1c);
+}
+
+.probe-pack__sparkline {
+    display: block;
+    margin: 4px 0;
+}
+
+.probe-pack__spark-gold {
+    stroke: var(--text-muted, #94a3b8);
+    stroke-width: 1.5;
+}
+
+.probe-pack__spark-probe {
+    stroke: var(--accent, #6366f1);
+    stroke-width: 1.5;
+}
+
+.probe-pack__trend-legend {
+    display: flex;
+    gap: 12px;
+    font-size: 10px;
+}
+
+.probe-pack__legend-gold {
+    color: var(--text-muted, #94a3b8);
+}
+
+.probe-pack__legend-probe {
+    color: var(--accent, #4f46e5);
+}

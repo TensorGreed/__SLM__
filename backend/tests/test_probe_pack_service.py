@@ -186,6 +186,46 @@ class ProbePackApiTests(unittest.TestCase):
         resp = self.client.get("/api/projects/99887766/probe-pack")
         self.assertEqual(resp.status_code, 404)
 
+    def test_divergence_history_is_chronological_and_in_payload(self):
+        pid = self._create_project(recipe_id="classification")
+
+        async def _seed_and_read():
+            async with async_session_factory() as db:
+                from app.models.experiment import (
+                    EvalResult, Experiment, ExperimentStatus, TrainingMode,
+                )
+                from app.services.probe_pack_service import get_divergence_history
+                # Two training runs; the gap narrows over time.
+                for i, (gold, probe) in enumerate([(0.90, 0.50), (0.92, 0.70)]):
+                    exp = Experiment(
+                        project_id=pid, name=f"e{i}", base_model="m",
+                        status=ExperimentStatus.COMPLETED,
+                        training_mode=TrainingMode.SFT,
+                    )
+                    db.add(exp)
+                    await db.flush()
+                    db.add(EvalResult(
+                        experiment_id=exp.id, dataset_name="gold_test",
+                        eval_type="classification", pass_rate=gold,
+                        metrics={
+                            "pass_rate": gold, "probe_pass_rate": probe,
+                            "probe": {"probe_pass_rate": probe},
+                        },
+                    ))
+                await db.commit()
+                return await get_divergence_history(db, pid, limit=8)
+
+        history = asyncio.run(_seed_and_read())
+        self.assertEqual(len(history), 2)
+        # Chronological: oldest run (the wider 0.40 gap) first.
+        self.assertAlmostEqual(history[0]["probe_pass_rate"], 0.50)
+        self.assertAlmostEqual(history[0]["divergence"], 0.40, places=5)
+        self.assertAlmostEqual(history[-1]["probe_pass_rate"], 0.70)
+        # The pack payload carries the history for the panel sparkline.
+        body = self.client.get(f"/api/projects/{pid}/probe-pack").json()
+        self.assertIn("divergence_history", body)
+        self.assertEqual(len(body["divergence_history"]), 2)
+
     def test_gate_config_defaults_off_and_put_round_trips(self):
         pid = self._create_project(recipe_id="classification")
         body = self.client.get(f"/api/projects/{pid}/probe-pack").json()

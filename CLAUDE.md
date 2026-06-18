@@ -398,7 +398,15 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   distinct from `_evaluate_gate`'s metric-provenance `source`), so the
   scorecard groups all `gate_source==="probe_pack"` gates under an
   "Independent ruler" subsection (detection now prefers `gate_source`,
-  falling back to the metric id). See `ROADMAP.md` Epic E0 phases 8–15.
+  falling back to the metric id). **Phase 16 (cross-run memory)** —
+  `probe_pack_service.get_divergence_history` derives the gold-vs-probe
+  series from the immutable EvalResult rows (**no new table**, one point
+  per training run); `divergence_streak` counts consecutive diverging
+  runs. The Coach divergence nudge escalates warning→critical at
+  `PROBE_GOLD_DIVERGENCE_PERSISTENT_STREAK` (3) with a "still diverging
+  after N evals" note + `probe-gold-divergence.persistent` rule_id, and
+  `ProbePackPanel` renders a two-line sparkline (gold vs probe) from
+  `pack["divergence_history"]`. See `ROADMAP.md` Epic E0 phases 8–16.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

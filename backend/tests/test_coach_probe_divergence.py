@@ -77,6 +77,44 @@ class ProbeGoldDivergenceTests(unittest.TestCase):
         nudge = _probe_gold_divergence_nudge(1, _eval(0.90, 0.75))
         self.assertIsNotNone(nudge)
 
+    def test_persistent_streak_escalates_a_warning_to_critical(self):
+        # A moderate gap (0.90 vs 0.72 = 0.18) is a warning on a one-off,
+        # but a 3-run streak escalates it to critical with a "pattern" note.
+        row = _eval(0.90, 0.72)
+        warn = _probe_gold_divergence_nudge(1, row, streak=1)
+        assert warn is not None
+        self.assertEqual(warn["severity"], "warning")
+
+        crit = _probe_gold_divergence_nudge(1, row, streak=3)
+        assert crit is not None
+        self.assertEqual(crit["severity"], "critical")
+        self.assertEqual(crit["rule_id"], "probe-gold-divergence.persistent")
+        self.assertIn("consecutive", crit["body"])
+        self.assertEqual(crit["context"]["streak"], 3)
+
+
+class DivergenceStreakTests(unittest.TestCase):
+    def test_counts_consecutive_recent_diverging_runs(self):
+        from app.services.probe_pack_service import divergence_streak
+        # Chronological oldest → newest. Newest 2 diverge (≥0.15), the one
+        # before is fine → streak is 2 (stops at the non-diverging run).
+        history = [
+            {"divergence": 0.20},   # old, diverging (but broken by next)
+            {"divergence": 0.02},   # not diverging → resets
+            {"divergence": 0.18},
+            {"divergence": 0.25},   # newest
+        ]
+        self.assertEqual(divergence_streak(history, 0.15), 2)
+
+    def test_zero_when_latest_run_agrees(self):
+        from app.services.probe_pack_service import divergence_streak
+        history = [{"divergence": 0.3}, {"divergence": 0.01}]
+        self.assertEqual(divergence_streak(history, 0.15), 0)
+
+    def test_empty_history_is_zero(self):
+        from app.services.probe_pack_service import divergence_streak
+        self.assertEqual(divergence_streak([], 0.15), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

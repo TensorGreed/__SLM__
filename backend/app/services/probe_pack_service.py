@@ -408,6 +408,73 @@ async def set_probe_gate(
     return config
 
 
+async def get_divergence_history(
+    db: AsyncSession, project_id: int, *, limit: int = 10
+) -> list[dict[str, Any]]:
+    """Phase 16 — the gold-vs-probe history, one point per training run.
+
+    Derived from the immutable EvalResult rows (no extra table): each
+    point carries the gold-set ``pass_rate`` and the independent
+    ``probe_pass_rate`` captured in the same eval. Deduped to the latest
+    probe-carrying EvalResult per experiment and returned chronologically
+    (oldest → newest) so the panel can sparkline it and Coach can measure
+    a divergence streak."""
+    from sqlalchemy import desc, select
+
+    from app.models.experiment import EvalResult, Experiment
+
+    result = await db.execute(
+        select(EvalResult)
+        .join(Experiment, Experiment.id == EvalResult.experiment_id)
+        .where(Experiment.project_id == project_id)
+        .order_by(desc(EvalResult.created_at), desc(EvalResult.id))
+        .limit(max(limit * 5, 50))
+    )
+    seen_experiments: set[int] = set()
+    points: list[dict[str, Any]] = []
+    for row in result.scalars():
+        metrics = row.metrics or {}
+        probe = metrics.get("probe") if isinstance(metrics, dict) else None
+        if not isinstance(probe, dict):
+            continue
+        probe_rate = probe.get("probe_pass_rate")
+        gold_rate = row.pass_rate
+        if gold_rate is None and isinstance(metrics, dict):
+            gold_rate = metrics.get("pass_rate")
+        if not isinstance(probe_rate, (int, float)) or not isinstance(
+            gold_rate, (int, float)
+        ):
+            continue
+        if row.experiment_id in seen_experiments:
+            continue
+        seen_experiments.add(row.experiment_id)
+        points.append({
+            "run_at": row.created_at.isoformat() if row.created_at else None,
+            "experiment_id": row.experiment_id,
+            "eval_result_id": row.id,
+            "gold_pass_rate": round(float(gold_rate), 6),
+            "probe_pass_rate": round(float(probe_rate), 6),
+            "divergence": round(float(gold_rate) - float(probe_rate), 6),
+        })
+        if len(points) >= limit:
+            break
+    points.reverse()
+    return points
+
+
+def divergence_streak(history: list[dict[str, Any]], threshold: float) -> int:
+    """Count the most-recent *consecutive* runs where the gold-set rate
+    leads the probe rate by ≥ ``threshold``. Pure — drives Coach's
+    'still diverging after N evals' escalation."""
+    streak = 0
+    for point in reversed(history):
+        if float(point.get("divergence", 0.0)) >= threshold:
+            streak += 1
+        else:
+            break
+    return streak
+
+
 async def get_probe_pack_for_project(
     db: AsyncSession, project_id: int
 ) -> dict[str, Any]:
@@ -434,4 +501,7 @@ async def get_probe_pack_for_project(
         if run is not None:
             pack["run"] = run
             pack["status"] = "graded"
+        pack["divergence_history"] = await get_divergence_history(
+            db, project_id, limit=8
+        )
     return pack

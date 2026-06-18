@@ -145,6 +145,37 @@ describe('ProbePackPanel', () => {
         expect(screen.queryByTestId('probe-pack-kinds')).not.toBeInTheDocument();
     });
 
+    it('renders the two-rulers trend sparkline when history has >= 2 points', async () => {
+        const PACK_WITH_HISTORY = {
+            ...APPLICABLE_PACK,
+            divergence_history: [
+                { run_at: '2026-06-17T10:00:00Z', gold_pass_rate: 0.9, probe_pass_rate: 0.5, divergence: 0.4 },
+                { run_at: '2026-06-18T10:00:00Z', gold_pass_rate: 0.92, probe_pass_rate: 0.7, divergence: 0.22 },
+            ],
+        };
+        apiMock.get.mockResolvedValueOnce({ data: PACK_WITH_HISTORY });
+        render(<ProbePackPanel projectId={7} />);
+        const trend = await screen.findByTestId('probe-pack-trend');
+        expect(trend).toHaveTextContent('Two rulers over 2 runs');
+        // Latest gap (0.22) surfaced.
+        expect(trend).toHaveTextContent('22pts');
+        // Two polylines (gold + probe).
+        expect(trend.querySelectorAll('polyline')).toHaveLength(2);
+    });
+
+    it('renders no sparkline with fewer than 2 history points', async () => {
+        const PACK_ONE_POINT = {
+            ...APPLICABLE_PACK,
+            divergence_history: [
+                { run_at: null, gold_pass_rate: 0.9, probe_pass_rate: 0.5, divergence: 0.4 },
+            ],
+        };
+        apiMock.get.mockResolvedValueOnce({ data: PACK_ONE_POINT });
+        render(<ProbePackPanel projectId={7} />);
+        await screen.findByTestId('probe-pack');
+        expect(screen.queryByTestId('probe-pack-trend')).not.toBeInTheDocument();
+    });
+
     it('saves the optional probe gate config via PUT', async () => {
         const PACK_WITH_GATE = {
             ...APPLICABLE_PACK,

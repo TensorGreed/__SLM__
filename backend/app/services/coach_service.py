@@ -2623,14 +2623,21 @@ async def _eval_gaps_rollup_nudge(
 # gold set says green but the independent ruler disagrees" moment.
 PROBE_GOLD_DIVERGENCE_THRESHOLD = 0.15
 PROBE_GOLD_DIVERGENCE_CRITICAL = 0.30
+# Phase 16 — consecutive diverging evals at which a single-run "warning"
+# escalates to "critical": a one-off gap can be noise, but a sustained
+# one means the gold set really is blind to what the probes catch.
+PROBE_GOLD_DIVERGENCE_PERSISTENT_STREAK = 3
 
 
 def _probe_gold_divergence_nudge(
-    project_id: int, latest_eval: Any
+    project_id: int, latest_eval: Any, *, streak: int = 1
 ) -> dict[str, Any] | None:
     """Fire when the gold-set pass-rate leads the independent probe
     pass-rate by more than the threshold. Both numbers come off the same
     latest EvalResult (the probe run is folded in during evaluation).
+
+    ``streak`` (phase 16) is how many consecutive recent evals have
+    diverged; a sustained streak escalates the severity + copy.
 
     Pure + sync so it's unit-testable with a stub eval row. Returns
     ``None`` when there's no probe run, no gold pass-rate, or the gap is
@@ -2662,11 +2669,26 @@ def _probe_gold_divergence_nudge(
         for r in results
         if isinstance(r, dict) and not r.get("passed") and r.get("id")
     ]
+    persistent = streak >= PROBE_GOLD_DIVERGENCE_PERSISTENT_STREAK
+    # A sustained streak escalates a one-off "warning" to "critical": a
+    # single diverging eval can be noise; three in a row is a pattern.
     severity: Severity = (
-        "critical" if divergence >= PROBE_GOLD_DIVERGENCE_CRITICAL else "warning"
+        "critical"
+        if (divergence >= PROBE_GOLD_DIVERGENCE_CRITICAL or persistent)
+        else "warning"
     )
     shown = ", ".join(failing_ids[:3])
     more = f" +{len(failing_ids) - 3} more" if len(failing_ids) > 3 else ""
+    streak_note = (
+        f" This is the {streak} consecutive eval where the independent ruler "
+        "has disagreed — it's a pattern, not noise."
+        if streak >= 2
+        else ""
+    )
+    if divergence >= PROBE_GOLD_DIVERGENCE_CRITICAL:
+        base_rule = "probe-gold-divergence.critical"
+    else:
+        base_rule = "probe-gold-divergence.warn"
     return {
         "id": "eval:probe-gold-divergence",
         "title": "Your gold set says green, but the independent ruler disagrees",
@@ -2679,6 +2701,7 @@ def _probe_gold_divergence_nudge(
             + ". Your gold set may be too easy, or blind to what the probes catch "
             "(robustness, refusal, grounding). Inspect the failing probes before "
             "you trust the green gate."
+            + streak_note
         ),
         "severity": severity,
         "action": {
@@ -2686,17 +2709,14 @@ def _probe_gold_divergence_nudge(
             "label": "Inspect failing probes",
             "params": {"target": "probe-pack-panel"},
         },
-        "rule_id": (
-            "probe-gold-divergence.critical"
-            if divergence >= PROBE_GOLD_DIVERGENCE_CRITICAL
-            else "probe-gold-divergence.warn"
-        ),
+        "rule_id": "probe-gold-divergence.persistent" if persistent else base_rule,
         "context": {
             "gold_pass_rate": round(float(gold_rate), 6),
             "probe_pass_rate": round(float(probe_rate), 6),
             "divergence": round(divergence, 6),
             "failing_probe_ids": failing_ids,
             "failing_count": len(failing_ids),
+            "streak": streak,
         },
     }
 
@@ -2747,7 +2767,21 @@ async def _eval_stage_suggestions(
     # post-eval nudges: it's the honesty headline of the whole arc. When
     # the independent probe pack disagrees with the user's gold set, that
     # outranks the lower-stakes auto-RAG / cluster nudges below.
-    divergence_nudge = _probe_gold_divergence_nudge(project.id, latest)
+    # Phase 16 — measure the divergence streak so a sustained gap
+    # escalates ("still diverging after N evals"). Best-effort.
+    from app.services.probe_pack_service import (
+        divergence_streak,
+        get_divergence_history,
+    )
+
+    try:
+        _div_history = await get_divergence_history(db, project.id, limit=10)
+    except Exception:
+        _div_history = []
+    _streak = divergence_streak(_div_history, PROBE_GOLD_DIVERGENCE_THRESHOLD)
+    divergence_nudge = _probe_gold_divergence_nudge(
+        project.id, latest, streak=_streak
+    )
     if divergence_nudge:
         suggestions.append(divergence_nudge)
 

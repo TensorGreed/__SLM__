@@ -18,7 +18,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { fetchProbePack, setProbeGate } from '../../api/probePack';
-import type { Probe, ProbePack, ProbeResult } from '../../api/probePack';
+import type {
+    DivergencePoint,
+    Probe,
+    ProbePack,
+    ProbeResult,
+} from '../../api/probePack';
 import './ProbePackPanel.css';
 
 interface ProbePackPanelProps {
@@ -106,6 +111,12 @@ export default function ProbePackPanel({ projectId }: ProbePackPanelProps) {
     // Defensive: never throw on a malformed payload — degrade to empty.
     const probes: Probe[] = useMemo(
         () => (Array.isArray(pack?.probes) ? pack!.probes : []),
+        [pack],
+    );
+
+    // Gold-vs-probe history for the trend sparkline (defensive).
+    const history: DivergencePoint[] = useMemo(
+        () => (Array.isArray(pack?.divergence_history) ? pack!.divergence_history : []),
         [pack],
     );
 
@@ -207,6 +218,50 @@ export default function ProbePackPanel({ projectId }: ProbePackPanelProps) {
                     </ul>
                 )}
             </header>
+
+            {history.length >= 2 && (() => {
+                const W = 220;
+                const H = 44;
+                const PAD = 6;
+                const n = history.length;
+                const x = (i: number) => PAD + (i / (n - 1)) * (W - 2 * PAD);
+                const y = (r: number) =>
+                    PAD + (1 - Math.max(0, Math.min(1, r))) * (H - 2 * PAD);
+                const goldPts = history
+                    .map((p, i) => `${x(i).toFixed(1)},${y(p.gold_pass_rate).toFixed(1)}`)
+                    .join(' ');
+                const probePts = history
+                    .map((p, i) => `${x(i).toFixed(1)},${y(p.probe_pass_rate).toFixed(1)}`)
+                    .join(' ');
+                const latest = history[history.length - 1];
+                return (
+                    <div className="probe-pack__trend" data-testid="probe-pack-trend">
+                        <div className="probe-pack__trend-head">
+                            Two rulers over {n} run{n === 1 ? '' : 's'}
+                            {latest && latest.divergence >= 0.15 && (
+                                <span className="probe-pack__trend-gap">
+                                    {' '}· latest gap {Math.round(latest.divergence * 100)}pts
+                                </span>
+                            )}
+                        </div>
+                        <svg
+                            className="probe-pack__sparkline"
+                            viewBox={`0 0 ${W} ${H}`}
+                            width={W}
+                            height={H}
+                            role="img"
+                            aria-label="Gold-set vs independent probe pass-rate over recent runs"
+                        >
+                            <polyline className="probe-pack__spark-gold" points={goldPts} fill="none" />
+                            <polyline className="probe-pack__spark-probe" points={probePts} fill="none" />
+                        </svg>
+                        <div className="probe-pack__trend-legend">
+                            <span className="probe-pack__legend-gold">gold set</span>
+                            <span className="probe-pack__legend-probe">independent probes</span>
+                        </div>
+                    </div>
+                );
+            })()}
 
             <div className="probe-pack__gate" data-testid="probe-pack-gate">
                 <label className="probe-pack__gate-toggle">

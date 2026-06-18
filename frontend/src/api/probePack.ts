@@ -69,6 +69,15 @@ export interface ProbeGateConfig {
     required: boolean;
 }
 
+export interface DivergencePoint {
+    run_at: string | null;
+    experiment_id?: number;
+    eval_result_id?: number;
+    gold_pass_rate: number;
+    probe_pass_rate: number;
+    divergence: number;
+}
+
 export interface ProbePack {
     project_id?: number;
     task_profile: string | null;
@@ -84,6 +93,8 @@ export interface ProbePack {
     run?: ProbeRun;
     /** Phase 13 — the optional probe gate config (off by default). */
     gate_config?: ProbeGateConfig;
+    /** Phase 16 — gold vs probe pass-rate over the last few runs. */
+    divergence_history?: DivergencePoint[];
 }
 
 export async function fetchProbePack(projectId: number): Promise<ProbePack> {
