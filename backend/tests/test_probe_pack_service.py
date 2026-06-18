@@ -32,10 +32,14 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.database import async_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
 from app.services.probe_pack_service import (  # noqa: E402
+    PROBE_GATE_DEFAULT_THRESHOLD,
     PROBE_PACK_VERSION,
     ProbeProperty,
     get_probe_pack,
+    read_probe_gate_config,
 )
 
 _VALID_PROPERTIES = set(ProbeProperty.__args__)  # type: ignore[attr-defined]
@@ -95,6 +99,40 @@ class ProbePackRegistryTests(unittest.TestCase):
         self.assertFalse(pack["applicable"])
 
 
+class ProbeGateConfigTests(unittest.TestCase):
+    def test_default_config_is_off(self):
+        cfg = read_probe_gate_config(SimpleNamespace(runtime_config=None))
+        self.assertFalse(cfg["enabled"])
+        self.assertEqual(cfg["min_pass_rate"], PROBE_GATE_DEFAULT_THRESHOLD)
+        self.assertTrue(cfg["required"])
+
+    def test_reads_enabled_config(self):
+        proj = SimpleNamespace(runtime_config={
+            "probe_gate": {"enabled": True, "min_pass_rate": 0.8, "required": False},
+        })
+        cfg = read_probe_gate_config(proj)
+        self.assertTrue(cfg["enabled"])
+        self.assertEqual(cfg["min_pass_rate"], 0.8)
+        self.assertFalse(cfg["required"])
+
+    def test_resolve_probe_gate_off_by_default(self):
+        from app.services.evaluation_pack_service import _resolve_probe_gate
+        self.assertIsNone(_resolve_probe_gate(SimpleNamespace(runtime_config={})))
+
+    def test_resolve_probe_gate_when_enabled(self):
+        from app.services.evaluation_pack_service import _resolve_probe_gate
+        proj = SimpleNamespace(runtime_config={
+            "probe_gate": {"enabled": True, "min_pass_rate": 0.75},
+        })
+        gate = _resolve_probe_gate(proj)
+        self.assertIsNotNone(gate)
+        assert gate is not None
+        self.assertEqual(gate["metric_id"], "probe_pass_rate")
+        self.assertEqual(gate["operator"], "gte")
+        self.assertEqual(gate["threshold"], 0.75)
+        self.assertEqual(gate["gate_id"], "min_probe_pass_rate")
+
+
 class ProbePackApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -147,6 +185,85 @@ class ProbePackApiTests(unittest.TestCase):
     def test_get_probe_pack_missing_project_404s(self):
         resp = self.client.get("/api/projects/99887766/probe-pack")
         self.assertEqual(resp.status_code, 404)
+
+    def test_gate_config_defaults_off_and_put_round_trips(self):
+        pid = self._create_project(recipe_id="classification")
+        body = self.client.get(f"/api/projects/{pid}/probe-pack").json()
+        self.assertIn("gate_config", body)
+        self.assertFalse(body["gate_config"]["enabled"])
+
+        put = self.client.put(
+            f"/api/projects/{pid}/probe-pack/gate",
+            json={"enabled": True, "min_pass_rate": 0.8, "required": True},
+        )
+        self.assertEqual(put.status_code, 200, put.text)
+        self.assertTrue(put.json()["enabled"])
+        # GET reflects the new config.
+        body2 = self.client.get(f"/api/projects/{pid}/probe-pack").json()
+        self.assertTrue(body2["gate_config"]["enabled"])
+        self.assertEqual(body2["gate_config"]["min_pass_rate"], 0.8)
+
+    def test_put_gate_rejects_out_of_range_threshold(self):
+        pid = self._create_project(recipe_id="classification")
+        resp = self.client.put(
+            f"/api/projects/{pid}/probe-pack/gate",
+            json={"enabled": True, "min_pass_rate": 1.5},
+        )
+        self.assertEqual(resp.status_code, 422)
+
+    def test_enabled_probe_gate_is_evaluated_in_auto_gates(self):
+        """The whole point: an enabled probe gate enforces the independent
+        ruler — it fails when probe_pass_rate is below threshold and passes
+        when above."""
+        pid = self._create_project(recipe_id="classification")
+        self.client.put(
+            f"/api/projects/{pid}/probe-pack/gate",
+            json={"enabled": True, "min_pass_rate": 0.8, "required": True},
+        )
+
+        def _run(probe_rate: float) -> dict:
+            async def _go():
+                async with async_session_factory() as db:
+                    from app.models.experiment import (
+                        EvalResult, Experiment, ExperimentStatus, TrainingMode,
+                    )
+                    from app.services.evaluation_pack_service import (
+                        evaluate_experiment_auto_gates,
+                    )
+                    exp = Experiment(
+                        project_id=pid, name="e", base_model="m",
+                        status=ExperimentStatus.COMPLETED,
+                        training_mode=TrainingMode.SFT,
+                    )
+                    db.add(exp)
+                    await db.flush()
+                    db.add(EvalResult(
+                        experiment_id=exp.id, dataset_name="gold_test",
+                        eval_type="classification", pass_rate=0.95,
+                        metrics={"pass_rate": 0.95, "probe_pass_rate": probe_rate},
+                    ))
+                    await db.commit()
+                    return await evaluate_experiment_auto_gates(
+                        db, project_id=pid, experiment_id=exp.id,
+                    )
+            return asyncio.run(_go())
+
+        below = _run(0.5)
+        probe_check = next(
+            (c for c in below["checks"] if c.get("gate_id") == "min_probe_pass_rate"),
+            None,
+        )
+        self.assertIsNotNone(probe_check, [c.get("gate_id") for c in below["checks"]])
+        assert probe_check is not None
+        self.assertFalse(probe_check["passed"])  # 0.5 < 0.8
+
+        above = _run(0.9)
+        probe_check2 = next(
+            (c for c in above["checks"] if c.get("gate_id") == "min_probe_pass_rate"),
+            None,
+        )
+        assert probe_check2 is not None
+        self.assertTrue(probe_check2["passed"])  # 0.9 >= 0.8
 
     def test_pack_is_ready_not_run_before_any_eval(self):
         pid = self._create_project(recipe_id="classification")

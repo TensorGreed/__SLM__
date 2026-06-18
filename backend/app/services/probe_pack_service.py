@@ -43,6 +43,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 PROBE_PACK_VERSION = "probepacks.builtin/v1"
 
+# Phase 13 — optional, per-project probe gate. Off by default; when a
+# project enables it, ``probe_pass_rate`` (the independent ruler) becomes
+# a first-class eval gate beside the gold-set gates. Config is stored on
+# ``project.runtime_config["probe_gate"]``.
+PROBE_GATE_DEFAULT_THRESHOLD = 0.7
+
 ProbeKind = Literal[
     "robustness",
     "safety_refusal",
@@ -349,11 +355,64 @@ async def _latest_probe_run(
     return None
 
 
+def read_probe_gate_config(project: Any) -> dict[str, Any]:
+    """Read the project's probe-gate config, defaulted to *off*. Pure +
+    sync so the gate evaluator and the panel payload agree on the shape."""
+    rc = getattr(project, "runtime_config", None)
+    cfg = rc.get("probe_gate") if isinstance(rc, dict) else None
+    if not isinstance(cfg, dict):
+        return {
+            "enabled": False,
+            "min_pass_rate": PROBE_GATE_DEFAULT_THRESHOLD,
+            "required": True,
+        }
+    raw_threshold = cfg.get("min_pass_rate")
+    threshold = (
+        float(raw_threshold)
+        if isinstance(raw_threshold, (int, float))
+        else PROBE_GATE_DEFAULT_THRESHOLD
+    )
+    return {
+        "enabled": bool(cfg.get("enabled", False)),
+        "min_pass_rate": threshold,
+        "required": bool(cfg.get("required", True)),
+    }
+
+
+async def set_probe_gate(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    enabled: bool,
+    min_pass_rate: float,
+    required: bool,
+) -> dict[str, Any]:
+    """Write the project's probe-gate config to
+    ``runtime_config["probe_gate"]``. Raises ``ValueError`` on a missing
+    project (API → 404)."""
+    from app.models.project import Project
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+    rc = dict(project.runtime_config) if isinstance(project.runtime_config, dict) else {}
+    config = {
+        "enabled": bool(enabled),
+        "min_pass_rate": float(min_pass_rate),
+        "required": bool(required),
+    }
+    rc["probe_gate"] = config
+    # Reassign the whole dict so SQLAlchemy marks the JSON column dirty.
+    project.runtime_config = rc
+    await db.commit()
+    return config
+
+
 async def get_probe_pack_for_project(
     db: AsyncSession, project_id: int
 ) -> dict[str, Any]:
     """Resolve a project's recipe → task_profile → probe pack, enriched
-    with the latest probe run when one exists.
+    with the latest probe run + the gate config.
 
     Raises ``ValueError`` if the project doesn't exist (the API maps it
     to 404). Returns the ``applicable=False`` payload when the project
@@ -369,6 +428,7 @@ async def get_probe_pack_for_project(
     task_profile = _resolve_task_profile_id(project)
     pack = get_probe_pack(task_profile)
     pack["project_id"] = int(project_id)
+    pack["gate_config"] = read_probe_gate_config(project)
     if pack.get("applicable"):
         run = await _latest_probe_run(db, project_id)
         if run is not None:

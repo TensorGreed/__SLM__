@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { fetchProbePack } from '../../api/probePack';
+import { fetchProbePack, setProbeGate } from '../../api/probePack';
 import type { Probe, ProbePack, ProbeResult } from '../../api/probePack';
 import './ProbePackPanel.css';
 
@@ -48,6 +48,10 @@ export default function ProbePackPanel({ projectId }: ProbePackPanelProps) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
+    // Phase 13 — optional probe-gate form state, seeded from the pack.
+    const [gateEnabled, setGateEnabled] = useState(false);
+    const [gatePct, setGatePct] = useState(70);
+    const [gateSaving, setGateSaving] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -65,6 +69,31 @@ export default function ProbePackPanel({ projectId }: ProbePackPanelProps) {
     useEffect(() => {
         void load();
     }, [load]);
+
+    // Seed the gate form whenever a fresh pack arrives.
+    useEffect(() => {
+        const gc = pack?.gate_config;
+        if (gc) {
+            setGateEnabled(!!gc.enabled);
+            setGatePct(Math.round((gc.min_pass_rate ?? 0.7) * 100));
+        }
+    }, [pack]);
+
+    const saveGate = useCallback(async () => {
+        setGateSaving(true);
+        try {
+            await setProbeGate(projectId, {
+                enabled: gateEnabled,
+                min_pass_rate: Math.max(0, Math.min(1, gatePct / 100)),
+                required: true,
+            });
+            await load();
+        } catch {
+            setError('Could not save the gate config.');
+        } finally {
+            setGateSaving(false);
+        }
+    }, [projectId, gateEnabled, gatePct, load]);
 
     const toggle = (id: string) =>
         setExpanded((prev) => {
@@ -178,6 +207,47 @@ export default function ProbePackPanel({ projectId }: ProbePackPanelProps) {
                     </ul>
                 )}
             </header>
+
+            <div className="probe-pack__gate" data-testid="probe-pack-gate">
+                <label className="probe-pack__gate-toggle">
+                    <input
+                        type="checkbox"
+                        checked={gateEnabled}
+                        onChange={(e) => setGateEnabled(e.target.checked)}
+                        data-testid="probe-gate-enabled"
+                    />
+                    Enforce as an eval gate
+                </label>
+                {gateEnabled && (
+                    <span className="probe-pack__gate-threshold">
+                        require probe pass-rate ≥
+                        <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={gatePct}
+                            onChange={(e) => setGatePct(Number(e.target.value))}
+                            data-testid="probe-gate-threshold"
+                            className="probe-pack__gate-input"
+                            aria-label="Minimum probe pass-rate percent"
+                        />
+                        %
+                    </span>
+                )}
+                <button
+                    type="button"
+                    className="btn btn-sm probe-pack__gate-save"
+                    onClick={() => void saveGate()}
+                    disabled={gateSaving}
+                    data-testid="probe-gate-save"
+                >
+                    {gateSaving ? 'Saving…' : 'Save gate'}
+                </button>
+                <p className="probe-pack__gate-note">
+                    Off by default. When on, a low independent probe score
+                    <strong> blocks</strong> the eval gate — not just nudges.
+                </p>
+            </div>
 
             <ul className="probe-pack__list">
                 {probes.map((p) => {

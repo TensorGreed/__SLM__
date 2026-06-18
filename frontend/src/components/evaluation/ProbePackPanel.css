@@ -194,3 +194,42 @@
 .probe-pack__verdict--fail {
     color: var(--danger, #b91c1c);
 }
+
+/* Optional probe gate (phase 13). */
+.probe-pack__gate {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px dashed var(--border-color);
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.probe-pack__gate-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+}
+
+.probe-pack__gate-threshold {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-muted);
+}
+
+.probe-pack__gate-input {
+    width: 56px;
+    padding: 2px 4px;
+}
+
+.probe-pack__gate-note {
+    flex-basis: 100%;
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-muted);
+}

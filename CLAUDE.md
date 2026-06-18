@@ -381,7 +381,16 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   set says green but the independent ruler disagrees," deep-linking to the
   failing probes via the `probe-pack-panel` navigate target (anchor
   `#probe-pack-panel` on `ProbePackPanel`). Both rates come off the same
-  latest EvalResult. See `ROADMAP.md` Epic E0 phases 8–11.
+  latest EvalResult. **Phase 13 (optional gate)** — a project can
+  *enforce* the independent ruler, not just be nudged: `PUT
+  /api/projects/{id}/probe-pack/gate` writes
+  `project.runtime_config["probe_gate"]` (`{enabled, min_pass_rate,
+  required}`, off by default). `evaluation_pack_service._resolve_probe_gate`
+  injects a `min_probe_pass_rate` gate (`metric_id="probe_pass_rate"`)
+  into `evaluate_experiment_auto_gates` when enabled — `probe_pass_rate`
+  flattens into the gate snapshot like any scalar, so it resolves with no
+  new gate code. Configured via a toggle on `ProbePackPanel`. See
+  `ROADMAP.md` Epic E0 phases 8–13.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

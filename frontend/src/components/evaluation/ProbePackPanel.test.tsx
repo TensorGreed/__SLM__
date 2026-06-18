@@ -145,6 +145,36 @@ describe('ProbePackPanel', () => {
         expect(screen.queryByTestId('probe-pack-kinds')).not.toBeInTheDocument();
     });
 
+    it('saves the optional probe gate config via PUT', async () => {
+        const PACK_WITH_GATE = {
+            ...APPLICABLE_PACK,
+            gate_config: { enabled: false, min_pass_rate: 0.7, required: true },
+        };
+        apiMock.get.mockResolvedValue({ data: PACK_WITH_GATE });
+        apiMock.put.mockResolvedValueOnce({
+            data: { enabled: true, min_pass_rate: 0.85, required: true },
+        });
+        const user = userEvent.setup();
+        render(<ProbePackPanel projectId={7} />);
+
+        // Gate is off by default — no threshold input shown yet.
+        const enable = await screen.findByTestId('probe-gate-enabled');
+        expect(screen.queryByTestId('probe-gate-threshold')).not.toBeInTheDocument();
+
+        await user.click(enable);
+        const threshold = screen.getByTestId('probe-gate-threshold');
+        await user.clear(threshold);
+        await user.type(threshold, '85');
+        await user.click(screen.getByTestId('probe-gate-save'));
+
+        await waitFor(() => {
+            expect(apiMock.put).toHaveBeenCalledWith(
+                '/projects/7/probe-pack/gate',
+                { enabled: true, min_pass_rate: 0.85, required: true },
+            );
+        });
+    });
+
     it('renders the honest "no pack for this shape yet" note when inapplicable', async () => {
         apiMock.get.mockResolvedValueOnce({ data: INAPPLICABLE_PACK });
         render(<ProbePackPanel projectId={9} />);

@@ -63,6 +63,12 @@ export interface ProbeRun {
     experiment_id?: number;
 }
 
+export interface ProbeGateConfig {
+    enabled: boolean;
+    min_pass_rate: number;
+    required: boolean;
+}
+
 export interface ProbePack {
     project_id?: number;
     task_profile: string | null;
@@ -76,9 +82,22 @@ export interface ProbePack {
     note: string;
     /** Present once the pack has been run — the independent result. */
     run?: ProbeRun;
+    /** Phase 13 — the optional probe gate config (off by default). */
+    gate_config?: ProbeGateConfig;
 }
 
 export async function fetchProbePack(projectId: number): Promise<ProbePack> {
     const res = await api.get<ProbePack>(`/projects/${projectId}/probe-pack`);
+    return res.data;
+}
+
+export async function setProbeGate(
+    projectId: number,
+    config: ProbeGateConfig,
+): Promise<ProbeGateConfig> {
+    const res = await api.put<ProbeGateConfig>(
+        `/projects/${projectId}/probe-pack/gate`,
+        config,
+    );
     return res.data;
 }

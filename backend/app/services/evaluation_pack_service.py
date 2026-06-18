@@ -2295,6 +2295,33 @@ def _evaluate_required_metric_schema(
     return checks, sorted(set(missing))
 
 
+def _resolve_probe_gate(project: Any) -> dict[str, Any] | None:
+    """Phase 13 — the optional, per-project probe gate. Returns a gate
+    dict referencing the independent ``probe_pass_rate`` metric when the
+    project has enabled it, else ``None`` (off by default). The metric
+    flattens into the gate snapshot like any other top-level scalar, so
+    no new resolution code is needed."""
+    from app.services.probe_pack_service import (
+        PROBE_GATE_DEFAULT_THRESHOLD,
+        read_probe_gate_config,
+    )
+
+    cfg = read_probe_gate_config(project)
+    if not cfg.get("enabled"):
+        return None
+    threshold = cfg.get("min_pass_rate")
+    if not isinstance(threshold, (int, float)):
+        threshold = PROBE_GATE_DEFAULT_THRESHOLD
+    return {
+        "gate_id": "min_probe_pass_rate",
+        "metric_id": "probe_pass_rate",
+        "operator": "gte",
+        "threshold": float(threshold),
+        "required": bool(cfg.get("required", True)),
+        "source": "probe_pack",
+    }
+
+
 async def evaluate_experiment_auto_gates(
     db: AsyncSession,
     *,
@@ -2325,6 +2352,11 @@ async def evaluate_experiment_auto_gates(
     )
     task_spec, selected_task_profile, fallback_used = _select_task_spec(pack, resolved_task_profile)
     gates = [item for item in list(task_spec.get("gates") or []) if isinstance(item, dict)]
+    # Phase 13 — fold in the optional probe gate (off unless the project
+    # enabled it) so the independent ruler can *enforce*, not just nudge.
+    probe_gate = _resolve_probe_gate(project)
+    if probe_gate is not None:
+        gates = [*gates, probe_gate]
     metric_schema = dict(task_spec.get("metric_schema") or {})
 
     latest_by_type = await _latest_eval_by_type(db, experiment_id)
