@@ -669,4 +669,51 @@ describe('ScorecardPanel', () => {
       screen.queryByText(/lower-bound policy applies the std/i)
     ).toBeNull();
   });
+
+  // Phase 14 — probe gate styled distinctly as the independent ruler.
+  const scorecardWithProbeGate = (probePassed: boolean) => ({
+    experiment_id: 7,
+    is_ship: probePassed,
+    decision: probePassed ? 'SHIP' : 'NO-SHIP',
+    reasons: [],
+    failed_gates: [],
+    missing_metrics: [],
+    gate_report: {
+      passed: probePassed,
+      failed_gate_ids: probePassed ? [] : ['min_probe_pass_rate'],
+      missing_required_metrics: [],
+      checks: [
+        {
+          gate_id: 'min_f1', metric_id: 'macro_f1', operator: 'gte',
+          threshold: 0.8, required: true, actual: 0.85, passed: true, reason: 'ok',
+        },
+        {
+          gate_id: 'min_probe_pass_rate', metric_id: 'probe_pass_rate',
+          operator: 'gte', threshold: 0.8, required: true,
+          actual: probePassed ? 0.9 : 0.5, passed: probePassed,
+          reason: probePassed ? 'ok' : 'below_threshold', source: 'probe_pack',
+        },
+      ],
+    },
+  });
+
+  it('badges the probe gate as an independent ruler and only the probe gate', async () => {
+    apiMock.get.mockResolvedValueOnce({ data: scorecardWithProbeGate(true) });
+    render(<ScorecardPanel projectId={1} experimentId={7} />);
+    await waitFor(() => expect(screen.getByTestId('scorecard-probe-gate')).toBeInTheDocument());
+    // The badge appears exactly once — on the probe gate row.
+    expect(screen.getAllByTestId('scorecard-probe-badge')).toHaveLength(1);
+    const probeRow = screen.getByTestId('scorecard-probe-gate');
+    expect(within(probeRow).getByTestId('scorecard-probe-badge')).toHaveTextContent('Independent ruler');
+    // Passing probe gate → no inspect link.
+    expect(screen.queryByTestId('scorecard-probe-link')).not.toBeInTheDocument();
+  });
+
+  it('links to the failing probes when the probe gate fails', async () => {
+    apiMock.get.mockResolvedValueOnce({ data: scorecardWithProbeGate(false) });
+    render(<ScorecardPanel projectId={1} experimentId={7} />);
+    const link = await screen.findByTestId('scorecard-probe-link');
+    expect(link).toHaveAttribute('href', '#probe-pack-panel');
+    expect(link).toHaveTextContent('Inspect probes');
+  });
 });

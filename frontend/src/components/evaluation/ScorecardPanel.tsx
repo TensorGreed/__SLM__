@@ -135,6 +135,13 @@ const isSingleSliceGate = (gate: GateCheck): boolean =>
 const isBehavioralGate = (gate: GateCheck): boolean =>
   typeof gate.behavioral_test_id === 'string' && gate.behavioral_test_id.length > 0;
 
+// Phase 14 — the optional probe gate (phase 13) grades against the
+// platform-authored, held-out probe pack rather than the user's gold
+// set. Style it distinctly so it reads as an *independent* ruler, not
+// just another gold-set gate. Detected by its fixed metric/gate id.
+const isProbeGate = (gate: GateCheck): boolean =>
+  gate.metric_id === 'probe_pass_rate' || gate.gate_id === 'min_probe_pass_rate';
+
 const BEHAVIORAL_KIND_COPY: Record<'INV' | 'DIR' | 'MFT', { label: string; explainer: string }> = {
   INV: {
     label: 'INV',
@@ -261,6 +268,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                 const rowClass = notMeasured
                   ? (gate.required ? 'failed' : 'warn')
                   : (gate.passed ? 'passed' : gate.required ? 'failed' : 'warn');
+                const probeGate = isProbeGate(gate);
                 const statusLabel = formatStatusLabel(gate, notMeasured);
                 const isExpanded = expandedGate === gate.gate_id;
                 // Multi-seed (phase 1) drill-down OR worst-slice
@@ -277,10 +285,22 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                 return (
                   <React.Fragment key={gate.gate_id}>
                     <tr
-                      className={`${rowClass}${canExpand ? ' scorecard-row--expandable' : ''}`}
+                      className={`${rowClass}${canExpand ? ' scorecard-row--expandable' : ''}${probeGate ? ' scorecard-row--probe' : ''}`}
                       onClick={canExpand ? () => setExpandedGate(isExpanded ? null : gate.gate_id) : undefined}
+                      data-testid={probeGate ? 'scorecard-probe-gate' : undefined}
                     >
-                      <td>{gate.gate_id}</td>
+                      <td>
+                        {gate.gate_id}
+                        {probeGate && (
+                          <span
+                            className="scorecard-probe-badge"
+                            title="Graded against the platform-authored held-out probe pack — independent of your gold set."
+                            data-testid="scorecard-probe-badge"
+                          >
+                            Independent ruler
+                          </span>
+                        )}
+                      </td>
                       <td>{formatMetricLabel(gate)}</td>
                       <td>{gate.operator} {gate.threshold}</td>
                       <td>
@@ -310,6 +330,16 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                           <span className="scorecard-expand-caret" aria-label={isExpanded ? 'collapse' : 'expand'}>
                             {' '}{isExpanded ? '▾' : '▸'}
                           </span>
+                        )}
+                        {probeGate && !gate.passed && (
+                          <a
+                            href="#probe-pack-panel"
+                            className="scorecard-probe-link"
+                            data-testid="scorecard-probe-link"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            Inspect probes →
+                          </a>
                         )}
                       </td>
                     </tr>

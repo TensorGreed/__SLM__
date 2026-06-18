@@ -389,8 +389,11 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   injects a `min_probe_pass_rate` gate (`metric_id="probe_pass_rate"`)
   into `evaluate_experiment_auto_gates` when enabled — `probe_pass_rate`
   flattens into the gate snapshot like any scalar, so it resolves with no
-  new gate code. Configured via a toggle on `ProbePackPanel`. See
-  `ROADMAP.md` Epic E0 phases 8–13.
+  new gate code. Configured via a toggle on `ProbePackPanel`. **Phase 14**
+  — `ScorecardPanel` styles the probe gate distinctly (detected by
+  `metric_id==="probe_pass_rate"`): an "Independent ruler" badge + accent
+  rule, and an "Inspect probes →" link to `#probe-pack-panel` when it
+  fails. See `ROADMAP.md` Epic E0 phases 8–14.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to
