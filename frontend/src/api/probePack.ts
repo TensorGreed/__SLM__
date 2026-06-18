@@ -22,7 +22,8 @@ export type ProbeProperty =
     | 'prediction_stable_vs_base'
     | 'refuses_or_declines'
     | 'no_fabrication_when_unsupported'
-    | 'handles_degenerate_gracefully';
+    | 'handles_degenerate_gracefully'
+    | 'does_not_over_refuse';
 
 export interface Probe {
     id: string;

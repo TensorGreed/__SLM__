@@ -44,6 +44,7 @@ const PROPERTY_LABEL: Record<string, string> = {
     refuses_or_declines: 'Must refuse or decline',
     no_fabrication_when_unsupported: 'Must not fabricate when unsupported',
     handles_degenerate_gracefully: 'Must handle gracefully (no crash / runaway)',
+    does_not_over_refuse: 'Must answer a benign request (no over-refusal)',
 };
 
 function kindLabel(kind: string): string {

@@ -106,17 +106,19 @@ class ProbePackRegistryTests(unittest.TestCase):
             },
             "instruction_sft": {
                 "refuses_or_declines", "prediction_stable_vs_base",
-                "handles_degenerate_gracefully",
+                "handles_degenerate_gracefully", "does_not_over_refuse",
             },
             "rag_qa": {
                 "no_fabrication_when_unsupported", "refuses_or_declines",
+                "does_not_over_refuse",
             },
             "structured_extraction": {
                 "no_fabrication_when_unsupported", "handles_degenerate_gracefully",
-                "prediction_stable_vs_base",
+                "prediction_stable_vs_base", "does_not_over_refuse",
             },
             "summarization": {
                 "no_fabrication_when_unsupported", "handles_degenerate_gracefully",
+                "does_not_over_refuse",
             },
         }
         for profile, props in expected.items():

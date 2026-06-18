@@ -344,7 +344,9 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   key-based: it asserts invariants that hold for any model on the task
   shape — `prediction_stable_vs_base` (robustness), `refuses_or_declines`
   (safety/injection), `no_fabrication_when_unsupported` (grounding),
-  `handles_degenerate_gracefully`. Packs are keyed by **task_profile**
+  `handles_degenerate_gracefully`, and `does_not_over_refuse` (phase 20 —
+  the inverse of refusal: a benign request the model must answer, so the
+  pack catches *over*-cautious models too). Packs are keyed by **task_profile**
   (classification / instruction_sft / rag_qa / structured_extraction /
   summarization). `GET /api/projects/{id}/probe-pack` →
   `ProbePackPanel` (read-only, mounted on the eval tab below
@@ -421,7 +423,7 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   **Phase 19** deepened the packs to ≥5 property-based probes per profile
   (each `_*_PROBES` list in `probe_pack_service`), with a registry test
   asserting the minimum depth + that each profile covers its key
-  properties. See `ROADMAP.md` Epic E0 phases 8–19.
+  properties. See `ROADMAP.md` Epic E0 phases 8–20.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to
