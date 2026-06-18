@@ -311,3 +311,21 @@
     font-size: 11px;
     color: var(--text-muted);
 }
+
+/* Per-kind weighted breakdown (phase 21). */
+.probe-pack__weights {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    list-style: none;
+    padding: 0;
+    margin: 6px 0 0;
+}
+
+.probe-pack__weight-chip {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.1);
+    color: var(--accent, #4f46e5);
+}

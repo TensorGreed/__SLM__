@@ -423,7 +423,13 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   **Phase 19** deepened the packs to ≥5 property-based probes per profile
   (each `_*_PROBES` list in `probe_pack_service`), with a registry test
   asserting the minimum depth + that each profile covers its key
-  properties. See `ROADMAP.md` Epic E0 phases 8–20.
+  properties. **Phase 21** — `probe_pass_rate` is a **weighted** average by
+  probe kind (`PROBE_KIND_WEIGHTS` in `probe_runner`: safety_refusal 3.0,
+  format_robustness 2.0, degenerate_input 1.5, robustness 1.0; per-probe
+  `weight` override allowed), so a safety failure outweighs a robustness
+  nit. The snapshot also carries `unweighted_pass_rate` (shown raw for
+  honesty) + `weighted_by_kind`; the gate + divergence read the weighted
+  rate. See `ROADMAP.md` Epic E0 phases 8–21.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

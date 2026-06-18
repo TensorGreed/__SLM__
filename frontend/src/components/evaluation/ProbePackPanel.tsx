@@ -194,10 +194,29 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                 {graded && run ? (
                     <div className="probe-pack__score" data-testid="probe-pack-score">
                         <span className="probe-pack__score-headline">
-                            Probe pass-rate:{' '}
+                            Weighted probe pass-rate:{' '}
                             <strong>{Math.round((run.probe_pass_rate ?? 0) * 100)}%</strong>{' '}
-                            ({run.passed}/{run.total})
+                            ({run.passed}/{run.total}
+                            {typeof run.unweighted_pass_rate === 'number' &&
+                                ` · raw ${Math.round(run.unweighted_pass_rate * 100)}%`}
+                            )
                         </span>
+                        {run.weighted_by_kind &&
+                            Object.keys(run.weighted_by_kind).length > 0 && (
+                                <ul
+                                    className="probe-pack__weights"
+                                    data-testid="probe-pack-weights"
+                                >
+                                    {Object.entries(run.weighted_by_kind).map(([kind, s]) => (
+                                        <li key={kind} className="probe-pack__weight-chip">
+                                            {kindLabel(kind)} ×{s.weight}:{' '}
+                                            <strong>
+                                                {s.passed}/{s.total}
+                                            </strong>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
                         <ul className="probe-pack__props" data-testid="probe-pack-props">
                             {Object.entries(run.per_property || {}).map(([prop, score]) => (
                                 <li key={prop} className="probe-pack__prop-chip">

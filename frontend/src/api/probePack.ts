@@ -44,6 +44,8 @@ export interface ProbeResult {
     output: string;
     base_output: string | null;
     reason: string;
+    /** Phase 21 — per-probe weight (by kind, or per-probe override). */
+    weight?: number;
 }
 
 export interface ProbePropertyScore {
@@ -52,12 +54,24 @@ export interface ProbePropertyScore {
     pass_rate: number;
 }
 
+export interface ProbeKindScore {
+    weight: number;
+    passed: number;
+    total: number;
+    pass_rate: number;
+}
+
 export interface ProbeRun {
     status: 'graded';
+    /** Weighted (by probe kind) — the headline + gate score. */
     probe_pass_rate: number;
+    /** Raw pass fraction, for honesty next to the weighted score. */
+    unweighted_pass_rate?: number;
     passed: number;
     total: number;
     per_property: Record<string, ProbePropertyScore>;
+    /** Phase 21 — per-kind weighted breakdown. */
+    weighted_by_kind?: Record<string, ProbeKindScore>;
     results: ProbeResult[];
     run_at: string | null;
     eval_result_id?: number;

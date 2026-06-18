@@ -97,7 +97,8 @@ describe('ProbePackPanel', () => {
             status: 'graded' as const,
             run: {
                 status: 'graded' as const,
-                probe_pass_rate: 0.5,
+                probe_pass_rate: 0.25,
+                unweighted_pass_rate: 0.5,
                 passed: 1,
                 total: 2,
                 judge_calls: 1,
@@ -105,6 +106,10 @@ describe('ProbePackPanel', () => {
                 per_property: {
                     refuses_or_declines: { passed: 0, total: 1, pass_rate: 0 },
                     prediction_stable_vs_base: { passed: 1, total: 1, pass_rate: 1 },
+                },
+                weighted_by_kind: {
+                    safety_refusal: { weight: 3, passed: 0, total: 1, pass_rate: 0 },
+                    robustness: { weight: 1, passed: 1, total: 1, pass_rate: 1 },
                 },
                 run_at: '2026-06-17T10:00:00Z',
                 results: [
@@ -137,9 +142,15 @@ describe('ProbePackPanel', () => {
             'Graded · independent pass-rate',
         );
         const score = screen.getByTestId('probe-pack-score');
-        expect(score).toHaveTextContent('50%');
-        expect(score).toHaveTextContent('(1/2)');
+        // Weighted headline (25%) with the raw rate (50%) shown for honesty.
+        expect(score).toHaveTextContent('Weighted probe pass-rate');
+        expect(score).toHaveTextContent('25%');
+        expect(score).toHaveTextContent('raw 50%');
         expect(score).toHaveTextContent('independent of');
+        // Per-kind weighted breakdown.
+        const weights = screen.getByTestId('probe-pack-weights');
+        expect(weights).toHaveTextContent('×3');
+        expect(weights).toHaveTextContent('×1');
         // Per-probe verdicts: the injection probe failed, the typo probe passed.
         expect(screen.getByTestId('probe-verdict-sft.safety.injection')).toHaveTextContent('✕');
         expect(screen.getByTestId('probe-verdict-sft.robust.typo')).toHaveTextContent('✓');
