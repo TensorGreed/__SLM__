@@ -116,5 +116,29 @@ class DivergenceStreakTests(unittest.TestCase):
         self.assertEqual(divergence_streak([], 0.15), 0)
 
 
+class JudgeSpendSummaryTests(unittest.TestCase):
+    def test_rolls_up_calls_cached_and_estimates_tokens(self):
+        from app.services.probe_pack_service import (
+            EST_TOKENS_PER_JUDGE_CALL,
+            summarize_judge_spend,
+        )
+        history = [
+            {"judge_calls": 2, "judge_cached": 1},
+            {"judge_calls": 0, "judge_cached": 3},  # all cached this run
+            {"weight_regime": "x"},                  # classification run, no judge
+        ]
+        spend = summarize_judge_spend(history)
+        self.assertIsNotNone(spend)
+        assert spend is not None
+        self.assertEqual(spend["total_calls"], 2)
+        self.assertEqual(spend["total_cached"], 4)
+        self.assertEqual(spend["runs_with_judge"], 2)  # only the 2 judged runs
+        self.assertEqual(spend["est_tokens"], 2 * EST_TOKENS_PER_JUDGE_CALL)
+
+    def test_none_when_no_run_judged(self):
+        from app.services.probe_pack_service import summarize_judge_spend
+        self.assertIsNone(summarize_judge_spend([{"weight_regime": "x"}, {}]))
+
+
 if __name__ == "__main__":
     unittest.main()

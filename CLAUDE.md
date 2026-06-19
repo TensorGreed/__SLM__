@@ -441,7 +441,12 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   divergence-history point, so the `ProbePackPanel` sparkline draws a
   dashed vertical marker wherever consecutive runs used different weights
   (with an honest "trend not comparable across it" note) — a weight change
-  no longer silently distorts the trend. See `ROADMAP.md` Epic E0 phases 8–23.
+  no longer silently distorts the trend. **Phase 24** rolls up LLM-judge
+  cost across runs: `summarize_judge_spend` sums per-run
+  `judge_calls`/`judge_cached` from the divergence history and estimates
+  tokens (`EST_TOKENS_PER_JUDGE_CALL`, labelled "~"); `pack["judge_spend"]`
+  drives a "Judge spend (recent): ~N calls · ~Xk tokens across M runs"
+  line in `ProbePackPanel`. See `ROADMAP.md` Epic E0 phases 8–24.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

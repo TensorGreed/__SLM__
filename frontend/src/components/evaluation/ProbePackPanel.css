@@ -369,3 +369,10 @@
 .probe-pack__trend-regime-note {
     color: var(--warning, #b45309);
 }
+
+/* Cumulative judge-spend rollup (phase 24). */
+.probe-pack__judge-spend {
+    margin: 8px 0 0;
+    font-size: 11px;
+    color: var(--text-muted);
+}

@@ -227,6 +227,27 @@ describe('ProbePackPanel', () => {
         expect(screen.queryByTestId('probe-pack-trend')).not.toBeInTheDocument();
     });
 
+    it('shows the cumulative judge-spend rollup', async () => {
+        const PACK_WITH_SPEND = {
+            ...APPLICABLE_PACK,
+            judge_spend: { total_calls: 12, total_cached: 30, runs_with_judge: 4, est_tokens: 6000 },
+        };
+        apiMock.get.mockResolvedValueOnce({ data: PACK_WITH_SPEND });
+        render(<ProbePackPanel projectId={7} />);
+        const spend = await screen.findByTestId('probe-pack-judge-spend');
+        expect(spend).toHaveTextContent('~12 calls');
+        expect(spend).toHaveTextContent('~6k tokens');
+        expect(spend).toHaveTextContent('across 4 runs');
+        expect(spend).toHaveTextContent('30 reused from cache');
+    });
+
+    it('shows no judge-spend line when absent', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: APPLICABLE_PACK });
+        render(<ProbePackPanel projectId={7} />);
+        await screen.findByTestId('probe-pack');
+        expect(screen.queryByTestId('probe-pack-judge-spend')).not.toBeInTheDocument();
+    });
+
     it('edits and saves per-kind weights', async () => {
         const PACK_WITH_WEIGHTS = {
             ...APPLICABLE_PACK,

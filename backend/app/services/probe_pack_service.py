@@ -710,6 +710,9 @@ async def get_divergence_history(
             # Phase 23 — weight regime active at this eval, so the panel
             # can mark where the score weighting changed.
             "weight_regime": probe.get("weight_regime"),
+            # Phase 24 — per-run judge cost, for the cross-run spend rollup.
+            "judge_calls": probe.get("judge_calls"),
+            "judge_cached": probe.get("judge_cached"),
         })
         if len(points) >= limit:
             break
@@ -728,6 +731,38 @@ def divergence_streak(history: list[dict[str, Any]], threshold: float) -> int:
         else:
             break
     return streak
+
+
+# Rough tokens per LLM-judge call (system + goal + probe request + model
+# output + a bounded ~200-token verdict). Deliberately approximate — the
+# panel labels the estimate with "~". Phase 24.
+EST_TOKENS_PER_JUDGE_CALL = 500
+
+
+def summarize_judge_spend(
+    history: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Roll up LLM-judge cost across the runs in ``history``. Returns
+    ``None`` when no run in the window invoked the judge (e.g. all
+    classification, or no judge configured)."""
+    total_calls = 0
+    total_cached = 0
+    runs_with_judge = 0
+    for p in history:
+        jc = p.get("judge_calls")
+        jcc = p.get("judge_cached")
+        if isinstance(jc, int) or isinstance(jcc, int):
+            runs_with_judge += 1
+            total_calls += int(jc or 0)
+            total_cached += int(jcc or 0)
+    if runs_with_judge == 0:
+        return None
+    return {
+        "total_calls": total_calls,
+        "total_cached": total_cached,
+        "runs_with_judge": runs_with_judge,
+        "est_tokens": total_calls * EST_TOKENS_PER_JUDGE_CALL,
+    }
 
 
 class ProbeJudgeCache:
@@ -832,7 +867,9 @@ async def get_probe_pack_for_project(
         if run is not None:
             pack["run"] = run
             pack["status"] = "graded"
-        pack["divergence_history"] = await get_divergence_history(
-            db, project_id, limit=8
-        )
+        history = await get_divergence_history(db, project_id, limit=8)
+        pack["divergence_history"] = history
+        spend = summarize_judge_spend(history)
+        if spend is not None:
+            pack["judge_spend"] = spend
     return pack

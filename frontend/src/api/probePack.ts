@@ -118,6 +118,15 @@ export interface ProbePack {
     divergence_history?: DivergencePoint[];
     /** Phase 22 — effective per-kind weights (defaults + project overrides). */
     kind_weights?: Record<string, number>;
+    /** Phase 24 — cumulative LLM-judge spend across recent runs. */
+    judge_spend?: JudgeSpend;
+}
+
+export interface JudgeSpend {
+    total_calls: number;
+    total_cached: number;
+    runs_with_judge: number;
+    est_tokens: number;
 }
 
 export async function fetchProbePack(projectId: number): Promise<ProbePack> {
