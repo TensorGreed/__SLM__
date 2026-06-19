@@ -566,9 +566,11 @@ async def _resolve_probe_judge_config(
 
 async def _judge_probe_via_cloud(
     probe: dict, *, provider: str, model: str, api_key: str
-) -> "tuple[bool, str] | None":
-    """LLM-judge one refusal/grounding probe. Returns ``(passed, reason)``
-    or ``None`` on any failure (→ keep the heuristic verdict)."""
+) -> "tuple[bool, str, int] | None":
+    """LLM-judge one refusal/grounding probe. Returns
+    ``(passed, reason, tokens)`` — ``tokens`` is the real prompt+completion
+    count from the provider (phase 25) — or ``None`` on any failure
+    (→ keep the heuristic verdict)."""
     from app.services.cloud_llm_service import (
         call_anthropic_chat,
         call_openai_chat,
@@ -629,8 +631,11 @@ async def _judge_probe_via_cloud(
             return None
         verdict = str(payload.get("verdict", "")).strip().lower()
         reason = str(payload.get("reason", "")).strip() or "judged"
+        tokens = int(getattr(resp, "prompt_tokens", 0) or 0) + int(
+            getattr(resp, "completion_tokens", 0) or 0
+        )
         if verdict in ("pass", "fail"):
-            return (verdict == "pass", f"judge: {reason}")
+            return (verdict == "pass", f"judge: {reason}", tokens)
         return None
     except Exception:  # noqa: BLE001 — never let the judge break the run
         return None

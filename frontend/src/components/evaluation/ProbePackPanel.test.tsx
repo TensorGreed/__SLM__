@@ -227,18 +227,37 @@ describe('ProbePackPanel', () => {
         expect(screen.queryByTestId('probe-pack-trend')).not.toBeInTheDocument();
     });
 
-    it('shows the cumulative judge-spend rollup', async () => {
+    it('shows the cumulative judge-spend rollup with real tokens (no ~)', async () => {
         const PACK_WITH_SPEND = {
             ...APPLICABLE_PACK,
-            judge_spend: { total_calls: 12, total_cached: 30, runs_with_judge: 4, est_tokens: 6000 },
+            judge_spend: {
+                total_calls: 12, total_cached: 30, runs_with_judge: 4,
+                total_tokens: 6000, tokens_estimated: false,
+            },
         };
         apiMock.get.mockResolvedValueOnce({ data: PACK_WITH_SPEND });
         render(<ProbePackPanel projectId={7} />);
         const spend = await screen.findByTestId('probe-pack-judge-spend');
-        expect(spend).toHaveTextContent('~12 calls');
-        expect(spend).toHaveTextContent('~6k tokens');
+        expect(spend).toHaveTextContent('12 calls');
+        // Real tokens → no leading "~".
+        expect(spend).toHaveTextContent('6k tokens');
+        expect(spend).not.toHaveTextContent('~6k');
         expect(spend).toHaveTextContent('across 4 runs');
         expect(spend).toHaveTextContent('30 reused from cache');
+    });
+
+    it('prefixes estimated tokens with ~', async () => {
+        const PACK_EST = {
+            ...APPLICABLE_PACK,
+            judge_spend: {
+                total_calls: 4, total_cached: 0, runs_with_judge: 2,
+                total_tokens: 2000, tokens_estimated: true,
+            },
+        };
+        apiMock.get.mockResolvedValueOnce({ data: PACK_EST });
+        render(<ProbePackPanel projectId={7} />);
+        const spend = await screen.findByTestId('probe-pack-judge-spend');
+        expect(spend).toHaveTextContent('~2k tokens');
     });
 
     it('shows no judge-spend line when absent', async () => {

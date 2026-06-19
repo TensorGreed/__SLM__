@@ -167,6 +167,29 @@ class ApplyLlmJudgeTests(unittest.TestCase):
         self.assertEqual(merged["probe_pass_rate"], 1.0)
         self.assertEqual(merged["judged"], 1)
 
+    def test_judge_tokens_summed_from_real_calls_only(self):
+        # A 3-tuple judge return carries real tokens; cache hits add none.
+        async def judge(_probe):
+            return (True, "judge: refused", 321)
+
+        cache = _FakeCache()
+        m1 = asyncio.run(apply_llm_judge(self._snapshot(), self.PROBES, judge, cache=cache))
+        self.assertEqual(m1["judge_calls"], 1)
+        self.assertEqual(m1["judge_tokens"], 321)
+        # Second run hits the cache → no new call, no new tokens.
+        m2 = asyncio.run(apply_llm_judge(self._snapshot(), self.PROBES, judge, cache=cache))
+        self.assertEqual(m2["judge_calls"], 0)
+        self.assertEqual(m2["judge_tokens"], 0)
+
+    def test_two_tuple_judge_still_works_with_zero_tokens(self):
+        async def judge(_probe):
+            return (True, "judge: ok")  # legacy 2-tuple
+
+        m = asyncio.run(apply_llm_judge(self._snapshot(), self.PROBES, judge))
+        self.assertEqual(m["judge_tokens"], 0)
+        r = next(x for x in m["results"] if x["id"] == "r")
+        self.assertTrue(r["passed"])
+
     def test_judge_returning_none_keeps_heuristic(self):
         async def judge(_probe):
             return None

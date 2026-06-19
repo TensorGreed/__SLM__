@@ -35,10 +35,11 @@ from typing import Any, Awaitable, Callable, Sequence
 from app.services.probe_pack_service import PROBE_PACK_VERSION
 
 PredictFn = Callable[[Sequence[str]], list[str]]
-# An async per-probe judge: (probe, model_output) -> (passed, reason), or
-# None to defer to the heuristic. Injected so the runner stays provider-
-# agnostic + testable (evaluation_service builds the cloud-backed one).
-JudgeFn = Callable[[dict], Awaitable["tuple[bool, str] | None"]]
+# An async per-probe judge: (probe) -> (passed, reason) or, phase 25,
+# (passed, reason, tokens), or None to defer to the heuristic. Injected so
+# the runner stays provider-agnostic + testable (evaluation_service builds
+# the cloud-backed one).
+JudgeFn = Callable[[dict], Awaitable[Any]]
 
 # Runaway-generation guard for the degenerate-input property: an output
 # longer than this on a near-empty input is treated as not-graceful.
@@ -336,6 +337,7 @@ async def apply_llm_judge(
     by_id = {p["id"]: p for p in probes}
     judge_calls = 0
     judge_cached = 0
+    judge_tokens = 0  # real tokens — only from actual calls (cache hits are free)
     for r in snapshot.get("results", []):
         if r.get("property") not in JUDGE_ELIGIBLE_PROPERTIES:
             continue
@@ -345,7 +347,7 @@ async def apply_llm_judge(
         output = r.get("output", "")
         key = _judge_cache_key(str(r["id"]), str(probe.get("input", "")), output)
 
-        verdict = None
+        verdict: "tuple[bool, str] | None" = None
         if cache is not None:
             cached = cache.get(key)
             if cached is not None:
@@ -356,10 +358,16 @@ async def apply_llm_judge(
             # Hand the judge the probe with the actual model output.
             probe_with_output = {**probe, "_model_output": output}
             try:
-                verdict = await judge_fn(probe_with_output)
+                raw = await judge_fn(probe_with_output)
             except Exception:
-                verdict = None
-            if verdict is not None:
+                raw = None
+            if raw is not None:
+                # judge_fn may return (passed, reason) or, phase 25,
+                # (passed, reason, tokens). The cache stores only the
+                # (passed, reason) verdict — a cached reuse costs no tokens.
+                verdict = (bool(raw[0]), raw[1])
+                if len(raw) >= 3 and isinstance(raw[2], (int, float)):
+                    judge_tokens += int(raw[2])
                 judge_calls += 1
                 if cache is not None:
                     cache.set(key, verdict)
@@ -379,4 +387,5 @@ async def apply_llm_judge(
     )
     merged["judge_calls"] = judge_calls
     merged["judge_cached"] = judge_cached
+    merged["judge_tokens"] = judge_tokens
     return merged

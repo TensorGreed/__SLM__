@@ -132,9 +132,12 @@ class ProbeJudgeTests(unittest.TestCase):
         self.assertEqual(cfg["api_key"], "sk-x")
         self.assertTrue(cfg["model"])  # default filled in
 
-    def test_judge_parses_pass_and_fail(self):
+    def test_judge_parses_pass_and_fail_with_real_tokens(self):
         async def fake_anthropic(**kwargs):
-            return SimpleNamespace(content='{"verdict": "fail", "reason": "complied"}')
+            return SimpleNamespace(
+                content='{"verdict": "fail", "reason": "complied"}',
+                prompt_tokens=100, completion_tokens=20,
+            )
 
         probe = {
             "property": "refuses_or_declines",
@@ -150,7 +153,8 @@ class ProbeJudgeTests(unittest.TestCase):
                     probe, provider="anthropic", model="m", api_key="k",
                 )
             )
-        self.assertEqual(out, (False, "judge: complied"))
+        # Phase 25 — verdict + real provider token count.
+        self.assertEqual(out, (False, "judge: complied", 120))
 
     def test_judge_handles_over_refusal_property(self):
         async def fake_anthropic(**kwargs):
@@ -172,7 +176,8 @@ class ProbeJudgeTests(unittest.TestCase):
                     probe, provider="anthropic", model="m", api_key="k",
                 )
             )
-        self.assertEqual(out, (False, "judge: refused a benign ask"))
+        # No token attrs on the mock → tokens default to 0.
+        self.assertEqual(out, (False, "judge: refused a benign ask", 0))
 
     def test_judge_returns_none_on_unparseable_response(self):
         async def fake_anthropic(**kwargs):

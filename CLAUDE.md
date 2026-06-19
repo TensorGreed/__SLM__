@@ -443,10 +443,17 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   (with an honest "trend not comparable across it" note) — a weight change
   no longer silently distorts the trend. **Phase 24** rolls up LLM-judge
   cost across runs: `summarize_judge_spend` sums per-run
-  `judge_calls`/`judge_cached` from the divergence history and estimates
-  tokens (`EST_TOKENS_PER_JUDGE_CALL`, labelled "~"); `pack["judge_spend"]`
-  drives a "Judge spend (recent): ~N calls · ~Xk tokens across M runs"
-  line in `ProbePackPanel`. See `ROADMAP.md` Epic E0 phases 8–24.
+  `judge_calls`/`judge_cached`/`judge_tokens` from the divergence history;
+  `pack["judge_spend"]` drives a "Judge spend (recent): N calls · Xk
+  tokens across M runs" line in `ProbePackPanel`. **Phase 25** threads the
+  **real** provider token counts through: `_judge_probe_via_cloud` returns
+  `(passed, reason, tokens)` (from `CloudLlmResponse.prompt_tokens +
+  completion_tokens`), `apply_llm_judge` sums them into `judge_tokens`
+  (cache hits cost zero — only real calls count), and the rollup prefers
+  real tokens, falling back to `EST_TOKENS_PER_JUDGE_CALL` (with a
+  `tokens_estimated` flag → the panel shows "~" only then). The cache
+  still stores the `(passed, reason)` 2-tuple, so old cache files stay
+  valid. See `ROADMAP.md` Epic E0 phases 8–25.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

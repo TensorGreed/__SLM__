@@ -126,7 +126,9 @@ export interface JudgeSpend {
     total_calls: number;
     total_cached: number;
     runs_with_judge: number;
-    est_tokens: number;
+    /** Real provider token total (phase 25), or estimate if `tokens_estimated`. */
+    total_tokens: number;
+    tokens_estimated: boolean;
 }
 
 export async function fetchProbePack(projectId: number): Promise<ProbePack> {

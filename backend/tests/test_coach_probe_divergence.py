@@ -117,23 +117,31 @@ class DivergenceStreakTests(unittest.TestCase):
 
 
 class JudgeSpendSummaryTests(unittest.TestCase):
-    def test_rolls_up_calls_cached_and_estimates_tokens(self):
+    def test_prefers_real_tokens_when_present(self):
+        from app.services.probe_pack_service import summarize_judge_spend
+        history = [
+            {"judge_calls": 2, "judge_cached": 1, "judge_tokens": 740},
+            {"judge_calls": 0, "judge_cached": 3, "judge_tokens": 0},  # all cached
+            {"weight_regime": "x"},                                     # no judge
+        ]
+        spend = summarize_judge_spend(history)
+        assert spend is not None
+        self.assertEqual(spend["total_calls"], 2)
+        self.assertEqual(spend["total_cached"], 4)
+        self.assertEqual(spend["runs_with_judge"], 2)
+        self.assertEqual(spend["total_tokens"], 740)   # real, not estimated
+        self.assertFalse(spend["tokens_estimated"])
+
+    def test_falls_back_to_estimate_when_tokens_absent(self):
         from app.services.probe_pack_service import (
             EST_TOKENS_PER_JUDGE_CALL,
             summarize_judge_spend,
         )
-        history = [
-            {"judge_calls": 2, "judge_cached": 1},
-            {"judge_calls": 0, "judge_cached": 3},  # all cached this run
-            {"weight_regime": "x"},                  # classification run, no judge
-        ]
-        spend = summarize_judge_spend(history)
-        self.assertIsNotNone(spend)
+        # Old run: judge_calls but no judge_tokens → estimated.
+        spend = summarize_judge_spend([{"judge_calls": 3, "judge_cached": 0}])
         assert spend is not None
-        self.assertEqual(spend["total_calls"], 2)
-        self.assertEqual(spend["total_cached"], 4)
-        self.assertEqual(spend["runs_with_judge"], 2)  # only the 2 judged runs
-        self.assertEqual(spend["est_tokens"], 2 * EST_TOKENS_PER_JUDGE_CALL)
+        self.assertEqual(spend["total_tokens"], 3 * EST_TOKENS_PER_JUDGE_CALL)
+        self.assertTrue(spend["tokens_estimated"])
 
     def test_none_when_no_run_judged(self):
         from app.services.probe_pack_service import summarize_judge_spend

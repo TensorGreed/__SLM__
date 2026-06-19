@@ -710,9 +710,11 @@ async def get_divergence_history(
             # Phase 23 — weight regime active at this eval, so the panel
             # can mark where the score weighting changed.
             "weight_regime": probe.get("weight_regime"),
-            # Phase 24 — per-run judge cost, for the cross-run spend rollup.
+            # Phase 24/25 — per-run judge cost, for the cross-run spend
+            # rollup. ``judge_tokens`` is the real provider count when present.
             "judge_calls": probe.get("judge_calls"),
             "judge_cached": probe.get("judge_cached"),
+            "judge_tokens": probe.get("judge_tokens"),
         })
         if len(points) >= limit:
             break
@@ -748,20 +750,33 @@ def summarize_judge_spend(
     total_calls = 0
     total_cached = 0
     runs_with_judge = 0
+    total_tokens = 0
+    estimated = False
     for p in history:
         jc = p.get("judge_calls")
         jcc = p.get("judge_cached")
-        if isinstance(jc, int) or isinstance(jcc, int):
-            runs_with_judge += 1
-            total_calls += int(jc or 0)
-            total_cached += int(jcc or 0)
+        if not (isinstance(jc, int) or isinstance(jcc, int)):
+            continue
+        runs_with_judge += 1
+        calls = int(jc or 0)
+        total_calls += calls
+        total_cached += int(jcc or 0)
+        # Phase 25 — prefer the real provider token count; estimate only
+        # when a run made calls but didn't record tokens (older runs).
+        jt = p.get("judge_tokens")
+        if isinstance(jt, int):
+            total_tokens += jt
+        elif calls > 0:
+            total_tokens += calls * EST_TOKENS_PER_JUDGE_CALL
+            estimated = True
     if runs_with_judge == 0:
         return None
     return {
         "total_calls": total_calls,
         "total_cached": total_cached,
         "runs_with_judge": runs_with_judge,
-        "est_tokens": total_calls * EST_TOKENS_PER_JUDGE_CALL,
+        "total_tokens": total_tokens,
+        "tokens_estimated": estimated,
     }
 
 

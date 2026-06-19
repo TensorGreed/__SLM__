@@ -395,11 +395,12 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
 
             {pack.judge_spend && (
                 <p className="probe-pack__judge-spend" data-testid="probe-pack-judge-spend">
-                    Judge spend (recent): ~{pack.judge_spend.total_calls} call
-                    {pack.judge_spend.total_calls === 1 ? '' : 's'} · ~
-                    {pack.judge_spend.est_tokens >= 1000
-                        ? `${Math.round(pack.judge_spend.est_tokens / 1000)}k`
-                        : pack.judge_spend.est_tokens}{' '}
+                    Judge spend (recent): {pack.judge_spend.total_calls} call
+                    {pack.judge_spend.total_calls === 1 ? '' : 's'} ·{' '}
+                    {pack.judge_spend.tokens_estimated ? '~' : ''}
+                    {pack.judge_spend.total_tokens >= 1000
+                        ? `${Math.round(pack.judge_spend.total_tokens / 1000)}k`
+                        : pack.judge_spend.total_tokens}{' '}
                     tokens across {pack.judge_spend.runs_with_judge} run
                     {pack.judge_spend.runs_with_judge === 1 ? '' : 's'}
                     {pack.judge_spend.total_cached > 0 &&
