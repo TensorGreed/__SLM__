@@ -86,3 +86,74 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+  e2e-golden-path:
+    # Locks the newbie golden path (login → sample → beginner pipeline →
+    # train) against regression. Training runs on the simulate runtime
+    # (no GPU on CI) — a path-integrity gate, not a quality gate.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright + chromium
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Boot stack (simulate runtime) + run golden-path E2E
+        env:
+          E2E_BASE_URL: http://localhost:5175
+        run: |
+          set -e
+          # Backend: auth on (bootstraps admin), simulate training, scratch DB.
+          ( cd backend && \
+            DATABASE_URL="sqlite+aiosqlite:////tmp/gp.db" DATA_DIR="/tmp/gpdata" \
+            AUTH_ENABLED=true API_KEY=sk-mock-admin-key AUTH_BOOTSTRAP_API_KEY=sk-mock-admin-key \
+            ALLOW_SIMULATED_TRAINING=true TRAINING_BACKEND=simulate \
+            ALLOW_SQLITE_AUTOCREATE=true DB_REQUIRE_ALEMBIC_HEAD=false \
+            .venv/bin/uvicorn app.main:app --port 8021 --no-access-log > /tmp/be.log 2>&1 & )
+          # Frontend: dev server proxying /api to the scratch backend.
+          ( cd frontend && \
+            VITE_API_PROXY_TARGET=http://localhost:8021 \
+            npm run dev -- --port 5175 --strictPort > /tmp/fe.log 2>&1 & )
+          # Wait for both to come up (curl loop — no extra deps).
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8021/api/health > /dev/null 2>&1 && \
+            curl -sf http://localhost:5175 > /dev/null 2>&1 && break
+            sleep 2
+          done
+          npx playwright test --config playwright.golden-path.config.ts
+
+      - name: Upload E2E artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-path-e2e-results
+          path: |
+            test-results/
+            /tmp/be.log
+            /tmp/fe.log
+          if-no-files-found: ignore

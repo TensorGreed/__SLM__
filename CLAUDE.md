@@ -225,6 +225,23 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
 `page.goto` — that's the key the frontend reads at
 `App.tsx:27`. Headless mode works on the dev box.
 
+**Golden-path regression gate (Epic G phase G1).**
+`tests/golden-path/golden-path.spec.ts` + `playwright.golden-path.config.ts`
+(fast, no video/slowMo, distinct from the narrated `tests/demo-recordings`
+suite). It locks the newbie path: login → launch the support-faq sample →
+beginner-mode pipeline renders → **train on the simulate runtime → assert
+`completed`**. Run: `npm run test:e2e:golden` (root). It needs an isolated
+stack — backend with `AUTH_ENABLED=true API_KEY=sk-mock-admin-key
+AUTH_BOOTSTRAP_API_KEY=sk-mock-admin-key ALLOW_SIMULATED_TRAINING=true
+TRAINING_BACKEND=simulate` + a scratch DB, and the frontend pointed at it
+via the new **`VITE_API_PROXY_TARGET`** env (vite proxy target is now
+env-configurable so a second backend on a non-default port works). CI runs
+it as the `e2e-golden-path` job. Training step + completion poll go through
+the API (`page.request` with the login token) for robustness; the UI drives
+login + sample launch + pipeline render. **Path-integrity gate, not a
+quality gate** (simulate runtime). The eval→export tail is deferred
+(G1-tail — eval on a simulated checkpoint needs real inference).
+
 ---
 
 ## Auth + dev env
