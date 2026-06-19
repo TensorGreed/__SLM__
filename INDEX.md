@@ -645,6 +645,7 @@ session-start guidance.
 - `backend/tests/test_checkpoint_registry.py` — Unit tests for the warm-start checkpoint registry (Track 1, Epic B).
 - `backend/tests/test_classification_adapter_prompt_wrap.py` — β-fix tests — classification-label adapter writes the production
 - `backend/tests/test_classification_inference_path.py` — Classification-aware inference path (fix #3).
+- `backend/tests/test_classification_training_launch.py` — Epic G phase G1.5 — classification samples must be trainable.
 - `backend/tests/test_classifier_head_eval_dispatch.py` — δ-fix tests — classifier-head dispatch on held-out eval.
 - `backend/tests/test_cleaning_async_task.py` — Cleaning background-task pattern (Phase F UX fix for 100K-row cleans).
 - `backend/tests/test_cleaning_chunks_pagination.py` — GET /cleaning/chunks pagination + sampling contract.

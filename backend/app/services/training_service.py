@@ -1525,10 +1525,19 @@ async def start_training(
     # this gate was added for. The gate is a no-op for DPO/ORPO
     # (alignment path has its own contract checks) and DOMAIN_PRETRAIN
     # (text-only is the point).
+    # Classification rows carry the target in ``label``, not the QA-shaped
+    # answer/completion/output/response. Make the gate task-aware so a
+    # classification project isn't wrongly rejected for "no target field".
+    _task_type = str((resolved_config or {}).get("task_type") or "").strip().lower()
+    _gate_target_fields = (
+        ["label", *DEFAULT_TARGET_FIELDS]
+        if _task_type == "classification"
+        else DEFAULT_TARGET_FIELDS
+    )
     data_gate_report = verify_training_data_has_targets(
         train_file,
         training_mode=training_mode,
-        target_fields=DEFAULT_TARGET_FIELDS,
+        target_fields=_gate_target_fields,
     )
     runtime_config["training_data_gate"] = data_gate_report
     if not data_gate_report["ok"]:

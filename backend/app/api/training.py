@@ -4253,6 +4253,14 @@ async def _resolve_effective_training_preview(
         profile_training_defaults=profile_training_defaults,
         fallback_training_mode=parsed_config.training_mode,
     )
+    # Classification projects must train with a classifier head, not the
+    # causal_lm default — otherwise the data gate rejects label-shaped data
+    # and (on real hardware) the trainer would mis-treat it as text gen.
+    # Only override when the user didn't pin task_type explicitly.
+    if "task_type" not in provided_config_fields:
+        task_profile = await _resolve_project_task_profile(db, project_id)
+        if task_profile == "classification":
+            resolved_config["task_type"] = "classification"
     return (
         runtime,
         profile_training_defaults,
@@ -4260,6 +4268,30 @@ async def _resolve_effective_training_preview(
         resolved_training_mode,
         profile_defaults_applied,
     )
+
+
+async def _resolve_project_task_profile(db: AsyncSession, project_id: int) -> str | None:
+    """Resolve a project's task_profile from its selected recipe, falling
+    back to the dataset-adapter preset. Used to make the resolved training
+    config task-aware (e.g. classification → classifier head)."""
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
+    if project is None:
+        return None
+    selected = project.selected_recipe if isinstance(project.selected_recipe, dict) else {}
+    recipe_id = selected.get("recipe_id")
+    if isinstance(recipe_id, str) and recipe_id:
+        try:
+            from app.services.recipe_service import get_recipe
+            recipe = get_recipe(recipe_id)
+            if recipe is not None and getattr(recipe, "task_profile", None):
+                return str(recipe.task_profile)
+        except Exception:
+            pass
+    preset = project.dataset_adapter_preset if isinstance(project.dataset_adapter_preset, dict) else {}
+    tp = preset.get("task_profile")
+    return str(tp) if isinstance(tp, str) and tp else None
 
 
 @router.get("/preferences")

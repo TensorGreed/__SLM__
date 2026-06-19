@@ -19,15 +19,21 @@ import { test, expect } from '@playwright/test';
  * (`page.request`, robust against async timing) using the same endpoints
  * the Training UI calls.
  *
- * Uses the support-faq (QA / instruction_sft) sample — it trains cleanly on
- * the simulate runtime. (The sentiment/classification sample currently fails
- * the training data gate — tracked separately.)
+ * Uses the support-faq (QA / instruction_sft) sample. One demo per run by
+ * design: two simulate trainings in a single browser session can leave the
+ * first stuck `pending` (a simulate-runtime/test-isolation quirk — real GPU
+ * training is subprocess-based), which would make a CI *gate* flaky. The
+ * classification path (task_type resolution + data gate, a real defect this
+ * exploration caught and fixed) is guarded by a fast backend integration
+ * test instead — see backend tests/test_classification_training_launch.py.
  */
 
 const ADMIN = 'admin';
 const ADMIN_KEY = 'sk-mock-admin-key';
+const SAMPLE_TILE = 'Open the Demo · Support FAQ demo project';
 
 test('golden path: login → sample → beginner pipeline → train completes', async ({ page }) => {
+  const tileAria = SAMPLE_TILE;
   // ── 1. Login as the bootstrap admin (global project access) ──────────
   await page.goto('/login');
   await page.getByPlaceholder('Enter your username').fill(ADMIN);
@@ -42,10 +48,8 @@ test('golden path: login → sample → beginner pipeline → train completes', 
   const token = await page.evaluate(() => localStorage.getItem('slm_token'));
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
-  // ── 2. Launch the support-faq sample project from the dashboard ──────
-  const sampleTile = page.locator(
-    '[aria-label="Open the Demo · Support FAQ demo project"]',
-  );
+  // ── 2. Launch the sample project from the dashboard ─────────────────
+  const sampleTile = page.locator(`[aria-label="${tileAria}"]`);
   await expect(sampleTile).toBeVisible();
   await sampleTile.click();
 
