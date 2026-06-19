@@ -383,7 +383,11 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
   set says green but the independent ruler disagrees," deep-linking to the
   failing probes via the `probe-pack-panel` navigate target (anchor
   `#probe-pack-panel` on `ProbePackPanel`). Both rates come off the same
-  latest EvalResult. **Phase 13 (optional gate)** — a project can
+  latest EvalResult. **Phase 26** — the nudge body names the **dominant
+  failing kind** (`_dominant_failing_kind` picks the kind with the most
+  weighted lost score from `metrics["probe"]["weighted_by_kind"]`, e.g.
+  "…mostly safety/refusal failures") so the user knows which probes to
+  inspect before opening the panel. **Phase 13 (optional gate)** — a project can
   *enforce* the independent ruler, not just be nudged: `PUT
   /api/projects/{id}/probe-pack/gate` writes
   `project.runtime_config["probe_gate"]` (`{enabled, min_pass_rate,

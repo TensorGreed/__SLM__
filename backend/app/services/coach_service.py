@@ -2628,6 +2628,36 @@ PROBE_GOLD_DIVERGENCE_CRITICAL = 0.30
 # one means the gold set really is blind to what the probes catch.
 PROBE_GOLD_DIVERGENCE_PERSISTENT_STREAK = 3
 
+# Human-readable names for probe kinds, for the divergence nudge body.
+_PROBE_KIND_HUMAN = {
+    "safety_refusal": "safety/refusal failures",
+    "format_robustness": "grounding failures",
+    "degenerate_input": "degenerate-input handling failures",
+    "robustness": "robustness (surface-form) failures",
+}
+
+
+def _dominant_failing_kind(weighted_by_kind: dict) -> str | None:
+    """The probe kind responsible for the most *weighted* lost score
+    (weight × failures). Returns ``None`` when nothing failed or the
+    breakdown is absent/malformed."""
+    dominant: str | None = None
+    worst_lost = 0.0
+    for kind, stats in (weighted_by_kind or {}).items():
+        if not isinstance(stats, dict):
+            continue
+        try:
+            weight = float(stats.get("weight", 1.0))
+            total = int(stats.get("total", 0))
+            passed = int(stats.get("passed", 0))
+        except (TypeError, ValueError):
+            continue
+        lost = weight * max(0, total - passed)
+        if lost > worst_lost:
+            worst_lost = lost
+            dominant = kind
+    return dominant
+
 
 def _probe_gold_divergence_nudge(
     project_id: int, latest_eval: Any, *, streak: int = 1
@@ -2669,6 +2699,15 @@ def _probe_gold_divergence_nudge(
         for r in results
         if isinstance(r, dict) and not r.get("passed") and r.get("id")
     ]
+    # Phase 26 — name the dominant failing kind: the one responsible for
+    # the most *weighted* lost score (weight × failures), so the user
+    # knows which probes to inspect before opening the panel.
+    dominant_kind = _dominant_failing_kind(probe.get("weighted_by_kind") or {})
+    dominant_note = (
+        f" The failures are mostly {_PROBE_KIND_HUMAN.get(dominant_kind, dominant_kind)}."
+        if dominant_kind
+        else ""
+    )
     persistent = streak >= PROBE_GOLD_DIVERGENCE_PERSISTENT_STREAK
     # A sustained streak escalates a one-off "warning" to "critical": a
     # single diverging eval can be noise; three in a row is a pattern.
@@ -2701,6 +2740,7 @@ def _probe_gold_divergence_nudge(
             + ". Your gold set may be too easy, or blind to what the probes catch "
             "(robustness, refusal, grounding). Inspect the failing probes before "
             "you trust the green gate."
+            + dominant_note
             + streak_note
         ),
         "severity": severity,
@@ -2716,6 +2756,7 @@ def _probe_gold_divergence_nudge(
             "divergence": round(divergence, 6),
             "failing_probe_ids": failing_ids,
             "failing_count": len(failing_ids),
+            "dominant_failing_kind": dominant_kind,
             "streak": streak,
         },
     }

@@ -93,6 +93,43 @@ class ProbeGoldDivergenceTests(unittest.TestCase):
         self.assertEqual(crit["context"]["streak"], 3)
 
 
+    def test_body_names_the_dominant_failing_kind(self):
+        row = SimpleNamespace(pass_rate=0.95, metrics={
+            "pass_rate": 0.95,
+            "probe": {
+                "probe_pass_rate": 0.5,
+                "results": [{"id": "sft.safety.injection", "passed": False}],
+                "weighted_by_kind": {
+                    # safety lost = 3×2 = 6 (dominant); robustness lost = 1×0.
+                    "safety_refusal": {"weight": 3.0, "passed": 0, "total": 2},
+                    "robustness": {"weight": 1.0, "passed": 2, "total": 2},
+                },
+            },
+        })
+        nudge = _probe_gold_divergence_nudge(1, row)
+        assert nudge is not None
+        self.assertIn("safety/refusal", nudge["body"])
+        self.assertEqual(nudge["context"]["dominant_failing_kind"], "safety_refusal")
+
+
+class DominantFailingKindTests(unittest.TestCase):
+    def test_picks_kind_with_most_weighted_loss(self):
+        from app.services.coach_service import _dominant_failing_kind
+        wbk = {
+            "robustness": {"weight": 1.0, "passed": 0, "total": 3},        # lost 3
+            "safety_refusal": {"weight": 3.0, "passed": 0, "total": 2},    # lost 6
+            "format_robustness": {"weight": 2.0, "passed": 2, "total": 2}, # lost 0
+        }
+        self.assertEqual(_dominant_failing_kind(wbk), "safety_refusal")
+
+    def test_none_when_all_pass_or_empty(self):
+        from app.services.coach_service import _dominant_failing_kind
+        self.assertIsNone(_dominant_failing_kind(
+            {"robustness": {"weight": 1.0, "passed": 2, "total": 2}}
+        ))
+        self.assertIsNone(_dominant_failing_kind({}))
+
+
 class DivergenceStreakTests(unittest.TestCase):
     def test_counts_consecutive_recent_diverging_runs(self):
         from app.services.probe_pack_service import divergence_streak
