@@ -2534,6 +2534,23 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertTrue((vdir / "test.jsonl").exists())
         self.assertTrue((vdir / "manifest.json").exists())
 
+    def test_prune_prepared_snapshots_keeps_newest_n(self):
+        from app.services.dataset_service import (
+            list_prepared_version_snapshots,
+            prune_prepared_version_snapshots,
+            snapshot_prepared_version,
+        )
+        pid = self._create_project("snap-prune")
+        prep = self._prepared_dir(pid)
+        (prep / "train.jsonl").write_text('{"x":1}\n', encoding="utf-8")
+        # Stage 5 version snapshots.
+        for v in range(1, 6):
+            snapshot_prepared_version(pid, v)
+        self.assertEqual(list_prepared_version_snapshots(pid), [5, 4, 3, 2, 1])
+        pruned = prune_prepared_version_snapshots(pid, keep=2)
+        self.assertEqual(pruned, [1, 2, 3])  # oldest three removed
+        self.assertEqual(list_prepared_version_snapshots(pid), [5, 4])
+
     def test_restore_unknown_version_raises(self):
         from app.services.dataset_service import restore_prepared_version
         pid = self._create_project("snap-missing")

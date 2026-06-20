@@ -56,6 +56,12 @@ def _prepared_versions_dir(project_id: int, version: int) -> Path:
     return _prep_dir(project_id) / "versions" / str(int(version))
 
 
+# Snapshots accumulate one dir per Prepare. Small newbie datasets make this
+# cheap, but cap retention so a project that re-prepares hundreds of times
+# doesn't grow unbounded — keep the most recent N, prune older.
+MAX_RETAINED_PREPARED_SNAPSHOTS = 10
+
+
 def snapshot_prepared_version(project_id: int, version: int) -> Path:
     """Copy the current active prepared files + manifest into
     prepared/versions/{version}/ so the run survives the next Prepare's
@@ -68,6 +74,27 @@ def snapshot_prepared_version(project_id: int, version: int) -> Path:
         if src_file.exists():
             shutil.copy2(src_file, dst / name)
     return dst
+
+
+def prune_prepared_version_snapshots(
+    project_id: int, *, keep: int = MAX_RETAINED_PREPARED_SNAPSHOTS
+) -> list[int]:
+    """Delete all but the ``keep`` newest version snapshots. Returns the
+    versions pruned (oldest-first). Best-effort — a failed delete is skipped,
+    not raised, so it never breaks a Prepare."""
+    versions = list_prepared_version_snapshots(project_id)  # newest first
+    if keep < 0 or len(versions) <= keep:
+        return []
+    to_prune = sorted(versions[keep:])  # oldest first
+    pruned: list[int] = []
+    for version in to_prune:
+        snap = _prepared_versions_dir(project_id, version)
+        try:
+            shutil.rmtree(snap, ignore_errors=True)
+            pruned.append(version)
+        except Exception:  # noqa: BLE001 — pruning is non-critical
+            pass
+    return pruned
 
 
 def list_prepared_version_snapshots(project_id: int) -> list[int]:
@@ -1096,6 +1123,7 @@ async def split_dataset(
     if prepared_version is not None:
         try:
             snapshot_prepared_version(project_id, prepared_version)
+            prune_prepared_version_snapshots(project_id)
         except Exception:  # noqa: BLE001 — snapshot is non-critical
             pass
 
