@@ -103,6 +103,17 @@ def _resolve_source_label(row: dict[str, Any]) -> str:
 ACCEPTED_ROWS_PER_GROUP_CAP = 25
 
 
+def _confidence_sort_key(row: dict[str, Any]) -> tuple[float, int]:
+    """Sort key for confidence-ascending order: (confidence, id). Rows with a
+    missing / non-numeric ``synth_confidence`` sort to the end (``inf``) — they
+    carry no uncertainty signal to rank, so they shouldn't crowd out the
+    genuinely-low-confidence rows a reviewer should see first."""
+    conf = row.get("synth_confidence")
+    conf_val = float(conf) if isinstance(conf, (int, float)) else float("inf")
+    rid = row.get("id")
+    return (conf_val, int(rid) if isinstance(rid, int) else 0)
+
+
 def _bucket_rows_by_source(
     rows: list[dict[str, Any]],
     *,
@@ -122,7 +133,11 @@ def _bucket_rows_by_source(
         groups[source].append(row)
     grouped: list[dict[str, Any]] = []
     for source in sorted(groups):
-        entries = sorted(groups[source], key=lambda r: r.get("id") or 0)
+        # Sort by confidence ASCENDING so the most uncertain rows — the ones a
+        # reviewer's attention is worth most on — surface first. Rows with no
+        # ``synth_confidence`` trail (we can't rank them as uncertain); ``id``
+        # breaks ties for a stable order.
+        entries = sorted(groups[source], key=_confidence_sort_key)
         total_in_group = len(entries)
         if rows_per_group_cap is not None and total_in_group > rows_per_group_cap:
             visible_entries = entries[:rows_per_group_cap]

@@ -277,7 +277,8 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                 <h3 className="synth-review-queue__title">Synth review queue</h3>
                 <p className="synth-review-queue__subtitle">
                     {data.total_pending} row{data.total_pending === 1 ? '' : 's'} awaiting review,
-                    grouped by source. Accept to add to training; reject to discard.
+                    grouped by source, <strong>most uncertain first</strong> (lowest confidence —
+                    where your review matters most). Accept to add to training; reject to discard.
                     {data.total_accepted > 0 && (
                         <> {' · '}<strong>{data.total_accepted}</strong> already accepted (see below).</>
                     )}

@@ -431,6 +431,26 @@ class ReviewQueueIntegrationTests(unittest.TestCase):
             1,
         )
 
+    def test_review_queue_rows_sorted_by_confidence_ascending(self):
+        # Epic E — the most uncertain rows (lowest synth_confidence) surface
+        # first within a group so a reviewer's attention lands where it matters.
+        # Rows with no confidence trail.
+        project = self._instantiate_template("ticket-router", "Queue Confidence Sort")
+        pid = project["id"]
+        src = "playbook:classification:positives_paraphrase"
+        self._seed_synth_rows(pid, [
+            {"id": 1, "text": "high", "label": "billing", "synth_source": src, "synth_confidence": 0.95, "review_status": "pending"},
+            {"id": 2, "text": "low", "label": "billing", "synth_source": src, "synth_confidence": 0.30, "review_status": "pending"},
+            {"id": 3, "text": "none", "label": "billing", "synth_source": src, "review_status": "pending"},  # no confidence → trails
+            {"id": 4, "text": "mid", "label": "billing", "synth_source": src, "synth_confidence": 0.60, "review_status": "pending"},
+        ])
+        resp = self.client.get(f"/api/projects/{pid}/synthetic/review-queue")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        group = next(g for g in resp.json()["groups"] if g["synth_source"] == src)
+        ids_in_order = [r["id"] for r in group["rows"]]
+        # 0.30 < 0.60 < 0.95 < (no confidence).
+        self.assertEqual(ids_in_order, [2, 4, 1, 3])
+
     def test_review_queue_total_rows_includes_every_row_regardless_of_status(self):
         """total_rows is the whole-file count — the user's anchor
         when they ask 'how many synth rows do I have?'."""
