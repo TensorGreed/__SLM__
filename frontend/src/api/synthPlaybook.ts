@@ -345,8 +345,13 @@ export interface BulkUpdateBySourceResult extends BulkUpdateResult {
     matched: number;
 }
 
-export async function listSynthReviewQueue(projectId: number): Promise<ReviewQueueResponse> {
-    const resp = await api.get(`/projects/${projectId}/synthetic/review-queue`);
+export async function listSynthReviewQueue(
+    projectId: number,
+    groupBy: 'source' | 'class' = 'source',
+): Promise<ReviewQueueResponse> {
+    const resp = await api.get(`/projects/${projectId}/synthetic/review-queue`, {
+        params: groupBy === 'class' ? { group_by: 'class' } : undefined,
+    });
     return resp.data as ReviewQueueResponse;
 }
 

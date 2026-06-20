@@ -939,10 +939,12 @@ class PurgeRejectedRequest(BaseModel):
 @router.get("/review-queue")
 async def list_synth_review_queue(
     project_id: int,
+    group_by: str = "source",
     db: AsyncSession = Depends(get_db),
 ):
     """List pending synthetic rows for the project, grouped by
-    `synth_source` (USER-SUCCESS Epic 2b).
+    `synth_source` (USER-SUCCESS Epic 2b) — or by class label with
+    `?group_by=class` (Epic E).
 
     Pending rows are gated out of dataset prep — they don't enter
     training until the user accepts them via `/review-queue/bulk-update`
@@ -950,7 +952,7 @@ async def list_synth_review_queue(
     """
     from app.services.synth_review_queue_service import list_review_queue
 
-    return await list_review_queue(db, project_id)
+    return await list_review_queue(db, project_id, group_by=group_by)
 
 
 @router.post("/review-queue/bulk-update")

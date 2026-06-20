@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -630,6 +630,26 @@ describe('SynthReviewQueue', () => {
             expect(
                 screen.getByTestId('synth-review-queue-purge-error'),
             ).toHaveTextContent(/synthetic.jsonl missing/);
+        });
+    });
+
+    it('refetches grouped by class when the Class toggle is clicked', async () => {
+        apiMock.get.mockResolvedValue({ data: { ...SAMPLE_PAYLOAD, group_by: 'source' } });
+        render(<SynthReviewQueue projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue')).toBeInTheDocument();
+        });
+        // Default load groups by source (no group_by param).
+        expect(apiMock.get).toHaveBeenLastCalledWith(
+            '/projects/1/synthetic/review-queue',
+            { params: undefined },
+        );
+        fireEvent.click(screen.getByRole('button', { name: /^Class$/ }));
+        await waitFor(() => {
+            expect(apiMock.get).toHaveBeenLastCalledWith(
+                '/projects/1/synthetic/review-queue',
+                { params: { group_by: 'class' } },
+            );
         });
     });
 });

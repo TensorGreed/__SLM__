@@ -114,12 +114,28 @@ def _confidence_sort_key(row: dict[str, Any]) -> tuple[float, int]:
     return (conf_val, int(rid) if isinstance(rid, int) else 0)
 
 
+def _resolve_class_label(row: dict[str, Any]) -> str:
+    """Group key when grouping by class — the row's ``label`` (classification
+    target). Unlabeled / non-classification rows fall into one bucket so the
+    grouping never silently drops them."""
+    label = row.get("label")
+    if label is not None and str(label).strip():
+        return str(label)
+    return "(unlabeled)"
+
+
 def _bucket_rows_by_source(
     rows: list[dict[str, Any]],
     *,
     rows_per_group_cap: int | None = None,
+    key_fn: Any = None,
 ) -> list[dict[str, Any]]:
-    """Group rows by synth_source, sort, project to the UI shape.
+    """Group rows by a key (``synth_source`` by default, or the class label
+    when ``key_fn`` is ``_resolve_class_label``), sort, project to the UI shape.
+
+    The output group still carries its key in ``synth_source`` regardless of the
+    grouping dimension, so the review UI renders either grouping transparently
+    (it just shows the group key + its rows).
 
     When ``rows_per_group_cap`` is set, each group's ``rows`` array
     is truncated to that length + a ``truncated`` flag is emitted.
@@ -127,9 +143,10 @@ def _bucket_rows_by_source(
     accept/reject); the accepted view passes the cap because
     legacy buckets may have thousands of rows.
     """
+    resolve = key_fn or _resolve_source_label
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        source = _resolve_source_label(row)
+        source = resolve(row)
         groups[source].append(row)
     grouped: list[dict[str, Any]] = []
     for source in sorted(groups):
@@ -168,9 +185,12 @@ def _bucket_rows_by_source(
 async def list_review_queue(
     db: AsyncSession,
     project_id: int,
+    *,
+    group_by: str = "source",
 ) -> dict[str, Any]:
     """Return synth rows for a project, split into pending + accepted
-    groups (both keyed by ``synth_source``).
+    groups (keyed by ``synth_source``, or by class label when
+    ``group_by="class"`` — Epic E).
 
     The pending list is the active review queue. The accepted list
     shows the rows that already passed review and will enter the
@@ -204,19 +224,22 @@ async def list_review_queue(
     # immediately.
     rejected = [r for r in all_rows if r.get("review_status") == "rejected"]
 
+    key_fn = _resolve_class_label if group_by == "class" else _resolve_source_label
+
     return {
         "project_id": project_id,
         "dataset_id": dataset.id if dataset else None,
+        "group_by": "class" if group_by == "class" else "source",
         "total_rows": len(all_rows),
         "total_pending": len(pending),
         "total_accepted": len(accepted),
         "total_rejected": len(rejected),
-        "groups": _bucket_rows_by_source(pending),
+        "groups": _bucket_rows_by_source(pending, key_fn=key_fn),
         "accepted_groups": _bucket_rows_by_source(
-            accepted, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP,
+            accepted, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP, key_fn=key_fn,
         ),
         "rejected_groups": _bucket_rows_by_source(
-            rejected, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP,
+            rejected, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP, key_fn=key_fn,
         ),
     }
 

@@ -519,3 +519,36 @@
 .synth-review-queue__rejected-source {
     color: var(--text-secondary);
 }
+
+/* Epic E — group-by toggle. */
+.synth-review-queue__head-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+}
+
+.synth-review-queue__groupby {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.synth-review-queue__groupby-btn {
+    border: 1px solid var(--border-default);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: var(--font-size-xs);
+    cursor: pointer;
+}
+
+.synth-review-queue__groupby-btn.is-active {
+    background: var(--accent, var(--accent-primary));
+    border-color: var(--accent, var(--accent-primary));
+    color: #fff;
+}

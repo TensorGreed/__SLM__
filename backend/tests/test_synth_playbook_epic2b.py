@@ -451,6 +451,33 @@ class ReviewQueueIntegrationTests(unittest.TestCase):
         # 0.30 < 0.60 < 0.95 < (no confidence).
         self.assertEqual(ids_in_order, [2, 4, 1, 3])
 
+    def test_review_queue_group_by_class(self):
+        # Epic E — ?group_by=class buckets pending rows by their label instead
+        # of synth_source, so a reviewer can sweep one class at a time.
+        project = self._instantiate_template("ticket-router", "Queue Group By Class")
+        pid = project["id"]
+        self._seed_synth_rows(pid, [
+            {"id": 1, "text": "a", "label": "billing", "synth_source": "playbook:x", "synth_confidence": 0.9, "review_status": "pending"},
+            {"id": 2, "text": "b", "label": "billing", "synth_source": "playbook:y", "synth_confidence": 0.8, "review_status": "pending"},
+            {"id": 3, "text": "c", "label": "technical", "synth_source": "playbook:x", "synth_confidence": 0.7, "review_status": "pending"},
+            {"id": 4, "text": "d", "synth_source": "playbook:x", "synth_confidence": 0.6, "review_status": "pending"},  # no label
+        ])
+        resp = self.client.get(
+            f"/api/projects/{pid}/synthetic/review-queue?group_by=class"
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["group_by"], "class")
+        groups = {g["synth_source"]: g for g in payload["groups"]}
+        # Grouped by label; the unlabeled row falls into "(unlabeled)".
+        self.assertEqual(set(groups), {"billing", "technical", "(unlabeled)"})
+        self.assertEqual(groups["billing"]["count"], 2)
+        # Default (no param) still groups by source.
+        src_resp = self.client.get(f"/api/projects/{pid}/synthetic/review-queue")
+        self.assertEqual(src_resp.json()["group_by"], "source")
+        src_groups = {g["synth_source"] for g in src_resp.json()["groups"]}
+        self.assertEqual(src_groups, {"playbook:x", "playbook:y"})
+
     def test_review_queue_total_rows_includes_every_row_regardless_of_status(self):
         """total_rows is the whole-file count — the user's anchor
         when they ask 'how many synth rows do I have?'."""

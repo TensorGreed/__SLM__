@@ -55,11 +55,14 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
         setFocusActive(!!focusSource);
     }, [focusSource]);
 
+    // Epic E — group the queue by synth source (default) or by class label.
+    const [groupBy, setGroupBy] = useState<'source' | 'class'>('source');
+
     const load = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
-            const payload = await listSynthReviewQueue(projectId);
+            const payload = await listSynthReviewQueue(projectId, groupBy);
             setData(payload);
             setSelected(new Set());
         } catch (err: any) {
@@ -67,7 +70,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
         } finally {
             setLoading(false);
         }
-    }, [projectId]);
+    }, [projectId, groupBy]);
 
     useEffect(() => {
         load();
@@ -274,10 +277,36 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
     return (
         <section className="synth-review-queue" data-testid="synth-review-queue">
             <header className="synth-review-queue__head">
-                <h3 className="synth-review-queue__title">Synth review queue</h3>
+                <div className="synth-review-queue__head-row">
+                    <h3 className="synth-review-queue__title">Synth review queue</h3>
+                    <div
+                        className="synth-review-queue__groupby"
+                        role="group"
+                        aria-label="Group review queue by"
+                    >
+                        <span>Group by</span>
+                        <button
+                            type="button"
+                            className={`synth-review-queue__groupby-btn${groupBy === 'source' ? ' is-active' : ''}`}
+                            aria-pressed={groupBy === 'source' ? 'true' : 'false'}
+                            onClick={() => setGroupBy('source')}
+                        >
+                            Source
+                        </button>
+                        <button
+                            type="button"
+                            className={`synth-review-queue__groupby-btn${groupBy === 'class' ? ' is-active' : ''}`}
+                            aria-pressed={groupBy === 'class' ? 'true' : 'false'}
+                            onClick={() => setGroupBy('class')}
+                        >
+                            Class
+                        </button>
+                    </div>
+                </div>
                 <p className="synth-review-queue__subtitle">
                     {data.total_pending} row{data.total_pending === 1 ? '' : 's'} awaiting review,
-                    grouped by source, <strong>most uncertain first</strong> (lowest confidence —
+                    grouped by {groupBy === 'class' ? 'class' : 'source'},{' '}
+                    <strong>most uncertain first</strong> (lowest confidence —
                     where your review matters most). Accept to add to training; reject to discard.
                     {data.total_accepted > 0 && (
                         <> {' · '}<strong>{data.total_accepted}</strong> already accepted (see below).</>
