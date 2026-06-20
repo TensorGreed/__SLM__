@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,
+    Check,
     CheckCircle2,
     ClipboardCheck,
     ExternalLink,
@@ -19,6 +20,7 @@ import {
     ShieldCheck,
     Sparkles,
     UserCheck,
+    X,
 } from 'lucide-react';
 
 import api from '../../api/client';
@@ -27,8 +29,10 @@ import {
 } from '../../api/dataStudio';
 import type {
     DataStudioReviewQueue,
+    DataStudioReviewQueueGroup,
     DataStudioReviewQueueTriageItem,
 } from '../../api/dataStudio';
+import { bulkUpdateSynthReviewBySource } from '../../api/synthPlaybook';
 import './DataStudioReviewQueuePanel.css';
 
 // Quality-Lift phase 3 slice 3 — Active-learning snapshot shape.
@@ -503,6 +507,10 @@ export default function DataStudioReviewQueuePanel({
     // Quality-Lift phase 4 slice 2 — Label-noise card state. Same
     // separation rationale as active-learning above.
     const [labelNoise, setLabelNoise] = useState<LabelNoiseLatestResponse | null>(null);
+    // Epic E — in-flight bulk-by-source action (keyed by group key) + the last
+    // result flash, so the read-only panel becomes actionable without leaving it.
+    const [bulkBusyKey, setBulkBusyKey] = useState<string | null>(null);
+    const [bulkFlash, setBulkFlash] = useState<string | null>(null);
 
     const loadQueue = async () => {
         setLoading(true);
@@ -550,6 +558,35 @@ export default function DataStudioReviewQueuePanel({
         void loadLabelNoise();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
+
+    const handleBulkBySource = async (
+        group: DataStudioReviewQueueGroup,
+        action: 'accept' | 'reject',
+    ) => {
+        if (!group.synth_source || bulkBusyKey) {
+            return;
+        }
+        setBulkBusyKey(group.key);
+        setBulkFlash(null);
+        try {
+            const result = await bulkUpdateSynthReviewBySource(projectId, {
+                source: group.synth_source,
+                action,
+            });
+            const n = action === 'accept' ? result.accepted : result.rejected;
+            setBulkFlash(
+                `${action === 'accept' ? 'Accepted' : 'Rejected'} ${n} row${n === 1 ? '' : 's'} `
+                + `from “${group.label}”. ${result.total_remaining_pending} still pending.`,
+            );
+            await loadQueue();
+        } catch (err: any) {
+            setBulkFlash(
+                err?.response?.data?.detail || err?.message || `Failed to ${action} the group.`,
+            );
+        } finally {
+            setBulkBusyKey(null);
+        }
+    };
 
     const handleOpenLabelQueue = (jobId: number | null) => {
         // Mirror CoachSuggestion's ``active-labeling-queue`` target —
@@ -714,26 +751,65 @@ export default function DataStudioReviewQueuePanel({
 
                 <div className="data-studio-review__groups">
                     <h4>Power grouping</h4>
+                    {bulkFlash && (
+                        <p className="data-studio-review__bulk-flash" role="status" data-testid="bulk-flash">
+                            {bulkFlash}
+                        </p>
+                    )}
                     {sourceGroups.length > 0 ? (
                         <div className="data-studio-review__source-list">
-                            {sourceGroups.map((group) => (
-                                <button
-                                    type="button"
-                                    className="data-studio-review__source"
-                                    key={group.key}
-                                    onClick={() => onOpenTarget(group.target_tab)}
-                                >
-                                    <span>
-                                        <strong>{group.label}</strong>
-                                        <small>
-                                            {labelForToken(group.kind)}
-                                            {' · '}
-                                            {labelForToken(group.status)}
-                                        </small>
-                                    </span>
-                                    <b>{formatNumber(group.count)}</b>
-                                </button>
-                            ))}
+                            {sourceGroups.map((group) => {
+                                const actionable = Boolean(
+                                    group.synth_source
+                                    && group.kind === 'synthetic'
+                                    && group.status === 'pending',
+                                );
+                                const busy = bulkBusyKey === group.key;
+                                return (
+                                    <div
+                                        className="data-studio-review__source"
+                                        key={group.key}
+                                    >
+                                        <button
+                                            type="button"
+                                            className="data-studio-review__source-open"
+                                            onClick={() => onOpenTarget(group.target_tab)}
+                                        >
+                                            <span>
+                                                <strong>{group.label}</strong>
+                                                <small>
+                                                    {labelForToken(group.kind)}
+                                                    {' · '}
+                                                    {labelForToken(group.status)}
+                                                </small>
+                                            </span>
+                                            <b>{formatNumber(group.count)}</b>
+                                        </button>
+                                        {actionable && (
+                                            <div className="data-studio-review__source-actions">
+                                                <button
+                                                    type="button"
+                                                    className="btn btn-secondary data-studio-review__bulk-accept"
+                                                    disabled={busy || bulkBusyKey !== null}
+                                                    onClick={() => handleBulkBySource(group, 'accept')}
+                                                >
+                                                    <Check size={13} aria-hidden="true" />
+                                                    {busy ? 'Working…' : `Accept all (${group.count})`}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="btn btn-ghost data-studio-review__bulk-reject"
+                                                    disabled={busy || bulkBusyKey !== null}
+                                                    onClick={() => handleBulkBySource(group, 'reject')}
+                                                >
+                                                    <X size={13} aria-hidden="true" />
+                                                    Reject all
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
                     ) : (
                         <p className="data-studio-review__empty">

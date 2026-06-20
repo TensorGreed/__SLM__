@@ -683,6 +683,112 @@ class ReviewQueueIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 400, resp.text)
 
+    def test_bulk_update_by_source_accepts_only_the_groups_pending_rows(self):
+        # Epic E — one-click "Accept all (N)" on a Data Studio pending group.
+        # Two sources; accepting one source's group must flip ONLY its pending
+        # rows, leaving the other source + an already-accepted row untouched.
+        project = self._instantiate_template("ticket-router", "Queue By-Source Accept")
+        pid = project["id"]
+        src_a = "playbook:classification:positives_paraphrase"
+        src_b = "playbook:classification:hard_negatives:vs=billing"
+        self._seed_synth_rows(pid, [
+            {"id": 1, "text": "a", "label": "billing", "synth_source": src_a, "synth_confidence": 0.9, "review_status": "pending"},
+            {"id": 2, "text": "b", "label": "billing", "synth_source": src_a, "synth_confidence": 0.8, "review_status": "pending"},
+            {"id": 3, "text": "c", "label": "technical", "synth_source": src_b, "synth_confidence": 0.95, "review_status": "pending"},
+            {"id": 4, "text": "d", "label": "billing", "synth_source": src_a, "synth_confidence": 0.7, "review_status": "accepted"},
+        ])
+        resp = self.client.post(
+            f"/api/projects/{pid}/synthetic/review-queue/bulk-update-by-source",
+            json={"source": src_a, "action": "accept"},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["source"], src_a)
+        self.assertEqual(payload["matched"], 2)
+        self.assertEqual(payload["accepted"], 2)
+        # src_b's pending row is the only one left pending.
+        self.assertEqual(payload["total_remaining_pending"], 1)
+
+        path = settings.DATA_DIR / "projects" / str(pid) / "synthetic" / "synthetic.jsonl"
+        with path.open() as f:
+            rows = {r["id"]: r for r in (json.loads(l) for l in f if l.strip())}
+        self.assertEqual(rows[1]["review_status"], "accepted")
+        self.assertEqual(rows[2]["review_status"], "accepted")
+        self.assertEqual(rows[3]["review_status"], "pending")  # other source, untouched
+        self.assertEqual(rows[4]["review_status"], "accepted")  # already accepted
+
+    def test_bulk_update_by_source_reject_stamps_reason(self):
+        project = self._instantiate_template("policy-qa-style", "Queue By-Source Reject")
+        pid = project["id"]
+        src = "playbook:qa-sft:positives_paraphrase"
+        self._seed_synth_rows(pid, [
+            {"id": 1, "question": "Q1", "answer": "A1", "synth_source": src, "synth_confidence": 0.6, "review_status": "pending"},
+            {"id": 2, "question": "Q2", "answer": "A2", "synth_source": src, "synth_confidence": 0.55, "review_status": "pending"},
+        ])
+        resp = self.client.post(
+            f"/api/projects/{pid}/synthetic/review-queue/bulk-update-by-source",
+            json={"source": src, "action": "reject", "reject_reason": "low_confidence"},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["rejected"], 2)
+        path = settings.DATA_DIR / "projects" / str(pid) / "synthetic" / "synthetic.jsonl"
+        with path.open() as f:
+            rows = [json.loads(l) for l in f if l.strip()]
+        for row in rows:
+            self.assertEqual(row["review_status"], "rejected")
+            self.assertEqual(row["reject_reason"], "low_confidence")
+
+    def test_bulk_update_by_source_unknown_source_is_a_noop(self):
+        project = self._instantiate_template("ticket-router", "Queue By-Source Noop")
+        pid = project["id"]
+        self._seed_synth_rows(pid, [
+            {"id": 1, "text": "a", "label": "x", "synth_source": "real:source", "synth_confidence": 0.9, "review_status": "pending"},
+        ])
+        resp = self.client.post(
+            f"/api/projects/{pid}/synthetic/review-queue/bulk-update-by-source",
+            json={"source": "does:not:exist", "action": "accept"},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["matched"], 0)
+        self.assertEqual(payload["accepted"], 0)
+        self.assertEqual(payload["total_remaining_pending"], 1)
+
+    def test_bulk_update_by_source_rejects_unknown_action(self):
+        project = self._instantiate_template("email-chat-tone", "Queue By-Source Bad Action")
+        pid = project["id"]
+        resp = self.client.post(
+            f"/api/projects/{pid}/synthetic/review-queue/bulk-update-by-source",
+            json={"source": "s", "action": "delete"},
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+
+    def test_data_studio_pending_groups_carry_synth_source_for_actions(self):
+        # The Data Studio review-queue panel needs the raw synth_source on each
+        # synthetic-pending group so its Accept/Reject-all buttons can target it.
+        project = self._instantiate_template("ticket-router", "Queue DS Source Key")
+        pid = project["id"]
+        src = "playbook:classification:positives_paraphrase"
+        self._seed_synth_rows(pid, [
+            {"id": 1, "text": "a", "label": "billing", "synth_source": src, "synth_confidence": 0.9, "review_status": "pending"},
+        ])
+        resp = self.client.get(f"/api/projects/{pid}/data-studio/review-queue")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        by_source = resp.json()["groupings"]["by_source"]
+        pending = [
+            g for g in by_source
+            if g["kind"] == "synthetic" and g["status"] == "pending"
+        ]
+        self.assertTrue(pending)
+        self.assertEqual(pending[0]["synth_source"], src)
+        # Accepted groups don't carry the actionable key.
+        accepted = [
+            g for g in by_source
+            if g["kind"] == "synthetic" and g["status"] == "accepted"
+        ]
+        for g in accepted:
+            self.assertNotIn("synth_source", g)
+
     def test_run_playbook_endpoint_wraps_backend_failure_as_503(self):
         """A flaky LLM backend that throws mid-generation must produce
         a clean 503 + readable message, not a 500 / "network error"

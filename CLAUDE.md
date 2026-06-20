@@ -310,6 +310,15 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   with recipe-aware playbooks + per-row `review_status="pending"`;
   (b) legacy `synthetic_service` with task framework + bridge to Jobs.
   Both auto-save to `data/projects/{id}/synthetic/synthetic.jsonl`.
+  Synthetic rows land `review_status="pending"`;
+  `synth_review_queue_service` lists them grouped by `synth_source` and
+  flips status via `bulk_update_review_queue` (by row-id) or
+  `bulk_update_by_source` (every pending row in a source group by key —
+  `POST /synthetic/review-queue/bulk-update-by-source`). The **Data Studio
+  review-queue panel** (`DataStudioReviewQueuePanel`) is actionable: its
+  synthetic-pending `by_source` groups carry the raw `synth_source` and
+  render inline "Accept all / Reject all" (Epic E). Reject is soft (rows
+  stay on disk, grouped by `reject_reason`, bulk-purgeable).
 - **Auto-RAG** — `auto_rag_service` builds BM25 indexes at training
   completion; `playground_chat` prepends top-K retrievals. Comparison
   panel + UI-triggered `auto_rag_ab --project` Job.

@@ -4394,8 +4394,9 @@ def _review_group(
     status: str,
     count: int,
     target_tab: str,
+    synth_source: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    entry: dict[str, Any] = {
         "key": key,
         "label": label,
         "kind": kind,
@@ -4403,6 +4404,12 @@ def _review_group(
         "count": int(count),
         "target_tab": target_tab,
     }
+    # Only the actionable synthetic-pending groups carry the raw
+    # ``synth_source`` key — the Data Studio panel passes it back to the
+    # bulk-update-by-source endpoint for one-click accept/reject-all.
+    if synth_source is not None:
+        entry["synth_source"] = synth_source
+    return entry
 
 
 async def _annotation_review_summary(
@@ -4723,6 +4730,7 @@ async def build_data_studio_review_queue(
                 status="pending",
                 count=int(group.get("count") or 0),
                 target_tab="synthetic",
+                synth_source=str(group.get("synth_source") or ""),
             )
         )
     for group in list(synthetic_queue_raw.get("accepted_groups") or []):

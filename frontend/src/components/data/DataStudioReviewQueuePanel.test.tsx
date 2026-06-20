@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { apiMock } = vi.hoisted(() => ({
     apiMock: {
         get: vi.fn(),
+        post: vi.fn(),
     },
 }));
 
@@ -132,6 +133,7 @@ const reviewQueuePayload = {
                 status: 'pending',
                 count: 2,
                 target_tab: 'synthetic',
+                synth_source: 'playbook:classification:positives_paraphrase',
             },
             {
                 key: 'annotation:12:promotion',
@@ -197,6 +199,77 @@ const reviewQueuePayload = {
 describe('DataStudioReviewQueuePanel', () => {
     beforeEach(() => {
         apiMock.get.mockReset();
+        apiMock.post.mockReset();
+    });
+
+    it('bulk-accepts a synthetic pending group in place and refreshes', async () => {
+        apiMock.get
+            .mockResolvedValueOnce({ data: reviewQueuePayload })   // /review-queue
+            .mockRejectedValueOnce(new Error('no AL'))             // /active-learning (best-effort)
+            .mockRejectedValueOnce(new Error('no noise'))          // /label-noise (best-effort)
+            .mockResolvedValueOnce({                               // reload after the action
+                data: {
+                    ...reviewQueuePayload,
+                    groupings: { ...reviewQueuePayload.groupings, by_source: [] },
+                },
+            });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                accepted: 2, rejected: 0, not_found: 0, not_pending: 0,
+                total_remaining_pending: 0,
+                source: 'playbook:classification:positives_paraphrase', matched: 2,
+            },
+        });
+        render(<DataStudioReviewQueuePanel projectId={1} onOpenTarget={vi.fn()} />);
+
+        const acceptBtn = await screen.findByRole('button', { name: /Accept all \(2\)/i });
+        fireEvent.click(acceptBtn);
+
+        // Hits the bulk-update-by-source endpoint with the group's synth_source.
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/1/synthetic/review-queue/bulk-update-by-source',
+                {
+                    source: 'playbook:classification:positives_paraphrase',
+                    action: 'accept',
+                    reject_reason: null,
+                },
+            );
+        });
+        // Result flash + refetch of the review queue.
+        await waitFor(() => {
+            expect(screen.getByTestId('bulk-flash')).toHaveTextContent(/Accepted 2 rows/i);
+        });
+        expect(apiMock.get).toHaveBeenCalledTimes(4); // 3 mount + 1 reload
+    });
+
+    it('does not render bulk actions for non-actionable groups (no synth_source)', async () => {
+        apiMock.get
+            .mockResolvedValueOnce({
+                data: {
+                    ...reviewQueuePayload,
+                    groupings: {
+                        ...reviewQueuePayload.groupings,
+                        by_source: [
+                            {
+                                key: 'annotation:12:promotion',
+                                label: 'Support annotation pass',
+                                kind: 'annotation',
+                                status: 'needs_promotion',
+                                count: 1,
+                                target_tab: 'annotate',
+                            },
+                        ],
+                    },
+                },
+            })
+            .mockRejectedValueOnce(new Error('no AL'))
+            .mockRejectedValueOnce(new Error('no noise'));
+        render(<DataStudioReviewQueuePanel projectId={1} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('data-studio-review-queue')).toBeInTheDocument();
+        });
+        expect(screen.queryByRole('button', { name: /Accept all/i })).toBeNull();
     });
 
     it('renders cross-workflow review triage and routes to existing actions', async () => {

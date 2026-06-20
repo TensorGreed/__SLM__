@@ -1056,6 +1056,9 @@ export interface DataStudioReviewQueueGroup {
     status: string;
     count: number;
     target_tab: string;
+    /** Epic E — present only on actionable synthetic-pending groups: the raw
+     * synth_source key the bulk-update-by-source endpoint targets. */
+    synth_source?: string;
 }
 
 export interface DataStudioReviewQueueStatusGroup {

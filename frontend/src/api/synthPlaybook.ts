@@ -338,6 +338,13 @@ export interface BulkUpdateResult {
     total_remaining_pending: number;
 }
 
+export interface BulkUpdateBySourceResult extends BulkUpdateResult {
+    /** Echo of the targeted synth_source group key. */
+    source: string;
+    /** Pending rows in the group at call time. */
+    matched: number;
+}
+
 export async function listSynthReviewQueue(projectId: number): Promise<ReviewQueueResponse> {
     const resp = await api.get(`/projects/${projectId}/synthetic/review-queue`);
     return resp.data as ReviewQueueResponse;
@@ -360,6 +367,31 @@ export async function bulkUpdateSynthReviewQueue(
         reject_reason: args.rejectReason ?? null,
     });
     return resp.data as BulkUpdateResult;
+}
+
+
+/**
+ * Epic E — accept/reject every pending row in one synth_source group by key
+ * (no row-id enumeration). Powers the Data Studio review-queue panel's
+ * one-click "Accept all (N)" / "Reject all (N)" on a pending group.
+ */
+export async function bulkUpdateSynthReviewBySource(
+    projectId: number,
+    args: {
+        source: string;
+        action: 'accept' | 'reject';
+        rejectReason?: string | null;
+    },
+): Promise<BulkUpdateBySourceResult> {
+    const resp = await api.post(
+        `/projects/${projectId}/synthetic/review-queue/bulk-update-by-source`,
+        {
+            source: args.source,
+            action: args.action,
+            reject_reason: args.rejectReason ?? null,
+        },
+    );
+    return resp.data as BulkUpdateBySourceResult;
 }
 
 

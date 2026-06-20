@@ -907,6 +907,24 @@ class BulkReviewQueueRequest(BaseModel):
     )
 
 
+class BulkReviewQueueBySourceRequest(BaseModel):
+    source: str = Field(
+        ...,
+        description=(
+            "The ``synth_source`` group key whose pending rows to update "
+            "(e.g. 'playbook:classification:hard_negatives'). Every pending "
+            "row in the group is affected — no row-id enumeration needed."
+        ),
+        max_length=256,
+    )
+    action: str = Field(..., description="'accept' or 'reject'.")
+    reject_reason: str | None = Field(
+        default=None,
+        description="Optional label stamped on each rejected row (reject only).",
+        max_length=64,
+    )
+
+
 class PurgeRejectedRequest(BaseModel):
     reasons: list[str] | None = Field(
         default=None,
@@ -956,6 +974,30 @@ async def bulk_update_synth_review_queue(
         db,
         project_id,
         row_ids=req.row_ids,
+        action=req.action,  # type: ignore[arg-type]
+        reject_reason=req.reject_reason,
+    )
+
+
+@router.post("/review-queue/bulk-update-by-source")
+async def bulk_update_synth_review_queue_by_source(
+    project_id: int,
+    req: BulkReviewQueueBySourceRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Accept or reject *every pending row* in one ``synth_source`` group by
+    key. Powers the one-click "Accept all (N)" / "Reject all (N)" on the Data
+    Studio review-queue panel's pending groups (Epic E — actionable workbench),
+    reusing the same soft-reject + record-count sync as ``/bulk-update``.
+    """
+    from app.services.synth_review_queue_service import bulk_update_by_source
+
+    if req.action not in ("accept", "reject"):
+        raise HTTPException(400, "action must be 'accept' or 'reject'")
+    return await bulk_update_by_source(
+        db,
+        project_id,
+        source=req.source,
         action=req.action,  # type: ignore[arg-type]
         reject_reason=req.reject_reason,
     )

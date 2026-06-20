@@ -307,6 +307,64 @@ async def bulk_update_review_queue(
     }
 
 
+async def bulk_update_by_source(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    source: str,
+    action: ReviewAction,
+    reject_reason: str | None = None,
+) -> dict[str, Any]:
+    """Accept / reject *every pending row* in one ``synth_source`` group by
+    key — no row-id enumeration needed.
+
+    This is what makes the Data Studio review-queue panel actionable: its
+    cross-workflow summary surfaces pending groups by source + count, so a
+    one-click "Accept all (N)" / "Reject all (N)" on a group is the natural
+    bulk. We resolve the matching pending row ids (via the same
+    ``_resolve_source_label`` the grouping uses, so a group's key always maps
+    back to its rows) and delegate to the tested ``bulk_update_review_queue``
+    — no second mutation path to keep in sync.
+
+    Returns the same summary as ``bulk_update_review_queue`` plus the echoed
+    ``source`` and ``matched`` (pending rows in the group at call time)."""
+    if action not in ("accept", "reject"):
+        raise ValueError("action must be 'accept' or 'reject'")
+    source = str(source or "").strip()
+    if not source:
+        raise ValueError("source must be a non-empty synth_source key")
+
+    path = _synthetic_jsonl_path(project_id)
+    rows = _read_all_rows(path)
+    matched_ids = [
+        int(row["id"])
+        for row in rows
+        if row.get("review_status") == "pending"
+        and isinstance(row.get("id"), int)
+        and _resolve_source_label(row) == source
+    ]
+
+    summary = await bulk_update_review_queue(
+        db,
+        project_id,
+        row_ids=matched_ids,
+        action=action,
+        reject_reason=reject_reason,
+    )
+    if not matched_ids:
+        # bulk_update_review_queue early-returns a zero summary (with a
+        # hardcoded total_remaining_pending=0) when handed no ids — it never
+        # reads the file. The group simply had no pending rows; report the
+        # project's *actual* remaining pending so the panel doesn't falsely
+        # show "0 left to review".
+        summary["total_remaining_pending"] = sum(
+            1 for row in rows if row.get("review_status") == "pending"
+        )
+    summary["source"] = source
+    summary["matched"] = len(matched_ids)
+    return summary
+
+
 async def purge_rejected_rows(
     db: AsyncSession,
     project_id: int,
