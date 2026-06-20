@@ -297,6 +297,38 @@ describe('DataStudioDatasetVersionsPanel', () => {
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/dataset-versions');
     });
 
+    it('exports a prepared split as JSONL via the export endpoint', async () => {
+        apiMock.get
+            .mockResolvedValueOnce({ data: versionPayload })   // initial load
+            .mockResolvedValueOnce({ data: new Blob(['{}\n']) }); // the export blob
+        const createObjectURL = vi.fn(() => 'blob://stub');
+        const revokeObjectURL = vi.fn();
+        const origCreate = URL.createObjectURL;
+        const origRevoke = URL.revokeObjectURL;
+        URL.createObjectURL = createObjectURL as typeof URL.createObjectURL;
+        URL.revokeObjectURL = revokeObjectURL as typeof URL.revokeObjectURL;
+        try {
+            render(<DataStudioDatasetVersionsPanel projectId={1} onOpenTarget={vi.fn()} />);
+            await waitFor(() => {
+                expect(screen.getByTestId('data-studio-dataset-versions')).toBeInTheDocument();
+            });
+            // Each file-present artifact gets an Export JSONL button (train/val/test).
+            const exportButtons = screen.getAllByRole('button', { name: /Export JSONL/i });
+            expect(exportButtons.length).toBeGreaterThan(0);
+            fireEvent.click(exportButtons[0]);
+            await waitFor(() => {
+                expect(apiMock.get).toHaveBeenCalledWith(
+                    '/projects/1/data-studio/dataset-versions/train/export',
+                    { responseType: 'blob' },
+                );
+            });
+            expect(createObjectURL).toHaveBeenCalled();
+        } finally {
+            URL.createObjectURL = origCreate;
+            URL.revokeObjectURL = origRevoke;
+        }
+    });
+
     it('renders empty version state without mutating', async () => {
         apiMock.get.mockResolvedValueOnce({
             data: {

@@ -2312,6 +2312,42 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertEqual(payload["source_of_truth"], "deterministic_data_studio_checks")
         teacher_mock.assert_awaited_once()
 
+    def test_export_prepared_split_streams_jsonl_when_present(self):
+        # Epic E — the prepared split the trainer consumes is downloadable.
+        project_id = self._create_project("export-split")
+        prep_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
+        prep_dir.mkdir(parents=True, exist_ok=True)
+        rows = [{"input": "a", "label": "x"}, {"input": "b", "label": "y"}]
+        (prep_dir / "train.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+        )
+        resp = self.client.get(
+            f"/api/projects/{project_id}/data-studio/dataset-versions/train/export"
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIn("application/x-ndjson", resp.headers.get("content-type", ""))
+        body_rows = [json.loads(l) for l in resp.text.splitlines() if l.strip()]
+        self.assertEqual(body_rows, rows)
+        # The validation split maps to val.jsonl on disk.
+        (prep_dir / "val.jsonl").write_text(json.dumps({"input": "c"}) + "\n", encoding="utf-8")
+        vresp = self.client.get(
+            f"/api/projects/{project_id}/data-studio/dataset-versions/validation/export"
+        )
+        self.assertEqual(vresp.status_code, 200, vresp.text)
+
+    def test_export_prepared_split_404s_for_unknown_and_missing(self):
+        project_id = self._create_project("export-missing")
+        # Unknown split name.
+        bad = self.client.get(
+            f"/api/projects/{project_id}/data-studio/dataset-versions/holdout/export"
+        )
+        self.assertEqual(bad.status_code, 404, bad.text)
+        # Known split, but nothing prepared yet.
+        missing = self.client.get(
+            f"/api/projects/{project_id}/data-studio/dataset-versions/test/export"
+        )
+        self.assertEqual(missing.status_code, 404, missing.text)
+
 
 if __name__ == "__main__":
     unittest.main()

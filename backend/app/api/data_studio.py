@@ -285,6 +285,38 @@ async def get_data_studio_dataset_versions(
         raise HTTPException(400, detail)
 
 
+@router.get("/dataset-versions/{split}/export")
+async def export_prepared_split(
+    project_id: int,
+    split: str,
+):
+    """Download a prepared split (``train`` / ``val`` / ``test``) as JSONL.
+
+    Epic E — the first real action on the Versions surface: the prepared
+    artifact the trainer actually consumes, downloadable for inspection,
+    external eval, or archival. (Mark-active / compare / retrain-from-version
+    need versioned file snapshots the prepare step doesn't keep — the prepared
+    dir is latest-only — so they're deferred, not faked here.)
+    """
+    from fastapi.responses import FileResponse
+
+    from app.services.data_studio_service import resolve_prepared_split_path
+
+    path = resolve_prepared_split_path(project_id, split)
+    if path is None:
+        raise HTTPException(404, f"Unknown split '{split}' (expected train/val/test).")
+    if not path.exists():
+        raise HTTPException(
+            404,
+            f"Prepared {split} split not found — run Prepare Dataset first.",
+        )
+    return FileResponse(
+        path=str(path),
+        media_type="application/x-ndjson",
+        filename=f"project-{project_id}-{path.stem}.jsonl",
+    )
+
+
 @router.post("/assist")
 async def run_data_studio_assist(
     project_id: int,

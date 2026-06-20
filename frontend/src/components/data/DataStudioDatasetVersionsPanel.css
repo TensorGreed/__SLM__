@@ -312,6 +312,20 @@
     gap: var(--space-xs);
 }
 
+.data-studio-versions__artifact-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+}
+
+.data-studio-versions__artifact-actions .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
 .data-studio-versions__artifact-flags span {
     display: inline-flex;
     align-items: center;

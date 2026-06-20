@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,
     CheckCircle2,
+    Download,
     ExternalLink,
     FileCheck2,
     GitBranch,
@@ -16,6 +17,7 @@ import {
     Workflow,
 } from 'lucide-react';
 
+import api from '../../api/client';
 import {
     getDataStudioDatasetVersions,
     runDataStudioPrepareDataset,
@@ -113,15 +115,44 @@ function SignalRow({
 
 function ArtifactCard({
     artifact,
+    projectId,
 }: {
     artifact: DataStudioDatasetVersionArtifact;
+    projectId: number;
 }) {
+    const [downloading, setDownloading] = useState(false);
+    const [downloadError, setDownloadError] = useState<string | null>(null);
     const versionLabel = artifact.latest_version_number
         ? `v${artifact.latest_version_number}`
         : 'No version';
     const manifestLabel = artifact.manifest_version
         ? `manifest v${artifact.manifest_version}`
         : 'no manifest ref';
+
+    const handleDownload = async () => {
+        setDownloading(true);
+        setDownloadError(null);
+        try {
+            // Auth-aware download: fetch the JSONL as a blob through the axios
+            // client (carries the token) then trigger a client-side save.
+            const resp = await api.get(
+                `/projects/${projectId}/data-studio/dataset-versions/${artifact.key}/export`,
+                { responseType: 'blob' },
+            );
+            const url = URL.createObjectURL(resp.data as Blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `project-${projectId}-${artifact.key}.jsonl`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        } catch (err: any) {
+            setDownloadError(err?.response?.data?.detail || err?.message || 'Download failed.');
+        } finally {
+            setDownloading(false);
+        }
+    };
     return (
         <article className="data-studio-versions__artifact">
             <div className="data-studio-versions__artifact-head">
@@ -156,6 +187,22 @@ function ArtifactCard({
                     {artifact.row_count_matches_manifest ? 'Counts match' : 'Counts differ'}
                 </span>
             </div>
+            {artifact.file_exists && (
+                <div className="data-studio-versions__artifact-actions">
+                    <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => void handleDownload()}
+                        disabled={downloading}
+                    >
+                        <Download size={13} aria-hidden="true" />
+                        {downloading ? 'Exporting…' : 'Export JSONL'}
+                    </button>
+                    {downloadError && (
+                        <span className="badge badge-danger" role="alert">{downloadError}</span>
+                    )}
+                </div>
+            )}
         </article>
     );
 }
@@ -425,7 +472,7 @@ export default function DataStudioDatasetVersionsPanel({
                     <h4>Latest artifacts</h4>
                     <div className="data-studio-versions__artifact-list">
                         {versions.latest_artifacts.map((artifact) => (
-                            <ArtifactCard artifact={artifact} key={artifact.key} />
+                            <ArtifactCard artifact={artifact} projectId={projectId} key={artifact.key} />
                         ))}
                     </div>
                 </div>

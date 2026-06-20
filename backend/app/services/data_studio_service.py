@@ -6546,6 +6546,27 @@ def _prepared_manifest_path(project_id: int) -> Path:
     return settings.DATA_DIR / "projects" / str(project_id) / "prepared" / "manifest.json"
 
 
+# Epic E — exportable prepared split keys + their on-disk JSONL filenames.
+# (The validation split is stored as ``val.jsonl``.)
+PREPARED_SPLIT_FILENAMES: dict[str, str] = {
+    "train": "train.jsonl",
+    "val": "val.jsonl",
+    "validation": "val.jsonl",
+    "test": "test.jsonl",
+}
+
+
+def resolve_prepared_split_path(project_id: int, split: str) -> Path | None:
+    """Return the on-disk JSONL path for a prepared split (``train`` / ``val`` /
+    ``test``), or ``None`` for an unknown split. Pure — existence is the
+    caller's check, so the export endpoint can 404 distinctly on
+    unknown-split vs not-prepared-yet."""
+    filename = PREPARED_SPLIT_FILENAMES.get(str(split or "").strip().lower())
+    if filename is None:
+        return None
+    return settings.DATA_DIR / "projects" / str(project_id) / "prepared" / filename
+
+
 def _read_prepared_manifest(project_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
     path = _prepared_manifest_path(project_id)
     meta: dict[str, Any] = {
