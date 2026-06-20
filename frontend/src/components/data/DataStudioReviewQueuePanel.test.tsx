@@ -203,16 +203,14 @@ describe('DataStudioReviewQueuePanel', () => {
     });
 
     it('bulk-accepts a synthetic pending group in place and refreshes', async () => {
-        apiMock.get
-            .mockResolvedValueOnce({ data: reviewQueuePayload })   // /review-queue
-            .mockRejectedValueOnce(new Error('no AL'))             // /active-learning (best-effort)
-            .mockRejectedValueOnce(new Error('no noise'))          // /label-noise (best-effort)
-            .mockResolvedValueOnce({                               // reload after the action
-                data: {
-                    ...reviewQueuePayload,
-                    groupings: { ...reviewQueuePayload.groupings, by_source: [] },
-                },
-            });
+        // Route GETs by URL so the best-effort cards (active-learning,
+        // label-noise, prepared-version-preview) can't shift a strict chain.
+        apiMock.get.mockImplementation((url: string) => {
+            if (url.includes('/data-studio/review-queue')) {
+                return Promise.resolve({ data: reviewQueuePayload });
+            }
+            return Promise.reject(new Error('not mocked (best-effort)'));
+        });
         apiMock.post.mockResolvedValueOnce({
             data: {
                 accepted: 2, rejected: 0, not_found: 0, not_pending: 0,
@@ -236,11 +234,40 @@ describe('DataStudioReviewQueuePanel', () => {
                 },
             );
         });
-        // Result flash + refetch of the review queue.
+        // Result flash (from the action result) + the queue is refetched.
         await waitFor(() => {
             expect(screen.getByTestId('bulk-flash')).toHaveTextContent(/Accepted 2 rows/i);
         });
-        expect(apiMock.get).toHaveBeenCalledTimes(4); // 3 mount + 1 reload
+        const reviewQueueCalls = apiMock.get.mock.calls.filter(
+            (c: any[]) => String(c[0]).includes('/data-studio/review-queue'),
+        ).length;
+        expect(reviewQueueCalls).toBeGreaterThanOrEqual(2); // mount + reload
+    });
+
+    it('renders the "what version will include this" preview', async () => {
+        apiMock.get.mockImplementation((url: string) => {
+            if (url.includes('/data-studio/review-queue')) {
+                return Promise.resolve({ data: reviewQueuePayload });
+            }
+            if (url.includes('/prepared-version-preview')) {
+                return Promise.resolve({
+                    data: {
+                        project_id: 1,
+                        next_version: 3,
+                        has_existing_versions: true,
+                        staged: { synthetic_accepted: 12, synthetic_pending: 5, gold: 20, cleaned: 80 },
+                        trainable_total: 112,
+                    },
+                });
+            }
+            return Promise.reject(new Error('not mocked'));
+        });
+        render(<DataStudioReviewQueuePanel projectId={1} onOpenTarget={vi.fn()} />);
+        const card = await screen.findByTestId('version-preview');
+        expect(card).toHaveTextContent(/next prepared dataset/i);
+        expect(card).toHaveTextContent(/v3/);
+        expect(card).toHaveTextContent(/12/);   // accepted synthetic
+        expect(card).toHaveTextContent(/5 pending rows excluded/i);
     });
 
     it('does not render bulk actions for non-actionable groups (no synth_source)', async () => {

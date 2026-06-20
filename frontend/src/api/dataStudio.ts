@@ -1462,6 +1462,28 @@ export async function getSplitClassCoverage(projectId: number): Promise<SplitCla
 }
 
 
+export interface PreparedVersionPreview {
+    project_id: number;
+    next_version: number;
+    has_existing_versions: boolean;
+    staged: {
+        synthetic_accepted: number;
+        synthetic_pending: number;
+        gold: number;
+        cleaned: number;
+    };
+    trainable_total: number;
+}
+
+/** Epic E — "what version will include this?" for the review queue. */
+export async function getPreparedVersionPreview(
+    projectId: number,
+): Promise<PreparedVersionPreview> {
+    const resp = await api.get(`/projects/${projectId}/data-studio/prepared-version-preview`);
+    return resp.data as PreparedVersionPreview;
+}
+
+
 /**
  * Arc A — "Run prepare now" inline from Data Studio.
  *

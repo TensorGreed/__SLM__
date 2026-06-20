@@ -15,6 +15,7 @@ import {
     CheckCircle2,
     ClipboardCheck,
     ExternalLink,
+    GitBranch,
     ListChecks,
     RefreshCw,
     ShieldCheck,
@@ -26,11 +27,13 @@ import {
 import api from '../../api/client';
 import {
     getDataStudioReviewQueue,
+    getPreparedVersionPreview,
 } from '../../api/dataStudio';
 import type {
     DataStudioReviewQueue,
     DataStudioReviewQueueGroup,
     DataStudioReviewQueueTriageItem,
+    PreparedVersionPreview,
 } from '../../api/dataStudio';
 import { bulkUpdateSynthReviewBySource } from '../../api/synthPlaybook';
 import './DataStudioReviewQueuePanel.css';
@@ -511,6 +514,16 @@ export default function DataStudioReviewQueuePanel({
     // result flash, so the read-only panel becomes actionable without leaving it.
     const [bulkBusyKey, setBulkBusyKey] = useState<string | null>(null);
     const [bulkFlash, setBulkFlash] = useState<string | null>(null);
+    // Epic E — "what version will include this?" preview. Best-effort.
+    const [versionPreview, setVersionPreview] = useState<PreparedVersionPreview | null>(null);
+
+    const loadVersionPreview = async () => {
+        try {
+            setVersionPreview(await getPreparedVersionPreview(projectId));
+        } catch {
+            setVersionPreview(null);
+        }
+    };
 
     const loadQueue = async () => {
         setLoading(true);
@@ -556,6 +569,7 @@ export default function DataStudioReviewQueuePanel({
         void loadQueue();
         void loadActiveLearning();
         void loadLabelNoise();
+        void loadVersionPreview();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
 
@@ -579,6 +593,7 @@ export default function DataStudioReviewQueuePanel({
                 + `from “${group.label}”. ${result.total_remaining_pending} still pending.`,
             );
             await loadQueue();
+            await loadVersionPreview();
         } catch (err: any) {
             setBulkFlash(
                 err?.response?.data?.detail || err?.message || `Failed to ${action} the group.`,
@@ -718,6 +733,37 @@ export default function DataStudioReviewQueuePanel({
                 <span>{formatNumber(queue.totals.synthetic_pending)} pending synthetic</span>
                 <span>{formatNumber(queue.totals.annotation_labeled_unpromoted)} labels to promote</span>
             </div>
+
+            {versionPreview && (
+                <div className="data-studio-review__version-preview" data-testid="version-preview">
+                    <GitBranch size={16} aria-hidden="true" />
+                    <span>
+                        Rows you accept feed the next prepared dataset{' '}
+                        <strong>v{versionPreview.next_version}</strong> — currently{' '}
+                        <strong>{formatNumber(versionPreview.staged.synthetic_accepted)}</strong>{' '}
+                        accepted synthetic
+                        {versionPreview.staged.gold > 0 && (
+                            <> {' + '}{formatNumber(versionPreview.staged.gold)} gold</>
+                        )}
+                        {versionPreview.staged.cleaned > 0 && (
+                            <> {' + '}{formatNumber(versionPreview.staged.cleaned)} cleaned</>
+                        )}
+                        {versionPreview.staged.synthetic_pending > 0 && (
+                            <>
+                                {' '}({formatNumber(versionPreview.staged.synthetic_pending)} pending
+                                rows excluded until reviewed)
+                            </>
+                        )}.
+                    </span>
+                    <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => onOpenTarget('dataprep')}
+                    >
+                        Prepare →
+                    </button>
+                </div>
+            )}
 
             <div className="data-studio-review__entrypoints">
                 {queue.entry_points.slice(0, 4).map((entry) => (

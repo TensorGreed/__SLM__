@@ -2380,6 +2380,51 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertFalse(payload["applicable"])
         self.assertEqual(payload["reason"], "not_prepared")
 
+    def test_prepared_version_preview_counts_accepted_and_next_version(self):
+        project_id = self._create_project("version-preview")
+        # Synthetic: 2 accepted (incl. 1 legacy with no review_status) + 1 pending.
+        synth_dir = settings.DATA_DIR / "projects" / str(project_id) / "synthetic"
+        synth_dir.mkdir(parents=True, exist_ok=True)
+        (synth_dir / "synthetic.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in [
+                {"id": 1, "text": "a", "review_status": "accepted"},
+                {"id": 2, "text": "b"},  # legacy → counts as accepted
+                {"id": 3, "text": "c", "review_status": "pending"},
+                {"id": 4, "text": "d", "review_status": "rejected"},
+            ]) + "\n",
+            encoding="utf-8",
+        )
+
+        async def _seed_datasets():
+            from app.database import async_session_factory
+            from app.models.dataset import Dataset, DatasetType
+            async with async_session_factory() as db:
+                db.add(Dataset(
+                    project_id=project_id, name="Cleaned", dataset_type=DatasetType.CLEANED,
+                    file_path=str(settings.DATA_DIR / "cleaned.jsonl"), record_count=80,
+                ))
+                db.add(Dataset(
+                    project_id=project_id, name="Gold", dataset_type=DatasetType.GOLD_DEV,
+                    file_path=str(settings.DATA_DIR / "gold.jsonl"), record_count=20,
+                ))
+                await db.commit()
+
+        asyncio.run(_seed_datasets())
+        resp = self.client.get(
+            f"/api/projects/{project_id}/data-studio/prepared-version-preview"
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        # No prepared versions yet → next is v1.
+        self.assertEqual(payload["next_version"], 1)
+        self.assertFalse(payload["has_existing_versions"])
+        self.assertEqual(payload["staged"]["synthetic_accepted"], 2)
+        self.assertEqual(payload["staged"]["synthetic_pending"], 1)
+        self.assertEqual(payload["staged"]["cleaned"], 80)
+        self.assertEqual(payload["staged"]["gold"], 20)
+        # Pending rows are excluded from the trainable total (2 + 80 + 20).
+        self.assertEqual(payload["trainable_total"], 102)
+
     def test_export_prepared_split_404s_for_unknown_and_missing(self):
         project_id = self._create_project("export-missing")
         # Unknown split name.

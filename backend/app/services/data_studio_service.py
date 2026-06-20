@@ -6674,6 +6674,90 @@ def build_split_class_coverage(project_id: int) -> dict[str, Any]:
     }
 
 
+async def get_prepared_version_preview(
+    db: AsyncSession, project_id: int
+) -> dict[str, Any]:
+    """Answer the review queue's "what version will include this?" — the next
+    prepared dataset version number + the row breakdown the next Prepare will
+    snapshot (Epic E). Closes the "where do my accepted synthetic rows show up?"
+    gap: a reviewer sees that accepting a row stages it for ``v{next}``.
+
+    Accepted = ``review_status`` accepted OR absent (legacy pre-review rows) —
+    matching ``list_review_queue``'s accepted definition, so the count agrees
+    with the queue surface."""
+    synth_path = (
+        settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl"
+    )
+    accepted = 0
+    pending = 0
+    if synth_path.exists():
+        with synth_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                status = row.get("review_status")
+                if status == "pending":
+                    pending += 1
+                elif status in (None, "accepted"):
+                    accepted += 1
+
+    prepared_ids = (
+        await db.execute(
+            select(Dataset.id).where(
+                Dataset.project_id == project_id,
+                Dataset.dataset_type.in_(
+                    [DatasetType.TRAIN, DatasetType.VALIDATION, DatasetType.TEST]
+                ),
+            )
+        )
+    ).scalars().all()
+    max_version = None
+    if prepared_ids:
+        max_version = (
+            await db.execute(
+                select(func.max(DatasetVersion.version)).where(
+                    DatasetVersion.dataset_id.in_(prepared_ids)
+                )
+            )
+        ).scalar()
+
+    async def _record_count(*types: DatasetType) -> int:
+        total = (
+            await db.execute(
+                select(func.coalesce(func.sum(Dataset.record_count), 0)).where(
+                    Dataset.project_id == project_id,
+                    Dataset.dataset_type.in_(types),
+                )
+            )
+        ).scalar()
+        return int(total or 0)
+
+    gold = await _record_count(DatasetType.GOLD_DEV, DatasetType.GOLD_TEST)
+    cleaned = await _record_count(DatasetType.CLEANED)
+
+    return {
+        "project_id": int(project_id),
+        "next_version": int(max_version or 0) + 1,
+        "has_existing_versions": max_version is not None,
+        "staged": {
+            "synthetic_accepted": accepted,
+            "synthetic_pending": pending,
+            "gold": gold,
+            "cleaned": cleaned,
+        },
+        # The accepted-now rows + gold + cleaned that a Prepare would draw from
+        # (pending rows are excluded until accepted — that's the point of review).
+        "trainable_total": accepted + gold + cleaned,
+    }
+
+
 def _read_prepared_manifest(project_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
     path = _prepared_manifest_path(project_id)
     meta: dict[str, Any] = {

@@ -693,3 +693,31 @@
     color: var(--text-tertiary);
     font-style: italic;
 }
+
+/* Epic E — "what version will include this" preview. */
+.data-studio-review__version-preview {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--border-default);
+    border-left: 3px solid var(--accent, var(--accent-primary));
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    font-size: 12.5px;
+    color: var(--text-secondary);
+}
+
+.data-studio-review__version-preview svg {
+    flex-shrink: 0;
+    color: var(--accent, var(--accent-primary));
+}
+
+.data-studio-review__version-preview span {
+    flex: 1;
+}
+
+.data-studio-review__version-preview strong {
+    color: var(--text-primary);
+}

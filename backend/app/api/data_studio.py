@@ -317,6 +317,19 @@ async def export_prepared_split(
     )
 
 
+@router.get("/prepared-version-preview")
+async def get_prepared_version_preview_endpoint(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Next prepared-dataset version number + the row breakdown the next Prepare
+    will snapshot (accepted synthetic / gold / cleaned). Epic E — "what version
+    will include this?" for the review queue."""
+    from app.services.data_studio_service import get_prepared_version_preview
+
+    return await get_prepared_version_preview(db, project_id)
+
+
 @router.get("/split-class-coverage")
 async def get_split_class_coverage(
     project_id: int,
