@@ -6,6 +6,7 @@ import csv
 import hashlib
 import json
 import random
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,77 @@ def _prep_dir(project_id: int) -> Path:
     d = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+# Epic E — versioned prepared-split storage. The active prepared files
+# (prepared/{train,val,test}.jsonl + manifest.json) are overwritten on every
+# Prepare; each run is *also* snapshotted under prepared/versions/{v}/ so an
+# older version can be restored ("make active") and retrained from. The active
+# files stay the single source the trainer/export/coverage read, so nothing
+# downstream needs to know about versioning.
+_PREPARED_SPLIT_FILES = ("train.jsonl", "val.jsonl", "test.jsonl")
+
+
+def _prepared_versions_dir(project_id: int, version: int) -> Path:
+    return _prep_dir(project_id) / "versions" / str(int(version))
+
+
+def snapshot_prepared_version(project_id: int, version: int) -> Path:
+    """Copy the current active prepared files + manifest into
+    prepared/versions/{version}/ so the run survives the next Prepare's
+    overwrite. Best-effort per file; returns the snapshot dir."""
+    src = _prep_dir(project_id)
+    dst = _prepared_versions_dir(project_id, version)
+    dst.mkdir(parents=True, exist_ok=True)
+    for name in (*_PREPARED_SPLIT_FILES, "manifest.json"):
+        src_file = src / name
+        if src_file.exists():
+            shutil.copy2(src_file, dst / name)
+    return dst
+
+
+def list_prepared_version_snapshots(project_id: int) -> list[int]:
+    """Versions that have an on-disk snapshot (newest first). A version
+    prepared before versioned storage landed has no snapshot — the UI uses
+    this to gate the activate/retrain actions."""
+    root = _prep_dir(project_id) / "versions"
+    if not root.exists():
+        return []
+    versions: list[int] = []
+    for child in root.iterdir():
+        if child.is_dir() and child.name.isdigit():
+            # Only count snapshots that actually carry split data.
+            if any((child / name).exists() for name in _PREPARED_SPLIT_FILES):
+                versions.append(int(child.name))
+    return sorted(versions, reverse=True)
+
+
+def restore_prepared_version(project_id: int, version: int) -> dict[str, int]:
+    """Copy a version snapshot back over the active prepared files + manifest,
+    making it the data the trainer/export/coverage read. Returns the restored
+    per-split row counts. Raises ``FileNotFoundError`` when no snapshot exists
+    for ``version`` (e.g. prepared before versioned storage landed)."""
+    snap = _prepared_versions_dir(project_id, version)
+    if not snap.exists() or not any(
+        (snap / name).exists() for name in _PREPARED_SPLIT_FILES
+    ):
+        raise FileNotFoundError(
+            f"No prepared snapshot for version {version} — re-prepare to enable."
+        )
+    dst = _prep_dir(project_id)
+    counts: dict[str, int] = {}
+    for name in (*_PREPARED_SPLIT_FILES, "manifest.json"):
+        src_file = snap / name
+        if not src_file.exists():
+            continue
+        shutil.copy2(src_file, dst / name)
+        if name.endswith(".jsonl"):
+            split = name[: -len(".jsonl")]
+            counts[split] = sum(
+                1 for line in (dst / name).read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            )
+    return counts
 
 
 def _sha256_file(path: Path) -> str:
@@ -986,6 +1058,11 @@ async def split_dataset(
         )
         dataset_versions[split_name] = next_version
 
+    # The prepared-version id for this run — the per-split DatasetVersion
+    # numbers increment together each Prepare, so they're aligned; use the max
+    # as the single version the snapshot + activate flow keys off.
+    prepared_version = max(dataset_versions.values()) if dataset_versions else None
+
     manifest = {
         "project_id": project_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -996,6 +1073,7 @@ async def split_dataset(
         "file_paths": file_paths,
         "file_hashes": file_hashes,
         "dataset_versions": dataset_versions,
+        "prepared_version": prepared_version,
         "chat_template": chat_template,
         "included_types": included_source_types,
         "include_types_resolution": dataset_type_report,
@@ -1011,6 +1089,15 @@ async def split_dataset(
     manifest_path = prep_dir / "manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
+
+    # Epic E — snapshot this run so it can be re-activated / retrained from
+    # after a later Prepare overwrites the active files. Best-effort: a
+    # snapshot failure must never fail the Prepare itself.
+    if prepared_version is not None:
+        try:
+            snapshot_prepared_version(project_id, prepared_version)
+        except Exception:  # noqa: BLE001 — snapshot is non-critical
+            pass
 
     return manifest
 

@@ -2474,6 +2474,128 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         # Pending rows are excluded from the trainable total (2 + 80 + 20).
         self.assertEqual(payload["trainable_total"], 102)
 
+    def _prepared_dir(self, project_id: int):
+        d = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def test_prepared_version_snapshot_and_restore_roundtrip(self):
+        from app.services.dataset_service import (
+            list_prepared_version_snapshots,
+            restore_prepared_version,
+            snapshot_prepared_version,
+        )
+        pid = self._create_project("snap-roundtrip")
+        prep = self._prepared_dir(pid)
+        (prep / "train.jsonl").write_text('{"x":1}\n{"x":2}\n', encoding="utf-8")
+        (prep / "val.jsonl").write_text('{"x":3}\n', encoding="utf-8")
+        (prep / "test.jsonl").write_text('{"x":4}\n', encoding="utf-8")
+        (prep / "manifest.json").write_text('{"prepared_version":1}', encoding="utf-8")
+        snapshot_prepared_version(pid, 1)
+        self.assertEqual(list_prepared_version_snapshots(pid), [1])
+        # A later Prepare overwrites the active train file.
+        (prep / "train.jsonl").write_text('{"y":9}\n', encoding="utf-8")
+        counts = restore_prepared_version(pid, 1)
+        self.assertEqual(counts, {"train": 2, "val": 1, "test": 1})
+        restored = [l for l in (prep / "train.jsonl").read_text().splitlines() if l.strip()]
+        self.assertEqual(len(restored), 2)  # v1 restored over the overwrite
+
+    def test_split_dataset_writes_a_version_snapshot(self):
+        # Integration: a real Prepare snapshots the run under prepared/versions/{v}/.
+        pid = self._create_project("snap-on-prepare")
+        cleaned_dir = settings.DATA_DIR / "projects" / str(pid) / "cleaned"
+        cleaned_dir.mkdir(parents=True, exist_ok=True)
+        fp = cleaned_dir / "cleaned.jsonl"
+        rows = [
+            {"input": f"q{i}", "output": f"a{i}", "label": "x" if i % 2 else "y"}
+            for i in range(20)
+        ]
+        fp.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+        async def _seed_and_split():
+            from app.database import async_session_factory
+            from app.models.dataset import Dataset, DatasetType
+            from app.services.dataset_service import split_dataset
+            async with async_session_factory() as db:
+                db.add(Dataset(
+                    project_id=pid, name="Cleaned", dataset_type=DatasetType.CLEANED,
+                    file_path=str(fp), record_count=len(rows),
+                ))
+                await db.commit()
+                manifest = await split_dataset(db, pid, include_types=["cleaned"])
+                await db.commit()
+                return manifest
+
+        manifest = asyncio.run(_seed_and_split())
+        self.assertEqual(manifest["prepared_version"], 1)
+        vdir = settings.DATA_DIR / "projects" / str(pid) / "prepared" / "versions" / "1"
+        self.assertTrue((vdir / "train.jsonl").exists())
+        self.assertTrue((vdir / "val.jsonl").exists())
+        self.assertTrue((vdir / "test.jsonl").exists())
+        self.assertTrue((vdir / "manifest.json").exists())
+
+    def test_restore_unknown_version_raises(self):
+        from app.services.dataset_service import restore_prepared_version
+        pid = self._create_project("snap-missing")
+        with self.assertRaises(FileNotFoundError):
+            restore_prepared_version(pid, 7)
+
+    def test_activate_prepared_version_restores_and_marks_active(self):
+        from app.services.dataset_service import snapshot_prepared_version
+        pid = self._create_project("activate-version")
+        prep = self._prepared_dir(pid)
+        (prep / "train.jsonl").write_text('{"a":1}\n{"a":2}\n{"a":3}\n', encoding="utf-8")
+        (prep / "val.jsonl").write_text('{"a":4}\n', encoding="utf-8")
+        (prep / "test.jsonl").write_text('{"a":5}\n', encoding="utf-8")
+        (prep / "manifest.json").write_text(
+            '{"prepared_version":2,"splits":{"train":3,"val":1,"test":1},'
+            '"dataset_versions":{"train":2,"validation":2,"test":2}}',
+            encoding="utf-8",
+        )
+        snapshot_prepared_version(pid, 2)
+
+        async def _seed_datasets():
+            from app.database import async_session_factory
+            from app.models.dataset import Dataset, DatasetType
+            async with async_session_factory() as db:
+                for name, dtype, fp in [
+                    ("Train", DatasetType.TRAIN, prep / "train.jsonl"),
+                    ("Val", DatasetType.VALIDATION, prep / "val.jsonl"),
+                    ("Test", DatasetType.TEST, prep / "test.jsonl"),
+                ]:
+                    db.add(Dataset(project_id=pid, name=name, dataset_type=dtype, file_path=str(fp), record_count=0))
+                await db.commit()
+
+        asyncio.run(_seed_datasets())
+        # Corrupt the active train file to prove the activate actually restores.
+        (prep / "train.jsonl").write_text("", encoding="utf-8")
+
+        resp = self.client.post(
+            f"/api/projects/{pid}/data-studio/dataset-versions/2/activate"
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["active_prepared_version"], 2)
+        self.assertEqual(body["restored_counts"]["train"], 3)
+        active_rows = [l for l in (prep / "train.jsonl").read_text().splitlines() if l.strip()]
+        self.assertEqual(len(active_rows), 3)  # restored from the snapshot
+
+        # The versions payload exposes the snapshot + which is active.
+        versions = self.client.get(
+            f"/api/projects/{pid}/data-studio/dataset-versions"
+        ).json()
+        self.assertEqual(versions["prepared_versions"]["active"], 2)
+        available = {v["version"]: v for v in versions["prepared_versions"]["available"]}
+        self.assertIn(2, available)
+        self.assertTrue(available[2]["is_active"])
+
+    def test_activate_unknown_version_returns_404(self):
+        pid = self._create_project("activate-404")
+        resp = self.client.post(
+            f"/api/projects/{pid}/data-studio/dataset-versions/9/activate"
+        )
+        self.assertEqual(resp.status_code, 404, resp.text)
+
     def test_export_prepared_split_404s_for_unknown_and_missing(self):
         project_id = self._create_project("export-missing")
         # Unknown split name.

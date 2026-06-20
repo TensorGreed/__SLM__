@@ -506,4 +506,65 @@ describe('DataStudioDatasetVersionsPanel', () => {
         });
         expect(apiMock.get).toHaveBeenCalledTimes(2);
     });
+
+    it('activates a prepared snapshot and refreshes', async () => {
+        const withSnapshots = {
+            ...versionPayload,
+            prepared_versions: {
+                available: [
+                    { version: 2, is_active: false },
+                    { version: 1, is_active: true },
+                ],
+                active: 1,
+                latest_prepared_version: 2,
+            },
+        };
+        apiMock.get.mockResolvedValueOnce({ data: withSnapshots });
+        apiMock.post.mockResolvedValueOnce({
+            data: { project_id: 9, active_prepared_version: 2, restored_counts: { train: 96, val: 12, test: 12 } },
+        });
+        apiMock.get.mockResolvedValueOnce({ data: withSnapshots });
+
+        render(<DataStudioDatasetVersionsPanel projectId={9} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('prepared-version-snapshots')).toBeInTheDocument();
+        });
+        // v1 is active (badge); v2 has an enabled "Make active".
+        expect(screen.getByTestId('snapshot-active-1')).toBeInTheDocument();
+        const makeActiveButtons = screen.getAllByRole('button', { name: /Make active/i });
+        fireEvent.click(makeActiveButtons[0]); // v2 (listed first)
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/9/data-studio/dataset-versions/2/activate',
+            );
+        });
+        await waitFor(() => {
+            expect(screen.getByTestId('activate-flash')).toHaveTextContent(/v2 is now the active/i);
+        });
+    });
+
+    it('retrain-from-version activates then opens Training', async () => {
+        const withSnapshots = {
+            ...versionPayload,
+            prepared_versions: {
+                available: [{ version: 1, is_active: true }],
+                active: 1,
+                latest_prepared_version: 1,
+            },
+        };
+        apiMock.get.mockResolvedValue({ data: withSnapshots });
+        apiMock.post.mockResolvedValueOnce({
+            data: { project_id: 9, active_prepared_version: 1, restored_counts: { train: 96 } },
+        });
+        const onOpenTarget = vi.fn();
+        render(<DataStudioDatasetVersionsPanel projectId={9} onOpenTarget={onOpenTarget} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('prepared-version-snapshots')).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByRole('button', { name: /Retrain from this/i }));
+        await waitFor(() => {
+            expect(onOpenTarget).toHaveBeenCalledWith('training');
+        });
+    });
 });

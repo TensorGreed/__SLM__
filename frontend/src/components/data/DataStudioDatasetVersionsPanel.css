@@ -547,3 +547,67 @@
     font-size: 13px;
     border-radius: var(--radius-sm);
 }
+
+/* Epic E — prepared-version snapshots (activate / retrain). */
+.data-studio-versions__snapshots {
+    margin-top: var(--space-md);
+    padding: var(--space-md);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+}
+
+.data-studio-versions__snapshots h4 {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    margin: 0 0 var(--space-sm);
+    font-size: var(--font-size-sm);
+}
+
+.data-studio-versions__snapshot-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.data-studio-versions__snapshot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-primary);
+}
+
+.data-studio-versions__snapshot-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.data-studio-versions__snapshot-actions {
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.data-studio-versions__snapshot-actions .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.data-studio-versions__activate-flash {
+    margin: 0 0 var(--space-sm);
+    font-size: 12.5px;
+    color: var(--text-secondary);
+}
+
+.data-studio-versions__activate-error {
+    margin: 0 0 var(--space-sm);
+    font-size: 12.5px;
+    color: var(--color-error, #dc2626);
+}

@@ -6674,6 +6674,62 @@ def build_split_class_coverage(project_id: int) -> dict[str, Any]:
     }
 
 
+async def activate_prepared_version(
+    db: AsyncSession, project_id: int, version: int
+) -> dict[str, Any]:
+    """Restore a prepared-version snapshot to the active files (Epic E) — the
+    data the trainer / export / coverage read — and record it as the active
+    version. This is the shared primitive behind "Make active" and
+    "Retrain from this version" (retrain = activate, then launch training,
+    which now sees this version's data).
+
+    Raises ``ValueError`` (→ 404) when the project is missing or the version
+    has no on-disk snapshot (prepared before versioned storage landed)."""
+    from app.services.dataset_service import restore_prepared_version
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    try:
+        counts = restore_prepared_version(project_id, int(version))
+    except FileNotFoundError as exc:
+        raise ValueError(str(exc)) from exc
+
+    # Sync each prepared split's record_count to the restored data so the
+    # versions/prepare panels + the trainer's row counts agree.
+    split_to_type = {
+        "train": DatasetType.TRAIN,
+        "val": DatasetType.VALIDATION,
+        "test": DatasetType.TEST,
+    }
+    for split, ds_type in split_to_type.items():
+        if split not in counts:
+            continue
+        ds = (
+            await db.execute(
+                select(Dataset).where(
+                    Dataset.project_id == project_id,
+                    Dataset.dataset_type == ds_type,
+                )
+            )
+        ).scalar_one_or_none()
+        if ds is not None:
+            ds.record_count = int(counts[split])
+
+    runtime_config = dict(project.runtime_config or {})
+    runtime_config["active_prepared_version"] = int(version)
+    project.runtime_config = runtime_config
+    await db.flush()
+    await db.commit()
+
+    return {
+        "project_id": int(project_id),
+        "active_prepared_version": int(version),
+        "restored_counts": counts,
+    }
+
+
 async def get_prepared_version_preview(
     db: AsyncSession, project_id: int
 ) -> dict[str, Any]:
@@ -9599,6 +9655,29 @@ async def build_data_studio_dataset_versions(
         ),
     ]
 
+    # Epic E — versioned prepared-split storage. Snapshots that can be
+    # re-activated / retrained from, plus which one is active (defaulting to
+    # the latest prepared run when the user hasn't explicitly activated one).
+    from app.services.dataset_service import list_prepared_version_snapshots
+
+    snapshot_versions = list_prepared_version_snapshots(project_id)
+    runtime_config = project.runtime_config if isinstance(project.runtime_config, dict) else {}
+    active_raw = runtime_config.get("active_prepared_version")
+    if active_raw is None:
+        active_raw = manifest.get("prepared_version")
+    try:
+        active_version = int(active_raw) if active_raw is not None else None
+    except (TypeError, ValueError):
+        active_version = None
+    prepared_versions = {
+        "available": [
+            {"version": int(v), "is_active": active_version == int(v)}
+            for v in snapshot_versions
+        ],
+        "active": active_version,
+        "latest_prepared_version": manifest.get("prepared_version"),
+    }
+
     return {
         "project_id": project_id,
         "verdict": verdict,
@@ -9618,6 +9697,7 @@ async def build_data_studio_dataset_versions(
         },
         "latest_artifacts": artifacts,
         "version_history": history,
+        "prepared_versions": prepared_versions,
         "manifest": {
             "exists": manifest_exists,
             "readable": manifest_readable,

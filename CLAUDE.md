@@ -319,6 +319,16 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   synthetic-pending `by_source` groups carry the raw `synth_source` and
   render inline "Accept all / Reject all" (Epic E). Reject is soft (rows
   stay on disk, grouped by `reject_reason`, bulk-purgeable).
+- **Versioned prepared splits** (Epic E) — `split_dataset` writes the active
+  `prepared/{train,val,test}.jsonl` + `manifest.json` (the single source the
+  trainer/export/coverage read) AND snapshots each run to
+  `prepared/versions/{v}/` (`snapshot_prepared_version`). `restore_prepared_version`
+  copies a snapshot back to active; `activate_prepared_version` (→ `POST
+  /data-studio/dataset-versions/{version}/activate`) restores + records
+  `runtime_config["active_prepared_version"]`. "Make active" and "Retrain from
+  this version" on `DataStudioDatasetVersionsPanel` both call activate (retrain
+  then opens Training, which reads the now-active version). The active version
+  defaults to the latest prepared run when none is explicitly activated.
 - **Auto-RAG** — `auto_rag_service` builds BM25 indexes at training
   completion; `playground_chat` prepends top-K retrievals. Comparison
   panel + UI-triggered `auto_rag_ab --project` Job.

@@ -1698,6 +1698,17 @@ export interface DataStudioDatasetVersionEntryPoint {
     requires_confirmation: boolean;
 }
 
+export interface DataStudioPreparedVersionEntry {
+    version: number;
+    is_active: boolean;
+}
+
+export interface DataStudioPreparedVersions {
+    available: DataStudioPreparedVersionEntry[];
+    active: number | null;
+    latest_prepared_version: number | null;
+}
+
 export interface DataStudioDatasetVersions {
     project_id: number;
     verdict: DataStudioDatasetVersionVerdict;
@@ -1707,6 +1718,7 @@ export interface DataStudioDatasetVersions {
     summary: DataStudioDatasetVersionSummary;
     latest_artifacts: DataStudioDatasetVersionArtifact[];
     version_history: DataStudioDatasetVersionHistoryItem[];
+    prepared_versions?: DataStudioPreparedVersions;
     manifest: DataStudioDatasetVersionManifest;
     source_context: DataStudioDatasetVersionSourceContext;
     reuse_readiness: {
@@ -1724,6 +1736,23 @@ export async function getDataStudioDatasetVersions(
 ): Promise<DataStudioDatasetVersions> {
     const resp = await api.get(`/projects/${projectId}/data-studio/dataset-versions`);
     return resp.data as DataStudioDatasetVersions;
+}
+
+export interface ActivatePreparedVersionResult {
+    project_id: number;
+    active_prepared_version: number;
+    restored_counts: Record<string, number>;
+}
+
+/** Epic E — restore a prepared-version snapshot to the active files. */
+export async function activatePreparedVersion(
+    projectId: number,
+    version: number,
+): Promise<ActivatePreparedVersionResult> {
+    const resp = await api.post(
+        `/projects/${projectId}/data-studio/dataset-versions/${version}/activate`,
+    );
+    return resp.data as ActivatePreparedVersionResult;
 }
 
 export interface DataStudioAssistRequest {

@@ -19,6 +19,7 @@ import {
 
 import api from '../../api/client';
 import {
+    activatePreparedVersion,
     getDataStudioDatasetVersions,
     runDataStudioPrepareDataset,
 } from '../../api/dataStudio';
@@ -240,6 +241,10 @@ export default function DataStudioDatasetVersionsPanel({
     const [running, setRunning] = useState(false);
     const [runFlash, setRunFlash] = useState<string | null>(null);
     const [runError, setRunError] = useState<string | null>(null);
+    // Epic E — activate/retrain a prepared-version snapshot.
+    const [activateBusy, setActivateBusy] = useState<number | null>(null);
+    const [activateFlash, setActivateFlash] = useState<string | null>(null);
+    const [activateError, setActivateError] = useState<string | null>(null);
 
     const loadVersions = async () => {
         setLoading(true);
@@ -278,6 +283,30 @@ export default function DataStudioDatasetVersionsPanel({
             );
         } finally {
             setRunning(false);
+        }
+    };
+
+    const handleActivate = async (version: number, retrain: boolean) => {
+        setActivateBusy(version);
+        setActivateFlash(null);
+        setActivateError(null);
+        try {
+            const result = await activatePreparedVersion(projectId, version);
+            const total = Object.values(result.restored_counts).reduce((a, b) => a + b, 0);
+            setActivateFlash(
+                `v${version} is now the active prepared dataset (${total.toLocaleString()} rows). `
+                + (retrain ? 'Opening Training…' : 'Training will use this version.'),
+            );
+            await loadVersions();
+            if (retrain) {
+                onOpenTarget('training');
+            }
+        } catch (err: any) {
+            setActivateError(
+                err?.response?.data?.detail || err?.message || `Failed to activate v${version}.`,
+            );
+        } finally {
+            setActivateBusy(null);
         }
     };
 
@@ -486,6 +515,56 @@ export default function DataStudioDatasetVersionsPanel({
                     </div>
                 </div>
             </div>
+
+            {versions.prepared_versions && versions.prepared_versions.available.length > 0 && (
+                <div className="data-studio-versions__snapshots" data-testid="prepared-version-snapshots">
+                    <h4>
+                        <GitBranch size={15} aria-hidden="true" />
+                        Prepared snapshots — activate or retrain from any version
+                    </h4>
+                    {activateFlash && (
+                        <p className="data-studio-versions__activate-flash" role="status" data-testid="activate-flash">
+                            {activateFlash}
+                        </p>
+                    )}
+                    {activateError && (
+                        <p className="data-studio-versions__activate-error" role="alert">{activateError}</p>
+                    )}
+                    <div className="data-studio-versions__snapshot-list">
+                        {versions.prepared_versions.available.map((snap) => (
+                            <div className="data-studio-versions__snapshot" key={snap.version}>
+                                <span className="data-studio-versions__snapshot-label">
+                                    <strong>v{snap.version}</strong>
+                                    {snap.is_active && (
+                                        <span className="badge badge-success" data-testid={`snapshot-active-${snap.version}`}>
+                                            Active
+                                        </span>
+                                    )}
+                                </span>
+                                <div className="data-studio-versions__snapshot-actions">
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary btn-sm"
+                                        disabled={activateBusy !== null || snap.is_active}
+                                        onClick={() => void handleActivate(snap.version, false)}
+                                    >
+                                        {activateBusy === snap.version ? 'Activating…' : 'Make active'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="btn btn-primary btn-sm"
+                                        disabled={activateBusy !== null}
+                                        onClick={() => void handleActivate(snap.version, true)}
+                                    >
+                                        <Play size={13} aria-hidden="true" />
+                                        Retrain from this
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className="data-studio-versions__history">
                 <h4>Version history</h4>

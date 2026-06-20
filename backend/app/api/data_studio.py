@@ -285,6 +285,24 @@ async def get_data_studio_dataset_versions(
         raise HTTPException(400, detail)
 
 
+@router.post("/dataset-versions/{version}/activate")
+async def activate_prepared_version_endpoint(
+    project_id: int,
+    version: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore a prepared-version snapshot to the active files (Epic E) so the
+    trainer / export / coverage read it, and mark it active. Shared by "Make
+    active" and "Retrain from this version" (retrain = activate + launch
+    training, which then sees this version's data)."""
+    from app.services.data_studio_service import activate_prepared_version
+
+    try:
+        return await activate_prepared_version(db, project_id, version)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
 @router.get("/dataset-versions/{split}/export")
 async def export_prepared_split(
     project_id: int,
