@@ -267,6 +267,15 @@
     stroke-width: 1.5;
 }
 
+/* Probe-arc finale — the comparable trend re-scored under current weights.
+   Dashed + dimmed so it reads as a derived overlay, not a third ruler. */
+.probe-pack__spark-probe-reweighted {
+    stroke: var(--accent, #6366f1);
+    stroke-width: 1.5;
+    stroke-dasharray: 3 2;
+    opacity: 0.6;
+}
+
 .probe-pack__trend-legend {
     display: flex;
     gap: 12px;
@@ -279,6 +288,12 @@
 
 .probe-pack__legend-probe {
     color: var(--accent, #4f46e5);
+}
+
+.probe-pack__legend-reweighted {
+    color: var(--accent, #4f46e5);
+    opacity: 0.7;
+    font-style: italic;
 }
 
 /* Interactive sparkline points + hover readout (phase 17). */

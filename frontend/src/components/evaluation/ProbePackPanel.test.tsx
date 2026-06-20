@@ -192,6 +192,37 @@ describe('ProbePackPanel', () => {
         expect(screen.queryByTestId('probe-pack-regime-note')).not.toBeInTheDocument();
     });
 
+    it('draws the comparable (current-weights) line when a regime change has reweighted points', async () => {
+        // Same regime change as HISTORY, but the backend supplied a reweighted
+        // rate per point → the comparable dashed line + readout should appear.
+        const REWEIGHTED = [
+            { ...HISTORY[0], probe_pass_rate_reweighted: 0.6 },
+            { ...HISTORY[1], probe_pass_rate_reweighted: 0.75 },
+        ];
+        apiMock.get.mockResolvedValueOnce({ data: { ...APPLICABLE_PACK, divergence_history: REWEIGHTED } });
+        render(<ProbePackPanel projectId={7} />);
+        const trend = await screen.findByTestId('probe-pack-trend');
+        // Now three polylines: gold, raw probe, comparable.
+        expect(trend.querySelectorAll('polyline')).toHaveLength(3);
+        expect(screen.getByTestId('probe-pack-spark-reweighted')).toBeInTheDocument();
+        // The note flips to the comparable wording.
+        expect(screen.getByTestId('probe-pack-regime-note')).toHaveTextContent(/comparable/i);
+        // Latest run readout surfaces the comparable value (75%).
+        expect(screen.getByTestId('probe-pack-readout-reweighted')).toHaveTextContent('75%');
+    });
+
+    it('omits the comparable line when there is no regime change even if reweighted is present', async () => {
+        const SAME_REGIME_REWEIGHTED = [
+            { ...HISTORY[0], weight_regime: 'aaa', probe_pass_rate_reweighted: 0.6 },
+            { ...HISTORY[1], weight_regime: 'aaa', probe_pass_rate_reweighted: 0.75 },
+        ];
+        apiMock.get.mockResolvedValueOnce({ data: { ...APPLICABLE_PACK, divergence_history: SAME_REGIME_REWEIGHTED } });
+        render(<ProbePackPanel projectId={7} />);
+        const trend = await screen.findByTestId('probe-pack-trend');
+        expect(trend.querySelectorAll('polyline')).toHaveLength(2);
+        expect(screen.queryByTestId('probe-pack-spark-reweighted')).not.toBeInTheDocument();
+    });
+
     it('clicking a sparkline point opens that run via onOpenRun', async () => {
         apiMock.get.mockResolvedValueOnce({ data: { ...APPLICABLE_PACK, divergence_history: HISTORY } });
         const onOpenRun = vi.fn();

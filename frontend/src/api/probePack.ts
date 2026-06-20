@@ -97,6 +97,11 @@ export interface DivergencePoint {
     /** Phase 23 — weight regime active at this eval; a change between
      * consecutive points means the score weighting was re-configured. */
     weight_regime?: string | null;
+    /** Probe-arc finale — this point's per-probe outcomes re-scored under the
+     * project's *current* weights, so the trend stays comparable across a
+     * weight-regime change. Absent when the stored snapshot kept no per-probe
+     * results to re-score. */
+    probe_pass_rate_reweighted?: number;
 }
 
 export interface ProbePack {

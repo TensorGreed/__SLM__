@@ -289,6 +289,28 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                 const probePts = history
                     .map((p, i) => `${x(i).toFixed(1)},${y(p.probe_pass_rate).toFixed(1)}`)
                     .join(' ');
+                const hasRegimeChange = history.some(
+                    (p, i) =>
+                        i > 0 &&
+                        !!p.weight_regime &&
+                        p.weight_regime !== history[i - 1].weight_regime,
+                );
+                // The comparable line: every point re-scored under the project's
+                // current weights. Only worth drawing when a regime change made
+                // the raw probe line non-comparable AND the backend supplied a
+                // reweighted value for every point.
+                const allReweighted = history.every(
+                    (p) => typeof p.probe_pass_rate_reweighted === 'number',
+                );
+                const showReweighted = hasRegimeChange && allReweighted;
+                const reweightedPts = showReweighted
+                    ? history
+                          .map(
+                              (p, i) =>
+                                  `${x(i).toFixed(1)},${y(p.probe_pass_rate_reweighted as number).toFixed(1)}`,
+                          )
+                          .join(' ')
+                    : '';
                 const latest = history[history.length - 1];
                 return (
                     <div className="probe-pack__trend" data-testid="probe-pack-trend">
@@ -299,18 +321,15 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                                     {' '}· latest gap {Math.round(latest.divergence * 100)}pts
                                 </span>
                             )}
-                            {history.some(
-                                (p, i) =>
-                                    i > 0 &&
-                                    !!p.weight_regime &&
-                                    p.weight_regime !== history[i - 1].weight_regime,
-                            ) && (
+                            {hasRegimeChange && (
                                 <span
                                     className="probe-pack__trend-regime-note"
                                     data-testid="probe-pack-regime-note"
                                 >
-                                    {' '}· ▏ marks a score-weight change (trend not
-                                    comparable across it)
+                                    {' '}· ▏ marks a score-weight change
+                                    {showReweighted
+                                        ? ' (dashed = probes re-scored under current weights, comparable)'
+                                        : ' (trend not comparable across it)'}
                                 </span>
                             )}
                         </div>
@@ -324,6 +343,14 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                         >
                             <polyline className="probe-pack__spark-gold" points={goldPts} fill="none" />
                             <polyline className="probe-pack__spark-probe" points={probePts} fill="none" />
+                            {showReweighted && (
+                                <polyline
+                                    className="probe-pack__spark-probe-reweighted"
+                                    points={reweightedPts}
+                                    fill="none"
+                                    data-testid="probe-pack-spark-reweighted"
+                                />
+                            )}
                             {history.map((p, i) => {
                                 if (i === 0) return null;
                                 const prev = history[i - 1];
@@ -373,6 +400,11 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                         <div className="probe-pack__trend-legend">
                             <span className="probe-pack__legend-gold">gold set</span>
                             <span className="probe-pack__legend-probe">independent probes</span>
+                            {showReweighted && (
+                                <span className="probe-pack__legend-reweighted">
+                                    probes · current weights
+                                </span>
+                            )}
                         </div>
                         {(() => {
                             const p = hoveredRun != null ? history[hoveredRun] : latest;
@@ -382,6 +414,13 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                                     {p.run_at ? `${new Date(p.run_at).toLocaleDateString()}: ` : ''}
                                     gold <strong>{Math.round(p.gold_pass_rate * 100)}%</strong>
                                     {' · '}probe <strong>{Math.round(p.probe_pass_rate * 100)}%</strong>
+                                    {showReweighted && typeof p.probe_pass_rate_reweighted === 'number' && (
+                                        <span data-testid="probe-pack-readout-reweighted">
+                                            {' · '}comparable{' '}
+                                            <strong>{Math.round(p.probe_pass_rate_reweighted * 100)}%</strong>
+                                            {' '}(current weights)
+                                        </span>
+                                    )}
                                     {' · '}gap {Math.round(p.divergence * 100)}pts
                                     {typeof p.experiment_id === 'number' && onOpenRun && (
                                         <span className="probe-pack__trend-hint"> · click a point to open its scorecard</span>

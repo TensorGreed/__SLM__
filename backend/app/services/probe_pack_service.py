@@ -661,7 +661,11 @@ async def set_probe_gate(
 
 
 async def get_divergence_history(
-    db: AsyncSession, project_id: int, *, limit: int = 10
+    db: AsyncSession,
+    project_id: int,
+    *,
+    limit: int = 10,
+    reweight_weights: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Phase 16 — the gold-vs-probe history, one point per training run.
 
@@ -670,10 +674,16 @@ async def get_divergence_history(
     ``probe_pass_rate`` captured in the same eval. Deduped to the latest
     probe-carrying EvalResult per experiment and returned chronologically
     (oldest → newest) so the panel can sparkline it and Coach can measure
-    a divergence streak."""
+    a divergence streak.
+
+    ``reweight_weights`` (the probe-arc finale) — when given, each point
+    also carries ``probe_pass_rate_reweighted``: its per-probe outcomes
+    re-scored under *these* weights (the project's current regime). After a
+    weight-regime change the raw series isn't comparable; this one is."""
     from sqlalchemy import desc, select
 
     from app.models.experiment import EvalResult, Experiment
+    from app.services.probe_runner import reweighted_pass_rate
 
     result = await db.execute(
         select(EvalResult)
@@ -700,7 +710,7 @@ async def get_divergence_history(
         if row.experiment_id in seen_experiments:
             continue
         seen_experiments.add(row.experiment_id)
-        points.append({
+        point: dict[str, Any] = {
             "run_at": row.created_at.isoformat() if row.created_at else None,
             "experiment_id": row.experiment_id,
             "eval_result_id": row.id,
@@ -715,7 +725,15 @@ async def get_divergence_history(
             "judge_calls": probe.get("judge_calls"),
             "judge_cached": probe.get("judge_cached"),
             "judge_tokens": probe.get("judge_tokens"),
-        })
+        }
+        # Probe-arc finale — recompute this point under the current weights so
+        # the trend stays comparable across a weight-regime change. Only when
+        # the stored snapshot kept its per-probe results to re-score.
+        if reweight_weights:
+            rw = reweighted_pass_rate(probe.get("results"), reweight_weights)
+            if rw is not None:
+                point["probe_pass_rate_reweighted"] = rw
+        points.append(point)
         if len(points) >= limit:
             break
     points.reverse()
@@ -876,13 +894,19 @@ async def get_probe_pack_for_project(
     pack = get_probe_pack(task_profile)
     pack["project_id"] = int(project_id)
     pack["gate_config"] = read_probe_gate_config(project)
-    pack["kind_weights"] = read_probe_kind_weights(project)
+    current_weights = read_probe_kind_weights(project)
+    pack["kind_weights"] = current_weights
     if pack.get("applicable"):
         run = await _latest_probe_run(db, project_id)
         if run is not None:
             pack["run"] = run
             pack["status"] = "graded"
-        history = await get_divergence_history(db, project_id, limit=8)
+        # Pass the project's current weights so each history point also carries
+        # ``probe_pass_rate_reweighted`` — a trend that stays comparable across
+        # a weight-regime change (vs just marking where it changed).
+        history = await get_divergence_history(
+            db, project_id, limit=8, reweight_weights=current_weights
+        )
         pack["divergence_history"] = history
         spend = summarize_judge_spend(history)
         if spend is not None:

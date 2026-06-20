@@ -298,6 +298,38 @@ def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def reweighted_pass_rate(
+    results: list[dict[str, Any]] | None,
+    weights: dict[str, float] | None,
+) -> float | None:
+    """Recompute the weighted ``probe_pass_rate`` from a per-probe results
+    list under a *given* per-kind weight map.
+
+    Each divergence-history point stored the pass-rate under the weights
+    active at the time, so a later weight-regime change makes the raw trend
+    not comparable. This re-weights a historical point's per-probe outcomes
+    under the project's *current* weights so the trend is apples-to-apples.
+
+    Pure; mirrors ``_aggregate``'s weighting but by ``probe_kind`` only — a
+    per-probe ``weight`` override isn't separately preserved (the feature
+    targets kind-weight regime changes, the only thing the UI can edit).
+    Returns ``None`` when there are no scored results (so the caller omits
+    the field rather than emit a misleading 0.0)."""
+    rows = results or []
+    if not rows:
+        return None
+    wmap = weights if isinstance(weights, dict) and weights else PROBE_KIND_WEIGHTS
+    total_weight = 0.0
+    weighted_pass = 0.0
+    for r in rows:
+        kind = str(r.get("probe_kind") or "unknown")
+        w = float(wmap.get(kind, PROBE_KIND_WEIGHTS.get(kind, 1.0)))
+        total_weight += w
+        if bool(r.get("passed")):
+            weighted_pass += w
+    return round(weighted_pass / total_weight, 6) if total_weight else 0.0
+
+
 def _judge_cache_key(probe_id: str, probe_input: str, output: str) -> str:
     """Stable key for a judge verdict over (probe id, probe input, model
     output). Identical outputs across re-evals (greedy decoding →

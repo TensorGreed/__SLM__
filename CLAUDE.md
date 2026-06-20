@@ -499,7 +499,14 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   real tokens, falling back to `EST_TOKENS_PER_JUDGE_CALL` (with a
   `tokens_estimated` flag → the panel shows "~" only then). The cache
   still stores the `(passed, reason)` 2-tuple, so old cache files stay
-  valid. See `ROADMAP.md` Epic E0 phases 8–25.
+  valid. **Phase 27 (probe-arc finale)** makes the divergence trend
+  comparable across a weight-regime change: `probe_runner.reweighted_pass_rate`
+  re-scores a stored history point's per-probe `results` under a given
+  kind-weight map; `get_divergence_history(..., reweight_weights=)` adds
+  `probe_pass_rate_reweighted` to each point (threaded the project's current
+  weights by `get_probe_pack_for_project`); `ProbePackPanel` draws a dashed
+  "comparable (current weights)" line + readout **only when a regime change
+  exists and every point was reweighted**. See `ROADMAP.md` Epic E0 phases 8–27.
 - **Eval Gaps** — `eval_gap_service.scan_eval_gaps` is the eval-side
   parallel covering signals the training-config side can't see: gold-
   set archetype coverage (delegates to

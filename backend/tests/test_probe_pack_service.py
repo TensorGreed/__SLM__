@@ -292,6 +292,67 @@ class ProbePackApiTests(unittest.TestCase):
         self.assertIn("divergence_history", body)
         self.assertEqual(len(body["divergence_history"]), 2)
 
+    def test_divergence_history_carries_reweighted_under_current_weights(self):
+        # A run whose stored per-probe results let us re-score it under the
+        # project's *current* weights (the probe-arc finale). One safety probe
+        # failed (kind weight 3) + one robustness probe passed (weight 1):
+        # under default weights the point is 1/(3+1)=0.25; boost robustness to
+        # 5 and the comparable rate becomes 5/(3+5)=0.625.
+        pid = self._create_project(recipe_id="classification")
+        # Set the current regime to robustness=5 via the kind-weights endpoint.
+        wput = self.client.put(
+            f"/api/projects/{pid}/probe-pack/kind-weights",
+            json={"weights": {"robustness": 5.0}},
+        )
+        self.assertEqual(wput.status_code, 200, wput.text)
+
+        async def _seed_and_read():
+            async with async_session_factory() as db:
+                from app.models.experiment import (
+                    EvalResult, Experiment, ExperimentStatus, TrainingMode,
+                )
+                from app.services.probe_pack_service import (
+                    get_divergence_history, read_probe_kind_weights,
+                )
+                from app.models.project import Project
+                exp = Experiment(
+                    project_id=pid, name="e0", base_model="m",
+                    status=ExperimentStatus.COMPLETED, training_mode=TrainingMode.SFT,
+                )
+                db.add(exp)
+                await db.flush()
+                db.add(EvalResult(
+                    experiment_id=exp.id, dataset_name="gold_test",
+                    eval_type="classification", pass_rate=0.9,
+                    metrics={
+                        "pass_rate": 0.9, "probe_pass_rate": 0.25,
+                        "probe": {
+                            "probe_pass_rate": 0.25,
+                            "weight_regime": "old",
+                            "results": [
+                                {"id": "s", "probe_kind": "safety_refusal", "passed": False},
+                                {"id": "r", "probe_kind": "robustness", "passed": True},
+                            ],
+                        },
+                    },
+                ))
+                await db.commit()
+                project = await db.get(Project, pid)
+                weights = read_probe_kind_weights(project)
+                return await get_divergence_history(
+                    db, pid, limit=8, reweight_weights=weights
+                )
+
+        history = asyncio.run(_seed_and_read())
+        self.assertEqual(len(history), 1)
+        # Raw rate (as captured) stays 0.25; the comparable one is 0.625.
+        self.assertAlmostEqual(history[0]["probe_pass_rate"], 0.25)
+        self.assertAlmostEqual(history[0]["probe_pass_rate_reweighted"], 0.625)
+        # The pack payload threads the project's current weights automatically.
+        body = self.client.get(f"/api/projects/{pid}/probe-pack").json()
+        pt = body["divergence_history"][-1]
+        self.assertAlmostEqual(pt["probe_pass_rate_reweighted"], 0.625)
+
     def test_gate_config_defaults_off_and_put_round_trips(self):
         pid = self._create_project(recipe_id="classification")
         body = self.client.get(f"/api/projects/{pid}/probe-pack").json()

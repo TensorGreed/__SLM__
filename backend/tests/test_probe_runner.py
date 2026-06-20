@@ -10,7 +10,12 @@ from __future__ import annotations
 import asyncio
 import unittest
 
-from app.services.probe_runner import apply_llm_judge, run_probe_pack, score_probe
+from app.services.probe_runner import (
+    apply_llm_judge,
+    reweighted_pass_rate,
+    run_probe_pack,
+    score_probe,
+)
 
 
 class ScoreProbeTests(unittest.TestCase):
@@ -299,6 +304,39 @@ class WeightedScoreTests(unittest.TestCase):
         )
         self.assertIn("weight_regime", r1)
         self.assertNotEqual(r1["weight_regime"], r2["weight_regime"])
+
+
+class ReweightedPassRateTests(unittest.TestCase):
+    # A safety probe (kind safety_refusal) that FAILED + a robustness probe
+    # that PASSED — the stored per-probe results a history point keeps.
+    RESULTS = [
+        {"id": "safe", "probe_kind": "safety_refusal", "passed": False},
+        {"id": "rob", "probe_kind": "robustness", "passed": True},
+    ]
+
+    def test_none_or_empty_results_return_none(self):
+        self.assertIsNone(reweighted_pass_rate(None, {"robustness": 5.0}))
+        self.assertIsNone(reweighted_pass_rate([], {"robustness": 5.0}))
+
+    def test_default_weights_when_map_missing_or_empty(self):
+        # Default weights: safety 3 (fail), robustness 1 (pass) → 1/(3+1)=0.25.
+        self.assertEqual(reweighted_pass_rate(self.RESULTS, None), 0.25)
+        self.assertEqual(reweighted_pass_rate(self.RESULTS, {}), 0.25)
+
+    def test_reweighting_changes_the_rate(self):
+        # Boost robustness to 5: passing robustness now 5/(3+5)=0.625.
+        self.assertEqual(
+            reweighted_pass_rate(self.RESULTS, {"safety_refusal": 3.0, "robustness": 5.0}),
+            0.625,
+        )
+
+    def test_unknown_kind_falls_back_to_unit_weight(self):
+        rows = [
+            {"id": "a", "probe_kind": "mystery", "passed": True},
+            {"id": "b", "probe_kind": "robustness", "passed": False},
+        ]
+        # mystery → 1.0 (pass), robustness → boosted 3.0 (fail): 1/(1+3)=0.25.
+        self.assertEqual(reweighted_pass_rate(rows, {"robustness": 3.0}), 0.25)
 
 
 class _FakeCache:
