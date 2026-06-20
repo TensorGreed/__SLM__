@@ -1,0 +1,97 @@
+/* GuidedLearningRail — Guided Learning Mode band (Epic G phase G3). */
+
+.guided-rail {
+    margin-bottom: var(--space-md);
+    padding: var(--space-sm) var(--space-md);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-left: 3px solid var(--accent, var(--accent-primary));
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.guided-rail-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.guided-rail-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--accent, var(--accent-primary));
+}
+
+.guided-rail-step {
+    flex: 1;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+}
+
+.guided-rail-step strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.guided-rail-next {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.guided-rail-final {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.guided-rail-tip {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    padding-top: var(--space-sm);
+    border-top: 1px dashed var(--border-default);
+}
+
+.guided-rail-tip-icon {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--text-tertiary);
+}
+
+.guided-rail-tip-text {
+    flex: 1;
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+}
+
+.guided-rail-tip-dismiss {
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--text-tertiary);
+    padding: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.guided-rail-tip-dismiss:hover,
+.guided-rail-tip-dismiss:focus-visible {
+    color: var(--text-primary);
+    border-color: var(--border-default);
+}

@@ -298,6 +298,14 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   `run_playbook`, `navigate`, `augment_from_cluster`.
   `NAVIGATE_TARGET_URLS` in `CoachSuggestion.tsx` maps target names
   to URLs.
+- **Guided Learning Mode** (Epic G G3) — `GuidedLearningRail`
+  (`components/guide/GuidedLearningRail.tsx`) renders under the pipeline
+  tab bar in `ProjectPipelinePage`, **gated on `project.beginner_mode`**
+  (null for advanced users). Per-tab: a "Guided step N of M · <stage>"
+  checkpoint line (complements `PipelineProgress`), a first-visit
+  contextual tip (dismissed per (project, tab) via localStorage key
+  `brewslm.guided.tip.<id>.<tab>`), and a "next step" CTA reusing
+  `ProjectPipelinePage.goToNextTab`. Pure orchestration — no new API/types.
 - **Synthetic data** — two paths: (a) modern `synth_playbook_service`
   with recipe-aware playbooks + per-row `review_status="pending"`;
   (b) legacy `synthetic_service` with task framework + bridge to Jobs.

@@ -17,6 +17,7 @@ import EvalPanel from '../components/evaluation/EvalPanel';
 import CompressionPanel from '../components/compression/CompressionPanel';
 import ExportPanel from '../components/export/ExportPanel';
 import GettingStartedWizard from '../components/shared/GettingStartedWizard';
+import GuidedLearningRail from '../components/guide/GuidedLearningRail';
 import TabVideoLink from '../components/video/TabVideoLink';
 import api from '../api/client';
 import { PIPELINE_TABS } from '../types';
@@ -67,7 +68,7 @@ export default function ProjectPipelinePage() {
     const { tabKey } = useParams<{ tabKey: string }>();
     const navigate = useNavigate();
     const { projectId, pipelineStatus, refreshPipelineStatus } = useOutletContext<ProjectWorkspaceContextValue>();
-    const { activeTab, setActiveTab } = useProjectStore();
+    const { activeTab, setActiveTab, activeProject } = useProjectStore();
 
     const [wizardDismissed, setWizardDismissed] = useState(false);
     const showWizard = !wizardDismissed && pipelineStatus?.progress_percent === 0;
@@ -313,6 +314,11 @@ export default function ProjectPipelinePage() {
                         })}
                     </div>
                     <div className="tab-content">
+                        <GuidedLearningRail
+                            project={activeProject}
+                            activeTab={resolvedTab}
+                            onNextStep={goToNextTab}
+                        />
                         <TabVideoLink tabKey={resolvedTab} />
                         {renderTabContent()}
                     </div>

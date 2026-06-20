@@ -545,6 +545,7 @@ session-start guidance.
 - `frontend/src/components/gamification/AchievementToast.tsx` — Terminal-glow achievement / level-up toast for the Lab Journal.
 - `frontend/src/components/gamification/LabJournalDrawer.tsx` — Right-side overlay drawer that surfaces the full Lab Journal.
 - `frontend/src/components/gamification/ProgressChip.tsx` — Inline TopBar chip showing the project's current level + XP.
+- `frontend/src/components/guide/GuidedLearningRail.tsx` — GuidedLearningRail — Guided Learning Mode contextual band (Epic G phase G3).
 - `frontend/src/components/guide/QuickstartCard.tsx` — Quickstart card (Theme 1 Epic 4).
 - `frontend/src/components/layout/BrandMark.tsx` — BrandMark — BrewSLM logo glyph.
 - `frontend/src/components/layout/CommandPalette.tsx` — CommandPalette — global Cmd-K / Ctrl-K palette for fast navigation.
@@ -944,6 +945,7 @@ session-start guidance.
 - `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/gamification/AchievementToast.test.tsx` — CRT achievement toast contract.
 - `frontend/src/components/gamification/ProgressChip.test.tsx` — ProgressChip + LabJournalDrawer contract.
+- `frontend/src/components/guide/GuidedLearningRail.test.tsx` — _(no docstring)_
 - `frontend/src/components/guide/QuickstartCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/CommandPalette.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/NotificationBell.test.tsx` — NotificationBell tests (Hardening Phase H1).
