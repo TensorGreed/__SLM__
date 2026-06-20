@@ -664,6 +664,7 @@ session-start guidance.
 - `backend/tests/test_data_studio_overview.py` — Data Studio overview endpoint tests.
 - `backend/tests/test_dataset_auto_exclude_cleaned.py` — ``resolve_training_dataset_types`` contract.
 - `backend/tests/test_decision_engine_service.py` — Tests for the Theme 7 decision engine — `infer_recommended_approach`.
+- `backend/tests/test_demo_project_reset.py` — Epic G phase G2 — demo sample reset lifecycle.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
 - `backend/tests/test_disjoint_split.py` — Unit tests for ``_disjoint_split_entries`` (Gap #4 slice 3).
 - `backend/tests/test_distillation_kd_handler_wrap.py` — Distillation β-fix tests — teacher capture wraps with the eval

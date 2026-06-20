@@ -38,7 +38,9 @@ export default function DemoProjectTiles() {
     const [archetypes, setArchetypes] = useState<DemoArchetype[]>([]);
     const [loading, setLoading] = useState(true);
     const [seedingSlug, setSeedingSlug] = useState<string | null>(null);
+    const [resettingSlug, setResettingSlug] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const busy = seedingSlug ?? resettingSlug;
 
     useEffect(() => {
         let cancelled = false;
@@ -82,6 +84,30 @@ export default function DemoProjectTiles() {
         [navigate],
     );
 
+    // Phase G2 — reset lifecycle: drop the (possibly broken) sample and
+    // re-seed a clean copy, then open it. Destructive → confirm first.
+    const resetAndOpen = useCallback(
+        async (slug: string, name: string) => {
+            const ok = window.confirm(
+                `Reset “${name}” to a fresh sample? This deletes your changes to it.`,
+            );
+            if (!ok) return;
+            setResettingSlug(slug);
+            setError(null);
+            try {
+                const response = await api.post<DemoSeedResponse>(
+                    `/demo-projects/${slug}/reset`,
+                    {},
+                );
+                navigate(`/project/${response.data.project.id}`);
+            } catch (err) {
+                setError(extractErrorMessage(err, 'Could not reset the demo project.'));
+                setResettingSlug(null);
+            }
+        },
+        [navigate],
+    );
+
     if (loading || (archetypes.length === 0 && !error)) {
         return null;
     }
@@ -103,32 +129,44 @@ export default function DemoProjectTiles() {
             <div className="demo-project-tiles-grid">
                 {archetypes.map((archetype) => {
                     const isSeeding = seedingSlug === archetype.slug;
+                    const isResetting = resettingSlug === archetype.slug;
+                    const otherBusy = Boolean(busy) && busy !== archetype.slug;
                     return (
-                        <button
-                            key={archetype.slug}
-                            type="button"
-                            className="demo-project-tile"
-                            disabled={Boolean(seedingSlug) && !isSeeding}
-                            onClick={() => void seedAndOpen(archetype.slug)}
-                            aria-label={`Open the ${archetype.name} demo project`}
-                        >
-                            <div className="demo-project-tile-header">
-                                <span className="demo-project-tile-name">{archetype.name}</span>
-                                <span className="demo-project-tile-badge">
-                                    {archetype.task_profile}
-                                </span>
-                            </div>
-                            <p className="demo-project-tile-headline">{archetype.headline}</p>
-                            <p className="demo-project-tile-description">
-                                {archetype.description}
-                            </p>
-                            <div className="demo-project-tile-footer">
-                                <span className="dim">target: {archetype.target_profile}</span>
-                                <span className="demo-project-tile-cta">
-                                    {isSeeding ? 'Seeding…' : 'Open demo →'}
-                                </span>
-                            </div>
-                        </button>
+                        <div key={archetype.slug} className="demo-project-tile-wrap">
+                            <button
+                                type="button"
+                                className="demo-project-tile"
+                                disabled={otherBusy || isResetting}
+                                onClick={() => void seedAndOpen(archetype.slug)}
+                                aria-label={`Open the ${archetype.name} demo project`}
+                            >
+                                <div className="demo-project-tile-header">
+                                    <span className="demo-project-tile-name">{archetype.name}</span>
+                                    <span className="demo-project-tile-badge">
+                                        {archetype.task_profile}
+                                    </span>
+                                </div>
+                                <p className="demo-project-tile-headline">{archetype.headline}</p>
+                                <p className="demo-project-tile-description">
+                                    {archetype.description}
+                                </p>
+                                <div className="demo-project-tile-footer">
+                                    <span className="dim">target: {archetype.target_profile}</span>
+                                    <span className="demo-project-tile-cta">
+                                        {isSeeding ? 'Seeding…' : 'Open demo →'}
+                                    </span>
+                                </div>
+                            </button>
+                            <button
+                                type="button"
+                                className="demo-project-tile-reset"
+                                disabled={otherBusy || isSeeding}
+                                onClick={() => void resetAndOpen(archetype.slug, archetype.name)}
+                                aria-label={`Reset the ${archetype.name} demo project`}
+                            >
+                                {isResetting ? 'Resetting…' : '↺ Reset to fresh'}
+                            </button>
+                        </div>
                     );
                 })}
             </div>

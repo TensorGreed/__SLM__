@@ -607,6 +607,32 @@ async def seed_demo_project(
     return project, summary
 
 
+async def reset_demo_project(
+    db: AsyncSession,
+    slug: str,
+    *,
+    actor_user_id: int | None = None,
+) -> tuple[Project, dict[str, Any]]:
+    """Delete the existing demo project for ``slug`` (if any) and re-seed a
+    fresh copy — the sample-gallery reset lifecycle (Epic G phase G2). Lets
+    a first-timer who broke a sample start over clean. ``seed_demo_project``
+    is idempotent (returns the existing project), so a reset must drop the
+    old one first. Raises ``ValueError`` on an unknown slug (via the
+    manifest load), which the API maps to 404."""
+    manifest = _load_manifest(slug)
+    project_name = str(manifest.get("name") or slug)
+    existing = await _find_project_by_name(db, project_name)
+    if existing is not None:
+        # ORM cascade removes the project's datasets / gold sets / experiments.
+        await db.delete(existing)
+        await db.flush()
+    project, summary = await seed_demo_project(
+        db, slug, actor_user_id=actor_user_id
+    )
+    summary["reset"] = True
+    return project, summary
+
+
 # Recipe id → preferred demo bundle slug. Used by the project-guide
 # quickstart "Import sample CSV" button to pick a bundle that matches
 # the task shape the user's already locked in via the recipe picker.

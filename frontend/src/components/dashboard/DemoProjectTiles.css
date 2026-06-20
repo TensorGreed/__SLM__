@@ -112,3 +112,35 @@
     font-weight: 500;
     letter-spacing: -0.005em;
 }
+
+/* Reset-to-fresh lifecycle (Epic G phase G2). */
+.demo-project-tile-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.demo-project-tile-wrap .demo-project-tile {
+    flex: 1;
+}
+
+.demo-project-tile-reset {
+    align-self: flex-start;
+    font-size: 12px;
+    padding: 4px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.demo-project-tile-reset:hover:not(:disabled) {
+    color: var(--text-primary, var(--text-secondary));
+    border-color: var(--accent, #6366f1);
+}
+
+.demo-project-tile-reset:disabled {
+    opacity: 0.5;
+    cursor: default;
+}

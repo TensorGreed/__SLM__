@@ -7,6 +7,9 @@ Two routes:
 - ``POST /api/demo-projects/{slug}`` — seed (or fetch existing) the
   demo project for that slug. Idempotent — re-posting returns the same
   project record so the "Try a demo" tile click is safe to repeat.
+- ``POST /api/demo-projects/{slug}/reset`` — drop the existing demo
+  project for the slug (if any) and re-seed a fresh copy (Epic G phase
+  G2 sample-reset lifecycle).
 
 Stable reason codes:
 
@@ -22,8 +25,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.services.demo_project_service import (
     list_demo_archetypes,
+    reset_demo_project,
     seed_demo_project,
 )
+
+
+def _serialize_demo_project(project) -> dict:
+    return {
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "status": project.status.value if project.status else None,
+        "beginner_mode": project.beginner_mode,
+        "target_profile_id": project.target_profile_id,
+        "training_preferred_plan_profile": project.training_preferred_plan_profile,
+        "evaluation_preferred_pack_id": project.evaluation_preferred_pack_id,
+    }
 
 
 router = APIRouter(prefix="/demo-projects", tags=["DemoProjects"])
@@ -53,16 +70,16 @@ async def seed_demo(slug: str, db: AsyncSession = Depends(get_db)):
         _raise_for(exc)
         return  # unreachable; pacifies type-checker
     await db.commit()
-    return {
-        "summary": summary,
-        "project": {
-            "id": project.id,
-            "name": project.name,
-            "description": project.description,
-            "status": project.status.value if project.status else None,
-            "beginner_mode": project.beginner_mode,
-            "target_profile_id": project.target_profile_id,
-            "training_preferred_plan_profile": project.training_preferred_plan_profile,
-            "evaluation_preferred_pack_id": project.evaluation_preferred_pack_id,
-        },
-    }
+    return {"summary": summary, "project": _serialize_demo_project(project)}
+
+
+@router.post("/{slug}/reset")
+async def reset_demo(slug: str, db: AsyncSession = Depends(get_db)):
+    """Drop the existing demo project for ``slug`` and re-seed a fresh copy."""
+    try:
+        project, summary = await reset_demo_project(db, slug)
+    except ValueError as exc:
+        _raise_for(exc)
+        return  # unreachable; pacifies type-checker
+    await db.commit()
+    return {"summary": summary, "project": _serialize_demo_project(project)}

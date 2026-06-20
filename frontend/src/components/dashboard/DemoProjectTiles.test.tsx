@@ -163,4 +163,50 @@ describe('DemoProjectTiles', () => {
         expect(sentimentButton).toBeDisabled();
         expect(supportButton).toHaveTextContent(/Seeding…/);
     });
+
+    it('Reset confirms, POSTs to the reset endpoint, and navigates', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: CATALOG });
+        const resetResponse: DemoSeedResponse = {
+            summary: {
+                slug: 'support-faq', created: true, reset: true, project_id: 7,
+                project_name: 'Demo · Support FAQ', gold_row_count: 6, source_row_count: 20,
+            },
+            project: {
+                id: 7, name: 'Demo · Support FAQ', description: '', status: 'active',
+                beginner_mode: true, target_profile_id: 'vllm_server',
+                training_preferred_plan_profile: 'balanced',
+                evaluation_preferred_pack_id: 'evalpack.general.default',
+            },
+        };
+        apiMock.post.mockResolvedValueOnce({ data: resetResponse });
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+        renderWithRouter();
+        await screen.findByText('Demo · Support FAQ');
+        const user = userEvent.setup();
+        await user.click(
+            screen.getByRole('button', { name: /Reset the Demo · Support FAQ demo project/i }),
+        );
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith('/demo-projects/support-faq/reset', {});
+        });
+        expect(await screen.findByTestId('project-workspace')).toBeInTheDocument();
+        confirmSpy.mockRestore();
+    });
+
+    it('Reset does nothing when the confirm is cancelled', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: CATALOG });
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+        renderWithRouter();
+        await screen.findByText('Demo · Support FAQ');
+        const user = userEvent.setup();
+        await user.click(
+            screen.getByRole('button', { name: /Reset the Demo · Support FAQ demo project/i }),
+        );
+
+        expect(apiMock.post).not.toHaveBeenCalled();
+        confirmSpy.mockRestore();
+    });
 });

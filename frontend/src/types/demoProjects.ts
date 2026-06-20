@@ -21,6 +21,8 @@ export interface DemoSeedResponse {
     summary: {
         slug: string;
         created: boolean;
+        /** Phase G2 — present (true) on the reset endpoint's response. */
+        reset?: boolean;
         project_id: number;
         project_name?: string;
         source_dataset_id?: number;
