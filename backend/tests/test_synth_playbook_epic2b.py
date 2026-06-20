@@ -478,6 +478,54 @@ class ReviewQueueIntegrationTests(unittest.TestCase):
         src_groups = {g["synth_source"] for g in src_resp.json()["groups"]}
         self.assertEqual(src_groups, {"playbook:x", "playbook:y"})
 
+    def test_review_queue_group_by_cluster(self):
+        # Epic E — ?group_by=cluster buckets pending rows by the originating
+        # failure cluster (cluster_id), so a reviewer can sweep one cluster.
+        project = self._instantiate_template("ticket-router", "Queue Group By Cluster")
+        pid = project["id"]
+        self._seed_synth_rows(pid, [
+            {"id": 1, "text": "a", "synth_source": "playbook:x", "synth_confidence": 0.9, "review_status": "pending", "cluster_id": "cluster-1"},
+            {"id": 2, "text": "b", "synth_source": "playbook:x", "synth_confidence": 0.8, "review_status": "pending", "cluster_id": "cluster-1"},
+            {"id": 3, "text": "c", "synth_source": "playbook:y", "synth_confidence": 0.7, "review_status": "pending", "cluster_id": "cluster-2"},
+            {"id": 4, "text": "d", "synth_source": "playbook:x", "synth_confidence": 0.6, "review_status": "pending"},  # no cluster
+        ])
+        resp = self.client.get(
+            f"/api/projects/{pid}/synthetic/review-queue?group_by=cluster"
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["group_by"], "cluster")
+        groups = {g["synth_source"]: g for g in payload["groups"]}
+        self.assertEqual(set(groups), {"cluster-1", "cluster-2", "(no cluster)"})
+        self.assertEqual(groups["cluster-1"]["count"], 2)
+
+    def test_cluster_id_from_failure_cluster(self):
+        from app.services.synth_playbook_service import _cluster_id_from
+        self.assertEqual(_cluster_id_from({"cluster_id": "cluster-1", "reason_code": "x"}), "cluster-1")
+        self.assertIsNone(_cluster_id_from(None))
+        self.assertIsNone(_cluster_id_from({}))
+        self.assertIsNone(_cluster_id_from({"cluster_id": "  "}))
+        self.assertIsNone(_cluster_id_from("not-a-dict"))
+
+    def test_append_synthetic_jsonl_stamps_cluster_id(self):
+        # The persist path stamps cluster_id from a CLUSTER_TARGETED run so the
+        # rows can later be grouped by cluster.
+        from app.services.synth_playbook_service import _append_to_synthetic_jsonl
+        project = self._instantiate_template("ticket-router", "Append Cluster Stamp")
+        pid = project["id"]
+        path = settings.DATA_DIR / "projects" / str(pid) / "synthetic" / "synthetic.jsonl"
+        rows = [
+            {"payload": {"text": "x", "label": "billing"}, "synth_confidence": 0.9, "synth_source": "playbook:classification:cluster_targeted"},
+        ]
+        _append_to_synthetic_jsonl(path, rows, cluster_id="cluster-3")
+        written = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        self.assertEqual(written[0]["cluster_id"], "cluster-3")
+        self.assertEqual(written[0]["review_status"], "pending")
+        # Without a cluster_id the field is omitted (not null).
+        _append_to_synthetic_jsonl(path, rows, cluster_id=None)
+        written = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        self.assertNotIn("cluster_id", written[-1])
+
     def test_review_queue_total_rows_includes_every_row_regardless_of_status(self):
         """total_rows is the whole-file count — the user's anchor
         when they ask 'how many synth rows do I have?'."""

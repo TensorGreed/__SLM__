@@ -124,6 +124,16 @@ def _resolve_class_label(row: dict[str, Any]) -> str:
     return "(unlabeled)"
 
 
+def _resolve_cluster_label(row: dict[str, Any]) -> str:
+    """Group key when grouping by cluster — the originating failure cluster
+    (CLUSTER_TARGETED rows carry ``cluster_id``). Rows generated outside a
+    cluster fall into one bucket."""
+    cluster = row.get("cluster_id")
+    if cluster is not None and str(cluster).strip():
+        return str(cluster)
+    return "(no cluster)"
+
+
 def _bucket_rows_by_source(
     rows: list[dict[str, Any]],
     *,
@@ -190,7 +200,8 @@ async def list_review_queue(
 ) -> dict[str, Any]:
     """Return synth rows for a project, split into pending + accepted
     groups (keyed by ``synth_source``, or by class label when
-    ``group_by="class"`` — Epic E).
+    ``group_by="class"``, or by originating failure cluster when
+    ``group_by="cluster"`` — Epic E).
 
     The pending list is the active review queue. The accepted list
     shows the rows that already passed review and will enter the
@@ -224,12 +235,18 @@ async def list_review_queue(
     # immediately.
     rejected = [r for r in all_rows if r.get("review_status") == "rejected"]
 
-    key_fn = _resolve_class_label if group_by == "class" else _resolve_source_label
+    _GROUP_RESOLVERS = {
+        "class": _resolve_class_label,
+        "cluster": _resolve_cluster_label,
+        "source": _resolve_source_label,
+    }
+    normalized_group_by = group_by if group_by in _GROUP_RESOLVERS else "source"
+    key_fn = _GROUP_RESOLVERS[normalized_group_by]
 
     return {
         "project_id": project_id,
         "dataset_id": dataset.id if dataset else None,
-        "group_by": "class" if group_by == "class" else "source",
+        "group_by": normalized_group_by,
         "total_rows": len(all_rows),
         "total_pending": len(pending),
         "total_accepted": len(accepted),

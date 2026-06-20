@@ -113,13 +113,21 @@ def _system_prompt_for_mode(mode: SynthMode) -> str:
     )
 
 
-def _append_to_synthetic_jsonl(file_path: Path, rows: list[SynthRow]) -> None:
+def _append_to_synthetic_jsonl(
+    file_path: Path,
+    rows: list[SynthRow],
+    *,
+    cluster_id: str | None = None,
+) -> None:
     """Append accepted SynthRows to the project's synthetic.jsonl file.
 
     We pre-write the rows in `review_status='pending'` so the
     downstream review queue (Epic 2b) can surface them. Until that
     queue lands the rows are immediately picked up by dataset prep —
     callers that want manual review should add a UI gate.
+
+    ``cluster_id`` stamps the originating failure cluster (CLUSTER_TARGETED
+    runs) onto each row so the review queue can group by cluster (Epic E).
     """
     file_path.parent.mkdir(parents=True, exist_ok=True)
     next_id = _peek_next_id(file_path)
@@ -133,8 +141,23 @@ def _append_to_synthetic_jsonl(file_path: Path, rows: list[SynthRow]) -> None:
                 "review_status": "pending",
                 "status": "accepted",  # legacy field — keeps existing readers happy
             }
+            if cluster_id:
+                record["cluster_id"] = cluster_id
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
             next_id += 1
+
+
+def _cluster_id_from(failure_cluster: dict[str, Any] | None) -> str | None:
+    """Pull the ``cluster_id`` off a failure-cluster dict (CLUSTER_TARGETED
+    runs), normalised to a non-empty string or ``None``. The clusters emitted
+    by ``failure_cluster_service`` carry ``cluster_id`` (e.g. ``"cluster-1"``)."""
+    if not isinstance(failure_cluster, dict):
+        return None
+    raw = failure_cluster.get("cluster_id")
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
 
 
 def _peek_next_id(file_path: Path) -> int:
@@ -257,7 +280,11 @@ async def run_playbook(
         synthetic_dir = settings.DATA_DIR / "projects" / str(project_id) / "synthetic"
         synthetic_dir.mkdir(parents=True, exist_ok=True)
         file_path = synthetic_dir / "synthetic.jsonl"
-        _append_to_synthetic_jsonl(file_path, accepted_rows)
+        # Stamp the originating failure cluster so the review queue can group
+        # cluster-targeted rows by cluster (Epic E).
+        _append_to_synthetic_jsonl(
+            file_path, accepted_rows, cluster_id=_cluster_id_from(failure_cluster),
+        )
         # Bump the record_count + ensure file_path is stamped on the
         # Dataset row for downstream readers.
         synthetic_ds.record_count = (synthetic_ds.record_count or 0) + len(accepted_rows)

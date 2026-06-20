@@ -652,4 +652,19 @@ describe('SynthReviewQueue', () => {
             );
         });
     });
+
+    it('refetches grouped by cluster when the Cluster toggle is clicked', async () => {
+        apiMock.get.mockResolvedValue({ data: { ...SAMPLE_PAYLOAD, group_by: 'source' } });
+        render(<SynthReviewQueue projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue')).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByRole('button', { name: /^Cluster$/ }));
+        await waitFor(() => {
+            expect(apiMock.get).toHaveBeenLastCalledWith(
+                '/projects/1/synthetic/review-queue',
+                { params: { group_by: 'cluster' } },
+            );
+        });
+    });
 });

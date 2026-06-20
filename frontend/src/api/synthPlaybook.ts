@@ -345,12 +345,14 @@ export interface BulkUpdateBySourceResult extends BulkUpdateResult {
     matched: number;
 }
 
+export type ReviewQueueGroupBy = 'source' | 'class' | 'cluster';
+
 export async function listSynthReviewQueue(
     projectId: number,
-    groupBy: 'source' | 'class' = 'source',
+    groupBy: ReviewQueueGroupBy = 'source',
 ): Promise<ReviewQueueResponse> {
     const resp = await api.get(`/projects/${projectId}/synthetic/review-queue`, {
-        params: groupBy === 'class' ? { group_by: 'class' } : undefined,
+        params: groupBy !== 'source' ? { group_by: groupBy } : undefined,
     });
     return resp.data as ReviewQueueResponse;
 }

@@ -55,8 +55,9 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
         setFocusActive(!!focusSource);
     }, [focusSource]);
 
-    // Epic E — group the queue by synth source (default) or by class label.
-    const [groupBy, setGroupBy] = useState<'source' | 'class'>('source');
+    // Epic E — group the queue by synth source (default), class label, or the
+    // originating failure cluster.
+    const [groupBy, setGroupBy] = useState<'source' | 'class' | 'cluster'>('source');
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -301,11 +302,19 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                         >
                             Class
                         </button>
+                        <button
+                            type="button"
+                            className={`synth-review-queue__groupby-btn${groupBy === 'cluster' ? ' is-active' : ''}`}
+                            aria-pressed={groupBy === 'cluster' ? 'true' : 'false'}
+                            onClick={() => setGroupBy('cluster')}
+                        >
+                            Cluster
+                        </button>
                     </div>
                 </div>
                 <p className="synth-review-queue__subtitle">
                     {data.total_pending} row{data.total_pending === 1 ? '' : 's'} awaiting review,
-                    grouped by {groupBy === 'class' ? 'class' : 'source'},{' '}
+                    grouped by {groupBy},{' '}
                     <strong>most uncertain first</strong> (lowest confidence —
                     where your review matters most). Accept to add to training; reject to discard.
                     {data.total_accepted > 0 && (
