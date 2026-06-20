@@ -13,6 +13,7 @@ import {
     GitBranch,
     Play,
     RefreshCw,
+    Settings,
     ShieldCheck,
 } from 'lucide-react';
 
@@ -155,6 +156,14 @@ export default function DataStudioPrepareDatasetPanel({
     // from the main readiness load so a coverage read failure (or no splits yet)
     // doesn't pull down the prepare checks.
     const [coverage, setCoverage] = useState<SplitClassCoverage | null>(null);
+    // Epic E — Configure-splits controls (seed + ratios). Off → backend uses
+    // recipe profile defaults; on → these override.
+    const [showConfig, setShowConfig] = useState(false);
+    const [seed, setSeed] = useState('42');
+    const [trainRatio, setTrainRatio] = useState('0.8');
+    const [valRatio, setValRatio] = useState('0.1');
+    const [testRatio, setTestRatio] = useState('0.1');
+    const [configError, setConfigError] = useState<string | null>(null);
 
     const loadPrepare = async () => {
         setLoading(true);
@@ -178,11 +187,28 @@ export default function DataStudioPrepareDatasetPanel({
     };
 
     const handleRunPrepare = async () => {
+        setConfigError(null);
+        let overrides = {};
+        if (showConfig) {
+            const t = Number(trainRatio);
+            const v = Number(valRatio);
+            const te = Number(testRatio);
+            const s = Number(seed);
+            if ([t, v, te, s].some((n) => Number.isNaN(n))) {
+                setConfigError('Seed and ratios must be numbers.');
+                return;
+            }
+            if (Math.abs(t + v + te - 1) > 1e-6) {
+                setConfigError('train + val + test ratios must sum to 1.0.');
+                return;
+            }
+            overrides = { seed: s, train_ratio: t, val_ratio: v, test_ratio: te };
+        }
         setRunning(true);
         setRunFlash(null);
         setRunError(null);
         try {
-            const result: RunPrepareDatasetResult = await runDataStudioPrepareDataset(projectId);
+            const result: RunPrepareDatasetResult = await runDataStudioPrepareDataset(projectId, overrides);
             const total =
                 Number(result.train_count || 0)
                 + Number(result.val_count || 0)
@@ -338,7 +364,51 @@ export default function DataStudioPrepareDatasetPanel({
                     <FileText size={15} aria-hidden="true" />
                     Adapter preview
                 </button>
+                <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => setShowConfig((s) => !s)}
+                    data-testid="data-studio-prepare-config-toggle"
+                >
+                    <Settings size={15} aria-hidden="true" />
+                    {showConfig ? 'Hide split config' : 'Configure splits'}
+                </button>
             </div>
+            {showConfig && (
+                <div className="data-studio-prepare__config" data-testid="data-studio-prepare-config">
+                    <p className="data-studio-prepare__config-hint">
+                        Override the recipe defaults for the next Prepare. Ratios must sum to 1.0;
+                        the seed makes the split reproducible.
+                    </p>
+                    <div className="data-studio-prepare__config-fields">
+                        <label>
+                            Train
+                            <input type="number" step="0.05" min="0" max="1" value={trainRatio}
+                                onChange={(e) => setTrainRatio(e.target.value)} aria-label="Train ratio" />
+                        </label>
+                        <label>
+                            Val
+                            <input type="number" step="0.05" min="0" max="1" value={valRatio}
+                                onChange={(e) => setValRatio(e.target.value)} aria-label="Validation ratio" />
+                        </label>
+                        <label>
+                            Test
+                            <input type="number" step="0.05" min="0" max="1" value={testRatio}
+                                onChange={(e) => setTestRatio(e.target.value)} aria-label="Test ratio" />
+                        </label>
+                        <label>
+                            Seed
+                            <input type="number" step="1" value={seed}
+                                onChange={(e) => setSeed(e.target.value)} aria-label="Seed" />
+                        </label>
+                    </div>
+                    {configError && (
+                        <p className="data-studio-prepare__run-error" data-testid="data-studio-prepare-config-error">
+                            {configError}
+                        </p>
+                    )}
+                </div>
+            )}
             {runFlash && (
                 <p
                     className="data-studio-prepare__run-flash"

@@ -1583,10 +1583,21 @@ export interface RunPrepareDatasetResult {
     [key: string]: unknown;
 }
 
+export interface PrepareSplitOverrides {
+    seed?: number;
+    train_ratio?: number;
+    val_ratio?: number;
+    test_ratio?: number;
+}
+
 export async function runDataStudioPrepareDataset(
     projectId: number,
+    overrides: PrepareSplitOverrides = {},
 ): Promise<RunPrepareDatasetResult> {
-    const resp = await api.post(`/projects/${projectId}/dataset/split`, {});
+    // Empty body → backend resolves seed + ratios from the recipe profile
+    // defaults. Providing any field overrides just that field (Epic E — the
+    // Configure-splits controls).
+    const resp = await api.post(`/projects/${projectId}/dataset/split`, overrides);
     return resp.data as RunPrepareDatasetResult;
 }
 

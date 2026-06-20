@@ -330,6 +330,38 @@ describe('DataStudioPrepareDatasetPanel', () => {
         expect(runBtn.textContent).toMatch(/Run prepare now/);
     });
 
+    it('passes seed + ratio overrides from the Configure-splits controls', async () => {
+        apiMock.get.mockImplementation((url: string) => {
+            if (url.includes('/prepare-dataset')) return Promise.resolve({ data: preparePayload });
+            return Promise.resolve(coverageNA);
+        });
+        apiMock.post.mockResolvedValueOnce({ data: { train_count: 70, val_count: 20, test_count: 10 } });
+
+        render(<DataStudioPrepareDatasetPanel projectId={7} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('data-studio-prepare-run')).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByTestId('data-studio-prepare-config-toggle'));
+        // Invalid sum (0.5 + 0.1 + 0.1) → client-side error, no POST.
+        fireEvent.change(screen.getByLabelText('Train ratio'), { target: { value: '0.5' } });
+        fireEvent.click(screen.getByTestId('data-studio-prepare-run'));
+        await waitFor(() => {
+            expect(screen.getByTestId('data-studio-prepare-config-error')).toHaveTextContent(/sum to 1\.0/);
+        });
+        expect(apiMock.post).not.toHaveBeenCalled();
+
+        // Fix the ratios + set a seed → POST carries the overrides.
+        fireEvent.change(screen.getByLabelText('Train ratio'), { target: { value: '0.8' } });
+        fireEvent.change(screen.getByLabelText('Seed'), { target: { value: '123' } });
+        fireEvent.click(screen.getByTestId('data-studio-prepare-run'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith('/projects/7/dataset/split', {
+                seed: 123, train_ratio: 0.8, val_ratio: 0.1, test_ratio: 0.1,
+            });
+        });
+    });
+
     it('disables "Run prepare now" when can_prepare is false (blocked verdict)', async () => {
         apiMock.get.mockResolvedValueOnce({
             data: {
