@@ -187,6 +187,7 @@ session-start guidance.
 - `backend/app/services/nl2pipeline_service.py` — Natural Language to Pipeline (Magic Create) service.
 - `backend/app/services/pack_generation_service.py` — Auto-generate a starter evaluation pack from blueprint + dataset + adapter.
 - `backend/app/services/pipeline_recipe_service.py` — End-to-end pipeline recipe (blueprint) service.
+- `backend/app/services/playbook_gap_service.py` — Gap-tied synthetic-playbook recommendations (Epic E).
 - `backend/app/services/playground_log_service.py` — Prompt/eval logging helpers for playground interactions.
 - `backend/app/services/playground_service.py` — Inference playground service for project-scoped chat experiments.
 - `backend/app/services/playground_session_service.py` — Persistence and model-discovery helpers for chat playground.

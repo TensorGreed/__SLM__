@@ -2380,6 +2380,55 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertFalse(payload["applicable"])
         self.assertEqual(payload["reason"], "not_prepared")
 
+    def test_playbook_gap_recommendations_flags_sparse_classes(self):
+        project_id = self._create_project("playbook-gap")
+        gold_path = settings.DATA_DIR / "projects" / str(project_id) / "gold_dev.jsonl"
+        gold_path.parent.mkdir(parents=True, exist_ok=True)
+        rows = (
+            [{"text": f"b{i}", "label": "billing"} for i in range(10)]
+            + [{"text": f"t{i}", "label": "technical"} for i in range(8)]
+            + [{"text": "v1", "label": "vip"}, {"text": "v2", "label": "vip"}]
+            + [{"text": "r1", "label": "refund"}]
+        )
+        gold_path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+        async def _seed_gold_dataset():
+            from app.database import async_session_factory
+            from app.models.dataset import Dataset, DatasetType
+            async with async_session_factory() as db:
+                db.add(Dataset(
+                    project_id=project_id, name="Gold Dev", dataset_type=DatasetType.GOLD_DEV,
+                    file_path=str(gold_path), record_count=len(rows),
+                ))
+                await db.commit()
+
+        asyncio.run(_seed_gold_dataset())
+        resp = self.client.get(
+            f"/api/projects/{project_id}/data-studio/playbook-gap-recommendations"
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertTrue(payload["applicable"])
+        self.assertEqual(payload["max_class_count"], 10)
+        recs = {r["class"]: r for r in payload["recommendations"]}
+        # billing (10) + technical (8) clear the threshold; refund (1) + vip (2) don't.
+        self.assertEqual(set(recs), {"refund", "vip"})
+        self.assertEqual(recs["refund"]["severity"], "block")   # < 2
+        self.assertEqual(recs["vip"]["severity"], "warn")       # 2 <= n < 5
+        self.assertEqual(recs["refund"]["recommended_mode"], "class_balance_fill")
+        # Suggested generate approaches parity with the biggest class (10 - 1).
+        self.assertEqual(recs["refund"]["suggested_generate"], 9)
+        # Sparsest first.
+        self.assertEqual(payload["recommendations"][0]["class"], "refund")
+
+    def test_playbook_gap_recommendations_not_applicable_without_labels(self):
+        project_id = self._create_project("playbook-gap-empty")
+        resp = self.client.get(
+            f"/api/projects/{project_id}/data-studio/playbook-gap-recommendations"
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertFalse(resp.json()["applicable"])
+
     def test_prepared_version_preview_counts_accepted_and_next_version(self):
         project_id = self._create_project("version-preview")
         # Synthetic: 2 accepted (incl. 1 legacy with no review_status) + 1 pending.

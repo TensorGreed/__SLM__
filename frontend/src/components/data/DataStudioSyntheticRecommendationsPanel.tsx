@@ -11,15 +11,18 @@ import {
     Lightbulb,
     RefreshCw,
     Route,
+    Scale,
     ShieldCheck,
 } from 'lucide-react';
 
 import {
     getDataStudioSyntheticRecommendations,
+    getPlaybookGapRecommendations,
 } from '../../api/dataStudio';
 import type {
     DataStudioSyntheticRecommendationItem,
     DataStudioSyntheticRecommendations,
+    PlaybookGapRecommendations,
 } from '../../api/dataStudio';
 import './DataStudioSyntheticRecommendationsPanel.css';
 
@@ -125,6 +128,9 @@ export default function DataStudioSyntheticRecommendationsPanel({
     const [recommendations, setRecommendations] = useState<DataStudioSyntheticRecommendations | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    // Epic E — gap-tied class-balance recommendations. Best-effort, separate
+    // from the domain recommendations so a gap-read failure doesn't break them.
+    const [gaps, setGaps] = useState<PlaybookGapRecommendations | null>(null);
 
     const loadRecommendations = async () => {
         setLoading(true);
@@ -139,8 +145,27 @@ export default function DataStudioSyntheticRecommendationsPanel({
         }
     };
 
+    const loadGaps = async () => {
+        try {
+            setGaps(await getPlaybookGapRecommendations(projectId));
+        } catch {
+            setGaps(null);
+        }
+    };
+
+    // Launch class_balance_fill prefilled for a specific underrepresented class.
+    // PlaybookPickerPanel reads prefill_mode/prefill_count; the user picks the
+    // exact class from the playbook's built-in dropdown.
+    const launchClassBalance = (generate: number) => {
+        window.location.assign(
+            `/project/${projectId}/pipeline/synthetic`
+            + `?prefill_mode=class_balance_fill&prefill_count=${generate}`,
+        );
+    };
+
     useEffect(() => {
         void loadRecommendations();
+        void loadGaps();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
 
@@ -241,6 +266,35 @@ export default function DataStudioSyntheticRecommendationsPanel({
                     {recommendations.signals.compatible_playbook_modes.length === 1 ? '' : 's'}
                 </span>
             </div>
+
+            {gaps?.applicable && gaps.recommendations.length > 0 && (
+                <div className="data-studio-synth-recs__gaps" data-testid="playbook-gaps">
+                    <h4>
+                        <Scale size={15} aria-hidden="true" />
+                        Balance underrepresented classes
+                    </h4>
+                    <div className="data-studio-synth-recs__gap-cards">
+                        {gaps.recommendations.slice(0, 6).map((gap) => (
+                            <div
+                                key={gap.class}
+                                className={`data-studio-synth-recs__gap-card data-studio-synth-recs__gap-card--${gap.severity}`}
+                            >
+                                <div className="data-studio-synth-recs__gap-text">
+                                    <strong><code>{gap.class}</code></strong>
+                                    <span>{gap.message}</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => launchClassBalance(gap.suggested_generate)}
+                                >
+                                    Generate ~{gap.suggested_generate}
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className="data-studio-synth-recs__body">
                 <div className="data-studio-synth-recs__recommendations">

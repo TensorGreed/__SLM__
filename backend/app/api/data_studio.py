@@ -317,6 +317,19 @@ async def export_prepared_split(
     )
 
 
+@router.get("/playbook-gap-recommendations")
+async def get_playbook_gap_recommendations_endpoint(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Underrepresented classes + a class_balance_fill playbook recommendation
+    each (Epic E — gap-tied synthetic). Drives the "generate N to balance"
+    cards that deep-link into the synthetic tab with the playbook prefilled."""
+    from app.services.playbook_gap_service import get_playbook_gap_recommendations
+
+    return await get_playbook_gap_recommendations(db, project_id)
+
+
 @router.get("/prepared-version-preview")
 async def get_prepared_version_preview_endpoint(
     project_id: int,

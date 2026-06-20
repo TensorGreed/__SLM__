@@ -1484,6 +1484,33 @@ export async function getPreparedVersionPreview(
 }
 
 
+export interface PlaybookGapRecommendation {
+    class: string;
+    current_count: number;
+    suggested_target: number;
+    suggested_generate: number;
+    recommended_mode: string;
+    severity: string;
+    message: string;
+}
+
+export interface PlaybookGapRecommendations {
+    applicable: boolean;
+    reason?: string;
+    total_classes?: number;
+    max_class_count?: number;
+    recommendations: PlaybookGapRecommendation[];
+}
+
+/** Epic E — underrepresented classes + a class_balance_fill recommendation each. */
+export async function getPlaybookGapRecommendations(
+    projectId: number,
+): Promise<PlaybookGapRecommendations> {
+    const resp = await api.get(`/projects/${projectId}/data-studio/playbook-gap-recommendations`);
+    return resp.data as PlaybookGapRecommendations;
+}
+
+
 /**
  * Arc A — "Run prepare now" inline from Data Studio.
  *

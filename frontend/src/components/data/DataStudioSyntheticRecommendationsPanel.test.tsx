@@ -9,6 +9,14 @@ const { apiMock } = vi.hoisted(() => ({
 
 vi.mock('../../api/client', () => ({ default: apiMock }));
 
+// Gap cards navigate via window.location.assign — spy on it (jsdom won't let
+// us redefine location.assign alone, so replace location wholesale).
+const locationAssignMock = vi.fn();
+Object.defineProperty(window, 'location', {
+    value: { assign: locationAssignMock, href: 'http://localhost/' },
+    writable: true,
+});
+
 import DataStudioSyntheticRecommendationsPanel from './DataStudioSyntheticRecommendationsPanel';
 
 const recommendationsPayload = {
@@ -140,6 +148,41 @@ describe('DataStudioSyntheticRecommendationsPanel', () => {
         fireEvent.click(screen.getByRole('button', { name: /^Open Synthetic$/i }));
         expect(onOpenTab).toHaveBeenCalledWith('synthetic');
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/synthetic-recommendations');
+    });
+
+    it('renders class-balance gap cards and launches class_balance_fill prefilled', async () => {
+        apiMock.get.mockImplementation((url: string) => {
+            if (url.includes('/synthetic-recommendations')) {
+                return Promise.resolve({ data: recommendationsPayload });
+            }
+            if (url.includes('/playbook-gap-recommendations')) {
+                return Promise.resolve({
+                    data: {
+                        applicable: true,
+                        total_classes: 4,
+                        max_class_count: 10,
+                        recommendations: [
+                            {
+                                class: 'refund', current_count: 1, suggested_target: 10,
+                                suggested_generate: 9, recommended_mode: 'class_balance_fill',
+                                severity: 'block',
+                                message: '“refund” has only 1 gold example vs 10 for the biggest class — generate ~9 to balance it.',
+                            },
+                        ],
+                    },
+                });
+            }
+            return Promise.reject(new Error('not mocked'));
+        });
+        locationAssignMock.mockReset();
+        render(<DataStudioSyntheticRecommendationsPanel projectId={1} onOpenTab={vi.fn()} />);
+        const gaps = await screen.findByTestId('playbook-gaps');
+        expect(gaps).toHaveTextContent(/Balance underrepresented classes/i);
+        expect(gaps).toHaveTextContent(/refund/);
+        fireEvent.click(screen.getByRole('button', { name: /Generate ~9/i }));
+        expect(locationAssignMock).toHaveBeenCalledWith(
+            '/project/1/pipeline/synthetic?prefill_mode=class_balance_fill&prefill_count=9',
+        );
     });
 
     it('renders setup recommendations when recipe and Ollama are missing', async () => {
