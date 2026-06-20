@@ -285,6 +285,22 @@ async def get_data_studio_dataset_versions(
         raise HTTPException(400, detail)
 
 
+@router.get("/dataset-versions/compare")
+async def compare_prepared_versions_endpoint(
+    project_id: int,
+    a: int,
+    b: int,
+):
+    """Diff two prepared-version snapshots — row counts per split, total, source
+    mix, seed, ratios, split strategy (Epic E)."""
+    from app.services.data_studio_service import compare_prepared_versions
+
+    try:
+        return compare_prepared_versions(project_id, a, b)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
 @router.post("/dataset-versions/{version}/activate")
 async def activate_prepared_version_endpoint(
     project_id: int,

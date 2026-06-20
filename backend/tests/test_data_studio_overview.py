@@ -2606,6 +2606,43 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertIn(2, available)
         self.assertTrue(available[2]["is_active"])
 
+    def test_compare_prepared_versions_diffs_two_snapshots(self):
+        from app.services.dataset_service import _prepared_versions_dir
+        pid = self._create_project("version-compare")
+        # Stage two snapshots with different manifests.
+        for v, manifest in [
+            (1, {"created_at": "t1", "total_entries": 100, "splits": {"train": 80, "val": 10, "test": 10},
+                 "ratios": {"train": 0.8, "val": 0.1, "test": 0.1}, "seed": 42,
+                 "included_types": ["cleaned"], "stratify_by": None, "disjoint_by": None}),
+            (2, {"created_at": "t2", "total_entries": 150, "splits": {"train": 120, "val": 15, "test": 15},
+                 "ratios": {"train": 0.8, "val": 0.1, "test": 0.1}, "seed": 7,
+                 "included_types": ["cleaned", "synthetic"], "stratify_by": "label", "disjoint_by": None}),
+        ]:
+            vdir = _prepared_versions_dir(pid, v)
+            vdir.mkdir(parents=True, exist_ok=True)
+            (vdir / "train.jsonl").write_text("{}\n", encoding="utf-8")
+            (vdir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        resp = self.client.get(
+            f"/api/projects/{pid}/data-studio/dataset-versions/compare?a=1&b=2"
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["diff"]["total_delta"], 50)
+        self.assertEqual(payload["diff"]["split_deltas"], {"train": 40, "val": 5, "test": 5})
+        self.assertEqual(payload["diff"]["sources_added"], ["synthetic"])
+        self.assertEqual(payload["diff"]["sources_removed"], [])
+        self.assertTrue(payload["diff"]["seed_changed"])
+        self.assertTrue(payload["diff"]["strategy_changed"])
+        self.assertFalse(payload["diff"]["ratios_changed"])
+
+    def test_compare_prepared_versions_404_when_snapshot_missing(self):
+        pid = self._create_project("compare-missing")
+        resp = self.client.get(
+            f"/api/projects/{pid}/data-studio/dataset-versions/compare?a=1&b=2"
+        )
+        self.assertEqual(resp.status_code, 404, resp.text)
+
     def test_activate_unknown_version_returns_404(self):
         pid = self._create_project("activate-404")
         resp = self.client.post(

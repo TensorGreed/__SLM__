@@ -6674,6 +6674,67 @@ def build_split_class_coverage(project_id: int) -> dict[str, Any]:
     }
 
 
+def _prepared_version_summary(manifest: dict[str, Any], version: int) -> dict[str, Any]:
+    """Project a snapshot manifest to the fields the compare diff shows."""
+    splits = manifest.get("splits") if isinstance(manifest.get("splits"), dict) else {}
+    ratios = manifest.get("ratios") if isinstance(manifest.get("ratios"), dict) else {}
+    included = manifest.get("included_types")
+    return {
+        "version": int(version),
+        "created_at": manifest.get("created_at"),
+        "total_entries": int(manifest.get("total_entries") or 0),
+        "splits": {k: int(v) for k, v in splits.items()},
+        "ratios": ratios,
+        "seed": manifest.get("seed"),
+        "included_types": list(included) if isinstance(included, list) else [],
+        "task_profile": manifest.get("task_profile"),
+        "adapter_id": manifest.get("adapter_id"),
+        "stratify_by": manifest.get("stratify_by"),
+        "disjoint_by": manifest.get("disjoint_by"),
+    }
+
+
+def compare_prepared_versions(
+    project_id: int, version_a: int, version_b: int
+) -> dict[str, Any]:
+    """Diff two prepared-version snapshots — row counts per split, total, source
+    mix, seed, ratios, split strategy (Epic E). Pure (reads snapshot manifests).
+    Raises ``ValueError`` (→ 404) when either snapshot is missing."""
+    from app.services.dataset_service import read_prepared_version_manifest
+
+    man_a = read_prepared_version_manifest(project_id, int(version_a))
+    man_b = read_prepared_version_manifest(project_id, int(version_b))
+    if man_a is None:
+        raise ValueError(f"No prepared snapshot for version {version_a}.")
+    if man_b is None:
+        raise ValueError(f"No prepared snapshot for version {version_b}.")
+
+    a = _prepared_version_summary(man_a, int(version_a))
+    b = _prepared_version_summary(man_b, int(version_b))
+
+    split_keys = sorted(set(a["splits"]) | set(b["splits"]))
+    split_deltas = {
+        k: int(b["splits"].get(k, 0)) - int(a["splits"].get(k, 0)) for k in split_keys
+    }
+    set_a, set_b = set(a["included_types"]), set(b["included_types"])
+    return {
+        "project_id": int(project_id),
+        "a": a,
+        "b": b,
+        "diff": {
+            "total_delta": b["total_entries"] - a["total_entries"],
+            "split_deltas": split_deltas,
+            "sources_added": sorted(set_b - set_a),
+            "sources_removed": sorted(set_a - set_b),
+            "seed_changed": a["seed"] != b["seed"],
+            "ratios_changed": a["ratios"] != b["ratios"],
+            "strategy_changed": (
+                a["stratify_by"] != b["stratify_by"] or a["disjoint_by"] != b["disjoint_by"]
+            ),
+        },
+    }
+
+
 async def activate_prepared_version(
     db: AsyncSession, project_id: int, version: int
 ) -> dict[str, Any]:

@@ -113,6 +113,21 @@ def list_prepared_version_snapshots(project_id: int) -> list[int]:
     return sorted(versions, reverse=True)
 
 
+def read_prepared_version_manifest(
+    project_id: int, version: int
+) -> dict[str, Any] | None:
+    """Read a version snapshot's manifest.json, or ``None`` when the snapshot
+    (or its manifest) is absent. Used by the version-compare diff."""
+    path = _prepared_versions_dir(project_id, version) / "manifest.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def restore_prepared_version(project_id: int, version: int) -> dict[str, int]:
     """Copy a version snapshot back over the active prepared files + manifest,
     making it the data the trainer/export/coverage read. Returns the restored

@@ -1755,6 +1755,48 @@ export async function activatePreparedVersion(
     return resp.data as ActivatePreparedVersionResult;
 }
 
+export interface PreparedVersionSummary {
+    version: number;
+    created_at?: string | null;
+    total_entries: number;
+    splits: Record<string, number>;
+    ratios: Record<string, number>;
+    seed?: number | null;
+    included_types: string[];
+    task_profile?: string | null;
+    adapter_id?: string | null;
+    stratify_by?: string | null;
+    disjoint_by?: string | null;
+}
+
+export interface PreparedVersionComparison {
+    project_id: number;
+    a: PreparedVersionSummary;
+    b: PreparedVersionSummary;
+    diff: {
+        total_delta: number;
+        split_deltas: Record<string, number>;
+        sources_added: string[];
+        sources_removed: string[];
+        seed_changed: boolean;
+        ratios_changed: boolean;
+        strategy_changed: boolean;
+    };
+}
+
+/** Epic E — diff two prepared-version snapshots. */
+export async function comparePreparedVersions(
+    projectId: number,
+    a: number,
+    b: number,
+): Promise<PreparedVersionComparison> {
+    const resp = await api.get(
+        `/projects/${projectId}/data-studio/dataset-versions/compare`,
+        { params: { a, b } },
+    );
+    return resp.data as PreparedVersionComparison;
+}
+
 export interface DataStudioAssistRequest {
     focus: DataStudioAssistFocus;
     provider: DataStudioAssistProvider;

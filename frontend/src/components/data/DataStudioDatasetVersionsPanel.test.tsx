@@ -544,6 +544,54 @@ describe('DataStudioDatasetVersionsPanel', () => {
         });
     });
 
+    it('compares two prepared snapshots and shows the diff', async () => {
+        const withSnapshots = {
+            ...versionPayload,
+            prepared_versions: {
+                available: [
+                    { version: 2, is_active: true },
+                    { version: 1, is_active: false },
+                ],
+                active: 2,
+                latest_prepared_version: 2,
+            },
+        };
+        apiMock.get.mockImplementation((url: string) => {
+            if (url.includes('/dataset-versions/compare')) {
+                return Promise.resolve({
+                    data: {
+                        project_id: 9,
+                        a: { version: 1, total_entries: 100, splits: { train: 80 }, ratios: {}, included_types: ['cleaned'] },
+                        b: { version: 2, total_entries: 150, splits: { train: 120 }, ratios: {}, included_types: ['cleaned', 'synthetic'] },
+                        diff: {
+                            total_delta: 50,
+                            split_deltas: { train: 40 },
+                            sources_added: ['synthetic'],
+                            sources_removed: [],
+                            seed_changed: true,
+                            ratios_changed: false,
+                            strategy_changed: false,
+                        },
+                    },
+                });
+            }
+            return Promise.resolve({ data: withSnapshots });
+        });
+
+        render(<DataStudioDatasetVersionsPanel projectId={9} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('version-compare')).toBeInTheDocument();
+        });
+        fireEvent.change(screen.getByLabelText('Compare version A'), { target: { value: '1' } });
+        fireEvent.change(screen.getByLabelText('Compare version B'), { target: { value: '2' } });
+        fireEvent.click(screen.getByRole('button', { name: /^Compare$/ }));
+        const result = await screen.findByTestId('version-compare-result');
+        expect(result).toHaveTextContent(/\+50.*rows total/);
+        expect(result).toHaveTextContent(/train \+40/);
+        expect(result).toHaveTextContent(/Sources added: synthetic/);
+        expect(result).toHaveTextContent(/seed/);
+    });
+
     it('retrain-from-version activates then opens Training', async () => {
         const withSnapshots = {
             ...versionPayload,

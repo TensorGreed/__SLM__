@@ -20,6 +20,7 @@ import {
 import api from '../../api/client';
 import {
     activatePreparedVersion,
+    comparePreparedVersions,
     getDataStudioDatasetVersions,
     runDataStudioPrepareDataset,
 } from '../../api/dataStudio';
@@ -29,6 +30,7 @@ import type {
     DataStudioDatasetVersionSignal,
     DataStudioDatasetVersions,
     DataStudioIssue,
+    PreparedVersionComparison,
     RunPrepareDatasetResult,
 } from '../../api/dataStudio';
 import './DataStudioDatasetVersionsPanel.css';
@@ -245,6 +247,11 @@ export default function DataStudioDatasetVersionsPanel({
     const [activateBusy, setActivateBusy] = useState<number | null>(null);
     const [activateFlash, setActivateFlash] = useState<string | null>(null);
     const [activateError, setActivateError] = useState<string | null>(null);
+    // Epic E — compare two prepared-version snapshots.
+    const [compareA, setCompareA] = useState<number | null>(null);
+    const [compareB, setCompareB] = useState<number | null>(null);
+    const [comparison, setComparison] = useState<PreparedVersionComparison | null>(null);
+    const [compareError, setCompareError] = useState<string | null>(null);
 
     const loadVersions = async () => {
         setLoading(true);
@@ -307,6 +314,19 @@ export default function DataStudioDatasetVersionsPanel({
             );
         } finally {
             setActivateBusy(null);
+        }
+    };
+
+    const handleCompare = async () => {
+        if (compareA == null || compareB == null || compareA === compareB) {
+            return;
+        }
+        setCompareError(null);
+        setComparison(null);
+        try {
+            setComparison(await comparePreparedVersions(projectId, compareA, compareB));
+        } catch (err: any) {
+            setCompareError(err?.response?.data?.detail || err?.message || 'Compare failed.');
         }
     };
 
@@ -563,6 +583,77 @@ export default function DataStudioDatasetVersionsPanel({
                             </div>
                         ))}
                     </div>
+
+                    {versions.prepared_versions.available.length >= 2 && (
+                        <div className="data-studio-versions__compare" data-testid="version-compare">
+                            <div className="data-studio-versions__compare-controls">
+                                <span>Compare</span>
+                                <select
+                                    aria-label="Compare version A"
+                                    value={compareA ?? ''}
+                                    onChange={(e) => setCompareA(e.target.value ? Number(e.target.value) : null)}
+                                >
+                                    <option value="">v…</option>
+                                    {versions.prepared_versions.available.map((s) => (
+                                        <option key={s.version} value={s.version}>v{s.version}</option>
+                                    ))}
+                                </select>
+                                <span>vs</span>
+                                <select
+                                    aria-label="Compare version B"
+                                    value={compareB ?? ''}
+                                    onChange={(e) => setCompareB(e.target.value ? Number(e.target.value) : null)}
+                                >
+                                    <option value="">v…</option>
+                                    {versions.prepared_versions.available.map((s) => (
+                                        <option key={s.version} value={s.version}>v{s.version}</option>
+                                    ))}
+                                </select>
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    disabled={compareA == null || compareB == null || compareA === compareB}
+                                    onClick={() => void handleCompare()}
+                                >
+                                    Compare
+                                </button>
+                            </div>
+                            {compareError && (
+                                <p className="data-studio-versions__activate-error" role="alert">{compareError}</p>
+                            )}
+                            {comparison && (
+                                <div className="data-studio-versions__compare-result" data-testid="version-compare-result">
+                                    <p>
+                                        v{comparison.a.version} → v{comparison.b.version}:{' '}
+                                        <strong>
+                                            {comparison.diff.total_delta >= 0 ? '+' : ''}
+                                            {comparison.diff.total_delta}
+                                        </strong>{' '}
+                                        rows total
+                                        {Object.entries(comparison.diff.split_deltas).map(([k, d]) => (
+                                            <span key={k}> · {k} {d >= 0 ? '+' : ''}{d}</span>
+                                        ))}
+                                    </p>
+                                    {comparison.diff.sources_added.length > 0 && (
+                                        <p>Sources added: {comparison.diff.sources_added.join(', ')}</p>
+                                    )}
+                                    {comparison.diff.sources_removed.length > 0 && (
+                                        <p>Sources removed: {comparison.diff.sources_removed.join(', ')}</p>
+                                    )}
+                                    {(comparison.diff.seed_changed
+                                        || comparison.diff.ratios_changed
+                                        || comparison.diff.strategy_changed) && (
+                                        <p>
+                                            Changed:
+                                            {comparison.diff.seed_changed && ' seed'}
+                                            {comparison.diff.ratios_changed && ' ratios'}
+                                            {comparison.diff.strategy_changed && ' split-strategy'}
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
 
