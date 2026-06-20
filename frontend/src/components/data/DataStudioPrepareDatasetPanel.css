@@ -453,3 +453,70 @@
     font-size: 13px;
     border-radius: var(--radius-sm);
 }
+
+/* Epic E — per-class split coverage. */
+.data-studio-prepare__coverage {
+    margin-top: var(--space-md);
+    padding: var(--space-md);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+}
+
+.data-studio-prepare__coverage h4 {
+    margin: 0 0 var(--space-sm);
+}
+
+.data-studio-prepare__coverage-warnings {
+    list-style: none;
+    margin: 0 0 var(--space-sm);
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.data-studio-prepare__coverage-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    font-size: 12.5px;
+    color: var(--text-primary);
+}
+
+.data-studio-prepare__coverage-warning svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--warning-color, #d97706);
+}
+
+.data-studio-prepare__coverage-ok {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin: 0 0 var(--space-sm);
+    font-size: 12.5px;
+    color: var(--text-secondary);
+}
+
+.data-studio-prepare__coverage-ok svg {
+    color: var(--success-color, #16a34a);
+}
+
+.data-studio-prepare__coverage-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+}
+
+.data-studio-prepare__coverage-table th,
+.data-studio-prepare__coverage-table td {
+    text-align: left;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border-default);
+}
+
+.data-studio-prepare__coverage-table td.is-missing {
+    color: var(--danger-color, #dc2626);
+    font-weight: 600;
+}

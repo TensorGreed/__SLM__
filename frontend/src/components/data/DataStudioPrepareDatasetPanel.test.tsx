@@ -346,14 +346,21 @@ describe('DataStudioPrepareDatasetPanel', () => {
         expect(runBtn.disabled).toBe(true);
     });
 
+    // Each mount also fires a best-effort split-class-coverage GET; mock it
+    // (applicable:false) so it doesn't consume the readiness mock in the chain.
+    const coverageNA = { data: { applicable: false, label_field: 'label', splits: {} } };
+    const prepareCalls = () =>
+        apiMock.get.mock.calls.filter((c: any[]) => String(c[0]).includes('prepare-dataset')).length;
+
     it('POSTs an empty split body and refreshes the panel on success', async () => {
-        apiMock.get.mockResolvedValueOnce({ data: preparePayload });
+        apiMock.get
+            .mockResolvedValueOnce({ data: preparePayload }) // mount: readiness
+            .mockResolvedValueOnce(coverageNA)               // mount: coverage
+            .mockResolvedValueOnce({ data: preparePayload }) // refresh: readiness
+            .mockResolvedValueOnce(coverageNA);              // refresh: coverage
         apiMock.post.mockResolvedValueOnce({
             data: { train_count: 96, val_count: 12, test_count: 12 },
         });
-        // The handler triggers a second GET to refresh the readiness
-        // summary; mock it to keep the panel mounted.
-        apiMock.get.mockResolvedValueOnce({ data: preparePayload });
 
         render(<DataStudioPrepareDatasetPanel projectId={7} onOpenTarget={vi.fn()} />);
         await waitFor(() => {
@@ -373,12 +380,14 @@ describe('DataStudioPrepareDatasetPanel', () => {
                 screen.getByTestId('data-studio-prepare-run-flash'),
             ).toHaveTextContent(/Prepared 120 rows/);
         });
-        // Refresh fetched the readiness payload again.
-        expect(apiMock.get).toHaveBeenCalledTimes(2);
+        // Refresh fetched the readiness payload again (twice total).
+        await waitFor(() => expect(prepareCalls()).toBe(2));
     });
 
     it('surfaces a backend error inline without refreshing', async () => {
-        apiMock.get.mockResolvedValueOnce({ data: preparePayload });
+        apiMock.get
+            .mockResolvedValueOnce({ data: preparePayload }) // mount: readiness
+            .mockResolvedValueOnce(coverageNA);              // mount: coverage
         apiMock.post.mockRejectedValueOnce({
             response: { data: { detail: 'recipe not selected' } },
         });
@@ -394,7 +403,39 @@ describe('DataStudioPrepareDatasetPanel', () => {
                 screen.getByTestId('data-studio-prepare-run-error'),
             ).toHaveTextContent(/recipe not selected/);
         });
-        // No refresh on failure.
-        expect(apiMock.get).toHaveBeenCalledTimes(1);
+        // No refresh on failure — readiness fetched once.
+        expect(prepareCalls()).toBe(1);
+    });
+
+    it('renders per-class coverage warnings when a split is missing a class', async () => {
+        apiMock.get
+            .mockResolvedValueOnce({ data: preparePayload })
+            .mockResolvedValueOnce({
+                data: {
+                    applicable: true,
+                    label_field: 'label',
+                    class_count: 2,
+                    splits: {
+                        train: { prepared: true, total: 3, by_label: { billing: 2, technical: 1 } },
+                        val: { prepared: true, total: 1, by_label: { technical: 1 } },
+                        test: { prepared: true, total: 2, by_label: { billing: 1, technical: 1 } },
+                    },
+                    warnings: [
+                        {
+                            severity: 'warning', split: 'val', label: 'billing', train_count: 2,
+                            message: 'Your val set has no “billing” examples — train has 2.',
+                        },
+                    ],
+                },
+            });
+
+        render(<DataStudioPrepareDatasetPanel projectId={1} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('data-studio-prepare-coverage')).toBeInTheDocument();
+        });
+        expect(screen.getByText(/no “billing” examples/)).toBeInTheDocument();
+        // The coverage table lists both classes.
+        expect(screen.getByText('billing')).toBeInTheDocument();
+        expect(screen.getByText('technical')).toBeInTheDocument();
     });
 });

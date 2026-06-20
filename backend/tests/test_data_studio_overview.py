@@ -2335,6 +2335,51 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         )
         self.assertEqual(vresp.status_code, 200, vresp.text)
 
+    def _write_split(self, project_id: int, split: str, rows: list[dict]) -> None:
+        prep_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
+        prep_dir.mkdir(parents=True, exist_ok=True)
+        fname = "val.jsonl" if split in ("val", "validation") else f"{split}.jsonl"
+        (prep_dir / fname).write_text(
+            "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+        )
+
+    def test_split_class_coverage_warns_on_missing_class_in_val(self):
+        project_id = self._create_project("split-cov")
+        self._write_split(project_id, "train", [
+            {"input": "a", "label": "billing"},
+            {"input": "b", "label": "billing"},
+            {"input": "c", "label": "technical"},
+        ])
+        # val has technical but NOT billing → warn for billing.
+        self._write_split(project_id, "val", [{"input": "d", "label": "technical"}])
+        self._write_split(project_id, "test", [
+            {"input": "e", "label": "billing"}, {"input": "f", "label": "technical"},
+        ])
+        resp = self.client.get(
+            f"/api/projects/{project_id}/data-studio/split-class-coverage"
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertTrue(payload["applicable"])
+        self.assertEqual(payload["splits"]["train"]["by_label"], {"billing": 2, "technical": 1})
+        billing_val_warnings = [
+            w for w in payload["warnings"] if w["split"] == "val" and w["label"] == "billing"
+        ]
+        self.assertEqual(len(billing_val_warnings), 1)
+        self.assertEqual(billing_val_warnings[0]["train_count"], 2)
+        # test has both classes → no test warnings.
+        self.assertEqual([w for w in payload["warnings"] if w["split"] == "test"], [])
+
+    def test_split_class_coverage_not_applicable_when_unprepared(self):
+        project_id = self._create_project("split-cov-empty")
+        resp = self.client.get(
+            f"/api/projects/{project_id}/data-studio/split-class-coverage"
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertFalse(payload["applicable"])
+        self.assertEqual(payload["reason"], "not_prepared")
+
     def test_export_prepared_split_404s_for_unknown_and_missing(self):
         project_id = self._create_project("export-missing")
         # Unknown split name.

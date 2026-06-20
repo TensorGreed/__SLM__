@@ -1431,6 +1431,37 @@ export async function getDataStudioPrepareDataset(
 }
 
 
+export interface SplitClassCoverageWarning {
+    severity: string;
+    split: string;
+    label: string;
+    train_count: number;
+    message: string;
+}
+
+export interface SplitClassCoverageSplit {
+    prepared: boolean;
+    total: number;
+    labelled?: number;
+    by_label: Record<string, number>;
+}
+
+export interface SplitClassCoverage {
+    applicable: boolean;
+    reason?: string;
+    label_field: string;
+    class_count?: number;
+    splits: Record<string, SplitClassCoverageSplit>;
+    warnings?: SplitClassCoverageWarning[];
+}
+
+/** Epic E — per-class coverage across prepared TRAIN/VAL/TEST + warnings. */
+export async function getSplitClassCoverage(projectId: number): Promise<SplitClassCoverage> {
+    const resp = await api.get(`/projects/${projectId}/data-studio/split-class-coverage`);
+    return resp.data as SplitClassCoverage;
+}
+
+
 /**
  * Arc A — "Run prepare now" inline from Data Studio.
  *

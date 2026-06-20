@@ -18,6 +18,7 @@ import {
 
 import {
     getDataStudioPrepareDataset,
+    getSplitClassCoverage,
     runDataStudioPrepareDataset,
 } from '../../api/dataStudio';
 import type {
@@ -26,6 +27,7 @@ import type {
     DataStudioPrepareDataset,
     DataStudioPrepareSplitItem,
     RunPrepareDatasetResult,
+    SplitClassCoverage,
 } from '../../api/dataStudio';
 import './DataStudioPrepareDatasetPanel.css';
 
@@ -149,6 +151,10 @@ export default function DataStudioPrepareDatasetPanel({
     const [running, setRunning] = useState(false);
     const [runFlash, setRunFlash] = useState<string | null>(null);
     const [runError, setRunError] = useState<string | null>(null);
+    // Epic E — per-class coverage across prepared splits. Best-effort, separate
+    // from the main readiness load so a coverage read failure (or no splits yet)
+    // doesn't pull down the prepare checks.
+    const [coverage, setCoverage] = useState<SplitClassCoverage | null>(null);
 
     const loadPrepare = async () => {
         setLoading(true);
@@ -160,6 +166,14 @@ export default function DataStudioPrepareDatasetPanel({
             setError(err?.response?.data?.detail || err?.message || 'Failed to load Data Studio prepare checks.');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const loadCoverage = async () => {
+        try {
+            setCoverage(await getSplitClassCoverage(projectId));
+        } catch {
+            setCoverage(null);
         }
     };
 
@@ -179,6 +193,7 @@ export default function DataStudioPrepareDatasetPanel({
                     : 'Prepared dataset splits — refreshing checks.',
             );
             await loadPrepare();
+            await loadCoverage();
         } catch (err: any) {
             setRunError(
                 err?.response?.data?.detail
@@ -192,6 +207,7 @@ export default function DataStudioPrepareDatasetPanel({
 
     useEffect(() => {
         void loadPrepare();
+        void loadCoverage();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
 
@@ -359,6 +375,55 @@ export default function DataStudioPrepareDatasetPanel({
                     </div>
                 </div>
             </div>
+
+            {coverage?.applicable && (
+                <div className="data-studio-prepare__coverage" data-testid="data-studio-prepare-coverage">
+                    <h4>Per-class coverage across splits</h4>
+                    {coverage.warnings && coverage.warnings.length > 0 ? (
+                        <ul className="data-studio-prepare__coverage-warnings">
+                            {coverage.warnings.map((w) => (
+                                <li key={`${w.split}:${w.label}`} className="data-studio-prepare__coverage-warning">
+                                    <AlertTriangle size={14} aria-hidden="true" />
+                                    <span>{w.message}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    ) : (
+                        <p className="data-studio-prepare__coverage-ok">
+                            <CheckCircle2 size={14} aria-hidden="true" />
+                            Every class in train is represented in val and test.
+                        </p>
+                    )}
+                    <table className="data-studio-prepare__coverage-table">
+                        <thead>
+                            <tr>
+                                <th>Class</th>
+                                <th>Train</th>
+                                <th>Val</th>
+                                <th>Test</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {Object.keys(coverage.splits.train?.by_label ?? {})
+                                .sort((a, b) =>
+                                    (coverage.splits.train.by_label[b] ?? 0)
+                                    - (coverage.splits.train.by_label[a] ?? 0))
+                                .map((label) => {
+                                    const val = coverage.splits.val?.by_label[label] ?? 0;
+                                    const test = coverage.splits.test?.by_label[label] ?? 0;
+                                    return (
+                                        <tr key={label}>
+                                            <td><code>{label}</code></td>
+                                            <td>{formatNumber(coverage.splits.train.by_label[label] ?? 0)}</td>
+                                            <td className={val === 0 ? 'is-missing' : undefined}>{formatNumber(val)}</td>
+                                            <td className={test === 0 ? 'is-missing' : undefined}>{formatNumber(test)}</td>
+                                        </tr>
+                                    );
+                                })}
+                        </tbody>
+                    </table>
+                </div>
+            )}
 
             <div className="data-studio-prepare__inclusion">
                 <div>

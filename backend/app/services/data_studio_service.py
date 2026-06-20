@@ -6567,6 +6567,113 @@ def resolve_prepared_split_path(project_id: int, split: str) -> Path | None:
     return settings.DATA_DIR / "projects" / str(project_id) / "prepared" / filename
 
 
+# Above this many distinct train labels we assume the field isn't a
+# classification label (free-text target / regression / generation), so
+# per-class coverage warnings would be noise — we mark the report
+# not-applicable instead.
+_SPLIT_COVERAGE_MAX_CLASSES = 40
+
+
+def _read_prepared_split_rows(project_id: int, split: str) -> list[dict[str, Any]] | None:
+    """Read a prepared split's JSONL rows, or ``None`` if it isn't on disk."""
+    path = resolve_prepared_split_path(project_id, split)
+    if path is None or not path.exists():
+        return None
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                rows.append(obj)
+    return rows
+
+
+def build_split_class_coverage(project_id: int) -> dict[str, Any]:
+    """Per-class coverage across the prepared TRAIN/VAL/TEST splits, with
+    plain-language warnings (Epic E).
+
+    The honesty win: a stratified split *should* put every class in every
+    split, but a class with very few examples can land train-only — so the
+    val/test pass-rate silently never measures it. This reads the prepared
+    JSONL on disk, counts labels per split, and warns in plain language
+    ("your val set has no `billing` examples — train has 42") so the user
+    fixes coverage before training on a blind eval.
+
+    Pure (file-only). ``applicable=False`` when nothing is prepared, the rows
+    carry no label field, or the label looks free-text (too many classes)."""
+    label_field = "label"
+    manifest, _meta = _read_prepared_manifest(project_id)
+    field_mapping = manifest.get("field_mapping")
+    if isinstance(field_mapping, dict):
+        mapped = field_mapping.get("label_field")
+        if isinstance(mapped, str) and mapped.strip():
+            label_field = mapped.strip()
+
+    splits: dict[str, dict[str, Any]] = {}
+    any_prepared = False
+    for split in ("train", "val", "test"):
+        rows = _read_prepared_split_rows(project_id, split)
+        if rows is None:
+            splits[split] = {"prepared": False, "total": 0, "by_label": {}}
+            continue
+        any_prepared = True
+        counts: dict[str, int] = {}
+        labelled = 0
+        for row in rows:
+            if label_field in row and row.get(label_field) is not None:
+                counts[str(row.get(label_field))] = counts.get(str(row.get(label_field)), 0) + 1
+                labelled += 1
+        splits[split] = {
+            "prepared": True,
+            "total": len(rows),
+            "labelled": labelled,
+            "by_label": counts,
+        }
+
+    train = splits.get("train", {})
+    train_labels = train.get("by_label", {}) if isinstance(train, dict) else {}
+
+    if not any_prepared:
+        return {"applicable": False, "reason": "not_prepared", "label_field": label_field, "splits": splits}
+    if not train_labels:
+        return {"applicable": False, "reason": "no_label_field", "label_field": label_field, "splits": splits}
+    if len(train_labels) > _SPLIT_COVERAGE_MAX_CLASSES:
+        return {"applicable": False, "reason": "free_text_label", "label_field": label_field, "splits": splits}
+
+    warnings: list[dict[str, Any]] = []
+    for split in ("val", "test"):
+        s = splits.get(split, {})
+        if not s.get("prepared") or int(s.get("total") or 0) == 0:
+            continue  # an empty/unprepared eval split is a different problem
+        present = s.get("by_label", {})
+        for label, train_count in sorted(train_labels.items(), key=lambda kv: -kv[1]):
+            if label not in present:
+                warnings.append({
+                    "severity": "warning",
+                    "split": split,
+                    "label": label,
+                    "train_count": int(train_count),
+                    "message": (
+                        f"Your {split} set has no “{label}” examples — train has "
+                        f"{int(train_count)}. That class's quality is never measured at eval."
+                    ),
+                })
+
+    return {
+        "applicable": True,
+        "label_field": label_field,
+        "class_count": len(train_labels),
+        "splits": splits,
+        "warnings": warnings,
+    }
+
+
 def _read_prepared_manifest(project_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
     path = _prepared_manifest_path(project_id)
     meta: dict[str, Any] = {

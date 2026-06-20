@@ -317,6 +317,18 @@ async def export_prepared_split(
     )
 
 
+@router.get("/split-class-coverage")
+async def get_split_class_coverage(
+    project_id: int,
+):
+    """Per-class coverage across prepared TRAIN/VAL/TEST splits + plain-language
+    warnings (e.g. "your val set has no `billing` examples"). Epic E — catches a
+    blind eval split before training. File-only; no DB."""
+    from app.services.data_studio_service import build_split_class_coverage
+
+    return build_split_class_coverage(project_id)
+
+
 @router.post("/assist")
 async def run_data_studio_assist(
     project_id: int,
