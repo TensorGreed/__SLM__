@@ -53,6 +53,7 @@ from app.models.gold_set_annotation import (
     GoldSetVersionStatus,
 )
 from app.models.project import PipelineStage, Project, ProjectStatus
+from app.services import gold_workbench_service
 
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
@@ -623,7 +624,11 @@ async def reset_demo_project(
     project_name = str(manifest.get("name") or slug)
     existing = await _find_project_by_name(db, project_name)
     if existing is not None:
-        # ORM cascade removes the project's datasets / gold sets / experiments.
+        # ORM cascade removes the project's datasets / experiments, but NOT the
+        # gold-set workbench tables (no relationship; ambiguous multi-FK). Purge
+        # them explicitly first or they leak and, via SQLite rowid reuse, pollute
+        # the next project that reuses a freed dataset id.
+        await gold_workbench_service.purge_gold_sets_for_project(db, existing.id)
         await db.delete(existing)
         await db.flush()
     project, summary = await seed_demo_project(

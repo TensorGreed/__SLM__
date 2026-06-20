@@ -36,6 +36,7 @@ from app.services.domain_pack_service import assign_project_domain_pack, get_dom
 from app.services.domain_profile_service import assign_project_domain_profile, get_domain_profile
 from app.services.domain_runtime_service import resolve_project_domain_runtime
 from app.services.readiness_service import get_project_readiness
+from app.services import gold_workbench_service
 from app.services.nl2pipeline_service import magic_create_pipeline_recipe
 from app.services.pipeline_recipe_service import apply_pipeline_recipe_blueprint
 from app.services.dataset_service import save_project_dataset_adapter_preference
@@ -733,6 +734,10 @@ async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(404, "Project not found")
+    # Gold-set workbench tables have no ORM cascade from Dataset (ambiguous
+    # multi-FK), so purge them explicitly before the cascade drops the datasets
+    # they key off — otherwise they leak orphaned rows.
+    await gold_workbench_service.purge_gold_sets_for_project(db, project.id)
     await db.delete(project)
 
 

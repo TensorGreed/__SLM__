@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dataset import Dataset, DatasetType
@@ -562,3 +562,40 @@ def _serialize_queue_entry(entry: GoldSetReviewerQueue, row: GoldSetRow) -> dict
 
 def iter_valid_row_statuses() -> Iterable[str]:
     return [status.value for status in GoldSetRowStatus]
+
+
+async def purge_gold_sets_for_project(db: AsyncSession, project_id: int) -> int:
+    """Delete every gold-set annotation artifact (versions, rows, reviewer-queue
+    entries) belonging to ``project_id``'s datasets.
+
+    The gold-set workbench tables key off ``datasets.id`` via ``gold_set_id``
+    but there is **no ORM relationship** from ``Dataset`` to them — and adding
+    one is ambiguous because ``GoldSetRow`` carries two ``ForeignKey("datasets.id")``
+    columns (``gold_set_id`` + ``source_dataset_id``). So ``db.delete(project)``
+    cascades the project's datasets but leaves these rows orphaned. On SQLite,
+    autoincrement rowids get reused, so the orphans later re-attach to a fresh
+    dataset that happens to reuse the old id — corrupting gold-version/row counts.
+
+    This is the explicit, targeted cleanup: call it *before* deleting the project
+    (while its datasets still resolve) so the artifacts go with it. Idempotent;
+    returns the number of (versions + rows + queue entries) deleted.
+    """
+    dataset_ids = (
+        await db.execute(
+            select(Dataset.id).where(Dataset.project_id == project_id)
+        )
+    ).scalars().all()
+    if not dataset_ids:
+        return 0
+
+    # Child → parent order (reviewer-queue refs rows, rows ref versions), so the
+    # delete is well-formed even when SQLite FK enforcement is on. Every row /
+    # queue entry carries a non-null ``gold_set_id``, so keying off the dataset
+    # ids covers them all without needing the version/row id sets.
+    removed = 0
+    for model in (GoldSetReviewerQueue, GoldSetRow, GoldSetVersion):
+        result = await db.execute(
+            delete(model).where(model.gold_set_id.in_(dataset_ids))
+        )
+        removed += result.rowcount or 0
+    return removed
