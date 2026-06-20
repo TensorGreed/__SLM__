@@ -133,7 +133,9 @@ class RunComparisonEndpointTests(unittest.TestCase):
                 f"/api/projects/{project['id']}/auto-rag/comparison/run",
             )
             self.assertEqual(resp.status_code, 409, resp.text)
-            detail = resp.json()["detail"]
+            # The structured-error envelope hoists error_code + metadata to the
+            # top level (`detail` is now the message string), so read the body.
+            detail = resp.json()
             self.assertEqual(
                 detail["error_code"], "AUTO_RAG_COMPARISON_ALREADY_RUNNING",
             )

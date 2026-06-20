@@ -195,7 +195,7 @@ class GoldAddPerRecipeTests(unittest.TestCase):
             json={},
         )
         self.assertEqual(resp.status_code, 400, resp.text)
-        detail = resp.json().get("detail") or {}
+        detail = resp.json()  # structured-error envelope: error_code is top-level
         self.assertEqual(detail.get("error_code"), "EMPTY_GOLD_ROW")
 
     def test_only_system_fields_returns_400(self):
@@ -211,7 +211,7 @@ class GoldAddPerRecipeTests(unittest.TestCase):
             },
         )
         self.assertEqual(resp.status_code, 400, resp.text)
-        detail = resp.json().get("detail") or {}
+        detail = resp.json()  # structured-error envelope: error_code is top-level
         self.assertEqual(detail.get("error_code"), "EMPTY_GOLD_ROW")
 
     def test_whitespace_only_strings_treated_as_empty(self):
@@ -226,7 +226,7 @@ class GoldAddPerRecipeTests(unittest.TestCase):
             },
         )
         self.assertEqual(resp.status_code, 400, resp.text)
-        detail = resp.json().get("detail") or {}
+        detail = resp.json()  # structured-error envelope: error_code is top-level
         self.assertEqual(detail.get("error_code"), "EMPTY_GOLD_ROW")
 
     # ── System-field protection ────────────────────────────────────

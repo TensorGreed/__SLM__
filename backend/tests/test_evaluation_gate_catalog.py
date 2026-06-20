@@ -39,12 +39,17 @@ from app.services.evaluation_pack_service import _BASE_METRIC_SCHEMA
 class GateCatalogShapeTests(unittest.TestCase):
 
     def test_operator_whitelist_matches_engine_support(self):
-        # The eval engine implements only gte/lte (see
-        # ``_evaluate_gate`` in evaluation_pack_service); anything else
-        # silently coerces to gte. The catalog's job is to surface this
-        # whitelist to the FE so a user picking ``eq`` gets a real
-        # validator error instead of a silent coercion.
-        self.assertEqual(VALID_GATE_OPERATORS, {"gte", "lte"})
+        # The eval engine implements gte/lte plus the per-slice aggregate
+        # operators worst_slice_gte/worst_slice_lte (see
+        # ``WORST_SLICE_OPERATORS`` + ``_evaluate_gate`` in
+        # evaluation_pack_service); anything else silently coerces to gte.
+        # The catalog's job is to surface this whitelist to the FE so a user
+        # picking ``eq`` gets a real validator error instead of a silent
+        # coercion.
+        self.assertEqual(
+            VALID_GATE_OPERATORS,
+            {"gte", "lte", "worst_slice_gte", "worst_slice_lte"},
+        )
         values = {op["value"] for op in GATE_OPERATORS}
         self.assertEqual(values, VALID_GATE_OPERATORS)
         # Labels are human-readable, not just the raw value.

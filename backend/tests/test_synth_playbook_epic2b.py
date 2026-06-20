@@ -39,13 +39,14 @@ from app.services.synth_playbooks import SynthMode, get_playbook, list_playbooks
 
 
 class CatalogAfterEpic2bTests(unittest.TestCase):
-    def test_registry_has_17_playbooks_with_expected_coverage(self):
+    def test_registry_has_20_playbooks_with_expected_coverage(self):
         playbooks = list_playbooks()
-        self.assertEqual(len(playbooks), 17)
+        self.assertEqual(len(playbooks), 20)
         # Coverage matrix sanity:
         # qa-sft + summarization: paraphrase + cluster (2 modes each)
         # classification: paraphrase + hard_neg + balance + cluster (4 modes)
         # code-review / generic-sft / span-extraction: paraphrase + hard_neg + cluster (3 modes each)
+        # rag-protocol: paraphrase + refusals + format_robustness (3 modes)
         from collections import defaultdict
         by_recipe = defaultdict(set)
         for pb in playbooks:
@@ -53,6 +54,7 @@ class CatalogAfterEpic2bTests(unittest.TestCase):
         self.assertEqual(by_recipe["classification"], {"positives_paraphrase", "hard_negatives", "class_balance_fill", "cluster_targeted"})
         self.assertEqual(by_recipe["qa-sft"], {"positives_paraphrase", "cluster_targeted"})
         self.assertEqual(by_recipe["summarization"], {"positives_paraphrase", "cluster_targeted"})
+        self.assertEqual(by_recipe["rag-protocol"], {"positives_paraphrase", "refusals", "format_robustness"})
         for r in ("code-review", "generic-sft", "span-extraction"):
             self.assertEqual(
                 by_recipe[r],

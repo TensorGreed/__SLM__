@@ -468,8 +468,11 @@ class HeldoutEvalAsyncEndpointTests(unittest.TestCase):
         )
         self.assertIn(second.status_code, (202, 409), second.text)
         if second.status_code == 409:
-            detail = second.json().get("detail") or {}
-            self.assertEqual(detail.get("error_code"), "HELDOUT_EVAL_ALREADY_RUNNING")
+            # The structured-error envelope (app.main._structured_error_payload)
+            # hoists `error_code` to the top level and reduces `detail` to the
+            # plain message string for backward-compat, so read it top-level.
+            body = second.json()
+            self.assertEqual(body.get("error_code"), "HELDOUT_EVAL_ALREADY_RUNNING")
 
 
 if __name__ == "__main__":

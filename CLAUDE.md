@@ -182,6 +182,23 @@ cd backend && python -m pytest -k "name_pattern"        # by name
 - For tests that need to seed Jobs / Experiments / etc. without going
   through endpoints, use `app.database.async_session_factory()` +
   `asyncio.run(...)`.
+- **CI test scope.** `ci.yml`'s `backend-tests` job runs the `test_phase*`
+  modules under `python -m unittest` (one shared process) **plus** a second
+  step that runs every **non-`test_phase`** file in **its own `pytest`
+  process** (`pip install pytest` then a per-file loop). Per-file isolation is
+  mandatory: several non-phase files (`test_jobs_service`, `test_demo_project_reset`,
+  `test_classification_training_launch`, the `test_probe_*` files) override
+  `DATABASE_URL` at import, so two in one pytest process collide on the single
+  StaticPool engine. The non-phase files are pytest-developed (they rely on
+  `conftest.py`'s per-PID `/tmp` DB pin) and several **fail under bare
+  `unittest`** (no conftest) — keep them on the pytest loop, don't fold them
+  into the unittest job. The loop retries each file up to 3× because a few
+  async-job tests (`test_jobs_service`'s heldout / quickstart / llm-judge async
+  endpoints) are intermittently flaky — their background `Job` runners race with
+  the test's own requests over the single-connection StaticPool aiosqlite engine
+  ("Project N not found", ~1-in-8). A genuinely broken file still fails all 3
+  attempts. (Proper fix — isolate the runner's DB session or await/cancel the job
+  in tearDown — is deferred; tracked in `/tmp/brewslm-progress.md`.)
 
 ### Frontend
 ```bash

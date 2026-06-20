@@ -1,6 +1,6 @@
 import os
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from pathlib import Path
 
 # Set up PYTHONPATH for testing
@@ -32,17 +32,20 @@ class TestSprint1(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cm.exception.detail["stage"], "training")
         self.assertIn("STRICT_EXECUTION_MODE is enabled", cm.exception.detail["message"])
 
-    @patch("app.database.async_session_factory")
+    @patch("app.services.readiness_service.async_session_factory")
     @patch("shutil.which")
     @patch("subprocess.run")
     async def test_readiness_api(self, mock_run, mock_which, mock_db):
-        # Mock project exists
-        mock_session = MagicMock()
-        mock_db.return_value.__aenter__.return_value = mock_session
+        # Patch the symbol where readiness_service looked it up (it does
+        # `from app.database import async_session_factory`), and mock the async
+        # context + `await db.get(...)` with AsyncMock so no real DB is hit.
         mock_project = MagicMock()
         mock_project.id = 1
-        mock_session.get.return_value = mock_project
-        
+        mock_session = MagicMock()
+        mock_session.get = AsyncMock(return_value=mock_project)
+        mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_db.return_value.__aexit__ = AsyncMock(return_value=False)
+
         # Mock GPU check
         mock_which.return_value = "/usr/bin/nvidia-smi"
         mock_run.return_value.returncode = 0
@@ -60,17 +63,18 @@ class TestSprint1(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gpu_check["status"], "pass")
         self.assertIn("RTX 4090", gpu_check["message"])
 
-    @patch("app.database.async_session_factory")
+    @patch("app.services.readiness_service.async_session_factory")
     @patch("shutil.which")
     @patch("torch.cuda.is_available")
     async def test_readiness_strict_mode_fail(self, mock_torch, mock_which, mock_db):
-        # Mock project exists
-        mock_session = MagicMock()
-        mock_db.return_value.__aenter__.return_value = mock_session
+        # Patch where readiness_service looked it up; async-aware session mock.
         mock_project = MagicMock()
         mock_project.id = 1
-        mock_session.get.return_value = mock_project
-        
+        mock_session = MagicMock()
+        mock_session.get = AsyncMock(return_value=mock_project)
+        mock_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_db.return_value.__aexit__ = AsyncMock(return_value=False)
+
         # Mock NO GPU
         mock_which.return_value = None
         mock_torch.return_value = False

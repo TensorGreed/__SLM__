@@ -365,7 +365,9 @@ class AutoRagComparisonApiTests(unittest.TestCase):
             f"/api/projects/{project['id']}/auto-rag/comparison",
         )
         self.assertEqual(resp.status_code, 400, resp.text)
-        detail = resp.json().get("detail")
+        # The structured-error envelope hoists error_code/message to the top
+        # level (`detail` is now just the message string), so read the body.
+        detail = resp.json()
         self.assertIsInstance(detail, dict)
         self.assertEqual(detail.get("error_code"), "RECIPE_REQUIRED")
         self.assertIn("message", detail)

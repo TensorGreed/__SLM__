@@ -251,7 +251,9 @@ class RerouteToRagApiTests(unittest.TestCase):
             json={},
         )
         self.assertEqual(second.status_code, 429, second.text)
-        detail = second.json()["detail"]
+        # The structured-error envelope hoists error_code + metadata to the top
+        # level (`detail` is now the message string), so read the body.
+        detail = second.json()
         self.assertEqual(detail["error_code"], "REROUTE_RECENTLY_CLONED")
         self.assertEqual(detail["metadata"]["existing_clone_id"], first_clone_id)
         self.assertEqual(detail["metadata"]["window_seconds"], 3600)

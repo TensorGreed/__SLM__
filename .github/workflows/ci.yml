@@ -37,6 +37,44 @@ jobs:
           python -m unittest tests.test_phase27_roadmap3 -v
           python -m unittest -v "${test_modules[@]}"
 
+      - name: Run non-phase backend tests (isolated, one pytest process each)
+        env:
+          DB_AUTO_CREATE: "true"
+        run: |
+          # The phase glob above misses the probe-arc tests, the demo-reset /
+          # classification-launch tests, and ~120 other non-phase files, so they
+          # never gated. They're pytest-developed (conftest.py pins each run's DB
+          # to a per-PID /tmp scratch), and several override DATABASE_URL at
+          # import — so two in ONE pytest process collide on a single engine.
+          # Run each file in its own pytest process to honour that isolation.
+          . .venv/bin/activate
+          pip install "pytest==9.0.2"
+          mapfile -t nonphase < <(ls tests/test_*.py | grep -v 'test_phase')
+          printf 'Discovered %s non-phase backend test files\n' "${#nonphase[@]}"
+          fail=0
+          for f in "${nonphase[@]}"; do
+            echo "::group::$f"
+            # Up to 3 attempts per file. A handful of async-job tests
+            # (test_jobs_service's heldout/quickstart/llm-judge async endpoints)
+            # are intermittently flaky: their background Job runners race with
+            # the test's own requests over the single-connection StaticPool
+            # aiosqlite engine ("Project N not found", ~1-in-8). Retry tolerates
+            # the flake; a genuinely broken file still fails all 3 attempts.
+            ok=0
+            for attempt in 1 2 3; do
+              if python -m pytest "$f" -q -p no:cacheprovider; then
+                ok=1; break
+              fi
+              echo "::warning::$f failed attempt $attempt/3"
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::$f failed after 3 attempts"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
+
   conformance-matrix:
     runs-on: ubuntu-latest
     defaults:

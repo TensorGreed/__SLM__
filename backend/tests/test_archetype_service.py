@@ -726,7 +726,10 @@ class ComparisonEndpointTests(unittest.TestCase):
             f"/api/projects/{pid}/archetype-comparison",
         )
         self.assertEqual(resp.status_code, 400, resp.text)
-        detail = resp.json().get("detail")
+        # The structured-error envelope (app.main._structured_error_payload)
+        # hoists error_code/message to the top level (the `detail` key is now
+        # just the message string), so assert against the envelope body.
+        detail = resp.json()
         self.assertIsInstance(detail, dict)
         self.assertEqual(detail.get("error_code"), "RECIPE_REQUIRED")
         self.assertIn("message", detail)

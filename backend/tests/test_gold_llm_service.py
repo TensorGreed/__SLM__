@@ -406,7 +406,7 @@ class GenerateGoldQaServiceTests(unittest.TestCase):
             },
         )
         self.assertEqual(resp.status_code, 400, resp.text)
-        detail = resp.json().get("detail") or {}
+        detail = resp.json()  # structured-error envelope: error_code is top-level
         self.assertEqual(detail.get("error_code"), "API_KEY_REQUIRED")
 
     def test_unsupported_recipe_returns_recipe_not_supported(self):
@@ -456,7 +456,7 @@ class GenerateGoldQaServiceTests(unittest.TestCase):
             },
         )
         self.assertEqual(resp.status_code, 400, resp.text)
-        detail = resp.json().get("detail") or {}
+        detail = resp.json()  # structured-error envelope: error_code is top-level
         self.assertEqual(detail.get("error_code"), "RECIPE_NOT_SUPPORTED")
         # Error message lists the supported recipes so the user knows
         # what to switch to.
@@ -526,7 +526,7 @@ class GenerateGoldQaServiceTests(unittest.TestCase):
             },
         )
         self.assertEqual(resp.status_code, 400, resp.text)
-        detail = resp.json().get("detail") or {}
+        detail = resp.json()  # structured-error envelope: error_code is top-level
         self.assertEqual(detail.get("error_code"), "RECIPE_REQUIRED")
 
     def test_unparseable_llm_response_returns_structured_error(self):
@@ -545,7 +545,7 @@ class GenerateGoldQaServiceTests(unittest.TestCase):
                 },
             )
         self.assertEqual(resp.status_code, 400, resp.text)
-        detail = resp.json().get("detail") or {}
+        detail = resp.json()  # structured-error envelope: error_code is top-level
         # Either LLM_RESPONSE_UNPARSEABLE (preferred — no JSON found)
         # or LLM_RESPONSE_COUNT_MISMATCH (if the JSON path slid through
         # to count check). Both are structured + frontend-actionable.
@@ -1531,7 +1531,7 @@ class PreviewPromptEndpointTests(unittest.TestCase):
             json={"count": 3, "ground_in_source": False},
         )
         self.assertEqual(resp.status_code, 400, resp.text)
-        detail = resp.json().get("detail") or {}
+        detail = resp.json()  # structured-error envelope: error_code is top-level
         self.assertEqual(detail.get("error_code"), "RECIPE_REQUIRED")
 
     def test_preview_count_out_of_range_returns_422(self):
@@ -1898,7 +1898,7 @@ class DifficultyAndTrapLabelTests(unittest.TestCase):
             },
         )
         self.assertEqual(resp.status_code, 400, resp.text)
-        detail = resp.json().get("detail") or {}
+        detail = resp.json()  # structured-error envelope: error_code is top-level
         self.assertEqual(detail.get("error_code"), "DISTRIBUTION_OUT_OF_RANGE")
 
     def test_distribution_total_zero_returns_400(self):
@@ -1916,7 +1916,7 @@ class DifficultyAndTrapLabelTests(unittest.TestCase):
             },
         )
         self.assertEqual(resp.status_code, 400, resp.text)
-        detail = resp.json().get("detail") or {}
+        detail = resp.json()  # structured-error envelope: error_code is top-level
         self.assertEqual(detail.get("error_code"), "DISTRIBUTION_OUT_OF_RANGE")
 
     def test_distribution_ignored_for_non_qa_recipes(self):
