@@ -108,6 +108,53 @@ describe('PlanRefinementCard', () => {
         expect(screen.getByRole('button', { name: /Generate ~30/ })).toBeInTheDocument();
     });
 
+    it('accepts & applies the recommendation through the apply endpoint', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                ...REPORT,
+                cloud_refinement: { ...REPORT.cloud_refinement, available: true },
+                refinement: { ...STRATEGY, from_cache: true, applied: null },
+            },
+        });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                project_id: 1,
+                plan_delta: [{ field: 'rag_first', status: 'applied' }, { field: 'task_profile', status: 'applied' }],
+                directional_config: [{ kind: 'num_epochs_recommend', status: 'applied' }],
+                applied: { plan_delta: ['rag_first', 'task_profile'], directional: ['num_epochs_recommend'] },
+            },
+        });
+
+        const { default: userEvent } = await import('@testing-library/user-event');
+        render(<PlanRefinementCard projectId={1} />);
+        const applyBtn = await screen.findByTestId('plan-refinement-apply');
+        await userEvent.setup().click(applyBtn);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('plan-refinement-applied')).toBeInTheDocument();
+        });
+        expect(apiMock.post).toHaveBeenCalledWith('/projects/1/refine-plan/apply', {});
+        expect(screen.getByTestId('plan-refinement-applied')).toHaveTextContent(/rag first/i);
+        // The Accept button is gone once applied.
+        expect(screen.queryByTestId('plan-refinement-apply')).not.toBeInTheDocument();
+    });
+
+    it('shows the already-applied state without an Accept button', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                ...REPORT,
+                cloud_refinement: { ...REPORT.cloud_refinement, available: true },
+                refinement: { ...STRATEGY, from_cache: true, applied: { plan_delta: ['rag_first'], directional: [] } },
+            },
+        });
+        render(<PlanRefinementCard projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('plan-refinement-applied')).toBeInTheDocument();
+        });
+        expect(screen.queryByTestId('plan-refinement-apply')).not.toBeInTheDocument();
+        expect(apiMock.post).not.toHaveBeenCalled();
+    });
+
     it('shows a cached refinement from the GET without re-calling cloud', async () => {
         apiMock.get.mockResolvedValueOnce({
             data: {

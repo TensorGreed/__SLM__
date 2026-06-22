@@ -12,7 +12,7 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ShieldCheck, Sparkles, XCircle } from 'lucide-react';
 
-import { getPlanRefinement, runCloudPlanRefinement } from '../../api/planRefinement';
+import { applyPlanRefinement, getPlanRefinement, runCloudPlanRefinement } from '../../api/planRefinement';
 import type { PlanRefinement, StrategyRefinement } from '../../api/planRefinement';
 import './PlanRefinementCard.css';
 
@@ -63,6 +63,25 @@ export default function PlanRefinementCard({ projectId }: Props) {
             `/project/${projectId}/pipeline/synthetic`
             + `?prefill_mode=class_balance_fill&prefill_count=${suggested ?? 30}`,
         );
+    };
+
+    const handleApply = async () => {
+        setBusy(true);
+        setCloudNote(null);
+        try {
+            const result = await applyPlanRefinement(projectId);   // accept all
+            setRefinement((prev) => (prev ? { ...prev, applied: result.applied } : prev));
+            const n = result.applied.plan_delta.length + result.applied.directional.length;
+            setCloudNote(
+                n > 0
+                    ? `Applied ${n} change${n === 1 ? '' : 's'} to the project.`
+                    : 'Nothing applied — the deterministic engine no longer agrees with those suggestions.',
+            );
+        } catch (e: any) {
+            setCloudNote(e?.response?.data?.detail || e?.message || 'Apply failed.');
+        } finally {
+            setBusy(false);
+        }
     };
 
     if (error) {
@@ -175,6 +194,24 @@ export default function PlanRefinementCard({ projectId }: Props) {
                         Strategy only — BrewSLM computes the actual hyperparameters from your data.
                         {refinement.from_cache && ' (cached for the current data)'}
                     </p>
+                    {(refinement.applied
+                        && (refinement.applied.plan_delta.length + refinement.applied.directional.length) > 0) ? (
+                        <p className="plan-refine__applied" data-testid="plan-refinement-applied">
+                            <CheckCircle2 size={13} aria-hidden="true" />
+                            Applied: {[...refinement.applied.plan_delta, ...refinement.applied.directional]
+                                .map((k) => k.replace(/_/g, ' ')).join(', ')}.
+                        </p>
+                    ) : (
+                        <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={() => void handleApply()}
+                            disabled={busy}
+                            data-testid="plan-refinement-apply"
+                        >
+                            {busy ? 'Applying…' : 'Accept & apply'}
+                        </button>
+                    )}
                 </div>
             ) : report.cloud_refinement.available ? (
                 <button

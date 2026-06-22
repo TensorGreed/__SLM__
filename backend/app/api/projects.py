@@ -785,6 +785,35 @@ async def run_cloud_plan_refinement(
     return {"available": True, "refinement": refinement}
 
 
+class ApplyRefinementRequest(BaseModel):
+    # Which validated items to accept. Omit a field to accept ALL of that kind.
+    plan_delta_fields: list[str] | None = None
+    directional_kinds: list[str] | None = None
+
+
+@router.post("/{project_id}/refine-plan/apply")
+async def apply_plan_refinement(
+    project_id: int,
+    req: ApplyRefinementRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Phase 3 — accept/apply selected items of the cached, validated refinement
+    through the canonical machinery (recipe blueprint, adapter preference, base
+    model, training-config patches). The client may only choose WHICH validated
+    items to apply, never inject new ones. Directional patches land only when
+    the deterministic gap scanner currently agrees. All reversible."""
+    from app.services.pipeline_refinement_service import apply_strategy_refinement
+
+    try:
+        return await apply_strategy_refinement(
+            db, project_id,
+            plan_delta_fields=req.plan_delta_fields,
+            directional_kinds=req.directional_kinds,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
 @router.get("/{project_id}/gate-check")
 async def project_deployment_gate_check(
     project_id: int,

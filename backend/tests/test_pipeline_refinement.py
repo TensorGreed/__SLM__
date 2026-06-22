@@ -239,6 +239,104 @@ class PipelineRefinementTests(unittest.TestCase):
         self.assertFalse(body["available"])
         self.assertIsNone(body["refinement"])
 
+    # ── Phase 3: accept / apply ───────────────────────────────────────
+
+    def _seed_cached_refinement(self, pid: int, refinement: dict) -> None:
+        async def _set():
+            from app.database import async_session_factory
+            from app.models.project import Project
+            async with async_session_factory() as db:
+                project = await db.get(Project, pid)
+                rc = dict(project.runtime_config or {})
+                rc["plan_refinement"] = {"profile_hash": "seed", "refinement": refinement}
+                project.runtime_config = rc
+                await db.commit()
+        asyncio.run(_set())
+
+    def test_apply_plan_delta_through_canonical_paths(self):
+        pid = self._seed_project()
+        self._seed_cached_refinement(pid, {
+            "plan_delta": {"rag_first": True, "base_model_size_class": "large", "task_profile": "rag_qa"},
+            "directional_config": [{"kind": "max_seq_length_raise", "reason": "long rows"}],
+            "data_gaps": [], "rationale": "x", "confidence": 0.6,
+        })
+        resp = self.client.post(f"/api/projects/{pid}/refine-plan/apply", json={})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        statuses = {o["field"]: o["status"] for o in body["plan_delta"]}
+        self.assertEqual(statuses["rag_first"], "applied")
+        self.assertEqual(statuses["base_model_size_class"], "applied")
+        self.assertEqual(statuses["task_profile"], "applied")
+        # max_seq_length_raise has no one-click patch → surfaced as manual.
+        dstatus = {o["kind"]: o["status"] for o in body["directional_config"]}
+        self.assertEqual(dstatus["max_seq_length_raise"], "manual")
+        self.assertIn("rag_first", body["applied"]["plan_delta"])
+
+        # Canonical mutations actually landed on the project.
+        async def _read():
+            from app.database import async_session_factory
+            from app.models.project import Project
+            async with async_session_factory() as db:
+                p = await db.get(Project, pid)
+                return p.base_model_name, dict(p.runtime_config or {})
+        base, rc = asyncio.run(_read())
+        self.assertEqual(base, "meta-llama/Meta-Llama-3-8B-Instruct")  # large
+        self.assertTrue(rc.get("rag_first"))
+        self.assertEqual(rc["plan_refinement"]["applied"]["plan_delta"], ["rag_first", "base_model_size_class", "task_profile"])
+
+    def test_apply_is_selective(self):
+        pid = self._seed_project()
+        self._seed_cached_refinement(pid, {
+            "plan_delta": {"rag_first": True, "base_model_size_class": "large"},
+            "directional_config": [], "data_gaps": [], "rationale": "x", "confidence": 0.5,
+        })
+        # Accept only rag_first — the base-size change must NOT land.
+        resp = self.client.post(
+            f"/api/projects/{pid}/refine-plan/apply",
+            json={"plan_delta_fields": ["rag_first"], "directional_kinds": []},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["applied"]["plan_delta"], ["rag_first"])
+
+        async def _read():
+            from app.database import async_session_factory
+            from app.models.project import Project
+            async with async_session_factory() as db:
+                p = await db.get(Project, pid)
+                return p.base_model_name
+        # Base model stays the seeded Qwen — NOT flipped to the "large" Llama.
+        self.assertEqual(asyncio.run(_read()), "Qwen/Qwen1.5-1.8B-Chat")
+
+    def test_apply_without_cached_refinement_404(self):
+        pid = self._seed_project()
+        resp = self.client.post(f"/api/projects/{pid}/refine-plan/apply", json={})
+        self.assertEqual(resp.status_code, 404, resp.text)
+
+    def test_get_surfaces_applied_marker(self):
+        pid = self._seed_project()
+        # Seed a refinement whose hash matches the live profile so GET surfaces it.
+        async def _seed_matching():
+            from app.database import async_session_factory
+            from app.models.project import Project
+            from app.services.pipeline_refinement_service import build_cloud_safe_profile, _profile_hash
+            async with async_session_factory() as db:
+                profile = await build_cloud_safe_profile(db, pid)
+                project = await db.get(Project, pid)
+                rc = dict(project.runtime_config or {})
+                rc["plan_refinement"] = {
+                    "profile_hash": _profile_hash(profile),
+                    "refinement": {"plan_delta": {"rag_first": True}, "directional_config": [],
+                                   "data_gaps": [], "rationale": "x", "confidence": 0.5},
+                    "applied": {"plan_delta": ["rag_first"], "directional": []},
+                }
+                project.runtime_config = rc
+                await db.commit()
+        asyncio.run(_seed_matching())
+        body = self.client.get(f"/api/projects/{pid}/refine-plan").json()
+        self.assertIsNotNone(body["refinement"])
+        self.assertEqual(body["refinement"]["applied"]["plan_delta"], ["rag_first"])
+
 
 if __name__ == "__main__":
     unittest.main()

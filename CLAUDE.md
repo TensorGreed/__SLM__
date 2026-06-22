@@ -365,9 +365,20 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   the network. Cached by data-profile hash in `runtime_config["plan_refinement"]`.
   Billable call is `POST /projects/{id}/refine-plan/cloud` (the GET stays free +
   surfaces a cached result). `PlanRefinementCard` shows a "Get AI strategy" CTA
-  when a provider's configured + renders the validated recommendation read-only
-  (Phase 3 = accept/apply). See the privacy-invariant + validation-gate tests in
-  `tests/test_pipeline_refinement.py`.
+  when a provider's configured + renders the validated recommendation.
+  **Phase 3 (accept/apply)** — `apply_strategy_refinement` applies *selected*
+  items of the **cached, validated** refinement (client picks which, never
+  injects new ones): `plan_delta` → `apply_pipeline_recipe_blueprint` /
+  `save_project_dataset_adapter_preference` / `base_model_name` /
+  `runtime_config["rag_first"]`; `directional_config` → the gap engine's
+  `apply_patch`, which **only lands when the scanner currently flags that gap**
+  (a second deterministic guardrail). `training_mode` / `max_seq_length_raise` /
+  `stratify_split` surface as `manual`. All reversible; applied items stamped on
+  `runtime_config["plan_refinement"]["applied"]` + surfaced on the GET.
+  `POST /projects/{id}/refine-plan/apply` (body picks `plan_delta_fields` /
+  `directional_kinds`, omit to accept all); card has an "Accept & apply" button
+  → "Applied: …" state. See the privacy-invariant, validation-gate, and apply
+  tests in `tests/test_pipeline_refinement.py`.
 - **Training Config Gaps** — `training_config_gap_service.scan_training_config_gaps`
   is the training-side parallel to `data_health_service`: given
   (project, recipe, labelled-row count, effective `TrainingConfig`) it

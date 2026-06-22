@@ -534,6 +534,158 @@ async def run_cloud_strategy_pass(
     return {**refinement, "from_cache": False}
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Phase 3 — accept / apply a validated refinement through existing machinery.
+# ─────────────────────────────────────────────────────────────────────
+
+# task_profile → data adapter (mirrors nl2pipeline's mapping).
+_TASK_PROFILE_TO_ADAPTER = {
+    "structured_extraction": "structured-extraction",
+    "rag_qa": "rag-grounded",
+    "tool_calling": "tool-call-json",
+}
+# Coarse size class → a concrete base model (mirrors nl2pipeline's fallback).
+_SIZE_CLASS_TO_BASE = {
+    "small": "Qwen/Qwen1.5-1.8B-Chat",
+    "mid": "microsoft/phi-2",
+    "large": "meta-llama/Meta-Llama-3-8B-Instruct",
+}
+
+
+async def _apply_plan_delta_field(
+    db: AsyncSession, project: Project, project_id: int, field: str, value: Any
+) -> dict[str, Any]:
+    """Apply one validated plan_delta field through the canonical machinery.
+    Returns an outcome record. Never trusts raw values — ``value`` came from the
+    already-validated cached refinement."""
+    if field == "recipe_id":
+        from app.services.pipeline_recipe_service import apply_pipeline_recipe_blueprint
+        await apply_pipeline_recipe_blueprint(
+            db, project_id=project_id, recipe_id=str(value),
+            include_preflight=False, mark_active=True,
+        )
+        return {"field": field, "status": "applied", "to": str(value)}
+
+    if field == "task_profile":
+        from app.services.dataset_service import save_project_dataset_adapter_preference
+        adapter = _TASK_PROFILE_TO_ADAPTER.get(str(value), "default-canonical")
+        await save_project_dataset_adapter_preference(
+            db, project_id, adapter_id=adapter, task_profile=str(value),
+        )
+        return {"field": field, "status": "applied", "to": str(value)}
+
+    if field == "base_model_size_class":
+        base = _SIZE_CLASS_TO_BASE.get(str(value))
+        if not base:
+            return {"field": field, "status": "skipped", "reason": "unknown_size_class"}
+        project.base_model_name = base
+        return {"field": field, "status": "applied", "to": base}
+
+    if field == "rag_first" and value:
+        runtime = dict(project.runtime_config or {})
+        runtime["rag_first"] = True
+        auto_rag = dict(runtime.get("auto_rag") or {})
+        auto_rag["enabled"] = True
+        runtime["auto_rag"] = auto_rag
+        project.runtime_config = runtime
+        return {"field": field, "status": "applied", "to": True}
+
+    if field == "training_mode":
+        # Distillation needs a teacher capture first — surface as manual, never
+        # silently flip the training mode.
+        return {"field": field, "status": "manual",
+                "reason": "training_mode change needs the Distillation setup (teacher capture)."}
+
+    return {"field": field, "status": "skipped", "reason": "unsupported_field"}
+
+
+async def apply_strategy_refinement(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    plan_delta_fields: list[str] | None = None,
+    directional_kinds: list[str] | None = None,
+) -> dict[str, Any]:
+    """Apply selected items of the cached, *validated* refinement (Phase 3).
+
+    The cached refinement is the source of truth — the client can only choose
+    WHICH validated items to accept, never inject new ones. Directional patches
+    go through ``training_config_gap_service.apply_patch``, which only lands when
+    the scanner *currently* flags that gap (a second deterministic guardrail).
+    Plan-delta fields go through the canonical recipe/adapter/base apply paths.
+    All reversible. Raises ``ValueError`` (→ 404) on a missing project / no
+    cached refinement."""
+    from app.services.training_config_gap_service import (
+        apply_patch,
+        signal_id_for_patch_kind,
+    )
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    cache = (project.runtime_config or {}).get(_PLAN_REFINEMENT_KEY)
+    refinement = cache.get("refinement") if isinstance(cache, dict) else None
+    if not isinstance(refinement, dict):
+        raise ValueError("No refinement to apply — run the cloud strategy pass first.")
+
+    plan_delta = refinement.get("plan_delta") or {}
+    available_directional = {d.get("kind") for d in (refinement.get("directional_config") or [])}
+
+    # Default = accept all available items.
+    fields = plan_delta_fields if plan_delta_fields is not None else list(plan_delta.keys())
+    kinds = directional_kinds if directional_kinds is not None else list(available_directional)
+
+    plan_outcomes: list[dict[str, Any]] = []
+    for field in fields:
+        if field not in plan_delta:
+            plan_outcomes.append({"field": field, "status": "skipped", "reason": "not_in_refinement"})
+            continue
+        try:
+            plan_outcomes.append(
+                await _apply_plan_delta_field(db, project, project_id, field, plan_delta[field])
+            )
+        except Exception as exc:  # noqa: BLE001 — one bad apply shouldn't sink the rest
+            plan_outcomes.append({"field": field, "status": "error", "reason": str(exc)[:200]})
+
+    directional_outcomes: list[dict[str, Any]] = []
+    for kind in kinds:
+        if kind not in available_directional:
+            directional_outcomes.append({"kind": kind, "status": "skipped", "reason": "not_in_refinement"})
+            continue
+        signal_id = signal_id_for_patch_kind(kind)
+        if not signal_id:
+            # max_seq_length_raise / stratify_split have no one-click patch.
+            directional_outcomes.append({"kind": kind, "status": "manual", "reason": "no_auto_patch"})
+            continue
+        try:
+            await apply_patch(db, project_id, signal_id)
+            directional_outcomes.append({"kind": kind, "status": "applied"})
+        except ValueError:
+            # apply_patch raises when the gap isn't currently in the report —
+            # i.e. the deterministic scanner no longer agrees. Don't apply.
+            directional_outcomes.append({"kind": kind, "status": "skipped", "reason": "gap_not_currently_present"})
+
+    # Stamp what was applied onto the cache so the UI can show "applied".
+    runtime = dict(project.runtime_config or {})
+    cache_block = dict(runtime.get(_PLAN_REFINEMENT_KEY) or {})
+    cache_block["applied"] = {
+        "plan_delta": [o["field"] for o in plan_outcomes if o["status"] == "applied"],
+        "directional": [o["kind"] for o in directional_outcomes if o["status"] == "applied"],
+    }
+    runtime[_PLAN_REFINEMENT_KEY] = cache_block
+    project.runtime_config = runtime
+
+    await db.flush()
+    await db.commit()
+    return {
+        "project_id": int(project_id),
+        "plan_delta": plan_outcomes,
+        "directional_config": directional_outcomes,
+        "applied": cache_block["applied"],
+    }
+
+
 async def refine_pipeline_plan(db: AsyncSession, project_id: int) -> dict[str, Any]:
     """Phase 1 — deterministic plan-refinement report: current plan + the
     privacy-safe aggregate profile + a plan-fit roll-up. No cloud call (but it
@@ -563,7 +715,11 @@ async def refine_pipeline_plan(db: AsyncSession, project_id: int) -> dict[str, A
     cached_refinement = None
     cached = (project.runtime_config or {}).get(_PLAN_REFINEMENT_KEY) if project else None
     if isinstance(cached, dict) and cached.get("profile_hash") == _profile_hash(profile):
-        cached_refinement = {**cached["refinement"], "from_cache": True}
+        cached_refinement = {
+            **cached["refinement"],
+            "from_cache": True,
+            "applied": cached.get("applied"),
+        }
 
     return {
         "project_id": int(project_id),

@@ -1067,6 +1067,15 @@ def _patch_label(kind: str) -> str:
     return entry[2] if entry else kind
 
 
+def signal_id_for_patch_kind(kind: str) -> str | None:
+    """The gap-report signal id a given ``apply_patch_kind`` patches, or None
+    when the kind has no one-click patch. Lets other services
+    (pipeline_refinement) apply a directional recommendation through the same
+    patch path — which only lands when the scanner currently flags that gap."""
+    entry = _PATCH_REGISTRY.get(kind)
+    return entry[0] if entry else None
+
+
 async def preview_patch(
     db: AsyncSession, project_id: int, signal_id: str
 ) -> dict[str, Any]:

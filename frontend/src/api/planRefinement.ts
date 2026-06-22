@@ -41,6 +41,14 @@ export interface StrategyRefinement {
     dropped?: { plan_delta: number; directional: number; data_gaps: number };
     provenance?: { model: string; shared: string };
     from_cache?: boolean;
+    applied?: { plan_delta: string[]; directional: string[] } | null;
+}
+
+export interface ApplyRefinementResult {
+    project_id: number;
+    plan_delta: { field: string; status: string; to?: unknown; reason?: string }[];
+    directional_config: { kind: string; status: string; reason?: string }[];
+    applied: { plan_delta: string[]; directional: string[] };
 }
 
 export interface PlanRefinement {
@@ -71,4 +79,13 @@ export async function runCloudPlanRefinement(
 ): Promise<{ available: boolean; refinement: StrategyRefinement | null; reason?: string }> {
     const resp = await api.post(`/projects/${projectId}/refine-plan/cloud`);
     return resp.data;
+}
+
+/** Phase 3 — accept/apply the validated refinement. Omit fields to accept all. */
+export async function applyPlanRefinement(
+    projectId: number,
+    body: { plan_delta_fields?: string[]; directional_kinds?: string[] } = {},
+): Promise<ApplyRefinementResult> {
+    const resp = await api.post(`/projects/${projectId}/refine-plan/apply`, body);
+    return resp.data as ApplyRefinementResult;
 }
