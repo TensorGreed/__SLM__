@@ -43,6 +43,14 @@ def _fallback_magic_recommendation(prompt: str) -> dict[str, Any]:
         task_profile = "tool_calling"
     elif any(kw in lower for kw in ("summarize", "summary", "summarization")):
         task_profile = "summarization"
+    elif any(kw in lower for kw in ("classif", "categor", "sentiment", "intent")):
+        # A user who says "classification model" must not silently fall through
+        # to instruction_sft. Classification is a light task → small base + LoRA
+        # by default (the VRAM/hardware block below still overrides if hinted).
+        adapter_id = "classification-label"
+        task_profile = "classification"
+        recipe_id = "recipe.pipeline.lora_fast"
+        base_model_name = "Qwen/Qwen1.5-1.8B-Chat"
 
     if vram_gb is not None:
         if vram_gb <= 8:
