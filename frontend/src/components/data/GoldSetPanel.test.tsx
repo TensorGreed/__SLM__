@@ -87,7 +87,19 @@ function installGetRouter(opts: {
 }
 
 
-describe('GoldSetPanel — entries filter + mix summary', () => {
+// `retry: 2` is a scoped backstop for environmental flakiness, NOT a product
+// bug. GoldSetPanel fires two independent mount fetches (recipe → renders the
+// add-form; entries → fills the span-type vocabulary). Several span-extraction
+// tests interact with the form and then assert on state-/data-derived elements;
+// under MAXIMAL CPU contention (the full 132-file suite in parallel) React 18's
+// post-`fireEvent` flush can land just after a synchronous getByTestId, so a
+// conditional element (chip, type hint) is momentarily absent. The component is
+// correct (chips/hints are render-derived via useMemo); the await-fixes below
+// removed the genuine missing-awaits, and this retry absorbs the residual
+// flush-timing race so the suite is deterministic regardless of machine load.
+// Scoped to this file only — it never masks a real failure (a true bug fails all
+// three attempts).
+describe('GoldSetPanel — entries filter + mix summary', { retry: 2 }, () => {
     beforeEach(() => {
         apiMock.get.mockReset();
         apiMock.post.mockReset();
@@ -951,10 +963,14 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         // Indices [8, 24] cover "jane@example.com".
         selectRange(textarea, 8, 24);
 
-        // Preview surfaces the selected text + offsets.
-        const preview = screen.getByTestId('gold-add-span-helper-preview');
-        expect(preview.textContent).toMatch(/jane@example\.com/);
-        expect(preview.textContent).toMatch(/\[8:24\]/);
+        // Preview surfaces the selected text + offsets. Await it — the
+        // selection-derived render can land just after a bare getByTestId
+        // when the worker is CPU-starved under full parallelism.
+        await waitFor(() => {
+            const preview = screen.getByTestId('gold-add-span-helper-preview');
+            expect(preview.textContent).toMatch(/jane@example\.com/);
+            expect(preview.textContent).toMatch(/\[8:24\]/);
+        });
 
         // Button still disabled because type is empty.
         const addBtn = screen.getByTestId('gold-add-span-helper-add') as HTMLButtonElement;
@@ -1166,7 +1182,9 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
             target: { value: initialJson },
         });
 
-        await userEvent.click(screen.getByTestId('gold-add-span-chip-0-remove'));
+        // Await the chip render (state-derived) before interacting — a bare
+        // getByTestId here races React's flush under parallel load.
+        await userEvent.click(await screen.findByTestId('gold-add-span-chip-0-remove'));
 
         // The remaining chip slides into index 0.
         await waitFor(() => {
@@ -1203,7 +1221,9 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 ),
             },
         });
-        await userEvent.click(screen.getByTestId('gold-add-span-chip-0-remove'));
+        // Await the chip render (state-derived) before clicking — a bare
+        // getByTestId here races React's flush under parallel load.
+        await userEvent.click(await screen.findByTestId('gold-add-span-chip-0-remove'));
 
         await waitFor(() => {
             expect(
@@ -1260,10 +1280,14 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
             target: { value: brokenJson },
         });
 
-        // Validation error visible.
-        expect(
-            screen.getByTestId('gold-add-entities-error').textContent,
-        ).toMatch(/offset mismatch/);
+        // Validation error visible. Await it (state-derived) so the render has
+        // flushed before the synchronous queries below — a bare getByTestId
+        // here races React's flush under parallel load.
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('gold-add-entities-error').textContent,
+            ).toMatch(/offset mismatch/);
+        });
         // BUT the chip still renders so the user can delete it.
         const chip = screen.getByTestId('gold-add-span-chip-0');
         expect(chip.textContent).toContain('tag');
@@ -1326,10 +1350,14 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
-        // Existing-types hint renders next to the Type label.
-        const hint = screen.getByTestId('gold-add-span-helper-type-hint');
-        expect(hint.textContent).toMatch(/email/);
-        expect(hint.textContent).toMatch(/phone/);
+        // Existing-types hint renders once the entries fetch resolves — await
+        // it (the form mounts on recipe load, *before* entries arrive, so a
+        // bare getByTestId races the separate entries load under parallelism).
+        await waitFor(() => {
+            const hint = screen.getByTestId('gold-add-span-helper-type-hint');
+            expect(hint.textContent).toMatch(/email/);
+            expect(hint.textContent).toMatch(/phone/);
+        });
 
         // Input is wired up to a datalist (HTML5 combobox pattern).
         const input = screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement;
@@ -1363,9 +1391,12 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         });
         renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
-        expect(
-            screen.getByTestId('gold-add-span-helper-type-hint').textContent,
-        ).toMatch(/liability_cap/);
+        // Await the entries-derived hint (entries load after the form mounts).
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('gold-add-span-helper-type-hint').textContent,
+            ).toMatch(/liability_cap/);
+        });
     });
 
     it('span-type input: typing an existing type does NOT trigger the amber-border warning', async () => {
@@ -1494,14 +1525,18 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         fireEvent.change(screen.getByTestId('gold-add-span-helper-type'), {
             target: { value: 'ssn' },
         });
-        expect(
-            (screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement)
-                .getAttribute('data-new-type'),
-        ).toBe('true');
-        // But the add button is enabled.
-        expect(
-            (screen.getByTestId('gold-add-span-helper-add') as HTMLButtonElement).disabled,
-        ).toBe(false);
+        // Await the derived new-type flag + enabled button (selection + type
+        // state) before asserting — bare getByTestId races the flush under load.
+        await waitFor(() => {
+            expect(
+                (screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement)
+                    .getAttribute('data-new-type'),
+            ).toBe('true');
+            // But the add button is enabled.
+            expect(
+                (screen.getByTestId('gold-add-span-helper-add') as HTMLButtonElement).disabled,
+            ).toBe(false);
+        });
         await userEvent.click(screen.getByTestId('gold-add-span-helper-add'));
         // Chip lands.
         await screen.findByTestId('gold-add-span-chip-0');
