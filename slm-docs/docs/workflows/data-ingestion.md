@@ -9,6 +9,15 @@ Stages 1, 2, 4, and 5 of the [pipeline](pipeline-overview.md) all live under the
 
 ## Step 1 — Ingestion
 
+:::important Two import paths — pick the right one
+There are **two different things** on the Data tab, and they land your rows in **different places**:
+
+- **Upload / Add source** (this section) → your rows become **raw training data** (`RawDocument`, `dataset_type=RAW`). **This is the path for your own labelled dataset** (e.g. a `{text, label}` JSONL for a classifier). It advances the pipeline so the Cleaning / Gold Set / Dataset Prep / Training tabs unlock.
+- **Import dataset (auto-mapping)** wizard (covered [below](#generic-dataset-import-pipeline-sources--mappers)) → mapped rows go to the project's **synthetic** dataset (pending review). It's for **augmenting** an existing dataset with an external/HF source, **not** for your primary training data.
+
+If you run your own data through the *Import dataset* wizard, it lands in *synthetic* (not RAW), no raw source exists, and the downstream tabs stay disabled. Use **Upload** for your training data. (The guided "Start" button auto-opens the *Import* wizard — close it and use **Upload** if you're bringing your own labelled file.)
+:::
+
 ### What it does
 
 Pulls raw data into the project's `RawDocument` table + persists files under `DATA_DIR/projects/{id}/raw/`. Supports CSV, TSV, JSON, JSONL, Parquet, Hugging Face datasets, URL pulls, and document corpora (PDF/DOCX/MD).
@@ -61,6 +70,10 @@ curl -X POST http://localhost:8000/api/projects/1/ingest \
 ### Generic dataset-import pipeline (sources × mappers)
 
 The ingest helpers above know about *file formats*. For datasets that already carry task structure (BIO-tagged tokens, classification labels, preference pairs, chat threads, …) BrewSLM also ships a generic three-layer pipeline that introspects the shape and proposes a mapping straight into the project's synthetic dataset — no per-domain converter needed.
+
+:::note Lands in *synthetic*, not RAW
+This wizard writes accepted rows to the project's **synthetic** dataset (pending review) — it's for **augmenting** with an external/HF dataset, not for your primary training data. For your own labelled file, use **Upload / Add source** above. See the callout at the top of this page.
+:::
 
 #### Via the UI
 
