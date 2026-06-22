@@ -1904,6 +1904,26 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                 </div>
                             ))}
                         </div>
+                        {splitManifest.dedup_requested && (
+                            <div className="dp-resolved-panel dp-strat-panel" data-testid="dp-dedup-report">
+                                <div className="dp-resolved-title">
+                                    {splitManifest.dedup_report && splitManifest.dedup_report.dropped_count > 0 ? (
+                                        <>
+                                            🧹 Deduped — dropped {splitManifest.dedup_report.dropped_count} of{' '}
+                                            {splitManifest.dedup_report.input_count} row(s);{' '}
+                                            {splitManifest.dedup_report.kept_count} kept and split
+                                        </>
+                                    ) : (
+                                        <>🧹 Deduped — no cross-split duplicates were found</>
+                                    )}
+                                </div>
+                                <p className="dp-strat-help">
+                                    Exact- and near-duplicate rows (token-set Jaccard ≥ 0.9) were removed from the
+                                    combined corpus before splitting, so no row can appear in more than one split.
+                                    This is what clears the <code>leakage.split_overlap</code> data-health signal.
+                                </p>
+                            </div>
+                        )}
                         {splitManifest.disjoint_report && (
                             <div className="dp-resolved-panel dp-strat-panel">
                                 <div className="dp-resolved-title">
