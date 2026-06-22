@@ -9,6 +9,7 @@ import AlignmentScaffoldPanel from '../components/training/AlignmentScaffoldPane
 import ArchetypeComparisonPanel from '../components/training/ArchetypeComparisonPanel';
 import TrainabilityForecastPanel from '../components/training/TrainabilityForecastPanel';
 import TrainingConfigGapsPanel from '../components/training/TrainingConfigGapsPanel';
+import PlanRefinementCard from '../components/training/PlanRefinementCard';
 import TrainingPanel from '../components/training/TrainingPanel';
 import CoachStrip from '../components/coach/CoachStrip';
 import { recordRemediationEvent } from '../api/remediation';
@@ -69,6 +70,8 @@ export default function ProjectTrainingConfigPage() {
             <CoachStrip projectId={projectId} stage="training" />
 
             <ArchetypeComparisonPanel projectId={projectId} />
+
+            <PlanRefinementCard projectId={projectId} />
 
             <TrainingConfigGapsPanel projectId={projectId} />
 

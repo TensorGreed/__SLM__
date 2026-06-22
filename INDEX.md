@@ -187,6 +187,7 @@ session-start guidance.
 - `backend/app/services/nl2pipeline_service.py` — Natural Language to Pipeline (Magic Create) service.
 - `backend/app/services/pack_generation_service.py` — Auto-generate a starter evaluation pack from blueprint + dataset + adapter.
 - `backend/app/services/pipeline_recipe_service.py` — End-to-end pipeline recipe (blueprint) service.
+- `backend/app/services/pipeline_refinement_service.py` — Pipeline plan refinement — Phase 1 (deterministic, no cloud LLM).
 - `backend/app/services/playbook_gap_service.py` — Gap-tied synthetic-playbook recommendations (Epic E).
 - `backend/app/services/playground_log_service.py` — Prompt/eval logging helpers for playground interactions.
 - `backend/app/services/playground_service.py` — Inference playground service for project-scoped chat experiments.
@@ -409,6 +410,7 @@ session-start guidance.
 - `frontend/src/api/gamification.ts` — Typed wrappers for the Lab Journal (gamification) API.
 - `frontend/src/api/goal.ts` — Arc H — Project end-goal contract + progress ledger client.
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
+- `frontend/src/api/planRefinement.ts` — _(no docstring)_
 - `frontend/src/api/probePack.ts` — Probe Pack API client — Coach-stage-2 phase 8.
 - `frontend/src/api/projectTemplates.ts` — Typed wrappers for the project-template catalog + instantiation API.
 - `frontend/src/api/quickstart.ts` — Typed wrappers for the project-guide quickstart endpoints
@@ -596,6 +598,7 @@ session-start guidance.
 - `frontend/src/components/training/LossCurvePanel.tsx` — LossCurvePanel — V2 of the ML-native visualisations arc.
 - `frontend/src/components/training/ModelRegistryPanel.tsx` — Checkpoint history browser with filtering and download links.
 - `frontend/src/components/training/ParetoComparisonPanel.tsx` — ParetoComparisonPanel — Track 1, Epic C.
+- `frontend/src/components/training/PlanRefinementCard.tsx` — PlanRefinementCard — Phase 1 of the post-data plan-refinement pass.
 - `frontend/src/components/training/PreRunConfirmModal.tsx` — PreRunConfirmModal — P20 pre-run confirm with cost provenance badge.
 - `frontend/src/components/training/TokenLengthDistributionPanel.tsx` — TokenLengthDistributionPanel — V3 of the ML-native visualisations arc.
 - `frontend/src/components/training/TokenizationPanel.tsx` — Token distribution analyzer with histogram and sequence-length statistics.
@@ -823,6 +826,7 @@ session-start guidance.
 - `backend/tests/test_phase9_synthetic.py` — Tests for the synthetic data generation service — demo/heuristic mode.
 - `backend/tests/test_phase9_tokenization.py` — Tests for the tokenization service — tokenizer loading and analysis.
 - `backend/tests/test_phase9_training_runtime_compat.py` — Compatibility tests for external training runtime adapters.
+- `backend/tests/test_pipeline_refinement.py` — Pipeline plan refinement — Phase 1 tests.
 - `backend/tests/test_post_eval_decision_engine.py` — Tests for the post-eval decision engine service
 - `backend/tests/test_probe_pack_generative.py` — Coach-stage-2 phase 10 — generative predict_fn wiring for probes.
 - `backend/tests/test_probe_pack_service.py` — Coach-stage-2 phase 8 — platform-authored held-out probe packs.
@@ -977,6 +981,7 @@ session-start guidance.
 - `frontend/src/components/training/HyperparameterSweepPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/LossCurvePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ParetoComparisonPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/PlanRefinementCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/PreRunConfirmModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TokenLengthDistributionPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainAnywayButton.test.tsx` — _(no docstring)_

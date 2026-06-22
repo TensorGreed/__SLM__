@@ -741,6 +741,24 @@ async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     await db.delete(project)
 
 
+@router.get("/{project_id}/refine-plan")
+async def get_pipeline_plan_refinement(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Phase 1 — deterministic plan-refinement report: the current pipeline plan,
+    a privacy-safe aggregate data profile, and a plan-fit roll-up (does the plan
+    suit the measured data?). No cloud call; ``cloud_refinement.available`` is
+    False. The aggregate profile is the only thing a later cloud pass may send
+    off-box — never the user's ingested rows."""
+    from app.services.pipeline_refinement_service import refine_pipeline_plan
+
+    try:
+        return await refine_pipeline_plan(db, project_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
 @router.get("/{project_id}/gate-check")
 async def project_deployment_gate_check(
     project_id: int,

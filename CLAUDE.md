@@ -338,6 +338,22 @@ quality gate** (simulate runtime). The eval→export tail is deferred
 - **Training** — `training_service.start_training` dispatches to
   simulate / external subprocess runtime. Watcher Job mirrors progress
   into the bell. Trainability forecast precedes the launch.
+- **Pipeline plan refinement (Phase 1, deterministic)** —
+  `pipeline_refinement_service.refine_pipeline_plan` is the post-data plan-fit
+  lens: does the project's current plan (recipe / task shape / base model /
+  target) suit the *measured* data? `build_cloud_safe_profile` assembles a
+  **privacy-safe aggregate profile** (counts, distribution *shape*, severities,
+  user-chosen config) — the **only** structure a future cloud-LLM strategy pass
+  (Phase 2) may send off-box; it **never** carries ingested rows, gold answers,
+  or even label names (whitelist of scalars; never a signal's nested
+  `context.examples`). `assess_plan_health` rolls up deterministic plan↔data
+  signals to a verdict (ready / attention / mismatch). `GET
+  /projects/{id}/refine-plan` → `PlanRefinementCard` on
+  `/project/{id}/training-config` (above `TrainingConfigGapsPanel`).
+  `cloud_refinement.available` is False in Phase 1; `supported_providers`
+  lists anthropic/openai/**deepseek**/**qwen**/ollama for Phase 2 (which will
+  ride `cloud_llm_service`'s OpenAI-compatible path). See the privacy-invariant
+  test in `tests/test_pipeline_refinement.py`.
 - **Training Config Gaps** — `training_config_gap_service.scan_training_config_gaps`
   is the training-side parallel to `data_health_service`: given
   (project, recipe, labelled-row count, effective `TrainingConfig`) it
