@@ -2,7 +2,7 @@
  * Panel for dataset preparation with profiling, normalization, and split-manifest configuration.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '../../api/client';
 import DataHealthReportPanel from './DataHealthReportPanel';
 import StepFooter from '../shared/StepFooter';
@@ -87,6 +87,12 @@ interface SplitManifest {
     stratification_report?: StratificationReport | null;
     disjoint_by?: string | null;
     disjoint_report?: DisjointReport | null;
+    dedup_requested?: boolean;
+    dedup_report?: {
+        input_count: number;
+        kept_count: number;
+        dropped_count: number;
+    } | null;
 }
 
 interface SplitEffectiveConfig {
@@ -372,12 +378,20 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     });
     const [splitLoading, setSplitLoading] = useState(false);
     const [splitManifest, setSplitManifest] = useState<SplitManifest | null>(null);
+    // Bumped to force DataHealthReportPanel to re-scan after an in-page
+    // remediation (e.g. "Re-split with dedup") so the leakage signal
+    // clears without the user hunting for the refresh button.
+    const [healthRefreshKey, setHealthRefreshKey] = useState(0);
+    // Anchor for the leakage "Re-split …" actions — they scroll the
+    // split form into view instead of a no-op self-navigate.
+    const splitSectionRef = useRef<HTMLDivElement | null>(null);
     const [effectiveSplitConfig, setEffectiveSplitConfig] = useState<SplitEffectiveConfig | null>(null);
     const [effectiveSplitLoading, setEffectiveSplitLoading] = useState(false);
     const [effectiveSplitError, setEffectiveSplitError] = useState('');
 
-    const buildSplitPayload = (): Record<string, unknown> => {
+    const buildSplitPayload = (opts?: { dedupRows?: boolean }): Record<string, unknown> => {
         const payload: Record<string, unknown> = {};
+        if (opts?.dedupRows) payload.dedup_rows = true;
         if (!useProfileDefaults || splitTouched.train_ratio) payload.train_ratio = trainRatio;
         if (!useProfileDefaults || splitTouched.val_ratio) payload.val_ratio = valRatio;
         if (!useProfileDefaults || splitTouched.test_ratio) payload.test_ratio = testRatio;
@@ -781,10 +795,10 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     };
 
     // ── Split ──────────────────────────────────────────────────
-    const runSplit = async () => {
+    const runSplit = async (opts?: { dedupRows?: boolean }) => {
         setSplitLoading(true);
         try {
-            const payload = buildSplitPayload();
+            const payload = buildSplitPayload(opts);
             const adapterConfigError = payload.__adapter_config_error;
             const fieldMappingError = payload.__field_mapping_error;
             if (typeof adapterConfigError === 'string' && adapterConfigError.trim()) {
@@ -801,6 +815,21 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
             const res = await api.post<SplitManifest>(`/projects/${projectId}/dataset/split`, payload);
             const manifest = res.data;
             setSplitManifest(manifest);
+
+            // Dedup re-split: report what was dropped and re-scan data
+            // health so the leakage.split_overlap signal clears in place.
+            if (manifest.dedup_requested) {
+                const dropped = manifest.dedup_report?.dropped_count ?? 0;
+                if (dropped > 0) {
+                    toast.success(
+                        `Re-split with dedup — dropped ${dropped} duplicate/near-duplicate row(s); ` +
+                        `the three splits are now disjoint.`,
+                    );
+                } else {
+                    toast.success('Re-split complete — no cross-split duplicates were found.');
+                }
+                setHealthRefreshKey((k) => k + 1);
+            }
 
             const resolved = manifest.resolved_split_config || {};
             if (typeof resolved.train_ratio === 'number') {
@@ -842,6 +871,42 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         } finally {
             setSplitLoading(false);
         }
+    };
+
+    const scrollToSplitForm = () => {
+        // The split form only renders under the 'split' view — switch to it
+        // first (the health panel that triggers this is mounted regardless
+        // of the active view), then scroll once it has painted.
+        setActiveView('split');
+        requestAnimationFrame(() => {
+            splitSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    };
+
+    // In-page handler for the data-health leakage actions. Their
+    // suggested_action.target is "dataprep" — the tab this panel is
+    // already mounted on — so a navigate is a no-op. Handle them here
+    // instead: scroll to the split form, and for split-overlap actually
+    // re-run the split with dedup (the safely-automatable fix).
+    const handleHealthSignalAction = (signalId: string): boolean => {
+        if (signalId === 'leakage.split_overlap') {
+            scrollToSplitForm();
+            void runSplit({ dedupRows: true });
+            return true;
+        }
+        if (signalId === 'leakage.gold_train_overlap') {
+            // Gold↔train overlap is a judgement call (which copy is
+            // canonical?), so we don't auto-delete. Guide the user to the
+            // split controls with the one thing they need to know.
+            scrollToSplitForm();
+            toast.info(
+                'Leaked rows must be dropped from your TRAINING data — the gold set stays the ' +
+                'held-out ruler, so BrewSLM won\'t auto-delete it. Re-prepare after removing the ' +
+                'overlap from cleaned/synthetic rows.',
+            );
+            return true;
+        }
+        return false;
     };
 
     const saveSplitAdapterPreference = async () => {
@@ -967,7 +1032,11 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                 every signal is computable. The user reads "here's what's
                 wrong before you train" before scrolling to the per-split
                 tables below. */}
-            <DataHealthReportPanel projectId={projectId} />
+            <DataHealthReportPanel
+                key={healthRefreshKey}
+                projectId={projectId}
+                onSignalAction={handleHealthSignalAction}
+            />
 
             <div className="dp-view-tabs">
                 <button
@@ -1569,7 +1638,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
 
             {/* ── Split Section ─────────────────────────────────── */}
             {activeView === 'split' && (
-            <div className="dp-section">
+            <div className="dp-section" ref={splitSectionRef}>
                 <h3><span className="icon">✂️</span> Train / Val / Test Split</h3>
                 <div className="dp-info">
                     <span className="info-icon">💡</span>
@@ -1727,7 +1796,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                     <button className="btn-primary" onClick={previewEffectiveSplitConfig} disabled={effectiveSplitLoading}>
                         {effectiveSplitLoading ? '⏳ Resolving...' : '🧭 Preview Effective Config'}
                     </button>
-                    <button className="btn-primary" onClick={runSplit}
+                    <button className="btn-primary" onClick={() => void runSplit()}
                         disabled={splitLoading || Math.abs(ratioSum - 1.0) > 0.001}>
                         {splitLoading ? '⏳ Splitting...' : '✂️ Run Split'}
                     </button>

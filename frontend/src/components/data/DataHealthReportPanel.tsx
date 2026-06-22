@@ -107,6 +107,15 @@ interface HealthReport {
 
 interface DataHealthReportPanelProps {
     projectId: number;
+    // Optional in-page action interceptor. When a signal's action is
+    // clicked, the host gets first refusal: return ``true`` to handle it
+    // locally (e.g. scroll to a form on the SAME page the panel is
+    // mounted on, or trigger a re-prepare) and suppress the navigate.
+    // Returning ``false``/omitting falls back to the normal target→URL
+    // navigation. This fixes the dead "Re-split …" leakage buttons —
+    // their target is ``dataprep``, but the panel renders INSIDE the
+    // dataprep tab, so a navigate is a no-op. See DatasetPrepPanel.
+    onSignalAction?: (signalId: string, target?: string) => boolean;
 }
 
 // Severity → display metadata. Single source of truth for badge
@@ -165,7 +174,7 @@ const AUTOFIX_LABEL: Record<string, string> = {
     normalize_schema: 'Normalize gold schema',
 };
 
-export default function DataHealthReportPanel({ projectId }: DataHealthReportPanelProps) {
+export default function DataHealthReportPanel({ projectId, onSignalAction }: DataHealthReportPanelProps) {
     const navigate = useNavigate();
     const [data, setData] = useState<HealthReport | null>(null);
     const [loading, setLoading] = useState(false);
@@ -453,12 +462,17 @@ export default function DataHealthReportPanel({ projectId }: DataHealthReportPan
                                                             type="button"
                                                             className="data-health__action btn btn-sm"
                                                             onClick={() => {
+                                                                // Host gets first refusal (in-page handling);
+                                                                // otherwise fall back to target→URL navigation.
+                                                                if (onSignalAction?.(sig.id, sig.suggested_action?.target)) {
+                                                                    return;
+                                                                }
                                                                 if (url) navigate(url);
                                                             }}
-                                                            disabled={!url}
+                                                            disabled={!url && !onSignalAction}
                                                             data-testid={`data-health-action-${sig.id}`}
                                                             title={
-                                                                url
+                                                                url || onSignalAction
                                                                     ? `Navigate to ${sig.suggested_action.target}`
                                                                     : 'Action not yet wired up'
                                                             }

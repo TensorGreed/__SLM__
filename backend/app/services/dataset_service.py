@@ -922,6 +922,81 @@ async def combine_datasets(
     return all_entries
 
 
+def _dedup_entries_for_split(
+    entries: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Drop exact- and near-duplicate entries so the downstream split
+    can't place the same row in two buckets. Mirrors the leakage scan's
+    matcher (``data_health_service._match_row_against_index``) exactly —
+    same row→text coercion, same lowercase+whitespace exact key, same
+    token-set Jaccard ≥ ``LEAKAGE_FUZZY_THRESHOLD`` fuzzy rule with the
+    same inverted-index candidate gathering — so a re-scan after a
+    ``dedup_rows=True`` split is guaranteed to clear ``leakage.split_overlap``.
+
+    First occurrence wins (stable order preserved). Returns
+    ``(kept_entries, dropped_count)``. Lazy imports keep ``dataset_service``
+    free of a top-level dependency on the higher-level health/forecast
+    modules (which import this module).
+    """
+    from app.services.trainability_forecast_service import (
+        _jaccard,
+        _row_to_text,
+        _tokenize,
+    )
+    from app.services.data_health_service import (
+        LEAKAGE_FUZZY_THRESHOLD,
+        LEAKAGE_MAX_CANDIDATES,
+        LEAKAGE_MAX_POSTINGS,
+        LEAKAGE_MIN_TOKENS,
+        _normalise_for_exact,
+    )
+
+    kept: list[dict[str, Any]] = []
+    exact_seen: set[str] = set()
+    kept_token_sets: list[frozenset[str]] = []
+    inverted: dict[str, list[int]] = {}
+    dropped = 0
+
+    for entry in entries:
+        text = _row_to_text(entry)
+        norm = _normalise_for_exact(text)
+        if norm in exact_seen:
+            dropped += 1
+            continue
+
+        toks = _tokenize(text)
+        is_dup = False
+        if len(toks) >= LEAKAGE_MIN_TOKENS:
+            toks_by_rarity = sorted(toks, key=lambda t: len(inverted.get(t, ())))
+            cand: set[int] = set()
+            for tok in toks_by_rarity:
+                for j in inverted.get(tok, ()):
+                    cand.add(j)
+                    if len(cand) >= LEAKAGE_MAX_CANDIDATES:
+                        break
+                if len(cand) >= LEAKAGE_MAX_CANDIDATES:
+                    break
+            for j in cand:
+                if _jaccard(toks, kept_token_sets[j]) >= LEAKAGE_FUZZY_THRESHOLD:
+                    is_dup = True
+                    break
+
+        if is_dup:
+            dropped += 1
+            continue
+
+        idx = len(kept)
+        kept.append(entry)
+        exact_seen.add(norm)
+        kept_token_sets.append(toks)
+        for tok in toks:
+            postings = inverted.setdefault(tok, [])
+            if len(postings) < LEAKAGE_MAX_POSTINGS:
+                postings.append(idx)
+
+    return kept, dropped
+
+
 async def split_dataset(
     db: AsyncSession,
     project_id: int,
@@ -937,6 +1012,7 @@ async def split_dataset(
     task_profile: str | None = None,
     stratify_by: str | None = None,
     disjoint_by: str | None = None,
+    dedup_rows: bool = False,
 ) -> dict:
     """Split combined data into train/val/test and save as JSONL.
 
@@ -1005,6 +1081,27 @@ async def split_dataset(
     )
     if not entries:
         raise ValueError("No data available to split. Ingest and process documents first.")
+
+    # ``dedup_rows`` powers the "Re-split with dedup" leakage remediation.
+    # Duplicate / near-duplicate rows in the combined corpus are what let
+    # the same row land in two prepared splits (the ``leakage.split_overlap``
+    # signal). Dropping them BEFORE the split — using the same matcher the
+    # leakage scan uses — guarantees the resulting splits are disjoint, so a
+    # re-scan flips the signal to ok.
+    dedup_report: dict | None = None
+    if dedup_rows:
+        deduped, dropped = _dedup_entries_for_split(entries)
+        if not deduped:
+            raise ValueError(
+                "Deduplication removed every row — the corpus is entirely "
+                "duplicates. Check your cleaned/synthetic data."
+            )
+        dedup_report = {
+            "input_count": len(entries),
+            "kept_count": len(deduped),
+            "dropped_count": dropped,
+        }
+        entries = deduped
 
     total = len(entries)
     stratification_report: dict | None = None
@@ -1127,6 +1224,8 @@ async def split_dataset(
         "stratification_report": stratification_report,
         "disjoint_by": str(disjoint_by).strip() if disjoint_by else None,
         "disjoint_report": disjoint_report,
+        "dedup_requested": bool(dedup_rows),
+        "dedup_report": dedup_report,
     }
     manifest_path = prep_dir / "manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:

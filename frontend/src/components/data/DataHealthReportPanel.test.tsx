@@ -521,6 +521,67 @@ describe('DataHealthReportPanel', () => {
         ).not.toBeInTheDocument();
     });
 
+    it('lets the host intercept a signal action in-page and suppresses navigation', async () => {
+        // A leakage signal whose target is the page the panel is mounted on
+        // ("dataprep"). Without an interceptor this navigate is a no-op — the
+        // bug. With onSignalAction returning true, the host handles it and the
+        // navigate is suppressed.
+        const LEAK_REPORT = {
+            project_id: 42,
+            computed_at: '2026-06-22T00:00:00Z',
+            overall: 'warn' as const,
+            severity_summary: { ok: 0, warn: 1, block: 0 },
+            total_signals: 1,
+            groups: [
+                {
+                    id: 'leakage',
+                    title: 'Leakage',
+                    subtitle: 'Are the prepared splits disjoint?',
+                    signals: [
+                        {
+                            id: 'leakage.split_overlap',
+                            severity: 'warn' as const,
+                            headline: '4 rows appear in more than one prepared split.',
+                            plain_english: 'Some rows are in two of your train/val/test splits.',
+                            why_it_matters: 'Overlapping splits make your val/test metrics optimistic.',
+                            suggested_action: { kind: 'navigate', label: 'Re-split with dedup', target: 'dataprep' },
+                            context: {},
+                        },
+                    ],
+                },
+            ],
+        };
+        apiMock.get.mockResolvedValueOnce({ data: LEAK_REPORT });
+        const onSignalAction = vi.fn().mockReturnValue(true);
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter>
+                <DataHealthReportPanel projectId={42} onSignalAction={onSignalAction} />
+            </MemoryRouter>,
+        );
+        const btn = await screen.findByTestId('data-health-action-leakage.split_overlap');
+        await user.click(btn);
+        expect(onSignalAction).toHaveBeenCalledWith('leakage.split_overlap', 'dataprep');
+        // Host handled it → no navigate fired.
+        expect(navigateMock).not.toHaveBeenCalled();
+    });
+
+    it('falls back to navigation when the host interceptor declines (returns false)', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: BLOCK_REPORT });
+        const onSignalAction = vi.fn().mockReturnValue(false);
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter>
+                <DataHealthReportPanel projectId={42} onSignalAction={onSignalAction} />
+            </MemoryRouter>,
+        );
+        const btn = await screen.findByTestId('data-health-action-shape.no_recipe_selected');
+        await user.click(btn);
+        expect(onSignalAction).toHaveBeenCalledWith('shape.no_recipe_selected', 'recipe-picker');
+        // Declined → normal target→URL navigation still happens.
+        expect(navigateMock).toHaveBeenCalledWith('/project/42/recipe-picker');
+    });
+
     it('renders an error fallback when the API call fails', async () => {
         apiMock.get.mockRejectedValueOnce({
             response: { data: { detail: 'Project not found' } },

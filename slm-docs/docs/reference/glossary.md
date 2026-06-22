@@ -122,6 +122,24 @@ and checkpoint selection pick the wrong model; a test row in train (or in val)
 inflates the final grade. Expanding a leakage signal opens a **drill-down** of
 exactly which rows leaked, from which split, and the source row they matched.
 
+### Fixing leakage from the report
+
+Both leakage signals have an action button on the Dataset Prep tab (where the
+report is shown):
+
+- **`leakage.split_overlap` → "Re-split with dedup".** This is safely
+  automatable, so the button does it for you: it re-runs the split with
+  `dedup_rows=true`, which drops exact- and near-duplicate rows from the
+  combined corpus *before* splitting (using the same matcher the scanner uses —
+  exact lowercase/whitespace match, plus token-set Jaccard ≥ 0.9). With the
+  duplicates gone, no row can land in two splits, so the signal clears. A toast
+  reports how many rows were dropped and the report re-scans in place.
+- **`leakage.gold_train_overlap` → "Re-split so gold is held out".** This is a
+  judgement call (which copy is canonical — the training row or the gold row?),
+  so BrewSLM will **not** auto-delete. The button scrolls you to the split form
+  and explains the one rule: drop the leaked rows from your **training** data;
+  the gold set stays the held-out ruler. Re-prepare once the overlap is gone.
+
 ## Probe pack (held-out, platform-authored)
 
 The gold set is the ruler *you* authored — and a newbie's gold set can be easy

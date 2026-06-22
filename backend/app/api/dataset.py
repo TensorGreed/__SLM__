@@ -59,6 +59,12 @@ class SplitRequest(BaseModel):
     # leakage that inflates eval numbers. Mutually exclusive with
     # ``stratify_by`` — they encode opposing guarantees.
     disjoint_by: str | None = None
+    # "Re-split with dedup" leakage remediation. When true, exact- and
+    # near-duplicate rows are dropped from the combined corpus BEFORE the
+    # split, so no row can land in two prepared splits. Clears the
+    # ``leakage.split_overlap`` data-health signal. Off by default — a
+    # normal Prepare never silently drops rows.
+    dedup_rows: bool = False
 
     @model_validator(mode="after")
     def validate_ratios(self):
@@ -289,6 +295,7 @@ async def split(
             task_profile=task_profile,
             stratify_by=req.stratify_by,
             disjoint_by=req.disjoint_by,
+            dedup_rows=req.dedup_rows,
         )
         manifest["domain_pack_applied"] = runtime.get("domain_pack_applied")
         manifest["domain_pack_source"] = runtime.get("domain_pack_source")
