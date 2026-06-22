@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { apiMock } = vi.hoisted(() => ({
-    apiMock: { get: vi.fn() },
+    apiMock: { get: vi.fn(), post: vi.fn() },
 }));
 vi.mock('../../api/client', () => ({ default: apiMock }));
 
@@ -38,6 +38,7 @@ const REPORT = {
             { id: 'plan.forecast_borderline', severity: 'warn', headline: 'Trainability forecast is borderline.', target_tab: 'training-config' },
         ],
     },
+    refinement: null,
     privacy: {
         cloud_sharing: 'aggregate_only',
         note: 'Only the aggregate signals in cloud_safe_profile are ever eligible to be sent to a cloud model (Phase 2). Your ingested rows, document text, gold answers, and label names never leave BrewSLM.',
@@ -45,8 +46,18 @@ const REPORT = {
     cloud_refinement: { available: false, supported_providers: ['anthropic', 'openai', 'deepseek', 'qwen', 'ollama'], reason: 'phase_1_deterministic_only' },
 };
 
+const STRATEGY = {
+    plan_delta: { rag_first: true, task_profile: 'rag_qa' },
+    directional_config: [{ kind: 'num_epochs_recommend', direction: 'down', reason: 'memorization risk on a small set' }],
+    data_gaps: [{ kind: 'class_balance', detail: 'minority classes are thin', suggested_count: 30 }],
+    rationale: 'Small, imbalanced, retrieval-shaped gold → RAG-first + balance the minority classes.',
+    confidence: 0.72,
+    provenance: { model: 'deepseek:deepseek-chat', shared: 'cloud_safe_profile' },
+    from_cache: false,
+};
+
 describe('PlanRefinementCard', () => {
-    beforeEach(() => apiMock.get.mockReset());
+    beforeEach(() => { apiMock.get.mockReset(); apiMock.post.mockReset(); });
 
     it('renders the plan-fit verdict, signals, aggregate profile, and privacy line', async () => {
         apiMock.get.mockResolvedValueOnce({ data: REPORT });
@@ -74,5 +85,43 @@ describe('PlanRefinementCard', () => {
         await waitFor(() => {
             expect(screen.getByText(/Project not found/i)).toBeInTheDocument();
         });
+    });
+
+    it('runs the cloud strategy pass and renders the validated recommendation', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: { ...REPORT, cloud_refinement: { ...REPORT.cloud_refinement, available: true } },
+        });
+        apiMock.post.mockResolvedValueOnce({ data: { available: true, refinement: STRATEGY } });
+
+        const { default: userEvent } = await import('@testing-library/user-event');
+        render(<PlanRefinementCard projectId={1} />);
+        const btn = await screen.findByTestId('plan-refinement-get-strategy');
+        await userEvent.setup().click(btn);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('plan-refinement-strategy')).toBeInTheDocument();
+        });
+        expect(apiMock.post).toHaveBeenCalledWith('/projects/1/refine-plan/cloud');
+        expect(screen.getByText('Enable RAG-first retrieval')).toBeInTheDocument();
+        expect(screen.getByText(/via deepseek:deepseek-chat/)).toBeInTheDocument();
+        // Data-gap remediation deep-links into the synthetic flow.
+        expect(screen.getByRole('button', { name: /Generate ~30/ })).toBeInTheDocument();
+    });
+
+    it('shows a cached refinement from the GET without re-calling cloud', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                ...REPORT,
+                cloud_refinement: { ...REPORT.cloud_refinement, available: true },
+                refinement: { ...STRATEGY, from_cache: true },
+            },
+        });
+        render(<PlanRefinementCard projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('plan-refinement-strategy')).toBeInTheDocument();
+        });
+        // No button (already have a recommendation); no POST fired.
+        expect(screen.queryByTestId('plan-refinement-get-strategy')).not.toBeInTheDocument();
+        expect(apiMock.post).not.toHaveBeenCalled();
     });
 });

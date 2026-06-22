@@ -26,11 +26,19 @@ makes no call; ``cloud_refinement.available`` is always False here.
 
 from __future__ import annotations
 
-from typing import Any
+import hashlib
+import json
+import os
+from typing import Any, Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import Project
+
+# A strategy fn takes the cloud-safe profile and returns the raw LLM dict (or
+# None on any failure). Injectable so tests never touch the network — the same
+# pattern as probe_runner's judge_fn.
+StrategyFn = Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]]
 
 
 # Severity → plan-health bucket. Gap/forecast signals use ok / warn / block.
@@ -228,9 +236,309 @@ def assess_plan_health(profile: dict[str, Any], *, recipe_min_rows: int | None) 
     return {"verdict": overall, "signals": signals}
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Phase 2 — cloud LLM strategy pass (best-effort, validated, privacy-safe).
+# ─────────────────────────────────────────────────────────────────────
+
+# What the LLM is allowed to touch. Anything outside these menus is dropped —
+# the LLM proposes a *strategy*; the deterministic engine owns the numbers and
+# vetoes anything off-menu, so a hallucinated config can't reach the user.
+_KNOWN_TASK_PROFILES = {
+    "instruction_sft", "chat_sft", "qa", "rag_qa", "tool_calling",
+    "structured_extraction", "summarization", "seq2seq", "classification", "preference",
+}
+_KNOWN_SIZE_CLASSES = {"small", "mid", "large"}
+_KNOWN_TRAINING_MODES = {"sft", "distillation"}
+# Directional config kinds map 1:1 to the deterministic patch engine's
+# apply_patch_kinds (+ two safe extras). The LLM gives a *direction*; the real
+# number comes from training_config_gap_service, never the LLM.
+_KNOWN_DIRECTIONAL_KINDS = {
+    "eval_steps_recommend", "num_epochs_recommend", "warmup_ratio_recommend",
+    "max_seq_length_raise", "stratify_split",
+}
+# Each data-gap kind only survives if the deterministic profile independently
+# supports it — the LLM can *explain* a gap, never *invent* one.
+_DATA_GAP_KINDS = {"class_balance", "more_rows", "seq_length", "leakage", "label_consistency"}
+
+_REFINE_DEFAULT_MODELS = {
+    "anthropic": "claude-haiku-4-5",
+    "openai": "gpt-4o-mini",
+    "deepseek": "deepseek-chat",
+    "qwen": "qwen-plus",
+}
+# DeepSeek + Qwen ride the OpenAI-compatible path with their own base URLs.
+_OPENAI_COMPAT_BASE_URLS = {
+    "deepseek": "https://api.deepseek.com/v1/chat/completions",
+    "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+}
+
+_PLAN_REFINEMENT_KEY = "plan_refinement"  # runtime_config cache slot
+
+
+def _data_gap_supported(kind: str, profile: dict[str, Any]) -> bool:
+    """Deterministic precondition for a data-gap kind — the anti-hallucination
+    gate. The profile must independently evidence the gap."""
+    shape = profile.get("label_distribution_shape") or {}
+    verdict = str(profile.get("forecast_verdict") or "")
+    if kind == "class_balance":
+        return int(shape.get("classes_below_floor") or 0) > 0 or (
+            float(shape.get("imbalance_ratio") or 1.0) < 0.34
+        )
+    if kind == "more_rows":
+        return verdict in ("borderline", "likely_fail")
+    if kind == "seq_length":
+        return _bucket(profile.get("truncation_risk")) != "ready"
+    if kind == "label_consistency":
+        return _bucket(profile.get("tokenizer_oov")) != "ready"
+    if kind == "leakage":
+        # Leakage isn't in the cloud profile (it carries raw matches), so the
+        # LLM can't see it — never accept a leakage gap from the model.
+        return False
+    return False
+
+
+def validate_strategy(raw: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    """Clamp the raw LLM strategy to the known menus + cross-check data gaps
+    against the deterministic profile. Pure; the trust-preserving core.
+
+    Returns a sanitized refinement with ``dropped`` counts so the UI can be
+    honest about what the model said vs. what survived validation."""
+    from app.services.recipe_service import get_recipe
+
+    raw = raw if isinstance(raw, dict) else {}
+    dropped: dict[str, int] = {"plan_delta": 0, "directional": 0, "data_gaps": 0}
+
+    # plan_delta — keep only valid fields that represent an actual change.
+    plan_delta: dict[str, Any] = {}
+    rd = raw.get("plan_delta") if isinstance(raw.get("plan_delta"), dict) else {}
+    recipe_id = rd.get("recipe_id")
+    if isinstance(recipe_id, str) and recipe_id.strip() and recipe_id != profile.get("recipe_id"):
+        try:
+            if get_recipe(recipe_id) is not None:
+                plan_delta["recipe_id"] = recipe_id
+            else:
+                dropped["plan_delta"] += 1
+        except Exception:  # noqa: BLE001
+            dropped["plan_delta"] += 1
+    tp = rd.get("task_profile")
+    if isinstance(tp, str) and tp in _KNOWN_TASK_PROFILES and tp != profile.get("task_profile"):
+        plan_delta["task_profile"] = tp
+    elif isinstance(tp, str) and tp and tp not in _KNOWN_TASK_PROFILES:
+        dropped["plan_delta"] += 1
+    sc = rd.get("base_model_size_class")
+    if isinstance(sc, str) and sc in _KNOWN_SIZE_CLASSES:
+        plan_delta["base_model_size_class"] = sc
+    if isinstance(rd.get("rag_first"), bool):
+        plan_delta["rag_first"] = rd["rag_first"]
+    tm = rd.get("training_mode")
+    if isinstance(tm, str) and tm in _KNOWN_TRAINING_MODES:
+        plan_delta["training_mode"] = tm
+
+    # directional_config — keep only known kinds.
+    directional: list[dict[str, Any]] = []
+    for item in raw.get("directional_config") or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "")
+        if kind in _KNOWN_DIRECTIONAL_KINDS:
+            directional.append({
+                "kind": kind,
+                "direction": str(item.get("direction") or "")[:24] or None,
+                "reason": str(item.get("reason") or "")[:280],
+            })
+        else:
+            dropped["directional"] += 1
+
+    # data_gaps — only those the deterministic profile evidences.
+    data_gaps: list[dict[str, Any]] = []
+    for item in raw.get("data_gaps") or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "")
+        if kind in _DATA_GAP_KINDS and _data_gap_supported(kind, profile):
+            entry: dict[str, Any] = {
+                "kind": kind,
+                "detail": str(item.get("detail") or "")[:280],
+            }
+            count = item.get("suggested_count")
+            if isinstance(count, (int, float)) and 0 < count <= 1000:
+                entry["suggested_count"] = int(count)
+            data_gaps.append(entry)
+        else:
+            dropped["data_gaps"] += 1
+
+    confidence = raw.get("confidence")
+    confidence = (
+        round(float(confidence), 3)
+        if isinstance(confidence, (int, float)) and 0 <= confidence <= 1
+        else None
+    )
+
+    return {
+        "plan_delta": plan_delta,
+        "directional_config": directional,
+        "data_gaps": data_gaps,
+        "rationale": str(raw.get("rationale") or "")[:1200],
+        "confidence": confidence,
+        "dropped": dropped,
+    }
+
+
+def _resolve_strategy_config(db: AsyncSession, project_id: int):
+    """Resolve a cloud-LLM config (provider/model/api_key/api_url) for the
+    strategy pass, or ``None`` (→ deterministic fallback). Order mirrors the
+    probe judge: PLAN_REFINE_* env → project secret → provider env keys.
+    Returns a coroutine."""
+    async def _resolve() -> dict[str, Any] | None:
+        model_override = (os.getenv("PLAN_REFINE_MODEL") or "").strip()
+
+        def _cfg(provider: str, key: str) -> dict[str, Any]:
+            return {
+                "provider": provider,
+                "api_key": key,
+                "model": model_override or _REFINE_DEFAULT_MODELS.get(provider, ""),
+                "api_url": _OPENAI_COMPAT_BASE_URLS.get(provider),
+            }
+
+        prov = (os.getenv("PLAN_REFINE_PROVIDER") or "").strip().lower()
+        key = (os.getenv("PLAN_REFINE_API_KEY") or "").strip()
+        if prov and key:
+            return _cfg(prov, key)
+
+        if db is not None:
+            try:
+                from app.services.secret_service import get_project_secret_value
+                for provider in ("anthropic", "openai", "deepseek", "qwen"):
+                    val = await get_project_secret_value(db, project_id, provider, "api_key", touch=False)
+                    if val:
+                        return _cfg(provider, val)
+            except Exception:  # noqa: BLE001 — best-effort
+                pass
+
+        for env_name, provider in (("ANTHROPIC_API_KEY", "anthropic"), ("OPENAI_API_KEY", "openai")):
+            val = (os.getenv(env_name) or "").strip()
+            if val:
+                return _cfg(provider, val)
+        return None
+
+    return _resolve()
+
+
+def _build_strategy_prompt(profile: dict[str, Any]) -> tuple[str, str]:
+    """System + user prompt. PRIVACY: the user prompt contains ONLY the
+    cloud-safe profile (aggregates) — never raw rows. The schema constrains the
+    model to a strategy menu; numbers are deliberately excluded."""
+    system = (
+        "You are an expert ML architect advising on a small-model fine-tuning pipeline. "
+        "You are given an AGGREGATE profile of a project's data + current plan — never the raw data. "
+        "Recommend STRATEGY only; do NOT emit hyperparameter numbers (learning rate, epochs, etc.) — "
+        "the platform computes those from the data.\n\n"
+        "Return ONLY JSON: {\n"
+        '  "plan_delta": { "recipe_id"?: str, "task_profile"?: one of '
+        "[instruction_sft,chat_sft,qa,rag_qa,tool_calling,structured_extraction,summarization,seq2seq,classification,preference], "
+        '"base_model_size_class"?: one of [small,mid,large], "rag_first"?: bool, "training_mode"?: one of [sft,distillation] },\n'
+        '  "directional_config": [ { "kind": one of '
+        "[eval_steps_recommend,num_epochs_recommend,warmup_ratio_recommend,max_seq_length_raise,stratify_split], "
+        '"direction": str, "reason": str } ],\n'
+        '  "data_gaps": [ { "kind": one of [class_balance,more_rows,seq_length,label_consistency], "detail": str, "suggested_count"?: int } ],\n'
+        '  "rationale": str, "confidence": number 0..1\n'
+        "}\nOmit a plan_delta field if no change is warranted."
+    )
+    user = "AGGREGATE PROFILE (no raw data):\n" + json.dumps(profile, sort_keys=True)
+    return system, user
+
+
+def _build_cloud_strategy_fn(config: dict[str, Any]) -> StrategyFn:
+    """Wrap a resolved provider config into a StrategyFn that calls the cloud
+    and parses JSON. DeepSeek/Qwen ride the OpenAI-compatible path."""
+    async def _fn(profile: dict[str, Any]) -> dict[str, Any] | None:
+        from app.services.cloud_llm_service import (
+            call_anthropic_chat,
+            call_openai_chat,
+            extract_json_payload,
+        )
+        system, user = _build_strategy_prompt(profile)
+        try:
+            if config["provider"] == "anthropic":
+                resp = await call_anthropic_chat(
+                    api_key=config["api_key"], model=config["model"],
+                    system_prompt=system, user_prompt=user, max_tokens=800, temperature=0.2,
+                )
+            else:
+                resp = await call_openai_chat(
+                    api_key=config["api_key"], model=config["model"],
+                    system_prompt=system, user_prompt=user, max_tokens=800, temperature=0.2,
+                    api_url=config.get("api_url"), force_json=True,
+                )
+            payload = extract_json_payload(resp.content)
+            return payload if isinstance(payload, dict) else None
+        except Exception:  # noqa: BLE001 — any failure → deterministic fallback
+            return None
+
+    return _fn
+
+
+def _profile_hash(profile: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(profile, sort_keys=True).encode("utf-8")).hexdigest()[:32]
+
+
+async def run_cloud_strategy_pass(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    strategy_fn: StrategyFn | None = None,
+    model_label: str | None = None,
+) -> dict[str, Any] | None:
+    """Phase 2 — run the cloud strategy pass and return a validated refinement,
+    or ``None`` (→ deterministic fallback) when no provider is configured or the
+    call fails. Caches by profile hash in ``runtime_config`` so repeat reads on
+    unchanged data don't re-bill. Best-effort throughout.
+
+    Only ``cloud_safe_profile`` is ever passed to ``strategy_fn`` — the privacy
+    boundary from Phase 1."""
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    profile = await build_cloud_safe_profile(db, project_id)
+    phash = _profile_hash(profile)
+
+    runtime_config = dict(project.runtime_config or {})
+    cached = runtime_config.get(_PLAN_REFINEMENT_KEY)
+    if isinstance(cached, dict) and cached.get("profile_hash") == phash:
+        return {**cached["refinement"], "from_cache": True}
+
+    fn = strategy_fn
+    provider_label = model_label
+    if fn is None:
+        config = await _resolve_strategy_config(db, project_id)
+        if config is None:
+            return None  # no provider → fallback to deterministic only
+        fn = _build_cloud_strategy_fn(config)
+        provider_label = f"{config['provider']}:{config['model']}"
+
+    raw = await fn(profile)
+    if raw is None:
+        return None
+
+    refinement = validate_strategy(raw, profile)
+    refinement["provenance"] = {
+        "model": provider_label or "injected",
+        "shared": "cloud_safe_profile",  # what left the box — aggregates only
+    }
+
+    runtime_config[_PLAN_REFINEMENT_KEY] = {"profile_hash": phash, "refinement": refinement}
+    project.runtime_config = runtime_config
+    await db.flush()
+    await db.commit()
+    return {**refinement, "from_cache": False}
+
+
 async def refine_pipeline_plan(db: AsyncSession, project_id: int) -> dict[str, Any]:
     """Phase 1 — deterministic plan-refinement report: current plan + the
-    privacy-safe aggregate profile + a plan-fit roll-up. No cloud call."""
+    privacy-safe aggregate profile + a plan-fit roll-up. No cloud call (but it
+    surfaces a previously-cached Phase-2 refinement when one matches the current
+    data, and whether a cloud provider is configured)."""
     from app.services.recipe_service import get_recipe
 
     profile = await build_cloud_safe_profile(db, project_id)
@@ -247,6 +555,16 @@ async def refine_pipeline_plan(db: AsyncSession, project_id: int) -> dict[str, A
 
     plan_health = assess_plan_health(profile, recipe_min_rows=recipe_min_rows)
 
+    # Cheap, free-of-charge cloud readiness: is a provider configured, and is
+    # there a cached Phase-2 refinement still valid for the current data? No
+    # cloud call happens on this GET — the billable call is POST /refine-plan/cloud.
+    project = await db.get(Project, project_id)
+    provider_config = await _resolve_strategy_config(db, project_id)
+    cached_refinement = None
+    cached = (project.runtime_config or {}).get(_PLAN_REFINEMENT_KEY) if project else None
+    if isinstance(cached, dict) and cached.get("profile_hash") == _profile_hash(profile):
+        cached_refinement = {**cached["refinement"], "from_cache": True}
+
     return {
         "project_id": int(project_id),
         "plan": {
@@ -257,18 +575,20 @@ async def refine_pipeline_plan(db: AsyncSession, project_id: int) -> dict[str, A
         },
         "cloud_safe_profile": profile,
         "plan_health": plan_health,
+        "refinement": cached_refinement,
         "privacy": {
             "cloud_sharing": "aggregate_only",
             "note": (
                 "Only the aggregate signals in cloud_safe_profile are ever eligible "
-                "to be sent to a cloud model (Phase 2). Your ingested rows, document "
-                "text, gold answers, and label names never leave BrewSLM."
+                "to be sent to a cloud model. Your ingested rows, document text, "
+                "gold answers, and label names never leave BrewSLM."
             ),
         },
         "cloud_refinement": {
-            # Phase 1 is deterministic-only; Phase 2 wires the cloud strategy pass.
-            "available": False,
+            # Configured = a provider resolves; the strategy pass is a separate
+            # billable POST. Off → the report stays fully deterministic.
+            "available": provider_config is not None,
             "supported_providers": ["anthropic", "openai", "deepseek", "qwen", "ollama"],
-            "reason": "phase_1_deterministic_only",
+            "reason": "configured" if provider_config is not None else "no_provider_configured",
         },
     }

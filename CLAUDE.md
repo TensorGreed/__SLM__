@@ -350,10 +350,24 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   signals to a verdict (ready / attention / mismatch). `GET
   /projects/{id}/refine-plan` → `PlanRefinementCard` on
   `/project/{id}/training-config` (above `TrainingConfigGapsPanel`).
-  `cloud_refinement.available` is False in Phase 1; `supported_providers`
-  lists anthropic/openai/**deepseek**/**qwen**/ollama for Phase 2 (which will
-  ride `cloud_llm_service`'s OpenAI-compatible path). See the privacy-invariant
-  test in `tests/test_pipeline_refinement.py`.
+  **Phase 2 (cloud strategy pass)** — `run_cloud_strategy_pass` sends *only*
+  the `cloud_safe_profile` to a configured model and gets back a strategy
+  (`plan_delta` + `directional_config` + `data_gaps` + rationale). `validate_strategy`
+  (pure) is the trust gate: it clamps `plan_delta` to the known recipe/task/size
+  menus, keeps only `directional_config` kinds that map to real
+  `apply_patch_kind`s (numbers stay deterministic), and **drops any data-gap the
+  deterministic profile doesn't independently evidence** (`_data_gap_supported`) —
+  the LLM can explain a gap, never invent one. Best-effort with deterministic
+  fallback + provider resolution `_resolve_strategy_config` (PLAN_REFINE_* env →
+  project secret → ANTHROPIC/OPENAI env), supporting anthropic/openai/**deepseek**/
+  **qwen** (the last two via `cloud_llm_service`'s OpenAI-compatible path + base
+  URL). Injectable `strategy_fn` (like probe_runner's judge_fn) → tests never hit
+  the network. Cached by data-profile hash in `runtime_config["plan_refinement"]`.
+  Billable call is `POST /projects/{id}/refine-plan/cloud` (the GET stays free +
+  surfaces a cached result). `PlanRefinementCard` shows a "Get AI strategy" CTA
+  when a provider's configured + renders the validated recommendation read-only
+  (Phase 3 = accept/apply). See the privacy-invariant + validation-gate tests in
+  `tests/test_pipeline_refinement.py`.
 - **Training Config Gaps** — `training_config_gap_service.scan_training_config_gaps`
   is the training-side parallel to `data_health_service`: given
   (project, recipe, labelled-row count, effective `TrainingConfig`) it

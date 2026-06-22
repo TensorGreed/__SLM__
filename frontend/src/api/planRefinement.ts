@@ -26,6 +26,23 @@ export interface CloudSafeProfile {
     forecast_verdict: string | null;
 }
 
+export interface StrategyRefinement {
+    plan_delta: {
+        recipe_id?: string;
+        task_profile?: string;
+        base_model_size_class?: string;
+        rag_first?: boolean;
+        training_mode?: string;
+    };
+    directional_config: { kind: string; direction?: string | null; reason: string }[];
+    data_gaps: { kind: string; detail: string; suggested_count?: number }[];
+    rationale: string;
+    confidence: number | null;
+    dropped?: { plan_delta: number; directional: number; data_gaps: number };
+    provenance?: { model: string; shared: string };
+    from_cache?: boolean;
+}
+
 export interface PlanRefinement {
     project_id: number;
     plan: {
@@ -36,6 +53,7 @@ export interface PlanRefinement {
     };
     cloud_safe_profile: CloudSafeProfile;
     plan_health: { verdict: 'ready' | 'attention' | 'mismatch' | string; signals: PlanRefinementSignal[] };
+    refinement: StrategyRefinement | null;
     privacy: { cloud_sharing: string; note: string };
     cloud_refinement: { available: boolean; supported_providers: string[]; reason: string };
 }
@@ -44,4 +62,13 @@ export interface PlanRefinement {
 export async function getPlanRefinement(projectId: number): Promise<PlanRefinement> {
     const resp = await api.get(`/projects/${projectId}/refine-plan`);
     return resp.data as PlanRefinement;
+}
+
+/** Phase 2 — run the cloud strategy pass (billable; sends only the aggregate
+ * profile). Returns {available, refinement}. */
+export async function runCloudPlanRefinement(
+    projectId: number,
+): Promise<{ available: boolean; refinement: StrategyRefinement | null; reason?: string }> {
+    const resp = await api.post(`/projects/${projectId}/refine-plan/cloud`);
+    return resp.data;
 }

@@ -133,6 +133,112 @@ class PipelineRefinementTests(unittest.TestCase):
         resp = self.client.get("/api/projects/999999/refine-plan")
         self.assertEqual(resp.status_code, 404, resp.text)
 
+    # ── Phase 2: cloud strategy pass ──────────────────────────────────
+
+    def test_validate_strategy_clamps_to_known_menu(self):
+        from app.services.pipeline_refinement_service import validate_strategy
+        profile = {"recipe_id": "classification", "task_profile": "classification"}
+        raw = {
+            "plan_delta": {
+                "task_profile": "summarization",       # valid + a change → kept
+                "base_model_size_class": "mid",        # valid → kept
+                "training_mode": "telepathy",          # off-menu → dropped
+                "rag_first": True,                     # valid bool → kept
+            },
+            "directional_config": [
+                {"kind": "num_epochs_recommend", "direction": "down", "reason": "memorization risk"},
+                {"kind": "set_learning_rate", "direction": "0.0005"},   # off-menu → dropped
+            ],
+            "rationale": "x" * 5000,                   # truncated
+            "confidence": 0.8,
+        }
+        out = validate_strategy(raw, profile)
+        self.assertEqual(out["plan_delta"]["task_profile"], "summarization")
+        self.assertEqual(out["plan_delta"]["base_model_size_class"], "mid")
+        self.assertTrue(out["plan_delta"]["rag_first"])
+        self.assertNotIn("training_mode", out["plan_delta"])          # off-menu dropped
+        kinds = {d["kind"] for d in out["directional_config"]}
+        self.assertEqual(kinds, {"num_epochs_recommend"})            # off-menu dropped
+        self.assertEqual(out["confidence"], 0.8)
+        self.assertLessEqual(len(out["rationale"]), 1200)
+
+    def test_validate_strategy_drops_unsupported_and_hallucinated_gaps(self):
+        from app.services.pipeline_refinement_service import validate_strategy
+        # Profile evidences class imbalance but NOT seq-length or leakage.
+        profile = {
+            "label_distribution_shape": {"classes_below_floor": 2, "imbalance_ratio": 0.16},
+            "truncation_risk": "ok", "tokenizer_oov": "ok", "forecast_verdict": "likely_pass",
+        }
+        raw = {"data_gaps": [
+            {"kind": "class_balance", "detail": "minority classes thin", "suggested_count": 30},
+            {"kind": "seq_length", "detail": "rows are long"},     # unsupported → dropped
+            {"kind": "leakage", "detail": "train leaks to test"},  # never accepted → dropped
+            {"kind": "made_up", "detail": "nonsense"},             # off-menu → dropped
+        ]}
+        out = validate_strategy(raw, profile)
+        self.assertEqual([g["kind"] for g in out["data_gaps"]], ["class_balance"])
+        self.assertEqual(out["data_gaps"][0]["suggested_count"], 30)
+        self.assertGreaterEqual(out["dropped"]["data_gaps"], 3)
+
+    def test_run_cloud_strategy_pass_injected_fn_validates_and_caches(self):
+        pid = self._seed_project()
+
+        async def _run():
+            from app.database import async_session_factory
+            from app.services.pipeline_refinement_service import run_cloud_strategy_pass
+
+            calls = {"n": 0}
+
+            async def fake_fn(profile):
+                calls["n"] += 1
+                # Profile is the cloud-safe aggregate — assert no secret leaked.
+                self.assertNotIn(SECRET_TEXT, json.dumps(profile))
+                return {
+                    "plan_delta": {"rag_first": True},
+                    "data_gaps": [{"kind": "class_balance", "detail": "balance refund", "suggested_count": 30}],
+                    "rationale": "Tiny imbalanced gold → balance + consider retrieval.",
+                    "confidence": 0.7,
+                }
+
+            async with async_session_factory() as db:
+                first = await run_cloud_strategy_pass(db, pid, strategy_fn=fake_fn, model_label="test:model")
+                # Second call hits the cache (profile unchanged) — no new fn call.
+                second = await run_cloud_strategy_pass(db, pid, strategy_fn=fake_fn, model_label="test:model")
+                return first, second, calls["n"]
+
+        first, second, n_calls = asyncio.run(_run())
+        self.assertTrue(first["plan_delta"]["rag_first"])
+        self.assertEqual([g["kind"] for g in first["data_gaps"]], ["class_balance"])
+        self.assertEqual(first["provenance"]["model"], "test:model")
+        self.assertEqual(first["provenance"]["shared"], "cloud_safe_profile")
+        self.assertFalse(first["from_cache"])
+        self.assertTrue(second["from_cache"])
+        self.assertEqual(n_calls, 1)  # cache prevented a second call
+
+    def test_run_cloud_strategy_pass_fallback_when_fn_returns_none(self):
+        pid = self._seed_project()
+
+        async def _run():
+            from app.database import async_session_factory
+            from app.services.pipeline_refinement_service import run_cloud_strategy_pass
+
+            async def none_fn(profile):
+                return None
+
+            async with async_session_factory() as db:
+                return await run_cloud_strategy_pass(db, pid, strategy_fn=none_fn)
+
+        self.assertIsNone(asyncio.run(_run()))
+
+    def test_cloud_endpoint_unavailable_without_provider(self):
+        # No PLAN_REFINE_*/ANTHROPIC/OPENAI configured in the test env → fallback.
+        pid = self._seed_project()
+        resp = self.client.post(f"/api/projects/{pid}/refine-plan/cloud")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertFalse(body["available"])
+        self.assertIsNone(body["refinement"])
+
 
 if __name__ == "__main__":
     unittest.main()

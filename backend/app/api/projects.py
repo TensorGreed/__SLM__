@@ -759,6 +759,32 @@ async def get_pipeline_plan_refinement(
         raise HTTPException(404, str(e))
 
 
+@router.post("/{project_id}/refine-plan/cloud")
+async def run_cloud_plan_refinement(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Phase 2 — run the cloud-LLM strategy pass: send ONLY the aggregate
+    cloud-safe profile to a configured model (Anthropic/OpenAI/DeepSeek/Qwen),
+    validate the returned strategy against the deterministic engine, and return
+    it. Best-effort: returns ``{available: false}`` when no provider is
+    configured or the call fails — the deterministic report (GET) still stands.
+    Cached by data profile so repeat calls on unchanged data don't re-bill."""
+    from app.services.pipeline_refinement_service import run_cloud_strategy_pass
+
+    try:
+        refinement = await run_cloud_strategy_pass(db, project_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    if refinement is None:
+        return {
+            "available": False,
+            "reason": "no_provider_or_call_failed",
+            "refinement": None,
+        }
+    return {"available": True, "refinement": refinement}
+
+
 @router.get("/{project_id}/gate-check")
 async def project_deployment_gate_check(
     project_id: int,
