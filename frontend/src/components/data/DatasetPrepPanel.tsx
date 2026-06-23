@@ -93,6 +93,7 @@ interface SplitManifest {
         kept_count: number;
         dropped_count: number;
     } | null;
+    dedup_inherited_config?: string[];
 }
 
 interface SplitEffectiveConfig {
@@ -1922,6 +1923,14 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                     combined corpus before splitting, so no row can appear in more than one split.
                                     This is what clears the <code>leakage.split_overlap</code> data-health signal.
                                 </p>
+                                {splitManifest.dedup_inherited_config && splitManifest.dedup_inherited_config.length > 0 && (
+                                    <p className="dp-strat-help" data-testid="dp-dedup-inherited">
+                                        ♻️ Reproduced the active prepared version's split config (rather than form
+                                        defaults): {splitManifest.dedup_inherited_config.map((f, i) => (
+                                            <span key={f}>{i > 0 ? ', ' : ''}<code>{f}</code></span>
+                                        ))}.
+                                    </p>
+                                )}
                             </div>
                         )}
                         {splitManifest.disjoint_report && (

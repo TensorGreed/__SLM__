@@ -669,6 +669,7 @@ session-start guidance.
 - `backend/tests/test_data_studio_overview.py` — Data Studio overview endpoint tests.
 - `backend/tests/test_dataset_auto_exclude_cleaned.py` — ``resolve_training_dataset_types`` contract.
 - `backend/tests/test_decision_engine_service.py` — Tests for the Theme 7 decision engine — `infer_recommended_approach`.
+- `backend/tests/test_dedup_resplit_inherits_config.py` — The dedup re-split ("Re-split with dedup" leakage remediation) must
 - `backend/tests/test_dedup_split.py` — Unit tests for ``_dedup_entries_for_split`` — the engine behind the
 - `backend/tests/test_demo_project_reset.py` — Epic G phase G2 — demo sample reset lifecycle.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.

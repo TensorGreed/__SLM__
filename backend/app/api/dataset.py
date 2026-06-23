@@ -251,6 +251,22 @@ async def split(
         profile_defaults = get_dataset_split_defaults(effective_contract)
         provided = set(req.model_fields_set)
 
+        # A dedup re-split means "the SAME split, minus duplicates" — not a
+        # fresh split with form defaults. The split form defaults stratify_by /
+        # disjoint_by to empty, so without this a dedup re-split would silently
+        # drop a stratification or disjoint-by-key guarantee (and reset ratios /
+        # seed / adapter). Inherit the ACTIVE prepared version's config
+        # (prepared/manifest.json — the single source the trainer reads, which
+        # restore/activate keeps in sync) for every field the caller didn't
+        # explicitly set. Explicit request fields always win.
+        active_manifest: dict = {}
+        active_resolved: dict = {}
+        inherited_from_active: list[str] = []
+        if req.dedup_rows:
+            from app.services.eval_task_handler_service import read_prepared_manifest
+            active_manifest = read_prepared_manifest(project_id) or {}
+            active_resolved = active_manifest.get("resolved_split_config") or {}
+
         resolved, profile_defaults_applied = _resolve_split_config(
             profile_defaults=profile_defaults,
             provided_fields=provided,
@@ -261,8 +277,27 @@ async def split(
             chat_template=req.chat_template,
         )
 
+        # Overlay the active version's ratios/seed/template for unprovided
+        # fields (wins over profile defaults; loses to explicit request).
+        for key in ("train_ratio", "val_ratio", "test_ratio", "seed", "chat_template"):
+            if key not in provided and active_resolved.get(key) is not None:
+                resolved[key] = active_resolved[key]
+                inherited_from_active.append(key)
+
         if abs((float(resolved["train_ratio"]) + float(resolved["val_ratio"]) + float(resolved["test_ratio"])) - 1.0) > 1e-6:
             raise HTTPException(400, "train_ratio + val_ratio + test_ratio must equal 1.0")
+
+        # Stratify / disjoint are mutually exclusive and the active manifest
+        # carries at most one — inherit whichever it used when the caller gave
+        # neither, so the dedup re-split reproduces the same grouping guarantee.
+        stratify_by = req.stratify_by
+        disjoint_by = req.disjoint_by
+        if req.dedup_rows and "stratify_by" not in provided and active_manifest.get("stratify_by"):
+            stratify_by = active_manifest["stratify_by"]
+            inherited_from_active.append("stratify_by")
+        if req.dedup_rows and "disjoint_by" not in provided and active_manifest.get("disjoint_by"):
+            disjoint_by = active_manifest["disjoint_by"]
+            inherited_from_active.append("disjoint_by")
 
         explicit_adapter_fields = {"adapter_id", "adapter_config", "field_mapping", "task_profile"}
         has_explicit_adapter = any(field in provided for field in explicit_adapter_fields)
@@ -272,6 +307,14 @@ async def split(
             field_mapping = dict(req.field_mapping or {})
             task_profile = str(req.task_profile or "").strip() or None
             adapter_source = "request"
+        elif req.dedup_rows and active_manifest.get("adapter_id"):
+            # Reproduce the active version's adapter wiring on a dedup re-split.
+            adapter_id = str(active_manifest.get("adapter_id") or "default-canonical")
+            adapter_config = dict(active_manifest.get("adapter_config") or {})
+            field_mapping = dict(active_manifest.get("field_mapping") or {})
+            task_profile = str(active_manifest.get("task_profile") or "").strip() or None
+            adapter_source = "active_prepared_version"
+            inherited_from_active.append("adapter")
         else:
             preset = await resolve_project_dataset_adapter_preference(db, project_id)
             adapter_id = str(preset.get("adapter_id") or "default-canonical")
@@ -293,8 +336,8 @@ async def split(
             adapter_config=adapter_config,
             field_mapping=field_mapping,
             task_profile=task_profile,
-            stratify_by=req.stratify_by,
-            disjoint_by=req.disjoint_by,
+            stratify_by=stratify_by,
+            disjoint_by=disjoint_by,
             dedup_rows=req.dedup_rows,
         )
         manifest["domain_pack_applied"] = runtime.get("domain_pack_applied")
@@ -305,6 +348,9 @@ async def split(
         manifest["resolved_split_config"] = resolved
         manifest["profile_defaults_applied"] = sorted(set(profile_defaults_applied))
         manifest["adapter_preference_source"] = adapter_source
+        # Honesty: which split-config fields this dedup re-split reproduced
+        # from the active prepared version rather than form/profile defaults.
+        manifest["dedup_inherited_config"] = sorted(set(inherited_from_active))
         return manifest
     except ValueError as e:
         detail = str(e)

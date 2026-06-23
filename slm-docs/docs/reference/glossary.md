@@ -133,7 +133,13 @@ report is shown):
   combined corpus *before* splitting (using the same matcher the scanner uses —
   exact lowercase/whitespace match, plus token-set Jaccard ≥ 0.9). With the
   duplicates gone, no row can land in two splits, so the signal clears. A toast
-  reports how many rows were dropped and the report re-scans in place.
+  reports how many rows were dropped and the report re-scans in place. The
+  dedup re-split **reproduces the active prepared version's split config** —
+  `stratify_by` / `disjoint_by` / ratios / seed / adapter are inherited from
+  `prepared/manifest.json`, not the (possibly-empty) form defaults — so it can't
+  silently turn a stratified split into a uniform one. The manifest lists what
+  was inherited (`dedup_inherited_config`), and the result is snapshotted as a
+  new prepared version like any Prepare.
 - **`leakage.gold_train_overlap` → "Re-split so gold is held out".** This is a
   judgement call (which copy is canonical — the training row or the gold row?),
   so BrewSLM will **not** auto-delete. The button scrolls you to the split form
