@@ -208,6 +208,8 @@ curl -X POST http://localhost:8000/api/projects/1/synthetic/generate \
 
 Joins cleaned + synthetic rows (if any), runs the chosen adapter, splits train/val/test, and writes the prepared records to `DATA_DIR/projects/{id}/prepared/`.
 
+The split form **hydrates from the active prepared version** on open: if the project has already been prepared, the stratify/disjoint field, ratios, seed, and chat template default to the config that produced the current splits (read from `prepared/manifest.json`) rather than empty fields — so a re-run reproduces the active split unless you change something. A "♻️ Reusing the active prepared version's split config" hint names which fields were filled. Edit any field to override.
+
 ### Data Health Report (D1+D2 of the data-quality arc)
 
 The Data Prep tab opens with an aggregated **Data Health Report** at the top — a single panel that pulls every data-quality signal scattered across the platform (ingestion, cleaning, shape vs recipe, classification balance) into one traffic-light scorecard. Backed by `GET /api/projects/{id}/data-health`.

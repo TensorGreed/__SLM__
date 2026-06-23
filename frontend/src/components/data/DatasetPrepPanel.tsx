@@ -383,6 +383,10 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     // remediation (e.g. "Re-split with dedup") so the leakage signal
     // clears without the user hunting for the refresh button.
     const [healthRefreshKey, setHealthRefreshKey] = useState(0);
+    // Split-config fields hydrated from the active prepared version on
+    // mount (so a manual Run Split reproduces the active config instead
+    // of defaulting to empty/profile fields). Drives the reuse hint.
+    const [hydratedFromActiveVersion, setHydratedFromActiveVersion] = useState<string[]>([]);
     // Anchor for the leakage "Re-split …" actions — they scroll the
     // split form into view instead of a no-op self-navigate.
     const splitSectionRef = useRef<HTMLDivElement | null>(null);
@@ -492,10 +496,47 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         }
     };
 
+    // Hydrate the split form from the ACTIVE prepared version's manifest so
+    // a manual Run Split defaults to the config that produced the current
+    // splits (stratify/disjoint/ratios/seed/template) rather than empty
+    // fields. Mirrors what the dedup re-split already inherits server-side —
+    // the form now shows the same thing up front. No-op on a fresh project
+    // (no manifest yet). Runs once on mount, before any user interaction.
+    const loadActivePreparedConfig = async () => {
+        try {
+            const res = await api.get<Record<string, unknown>>(`/projects/${projectId}/prepared-manifest`);
+            const m = res.data || {};
+            const hydrated: string[] = [];
+
+            const stratify = typeof m.stratify_by === 'string' ? m.stratify_by.trim() : '';
+            const disjoint = typeof m.disjoint_by === 'string' ? m.disjoint_by.trim() : '';
+            if (stratify) { setStratifyBy(stratify); hydrated.push('stratify_by'); }
+            if (disjoint) { setDisjointBy(disjoint); hydrated.push('disjoint_by'); }
+
+            const rc = (m.resolved_split_config || {}) as Record<string, unknown>;
+            let hydratedExplicitConfig = false;
+            if (typeof rc.train_ratio === 'number') { setTrainRatio(rc.train_ratio); hydrated.push('train_ratio'); hydratedExplicitConfig = true; }
+            if (typeof rc.val_ratio === 'number') { setValRatio(rc.val_ratio); hydratedExplicitConfig = true; }
+            if (typeof rc.test_ratio === 'number') { setTestRatio(rc.test_ratio); hydratedExplicitConfig = true; }
+            if (typeof rc.seed === 'number') { setSplitSeed(rc.seed); hydrated.push('seed'); hydratedExplicitConfig = true; }
+            if (typeof rc.chat_template === 'string') { setSplitTemplate(rc.chat_template); }
+
+            // If we pulled explicit ratios/seed from the active version, switch
+            // off "use profile defaults" so a manual Run Split actually sends
+            // them (buildSplitPayload gates ratios/seed on this flag). stratify/
+            // disjoint are always sent when non-empty, so they don't need it.
+            if (hydratedExplicitConfig) { setUseProfileDefaults(false); }
+            if (hydrated.length > 0) { setHydratedFromActiveVersion(hydrated); }
+        } catch {
+            /* No active prepared version yet — leave the form at its defaults. */
+        }
+    };
+
     useEffect(() => {
         void previewEffectiveSplitConfig();
         void loadAdapterCatalog();
         void loadAdapterPreference();
+        void loadActivePreparedConfig();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
 
@@ -1645,6 +1686,16 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                     <span className="info-icon">💡</span>
                     Splits your combined dataset into training, validation, and test JSONL files. Ratios must sum to 1.0.
                 </div>
+                {hydratedFromActiveVersion.length > 0 && (
+                    <div className="dp-info" data-testid="dp-active-config-hint">
+                        <span className="info-icon">♻️</span>
+                        Reusing the active prepared version's split config (
+                        {hydratedFromActiveVersion.map((f, i) => (
+                            <span key={f}>{i > 0 ? ', ' : ''}<code>{f}</code></span>
+                        ))}
+                        ). Edit any field to override before running.
+                    </div>
+                )}
                 <div className="dp-resolved-panel" style={{ marginBottom: '1rem' }}>
                     <div className="dp-resolved-title">Split Adapter</div>
                     <div className="dp-actions" style={{ marginBottom: '.5rem' }}>

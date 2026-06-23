@@ -905,6 +905,7 @@ session-start guidance.
 - `frontend/src/components/data/DataStudioSyntheticQualityPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataStudioSyntheticRecommendationsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DatasetImportWizard.test.tsx` — Phase F — UI wizard contract.
+- `frontend/src/components/data/DatasetPrepPanel.hydrate.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DocumentSampleAccordion.test.tsx` — Document-sample accordion contract.
 - `frontend/src/components/data/GoalLedgerCard.test.tsx` — Arc H — GoalLedgerCard tests.
 - `frontend/src/components/data/GoldSetDiagnosticsPanel.test.tsx` — _(no docstring)_
