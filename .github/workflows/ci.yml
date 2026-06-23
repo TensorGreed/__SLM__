@@ -125,6 +125,32 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+  docs-build:
+    # Builds the Docusaurus docs site. docusaurus.config.ts sets
+    # onBrokenLinks + onBrokenAnchors to 'throw', so a broken internal link
+    # or a stale #anchor fails the build here instead of silently
+    # accumulating warnings (which is how three broke before this gate).
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: slm-docs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: slm-docs/package-lock.json
+
+      - name: Install docs dependencies
+        run: npm ci
+
+      - name: Build docs (fails on broken links/anchors)
+        run: npm run build
+
   e2e-golden-path:
     # Locks the newbie golden path (login → sample → beginner pipeline →
     # train) against regression. Training runs on the simulate runtime
