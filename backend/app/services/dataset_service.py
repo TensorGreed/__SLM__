@@ -1209,6 +1209,19 @@ async def split_dataset(
         "total_entries": total,
         "splits": {k: len(v) for k, v in splits.items()},
         "ratios": {"train": train_ratio, "val": val_ratio, "test": test_ratio},
+        # Canonical split config — the same shape the split API response carries
+        # (resolved_split_config), now persisted so on-disk readers (dedup
+        # re-split inheritance, split-form hydration) read one key instead of
+        # reconstructing it from top-level seed + ratios. The args here ARE the
+        # resolved values (the endpoint passes resolved[...] in). `ratios` +
+        # top-level `seed`/`chat_template` stay for existing consumers.
+        "resolved_split_config": {
+            "train_ratio": train_ratio,
+            "val_ratio": val_ratio,
+            "test_ratio": test_ratio,
+            "seed": seed,
+            "chat_template": chat_template,
+        },
         "file_paths": file_paths,
         "file_hashes": file_hashes,
         "dataset_versions": dataset_versions,

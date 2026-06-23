@@ -145,12 +145,13 @@ class DedupResplitInheritsConfigTests(unittest.TestCase):
         )
         self.assertEqual(first["stratify_by"], "label")
 
-        # Sanity: the persisted manifest uses the on-disk shape (no
-        # resolved_split_config), so the inheritance code must read it.
+        # The persisted manifest now carries the canonical resolved_split_config
+        # AND keeps the legacy top-level seed + ratios for existing consumers.
         on_disk = _read_active_manifest(pid)
-        self.assertNotIn("resolved_split_config", on_disk)
         self.assertEqual(on_disk["seed"], 7)
         self.assertAlmostEqual(on_disk["ratios"]["train"], 0.7)
+        self.assertEqual(on_disk["resolved_split_config"]["seed"], 7)
+        self.assertAlmostEqual(on_disk["resolved_split_config"]["train_ratio"], 0.7)
 
         # The leakage button sends ONLY dedup_rows — no stratify, no ratios.
         manifest = self._split(pid, {"dedup_rows": True})
@@ -231,6 +232,23 @@ class ActiveManifestSplitConfigTests(unittest.TestCase):
         )
         self.assertAlmostEqual(out["train_ratio"], 0.6)
         self.assertEqual(out["seed"], 99)
+        self.assertEqual(out["chat_template"], "chatml")
+
+    def test_canonical_key_wins_when_both_present(self):
+        # split_dataset now persists BOTH resolved_split_config and the legacy
+        # ratios/seed. The canonical key must win.
+        from app.api.dataset import _active_manifest_split_config
+        out = _active_manifest_split_config(
+            {
+                "seed": 1, "chat_template": "llama3",
+                "ratios": {"train": 0.8, "val": 0.1, "test": 0.1},
+                "resolved_split_config": {
+                    "train_ratio": 0.7, "val_ratio": 0.15, "test_ratio": 0.15,
+                    "seed": 7, "chat_template": "chatml"},
+            }
+        )
+        self.assertAlmostEqual(out["train_ratio"], 0.7)
+        self.assertEqual(out["seed"], 7)
         self.assertEqual(out["chat_template"], "chatml")
 
     def test_empty_manifest_yields_empty(self):

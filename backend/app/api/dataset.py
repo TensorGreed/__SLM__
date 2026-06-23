@@ -82,18 +82,15 @@ class SplitRequest(BaseModel):
 
 
 def _active_manifest_split_config(manifest: dict) -> dict:
-    """Pull ratios/seed/chat_template out of a prepared ``manifest.json``,
-    tolerating both shapes:
+    """Pull ratios/seed/chat_template out of a prepared ``manifest.json``.
 
-    - **on-disk** (what ``split_dataset`` persists): top-level ``seed`` +
-      ``chat_template`` and ``ratios: {train, val, test}``.
-    - **API-response** (``resolved_split_config: {train_ratio, ...}``): added
-      to the split *response* but historically never written to disk.
-
-    The dedup re-split inherits the ACTIVE version's config from the on-disk
-    manifest, so it must read the on-disk shape; the resolved_split_config
-    shape is honoured as a fallback for robustness. Returns a dict keyed like
-    ``resolved_split_config`` (``train_ratio`` etc.); missing keys are absent.
+    ``split_dataset`` now persists ``resolved_split_config`` (the canonical
+    shape, identical to the split API response) — read that first. The
+    legacy fallback (top-level ``seed`` + ``ratios: {train, val, test}``)
+    is kept only for manifests prepared before that key was persisted; those
+    projects pick up the canonical key on their next Prepare. Returns a dict
+    keyed like ``resolved_split_config`` (``train_ratio`` etc.); missing keys
+    are absent.
     """
     rc = manifest.get("resolved_split_config") or {}
     ratios = manifest.get("ratios") or {}

@@ -513,10 +513,10 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
             if (stratify) { setStratifyBy(stratify); hydrated.push('stratify_by'); }
             if (disjoint) { setDisjointBy(disjoint); hydrated.push('disjoint_by'); }
 
-            // The on-disk manifest stores ratios under `ratios:{train,val,test}`
-            // with top-level `seed`/`chat_template`; the split API *response*
-            // uses `resolved_split_config:{train_ratio,...}`. Read both shapes so
-            // hydration works against the persisted file (the common case).
+            // split_dataset now persists `resolved_split_config:{train_ratio,...}`
+            // (canonical). Read it first; fall back to the legacy on-disk shape
+            // (top-level `seed`/`chat_template` + `ratios:{train,val,test}`) for
+            // manifests prepared before that key was persisted.
             const rc = (m.resolved_split_config || {}) as Record<string, unknown>;
             const ratios = (m.ratios || {}) as Record<string, unknown>;
             const trainR = typeof rc.train_ratio === 'number' ? rc.train_ratio : ratios.train;
