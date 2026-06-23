@@ -239,8 +239,11 @@ class Phase15EvaluationPackTests(unittest.TestCase):
         self.assertEqual(accuracy_gate.get("metric_id"), "accuracy")
         self.assertIsNotNone(accuracy_gate.get("actual"))
         self.assertTrue(bool(accuracy_gate.get("passed")))
-        # Alias mapping should resolve from exact_match metric snapshots.
-        self.assertEqual(accuracy_gate.get("resolved_metric_key"), "exact_match")
+        # The classification eval emits an `accuracy` snapshot directly, so the
+        # accuracy gate resolves to it (the primary alias) rather than falling
+        # through to `exact_match`. Both are in the alias list; the present
+        # primary key wins.
+        self.assertEqual(accuracy_gate.get("resolved_metric_key"), "accuracy")
 
     def test_task_aware_required_metric_schema_flags_missing_task_metrics(self):
         project_id = self._create_project("phase15-packs-task-aware-2")
