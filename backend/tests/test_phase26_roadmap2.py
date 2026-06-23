@@ -129,15 +129,36 @@ class Phase26Roadmap2Tests(unittest.TestCase):
             "Evaluation should include both quality and safety checks before deployment. "
             "Monitoring in production helps detect drift and model regressions."
         )
-        generate_resp = self.client.post(
-            f"/api/projects/{project_id}/synthetic/generate-conversations",
-            json={
-                "source_text": source_text,
-                "num_dialogues": 2,
-                "min_turns": 3,
-                "max_turns": 4,
-            },
-        )
+        # The teacher model isn't reachable in CI (no Ollama), so mock the
+        # generator. Shape mirrors the real generate_conversation_dialogues:
+        # messages as user/assistant pairs (turn_count = pair count), plus
+        # turn_count + confidence. Patched on app.api.synthetic because the
+        # sync endpoint imports the symbol at module load.
+        async def _fake_dialogues(
+            db, project_id, source_text, num_dialogues=3, min_turns=3, max_turns=4, **kwargs
+        ):
+            out = []
+            for _ in range(num_dialogues):
+                messages = []
+                for t in range(min_turns):
+                    messages.append({"role": "user", "content": f"q{t}"})
+                    messages.append({"role": "assistant", "content": f"a{t}"})
+                out.append({"messages": messages, "turn_count": min_turns, "confidence": 1.0})
+            return out
+
+        with patch(
+            "app.api.synthetic.generate_conversation_dialogues",
+            side_effect=_fake_dialogues,
+        ):
+            generate_resp = self.client.post(
+                f"/api/projects/{project_id}/synthetic/generate-conversations",
+                json={
+                    "source_text": source_text,
+                    "num_dialogues": 2,
+                    "min_turns": 3,
+                    "max_turns": 4,
+                },
+            )
         self.assertEqual(generate_resp.status_code, 200, generate_resp.text)
         payload = generate_resp.json()
         conversations = payload.get("conversations", [])
