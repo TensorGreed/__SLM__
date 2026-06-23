@@ -186,17 +186,23 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        resp = self.client.post(
-            f"/api/projects/{project_id}/training/experiments/preflight",
-            json={
-                "config": {
-                    "base_model": "microsoft/phi-2",
-                    "training_mode": "dpo",
-                    "task_type": "causal_lm",
-                    "trainer_backend": "auto",
-                }
-            },
-        )
+        # trl is a declared dependency, so simulate its absence to exercise
+        # the "DPO requires trl" preflight block (otherwise it never fires).
+        with patch(
+            "app.services.training_preflight_service._module_available",
+            side_effect=lambda name: name != "trl",
+        ):
+            resp = self.client.post(
+                f"/api/projects/{project_id}/training/experiments/preflight",
+                json={
+                    "config": {
+                        "base_model": "microsoft/phi-2",
+                        "training_mode": "dpo",
+                        "task_type": "causal_lm",
+                        "trainer_backend": "auto",
+                    }
+                },
+            )
         self.assertEqual(resp.status_code, 200, resp.text)
         payload = resp.json()
         preflight = payload.get("preflight", {})

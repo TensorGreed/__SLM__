@@ -285,7 +285,8 @@ class Phase8ExportAndHeldoutEvalTests(unittest.IsolatedAsyncioTestCase):
         captured_pairs: dict[str, list[dict]] = {"rows": []}
 
         def _mock_local_inference(
-            _model_ref, pairs, _max_new_tokens, _temperature, _stop_sequences=None
+            _model_ref, pairs, _max_new_tokens, _temperature, _stop_sequences=None,
+            **_kwargs,
         ):
             captured_pairs["rows"] = [dict(item) for item in pairs]
             predictions = [

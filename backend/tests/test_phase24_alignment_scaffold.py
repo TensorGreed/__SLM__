@@ -221,18 +221,24 @@ class Phase24AlignmentScaffoldTests(unittest.TestCase):
             ],
         )
 
-        preflight_resp = self.client.post(
-            f"/api/projects/{project_id}/training/experiments/preflight",
-            json={
-                "config": {
-                    "base_model": "microsoft/phi-2",
-                    "training_mode": "dpo",
-                    "task_type": "causal_lm",
-                    "trainer_backend": "hf_trainer",
-                    "alignment_quality_threshold": 3.0,
-                }
-            },
-        )
+        # Simulate trl-absence so the "DPO requires trl" preflight block fires
+        # (trl is installed as a declared dependency).
+        with patch(
+            "app.services.training_preflight_service._module_available",
+            side_effect=lambda name: name != "trl",
+        ):
+            preflight_resp = self.client.post(
+                f"/api/projects/{project_id}/training/experiments/preflight",
+                json={
+                    "config": {
+                        "base_model": "microsoft/phi-2",
+                        "training_mode": "dpo",
+                        "task_type": "causal_lm",
+                        "trainer_backend": "hf_trainer",
+                        "alignment_quality_threshold": 3.0,
+                    }
+                },
+            )
         self.assertEqual(preflight_resp.status_code, 200, preflight_resp.text)
         payload = preflight_resp.json()
         preflight = payload.get("preflight", {})
