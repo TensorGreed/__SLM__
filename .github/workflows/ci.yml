@@ -283,3 +283,31 @@ jobs:
             /tmp/be.log
             /tmp/fe.log
           if-no-files-found: ignore
+
+  ci-success:
+    # Single aggregate gate for branch protection. Make THIS the one required
+    # status check (not the individual jobs). It always runs, so the context is
+    # never "missing" — the footgun where a path-gated job that never reports
+    # leaves a PR stuck at "Expected — Waiting for status to be reported".
+    #
+    # It passes when every job either succeeded OR was intentionally skipped
+    # (path-gated), and fails only if a job actually failed or was cancelled.
+    # Requiring just this one check also means the required-check list never
+    # drifts as jobs are added/renamed.
+    if: always()
+    needs:
+      - changes
+      - backend-tests
+      - conformance-matrix
+      - frontend-build
+      - docs-build
+      - e2e-golden-path
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "::error::A required CI job failed or was cancelled — see the run summary."
+          exit 1
+      - name: All required jobs passed or were skipped
+        run: echo "CI gate green — every job succeeded or was intentionally path-skipped."
