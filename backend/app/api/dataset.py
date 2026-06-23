@@ -81,6 +81,41 @@ class SplitRequest(BaseModel):
         return self
 
 
+def _active_manifest_split_config(manifest: dict) -> dict:
+    """Pull ratios/seed/chat_template out of a prepared ``manifest.json``,
+    tolerating both shapes:
+
+    - **on-disk** (what ``split_dataset`` persists): top-level ``seed`` +
+      ``chat_template`` and ``ratios: {train, val, test}``.
+    - **API-response** (``resolved_split_config: {train_ratio, ...}``): added
+      to the split *response* but historically never written to disk.
+
+    The dedup re-split inherits the ACTIVE version's config from the on-disk
+    manifest, so it must read the on-disk shape; the resolved_split_config
+    shape is honoured as a fallback for robustness. Returns a dict keyed like
+    ``resolved_split_config`` (``train_ratio`` etc.); missing keys are absent.
+    """
+    rc = manifest.get("resolved_split_config") or {}
+    ratios = manifest.get("ratios") or {}
+    out: dict = {}
+    train = rc.get("train_ratio", ratios.get("train"))
+    val = rc.get("val_ratio", ratios.get("val"))
+    test = rc.get("test_ratio", ratios.get("test"))
+    seed = rc.get("seed", manifest.get("seed"))
+    chat_template = rc.get("chat_template", manifest.get("chat_template"))
+    if train is not None:
+        out["train_ratio"] = train
+    if val is not None:
+        out["val_ratio"] = val
+    if test is not None:
+        out["test_ratio"] = test
+    if seed is not None:
+        out["seed"] = seed
+    if chat_template is not None:
+        out["chat_template"] = chat_template
+    return out
+
+
 class ProfileRequest(BaseModel):
     dataset_type: DatasetType = DatasetType.CLEANED
     sample_size: int = Field(default=500, ge=10, le=5000)
@@ -265,7 +300,7 @@ async def split(
         if req.dedup_rows:
             from app.services.eval_task_handler_service import read_prepared_manifest
             active_manifest = read_prepared_manifest(project_id) or {}
-            active_resolved = active_manifest.get("resolved_split_config") or {}
+            active_resolved = _active_manifest_split_config(active_manifest)
 
         resolved, profile_defaults_applied = _resolve_split_config(
             profile_defaults=profile_defaults,

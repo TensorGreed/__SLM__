@@ -16,16 +16,16 @@ vi.mock('../../utils/workflowGraphPrefill', () => ({
 
 import DatasetPrepPanel from './DatasetPrepPanel';
 
+// The REAL on-disk prepared/manifest.json shape: top-level seed/chat_template
+// + ratios:{train,val,test}. (split_dataset does NOT persist
+// resolved_split_config — that key only exists on the split API response, so
+// the hydration must read this shape or ratios/seed silently fail to load.)
 const ACTIVE_MANIFEST = {
     stratify_by: 'label',
     disjoint_by: null,
-    resolved_split_config: {
-        train_ratio: 0.7,
-        val_ratio: 0.15,
-        test_ratio: 0.15,
-        seed: 7,
-        chat_template: 'llama3',
-    },
+    seed: 7,
+    chat_template: 'llama3',
+    ratios: { train: 0.7, val: 0.15, test: 0.15 },
 };
 
 function mockApi(manifest: Record<string, unknown>) {

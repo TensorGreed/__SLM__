@@ -90,6 +90,11 @@ def _write_active_manifest(project_id: int, manifest: dict) -> None:
     (prep / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
+def _read_active_manifest(project_id: int) -> dict:
+    path = settings.DATA_DIR / "projects" / str(project_id) / "prepared" / "manifest.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 class DedupResplitInheritsConfigTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -118,26 +123,34 @@ class DedupResplitInheritsConfigTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
         return resp.json()
 
-    # ── The load-bearing case ───────────────────────────────────────
+    # ── The load-bearing case (end-to-end against the REAL manifest) ──
 
     def test_dedup_resplit_inherits_active_stratify_by(self):
         pid = self._create_project("dedup-inherit-stratify")
         _seed_cleaned_with_file(pid, _ROWS)
-        # Active version was a STRATIFIED split on label.
-        _write_active_manifest(
+
+        # A REAL stratified split — writes the genuine on-disk manifest the
+        # dedup re-split will inherit from. (Hand-authoring a manifest with
+        # resolved_split_config would mask the on-disk shape, which stores
+        # top-level seed/chat_template + ratios:{train,val,test} instead.)
+        first = self._split(
             pid,
             {
                 "stratify_by": "label",
-                "disjoint_by": None,
-                "resolved_split_config": {
-                    "train_ratio": 0.7,
-                    "val_ratio": 0.15,
-                    "test_ratio": 0.15,
-                    "seed": 7,
-                    "chat_template": "llama3",
-                },
+                "train_ratio": 0.7,
+                "val_ratio": 0.15,
+                "test_ratio": 0.15,
+                "seed": 7,
             },
         )
+        self.assertEqual(first["stratify_by"], "label")
+
+        # Sanity: the persisted manifest uses the on-disk shape (no
+        # resolved_split_config), so the inheritance code must read it.
+        on_disk = _read_active_manifest(pid)
+        self.assertNotIn("resolved_split_config", on_disk)
+        self.assertEqual(on_disk["seed"], 7)
+        self.assertAlmostEqual(on_disk["ratios"]["train"], 0.7)
 
         # The leakage button sends ONLY dedup_rows — no stratify, no ratios.
         manifest = self._split(pid, {"dedup_rows": True})
@@ -166,15 +179,10 @@ class DedupResplitInheritsConfigTests(unittest.TestCase):
     def test_explicit_field_overrides_active_manifest(self):
         pid = self._create_project("dedup-explicit-wins")
         _seed_cleaned_with_file(pid, _ROWS)
-        _write_active_manifest(
+        self._split(
             pid,
-            {
-                "stratify_by": "label",
-                "resolved_split_config": {
-                    "train_ratio": 0.7, "val_ratio": 0.15, "test_ratio": 0.15,
-                    "seed": 7, "chat_template": "llama3",
-                },
-            },
+            {"stratify_by": "label", "train_ratio": 0.7, "val_ratio": 0.15,
+             "test_ratio": 0.15, "seed": 7},
         )
         # Caller explicitly overrides the seed on the dedup re-split.
         manifest = self._split(pid, {"dedup_rows": True, "seed": 123})
@@ -188,13 +196,46 @@ class DedupResplitInheritsConfigTests(unittest.TestCase):
     def test_normal_split_does_not_inherit(self):
         pid = self._create_project("normal-no-inherit")
         _seed_cleaned_with_file(pid, _ROWS)
-        _write_active_manifest(pid, {"stratify_by": "label"})
-        # No dedup_rows → a fresh split, no inheritance, uniform random.
+        # An active stratified version exists on disk…
+        self._split(pid, {"stratify_by": "label", "seed": 7})
+        # …but a fresh split with no dedup_rows must NOT inherit it.
         manifest = self._split(pid, {})
         self.assertIsNone(manifest.get("stratify_by"))
         self.assertIsNone(manifest.get("stratification_report"))
         self.assertEqual(manifest.get("dedup_inherited_config"), [])
         self.assertFalse(manifest.get("dedup_requested"))
+
+
+class ActiveManifestSplitConfigTests(unittest.TestCase):
+    """The normalizer must read BOTH the on-disk manifest shape and the
+    API-response shape — the regression that let ratios/seed inheritance
+    silently no-op against a real persisted manifest."""
+
+    def test_reads_on_disk_shape(self):
+        from app.api.dataset import _active_manifest_split_config
+        out = _active_manifest_split_config(
+            {"seed": 7, "chat_template": "llama3",
+             "ratios": {"train": 0.7, "val": 0.15, "test": 0.15}}
+        )
+        self.assertEqual(out["seed"], 7)
+        self.assertAlmostEqual(out["train_ratio"], 0.7)
+        self.assertAlmostEqual(out["val_ratio"], 0.15)
+        self.assertEqual(out["chat_template"], "llama3")
+
+    def test_reads_api_response_shape_as_fallback(self):
+        from app.api.dataset import _active_manifest_split_config
+        out = _active_manifest_split_config(
+            {"resolved_split_config": {
+                "train_ratio": 0.6, "val_ratio": 0.2, "test_ratio": 0.2,
+                "seed": 99, "chat_template": "chatml"}}
+        )
+        self.assertAlmostEqual(out["train_ratio"], 0.6)
+        self.assertEqual(out["seed"], 99)
+        self.assertEqual(out["chat_template"], "chatml")
+
+    def test_empty_manifest_yields_empty(self):
+        from app.api.dataset import _active_manifest_split_config
+        self.assertEqual(_active_manifest_split_config({}), {})
 
 
 if __name__ == "__main__":

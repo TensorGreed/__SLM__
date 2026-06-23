@@ -513,13 +513,23 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
             if (stratify) { setStratifyBy(stratify); hydrated.push('stratify_by'); }
             if (disjoint) { setDisjointBy(disjoint); hydrated.push('disjoint_by'); }
 
+            // The on-disk manifest stores ratios under `ratios:{train,val,test}`
+            // with top-level `seed`/`chat_template`; the split API *response*
+            // uses `resolved_split_config:{train_ratio,...}`. Read both shapes so
+            // hydration works against the persisted file (the common case).
             const rc = (m.resolved_split_config || {}) as Record<string, unknown>;
+            const ratios = (m.ratios || {}) as Record<string, unknown>;
+            const trainR = typeof rc.train_ratio === 'number' ? rc.train_ratio : ratios.train;
+            const valR = typeof rc.val_ratio === 'number' ? rc.val_ratio : ratios.val;
+            const testR = typeof rc.test_ratio === 'number' ? rc.test_ratio : ratios.test;
+            const seedV = typeof rc.seed === 'number' ? rc.seed : m.seed;
+            const templateV = typeof rc.chat_template === 'string' ? rc.chat_template : m.chat_template;
             let hydratedExplicitConfig = false;
-            if (typeof rc.train_ratio === 'number') { setTrainRatio(rc.train_ratio); hydrated.push('train_ratio'); hydratedExplicitConfig = true; }
-            if (typeof rc.val_ratio === 'number') { setValRatio(rc.val_ratio); hydratedExplicitConfig = true; }
-            if (typeof rc.test_ratio === 'number') { setTestRatio(rc.test_ratio); hydratedExplicitConfig = true; }
-            if (typeof rc.seed === 'number') { setSplitSeed(rc.seed); hydrated.push('seed'); hydratedExplicitConfig = true; }
-            if (typeof rc.chat_template === 'string') { setSplitTemplate(rc.chat_template); }
+            if (typeof trainR === 'number') { setTrainRatio(trainR); hydrated.push('train_ratio'); hydratedExplicitConfig = true; }
+            if (typeof valR === 'number') { setValRatio(valR); hydratedExplicitConfig = true; }
+            if (typeof testR === 'number') { setTestRatio(testR); hydratedExplicitConfig = true; }
+            if (typeof seedV === 'number') { setSplitSeed(seedV); hydrated.push('seed'); hydratedExplicitConfig = true; }
+            if (typeof templateV === 'string') { setSplitTemplate(templateV); }
 
             // If we pulled explicit ratios/seed from the active version, switch
             // off "use profile defaults" so a manual Run Split actually sends
