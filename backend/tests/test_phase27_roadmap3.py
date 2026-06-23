@@ -232,6 +232,19 @@ class Phase27Roadmap3Tests(unittest.TestCase):
         )
         self.assertEqual(exp_resp.status_code, 201, exp_resp.text)
         experiment_id = int(exp_resp.json()["id"])
+
+        # The training-data gate requires prepared splits on disk before a
+        # start is allowed. Seed minimal prepared data (settings.DATA_DIR is
+        # pinned to this module's fixture dir in setUpClass).
+        prepared = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
+        prepared.mkdir(parents=True, exist_ok=True)
+        for split in ("train", "val", "test"):
+            (prepared / f"{split}.jsonl").write_text(
+                '{"prompt":"hi","response":"hello"}\n'
+                '{"prompt":"bye","response":"goodbye"}\n',
+                encoding="utf-8",
+            )
+
         start_resp = self.client.post(
             f"/api/projects/{project_id}/training/experiments/{experiment_id}/start"
         )

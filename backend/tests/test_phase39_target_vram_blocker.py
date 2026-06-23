@@ -31,9 +31,8 @@ class Phase39TargetVramBlockerTests(unittest.TestCase):
             if path.exists():
                 path.unlink()
 
-    @classmethod
-    def setUpClass(cls):
-        cls._cleanup_db_files()
+    @staticmethod
+    def _wipe_data_dir():
         if TEST_DATA_DIR.exists():
             for path in sorted(TEST_DATA_DIR.rglob("*"), reverse=True):
                 if path.is_file():
@@ -41,19 +40,30 @@ class Phase39TargetVramBlockerTests(unittest.TestCase):
                 elif path.is_dir():
                     path.rmdir()
         TEST_DATA_DIR.mkdir(parents=True, exist_ok=True)
-        cls._client_cm = TestClient(app)
-        cls.client = cls._client_cm.__enter__()
 
-    @classmethod
-    def tearDownClass(cls):
-        cls._client_cm.__exit__(None, None, None)
-        cls._cleanup_db_files()
-        if TEST_DATA_DIR.exists():
-            for path in sorted(TEST_DATA_DIR.rglob("*"), reverse=True):
-                if path.is_file():
-                    path.unlink()
-                elif path.is_dir():
-                    path.rmdir()
+    # Per-test isolation (not setUpClass): the /start endpoint spawns a
+    # background watcher Job that holds the single StaticPool aiosqlite
+    # connection past the test, so a project created in the NEXT test's POST
+    # wasn't visible to its own follow-up PUT ("Project not found"). Disposing
+    # the engine + a fresh client/DB per test removes the cross-test race.
+    def setUp(self):
+        import asyncio
+        from app.database import engine
+
+        asyncio.run(engine.dispose())
+        self._cleanup_db_files()
+        self._wipe_data_dir()
+        self._client_cm = TestClient(app)
+        self.client = self._client_cm.__enter__()
+
+    def tearDown(self):
+        import asyncio
+        from app.database import engine
+
+        self._client_cm.__exit__(None, None, None)
+        asyncio.run(engine.dispose())
+        self._cleanup_db_files()
+        self._wipe_data_dir()
 
     def _create_project(self, name: str) -> int:
         resp = self.client.post(
