@@ -312,7 +312,7 @@ Set `HF_TOKEN` (or `HUGGING_FACE_HUB_TOKEN`) before running for gated
 datasets. The introspector falls into `bio_to_spans` when the dataset
 ships BIO-tagged tokens + labels, or `label_to_classification` when it
 ships a flat `{text, label}` shape — see the
-[generic dataset-import pipeline](../workflows/data-ingestion.md#generic-dataset-import-pipeline-sources-mappers)
+[generic dataset-import pipeline](../workflows/data-ingestion.md#generic-dataset-import-pipeline-sources--mappers)
 docs for the full mapper catalog.
 
 #### Kaggle datasets
