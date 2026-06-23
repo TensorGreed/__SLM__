@@ -104,6 +104,9 @@ jobs:
           python -m unittest tests.test_phase20_conformance_scale_matrix -v
 
   frontend-build:
+    # Only runs when frontend/** changed (see the `changes` job).
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -134,13 +137,16 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       docs: ${{ steps.filter.outputs.docs }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+      e2e: ${{ steps.filter.outputs.e2e }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Detect docs changes
+      - name: Detect changed areas
         id: filter
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -153,17 +159,26 @@ jobs:
           if [ -z "$base" ] \
              || [ "$base" = "0000000000000000000000000000000000000000" ] \
              || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
-            echo "Base commit unavailable — running docs-build to be safe."
-            echo "docs=true" >> "$GITHUB_OUTPUT"
+            echo "Base commit unavailable — running every gated job to be safe."
+            for n in docs frontend backend e2e; do echo "$n=true" >> "$GITHUB_OUTPUT"; done
             exit 0
           fi
           changed=$(git diff --name-only "$base" "$head")
           printf 'Changed files:\n%s\n' "$changed"
-          if echo "$changed" | grep -qE '^slm-docs/'; then
-            echo "docs=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "docs=false" >> "$GITHUB_OUTPUT"
-          fi
+          set_out() {
+            if echo "$changed" | grep -qE "$2"; then
+              echo "$1=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$1=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          set_out docs '^slm-docs/'
+          set_out frontend '^frontend/'
+          set_out backend '^backend/'
+          # The golden-path E2E drives both stacks plus the root Playwright
+          # harness (tests/, root package.json/lock, playwright*.config.*), so
+          # any of those must re-run it. A docs-only PR matches none → it skips.
+          set_out e2e '^(frontend|backend|tests)/|^package(-lock)?\.json$|^playwright[^/]*\.config\.'
 
   docs-build:
     # Builds the Docusaurus docs site. docusaurus.config.ts sets
@@ -198,6 +213,10 @@ jobs:
     # Locks the newbie golden path (login → sample → beginner pipeline →
     # train) against regression. Training runs on the simulate runtime
     # (no GPU on CI) — a path-integrity gate, not a quality gate.
+    # Only runs when a stack or the E2E harness changed (see the `changes`
+    # job's `e2e` output); a docs-only PR skips it.
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
