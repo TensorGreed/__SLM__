@@ -210,6 +210,10 @@ Joins cleaned + synthetic rows (if any), runs the chosen adapter, splits train/v
 
 The split form **hydrates from the active prepared version** on open: if the project has already been prepared, the stratify/disjoint field, ratios, seed, and chat template default to the config that produced the current splits (read from `prepared/manifest.json`) rather than empty fields — so a re-run reproduces the active split unless you change something. A "♻️ Reusing the active prepared version's split config" hint names which fields were filled. Edit any field to override.
 
+:::note Canonical split-config key
+`prepared/manifest.json` carries the split config under **`resolved_split_config`** (`{train_ratio, val_ratio, test_ratio, seed, chat_template}`) — the same shape the split API response returns. This is the canonical key readers should use (the split-form hydration and the "Re-split with dedup" inheritance both read it). The older top-level `seed`/`chat_template` and `ratios: {train, val, test}` fields are still written for back-compat; manifests prepared before `resolved_split_config` was persisted fall back to those and pick up the canonical key on their next Prepare. The manifest also reflects the **activated** version, not just the latest run — activating an older version via the Dataset Versions panel restores its `manifest.json` over the active file.
+:::
+
 ### Data Health Report (D1+D2 of the data-quality arc)
 
 The Data Prep tab opens with an aggregated **Data Health Report** at the top — a single panel that pulls every data-quality signal scattered across the platform (ingestion, cleaning, shape vs recipe, classification balance) into one traffic-light scorecard. Backed by `GET /api/projects/{id}/data-health`.
