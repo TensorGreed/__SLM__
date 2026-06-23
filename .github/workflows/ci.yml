@@ -27,15 +27,32 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run backend tests
+      - name: Run backend phase tests (per-module isolation)
         env:
           DB_AUTO_CREATE: "true"
         run: |
           . .venv/bin/activate
           mapfile -t test_modules < <(ls tests/test_phase*.py | grep -v 'test_phase20_' | sed 's#/#.#g; s#.py$##')
-          printf 'Discovered backend phase tests:\n%s\n' "${test_modules[@]}"
-          python -m unittest tests.test_phase27_roadmap3 -v
-          python -m unittest -v "${test_modules[@]}"
+          printf 'Discovered %s phase test modules\n' "${#test_modules[@]}"
+          # 56 of these modules pin their own DATABASE_URL/DATA_DIR at import.
+          # Running them in ONE unittest process collides on the single shared
+          # StaticPool aiosqlite engine — only the first import's pin wins, so
+          # the rest contaminate each other ("Project not found" / stale state,
+          # ~100 false failures). Run each module in its own process (mirrors
+          # the non-phase pytest loop below). 2 attempts tolerates the same
+          # async-job/StaticPool flakiness the non-phase loop documents.
+          fail=0
+          for m in "${test_modules[@]}"; do
+            echo "::group::$m"
+            ok=0
+            for attempt in 1 2; do
+              if python -m unittest "$m"; then ok=1; break; fi
+              echo "::warning::$m failed attempt $attempt/2"
+            done
+            if [ "$ok" -ne 1 ]; then echo "::error::$m failed after 2 attempts"; fail=1; fi
+            echo "::endgroup::"
+          done
+          exit $fail
 
       - name: Run non-phase backend tests (isolated, one pytest process each)
         env:
