@@ -279,7 +279,7 @@ class Phase46EvaluationRemediationPlanTests(unittest.TestCase):
             },
         )
         self.assertEqual(response.status_code, 409, response.text)
-        detail = dict(response.json().get("detail") or {})
+        detail = response.json()
 
         self.assertEqual(str(detail.get("error_code") or ""), "REMEDIATION_NOT_REQUIRED")
         self.assertEqual(str(detail.get("stage") or ""), "evaluation")

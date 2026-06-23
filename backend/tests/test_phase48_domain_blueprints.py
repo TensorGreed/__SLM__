@@ -199,8 +199,8 @@ class Phase48DomainBlueprintTests(unittest.TestCase):
         )
         self.assertEqual(save_resp.status_code, 400, save_resp.text)
         payload = save_resp.json()
-        self.assertEqual(payload.get("detail", {}).get("error_code"), "DOMAIN_BLUEPRINT_VALIDATION_FAILED")
-        errors = payload.get("detail", {}).get("validation", {}).get("errors", [])
+        self.assertEqual(payload.get("error_code"), "DOMAIN_BLUEPRINT_VALIDATION_FAILED")
+        errors = payload.get("validation", {}).get("errors", [])
         codes = {str(item.get("code")) for item in errors if isinstance(item, dict)}
         self.assertIn("DEPLOYMENT_CONSTRAINT_CONFLICT", codes)
 

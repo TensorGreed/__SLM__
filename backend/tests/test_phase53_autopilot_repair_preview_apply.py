@@ -223,7 +223,7 @@ class Phase53AutopilotRepairPreviewApplyTests(unittest.TestCase):
                 "/api/autopilot/repair-apply", json={"plan_token": token}
             )
         self.assertEqual(second.status_code, 409, second.text)
-        detail = dict(second.json().get("detail") or {})
+        detail = second.json()
         self.assertEqual(detail.get("reason"), "already_applied")
 
     def test_unknown_plan_token_returns_404(self):
@@ -232,7 +232,7 @@ class Phase53AutopilotRepairPreviewApplyTests(unittest.TestCase):
             json={"plan_token": "never-issued-token-xxxxxxxx"},
         )
         self.assertEqual(resp.status_code, 404, resp.text)
-        detail = dict(resp.json().get("detail") or {})
+        detail = resp.json()
         self.assertEqual(detail.get("reason"), "preview_not_found")
 
     def test_expired_preview_returns_410(self):
@@ -247,7 +247,7 @@ class Phase53AutopilotRepairPreviewApplyTests(unittest.TestCase):
             "/api/autopilot/repair-apply", json={"plan_token": token}
         )
         self.assertEqual(resp.status_code, 410, resp.text)
-        detail = dict(resp.json().get("detail") or {})
+        detail = resp.json()
         self.assertEqual(detail.get("reason"), "preview_expired")
 
     def test_state_drift_blocks_apply_but_force_overrides(self):
@@ -266,7 +266,7 @@ class Phase53AutopilotRepairPreviewApplyTests(unittest.TestCase):
             "/api/autopilot/repair-apply", json={"plan_token": token}
         )
         self.assertEqual(resp.status_code, 409, resp.text)
-        detail = dict(resp.json().get("detail") or {})
+        detail = resp.json()
         self.assertEqual(detail.get("reason"), "state_drift")
         self.assertIn("preview_state_hash", detail)
         self.assertIn("current_state_hash", detail)
@@ -295,7 +295,7 @@ class Phase53AutopilotRepairPreviewApplyTests(unittest.TestCase):
             json={"plan_token": token, "expected_state_hash": "deadbeef" * 8},
         )
         self.assertEqual(resp.status_code, 409, resp.text)
-        detail = dict(resp.json().get("detail") or {})
+        detail = resp.json()
         self.assertEqual(detail.get("reason"), "state_hash_mismatch")
 
     def test_one_click_run_still_works_as_convenience_wrapper(self):

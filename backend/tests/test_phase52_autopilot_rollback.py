@@ -259,7 +259,7 @@ class Phase52AutopilotRollbackTests(unittest.TestCase):
 
         second = self.client.post(f"/api/autopilot/rollback/{decision['id']}")
         self.assertEqual(second.status_code, 409, second.text)
-        detail = dict(second.json().get("detail") or {})
+        detail = second.json()
         self.assertEqual(detail.get("reason"), "already_rolled_back")
 
     def test_rollback_without_snapshot_returns_409(self):
@@ -287,13 +287,13 @@ class Phase52AutopilotRollbackTests(unittest.TestCase):
 
         rollback = self.client.post(f"/api/autopilot/rollback/{decision_id}")
         self.assertEqual(rollback.status_code, 409, rollback.text)
-        detail = dict(rollback.json().get("detail") or {})
+        detail = rollback.json()
         self.assertEqual(detail.get("reason"), "no_snapshot")
 
     def test_rollback_unknown_decision_returns_404(self):
         resp = self.client.post("/api/autopilot/rollback/999999999")
         self.assertEqual(resp.status_code, 404, resp.text)
-        detail = dict(resp.json().get("detail") or {})
+        detail = resp.json()
         self.assertEqual(detail.get("reason"), "decision_not_found")
 
     def test_expired_snapshot_returns_410(self):
@@ -307,7 +307,7 @@ class Phase52AutopilotRollbackTests(unittest.TestCase):
 
         resp = self.client.post(f"/api/autopilot/rollback/{decision['id']}")
         self.assertEqual(resp.status_code, 410, resp.text)
-        detail = dict(resp.json().get("detail") or {})
+        detail = resp.json()
         self.assertEqual(detail.get("reason"), "snapshot_expired")
 
     def test_purge_expired_snapshots_removes_only_expired(self):
