@@ -15,6 +15,7 @@ redis
 httpx
 PyPDF2
 python-docx
+Pillow
 datasets
 kaggle
 transformers

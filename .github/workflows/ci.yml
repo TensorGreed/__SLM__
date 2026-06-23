@@ -32,6 +32,11 @@ jobs:
           DB_AUTO_CREATE: "true"
         run: |
           . .venv/bin/activate
+          # Phase modules that DON'T pin their own DATABASE_URL fall back to the
+          # committed dev DB (data/slm_platform.db), which is stale in a fresh
+          # checkout (predates recent columns, e.g. projects.goal). Remove it so
+          # ALLOW_SQLITE_AUTOCREATE rebuilds the current schema via create_all.
+          rm -f data/slm_platform.db data/slm_platform.db-shm data/slm_platform.db-wal
           mapfile -t test_modules < <(ls tests/test_phase*.py | grep -v 'test_phase20_' | sed 's#/#.#g; s#.py$##')
           printf 'Discovered %s phase test modules\n' "${#test_modules[@]}"
           # 56 of these modules pin their own DATABASE_URL/DATA_DIR at import.
