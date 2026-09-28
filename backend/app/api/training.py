@@ -3486,6 +3486,8 @@ async def _apply_playground_auto_rag(
                     "query": query_text,
                     "retrieved": preamble["retrieved"],
                     "preamble_inserted_at": insert_at,
+                    # "qa" (Q&A pairs) or "documents" (document passages).
+                    "corpus": preamble.get("corpus", "qa"),
                 }
     return normalized_messages, auto_rag_block
 

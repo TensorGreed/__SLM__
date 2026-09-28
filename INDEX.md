@@ -689,6 +689,7 @@ session-start guidance.
 - `backend/tests/test_distillation_kd_math.py` — KD loss math + offline trainer compute_loss — Track 1, Epic A, slice 2.
 - `backend/tests/test_distillation_kd_offline.py` — Offline-KD data prep + readiness gate + recipes — Track 1, Epic A, slice 2.
 - `backend/tests/test_distillation_teacher_capture.py` — Teacher logit capture — Track 1, Epic A, slice 1.
+- `backend/tests/test_document_retrieval.py` — Document-level retrieval (Wave 2c-2).
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
 - `backend/tests/test_domain_hook_builtins.py` — Unit tests for the Gap-#1/#2 slice 1 built-in domain hooks.
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).

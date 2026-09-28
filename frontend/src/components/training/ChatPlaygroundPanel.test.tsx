@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -303,5 +303,41 @@ describe('ChatPlaygroundPanel', () => {
         expect.objectContaining({ provider: 'experiment', experiment_id: 5, api_url: undefined }),
       );
     });
+  });
+
+  it('grounds answers in document passages by default and shows citations', async () => {
+    const baseGet = apiMock.get.getMockImplementation();
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/auto-rag/documents')) {
+        return { data: { available: true, passages: 42 } };
+      }
+      return baseGet ? baseGet(url) : { data: {} };
+    });
+    await _sendChatWithMock({
+      reply: 'The K-7 has a 14-month warranty [1].',
+      provider: 'mock',
+      auto_rag: {
+        applied: true,
+        corpus: 'documents',
+        retrieved: [
+          { row_id: '5:2', score: 7.1, payload: { text: 'The K-7 carries a 14-month warranty.', source_doc: 'manual.pdf', chunk_id: 2 } },
+          { row_id: '5:7', score: 3.2, payload: { text: 'Descale every 6 weeks.', source_doc: 'manual.pdf', chunk_id: 7 } },
+        ],
+      },
+    });
+
+    const toggle = within(await screen.findByTestId('playground-ground-docs')).getByRole('checkbox') as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+    expect(screen.getByTestId('playground-ground-docs').textContent).toContain('42 passages');
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith(
+        '/projects/42/training/playground/chat',
+        expect.objectContaining({ auto_rag: true }),
+      ),
+    );
+    const chip = await screen.findByTestId(/playground-provenance-assistant-\d+-rag/);
+    expect(chip.textContent).toContain('Sources: 2 passages');
+    await userEvent.setup().click(chip);
+    expect(screen.getByTestId(/playground-provenance-assistant-\d+-cite-1/).textContent).toContain('[1] manual.pdf · passage 3');
   });
 });

@@ -35,6 +35,8 @@ interface PlaygroundRagHit {
   rowId: string;
   score: number;
   preview: string;
+  /** "manual.pdf · passage 3" for document passages (citation target). */
+  source?: string | null;
 }
 
 interface PlaygroundMessageProvenance {
@@ -50,6 +52,8 @@ interface PlaygroundMessageProvenance {
   /** First-class flag for reroute-to-RAG sibling projects (no LoRA
    *  loaded; serving the base model + retrieval). */
   ragFirstActive: boolean;
+  /** "documents" when grounded in document passages, "qa" for Q&A pairs. */
+  ragCorpus?: string | null;
 }
 
 interface PlaygroundMessage {
@@ -128,6 +132,7 @@ interface PlaygroundChatAutoRagBlock {
   }>;
   skip_reason?: string | null;
   preamble_inserted_at?: number;
+  corpus?: string;
 }
 
 interface PlaygroundChatResponse {
@@ -257,11 +262,17 @@ function _buildProvenance(
     || ((source as Record<string, unknown>).auto_rag as PlaygroundChatAutoRagBlock | undefined)
     || {}) as PlaygroundChatAutoRagBlock;
   const retrieved = Array.isArray(autoRag.retrieved) ? autoRag.retrieved : [];
-  const ragHits: PlaygroundRagHit[] = retrieved.map((chunk) => ({
-    rowId: String(chunk?.row_id ?? ''),
-    score: Number.isFinite(Number(chunk?.score)) ? Number(chunk?.score) : 0,
-    preview: _ragPayloadPreview(chunk?.payload as Record<string, unknown>),
-  }));
+  const ragHits: PlaygroundRagHit[] = retrieved.map((chunk) => {
+    const payload = (chunk?.payload || {}) as Record<string, unknown>;
+    const doc = typeof payload.source_doc === 'string' ? payload.source_doc : null;
+    const chunkId = Number(payload.chunk_id);
+    return {
+      rowId: String(chunk?.row_id ?? ''),
+      score: Number.isFinite(Number(chunk?.score)) ? Number(chunk?.score) : 0,
+      preview: _ragPayloadPreview(payload),
+      source: doc ? `${doc}${Number.isInteger(chunkId) ? ` · passage ${chunkId + 1}` : ''}` : null,
+    };
+  });
   const ragFirstActive = Boolean(
     (source as PlaygroundChatResponse).rag_first_active
     ?? ((source as Record<string, unknown>).rag_first_active as boolean | undefined),
@@ -274,6 +285,7 @@ function _buildProvenance(
     ragHits,
     ragSkipReason: autoRag.skip_reason ? String(autoRag.skip_reason) : null,
     ragFirstActive,
+    ragCorpus: autoRag.corpus ? String(autoRag.corpus) : null,
   };
 }
 
@@ -332,6 +344,10 @@ function authHeaders(): HeadersInit {
 export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelProps) {
   const [provider, setProvider] = useState<PlaygroundProvider>('mock');
   const [runs, setRuns] = useState<PlaygroundRunOption[]>([]);
+  // Document grounding: retrieve passages from the project's cleaned
+  // documents and cite them. On by default once an index exists.
+  const [docIndex, setDocIndex] = useState<{ available: boolean; passages: number | null } | null>(null);
+  const [groundInDocs, setGroundInDocs] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState('');
   const selectedRun = runs.find((run) => String(run.id) === selectedRunId) || null;
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
@@ -440,6 +456,19 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     }
   };
 
+  const loadDocumentIndex = async () => {
+    try {
+      const res = await api.get<{ available?: boolean; passages?: number | null }>(
+        `/projects/${projectId}/auto-rag/documents`,
+      );
+      const available = Boolean(res.data?.available);
+      setDocIndex({ available, passages: res.data?.passages ?? null });
+      setGroundInDocs(available);
+    } catch {
+      setDocIndex(null);
+    }
+  };
+
   const loadProviderCatalog = async () => {
     try {
       const res = await api.get<PlaygroundProviderCatalogResponse>(`/projects/${projectId}/training/playground/providers`);
@@ -480,6 +509,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     void loadSessions();
     void loadModelOptions();
     void loadRuns();
+    void loadDocumentIndex();
     void loadProviderCatalog();
     void loadFeedbackLogs();
   }, [projectId]);
@@ -815,6 +845,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
       auto_runtime_provider: true,
       session_id: activeSessionId || undefined,
       save_history: true,
+      auto_rag: groundInDocs || undefined,
       messages: nextMessages.map((item) => ({
         role: item.role,
         content: item.content,
@@ -1021,6 +1052,17 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
           <input type="checkbox" checked={streamEnabled} onChange={(e) => setStreamEnabled(e.target.checked)} />
           Stream responses
         </label>
+        {docIndex?.available && (
+          <label className="playground-toggle" data-testid="playground-ground-docs">
+            <input
+              type="checkbox"
+              checked={groundInDocs}
+              onChange={(e) => setGroundInDocs(e.target.checked)}
+            />
+            Answer from your documents
+            {docIndex.passages ? ` (${docIndex.passages} passages)` : ''} — cites sources
+          </label>
+        )}
       </div>
 
       {provider === 'openai_compatible' && (
@@ -1325,7 +1367,8 @@ function MessageProvenanceFooter({
           >
             {provenance.ragHits.length > 0 ? (
               <>
-                RAG: {provenance.ragHits.length} hit{provenance.ragHits.length === 1 ? '' : 's'}
+                {provenance.ragCorpus === 'documents' ? 'Sources' : 'RAG'}: {provenance.ragHits.length}{' '}
+                {provenance.ragCorpus === 'documents' ? 'passage' : 'hit'}{provenance.ragHits.length === 1 ? '' : 's'}
                 {topRagScore !== null ? (
                   <small> (top {topRagScore.toFixed(2)})</small>
                 ) : null}
@@ -1344,8 +1387,8 @@ function MessageProvenanceFooter({
           data-testid={`playground-provenance-${messageKey}-hits`}
         >
           {provenance.ragHits.map((hit, idx) => (
-            <li key={`${hit.rowId || idx}-${idx}`}>
-              <code>{hit.rowId || `chunk #${idx + 1}`}</code>
+            <li key={`${hit.rowId || idx}-${idx}`} data-testid={`playground-provenance-${messageKey}-cite-${idx + 1}`}>
+              <code>[{idx + 1}] {hit.source || hit.rowId || `chunk #${idx + 1}`}</code>
               <small> score {hit.score.toFixed(3)}</small>
               {hit.preview ? <p>{hit.preview}</p> : null}
             </li>

@@ -51,8 +51,14 @@ def _chunk_text(text: str, chunk_chars: int = 800, overlap: int = 120) -> list[s
 
 
 def _read_doc_text(path: Path) -> str:
+    """Extracted text of a document — never the raw bytes of a PDF/DOCX."""
+    sidecar = path.with_suffix(".extracted.txt")
     try:
-        return path.read_text(encoding="utf-8", errors="ignore")
+        if sidecar.exists():
+            return sidecar.read_text(encoding="utf-8", errors="ignore")
+        from app.utils.file_parsers import parse_file
+
+        return parse_file(path)
     except Exception:
         return ""
 
@@ -71,6 +77,35 @@ async def retrieve_project_rag_snippets(
     q_tokens = set(_tokenize(query))
     if not q_tokens:
         return []
+
+    # Prefer the cleaned document-passage BM25 index (auto_rag_service);
+    # fall back to on-the-fly overlap scoring of extracted document text.
+    from app.services.auto_rag_service import (
+        AutoRagUnavailable,
+        document_index_dir,
+        ensure_document_index,
+        retrieve,
+    )
+
+    if ensure_document_index(project_id).get("available"):
+        try:
+            hits = retrieve(query, index_dir=document_index_dir(project_id), k=safe_top_k)
+        except AutoRagUnavailable:
+            hits = []
+        if hits:
+            top_score = max(float(h["score"]) for h in hits) or 1.0
+            return [
+                {
+                    "snippet_id": f"s{rank}",
+                    "document_id": hit["payload"].get("source_document_id"),
+                    "source_doc": str(hit["payload"].get("source_doc") or "document"),
+                    "score": round(float(hit["score"]), 4),
+                    "text": str(hit["payload"].get("text") or "")[:1200],
+                    "normalized_score": round(float(hit["score"]) / top_score, 4),
+                    "rank": rank,
+                }
+                for rank, hit in enumerate(hits, start=1)
+            ]
 
     docs_query = (
         select(RawDocument, Dataset)

@@ -368,6 +368,16 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   plain-text-only test split) → `_compute_perplexity` (perplexity / mean_nll /
   bits_per_byte); lift treats `_LOWER_IS_BETTER` metrics as improved when they
   drop. Real test: SmolLM2 CPT drops held-out ppl ~2.4 → ~1.2.
+- **Document retrieval (Wave 2c-2)** — `auto_rag_service` also indexes cleaned
+  *document passages* (cleaned.jsonl rows without `row_index`; corpus key
+  `documents`) under `auto_rag/documents/bm25_index.json`, built lazily by
+  `ensure_document_index` and rebuilt when cleaned.jsonl is newer.
+  `build_preamble_from_query(corpus="auto")` = Q&A index if the recipe has one,
+  else passages with a cite-[n]/say-you-don't-know preamble; result carries
+  `corpus`. `GET /auto-rag/documents`; playground toggle "Answer from your
+  documents" (default on when available) + Sources chip with `source_doc ·
+  passage n`. `rag_sandbox_service` (RAG-compare) now uses the passage index /
+  extracted text (it read PDF bytes before).
 - **Auto-RAG** — `auto_rag_service` builds BM25 indexes at training
   completion; `playground_chat` prepends top-K retrievals. Comparison
   panel + UI-triggered `auto_rag_ab --project` Job.

@@ -103,6 +103,13 @@ Continued pretraining teaches the model your domain's language. To make it *answ
 ## After training: did it help, and chat with it
 
 - **Lift check (automatic).** When a real run finishes, a follow-up job evaluates the base model and your run on the held-out split. The bell then shows the headline change, e.g. `exact_match: 0.10 → 0.80 (better than base)`. Details: [Automatic "did fine-tuning help?" check](./evaluation-and-remediation.md#automatic-did-fine-tuning-help-check).
+- **Answer from your documents.** After cleaning, your document passages (PDF, Word, HTML, text; not row files) are indexed for retrieval under `auto_rag/documents/`. The index is rebuilt automatically when cleaning runs again. In the Playground, **Answer from your documents** is on by default once passages exist.
+  - **What happens per message.** The top passages go into the prompt, with an instruction to answer only from them, cite them as `[n]`, and say "I don't know" otherwise.
+  - **Where sources show up.** Each reply's **Sources** chip lists the passages that were retrieved (`manual.pdf · passage 3`).
+  - **Which models.** It works with the base model and with trained runs.
+  - **Q&A projects.** Projects with a Q&A recipe keep retrieving from their Q&A pairs.
+  - **Honest caveat.** Very small models (such as 135M) use the passages to get facts right, but they often skip the `[n]` citations and may still guess when the passages don't cover the question. The Sources list always reflects what was actually retrieved.
+  - **API.** `GET /api/projects/{id}/auto-rag/documents` returns the index status and builds or refreshes the index. Send `auto_rag: true` on playground chat.
 - **Chat with the run.** Open **Playground**. It starts on your latest completed run, with provider **Trained run (this project)**, and loads the checkpoint in-process: no export and no server. The first message takes a few seconds while the model loads. Use `?run=<id>` or the picker to choose another run. The **Did SFT help?** panel also links to the playground for the run it compares.
 
 ## Warm-start checkpoints

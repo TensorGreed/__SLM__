@@ -54,9 +54,14 @@ from typing import Any, Literal, TypedDict
 # retrieval surface mirrors the protocol-aware fine-tune's training
 # shape. Stage 2 customers (ecom-FAQ / legal / support) bolt their
 # own data onto the same shape.
+DOCUMENTS_CORPUS = "documents"
+
 _RECIPE_TO_TEXT_KEYS: dict[str, tuple[str, ...]] = {
     "qa-sft": ("question", "answer"),
     "rag-protocol": ("context", "question", "answer"),
+    # Not a recipe: the document-passage corpus (cleaned PDF / DOCX / HTML
+    # passages), indexed separately under ``auto_rag/documents/``.
+    DOCUMENTS_CORPUS: ("text",),
 }
 
 
@@ -438,12 +443,135 @@ _AUTO_RAG_PREAMBLE_TEMPLATE = (
 )
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Document passages (Wave 2c-2) — ground answers in the project's own
+# documents, not only in Q&A pairs.
+# ─────────────────────────────────────────────────────────────────────
+
+_PASSAGE_PREVIEW_CHARS = 700
+
+_DOCUMENT_PREAMBLE_TEMPLATE = (
+    "Passages from this project's documents:\n"
+    "{passages}\n"
+    "Answer the user's next question using only these passages and cite the "
+    "passage numbers you used, like [1]. If the passages don't contain the "
+    "answer, say you don't know."
+)
+
+
+def document_index_dir(project_id: int) -> Path:
+    from app.config import settings
+
+    return settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / DOCUMENTS_CORPUS
+
+
+def _cleaned_path(project_id: int) -> Path:
+    from app.config import settings
+
+    return settings.DATA_DIR / "projects" / str(project_id) / "cleaned" / "cleaned.jsonl"
+
+
+def load_document_passages(project_id: int) -> list[dict[str, Any]]:
+    """Cleaned document passages (chunks of PDF / DOCX / HTML / text).
+    Rows from structured files (CSV/XLSX…, which cleaning keeps
+    row-by-row with a ``row_index``) are Q&A / label data, not prose, and
+    are left to the Q&A index."""
+    path = _cleaned_path(project_id)
+    if not path.exists():
+        return []
+    passages: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict) or "row_index" in row:
+                continue
+            text = row.get("text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            document_id = row.get("source_document_id")
+            chunk_id = row.get("chunk_id")
+            passages.append({
+                "id": f"{document_id}:{chunk_id}",
+                "text": text.strip(),
+                "source_doc": row.get("source_doc"),
+                "source_document_id": document_id,
+                "chunk_id": chunk_id,
+            })
+    return passages
+
+
+def document_index_status(project_id: int) -> dict[str, Any]:
+    index_path = document_index_dir(project_id) / "bm25_index.json"
+    cleaned = _cleaned_path(project_id)
+    exists = index_path.exists()
+    stale = bool(
+        exists and cleaned.exists() and cleaned.stat().st_mtime > index_path.stat().st_mtime
+    )
+    passages = None
+    if exists:
+        try:
+            passages = int(json.loads(index_path.read_text(encoding="utf-8")).get("doc_count") or 0)
+        except (OSError, json.JSONDecodeError):
+            passages = None
+    return {"available": exists and not stale, "exists": exists, "stale": stale, "passages": passages}
+
+
+def ensure_document_index(project_id: int) -> dict[str, Any]:
+    """Build (or rebuild when cleaning ran since) the passage index. Never
+    raises; returns a status dict."""
+    status = document_index_status(project_id)
+    if status["available"]:
+        return {**status, "built": False, "reason": "up_to_date"}
+    passages = load_document_passages(project_id)
+    if not passages:
+        return {**status, "available": False, "built": False, "reason": "no_document_passages"}
+    try:
+        manifest = build_bm25_index(passages, recipe_id=DOCUMENTS_CORPUS, output_dir=document_index_dir(project_id))
+    except AutoRagUnavailable as exc:
+        return {**status, "available": False, "built": False, "reason": f"build_failed:{exc}"}
+    return {
+        "available": True,
+        "exists": True,
+        "stale": False,
+        "passages": manifest["doc_count"],
+        "built": True,
+        "reason": "ok",
+    }
+
+
+def _format_passage(idx: int, hit: RetrievedChunk) -> str:
+    payload = hit.get("payload") or {}
+    text = str(payload.get("text") or "")
+    if len(text) > _PASSAGE_PREVIEW_CHARS:
+        text = text[:_PASSAGE_PREVIEW_CHARS].rsplit(" ", 1)[0] + " …"
+    source = payload.get("source_doc") or "document"
+    chunk = payload.get("chunk_id")
+    where = f"{source} · passage {int(chunk) + 1}" if isinstance(chunk, int) else str(source)
+    return f"[{idx}] ({where}) {text}"
+
+
+def _qa_index_usable(project: Any, project_id: int) -> bool:
+    from app.config import settings
+
+    recipe_id = (project.selected_recipe or {}).get("recipe_id")
+    if not recipe_id or recipe_id == DOCUMENTS_CORPUS or recommended_text_keys_for_recipe(recipe_id) is None:
+        return False
+    return (settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / "bm25_index.json").exists()
+
+
 async def build_preamble_from_query(
     db,
     project_id: int,
     query: str,
     *,
     k: int = 3,
+    corpus: str = "auto",
 ) -> dict[str, Any] | None:
     """Phase 9b inference-time helper. Returns
     ``{preamble_text, retrieved}`` or ``None`` when auto-RAG should
@@ -462,24 +590,38 @@ async def build_preamble_from_query(
     project = await db.get(Project, project_id)
     if project is None:
         return None
-    selected_recipe = project.selected_recipe or {}
-    recipe_id = selected_recipe.get("recipe_id")
-    if not recipe_id or recommended_text_keys_for_recipe(recipe_id) is None:
-        return None  # recipe not eligible — silent skip
-    index_dir = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
-    if not (index_dir / "bm25_index.json").exists():
-        return None  # no index yet — silent skip (the build hook runs at training completion)
+    # ``corpus``: "qa" (Q&A-pair index, recipe-gated), "documents" (the
+    # project's document passages) or "auto" — Q&A pairs when the recipe
+    # has them, otherwise document passages.
+    use_qa = corpus in {"qa", "auto"} and _qa_index_usable(project, project_id)
+    if use_qa:
+        index_dir = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
+        try:
+            hits = retrieve(query, index_dir=index_dir, k=k)
+        except AutoRagUnavailable:
+            hits = []
+        if hits:
+            pairs_text = "\n\n".join(_format_pair(idx, hit) for idx, hit in enumerate(hits, start=1))
+            return {
+                "preamble_text": _AUTO_RAG_PREAMBLE_TEMPLATE.format(pairs=pairs_text),
+                "retrieved": hits,
+                "corpus": "qa",
+            }
+    if corpus not in {"documents", "auto"}:
+        return None
+    if not ensure_document_index(project_id).get("available"):
+        return None
     try:
-        hits = retrieve(query, index_dir=index_dir, k=k)
+        hits = retrieve(query, index_dir=document_index_dir(project_id), k=k)
     except AutoRagUnavailable:
         return None
     if not hits:
         return None
-    pairs_text = "\n\n".join(_format_pair(idx, hit) for idx, hit in enumerate(hits, start=1))
-    preamble_text = _AUTO_RAG_PREAMBLE_TEMPLATE.format(pairs=pairs_text)
+    passages_text = "\n\n".join(_format_passage(idx, hit) for idx, hit in enumerate(hits, start=1))
     return {
-        "preamble_text": preamble_text,
+        "preamble_text": _DOCUMENT_PREAMBLE_TEMPLATE.format(passages=passages_text),
         "retrieved": hits,
+        "corpus": DOCUMENTS_CORPUS,
     }
 
 

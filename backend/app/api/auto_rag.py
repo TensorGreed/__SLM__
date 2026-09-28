@@ -37,6 +37,22 @@ router = APIRouter(
 )
 
 
+@router.get("/documents")
+async def get_document_index(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Document-passage retrieval index for this project (cleaned PDF /
+    DOCX / HTML passages). Builds or refreshes it on the way — cheap BM25
+    over cleaned.jsonl — so the Playground can offer "answer from your
+    documents" as soon as cleaning has run."""
+    if await db.get(Project, project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    from app.services.auto_rag_service import ensure_document_index
+
+    return {"project_id": project_id, **ensure_document_index(project_id)}
+
+
 @router.get("/preview")
 async def preview_auto_rag(
     project_id: int,
