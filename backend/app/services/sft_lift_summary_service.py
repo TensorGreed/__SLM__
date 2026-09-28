@@ -71,11 +71,13 @@ class _ExperimentEval:
 
 
 async def _latest_baseline_experiment_eval(
-    db: AsyncSession, project_id: int,
+    db: AsyncSession, project_id: int, base_model: str | None = None,
 ) -> _ExperimentEval | None:
     """Find the project's most recent baseline experiment + its latest
     eval result. Baselines are identified by `config.is_baseline=True`
-    (set by `find_or_create_baseline_experiment` in quickstart.py)."""
+    (set by `post_training_eval_service.find_or_create_baseline_experiment`).
+    With ``base_model`` only that model's baseline qualifies — comparing a
+    run against a different model's baseline isn't a lift."""
     rows = await db.execute(
         select(Experiment)
         .where(Experiment.project_id == project_id)
@@ -87,6 +89,8 @@ async def _latest_baseline_experiment_eval(
         if not isinstance(cfg, dict):
             continue
         if cfg.get("is_baseline") is True:
+            if base_model and exp.base_model != base_model:
+                continue
             er = await _latest_eval_result(db, exp.id)
             if er is None:
                 continue
@@ -99,20 +103,22 @@ async def _latest_baseline_experiment_eval(
 
 
 async def _latest_trained_experiment_eval(
-    db: AsyncSession, project_id: int,
+    db: AsyncSession, project_id: int, experiment_id: int | None = None,
 ) -> _ExperimentEval | None:
     """Find the project's most recent non-baseline experiment + its
     latest eval result. We don't require ExperimentStatus.COMPLETED
     because a long training that emitted an early eval is still
     legitimately "trained" for comparison purposes — but we DO skip
     rows that have no eval result yet."""
-    rows = await db.execute(
+    query = (
         select(Experiment)
         .where(Experiment.project_id == project_id)
         .where(Experiment.status != ExperimentStatus.FAILED)
         .where(Experiment.status != ExperimentStatus.CANCELLED)
-        .order_by(desc(Experiment.id))
     )
+    if experiment_id is not None:
+        query = query.where(Experiment.id == experiment_id)
+    rows = await db.execute(query.order_by(desc(Experiment.id)))
     for exp in rows.scalars().all():
         cfg = exp.config or {}
         if isinstance(cfg, dict) and cfg.get("is_baseline") is True:
@@ -347,6 +353,7 @@ def _serialize_experiment(item: _ExperimentEval) -> dict[str, Any]:
 async def compute_sft_lift_summary(
     db: AsyncSession,
     project_id: int,
+    experiment_id: int | None = None,
 ) -> dict[str, Any]:
     """Build the "did SFT help?" summary payload for a project.
 
@@ -363,16 +370,20 @@ async def compute_sft_lift_summary(
     if project is None:
         raise ValueError(f"project_not_found:{project_id}")
 
-    baseline = await _latest_baseline_experiment_eval(db, project_id)
-    trained = await _latest_trained_experiment_eval(db, project_id)
+    trained = await _latest_trained_experiment_eval(db, project_id, experiment_id)
+    baseline = await _latest_baseline_experiment_eval(
+        db, project_id, trained.experiment.base_model if trained else None
+    )
 
     if baseline is None:
         return {
             "status": "no_baseline",
             "project_id": project_id,
             "message": (
-                "Run the Quickstart 'Baseline (untrained)' tile first to "
-                "establish a pre-SFT anchor."
+                "No baseline for this base model yet. It's evaluated "
+                "automatically after each real training run (watch the "
+                "notification bell), or run the Quickstart 'Baseline "
+                "(untrained)' tile."
             ),
             "baseline": None,
             "trained": _serialize_experiment(trained) if trained else None,

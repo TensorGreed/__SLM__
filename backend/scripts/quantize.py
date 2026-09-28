@@ -512,6 +512,24 @@ def main() -> int:
         out_path = Path(args.out).expanduser().resolve()
         adapter_path = Path(args.adapter).expanduser().resolve() if args.adapter else None
         model_source, source_origin = resolve_model_source(args.model)
+        # A LoRA run saves only the adapter. When --model points at one,
+        # quantize/convert its merged model: base from adapter_config.json,
+        # this directory as the adapter.
+        adapter_cfg_path = model_source / "adapter_config.json"
+        if adapter_path is None and model_source.is_dir() and adapter_cfg_path.is_file():
+            adapter_cfg = json.loads(adapter_cfg_path.read_text(encoding="utf-8"))
+            base_ref = str(adapter_cfg.get("base_model_name_or_path") or "").strip()
+            if not base_ref:
+                raise ValueError(
+                    f"{model_source} is a LoRA adapter without base_model_name_or_path; "
+                    "pass --adapter with the base model as --model."
+                )
+            adapter_path = model_source
+            model_source, source_origin = resolve_model_source(base_ref)
+            print_json_event(
+                "adapter_detected",
+                {"adapter": str(adapter_path), "base_model": base_ref},
+            )
         source_summary = summarize_source(model_source)
 
         print_json_event(

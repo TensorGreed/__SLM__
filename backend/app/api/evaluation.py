@@ -1248,6 +1248,7 @@ async def augment_failure_cluster_endpoint(
 @router.get("/sft-lift-summary")
 async def get_sft_lift_summary(
     project_id: int,
+    experiment_id: int | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Compute the baseline → trained lift summary for this project.
@@ -1258,7 +1259,7 @@ async def get_sft_lift_summary(
     from app.services.sft_lift_summary_service import compute_sft_lift_summary
 
     try:
-        return await compute_sft_lift_summary(db, project_id)
+        return await compute_sft_lift_summary(db, project_id, experiment_id=experiment_id)
     except ValueError as e:
         detail = str(e)
         if detail.startswith("project_not_found:"):

@@ -143,8 +143,11 @@ class Phase8ExportAndHeldoutEvalTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(export.status, ExportStatus.FAILED)
             manifest = export.manifest or {}
-            self.assertIn("Deployment validation failed", str(manifest.get("error", "")))
-            self.assertIsInstance(manifest.get("deployment"), dict)
+            # Fails fast: the raw HF weights are never packaged under a
+            # GGUF label (Wave 1b), so it never reaches deployment checks.
+            error = str(manifest.get("error", ""))
+            self.assertIn(f"GGUF artifact for run #{exp.id}", error)
+            self.assertIn("Compression", error)
 
     def test_deployment_target_defaults_for_common_formats(self):
         hf = default_deployment_targets_for_format(ExportFormat.HUGGINGFACE)

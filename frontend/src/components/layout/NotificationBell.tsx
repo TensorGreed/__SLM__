@@ -53,6 +53,9 @@ function jobDeepLink(job: Job): string | null {
     if (job.kind === 'training_start' && job.project_id) {
         return `/project/${job.project_id}/training-config`;
     }
+    if (job.kind === 'post_training_lift_eval' && job.project_id) {
+        return `/project/${job.project_id}/pipeline/eval`;
+    }
     if (job.project_id) {
         return `/project/${job.project_id}`;
     }
@@ -126,6 +129,22 @@ function jobOutcomeSummary(job: Job): string | null {
                 : `Created project #${newId}`;
         }
         return null;
+    }
+
+    if (job.kind === 'post_training_lift_eval') {
+        const h = (r.headline || null) as {
+            metric_id?: string;
+            baseline_value?: number;
+            trained_value?: number;
+            direction?: string;
+        } | null;
+        if (h && typeof h.baseline_value === 'number' && typeof h.trained_value === 'number') {
+            const verb = h.direction === 'improved'
+                ? 'better than base'
+                : h.direction === 'regressed' ? 'worse than base' : 'same as base';
+            return `${h.metric_id}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)} (${verb})`;
+        }
+        return typeof r.lift_status === 'string' ? `lift: ${r.lift_status}` : null;
     }
 
     if (job.kind === 'training_start') {

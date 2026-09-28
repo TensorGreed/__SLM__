@@ -25,6 +25,36 @@ def _compression_dir(project_id: int) -> Path:
     return d
 
 
+def experiment_id_for_model_path(project_id: int, model_path: str | None) -> int | None:
+    """The experiment id when ``model_path`` lives under this project's
+    ``experiments/<id>/`` tree (e.g. ``…/experiments/7/model``)."""
+    if not model_path:
+        return None
+    try:
+        path = Path(model_path).expanduser().resolve()
+        root = (settings.DATA_DIR / "projects" / str(project_id) / "experiments").resolve()
+        relative = path.relative_to(root)
+    except (ValueError, OSError):
+        return None
+    head = relative.parts[0] if relative.parts else ""
+    return int(head) if head.isdigit() else None
+
+
+def experiment_compression_dir(project_id: int, experiment_id: int) -> Path:
+    """Per-experiment compression outputs — export only ever packages
+    artifacts from the exported run's own directory."""
+    d = _compression_dir(project_id) / f"exp-{int(experiment_id)}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _output_dir_for_source(project_id: int, model_path: str | None) -> Path:
+    experiment_id = experiment_id_for_model_path(project_id, model_path)
+    if experiment_id is None:
+        return _compression_dir(project_id)
+    return experiment_compression_dir(project_id, experiment_id)
+
+
 def _resolve_report_path(project_id: int, report_path: str) -> Path:
     base = _compression_dir(project_id).resolve()
     requested = Path(report_path).expanduser()
@@ -146,7 +176,7 @@ async def quantize_model(
     output_format: str = "gguf",
 ) -> dict:
     """Quantize a model using either external runtime or explicit stub mode."""
-    output_dir = _compression_dir(project_id)
+    output_dir = _output_dir_for_source(project_id, model_path)
     backend = _resolve_backend()
     created_at = datetime.now(timezone.utc).isoformat()
 
@@ -236,7 +266,7 @@ async def merge_lora(
     lora_adapter_path: str,
 ) -> dict:
     """Merge LoRA adapter using external runtime or explicit stub mode."""
-    output_dir = _compression_dir(project_id) / "merged"
+    output_dir = _output_dir_for_source(project_id, lora_adapter_path) / "merged"
     output_dir.mkdir(parents=True, exist_ok=True)
     backend = _resolve_backend()
     created_at = datetime.now(timezone.utc).isoformat()

@@ -70,11 +70,15 @@ export interface SftLiftSummary {
     task_profile_used?: string | null;
 }
 
+/** ``experimentId`` pins the trained side to that run (and the baseline to
+ * its base model); omitted → the project's latest trained run. */
 export async function fetchSftLiftSummary(
     projectId: number,
+    experimentId?: number | null,
 ): Promise<SftLiftSummary> {
     const res = await api.get<SftLiftSummary>(
         `/projects/${projectId}/evaluation/sft-lift-summary`,
+        experimentId ? { params: { experiment_id: experimentId } } : undefined,
     );
     return res.data;
 }

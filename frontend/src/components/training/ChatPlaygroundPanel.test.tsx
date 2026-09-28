@@ -276,4 +276,32 @@ describe('ChatPlaygroundPanel', () => {
     expect(screen.queryByTestId(/playground-provenance-.*-latency/)).toBeNull();
     expect(screen.queryByTestId(/playground-provenance-.*-rag/)).toBeNull();
   });
+
+  it('opens on the latest completed run and chats with it in-process', async () => {
+    const baseGet = apiMock.get.getMockImplementation();
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/training/experiments')) {
+        return {
+          data: [
+            { id: 3, name: 'first', status: 'completed', base_model: 'acme/base', output_dir: '/d/3', config: {} },
+            { id: 5, name: 'latest', status: 'completed', base_model: 'acme/base', output_dir: '/d/5', config: {} },
+            { id: 6, name: 'running', status: 'running', base_model: 'acme/base', output_dir: '/d/6', config: {} },
+            { id: 7, name: 'Baseline', status: 'completed', base_model: 'acme/base', output_dir: null, config: { is_baseline: true } },
+          ],
+        };
+      }
+      return baseGet ? baseGet(url) : { data: {} };
+    });
+    await _sendChatWithMock({ reply: 'Routed to Billing.', provider: 'experiment' });
+
+    const picker = (await screen.findByLabelText('Training run')) as HTMLSelectElement;
+    expect(picker.value).toBe('5');
+    expect(Array.from(picker.options).map((o) => o.value)).toEqual(['5', '3']);
+    await waitFor(() => {
+      expect(apiMock.post).toHaveBeenCalledWith(
+        '/projects/42/training/playground/chat',
+        expect.objectContaining({ provider: 'experiment', experiment_id: 5, api_url: undefined }),
+      );
+    });
+  });
 });

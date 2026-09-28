@@ -1834,6 +1834,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
             {selectedExp && evalResults.length > 0 && (
                 <SftLiftPanel
                     projectId={projectId}
+                    experimentId={selectedExp}
                     refreshToken={evalResults.length}
                 />
             )}

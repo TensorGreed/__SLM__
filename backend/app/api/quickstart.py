@@ -46,6 +46,11 @@ from app.services.demo_project_service import (
 )
 from app.services.evaluation_service import run_heldout_evaluation
 from app.services.training_service import create_experiment, start_training
+from app.services.post_training_eval_service import (
+    eval_type_for_project,
+    find_or_create_baseline_experiment,
+    short_model_name,
+)
 
 router = APIRouter(prefix="/projects/{project_id}/quickstart", tags=["Quickstart"])
 
@@ -76,72 +81,12 @@ async def _get_project_or_404(db: AsyncSession, project_id: int) -> Project:
     return project
 
 
-def _eval_type_for_project(project: Project) -> str:
-    """Pick the eval_type label for a quickstart eval call. The
-    eval handler reads the real metrics off `prepared/manifest.json`;
-    this label is mostly informational on the result row."""
-    snapshot = project.selected_recipe or {}
-    scoring_mode = str(snapshot.get("scoring_mode") or "").strip()
-    if scoring_mode == "span_set":
-        return "f1"
-    return "exact_match"
-
-
-def _short_model_name(model_id: str) -> str:
-    """Trim a HF model id to its trailing component for use in a
-    user-facing experiment name. `HuggingFaceTB/SmolLM2-135M-Instruct`
-    → `SmolLM2-135M-Instruct`."""
-    if not model_id:
-        return "base model"
-    return model_id.rsplit("/", 1)[-1] or model_id
-
-
-async def _find_or_create_baseline_experiment(
-    db: AsyncSession,
-    project_id: int,
-    base_model: str,
-) -> Experiment:
-    """Find the existing baseline Experiment for this project +
-    base_model combo, or create one. Scoped to (project_id,
-    base_model) so switching base models gives each its own
-    baseline row (useful when comparing recipes)."""
-    name = f"Baseline · {_short_model_name(base_model)}"[:255]
-    result = await db.execute(
-        select(Experiment)
-        .where(Experiment.project_id == project_id)
-        .where(Experiment.name == name)
-        .limit(1)
-    )
-    existing = result.scalar_one_or_none()
-    if existing is not None:
-        return existing
-
-    exp = Experiment(
-        project_id=project_id,
-        name=name,
-        description=(
-            "Synthetic baseline experiment — the un-fine-tuned base model "
-            "evaluated against the project's gold/test split. Anchors "
-            "post-SFT eval numbers so 'F1 0.65' has context."
-        ),
-        status=ExperimentStatus.COMPLETED,
-        training_mode=TrainingMode.SFT,
-        base_model=base_model,
-        # `output_dir` left empty on purpose — `run_heldout_evaluation`
-        # is called with `model_path=base_model` to bypass the artifact
-        # resolver. The empty output_dir is the signal this is a
-        # synthetic / baseline row.
-        output_dir=None,
-        config={
-            "is_baseline": True,
-            "source": "quickstart.baseline-eval",
-        },
-        final_train_loss=None,
-        final_eval_loss=None,
-    )
-    db.add(exp)
-    await db.flush()
-    return exp
+# Baseline helpers live in post_training_eval_service so the automatic
+# post-training lift eval and this tile share one baseline row per
+# (project, base_model).
+_eval_type_for_project = eval_type_for_project
+_short_model_name = short_model_name
+_find_or_create_baseline_experiment = find_or_create_baseline_experiment
 
 
 # ── Endpoints ────────────────────────────────────────────────────────

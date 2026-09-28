@@ -301,6 +301,9 @@ class PlaygroundChatRequest(BaseModel):
     # power users can flip it per-request to A/B inline.
     auto_rag: bool = False
     auto_rag_k: int = Field(default=3, ge=1, le=10)
+    # provider="experiment": chat with this completed run's checkpoint,
+    # loaded in-process (local_chat_service).
+    experiment_id: int | None = Field(default=None, ge=1)
 
 
 class PlaygroundSessionCreateRequest(BaseModel):
@@ -3431,54 +3434,14 @@ async def playground_provider_catalog(
     }
 
 
-@router.post("/playground/chat")
-async def playground_chat(
+async def _apply_playground_auto_rag(
+    db: AsyncSession,
     project_id: int,
-    req: PlaygroundChatRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """Run a chat completion request for the project playground."""
-    project = await _get_project_or_404(db, project_id)
-
-    # USER-SUCCESS Epic 7 Phase 7b — RAG-first projects answer from
-    # base model + auto-RAG preamble (no LoRA adapter). Force the
-    # request's model + auto_rag flag here so the rest of the
-    # playground path treats it as any other auto-RAG request.
-    # Explicit caller-supplied model_name is overridden — the whole
-    # point of a rag_first clone is "base + retrieval," letting a
-    # caller swap models would silently defeat that.
-    from app.services.rag_project_service import is_rag_first
-
-    rag_first_active = is_rag_first(project)
-    if rag_first_active:
-        req.auto_rag = True
-        if project.base_model_name:
-            req.model_name = project.base_model_name
-
-    requested_model_name = str(req.model_name or project.base_model_name or "").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
-    runtime_resolution = resolve_playground_model_runtime(
-        model_name=requested_model_name,
-        provider=req.provider,
-    )
-    runtime_provider = str(req.provider or "").strip() or "openai_compatible"
-    if bool(req.auto_runtime_provider):
-        recommended_provider = str(runtime_resolution.get("recommended_provider") or "").strip()
-        if recommended_provider and runtime_provider in {"", "openai_compatible"}:
-            runtime_provider = recommended_provider
-    resolved_model_name = str(runtime_resolution.get("resolved_model_name") or requested_model_name)
-    normalized_messages = normalize_playground_messages(
-        messages=[item.model_dump() for item in req.messages],
-        system_prompt=req.system_prompt,
-    )
-    if not normalized_messages:
-        raise HTTPException(400, "At least one non-empty chat message is required.")
-
-    # Phase 9b — auto-RAG retrieve + prepend. Opt-in via req.auto_rag.
-    # Silently skips (returns None) when the recipe / index aren't
-    # eligible — caller sees ``auto_rag.applied == False`` in the
-    # response and infers why from ``auto_rag.skip_reason``. We pull
-    # the LAST user message as the retrieval query — multi-turn
-    # context retrieval is Phase 9b.1 if it shows up as a need.
+    req: "PlaygroundChatRequest",
+    normalized_messages: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    """Phase 9b auto-RAG retrieve + prepend, shared by the chat and stream
+    routes. Returns the (possibly augmented) messages + the audit block."""
     auto_rag_block: dict[str, Any] = {"applied": False}
     if req.auto_rag:
         last_user = next(
@@ -3524,6 +3487,118 @@ async def playground_chat(
                     "retrieved": preamble["retrieved"],
                     "preamble_inserted_at": insert_at,
                 }
+    return normalized_messages, auto_rag_block
+
+
+async def _resolve_playground_run(
+    db: AsyncSession,
+    project_id: int,
+    req: "PlaygroundChatRequest",
+    *,
+    rag_first_active: bool,
+) -> tuple[str, str, str] | None:
+    """For ``provider="experiment"``: the run's checkpoint path, a display
+    label and its base model. ``None`` for every other provider."""
+    from app.services.playground_service import _normalize_provider
+    from app.services.post_training_eval_service import _model_dir_has_weights
+
+    if _normalize_provider(req.provider) != "experiment":
+        return None
+    if rag_first_active:
+        raise HTTPException(
+            400,
+            "This is a RAG-first project: it answers from the base model plus "
+            "retrieval, not a fine-tuned run. Use the base model provider.",
+        )
+    if not req.experiment_id:
+        raise HTTPException(400, "Pick a training run to chat with (experiment_id).")
+    exp = (
+        await db.execute(
+            select(Experiment).where(
+                Experiment.id == req.experiment_id,
+                Experiment.project_id == project_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if exp is None:
+        raise HTTPException(404, f"Run #{req.experiment_id} not found in this project.")
+    if isinstance(exp.config, dict) and exp.config.get("is_baseline") is True:
+        raise HTTPException(400, "That's a baseline row, not a trained run.")
+    if exp.status != ExperimentStatus.COMPLETED:
+        raise HTTPException(
+            400, f"Run #{exp.id} is {exp.status.value}; only completed runs can chat."
+        )
+    if not _model_dir_has_weights(exp.output_dir):
+        raise HTTPException(
+            400,
+            f"Run #{exp.id} has no saved model weights (simulated or incomplete run).",
+        )
+    from app.services.evaluation_service import _resolve_model_reference
+
+    model_ref = str(_resolve_model_reference(exp, None))
+    return model_ref, f"run #{exp.id} · {exp.name}", exp.base_model
+
+
+@router.post("/playground/chat")
+async def playground_chat(
+    project_id: int,
+    req: PlaygroundChatRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run a chat completion request for the project playground."""
+    project = await _get_project_or_404(db, project_id)
+
+    # USER-SUCCESS Epic 7 Phase 7b — RAG-first projects answer from
+    # base model + auto-RAG preamble (no LoRA adapter). Force the
+    # request's model + auto_rag flag here so the rest of the
+    # playground path treats it as any other auto-RAG request.
+    # Explicit caller-supplied model_name is overridden — the whole
+    # point of a rag_first clone is "base + retrieval," letting a
+    # caller swap models would silently defeat that.
+    from app.services.rag_project_service import is_rag_first
+
+    rag_first_active = is_rag_first(project)
+    if rag_first_active:
+        req.auto_rag = True
+        if project.base_model_name:
+            req.model_name = project.base_model_name
+
+    run = await _resolve_playground_run(
+        db, project_id, req, rag_first_active=rag_first_active
+    )
+    base_model_hint: str | None = None
+    if run is not None:
+        resolved_model_name, requested_model_name, base_model_hint = run
+        runtime_provider = "experiment"
+        runtime_resolution: dict[str, Any] = {"runtime_hint": "in_process_trained_run"}
+    else:
+        requested_model_name = str(req.model_name or project.base_model_name or "").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
+        runtime_resolution = resolve_playground_model_runtime(
+            model_name=requested_model_name,
+            provider=req.provider,
+        )
+        runtime_provider = str(req.provider or "").strip() or "openai_compatible"
+        if bool(req.auto_runtime_provider):
+            recommended_provider = str(runtime_resolution.get("recommended_provider") or "").strip()
+            if recommended_provider and runtime_provider in {"", "openai_compatible"}:
+                runtime_provider = recommended_provider
+        resolved_model_name = str(runtime_resolution.get("resolved_model_name") or requested_model_name)
+    normalized_messages = normalize_playground_messages(
+        messages=[item.model_dump() for item in req.messages],
+        system_prompt=req.system_prompt,
+    )
+    if not normalized_messages:
+        raise HTTPException(400, "At least one non-empty chat message is required.")
+
+    # Phase 9b — auto-RAG retrieve + prepend. Opt-in via req.auto_rag.
+    # Silently skips (returns None) when the recipe / index aren't
+    # eligible — caller sees ``auto_rag.applied == False`` in the
+    # response and infers why from ``auto_rag.skip_reason``. We pull
+    # the LAST user message as the retrieval query — multi-turn
+    # context retrieval is Phase 9b.1 if it shows up as a need.
+    normalized_messages, auto_rag_block = await _apply_playground_auto_rag(
+        db, project_id, req, normalized_messages
+    )
 
     try:
         result = await run_playground_chat(
@@ -3535,6 +3610,7 @@ async def playground_chat(
             temperature=req.temperature,
             max_tokens=req.max_tokens,
             system_prompt=None,
+            base_model_hint=base_model_hint,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -3622,23 +3698,42 @@ async def playground_chat_stream(
 ):
     """Stream incremental chat completion chunks (SSE)."""
     project = await _get_project_or_404(db, project_id)
-    requested_model_name = str(req.model_name or project.base_model_name or "").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
-    runtime_resolution = resolve_playground_model_runtime(
-        model_name=requested_model_name,
-        provider=req.provider,
+    from app.services.rag_project_service import is_rag_first
+
+    rag_first_active = is_rag_first(project)
+    if rag_first_active:
+        req.auto_rag = True
+        if project.base_model_name:
+            req.model_name = project.base_model_name
+    run = await _resolve_playground_run(
+        db, project_id, req, rag_first_active=rag_first_active
     )
-    runtime_provider = str(req.provider or "").strip() or "openai_compatible"
-    if bool(req.auto_runtime_provider):
-        recommended_provider = str(runtime_resolution.get("recommended_provider") or "").strip()
-        if recommended_provider and runtime_provider in {"", "openai_compatible"}:
-            runtime_provider = recommended_provider
-    resolved_model_name = str(runtime_resolution.get("resolved_model_name") or requested_model_name)
+    base_model_hint: str | None = None
+    if run is not None:
+        resolved_model_name, requested_model_name, base_model_hint = run
+        runtime_provider = "experiment"
+        runtime_resolution: dict[str, Any] = {"runtime_hint": "in_process_trained_run"}
+    else:
+        requested_model_name = str(req.model_name or project.base_model_name or "").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
+        runtime_resolution = resolve_playground_model_runtime(
+            model_name=requested_model_name,
+            provider=req.provider,
+        )
+        runtime_provider = str(req.provider or "").strip() or "openai_compatible"
+        if bool(req.auto_runtime_provider):
+            recommended_provider = str(runtime_resolution.get("recommended_provider") or "").strip()
+            if recommended_provider and runtime_provider in {"", "openai_compatible"}:
+                runtime_provider = recommended_provider
+        resolved_model_name = str(runtime_resolution.get("resolved_model_name") or requested_model_name)
     normalized_messages = normalize_playground_messages(
         messages=[item.model_dump() for item in req.messages],
         system_prompt=req.system_prompt,
     )
     if not normalized_messages:
         raise HTTPException(400, "At least one non-empty chat message is required.")
+    normalized_messages, auto_rag_block = await _apply_playground_auto_rag(
+        db, project_id, req, normalized_messages
+    )
 
     async def stream_events() -> AsyncIterator[str]:
         try:
@@ -3651,6 +3746,7 @@ async def playground_chat_stream(
                 temperature=req.temperature,
                 max_tokens=req.max_tokens,
                 system_prompt=None,
+                base_model_hint=base_model_hint,
             ):
                 event_type = str(event.get("type") or "").strip().lower()
                 if event_type != "final":
@@ -3687,6 +3783,7 @@ async def playground_chat_stream(
                                 "requested_model_name": requested_model_name,
                                 "resolved_model_name": resolved_model_name,
                                 "runtime_hint": runtime_resolution.get("runtime_hint"),
+                                "auto_rag": auto_rag_block if req.auto_rag else None,
                             },
                         )
                         session_payload = serialize_playground_session_summary(session)
@@ -3705,6 +3802,7 @@ async def playground_chat_stream(
                         "resolved_model_name": resolved_model_name,
                         "resolved_provider": runtime_provider,
                         "runtime_hint": runtime_resolution.get("runtime_hint"),
+                        "auto_rag": auto_rag_block,
                     }
                 )
                 yield _sse_json(final_event)
@@ -3862,6 +3960,14 @@ async def playground_rag_compare(
     messages = [{"role": "user", "content": user_prompt}]
 
     provider = str(req.provider or "mock").strip() or "mock"
+    from app.services.playground_service import _normalize_provider
+
+    if _normalize_provider(provider) == "experiment":
+        raise HTTPException(
+            400,
+            "RAG compare runs against a model server; switch the provider to "
+            "OpenAI-compatible, llama.cpp or Mock to use it.",
+        )
     base_model_name = str(req.base_model_name or project.base_model_name or "").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
     tuned_model_name = str(req.tuned_model_name or base_model_name).strip() or base_model_name
 
@@ -5216,12 +5322,25 @@ async def _spawn_training_watcher_job(
             )
             # Honor terminal transitions.
             if status == ExperimentStatus.COMPLETED:
+                # Answer "did fine-tuning help?" without the user asking:
+                # base vs fine-tuned held-out eval as a follow-on Job.
+                from app.services.post_training_eval_service import (
+                    start_post_training_lift_job,
+                )
+
+                async with async_session_factory() as lift_db:
+                    auto_lift = await start_post_training_lift_job(
+                        lift_db,
+                        project_id=project_id,
+                        experiment_id=experiment_id,
+                    )
                 return {
                     "experiment_id": experiment_id,
                     "final_train_loss": final_loss,
                     "total_steps": total_steps,
                     "base_model": base_model,
                     "terminal_status": "completed",
+                    "auto_lift_eval": auto_lift,
                 }
             if status == ExperimentStatus.FAILED:
                 raise RuntimeError(

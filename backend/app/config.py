@@ -115,6 +115,10 @@ class Settings(BaseSettings):
     # ── Training Runtime Backend ────────────────────────────────────────
     TRAINING_BACKEND: str = "external"  # simulate | external
     ALLOW_SIMULATED_TRAINING: bool = False
+    # After every real training run, evaluate base vs fine-tuned on the
+    # held-out split (post_training_eval_service). Per-project opt-out:
+    # runtime_config["auto_lift_eval"] = False.
+    AUTO_LIFT_EVAL_ENABLED: bool = True
     TRAINING_EXTERNAL_CMD: str = (
         'python "{backend_dir}/scripts/train.py" '
         "--project {project_id} --experiment {experiment_id} "

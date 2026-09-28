@@ -28,6 +28,11 @@ from app.schemas.export import (
     OptimizationRunEvidence,
 )
 from app.services import target_profile_service
+from app.services.adapter_merge_service import (
+    adapter_base_model,
+    merge_adapter,
+    read_adapter_config,
+)
 from app.services.deployment_target_service import (
     build_deploy_target_plan,
     execute_deploy_target_plan,
@@ -224,12 +229,24 @@ def _matches_quantization(file_name: str, quantization: str | None) -> bool:
     return False
 
 
+COMPRESSED_EXPORT_FORMATS = frozenset({ExportFormat.GGUF, ExportFormat.ONNX, ExportFormat.TENSORRT})
+
+
 def _collect_compressed_files(
     project_id: int,
     export_format: ExportFormat,
     quantization: str | None,
+    experiment_id: int | None = None,
 ) -> list[Path]:
-    compressed_dir = _project_dir(project_id) / "compressed"
+    # Only the exported run's own compression outputs
+    # (``compressed/exp-<id>/``, written by compression_service when the
+    # source model lives under that experiment). The project-wide
+    # ``compressed/`` root mixes runs, so it's never searched — shipping
+    # another experiment's model under this one's name is worse than
+    # failing.
+    if experiment_id is None:
+        return []
+    compressed_dir = _project_dir(project_id) / "compressed" / f"exp-{int(experiment_id)}"
     if not compressed_dir.exists():
         return []
 
@@ -328,11 +345,15 @@ def _resolve_source_model_files(
     export_format: ExportFormat,
     quantization: str | None,
 ) -> tuple[str, list[Path], Path | None]:
-    use_compressed = export_format in {ExportFormat.GGUF, ExportFormat.ONNX, ExportFormat.TENSORRT} or bool(quantization)
-    if use_compressed:
-        compressed_files = _collect_compressed_files(project_id, export_format, quantization)
+    if export_format in COMPRESSED_EXPORT_FORMATS:
+        # A GGUF/ONNX/TensorRT export is only ever its converted artifact —
+        # never the raw HF weights relabelled.
+        compressed_files = _collect_compressed_files(
+            project_id, export_format, quantization, getattr(experiment, "id", None)
+        )
         if compressed_files:
             return "compressed", compressed_files, None
+        return "none", [], None
 
     output_dir = Path(experiment.output_dir).expanduser() if experiment.output_dir else None
     if output_dir and output_dir.exists():
@@ -748,14 +769,45 @@ async def run_export(
             quantization=export.quantization,
         )
         if not source_files:
+            if export.export_format in COMPRESSED_EXPORT_FORMATS:
+                fmt = export.export_format.value.upper()
+                quant = f" {export.quantization}" if export.quantization else ""
+                raise ValueError(
+                    f"No{quant} {fmt} artifact for run #{experiment.id}. Open Compression, "
+                    f"pick run #{experiment.id}, and convert it to {fmt}{quant} first — "
+                    "export packages that run's converted file, never the raw weights."
+                )
             raise ValueError(
-                "No model artifacts found for export. "
-                "Complete training (and compression for quantized formats) before exporting."
+                f"No model artifacts found for run #{experiment.id}. "
+                "Complete training before exporting."
             )
 
         model_dir = run_dir / "model"
         model_dir.mkdir(parents=True, exist_ok=True)
-        if source_root is not None:
+        merge_info: dict | None = None
+        adapter_cfg = (
+            read_adapter_config(source_root)
+            if source_root is not None and export.export_format not in COMPRESSED_EXPORT_FORMATS
+            else None
+        )
+        if adapter_cfg is not None:
+            # LoRA runs save only the adapter; a HuggingFace/Docker export
+            # must be a standalone model that vLLM/TGI/serve.py can load.
+            try:
+                merge_info = await asyncio.to_thread(
+                    merge_adapter,
+                    source_root,
+                    model_dir,
+                    base_model=experiment.base_model,
+                )
+            except Exception as merge_error:  # noqa: BLE001
+                raise ValueError(
+                    f"Run #{experiment.id} is a LoRA adapter and merging it into "
+                    f"{adapter_base_model(source_root, experiment.base_model)} failed: {merge_error}"
+                ) from merge_error
+            model_source = "merged_lora"
+            copied_model_files = [p for p in model_dir.rglob("*") if p.is_file()]
+        elif source_root is not None:
             copied_model_files = _copy_files_preserve_structure(source_files, model_dir, source_root)
         else:
             copied_model_files = _copy_files(source_files, model_dir)
@@ -843,6 +895,8 @@ async def run_export(
                 "count": len(copied_model_files),
                 "size_bytes": model_size_bytes,
                 "path": "model",
+                "experiment_id": experiment.id,
+                "merged_from_adapter": merge_info,
             },
             "artifacts": artifacts,
         }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from time import perf_counter
 from typing import Any, AsyncIterator
@@ -28,6 +29,18 @@ _PLAYGROUND_PROVIDER_SPECS: dict[str, dict[str, Any]] = {
         "supports_stream": True,
         "local_first": False,
     },
+    "experiment": {
+        "provider": "experiment",
+        "label": "Trained run (this project)",
+        "description": (
+            "Chat with one of this project's completed training runs, loaded "
+            "in-process — no export or external server needed."
+        ),
+        "default_api_url": None,
+        "supports_stream": True,
+        "local_first": True,
+        "requires_experiment": True,
+    },
     "llama_cpp": {
         "provider": "llama_cpp",
         "label": "llama.cpp Server",
@@ -47,6 +60,8 @@ def _normalize_provider(value: str | None) -> str:
         return "llama_cpp"
     if token in {"mock", "simulate"}:
         return "mock"
+    if token in {"experiment", "run", "trained_run", "local_run"}:
+        return "experiment"
     return token
 
 
@@ -283,8 +298,10 @@ async def run_playground_chat(
     temperature: float = 0.2,
     max_tokens: int = 512,
     system_prompt: str | None = None,
+    base_model_hint: str | None = None,
 ) -> dict[str, Any]:
-    """Run chat request against mock or OpenAI-compatible provider."""
+    """Run chat request against mock, a local trained run, or an
+    OpenAI-compatible provider."""
     normalized_provider = _normalize_provider(provider)
     normalized_messages = normalize_playground_messages(
         messages=messages,
@@ -308,9 +325,34 @@ async def run_playground_chat(
             "latency_ms": latency_ms,
         }
 
+    if normalized_provider == "experiment":
+        from app.services import local_chat_service
+
+        # ``model_name`` is the run's resolved checkpoint path (set by the
+        # API from ``experiment_id``); ``api_url`` is unused.
+        result = await asyncio.to_thread(
+            local_chat_service.generate_reply,
+            model_name,
+            normalized_messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            base_model_hint=base_model_hint,
+        )
+        return {
+            "provider": normalized_provider,
+            "model_name": model_name,
+            "reply": result["reply"],
+            "usage": result.get("usage"),
+            "finish_reason": result.get("finish_reason"),
+            "response_id": None,
+            "endpoint": None,
+            "latency_ms": round((perf_counter() - started) * 1000, 2),
+        }
+
     if normalized_provider not in {"openai_compatible", "llama_cpp"}:
         raise ValueError(
-            f"Unsupported provider '{normalized_provider}'. Use 'openai_compatible', 'llama_cpp', or 'mock'."
+            f"Unsupported provider '{normalized_provider}'. "
+            "Use 'experiment', 'openai_compatible', 'llama_cpp', or 'mock'."
         )
     default_endpoint = (
         DEFAULT_LLAMA_CPP_URL if normalized_provider == "llama_cpp" else DEFAULT_OPENAI_COMPATIBLE_URL
@@ -349,6 +391,7 @@ async def stream_playground_chat(
     temperature: float = 0.2,
     max_tokens: int = 512,
     system_prompt: str | None = None,
+    base_model_hint: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield incremental chat events and a final payload envelope."""
     normalized_provider = _normalize_provider(provider)
@@ -378,9 +421,32 @@ async def stream_playground_chat(
         }
         return
 
+    if normalized_provider == "experiment":
+        from app.services import local_chat_service
+
+        async for event in local_chat_service.astream_reply(
+            model_name,
+            normalized_messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            base_model_hint=base_model_hint,
+        ):
+            if event.get("type") != "final":
+                yield event
+                continue
+            yield {
+                **event,
+                "provider": normalized_provider,
+                "model_name": model_name,
+                "response_id": None,
+                "endpoint": None,
+            }
+        return
+
     if normalized_provider not in {"openai_compatible", "llama_cpp"}:
         raise ValueError(
-            f"Unsupported provider '{normalized_provider}'. Use 'openai_compatible', 'llama_cpp', or 'mock'."
+            f"Unsupported provider '{normalized_provider}'. "
+            "Use 'experiment', 'openai_compatible', 'llama_cpp', or 'mock'."
         )
     default_endpoint = (
         DEFAULT_LLAMA_CPP_URL if normalized_provider == "llama_cpp" else DEFAULT_OPENAI_COMPATIBLE_URL

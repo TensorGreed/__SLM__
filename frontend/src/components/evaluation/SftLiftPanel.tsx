@@ -28,6 +28,9 @@ interface SftLiftPanelProps {
     projectId: number;
     /** Triggers a refetch when this changes (e.g. eval just re-ran). */
     refreshToken?: unknown;
+    /** Compare this run (vs its base model's baseline) instead of the
+     * project's latest trained run. */
+    experimentId?: number | null;
 }
 
 function errorDetail(err: unknown, fallback: string): string {
@@ -201,6 +204,7 @@ function GateRow({ row }: { row: SftLiftGateRow }) {
 export default function SftLiftPanel({
     projectId,
     refreshToken,
+    experimentId,
 }: SftLiftPanelProps) {
     const [summary, setSummary] = useState<SftLiftSummary | null>(null);
     const [loading, setLoading] = useState(true);
@@ -210,14 +214,14 @@ export default function SftLiftPanel({
         setLoading(true);
         setError('');
         try {
-            const res = await fetchSftLiftSummary(projectId);
+            const res = await fetchSftLiftSummary(projectId, experimentId);
             setSummary(res);
         } catch (err) {
             setError(errorDetail(err, 'Failed to load lift summary.'));
         } finally {
             setLoading(false);
         }
-    }, [projectId]);
+    }, [projectId, experimentId]);
 
     useEffect(() => {
         load();
@@ -374,6 +378,15 @@ export default function SftLiftPanel({
                     )}
                 </p>
             </div>
+
+            {trained?.experiment_id != null && (
+                <a
+                    href={`/project/${projectId}/playground?run=${trained.experiment_id}`}
+                    data-testid="sft-lift-chat-link"
+                >
+                    Chat with run #{trained.experiment_id} →
+                </a>
+            )}
 
             <div data-testid="sft-lift-metric-rows">
                 {metric_lifts.map((row) => (

@@ -12,6 +12,15 @@ import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 
 interface CompressionPanelProps { projectId: number; onNextStep?: () => void; }
 
+interface RunOption {
+    id: number;
+    name: string;
+    status: string;
+    base_model: string;
+    output_dir?: string | null;
+    config?: Record<string, unknown> | null;
+}
+
 interface CompressionResult {
     status?: string;
     report_path?: string;
@@ -54,6 +63,31 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
     const [compressionError, setCompressionError] = useState<string>('');
 
     const bitOptions = BIT_OPTIONS_BY_FORMAT[format] || [4];
+    const [runs, setRuns] = useState<RunOption[]>([]);
+    const [selectedRunId, setSelectedRunId] = useState('');
+
+    // Completed, real runs — picking one fills the model path with that
+    // run's weights so the converted file is filed under the run and
+    // Export can package it for exactly that run.
+    useEffect(() => {
+        let cancelled = false;
+        api.get<RunOption[]>(`/projects/${projectId}/training/experiments`)
+            .then((res) => {
+                if (cancelled || !Array.isArray(res.data)) return;
+                setRuns(res.data.filter((exp) =>
+                    exp.status === 'completed'
+                    && !!exp.output_dir
+                    && !(exp.config && (exp.config as Record<string, unknown>).is_baseline === true)));
+            })
+            .catch(() => { /* picker is optional; manual path still works */ });
+        return () => { cancelled = true; };
+    }, [projectId]);
+
+    const handlePickRun = (value: string) => {
+        setSelectedRunId(value);
+        const run = runs.find((item) => String(item.id) === value);
+        if (run?.output_dir) setModelPath(`${run.output_dir.replace(/\/+$/, '')}/model`);
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -235,7 +269,24 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
                         Prefilled from workflow template stage: <strong>{mergePrefillStage}</strong>
                     </div>
                 )}
-                <div className="form-group"><label className="form-label">Model Path</label><input className="input" value={modelPath} onChange={e => setModelPath(e.target.value)} placeholder="Path to model directory" /></div>
+                <div className="form-group">
+                    <label className="form-label" htmlFor="compression-run-picker">Training run</label>
+                    <select
+                        id="compression-run-picker"
+                        className="input"
+                        value={selectedRunId}
+                        onChange={(e) => handlePickRun(e.target.value)}
+                    >
+                        <option value="">Choose a completed run…</option>
+                        {runs.map((run) => (
+                            <option key={run.id} value={String(run.id)}>
+                                Run #{run.id} · {run.name} · {run.base_model}
+                            </option>
+                        ))}
+                    </select>
+                    <p className="form-hint">LoRA runs are merged into their base model automatically before conversion.</p>
+                </div>
+                <div className="form-group"><label className="form-label">Model Path</label><input className="input" value={modelPath} onChange={e => { setModelPath(e.target.value); setSelectedRunId(''); }} placeholder="Path to model directory" /></div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>
                     <div className="form-group">
                         <label className="form-label">Quantization Bits</label>

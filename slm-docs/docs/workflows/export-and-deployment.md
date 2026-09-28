@@ -20,7 +20,10 @@ Optional. Quantises / prunes the trained checkpoint to fit a target's weight bud
 
 ### UI
 
-Pipeline → **Compression** → **New compression**. Pick the source checkpoint, method, and quality vs size knob. The job is queued; status pings the timeline.
+Pipeline → **Compression**. Pick the **Training run** (only completed runs are listed); the model path fills in automatically. Then choose the format and bit width. The job is queued, and its status shows on the timeline.
+
+- **LoRA runs just work.** A LoRA run saves only an adapter. Compression detects that and merges it into its base model (the one recorded in `adapter_config.json`) before converting.
+- **Outputs are filed per run.** Anything converted from a run's weights lands in `data/projects/<id>/compressed/exp-<run>/`. Export reads that folder, which is why picking the run matters.
 
 ### CLI
 
@@ -51,6 +54,11 @@ curl -X POST http://localhost:8000/api/projects/1/compression/jobs \
 ## Export
 
 Builds the **deployable artifact bundle** for a target. The export job wraps weights + tokenizer + manifest into the layout the target runtime expects.
+
+**What gets packaged:**
+
+- **HuggingFace / Docker:** the run's model. If the run is a **LoRA adapter**, it is merged into its base model first (merged in fp32, then saved in the base checkpoint's dtype). The bundle is a standalone model that vLLM, TGI and `serve.py` can load without the base. The manifest records this as `model_artifacts.source = "merged_lora"`, and `merged_from_adapter` names the base model.
+- **GGUF / ONNX / TensorRT:** only the converted file from **this run's** `compressed/exp-<run>/` folder. If you haven't compressed this run yet, export fails with a message telling you to do that. It never packages the raw weights under a GGUF/ONNX label, and never another run's file.
 
 ### Target → output bundle layout
 
@@ -133,6 +141,8 @@ exports/project-1/export-19/
 |---|---|
 | `export_run_failed` | Generic export failure — read the timeline. |
 | `export_artifact_missing` | Source checkpoint / tokenizer missing. |
+| "No GGUF artifact for run #N" | This run has no converted file yet. Open Compression, pick run #N, convert it, then export again. |
+| "…is a LoRA adapter and merging it into … failed" | The base model couldn't be loaded (offline without a cache, or torch/peft missing in the backend). |
 | `export_quantization_failed` | Mid-export quantisation step failed (when target requires INT8/Q4). |
 
 ## Optimization recommendations

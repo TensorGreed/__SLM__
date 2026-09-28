@@ -7,7 +7,16 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../../api/client';
 import './ChatPlaygroundPanel.css';
 
-type PlaygroundProvider = 'openai_compatible' | 'llama_cpp' | 'mock';
+type PlaygroundProvider = 'openai_compatible' | 'llama_cpp' | 'mock' | 'experiment';
+
+interface PlaygroundRunOption {
+  id: number;
+  name: string;
+  status: string;
+  base_model: string;
+  output_dir?: string | null;
+  config?: Record<string, unknown> | null;
+}
 type PlaygroundRole = 'system' | 'user' | 'assistant';
 
 /**
@@ -322,6 +331,9 @@ function authHeaders(): HeadersInit {
 
 export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelProps) {
   const [provider, setProvider] = useState<PlaygroundProvider>('mock');
+  const [runs, setRuns] = useState<PlaygroundRunOption[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState('');
+  const selectedRun = runs.find((run) => String(run.id) === selectedRunId) || null;
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
   const [apiKey, setApiKey] = useState('');
   const [modelName, setModelName] = useState('HuggingFaceTB/SmolLM2-135M-Instruct');
@@ -404,6 +416,30 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     }
   };
 
+  // Completed, real training runs this project can chat with in-process.
+  // With at least one, the playground opens on the latest (or ?run=<id>)
+  // so "chat with what I just trained" is zero setup.
+  const loadRuns = async () => {
+    try {
+      const res = await api.get<PlaygroundRunOption[]>(`/projects/${projectId}/training/experiments`);
+      const rows = (Array.isArray(res.data) ? res.data : []).filter(
+        (exp) => exp.status === 'completed'
+          && !!exp.output_dir
+          && !(exp.config && (exp.config as Record<string, unknown>).is_baseline === true),
+      );
+      rows.sort((a, b) => b.id - a.id);
+      setRuns(rows);
+      const requested = new URLSearchParams(window.location.search).get('run');
+      const initial = rows.find((row) => String(row.id) === requested) || rows[0];
+      if (initial) {
+        setSelectedRunId(String(initial.id));
+        setProvider((current) => (current === 'mock' || requested ? 'experiment' : current));
+      }
+    } catch {
+      setRuns([]);
+    }
+  };
+
   const loadProviderCatalog = async () => {
     try {
       const res = await api.get<PlaygroundProviderCatalogResponse>(`/projects/${projectId}/training/playground/providers`);
@@ -443,6 +479,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     setRagResult(null);
     void loadSessions();
     void loadModelOptions();
+    void loadRuns();
     void loadProviderCatalog();
     void loadFeedbackLogs();
   }, [projectId]);
@@ -768,9 +805,10 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     const tempNumber = Number.parseFloat(temperature);
     const payload: Record<string, unknown> = {
       provider,
-      model_name: modelName || undefined,
-      api_url: provider === 'mock' ? undefined : apiUrl,
-      api_key: provider !== 'mock' && apiKey.trim() ? apiKey.trim() : undefined,
+      model_name: provider === 'experiment' ? undefined : modelName || undefined,
+      experiment_id: provider === 'experiment' && selectedRunId ? Number(selectedRunId) : undefined,
+      api_url: provider === 'mock' || provider === 'experiment' ? undefined : apiUrl,
+      api_key: provider !== 'mock' && provider !== 'experiment' && apiKey.trim() ? apiKey.trim() : undefined,
       system_prompt: systemPrompt.trim() || undefined,
       temperature: Number.isFinite(tempNumber) ? tempNumber : 0.2,
       max_tokens: maxTokens,
@@ -784,10 +822,13 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     };
 
     try {
+      const metaModel = provider === 'experiment' && selectedRun
+        ? `run #${selectedRun.id} · ${selectedRun.name}`
+        : modelName;
       if (streamEnabled) {
-        await sendMessageStreaming(payload, modelName, provider);
+        await sendMessageStreaming(payload, metaModel, provider);
       } else {
-        await sendMessageNonStreaming(payload, modelName, provider);
+        await sendMessageNonStreaming(payload, metaModel, provider);
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to get playground response.';
@@ -900,6 +941,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
               ))
             ) : (
               <>
+                <option value="experiment">Trained run (this project)</option>
                 <option value="mock">Mock (local, no model runtime)</option>
                 <option value="openai_compatible">OpenAI-Compatible / Ollama</option>
                 <option value="llama_cpp">llama.cpp Server</option>
@@ -907,6 +949,28 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
             )}
           </select>
         </div>
+        {provider === 'experiment' ? (
+          <div className="form-group">
+            <label className="form-label" htmlFor="playground-run-picker">Training run</label>
+            <select
+              id="playground-run-picker"
+              className="input"
+              value={selectedRunId}
+              onChange={(e) => setSelectedRunId(e.target.value)}
+            >
+              {runs.length === 0 && <option value="">No completed runs yet — train one first</option>}
+              {runs.map((run) => (
+                <option key={run.id} value={String(run.id)}>
+                  Run #{run.id} · {run.name} · {run.base_model}
+                </option>
+              ))}
+            </select>
+            <div className="form-hint">
+              Loaded in-process from the run's checkpoint — no export or server needed. The first
+              message loads the model, so it takes a few seconds longer.
+            </div>
+          </div>
+        ) : (
         <div className="form-group">
           <label className="form-label">Model</label>
           <input className="input" value={modelName} onChange={(e) => setModelName(e.target.value)} list="playground-models" />
@@ -934,6 +998,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
             </button>
           )}
         </div>
+        )}
         <div className="form-group">
           <label className="form-label">Temperature</label>
           <input className="input" value={temperature} onChange={(e) => setTemperature(e.target.value)} />
@@ -1004,7 +1069,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
           />
         </div>
         <div className="form-group playground-form-group--action">
-          <button className="btn btn-secondary" type="button" onClick={() => void runRagCompare()} disabled={ragLoading || !ragQuery.trim()}>
+          <button className="btn btn-secondary" type="button" onClick={() => void runRagCompare()} disabled={ragLoading || !ragQuery.trim() || provider === 'experiment'} title={provider === 'experiment' ? 'RAG compare needs a model server provider' : undefined}>
             {ragLoading ? 'Comparing...' : 'Run RAG Compare'}
           </button>
         </div>

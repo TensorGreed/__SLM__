@@ -309,6 +309,25 @@ Each pack's task spec defines:
 - `gates` — per-gate threshold + `required` flag. Failing a `required` gate fails the whole eval.
 - `metric_schema` — descriptions + expected ranges for each metric.
 
+## Automatic "did fine-tuning help?" check
+
+After every **real** training run completes, BrewSLM queues a `post_training_lift_eval` job; watch it in the notification bell. The job does three things:
+
+1. **Evaluates the base model.** It runs the un-fine-tuned base model on the held-out `test` split (up to 100 rows, greedy decoding). The result is cached per base model, and it's reused until `prepared/test.jsonl` changes.
+2. **Evaluates your run.** It runs the fine-tuned checkpoint on the same split with the same settings.
+3. **Reports the lift.** It reports the headline metric, for example `exact_match: 0.10 → 0.80 (better than base)`. The **Did SFT help?** panel on the Eval tab shows the full comparison for the selected run. It always compares against the baseline for **that run's base model**, never another model's.
+
+The job is skipped, with the reason recorded on the training job, for:
+
+- simulated runs;
+- seed-group children (the leader covers the group);
+- runs without saved weights;
+- projects with `runtime_config.auto_lift_eval = false`.
+
+It can also be turned off globally with `AUTO_LIFT_EVAL_ENABLED=false`.
+
+API: `GET /api/projects/{id}/evaluation/sft-lift-summary?experiment_id=<run>` pins the comparison to one run. Leave out `experiment_id` to get the latest run.
+
 ## Step 3 — Run evaluation
 
 ### UI

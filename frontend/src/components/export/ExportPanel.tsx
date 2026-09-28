@@ -610,9 +610,26 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                 created_at: new Date().toISOString(),
             };
             setExportsList((prev) => [runPayload, ...prev]);
+            if (runRes.data.status === 'failed') {
+                const manifestError = (runRes.data.manifest as Record<string, unknown> | null)?.error;
+                setErrorMessage(
+                    typeof manifestError === 'string' && manifestError
+                        ? manifestError
+                        : 'Export failed — see the export manifest for details.',
+                );
+                setStatusMessage('');
+                return;
+            }
             const deployable = runRes.data.deployment?.summary?.deployable_artifact;
             const smokePassed = runRes.data.deployment?.summary?.local_smoke_passed;
             const summaryParts: string[] = ['Export run completed.'];
+            const modelArtifacts = (runRes.data.manifest as Record<string, unknown> | null)
+                ?.model_artifacts as { source?: string; merged_from_adapter?: { base_model?: string } | null } | undefined;
+            if (modelArtifacts?.source === 'merged_lora') {
+                summaryParts.push(
+                    `LoRA adapter merged into ${modelArtifacts.merged_from_adapter?.base_model || 'its base model'} — the package is a standalone model.`,
+                );
+            }
             if (typeof deployable === 'boolean') {
                 summaryParts.push(`Artifact deployable: ${deployable ? 'yes' : 'no'}.`);
             }

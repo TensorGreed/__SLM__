@@ -134,6 +134,13 @@ Job kinds currently:
 - `reroute_to_rag` — clone a qa-sft project into a RAG-first sibling
 - `training_start` — watcher Job that mirrors Experiment progress
 - `auto_rag_comparison` — UI-triggered auto-RAG comparison harness
+- `post_training_lift_eval` — spawned by the `training_start` watcher when a
+  real run completes (`post_training_eval_service`): base-model held-out eval
+  (cached per base model until `prepared/test.jsonl` changes) + fine-tuned
+  eval on the same split → paired lift. Skips simulate / baseline /
+  seed-child / weightless runs; opt out via `runtime_config.auto_lift_eval=false`
+  or `AUTO_LIFT_EVAL_ENABLED=false`. The shared baseline helpers
+  (`find_or_create_baseline_experiment`) live here; quickstart aliases them.
 
 Pattern to add a new kind:
 1. Endpoint accepts `?async_job=true`. When true: call
@@ -607,6 +614,24 @@ quality gate** (simulate runtime). The eval→export tail is deferred
 - **Evaluation** — `evaluation_service` runs eval packs; results land in
   `EvalResult` rows. Failure clusters, remediation plans, post-eval
   decision engine for reroute recommendations.
+  `sft_lift_summary_service.compute_sft_lift_summary(db, pid, experiment_id=)`
+  pairs a run with **its own base model's** baseline (never another model's).
+- **Export (Wave 1b)** — GGUF/ONNX/TensorRT export packages only
+  `compressed/exp-<run>/` (compression_service files outputs there when the
+  source path is under `experiments/<run>/`); no raw-weights fallback under a
+  compressed label. HF/Docker export of a LoRA run merges the adapter
+  (`adapter_merge_service.merge_adapter`: fp32 merge, saved in the base
+  checkpoint's dtype read from `AutoConfig` — `from_pretrained(dtype=fp32)`
+  overwrites `config.dtype`). `scripts/quantize.py` auto-detects an
+  adapter-only `--model`.
+- **Playground "experiment" provider** — `provider="experiment"` +
+  `experiment_id` chats with a completed run in-process
+  (`local_chat_service`: one cached model, base+adapter or full model,
+  tokenizer chat template over the whole conversation, classifier runs reply
+  with the predicted label). Chat + stream routes share
+  `_apply_playground_auto_rag` / `_resolve_playground_run` in `api/training.py`
+  (the stream route previously skipped auto-RAG and rag_first). The UI opens
+  on the latest run (or `?run=<id>`).
 - **Distillation (offline KD)** — `services/distillation/`: slice 1
   captures a teacher's top-k logprobs (`teacher_capture.py`, `POST
   .../distillation/capture` → bg task) to

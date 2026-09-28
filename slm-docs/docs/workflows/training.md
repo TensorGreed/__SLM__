@@ -90,6 +90,11 @@ Rows are paired from `source_text`/`target_text` first. After that come
 against `answer`/`completion`/`output`/`response`. A display-only `text`
 field never overrides a real prompt/answer pair.
 
+## After training: did it help, and chat with it
+
+- **Lift check (automatic).** When a real run finishes, a follow-up job evaluates the base model and your run on the held-out split. The bell then shows the headline change, e.g. `exact_match: 0.10 → 0.80 (better than base)`. Details: [Automatic "did fine-tuning help?" check](./evaluation-and-remediation.md#automatic-did-fine-tuning-help-check).
+- **Chat with the run.** Open **Playground**. It starts on your latest completed run, with provider **Trained run (this project)**, and loads the checkpoint in-process: no export and no server. The first message takes a few seconds while the model loads. Use `?run=<id>` or the picker to choose another run. The **Did SFT help?** panel also links to the playground for the run it compares.
+
 ## Warm-start checkpoints
 
 A recipe can recommend a **pre-fine-tuned warm-start checkpoint** — a base model already task-pretuned on open corpora, so your rows only teach the *delta* (~3–5× fewer rows for the same quality). Recipes carry the recommendation as `recommended_starting_checkpoint`; the task-shaped offline-KD recipes already point at the planned task bases:

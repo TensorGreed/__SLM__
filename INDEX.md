@@ -81,6 +81,7 @@ session-start guidance.
 ## Backend · Services (business logic)
 
 - `backend/app/services/active_learning_service.py` — Active-learning recommender (Theme 8 Epic 2).
+- `backend/app/services/adapter_merge_service.py` — Detect PEFT/LoRA adapter directories and merge them into full models.
 - `backend/app/services/adapter_studio_service.py` — Dataset Structure Explorer + Adapter Studio orchestration services.
 - `backend/app/services/alignment_dataset_service.py` — Preference dataset import/filter helpers for alignment training workflows.
 - `backend/app/services/alignment_service.py` — Preference alignment scaffolding: DPO/ORPO contracts and judge scoring.
@@ -179,6 +180,7 @@ session-start guidance.
 - `backend/app/services/job_service.py` — Shared Celery job helpers for status and cancellation.
 - `backend/app/services/jobs_service.py` — Generic background-job framework (Hardening Phase H1).
 - `backend/app/services/label_noise_scoring_service.py` — Quality-Lift phase 4 slice 1 — Label-noise scoring (Confident-Learning-lite).
+- `backend/app/services/local_chat_service.py` — In-process chat with a trained run's checkpoint (Playground "experiment"
 - `backend/app/services/manifest_apply_service.py` — Manifest validate / diff / apply services (priority.md P22).
 - `backend/app/services/model_benchmark_service.py` — Real sampled benchmark sweep for model-selection onboarding.
 - `backend/app/services/model_introspection_service.py` — Model introspection helpers for Hugging Face compatible model IDs.
@@ -195,6 +197,7 @@ session-start guidance.
 - `backend/app/services/plugin_contract_service.py` — Plugin contract orchestration service (priority.md P37, Wave H).
 - `backend/app/services/plugin_contracts.py` — Plugin contract definitions for BrewSLM extension modules (priority.md P37, Wave H).
 - `backend/app/services/post_eval_decision_engine_service.py` — Post-eval decision engine (USER-SUCCESS Epic 7 Phase 7a).
+- `backend/app/services/post_training_eval_service.py` — Automatic baseline-vs-fine-tuned lift eval after every real training run.
 - `backend/app/services/probe_pack_service.py` — Platform-authored held-out probe packs (Coach-stage-2 phase 8).
 - `backend/app/services/probe_runner.py` — Probe runner — Coach-stage-2 phase 9.
 - `backend/app/services/project_smoke_test_service.py` — Project smoke-test service (Diagnostics Intervention C).
@@ -690,6 +693,7 @@ session-start guidance.
 - `backend/tests/test_evaluation_per_class_gates.py` — Tests for the per-class metric flattener + endpoint (Gap #6 slice 1).
 - `backend/tests/test_experiment_clone.py` — Tests for the experiment-clone endpoint
 - `backend/tests/test_experiment_comparison.py` — Tests for the eval-aware experiment comparison service + API (E3).
+- `backend/tests/test_export_scoping_and_merge.py` — Export correctness (Wave 1b).
 - `backend/tests/test_failure_cluster_handler_drilldown.py` — Arc 2 — failure-cluster drill-down backend pass-through.
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_frontier_comparison.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
@@ -830,7 +834,9 @@ session-start guidance.
 - `backend/tests/test_phase9_tokenization.py` — Tests for the tokenization service — tokenizer loading and analysis.
 - `backend/tests/test_phase9_training_runtime_compat.py` — Compatibility tests for external training runtime adapters.
 - `backend/tests/test_pipeline_refinement.py` — Pipeline plan refinement — Phase 1 tests.
+- `backend/tests/test_playground_trained_run.py` — Playground "experiment" provider — chat with a trained run in-process
 - `backend/tests/test_post_eval_decision_engine.py` — Tests for the post-eval decision engine service
+- `backend/tests/test_post_training_lift_eval.py` — Automatic post-training lift eval (Wave 1b).
 - `backend/tests/test_probe_pack_generative.py` — Coach-stage-2 phase 10 — generative predict_fn wiring for probes.
 - `backend/tests/test_probe_pack_service.py` — Coach-stage-2 phase 8 — platform-authored held-out probe packs.
 - `backend/tests/test_probe_runner.py` — Coach-stage-2 phase 9 — probe runner scoring + aggregation.
