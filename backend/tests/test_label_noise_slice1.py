@@ -507,20 +507,15 @@ class EndpointTests(unittest.TestCase):
         ):
             CLIENT.post(f"/api/projects/{pid}/label-noise/scan")
 
-            async def _poll() -> None:
-                for _ in range(50):
-                    async with async_session_factory() as session:
-                        rows = (await session.execute(
-                            select(LabelNoiseScan).where(
-                                LabelNoiseScan.project_id == pid,
-                                LabelNoiseScan.status == LabelNoiseScanStatus.SUCCEEDED,
-                            )
-                        )).scalars().all()
-                        if rows:
-                            return
-                    await asyncio.sleep(0.05)
+            # Poll through the API (app event loop), never the engine via
+            # asyncio.run from this thread — see the test above.
+            import time
 
-            asyncio.run(_poll())
+            for _ in range(200):
+                latest = CLIENT.get(f"/api/projects/{pid}/label-noise/latest").json()
+                if (latest.get("scan") or {}).get("status") == "succeeded":
+                    break
+                time.sleep(0.05)
 
         resp = CLIENT.get(f"/api/projects/{pid}/label-noise/latest")
         body = resp.json()
