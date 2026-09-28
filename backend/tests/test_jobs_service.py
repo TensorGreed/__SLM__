@@ -375,10 +375,41 @@ class HeldoutEvalAsyncEndpointTests(unittest.TestCase):
         cls._prev_auth_enabled = settings.AUTH_ENABLED
         settings.AUTH_ENABLED = False
         cls.client = _MODULE_CLIENT_CM
+        # The background Job would otherwise run a REAL held-out eval: the
+        # quickstart baseline points at a real HF model id, so the runner
+        # downloads + loads it and generates on CPU in a worker thread the
+        # interpreter must join at exit — a multi-minute hang on CI runners
+        # (no model cache, no GPU). These tests only pin the 202 + stub
+        # contract, so fail the runner fast instead.
+        from unittest.mock import patch
+
+        async def _no_model_in_test_env(*_args, **_kwargs):
+            raise ValueError("no model available in the test environment")
+
+        cls._eval_patch = patch(
+            "app.services.evaluation_service.run_heldout_evaluation",
+            _no_model_in_test_env,
+        )
+        cls._eval_patch.start()
 
     @classmethod
     def tearDownClass(cls):
+        cls._eval_patch.stop()
         settings.AUTH_ENABLED = cls._prev_auth_enabled
+
+    def tearDown(self):
+        # Let this test's background Job finish before the next test
+        # writes: on the shared StaticPool connection a runner session's
+        # rollback can wipe the next test's uncommitted project insert
+        # ("Project N not found" — the long-standing flake here).
+        import time
+
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            resp = self.client.get("/api/jobs/active", params={"include_recently_completed": "false"})
+            if resp.status_code == 200 and not resp.json().get("jobs"):
+                return
+            time.sleep(0.1)
 
     def _instantiate_project(self, name: str) -> int:
         resp = self.client.post(
