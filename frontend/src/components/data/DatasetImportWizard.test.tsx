@@ -261,6 +261,46 @@ describe('DatasetImportWizard', () => {
         defaultApiHandlers();
     });
 
+    it('uploads a file from the computer and previews the staged file: locator', async () => {
+        const staged = '/data/projects/77/imports/ab12cd34_tickets.xlsx';
+        const baseImpl = apiMock.post.getMockImplementation();
+        apiMock.post.mockImplementation(async (url: string, body?: unknown) => {
+            if (url === '/projects/77/dataset-import/upload') {
+                return {
+                    data: {
+                        locator: `file:${staged}`,
+                        filename: 'tickets.xlsx',
+                        size_bytes: 1234,
+                        introspection: HIGH_CONFIDENCE_INTROSPECTION,
+                    },
+                };
+            }
+            return baseImpl ? baseImpl(url, body) : { data: {} };
+        });
+        const user = userEvent.setup();
+        render(<DatasetImportWizard projectId={77} onClose={() => undefined} />);
+
+        const file = new File(['text,label\nhi,pos\n'], 'tickets.xlsx');
+        await user.upload(await screen.findByTestId('upload-input'), file);
+        await waitFor(() =>
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/77/dataset-import/upload',
+                expect.any(FormData),
+            ),
+        );
+        // Upload returns the introspection directly — no separate
+        // /introspect call, and the wizard moves on to the recipe step.
+        await skipRecipeStep(user);
+        expect(apiMock.post).not.toHaveBeenCalledWith('/dataset-import/introspect', expect.anything());
+        await user.click(await screen.findByTestId('preview-btn'));
+        await waitFor(() =>
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/77/dataset-import/preview',
+                expect.objectContaining({ locator: `file:${staged}` }),
+            ),
+        );
+    });
+
     it('walks the happy path: introspect → map → preview → run', async () => {
         const user = userEvent.setup();
         const onSuccess = vi.fn();

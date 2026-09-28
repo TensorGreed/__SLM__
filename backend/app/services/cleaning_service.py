@@ -1,7 +1,6 @@
 """Data Cleaning service — deduplication, PII detection, quality scoring, chunking."""
 
 import asyncio
-import csv
 import hashlib
 import json
 import re
@@ -16,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.utils.tabular_io import is_tabular, load_rows, read_text_file
 from app.database import async_session_factory
 from app.models.dataset import Dataset, DatasetType, RawDocument
 
@@ -247,36 +247,12 @@ def _render_record_text(record: object) -> str:
 def _load_rows_from_source_file(file_path: Path) -> list[object]:
     if not file_path.exists():
         return []
-
-    ext = file_path.suffix.lower()
-    rows: list[object] = []
-
-    if ext == ".jsonl":
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            for line in f:
-                token = line.strip()
-                if not token:
-                    continue
-                try:
-                    rows.append(json.loads(token))
-                except json.JSONDecodeError:
-                    rows.append(token)
-        return rows
-
-    if ext == ".json":
-        raw = json.loads(file_path.read_text(encoding="utf-8"))
-        if isinstance(raw, list):
-            return list(raw)
-        return [raw]
-
-    if ext == ".csv":
-        with open(file_path, "r", encoding="utf-8", errors="replace", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                rows.append(dict(row))
-        return rows
-
-    return [file_path.read_text(encoding="utf-8", errors="replace")]
+    if is_tabular(file_path):
+        try:
+            return list(load_rows(file_path))
+        except ValueError:
+            pass
+    return [read_text_file(file_path)]
 
 
 def _materialize_extracted_text(doc: RawDocument) -> Path:
@@ -331,6 +307,178 @@ async def get_or_create_cleaned_dataset(
     return ds
 
 
+async def _replace_document_entries(
+    db: AsyncSession,
+    project_id: int,
+    document_id: int,
+    new_entries: list[dict],
+) -> Path:
+    """Swap this document's rows in the project's cleaned.jsonl (other
+    documents' rows are kept) and update the CLEANED dataset."""
+    cleaned_ds = await get_or_create_cleaned_dataset(db, project_id)
+    cleaned_file_path = _cleaned_dir(project_id) / "cleaned.jsonl"
+
+    existing_entries: list[dict] = []
+    if cleaned_file_path.exists():
+        with open(cleaned_file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("source_document_id") != document_id:
+                    existing_entries.append(entry)
+
+    merged_entries = existing_entries + new_entries
+    with open(cleaned_file_path, "w", encoding="utf-8") as f:
+        for idx, entry in enumerate(merged_entries, start=1):
+            entry["id"] = idx
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    cleaned_ds.file_path = str(cleaned_file_path)
+    cleaned_ds.record_count = len(merged_entries)
+    return cleaned_file_path
+
+
+def _clean_value(
+    value: object,
+    *,
+    redact: bool,
+    redact_toxic: bool,
+    pii_findings: list[dict],
+    toxicity_findings: list[dict],
+) -> object:
+    if isinstance(value, str):
+        text = value.strip()
+        pii = detect_pii(text)
+        toxic = detect_toxicity(text)
+        pii_findings.extend(pii)
+        toxicity_findings.extend(toxic)
+        if redact and pii:
+            text = redact_pii(text)
+        if redact_toxic and toxic:
+            text = redact_toxicity(text)
+        return text
+    if isinstance(value, list):
+        return [
+            _clean_value(v, redact=redact, redact_toxic=redact_toxic,
+                         pii_findings=pii_findings, toxicity_findings=toxicity_findings)
+            for v in value
+        ]
+    if isinstance(value, dict):
+        return {
+            k: _clean_value(v, redact=redact, redact_toxic=redact_toxic,
+                            pii_findings=pii_findings, toxicity_findings=toxicity_findings)
+            for k, v in value.items()
+        }
+    return value
+
+
+_ROW_BOOKKEEPING_KEYS = frozenset({"source_document_id", "source_doc", "chunk_id", "row_index"})
+
+
+async def _clean_structured_document(
+    db: AsyncSession,
+    project_id: int,
+    doc: RawDocument,
+    rows: list[dict],
+    *,
+    redact: bool,
+    redact_toxic: bool,
+) -> dict:
+    """Row-preserving cleaning: per-field PII/toxicity redaction, drop empty
+    and exact-duplicate rows, keep every column. Fields starting with ``_``
+    (adapter bookkeeping like ``_task_profile``) pass through untouched."""
+    pii_findings: list[dict] = []
+    toxicity_findings: list[dict] = []
+    seen: set[str] = set()
+    entries: list[dict] = []
+    empty_dropped = duplicates_dropped = 0
+    text_sample: list[str] = []
+
+    for index, row in enumerate(rows):
+        cleaned_row: dict = {}
+        for key, value in row.items():
+            if str(key).startswith("_"):
+                cleaned_row[key] = value
+                continue
+            cleaned_row[key] = _clean_value(
+                value,
+                redact=redact,
+                redact_toxic=redact_toxic,
+                pii_findings=pii_findings,
+                toxicity_findings=toxicity_findings,
+            )
+        content = {k: v for k, v in cleaned_row.items() if not str(k).startswith("_")}
+        if not any(isinstance(v, str) and v for v in content.values()) and not any(
+            isinstance(v, (list, dict, int, float)) for v in content.values()
+        ):
+            empty_dropped += 1
+            continue
+        fingerprint = json.dumps(content, sort_keys=True, ensure_ascii=False, default=str)
+        if fingerprint in seen:
+            duplicates_dropped += 1
+            continue
+        seen.add(fingerprint)
+        if "id" in cleaned_row:
+            cleaned_row["source_row_id"] = cleaned_row.pop("id")
+        for key in _ROW_BOOKKEEPING_KEYS & set(cleaned_row):
+            cleaned_row[f"source_{key}"] = cleaned_row.pop(key)
+        if len(text_sample) < 200:
+            text_sample.append(_render_record_text(content))
+        entries.append({
+            **cleaned_row,
+            "source_document_id": doc.id,
+            "source_doc": doc.filename,
+            "chunk_id": len(entries),
+            "row_index": index,
+        })
+
+    if not entries:
+        raise ValueError(f"{doc.filename} has no non-empty rows after cleaning.")
+
+    cleaned_file_path = await _replace_document_entries(db, project_id, doc.id, entries)
+    sample_text = "\n\n".join(t for t in text_sample if t)
+    quality = compute_quality_score(sample_text) if sample_text else 0.0
+
+    doc.quality_score = quality
+    doc.chunk_count = len(entries)
+    doc.metadata_ = {
+        **(doc.metadata_ or {}),
+        "structured": True,
+        "cleaned_dataset_path": str(cleaned_file_path),
+        "rows_in": len(rows),
+        "rows_kept": len(entries),
+        "empty_rows_dropped": empty_dropped,
+        "duplicate_rows_dropped": duplicates_dropped,
+        "pii_count": len(pii_findings),
+        "pii_types": sorted({f["type"] for f in pii_findings}),
+        "toxicity_count": len(toxicity_findings),
+        "toxicity_types": sorted({f["type"] for f in toxicity_findings}),
+        "chunk_count": len(entries),
+    }
+    await db.flush()
+    await db.refresh(doc)
+    return {
+        "document_id": doc.id,
+        "structured": True,
+        "quality_score": quality,
+        "pii_findings": pii_findings,
+        "toxicity_findings": toxicity_findings,
+        "chunk_count": len(entries),
+        "rows_in": len(rows),
+        "rows_kept": len(entries),
+        "duplicate_rows_dropped": duplicates_dropped,
+        "empty_rows_dropped": empty_dropped,
+        "original_chars": len(sample_text),
+        "cleaned_chars": len(sample_text),
+        "text_hash": compute_text_hash(sample_text),
+    }
+
+
 # ── Main Cleaning Pipeline ─────────────────────────────────────────────
 
 async def clean_document(
@@ -354,6 +502,26 @@ async def clean_document(
     doc = result.scalar_one_or_none()
     if not doc:
         raise ValueError(f"Document {document_id} not found")
+
+    # Row files (CSV/TSV/JSON(L)/XLSX/Parquet, incl. HF/Kaggle imports) keep
+    # their columns: one cleaned row per record. Flattening them into text
+    # and chunking at 1000 chars destroyed labelled data before it ever
+    # reached training.
+    source_path = Path(doc.file_path)
+    if is_tabular(source_path) and source_path.exists():
+        try:
+            structured_rows = load_rows(source_path)
+        except ValueError:
+            structured_rows = []
+        if structured_rows and all(isinstance(r, dict) for r in structured_rows):
+            return await _clean_structured_document(
+                db,
+                project_id,
+                doc,
+                structured_rows,
+                redact=redact,
+                redact_toxic=redact_toxic,
+            )
 
     # Read extracted text
     extracted_path = _materialize_extracted_text(doc)
@@ -396,24 +564,6 @@ async def clean_document(
         for i, chunk in enumerate(chunks):
             f.write(json.dumps({"chunk_id": i, "text": chunk, "source_doc": doc.filename}) + "\n")
 
-    # Upsert project-level cleaned dataset so dataset prep can consume cleaned data.
-    cleaned_ds = await get_or_create_cleaned_dataset(db, project_id)
-    cleaned_file_path = _cleaned_dir(project_id) / "cleaned.jsonl"
-
-    existing_entries: list[dict] = []
-    if cleaned_file_path.exists():
-        with open(cleaned_file_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if entry.get("source_document_id") != doc.id:
-                    existing_entries.append(entry)
-
     new_entries = [
         {
             "source_document_id": doc.id,
@@ -423,15 +573,7 @@ async def clean_document(
         }
         for i, chunk in enumerate(chunks)
     ]
-    merged_entries = existing_entries + new_entries
-
-    with open(cleaned_file_path, "w", encoding="utf-8") as f:
-        for idx, entry in enumerate(merged_entries, start=1):
-            entry["id"] = idx
-            f.write(json.dumps(entry) + "\n")
-
-    cleaned_ds.file_path = str(cleaned_file_path)
-    cleaned_ds.record_count = len(merged_entries)
+    cleaned_file_path = await _replace_document_entries(db, project_id, doc.id, new_entries)
 
     # Update document record
     doc.quality_score = quality

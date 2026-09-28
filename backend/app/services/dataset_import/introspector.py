@@ -624,6 +624,37 @@ def detect_shape(
             )
         )
 
+    # ── summarization ──
+    # {long text, summary} with no question column. Routed through the
+    # qa passthrough mapper (source → question, summary → answer); the
+    # seq2seq-pair adapter then wraps it in the Summarize prompt.
+    summary_sig = _find_column(
+        signatures,
+        ("summary", "abstract", "highlights", "tldr", "tl_dr", "synopsis", "headline", "gist"),
+        column_types=(TEXT_LIKE, CATEGORICAL),
+    )
+    source_sig = _find_column(
+        signatures,
+        ("article", "document", "text", "content", "body", "passage", "dialogue", "transcript", "source"),
+        column_types=(TEXT_LIKE,),
+    )
+    if summary_sig and source_sig and not question_sig and source_sig.name != summary_sig.name:
+        confidence = min(0.93, (summary_sig.confidence + source_sig.confidence) / 2 + 0.12)
+        hypotheses.append(
+            ShapeHypothesis(
+                mapper_id="qa_pair_passthrough",
+                target_task_profile="summarization",
+                field_map={
+                    "question_field": source_sig.name,
+                    "answer_field": summary_sig.name,
+                },
+                confidence=confidence,
+                rationale=(
+                    f"detected text '{source_sig.name}' + summary '{summary_sig.name}'"
+                ),
+            )
+        )
+
     # ── qa_pair_passthrough ──
     # {question, answer} WITHOUT a context column. We deliberately
     # don't propose QA when context exists — rag_passthrough is the

@@ -6220,6 +6220,9 @@ async def build_data_studio_mapping_preview(
     recipe_payload = _recipe_payload(project)
     preference = await resolve_project_dataset_adapter_preference(db, project_id)
     preference_source = str(preference.get("source") or "default")
+    if preference_source == "project" and preference.get("origin") == "recipe":
+        # Preset written by picking the recipe — label it as the recipe's.
+        preference_source = "recipe"
     field_mapping = dict(preference.get("field_mapping") or {})
     adapter_config = dict(preference.get("adapter_config") or {})
 

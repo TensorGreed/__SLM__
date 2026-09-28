@@ -5,6 +5,8 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../../api/client';
 import DataHealthReportPanel from './DataHealthReportPanel';
+import TaskShapeConfirmCard from './TaskShapeConfirmCard';
+import { fetchProjectTaskShape, type ProjectTaskShape } from '../../api/taskShape';
 import StepFooter from '../shared/StepFooter';
 import { toast } from '../../stores/toastStore';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
@@ -468,6 +470,19 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         }
     };
 
+    // Unified task-shape detector over the project's current data — the
+    // documents path never passes through the import wizard, so the
+    // "what kind of task is this?" confirmation lives here too.
+    const [taskShape, setTaskShape] = useState<ProjectTaskShape | null>(null);
+    const loadTaskShape = async () => {
+        try {
+            const res = await fetchProjectTaskShape(projectId);
+            setTaskShape(res && res.detection ? res : null);
+        } catch {
+            setTaskShape(null);
+        }
+    };
+
     const loadAdapterPreference = async () => {
         setAdapterPreferenceLoading(true);
         try {
@@ -546,6 +561,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         void previewEffectiveSplitConfig();
         void loadAdapterCatalog();
         void loadAdapterPreference();
+        void loadTaskShape();
         void loadActivePreparedConfig();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
@@ -1084,6 +1100,19 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                 every signal is computable. The user reads "here's what's
                 wrong before you train" before scrolling to the per-split
                 tables below. */}
+            {taskShape?.detection && (
+                <TaskShapeConfirmCard
+                    key={taskShape.confirmed?.task_profile || 'unconfirmed'}
+                    projectId={projectId}
+                    detection={taskShape.detection}
+                    catalog={taskShape.catalog}
+                    confirmedLabel={taskShape.confirmed?.label ?? null}
+                    onConfirmed={() => {
+                        void loadAdapterPreference();
+                        void loadTaskShape();
+                    }}
+                />
+            )}
             <DataHealthReportPanel
                 key={healthRefreshKey}
                 projectId={projectId}

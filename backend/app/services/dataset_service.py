@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 import hashlib
 import json
 import random
@@ -35,6 +34,8 @@ from app.services.domain_runtime_service import resolve_project_domain_runtime
 from app.services.record_normalization import (
     build_schema_profile,
 )
+from app.utils.file_parsers import parse_file
+from app.utils.tabular_io import is_tabular, load_rows, read_text_file
 
 
 def _prep_dir(project_id: int) -> Path:
@@ -280,64 +281,42 @@ def _load_records_from_file(
     ext = file_path.suffix.lower()
     records: list[dict[str, Any]] = []
 
-    if ext == ".jsonl":
-        with open(file_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(row, dict):
-                    if (
-                        not include_pending_synth
-                        and row.get("review_status") == "pending"
-                    ):
-                        # Pending synth rows are gated by the review
-                        # queue; don't leak them into training prep.
-                        continue
-                    records.append(row)
-                else:
-                    records.append({"value": row})
-                if max_records and len(records) >= max_records:
-                    break
-        return records
+    def _keep(row: Any) -> bool:
+        # Pending synth rows are gated by the review queue; don't leak
+        # them into training prep.
+        return include_pending_synth or not (
+            isinstance(row, dict) and row.get("review_status") == "pending"
+        )
 
-    if ext == ".json":
-        raw = json.loads(file_path.read_text(encoding="utf-8"))
-        if isinstance(raw, list):
-            for row in raw:
-                if isinstance(row, dict):
-                    records.append(row)
-                else:
-                    records.append({"value": row})
-                if max_records and len(records) >= max_records:
-                    break
-            return records
-        if isinstance(raw, dict):
-            return [raw]
-        return [{"value": raw}]
-
-    if ext == ".csv":
-        with open(file_path, "r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                records.append(dict(row))
-                if max_records and len(records) >= max_records:
-                    break
-        return records
-
-    # Generic text fallback.
-    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
+    if is_tabular(file_path):
+        # CSV/TSV/JSON(L)/XLSX/Parquet in any encoding (tabular_io) — a
+        # cp1252 Excel export used to raise UnicodeDecodeError here.
+        try:
+            rows = load_rows(file_path)
+        except ValueError:
+            return []
+        for row in rows:
+            if not _keep(row):
                 continue
-            records.append({"text": line})
+            records.append(row if isinstance(row, dict) else {"value": row})
             if max_records and len(records) >= max_records:
                 break
+        return records
+
+    # Documents (PDF/DOCX/HTML/TXT/MD): the extracted-text sidecar when
+    # processing wrote one, else parse — never read binary bytes as lines.
+    sidecar = file_path.with_suffix(".extracted.txt")
+    try:
+        text = read_text_file(sidecar) if sidecar.exists() else parse_file(file_path)
+    except ValueError:
+        return []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        records.append({"text": line})
+        if max_records and len(records) >= max_records:
+            break
     return records
 
 
@@ -697,6 +676,9 @@ async def resolve_project_dataset_adapter_preference(
         return {
             "project_id": project_id,
             "source": "project",
+            # Who set it: "recipe" (picked a recipe), "task_shape" (confirmed
+            # the detector's guess) or None (set by hand / API).
+            "origin": project_raw.get("origin"),
             "adapter_id": project_payload["adapter_id"],
             "adapter_config": project_payload["adapter_config"],
             "field_mapping": project_payload["field_mapping"],
@@ -1232,7 +1214,10 @@ async def split_dataset(
         "adapter_id": adapter_id,
         "adapter_config": dict(adapter_config or {}),
         "field_mapping": dict(field_mapping or {}),
-        "task_profile": _normalize_task_profile_value(task_profile),
+        # What the rows were actually prepared as (eval's handler reads
+        # this). The requested profile is kept alongside for audit.
+        "task_profile": _majority_task_profile(splits) or _normalize_task_profile_value(task_profile),
+        "task_profile_requested": _normalize_task_profile_value(task_profile),
         "stratify_by": str(stratify_by).strip() if stratify_by else None,
         "stratification_report": stratification_report,
         "disjoint_by": str(disjoint_by).strip() if disjoint_by else None,
@@ -1255,6 +1240,18 @@ async def split_dataset(
             pass
 
     return manifest
+
+
+def _majority_task_profile(splits: dict[str, list[dict[str, Any]]]) -> str | None:
+    counts: dict[str, int] = {}
+    for rows in splits.values():
+        for row in rows:
+            profile = row.get("_task_profile") if isinstance(row, dict) else None
+            if isinstance(profile, str) and profile:
+                counts[profile] = counts.get(profile, 0) + 1
+    if not counts:
+        return None
+    return _normalize_task_profile_value(max(counts, key=counts.get))
 
 
 def _stratified_split_entries(

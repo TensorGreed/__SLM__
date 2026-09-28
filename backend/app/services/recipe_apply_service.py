@@ -89,10 +89,46 @@ async def apply_recipe_to_project(
 
     project.selected_recipe = build_recipe_snapshot(recipe)
     project.base_model_name = recipe.suggested_base_model
+    _sync_dataset_adapter_preset(project, recipe)
 
     await db.flush()
     await db.refresh(project)
     return project
+
+
+def _sync_dataset_adapter_preset(project: Project, recipe) -> None:  # noqa: ANN001
+    """Dataset prep, training and eval read ``dataset_adapter_preset``, not
+    ``selected_recipe``. Without this a recipe picked in the wizard never
+    reached training. Keeps an existing adapter config / field mapping when
+    the adapter doesn't change."""
+    from app.services.task_shape_service import canonical_task_profile
+
+    adapter_id = str(getattr(recipe, "adapter_id", "") or "").strip()
+    if not adapter_id:
+        return
+    existing = project.dataset_adapter_preset if isinstance(project.dataset_adapter_preset, dict) else {}
+    recipe_profile = canonical_task_profile(getattr(recipe, "task_profile", None))
+    if (
+        existing.get("adapter_id")
+        and recipe_profile
+        and canonical_task_profile(existing.get("task_profile")) == recipe_profile
+    ):
+        # Already set up for this task shape (possibly with a more specific
+        # adapter, e.g. a demo's structured-extraction) — leave it alone.
+        return
+    same_adapter = existing.get("adapter_id") == adapter_id
+    project.dataset_adapter_preset = {
+        # Merge: callers (e.g. demo seeding) keep their own keys.
+        **existing,
+        "adapter_id": adapter_id,
+        "adapter_config": dict(existing.get("adapter_config") or {}) if same_adapter else {},
+        "field_mapping": dict(existing.get("field_mapping") or {}) if same_adapter else {},
+        "task_profile": canonical_task_profile(getattr(recipe, "task_profile", None))
+        or getattr(recipe, "task_profile", None),
+        # Provenance: surfaces as "recipe" (not a hand-set project override)
+        # in Data Studio's mapping preview.
+        "origin": "recipe",
+    }
 
 
 async def clear_recipe_from_project(db: AsyncSession, project_id: int) -> Project:

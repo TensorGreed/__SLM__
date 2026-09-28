@@ -124,6 +124,11 @@ export interface RawDocument {
     quality_score: number | null;
     chunk_count: number;
     ingested_at: string;
+    /** Why processing failed (e.g. scanned PDF with no text). */
+    error?: string | null;
+    /** Row file (CSV/XLSX/JSONL…) whose columns are kept through cleaning. */
+    structured?: boolean;
+    row_count?: number | null;
 }
 
 export interface Experiment {

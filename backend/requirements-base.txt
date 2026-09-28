@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-sqlalchemy
+sqlalchemy[asyncio]
 alembic
 aiosqlite
 asyncpg
@@ -15,6 +15,7 @@ redis
 httpx
 PyPDF2
 python-docx
+openpyxl
 Pillow
 datasets
 kaggle

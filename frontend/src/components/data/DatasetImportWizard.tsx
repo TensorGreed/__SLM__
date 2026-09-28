@@ -28,6 +28,7 @@ import {
     previewImport,
     runImport,
     saveConfig,
+    uploadImportFile,
     type ImportResultDict,
     type IntrospectResponse,
     type SavedConfig,
@@ -36,6 +37,7 @@ import {
 import { applyRecipeToProject } from '../../api/recipes';
 import type { Recipe, RecipeSuggestion } from '../../api/recipes';
 import RecipePicker from './RecipePicker';
+import TaskShapeConfirmCard from './TaskShapeConfirmCard';
 
 interface DatasetImportWizardProps {
     projectId: number;
@@ -58,6 +60,11 @@ const SOURCE_HELP: Record<string, SourceHelp> = {
         label: 'JSONL file',
         placeholder: '/absolute/path/to/data.jsonl',
         helpText: 'One JSON object per line.',
+    },
+    file: {
+        label: 'Server file (any row format)',
+        placeholder: '/absolute/path/to/data.xlsx',
+        helpText: 'CSV, TSV, Excel (.xlsx), JSON, JSONL or Parquet already on the server. Any encoding.',
     },
     csv: {
         label: 'CSV file',
@@ -151,6 +158,11 @@ export default function DatasetImportWizard({
     // Source step.
     const [sourceId, setSourceId] = useState<string>('jsonl');
     const [locatorBody, setLocatorBody] = useState<string>('');
+    // Browser upload: the server stages the file and returns a ``file:``
+    // locator, which then takes the place of the typed one.
+    const [uploadedLocator, setUploadedLocator] = useState<string>('');
+    const [uploadedName, setUploadedName] = useState<string>('');
+    const [uploading, setUploading] = useState(false);
 
     // Map step.
     const [introspecting, setIntrospecting] = useState(false);
@@ -204,7 +216,10 @@ export default function DatasetImportWizard({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const locator = useMemo(() => buildLocator(sourceId, locatorBody), [sourceId, locatorBody]);
+    const locator = useMemo(
+        () => uploadedLocator || buildLocator(sourceId, locatorBody),
+        [uploadedLocator, sourceId, locatorBody],
+    );
     const sourceHelp = SOURCE_HELP[sourceId] ?? {
         label: sourceId,
         placeholder: '',
@@ -219,27 +234,45 @@ export default function DatasetImportWizard({
         setIntrospecting(true);
         setIntrospectError('');
         try {
-            const res = await introspectLocator(locator);
-            setIntrospection(res);
-            // Default-select the top hypothesis if any; users can pick a
-            // different one in the UI.
-            const topMapper = res.proposal?.mapper_id || res.hypotheses[0]?.mapper_id || '';
-            setSelectedMapperId(topMapper);
-            const topFieldMap = res.proposal?.field_map || res.hypotheses[0]?.field_map || {};
-            setFieldMapJson(fieldMapToJsonString(topFieldMap));
-            setForceLowConfidence(false);
-            // Reset recipe state on every fresh introspect; the picker
-            // is shown next so the user lands on a sniffed task shape
-            // before the dense mapper config.
-            setSelectedRecipe(null);
-            setRecipeSuggestion(null);
-            setRecipeOverridden(false);
-            setStep('recipe');
+            applyIntrospection(await introspectLocator(locator));
         } catch (err) {
             setIntrospectError(extractErrorMessage(err));
         } finally {
             setIntrospecting(false);
         }
+    };
+
+    const handleUploadFile = async (file: File) => {
+        setUploading(true);
+        setIntrospectError('');
+        try {
+            const res = await uploadImportFile(projectId, file);
+            setUploadedLocator(res.locator);
+            setUploadedName(res.filename);
+            applyIntrospection(res.introspection);
+        } catch (err) {
+            setIntrospectError(extractErrorMessage(err));
+        } finally {
+            setUploading(false);
+        }
+    };
+
+    const applyIntrospection = (res: IntrospectResponse) => {
+        setIntrospection(res);
+        // Default-select the top hypothesis if any; users can pick a
+        // different one in the UI.
+        const topMapper = res.proposal?.mapper_id || res.hypotheses[0]?.mapper_id || '';
+        setSelectedMapperId(topMapper);
+        const topFieldMap = res.proposal?.field_map || res.hypotheses[0]?.field_map || {};
+        setFieldMapJson(fieldMapToJsonString(topFieldMap));
+        setForceLowConfidence(false);
+        // Reset recipe state on every fresh introspect; the picker
+        // is shown next so the user lands on a sniffed task shape
+        // before the dense mapper config.
+        setSelectedRecipe(null);
+        setRecipeSuggestion(null);
+        setRecipeOverridden(false);
+        setStep('recipe');
     };
 
     const selectedHypothesis: ShapeHypothesisDict | undefined = useMemo(() => {
@@ -396,9 +429,12 @@ export default function DatasetImportWizard({
                         <SourceStep
                             sources={sources}
                             sourceId={sourceId}
-                            onSourceChange={setSourceId}
+                            onSourceChange={(id) => { setSourceId(id); setUploadedLocator(''); }}
                             locatorBody={locatorBody}
-                            onLocatorBodyChange={setLocatorBody}
+                            onLocatorBodyChange={(value) => { setLocatorBody(value); setUploadedLocator(''); }}
+                            uploading={uploading}
+                            uploadedName={uploadedName}
+                            onUploadFile={handleUploadFile}
                             sourceHelp={sourceHelp}
                             introspecting={introspecting}
                             introspectError={introspectError}
@@ -408,6 +444,28 @@ export default function DatasetImportWizard({
 
                     {step === 'recipe' && introspection && (
                         <>
+                            <TaskShapeConfirmCard
+                                projectId={projectId}
+                                detection={introspection.task_shape}
+                                onConfirmed={(_result, candidate) => {
+                                    // Confirmed server-side (adapter preset +
+                                    // recipe). Carry the detector's mapping
+                                    // into the map step.
+                                    if (candidate?.mapper_id) {
+                                        setSelectedMapperId(candidate.mapper_id);
+                                        if (Object.keys(candidate.field_map || {}).length > 0) {
+                                            setFieldMapJson(fieldMapToJsonString(candidate.field_map));
+                                        }
+                                    }
+                                    setSelectedRecipe(null);
+                                    setRecipeSuggestion(null);
+                                    setRecipeOverridden(false);
+                                    setStep('map');
+                                }}
+                            />
+                            {introspection.task_shape && (
+                                <p className="form-hint">Or pick a recipe yourself:</p>
+                            )}
                             <RecipePicker
                                 headers={introspection.columns}
                                 onSelect={(recipe, suggestion) => {
@@ -606,6 +664,9 @@ function RecipeSummaryChip({ recipe, suggestion, onChange }: RecipeSummaryChipPr
 // ── Step 1: Source ───────────────────────────────────────────────────
 
 interface SourceStepProps {
+    uploading: boolean;
+    uploadedName: string;
+    onUploadFile: (file: File) => void;
     sources: string[];
     sourceId: string;
     onSourceChange: (id: string) => void;
@@ -618,6 +679,9 @@ interface SourceStepProps {
 }
 
 function SourceStep({
+    uploading,
+    uploadedName,
+    onUploadFile,
     sources,
     sourceId,
     onSourceChange,
@@ -630,9 +694,34 @@ function SourceStep({
 }: SourceStepProps) {
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+            <div className="form-group" data-testid="upload-block">
+                <label className="form-label" htmlFor="dsi-upload">
+                    Upload a file from your computer
+                </label>
+                <input
+                    id="dsi-upload"
+                    type="file"
+                    className="input"
+                    accept=".csv,.tsv,.xlsx,.json,.jsonl,.parquet"
+                    disabled={uploading}
+                    data-testid="upload-input"
+                    onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) onUploadFile(file);
+                    }}
+                />
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                    {uploading
+                        ? 'Uploading and reading columns…'
+                        : uploadedName
+                            ? `Loaded ${uploadedName}.`
+                            : 'CSV, TSV, Excel (.xlsx), JSON, JSONL or Parquet — any encoding. We read the columns and propose how to use them.'}
+                </div>
+            </div>
+
             <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
-                Pick the source type and enter a locator. The introspector will sniff the
-                columns and propose a mapping — no need to write a converter.
+                Or point at a source: pick the source type and enter a locator. The introspector
+                will sniff the columns and propose a mapping — no need to write a converter.
             </p>
 
             <div className="form-group">

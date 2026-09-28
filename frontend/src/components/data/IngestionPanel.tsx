@@ -699,11 +699,16 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                         <div className="upload-zone-content">
                             <div className="upload-icon">📤</div>
                             <h3 className="upload-title">Drop files here or click to browse</h3>
-                            <p className="upload-subtitle">Supports PDF, DOCX, TXT, Markdown, CSV, JSON, JSONL</p>
+                            <p className="upload-subtitle">
+                                Documents: PDF, Word (.docx), HTML, TXT, Markdown. Row files: CSV, TSV, Excel (.xlsx), JSON, JSONL, Parquet — any encoding.
+                            </p>
+                            <p className="upload-subtitle">
+                                Row files keep their columns (e.g. question/answer, text/label) all the way to training; documents are split into passages.
+                            </p>
                             <input
                                 type="file"
                                 multiple
-                                accept=".pdf,.docx,.txt,.md,.csv,.markdown,.json,.jsonl"
+                                accept=".pdf,.docx,.html,.htm,.txt,.md,.markdown,.csv,.tsv,.xlsx,.json,.jsonl,.parquet"
                                 onChange={handleFileInput}
                                 className="upload-input"
                                 id="file-upload"
@@ -1072,7 +1077,19 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                                                         {isExpanded ? '▼' : '▶'}
                                                     </button>
                                                 </td>
-                                                <td className="doc-name">{doc.filename}</td>
+                                                <td className="doc-name">
+                                                    {doc.filename}
+                                                    {doc.structured && (
+                                                        <div className="form-hint" data-testid={`doc-structured-${doc.id}`}>
+                                                            Row file{doc.row_count ? ` · ${doc.row_count} rows` : ''} — columns kept for training
+                                                        </div>
+                                                    )}
+                                                    {doc.status === 'error' && doc.error && (
+                                                        <div className="form-hint-warning" role="alert" data-testid={`doc-error-${doc.id}`}>
+                                                            {doc.error}
+                                                        </div>
+                                                    )}
+                                                </td>
                                                 <td>
                                                     <span className="badge badge-info" style={{ fontSize: 10 }}>
                                                         {doc.source || 'upload'}

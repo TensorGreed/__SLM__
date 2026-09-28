@@ -61,6 +61,7 @@ from app.services.data_adapter_service import (
     resolve_data_adapter_for_records,
 )
 from app.services.record_normalization import build_schema_profile
+from app.utils.tabular_io import is_tabular, load_rows, read_text_file
 from app.utils.file_parsers import (
     SUPPORTED_EXTENSIONS,
     compute_file_hash,
@@ -245,11 +246,17 @@ async def process_document(
         text_path.write_text(text, encoding="utf-8")
 
         doc.status = DocumentStatus.ACCEPTED
+        structured_meta: dict = {}
+        if is_tabular(file_path):
+            # Row files keep their columns through cleaning + prep; the
+            # extracted text is only a readable preview.
+            structured_meta = {"structured": True, "row_count": len(load_rows(file_path))}
         doc.metadata_ = {
             **(doc.metadata_ or {}),
             "extracted_text_path": str(text_path),
             "char_count": len(text),
             "word_count": len(text.split()),
+            **structured_meta,
         }
         await db.flush()
         await db.refresh(doc)
@@ -1310,18 +1317,17 @@ def _sample_text_lines(path: Path, k: int) -> tuple[list[dict], int]:
 
     reservoir: list[dict] = []
     scanned = 0
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
-        for raw_line in handle:
-            stripped = raw_line.strip()
-            if not stripped:
-                continue
-            scanned += 1
-            if len(reservoir) < k:
-                reservoir.append({"line": stripped})
-                continue
-            j = random.randint(0, scanned - 1)
-            if j < k:
-                reservoir[j] = {"line": stripped}
+    for raw_line in read_text_file(path).splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        scanned += 1
+        if len(reservoir) < k:
+            reservoir.append({"line": stripped})
+            continue
+        j = random.randint(0, scanned - 1)
+        if j < k:
+            reservoir[j] = {"line": stripped}
     return reservoir, scanned
 
 
@@ -1388,16 +1394,22 @@ async def sample_document_rows(
             rows, scanned = _reservoir_sample_jsonl(path, n)
         elif ext == ".json":
             rows, scanned = _sample_json_array(path, n)
-        elif ext == ".csv":
-            rows, scanned = _sample_csv(path, n)
-        elif ext == ".tsv":
-            rows, scanned = _sample_csv(path, n, delimiter="\t")
+        elif ext in {".csv", ".tsv", ".xlsx", ".parquet"}:
+            # tabular_io handles encodings (cp1252 Excel exports),
+            # delimiters and the binary spreadsheet formats.
+            all_rows = [r for r in load_rows(path) if isinstance(r, dict)]
+            rows, scanned = all_rows[:n], len(all_rows)
         elif ext in {".txt", ".md", ".markdown"}:
             rows, scanned = _sample_text_lines(path, n)
+        elif path.with_suffix(".extracted.txt").exists():
+            # PDF / DOCX / HTML after processing: preview the text the
+            # pipeline will actually use.
+            rows, scanned = _sample_text_lines(path.with_suffix(".extracted.txt"), n)
+            source_label = "extracted_text"
         else:
             rows = []
             scanned = 0
-            note = f"Preview not available for '{ext}' files."
+            note = f"Preview not available for '{ext}' files until the document is processed."
     except ValueError as exc:
         # Surface the message (e.g. JSON-too-large) without crashing.
         rows = []

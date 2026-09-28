@@ -20,7 +20,17 @@ If you run your own data through the *Import dataset* wizard, it lands in *synth
 
 ### What it does
 
-Pulls raw data into the project's `RawDocument` table + persists files under `DATA_DIR/projects/{id}/raw/`. Supports CSV, TSV, JSON, JSONL, Parquet, Hugging Face datasets, URL pulls, and document corpora (PDF/DOCX/MD).
+Pulls raw data into the project's `RawDocument` table and saves files under `DATA_DIR/projects/{id}/raw/`. It also supports Hugging Face datasets and URL pulls.
+
+| You upload | Formats | What happens |
+|---|---|---|
+| **Row files** | CSV, TSV, Excel (`.xlsx`), JSON, JSONL, Parquet | The columns are kept. Cleaning writes one cleaned row per record: PII is redacted per field, and empty or exact-duplicate rows are dropped. Fields such as `question`/`answer` or `text`/`label` reach training intact. They are **not** flattened into text and chunked. |
+| **Documents** | PDF, Word (`.docx`, including tables), HTML, TXT, Markdown | Text is extracted, then cleaning splits it into passages. |
+
+Details that apply to both:
+
+- **Any encoding works.** UTF-8, UTF-8 with BOM, Excel/Windows cp1252, Cyrillic and CJK code pages are all detected. CSV delimiters (`,` `;` tab `|`) are sniffed.
+- **Failed documents are marked `error` and never used for training.** Examples are a scanned or image-only PDF (no OCR yet), a damaged file, or an empty page. The reason is shown next to the file.
 
 ### UI
 
@@ -79,7 +89,7 @@ This wizard writes accepted rows to the project's **synthetic** dataset (pending
 
 Pipeline → **Data** → **Import dataset (auto-mapping)** opens a 3-step wizard:
 
-1. **Source** — pick `jsonl` / `csv` / `hf` / `kaggle` from a dropdown and enter the locator. Source-specific helper text shows the format; gated-dataset auth gets a banner reminding you to set env vars or save secrets under Project → Secrets first.
+1. **Source** — **upload a file from your computer** (CSV, TSV, `.xlsx`, JSON, JSONL or Parquet, in any encoding). It's staged under `projects/{id}/imports/` and read immediately. Alternatively, pick `file` / `jsonl` / `csv` / `hf` / `kaggle` and enter a locator (`file:` reads any row format already on the server). Source-specific helper text shows the format; gated-dataset auth gets a banner reminding you to set env vars or save secrets under Project → Secrets first.
 2. **Map** — column signatures table (detected type + confidence per column), ranked-hypothesis dropdown pre-selected to the top proposal, free-form rationale, and a JSON field-map editor you can override before previewing. A red banner blocks low-confidence proposals until you tick "I've reviewed the proposal — proceed anyway."
 3. **Preview & Confirm** — accepted-row sample + rejected breakdown grouped by reason; tick reasons to bulk-drop them before commit (counts are preserved in the result for audit). Final *Import* button writes the rows to the project's synthetic dataset and surfaces the `written_path`.
 
@@ -146,11 +156,43 @@ The introspector auto-detects every mapper in the catalog except `kv_to_structur
 
 See [Schema introspection](../reference/glossary.md#schema-introspection), [Target mapper](../reference/glossary.md#target-mapper-dataset-import), and the [PII demo `--auto` walkthrough](../demos/pii-detector.md#skip-the-converter-with---auto).
 
+## What kind of task is this? (confirm once)
+
+BrewSLM needs to know what your data is *for*: question answering, classification, summarization and so on. That choice decides how rows are formatted for training and how the model is scored.
+
+**One detector makes the guess.** It combines three signals:
+
+1. **Column evidence.** Examples: `question` + `answer`; `text` + a label column; `article` + `summary`/`abstract`/`highlights`; `question` + `context` + `answer`; `prompt` + `chosen` + `rejected`; chat `messages`.
+2. **A fit check.** What share of rows the matching data adapter can actually use.
+3. **Your stated goal, if you gave one.** This is only a small nudge. It never overrides what the data clearly is.
+
+**Where you see it:**
+
+- In the **Import dataset** wizard, right after upload or introspection.
+- On **Dataset Prep**, for data that came in through document upload and cleaning.
+
+The card reads, for example, "Looks like **Question answering** (92% confident)", followed by the reasons. **Yes, it's …** confirms it, and **Something else…** lets you pick from the full list. When the guess is uncertain (below 80%, or two shapes are close) the card says so, rather than guessing silently.
+
+**What confirming does:**
+
+- Saves the shape where dataset prep, training and evaluation read it (the project's dataset adapter preference).
+- Snapshots the matching recipe.
+- Keeps any base model you already chose.
+- Picking a recipe by hand also updates that preference. Before, a recipe picked in the wizard never reached training.
+
+**API:**
+
+- `GET /api/projects/{id}/task-shape?intent=…` returns the detection for the project's current data, what's confirmed, and the catalog of shapes.
+- `POST /api/projects/{id}/task-shape/confirm` with `{"task_profile": "qa"}` confirms a shape. Aliases such as `dpo` → `preference` and `summary` → `summarization` are accepted.
+- `/dataset-import/introspect` includes the same detection as `task_shape`.
+
 ## Step 2 — Clean
 
 ### What it does
 
 Normalises text, deduplicates rows, runs a PII scan, applies your domain pack's data-quality overlay. Emits a new `DatasetVersion` rather than mutating the ingested rows.
+
+Row files are cleaned row by row, so their columns are preserved. Documents are cleaned as text and split into passages (`chunk_size`, `chunk_overlap`).
 
 ### UI
 

@@ -45,6 +45,7 @@ from app.services.dataset_import.registry import (
     resolve_source,
     split_locator,
 )
+from app.services.task_shape_service import detect_task_shape
 
 
 def _build_context(
@@ -441,6 +442,11 @@ async def introspect_locator(
         "proposal": proposal_to_dict(proposal) if proposal else None,
         "confidence_threshold": CONFIDENCE_HIGH,
         "llm_assist_used": llm_proposal is not None,
+        # The unified detector's verdict (task_shape_service): canonical
+        # task profile + the adapter/recipe/mapper that implement it, with
+        # a plain-language rationale. The wizard confirms this, not the raw
+        # hypotheses.
+        "task_shape": detect_task_shape(list(description.get("sample_rows") or [])),
     }
 
 

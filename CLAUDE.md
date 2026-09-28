@@ -336,6 +336,27 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   this version" on `DataStudioDatasetVersionsPanel` both call activate (retrain
   then opens Training, which reads the now-active version). The active version
   defaults to the latest prepared run when none is explicitly activated.
+- **Generic intake (Wave 2a)** — `app/utils/tabular_io.py` is the ONE reader
+  for row files (CSV/TSV/JSON(L)/XLSX/Parquet; encoding: utf-8 → charset_normalizer
+  only when it finds a non-Latin script → cp1252 → latin-1; delimiter sniffed).
+  `file_parsers` raise `DocumentParseError` (never return error strings — they
+  used to become ACCEPTED training text); scanned PDFs error out; HTML/DOCX
+  tables supported. Cleaning a row file is row-preserving
+  (`cleaning_service._clean_structured_document`: per-field PII redaction,
+  dup/empty drop, columns kept) — only documents are chunked. Import wizard
+  takes browser uploads: `POST /projects/{id}/dataset-import/upload` stages
+  under `projects/{id}/imports/` → `file:` locator (`sources/file.py`).
+- **Task shape (Wave 2b)** — `task_shape_service` is the single detector +
+  vocabulary: `TASK_SHAPES` (canonical profile → adapter/recipe/mapper),
+  `detect_task_shape(rows, intent=)` = introspector column rules (evidence) ×
+  adapter map-rate (validator) + intent prior (+0.08, never an override);
+  row-fit-only guesses are capped below the 0.8 confirm threshold.
+  `confirm_task_shape` writes `dataset_adapter_preset` (what split/train/eval
+  read) + recipe snapshot; `apply_recipe_to_project` now syncs the preset too.
+  Split manifest `task_profile` = majority resolved `_task_profile` of the rows
+  (`task_profile_requested` kept). UI: `TaskShapeConfirmCard` in the import
+  wizard + DatasetPrepPanel. Other detectors (newbie-autopilot keywords, brief
+  keywords, recipe header sniffer) still exist — fold them in as priors next.
 - **Auto-RAG** — `auto_rag_service` builds BM25 indexes at training
   completion; `playground_chat` prepends top-K retrievals. Comparison
   panel + UI-triggered `auto_rag_ab --project` Job.

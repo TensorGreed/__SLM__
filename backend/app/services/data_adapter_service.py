@@ -551,6 +551,12 @@ def _map_seq2seq(record: dict[str, Any], config: dict[str, Any]) -> dict[str, An
         "instruction",
         "text",
         "content",
+        "article",
+        "document",
+        "body",
+        "passage",
+        "dialogue",
+        "transcript",
     ]
     target_aliases = list(target_fields) if isinstance(target_fields, list) and target_fields else [
         "target",
@@ -558,6 +564,12 @@ def _map_seq2seq(record: dict[str, Any], config: dict[str, Any]) -> dict[str, An
         "output",
         "completion",
         "response",
+        "summary",
+        "abstract",
+        "highlights",
+        "tldr",
+        "synopsis",
+        "headline",
     ]
 
     source = _pick_text(record, source_aliases)

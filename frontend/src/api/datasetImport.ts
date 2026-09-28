@@ -13,6 +13,7 @@
  */
 
 import api from './client';
+import type { TaskShapeDetection } from './taskShape';
 
 // ── Catalog ──────────────────────────────────────────────────────────
 
@@ -75,6 +76,8 @@ export interface IntrospectResponse {
     hypotheses: ShapeHypothesisDict[];
     proposal: ProposalDict | null;
     confidence_threshold: number;
+    /** Unified detector verdict (task_shape_service). */
+    task_shape?: TaskShapeDetection | null;
 }
 
 export async function introspectLocator(
@@ -85,6 +88,29 @@ export async function introspectLocator(
         locator,
         sample_size,
     });
+    return res.data;
+}
+
+export interface UploadImportResponse {
+    locator: string;
+    filename: string;
+    size_bytes: number;
+    introspection: IntrospectResponse;
+}
+
+/** Stage a file from the user's computer (CSV/TSV/XLSX/JSON/JSONL/Parquet)
+ * under the project and introspect it; the returned ``file:`` locator
+ * previews/runs like any other source. */
+export async function uploadImportFile(
+    projectId: number,
+    file: File,
+): Promise<UploadImportResponse> {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await api.post<UploadImportResponse>(
+        `/projects/${projectId}/dataset-import/upload`,
+        form,
+    );
     return res.data;
 }
 

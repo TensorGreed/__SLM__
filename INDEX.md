@@ -74,6 +74,7 @@ session-start guidance.
 - `backend/app/api/support_bundles.py` — Support-bundle API (priority.md P34, Wave G).
 - `backend/app/api/synthetic.py` — Synthetic data generation API routes.
 - `backend/app/api/targets.py` — Hardware target catalog API — list deploy-target profiles and check base-model compatibility against them.
+- `backend/app/api/task_shape.py` — Task shape — detect what kind of task the project's data is, and confirm it.
 - `backend/app/api/tokenization.py` — Tokenization analysis API routes.
 - `backend/app/api/training.py` — Training API routes.
 - `backend/app/api/training_config_gaps.py` — Training Config Gap API — Coach-stage-2 phases 1 + 2.
@@ -131,6 +132,7 @@ session-start guidance.
 - `backend/app/services/dataset_import/registry.py` — Source + mapper registry for the dataset-import pipeline.
 - `backend/app/services/dataset_import/service.py` — Orchestrator: source → mapper → save.
 - `backend/app/services/dataset_import/sources/csv.py` — CSV source connector.
+- `backend/app/services/dataset_import/sources/file.py` — Any-format local file source (browser uploads land here).
 - `backend/app/services/dataset_import/sources/hf.py` — HuggingFace datasets source connector.
 - `backend/app/services/dataset_import/sources/jsonl.py` — JSONL source connector.
 - `backend/app/services/dataset_import/sources/kaggle.py` — Kaggle source connector — competitions + datasets.
@@ -257,6 +259,7 @@ session-start guidance.
 - `backend/app/services/synth_review_queue_service.py` — Synth review queue service (USER-SUCCESS Epic 2b).
 - `backend/app/services/synthetic_service.py` — Synthetic data generation service — teacher model integration.
 - `backend/app/services/target_profile_service.py` — Plugin-extensible registry of deployment target profiles with constraint validation and HF-introspection compatibility checks.
+- `backend/app/services/task_shape_service.py` — One task-shape detector + one vocabulary (Wave 2b).
 - `backend/app/services/timeline_service.py` — Unified timeline service (priority.md P32, Wave G).
 - `backend/app/services/tokenization_service.py` — Tokenization service — tokenizer management and dataset statistics.
 - `backend/app/services/trainability_forecast_service.py` — Trainability forecast service — USER-SUCCESS Epic 1.
@@ -427,6 +430,7 @@ session-start guidance.
 - `frontend/src/api/smokeTest.ts` — Typed client for the project smoke-test endpoint (Diagnostics
 - `frontend/src/api/studentTeacherComparison.ts` — Typed wrapper for the Track 1 Epic A slice 3 student-vs-teacher comparison.
 - `frontend/src/api/synthPlaybook.ts` — Typed API wrapper for the synth playbook framework
+- `frontend/src/api/taskShape.ts` — Typed wrapper for the unified task-shape detector (Wave 2b).
 - `frontend/src/api/trainabilityForecast.ts` — Typed API wrapper for the trainability forecast endpoint
 - `frontend/src/api/trainingConfigGaps.ts` — Training Config Gaps API client — Coach-stage-2 phases 1 + 2.
 
@@ -516,6 +520,7 @@ session-start guidance.
 - `frontend/src/components/data/SavedMappingsPanel.tsx` — Saved dataset-import mappings panel (Phase G of DATASET_IMPORT_PLAN).
 - `frontend/src/components/data/SynthReviewQueue.tsx` — SynthReviewQueue — USER-SUCCESS Epic 2b.
 - `frontend/src/components/data/SyntheticPanel.tsx` — Panel for generating synthetic training data with playbook selection, batch async support, and review queue.
+- `frontend/src/components/data/TaskShapeConfirmCard.tsx` — "What kind of task is this?" — shows the unified detector's best guess
 - `frontend/src/components/deployment/DeployabilityScoreCard.tsx` — DeployabilityScoreCard — readiness report (priority.md P30, P28).
 - `frontend/src/components/deployment/DeployedVersionsList.tsx` — DeployedVersionsList — served-versions table for the deployment page
 - `frontend/src/components/deployment/DriftPanel.tsx` — DriftPanel — drift verdict + history for a deployment version
@@ -698,6 +703,7 @@ session-start guidance.
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_frontier_comparison.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
 - `backend/tests/test_gamification_service.py` — Gamification (Lab Journal) progression service.
+- `backend/tests/test_generic_intake.py` — Generic intake (Wave 2a): any file a newcomer brings lands correctly.
 - `backend/tests/test_goal_service.py` — Tests for goal_service + the /goal/progress + /goal endpoints (Arc H).
 - `backend/tests/test_gold_add_per_recipe.py` — Endpoint tests for ``POST /api/projects/{id}/gold/add`` after the
 - `backend/tests/test_gold_llm_service.py` — Tests for the LLM-assisted gold-set generation path.
@@ -869,6 +875,7 @@ session-start guidance.
 - `backend/tests/test_synth_vllm_backend.py` — Tests for the vLLM synth backend (USER-SUCCESS Epic 5 Phase 5c).
 - `backend/tests/test_synthetic_qa_conversation_async.py` — Batched synthetic QA + conversation generation (USER-SUCCESS Epic 2c).
 - `backend/tests/test_synthetic_span_async.py` — Batched synthetic-span generation (long-running) — Story PII-async.
+- `backend/tests/test_task_shape.py` — Unified task-shape detector + confirm (Wave 2b).
 - `backend/tests/test_theme5_epic1_video_flow_cli.py` — Theme 5 Epic 1 — brewslm CLI gap-fill commands for the 11-video flow.
 - `backend/tests/test_tokenization_analyze_splits.py` — V3 of the ML-native visualisations arc — POST /tokenization/analyze-splits.
 - `backend/tests/test_trainability_forecast_service.py` — Tests for the trainability forecast service (USER-SUCCESS Epic 1).
@@ -925,6 +932,7 @@ session-start guidance.
 - `frontend/src/components/data/SavedMappingsPanel.test.tsx` — Saved-mappings panel contract.
 - `frontend/src/components/data/SynthReviewQueue.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SyntheticPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/TaskShapeConfirmCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/deployment/DeployabilityScoreCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/deployment/DeployedVersionsList.test.tsx` — _(no docstring)_
 - `frontend/src/components/deployment/DriftPanel.test.tsx` — _(no docstring)_

@@ -664,6 +664,11 @@ textarea::placeholder {
   color: var(--text-tertiary);
   margin-top: 4px;
 }
+.form-hint-warning {
+  font-size: var(--font-size-xs);
+  color: var(--color-warning);
+  margin-top: 4px;
+}
 
 /* ── Utility helpers used across pages ──────────────────────────────── */
 .dim {
@@ -681,4 +686,28 @@ textarea::placeholder {
   .page-container {
     padding: var(--space-md);
   }
+}
+
+/* ── Task-shape confirm card (Wave 2b) ─────────────────────────────── */
+.task-shape-card {
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+.task-shape-card__title { margin: 0; }
+.task-shape-card__confidence { color: var(--text-secondary); }
+.task-shape-card__reasons {
+  margin: 0;
+  padding-left: 1.2em;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+.task-shape-card__actions,
+.task-shape-card__choose {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  flex-wrap: wrap;
 }

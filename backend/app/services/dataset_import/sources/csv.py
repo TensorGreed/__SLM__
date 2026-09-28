@@ -10,11 +10,13 @@ int, a string, or a label).
 from __future__ import annotations
 
 import csv as _csv
+import io as _io
 from pathlib import Path
 from typing import Any, Iterable
 
 from app.services.dataset_import.protocols import DatasetSource, RawRow
 from app.services.dataset_import.registry import register_source
+from app.utils.tabular_io import read_text_file
 
 
 class CsvSource:
@@ -39,7 +41,7 @@ class CsvSource:
     ) -> Iterable[RawRow]:
         path = self._resolve_path(locator)
         yielded = 0
-        with path.open("r", encoding="utf-8", newline="") as handle:
+        with _io.StringIO(read_text_file(path), newline="") as handle:
             reader = _csv.DictReader(handle)
             for row in reader:
                 # DictReader can produce ``None`` keys when a row has
@@ -60,7 +62,7 @@ class CsvSource:
         sample: list[dict[str, Any]] = []
         total_rows = 0
         columns: list[str] = []
-        with path.open("r", encoding="utf-8", newline="") as handle:
+        with _io.StringIO(read_text_file(path), newline="") as handle:
             reader = _csv.DictReader(handle)
             columns = list(reader.fieldnames or [])
             for row in reader:

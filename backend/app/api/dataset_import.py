@@ -17,7 +17,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -139,6 +142,62 @@ async def _load_project_profile(db: AsyncSession, project_id: int) -> str | None
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+MAX_UPLOAD_BYTES = 512 * 1024 * 1024
+
+
+@project_router.post("/upload", status_code=201)
+async def upload_import_file(
+    project_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Stage a browser-uploaded row file (CSV/TSV/JSONL/JSON/XLSX/Parquet)
+    under the project and introspect it — the wizard then previews/runs the
+    returned ``file:`` locator exactly like a server path. No more typing a
+    server file path."""
+    await _load_project_profile(db, project_id)
+    from app.config import settings
+    from app.utils.tabular_io import TABULAR_EXTENSIONS
+
+    original = Path(file.filename or "upload").name
+    suffix = Path(original).suffix.lower()
+    if suffix not in TABULAR_EXTENSIONS:
+        allowed = ", ".join(sorted(TABULAR_EXTENSIONS))
+        raise HTTPException(
+            400,
+            f"'{original}' isn't a row file ({allowed}). Upload PDFs, Word "
+            "documents and web pages under Data → Upload documents.",
+        )
+    staging = Path(settings.DATA_DIR) / "projects" / str(project_id) / "imports"
+    staging.mkdir(parents=True, exist_ok=True)
+    target = staging / f"{uuid4().hex[:8]}_{original}"
+    size = 0
+    with target.open("wb") as out:
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_UPLOAD_BYTES:
+                out.close()
+                target.unlink(missing_ok=True)
+                raise HTTPException(413, "File is larger than 512 MB.")
+            out.write(chunk)
+    if size == 0:
+        target.unlink(missing_ok=True)
+        raise HTTPException(400, "The uploaded file is empty.")
+
+    locator = f"file:{target}"
+    try:
+        introspection = await introspect_locator(locator)
+    except (ValueError, KeyError) as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(400, f"Couldn't read '{original}': {exc}") from exc
+    return {
+        "locator": locator,
+        "filename": original,
+        "size_bytes": size,
+        "introspection": introspection,
+    }
 
 
 @project_router.post("/preview")
