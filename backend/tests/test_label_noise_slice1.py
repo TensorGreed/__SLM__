@@ -398,6 +398,19 @@ class DualConditionTests(unittest.TestCase):
 
 class EndpointTests(unittest.TestCase):
 
+    def tearDown(self):
+        # Let this test's scan Job finish before the next test writes: on
+        # the shared StaticPool connection a runner session's rollback can
+        # wipe the next test's uncommitted project insert.
+        import time
+
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            resp = CLIENT.get("/api/jobs/active", params={"include_recently_completed": "false"})
+            if resp.status_code == 200 and not resp.json().get("jobs"):
+                return
+            time.sleep(0.1)
+
     def test_post_scan_404_on_missing_project(self):
         resp = CLIENT.post("/api/projects/999999/label-noise/scan")
         self.assertEqual(resp.status_code, 404)
@@ -445,36 +458,35 @@ class EndpointTests(unittest.TestCase):
             self.assertEqual(resp.status_code, 202, resp.text)
             scan_id = int(resp.json()["id"])
 
-            # Wait for the background task to finish. The Jobs framework
-            # uses asyncio.create_task; the TestClient runs the event
-            # loop in a separate thread, so we poll the DB until status
-            # transitions.
-            async def _poll() -> LabelNoiseScan:
-                for _ in range(50):
-                    async with async_session_factory() as session:
-                        row = (await session.execute(
-                            select(LabelNoiseScan).where(LabelNoiseScan.id == scan_id)
-                        )).scalar_one()
-                        if row.status in (
-                            LabelNoiseScanStatus.SUCCEEDED,
-                            LabelNoiseScanStatus.FAILED,
-                        ):
-                            return row
-                    await asyncio.sleep(0.05)
+            # Wait for the background task to finish — polled through the
+            # API so every DB access stays on the app's event loop.
+            # (Polling the engine via asyncio.run from this thread drove
+            # the shared aiosqlite connection from a second loop:
+            # "Lock … is bound to a different event loop" on CI.)
+            import time
+
+            final: dict = {}
+            for _ in range(200):
+                got = CLIENT.get(f"/api/projects/{pid}/label-noise/scans/{scan_id}")
+                self.assertEqual(got.status_code, 200, got.text)
+                body = got.json()
+                final = body.get("scan", body)
+                if final["status"] in ("succeeded", "failed"):
+                    break
+                time.sleep(0.05)
+            else:
                 raise AssertionError("scan never finished")
 
-            final = asyncio.run(_poll())
-
-        self.assertEqual(final.status, LabelNoiseScanStatus.SUCCEEDED)
+        self.assertEqual(final["status"], LabelNoiseScanStatus.SUCCEEDED.value)
         # One row matched dual condition (A given, B predicted at 0.95).
         # The second row's model picks B as predicted at 0.90 AND its
         # given label is B → agreement, not a mislabel.
-        self.assertEqual(final.suspected_count, 1)
-        self.assertEqual(final.label_count_at_scan, 2)
-        self.assertIsNotNone(final.completed_at)
-        self.assertIsNotNone(final.job_id)
+        self.assertEqual(final["suspected_count"], 1)
+        self.assertEqual(final["label_count_at_scan"], 2)
+        self.assertIsNotNone(final["completed_at"])
+        self.assertIsNotNone(final["job_id"])
         # Result payload has the suspected entry at the top.
-        payload = final.result_payload or {}
+        payload = final["result_payload"] or {}
         self.assertEqual(len(payload["top_k"]), 1)
         self.assertEqual(payload["top_k"][0]["given_label"], "A")
         self.assertEqual(payload["top_k"][0]["predicted_label"], "B")

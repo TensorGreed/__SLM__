@@ -251,6 +251,17 @@ def _ticket_rows(n: int, rng: random.Random, id_range: tuple[int, int]) -> list[
 def _real_training_available() -> str | None:
     if os.environ.get("BREWSLM_SKIP_REAL_TRAINING"):
         return "BREWSLM_SKIP_REAL_TRAINING set"
+    if not os.environ.get("BREWSLM_REAL_TRAINING"):
+        try:
+            import torch
+
+            has_gpu = torch.cuda.is_available()
+        except Exception:  # noqa: BLE001
+            has_gpu = False
+        if not has_gpu:
+            # Real fine-tunes on CPU (+ a model download) take many minutes —
+            # opt in with BREWSLM_REAL_TRAINING=1; GPU boxes run them by default.
+            return "needs a GPU or BREWSLM_REAL_TRAINING=1"
     try:
         import peft  # noqa: F401
         import torch  # noqa: F401

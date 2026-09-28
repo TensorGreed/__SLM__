@@ -225,8 +225,8 @@ class StartTrainingWiringContractTests(unittest.TestCase):
     must resolve the checkpoint and pass the resolved model to the runtime."""
 
     def test_start_training_resolves_and_passes_effective_model(self):
-        src = Path(
-            "/home/anuragj/Desktop/GitHub/__SLM__/backend/app/services/training_service.py"
+        src = (
+            Path(__file__).resolve().parent.parent / "app" / "services" / "training_service.py"
         ).read_text(encoding="utf-8")
         self.assertIn("resolve_starting_checkpoint(", src)
         self.assertIn("effective_base_model", src)

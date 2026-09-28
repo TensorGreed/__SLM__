@@ -280,9 +280,7 @@ class CurriculumDisableShuffleFlagTests(unittest.TestCase):
         and consulted before the sampler-swap block runs. We assert
         the literal key name appears in train.py — guards against a
         future rename that would silently disable the wiring."""
-        train_py = Path(
-            "/home/anuragj/Desktop/GitHub/__SLM__/backend/scripts/train.py"
-        )
+        train_py = Path(__file__).resolve().parent.parent / "scripts" / "train.py"
         source = train_py.read_text(encoding="utf-8")
         # The helper sets resolved_config["curriculum_disable_shuffle"];
         # train.py reads config.get("curriculum_disable_shuffle").

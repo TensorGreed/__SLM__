@@ -207,6 +207,21 @@ cd backend && python -m pytest -k "name_pattern"        # by name
   attempts. (Proper fix — isolate the runner's DB session or await/cancel the job
   in tearDown — is deferred; tracked in `/tmp/brewslm-progress.md`.)
 
+- **Real-training tests** (`test_training_correctness`, `test_continued_pretraining`,
+  `test_export_scoping_and_merge`, `test_playground_trained_run`) fine-tune /
+  load SmolLM2-135M. They run only with a GPU or `BREWSLM_REAL_TRAINING=1`
+  (and a cached model); `BREWSLM_SKIP_REAL_TRAINING=1` forces a skip. CI has
+  neither, so they skip there.
+- **Tests that spawn background Jobs must let them finish** (cancel runs they
+  start, wait on `/api/jobs/active?include_recently_completed=false` in
+  `tearDown`) and must never poll the engine via `asyncio.run` from the test
+  thread — on the shared StaticPool connection both wipe the next test's
+  writes ("Project N not found", "Could not refresh instance", "Lock … bound
+  to a different event loop"). And never let a Job run a real model eval
+  (patch `run_heldout_evaluation`): on CI it downloads + runs on CPU and the
+  process hangs at exit. CI caps each non-phase file at 600s
+  (`::error::<file> timed out`) and the job at 90 min.
+
 ### Frontend
 ```bash
 cd frontend && npx vitest run                           # all
