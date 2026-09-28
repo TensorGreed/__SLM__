@@ -338,6 +338,19 @@ quality gate** (simulate runtime). The eval→export tail is deferred
 - **Training** — `training_service.start_training` dispatches to
   simulate / external subprocess runtime. Watcher Job mirrors progress
   into the bell. Trainability forecast precedes the launch.
+  **Core-loop defaults in `scripts/train.py` (2026-09-28 audit fix)**:
+  prompt→answer pairs beat a display `text` field (`_extract_prompt_completion`);
+  QA-family rows are re-rendered with the tokenizer's chat template
+  (`use_tokenizer_chat_template` default **True**, `_rewrap_prompt_completion_row`,
+  matches `evaluation_service._apply_chat_template_if_present`); causal-LM
+  loss is completion-only with an explicit, never-masked EOS
+  (`_encode_causal_lm_example` + `CausalLMCompletionCollator` — don't go back
+  to `DataCollatorForLanguageModeling`, it masks EOS when pad==eos);
+  `auto_epochs` (default on, `services/training_epoch_policy.py`) sizes
+  epochs to row count — an explicit `num_epochs` disables it (schema
+  validator). Regression net: `tests/test_training_correctness.py`
+  (real SmolLM2 fine-tune must beat base on a held-out split; skips
+  without torch / cached model).
 - **Pipeline plan refinement (Phase 1, deterministic)** —
   `pipeline_refinement_service.refine_pipeline_plan` is the post-data plan-fit
   lens: does the project's current plan (recipe / task shape / base model /

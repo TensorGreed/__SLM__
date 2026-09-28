@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.experiment import ExperimentStatus, TrainingMode
 
@@ -12,23 +12,23 @@ class TrainingConfig(BaseModel):
     """Training hyperparameters and configuration."""
     base_model: str = Field(..., description="HuggingFace model ID or local path")
     training_mode: TrainingMode = TrainingMode.SFT
-    chat_template: str = Field("llama3", description="Chat template format (llama3, chatml, zephyr, phi3)")
-    use_tokenizer_chat_template: bool = Field(
-        False,
+    chat_template: str = Field(
+        "llama3",
         description=(
-            "When True, QA-family training rows (handlers whose "
-            "wraps_own_prompt() is False — qa / chat_sft / "
-            "instruction_sft / language_modeling) are re-shaped via "
-            "``tokenizer.apply_chat_template`` at trainer-input time "
-            "so the student sees the same byte-identical scaffold the "
-            "held-out eval will build at inference. Closes a residual "
-            "train/eval format gap left by the hardcoded "
-            "``_qa_to_chat_text`` template. Defaults False to preserve "
-            "existing-project training format; flip on for new "
-            "projects training a chat-template-aware base. No effect "
-            "on wraps_own_prompt rows (Classification / Structured / "
-            "RAG / Seq2Seq / Vision / Audio) — those are already "
-            "byte-aligned via the β/ζ/η/θ/ι/κ adapter wraps."
+            "Fallback prompt preset (llama3, chatml, zephyr, phi3) used only "
+            "when use_tokenizer_chat_template is False."
+        ),
+    )
+    use_tokenizer_chat_template: bool = Field(
+        True,
+        description=(
+            "Train QA-family rows (qa / chat_sft / instruction_sft) in the "
+            "exact prompt shape held-out eval and serving use: the base "
+            "model's own ``tokenizer.apply_chat_template`` (raw prompt when "
+            "the tokenizer has none). ``chat_template`` is only used when "
+            "this is False. No effect on wraps_own_prompt rows "
+            "(Classification / Structured / RAG / Seq2Seq / Vision / Audio), "
+            "which carry their handler's prompt already."
         ),
     )
     task_type: str = Field(
@@ -59,6 +59,15 @@ class TrainingConfig(BaseModel):
     optimizer: str = Field("paged_adamw_8bit", description="Optimizer type")
     lr_scheduler: str = Field("cosine", description="Learning rate scheduler")
     num_epochs: int = Field(3, ge=1, le=100)
+    auto_epochs: bool = Field(
+        True,
+        description=(
+            "Scale epochs (and, for tiny datasets, gradient accumulation) to "
+            "the training-row count via ``training_epoch_policy``; "
+            "``num_epochs`` is ignored while on. Set False to use "
+            "``num_epochs`` exactly."
+        ),
+    )
     max_seq_length: int = Field(2048, ge=128, le=32768)
     warmup_ratio: float = Field(0.03, ge=0, le=1)
     weight_decay: float = Field(0.01, ge=0)
@@ -211,6 +220,15 @@ class TrainingConfig(BaseModel):
             "buys nothing and can OOM. Flip on only for multi-GPU runtimes."
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _explicit_epochs_disable_auto(cls, data: Any) -> Any:
+        # A caller that names ``num_epochs`` (CLI ``--num-epochs``, API
+        # config, UI field the user touched) means that exact count.
+        if isinstance(data, dict) and "num_epochs" in data and "auto_epochs" not in data:
+            data = {**data, "auto_epochs": False}
+        return data
 
 
 class ExperimentCreate(BaseModel):

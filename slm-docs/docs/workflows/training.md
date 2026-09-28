@@ -73,6 +73,23 @@ curl -X POST http://localhost:8000/api/projects/1/experiments \
   }'
 ```
 
+## What the trainer gets right by default
+
+Every supervised (prompt → answer) run applies four defaults. They matter more
+than any hyperparameter:
+
+| Default | What it means | Opt out |
+|---|---|---|
+| **Eval-matched prompt format** | Rows are rendered with the base model's own chat template (`tokenizer.apply_chat_template`), the same prompt shape held-out eval and serving use. Base models without a template train on the raw prompt. | `"use_tokenizer_chat_template": false` falls back to the `chat_template` preset (`llama3` / `chatml` / `zephyr` / `phi3`). |
+| **Answer-only loss** | Prompt tokens are masked (label `-100`), so the model learns to *answer*, not to echo questions. Plain-text rows (no answer field) still train on every token. | — |
+| **Learns to stop** | Every row ends in a real end-of-sequence token that is never masked as padding, so answers don't ramble. Rows whose answer is cut off by `max_seq_length` are dropped, with a warning. | — |
+| **Epochs scale with your data** | `auto_epochs` aims for about 200 optimizer steps. Epochs are capped by dataset size: 4 below 100 rows, 5 below 1,000, 3 otherwise. Tiny datasets first shrink gradient accumulation rather than re-reading rows. The chosen plan is recorded in the run's `training_report.json` under `runtime_environment.auto_epochs`. | Pass `num_epochs` explicitly (UI field, `--num-epochs`, or API config). An explicit count is used exactly. |
+
+Rows are paired from `source_text`/`target_text` first. After that come
+`question`/`prompt`/`instruction` (with Alpaca-style `input` as context)
+against `answer`/`completion`/`output`/`response`. A display-only `text`
+field never overrides a real prompt/answer pair.
+
 ## Warm-start checkpoints
 
 A recipe can recommend a **pre-fine-tuned warm-start checkpoint** — a base model already task-pretuned on open corpora, so your rows only teach the *delta* (~3–5× fewer rows for the same quality). Recipes carry the recommendation as `recommended_starting_checkpoint`; the task-shaped offline-KD recipes already point at the planned task bases:

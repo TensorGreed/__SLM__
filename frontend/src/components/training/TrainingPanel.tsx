@@ -1435,7 +1435,12 @@ export default function TrainingPanel({
     if (includeField('trainer_backend')) config.trainer_backend = trainerBackend;
     if (includeField('chat_template')) config.chat_template = chatTemplate;
     if (includeField('learning_rate')) config.learning_rate = learningRate;
-    if (includeField('num_epochs')) config.num_epochs = epochs;
+    // An epoch count the user actually sends is explicit; otherwise the
+    // trainer scales epochs to the dataset size (backend auto_epochs).
+    if (includeField('num_epochs')) {
+      config.num_epochs = epochs;
+      config.auto_epochs = false;
+    }
     if (includeField('batch_size')) config.batch_size = batchSize;
     if (includeField('gradient_accumulation_steps')) config.gradient_accumulation_steps = gradientAccumulationSteps;
     if (includeField('max_seq_length')) config.max_seq_length = maxSeqLength;
@@ -5418,6 +5423,9 @@ export default function TrainingPanel({
                             setTouchedConfig((prev) => ({ ...prev, num_epochs: true }));
                           }}
                         />
+                        {useProfileDefaults && !touchedConfig.num_epochs && (
+                          <p className="form-hint">Auto: scaled to your dataset size unless you change it.</p>
+                        )}
                       </div>
                       <div className="form-group">
                         <label className="form-label">Batch Size</label>

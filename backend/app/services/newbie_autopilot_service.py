@@ -139,6 +139,8 @@ def _normalize_target_profile(value: str | None) -> str:
 
 
 def _safe_defaults_for_target(target_profile_id: str) -> dict[str, Any]:
+    # No ``num_epochs`` here: epochs depend on dataset size, not the
+    # deploy target — the trainer's ``auto_epochs`` policy picks them.
     target = target_profile_service.get_target_by_id(target_profile_id)
     if not target:
         return {"batch_size": 1, "max_seq_length": 512}
@@ -149,20 +151,17 @@ def _safe_defaults_for_target(target_profile_id: str) -> dict[str, Any]:
             "batch_size": 1,
             "gradient_accumulation_steps": 8,
             "max_seq_length": 1024,
-            "num_epochs": 2,
         }
     if target_profile_id == "vllm_server":
         return {
             "batch_size": 4,
             "gradient_accumulation_steps": 4,
             "max_seq_length": 2048,
-            "num_epochs": 3,
         }
     return {
         "batch_size": 2,
         "gradient_accumulation_steps": 6,
         "max_seq_length": 1536,
-        "num_epochs": 2,
     }
 
 

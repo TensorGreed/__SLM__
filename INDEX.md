@@ -259,6 +259,7 @@ session-start guidance.
 - `backend/app/services/trainability_forecast_service.py` — Trainability forecast service — USER-SUCCESS Epic 1.
 - `backend/app/services/training_config_gap_service.py` — Training Config Gap scanner + patch engine — Coach-stage-2 phases 1 + 2 + 3.
 - `backend/app/services/training_data_gate.py` — Pre-training data-shape gate.
+- `backend/app/services/training_epoch_policy.py` — Dataset-size-aware epoch policy (``auto_epochs``).
 - `backend/app/services/training_manifest_service.py` — P14 — Capture + read immutable training-run manifests.
 - `backend/app/services/training_preflight_service.py` — Training capability matrix and preflight checks.
 - `backend/app/services/training_recipe_service.py` — Training recipe catalog and resolution helpers.
@@ -869,6 +870,7 @@ session-start guidance.
 - `backend/tests/test_training_config_gap_phase3.py` — Phase-3 additions to the training-config gap scanner.
 - `backend/tests/test_training_config_gap_service.py` — Training Config Gap scanner — Coach-stage-2 phase 1.
 - `backend/tests/test_training_config_gaps_coach_rollup.py` — Coach-stage-2 phase 1 — Coach training-stage roll-up nudge.
+- `backend/tests/test_training_correctness.py` — Training-correctness regression net (fresh-look audit, Wave 1).
 - `backend/tests/test_training_data_gate.py` — Pre-training data-shape gate (training_data_gate).
 - `backend/tests/test_unlabeled_pool_scoring_slice1.py` — Quality-Lift phase 3 slice 1 — Unlabeled-pool scoring service.
 - `backend/tests/test_vision_language_adapter_prompt_wrap.py` — ι-fix tests — vision-language-pair adapter writes the

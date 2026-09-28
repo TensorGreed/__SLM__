@@ -319,7 +319,27 @@ def _effective_training_config(project: Project) -> TrainingConfig:
     for field in PATCHABLE_FIELDS:
         if field in overrides:
             init_kwargs[field] = overrides[field]
+    if "num_epochs" in overrides:
+        # An applied epoch count is an explicit choice — the trainer
+        # honours it verbatim instead of the dataset-size policy.
+        init_kwargs["auto_epochs"] = False
     return TrainingConfig(**init_kwargs)
+
+
+def _run_shape(labelled_rows: int, cfg: TrainingConfig) -> tuple[int, int]:
+    """``(epochs, gradient_accumulation_steps)`` the trainer will actually
+    use — resolved through ``training_epoch_policy`` when ``auto_epochs``
+    is on, so signals judge the real run, not the nominal preset."""
+    if cfg.auto_epochs:
+        from app.services.training_epoch_policy import resolve_auto_epochs
+
+        plan = resolve_auto_epochs(
+            train_rows=labelled_rows,
+            batch_size=cfg.batch_size,
+            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
+        )
+        return int(plan["num_epochs"]), int(plan["gradient_accumulation_steps"])
+    return cfg.num_epochs, cfg.gradient_accumulation_steps
 
 
 async def _sample_training_text(
@@ -508,11 +528,12 @@ def _eval_cadence_signal(
     cfg: TrainingConfig,
 ) -> dict[str, Any]:
     """Signal: eval_steps is too coarse for the planned run length."""
+    epochs, grad_accum = _run_shape(labelled_rows, cfg)
     total_steps = _approx_total_steps(
         labelled_rows,
-        cfg.num_epochs,
+        epochs,
         cfg.batch_size,
-        cfg.gradient_accumulation_steps,
+        grad_accum,
     )
     eval_obs = total_steps // max(1, cfg.eval_steps)
 
@@ -570,7 +591,7 @@ def _epochs_overfit_signal(
     cfg: TrainingConfig,
 ) -> dict[str, Any]:
     """Signal: epoch count too high for the data scale."""
-    epochs = cfg.num_epochs
+    epochs, _ = _run_shape(labelled_rows, cfg)
     if labelled_rows >= SMALL_DATA_WARN_ROWS or epochs < EPOCHS_WARN_FOR_SMALL:
         return _make_signal(
             id="training_config.epochs_high_for_small_data",
@@ -618,11 +639,12 @@ def _warmup_signal(
     cfg: TrainingConfig,
 ) -> dict[str, Any]:
     """Signal: warmup is too short for an aggressive LR + long run."""
+    epochs, grad_accum = _run_shape(labelled_rows, cfg)
     total_steps = _approx_total_steps(
         labelled_rows,
-        cfg.num_epochs,
+        epochs,
         cfg.batch_size,
-        cfg.gradient_accumulation_steps,
+        grad_accum,
     )
     lr = cfg.learning_rate
     warmup = cfg.warmup_ratio

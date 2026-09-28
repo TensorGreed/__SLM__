@@ -529,6 +529,38 @@ def _adapt_record_to_text(
             "target_text": prepared_target_au,
         })
 
+    # Prompt→completion pairs win over a raw ``text`` field. Adapters
+    # (qa-pair, default-canonical, chat) also write a display-oriented
+    # ``text`` ("Question: …\nAnswer: …", or just the question), and
+    # letting that shadow the pair trained the model on the whole
+    # string as plain text — or, for default-canonical rows, on the
+    # question alone with the answer silently dropped.
+    # Any other handler-wrapped prompt (e.g. classification-label rows
+    # trained generatively under causal_lm) passes through byte-for-byte
+    # — its handler builds exactly this string at eval.
+    wrapped_source = row.get("source_text")
+    wrapped_target = row.get("target_text")
+    if (
+        isinstance(wrapped_source, str)
+        and isinstance(wrapped_target, str)
+        and wrapped_target.strip()
+        and _is_wraps_own_prompt_row(row)
+    ):
+        return _attach_multimodal_fields(row, {
+            "text": f"{wrapped_source}{wrapped_target}",
+            "source_text": wrapped_source,
+            "target_text": wrapped_target,
+        })
+
+    pair = _extract_prompt_completion(row)
+    if pair is not None:
+        question, answer = pair
+        return _attach_multimodal_fields(row, {
+            "text": _qa_to_chat_text(question, answer, chat_template),
+            "source_text": question,
+            "target_text": answer,
+        })
+
     direct_text = _pick_first_text(row, ["text", "content"])
     if direct_text:
         return _attach_multimodal_fields(
@@ -536,35 +568,8 @@ def _adapt_record_to_text(
             {"text": direct_text, "source_text": direct_text, "target_text": ""},
         )
 
-    question = _pick_first_text(row, ["question", "prompt", "instruction"])
-    answer = _pick_first_text(
-        row,
-        [
-            "answer",
-            "completion",
-            "output",
-            "response",
-            "chosen",
-            "preferred",
-            "accepted",
-            "response_chosen",
-        ],
-    )
-    if question and answer:
-        rendered = _qa_to_chat_text(question, answer, chat_template)
-        return _attach_multimodal_fields(
-            row,
-            {"text": rendered, "source_text": question, "target_text": answer},
-        )
-
+    question = _pick_first_text(row, ["question", "prompt", "instruction", "input"])
     if question:
-        optional_input = _pick_first_text(row, ["input"])
-        if optional_input:
-            return _attach_multimodal_fields(row, {
-                "text": _qa_to_chat_text(question, optional_input, chat_template),
-                "source_text": question,
-                "target_text": optional_input,
-            })
         return _attach_multimodal_fields(
             row,
             {"text": question, "source_text": question, "target_text": ""},
@@ -574,6 +579,62 @@ def _adapt_record_to_text(
         row,
         {"text": "", "source_text": "", "target_text": ""},
     )
+
+
+_COMPLETION_FIELDS: list[str] = [
+    "answer",
+    "completion",
+    "output",
+    "response",
+    "chosen",
+    "preferred",
+    "accepted",
+    "response_chosen",
+]
+
+
+def _extract_prompt_completion(row: dict[str, Any]) -> tuple[str, str] | None:
+    """Return ``(prompt, completion)`` for a supervised causal-LM row, or
+    ``None`` when the row is plain text (language modelling).
+
+    Precedence: the adapter-written ``source_text``/``target_text`` pair,
+    then question/prompt/instruction (+ Alpaca-style ``input`` context)
+    against answer/completion/output/response. Multi-turn ``messages``
+    rows (more than one exchange) stay on the rendered-text path so
+    earlier turns aren't dropped.
+    """
+    messages = row.get("messages")
+    if isinstance(messages, list) and len(messages) > 2:
+        return None
+
+    source = row.get("source_text")
+    target = row.get("target_text")
+    if (
+        isinstance(source, str)
+        and source.strip()
+        and isinstance(target, str)
+        and target.strip()
+    ):
+        return source.strip(), target.strip()
+
+    answer = _pick_first_text(row, _COMPLETION_FIELDS)
+    if not answer:
+        return None
+    instruction = _pick_first_text(row, ["question", "prompt", "instruction"])
+    context = _pick_first_text(row, ["input"])
+    if instruction and context and context != instruction:
+        prompt = f"{instruction}\n\n{context}"
+    else:
+        prompt = instruction or context
+    if not prompt:
+        # ``{text, answer}`` rows: ``text`` is the prompt unless it is a
+        # rendered composite that already embeds the answer.
+        text = _pick_first_text(row, ["text", "content"])
+        if text and answer not in text:
+            prompt = text
+    if not prompt:
+        return None
+    return prompt, answer
 
 
 def _row_has_text(value: Any) -> bool:
@@ -626,6 +687,118 @@ def _is_wraps_own_prompt_row(row: dict[str, Any]) -> bool:
     ):
         return True
     return False
+
+
+def _tokenizer_has_chat_template(tokenizer: Any) -> bool:
+    return hasattr(tokenizer, "apply_chat_template") and bool(
+        getattr(tokenizer, "chat_template", None)
+    )
+
+
+def _rewrap_prompt_completion_row(row: dict[str, Any], tokenizer: Any) -> dict[str, Any]:
+    """Re-render a prompt→completion row in the exact prompt shape the
+    held-out eval builds (``evaluation_service._apply_chat_template_if_present``):
+    the tokenizer's chat template when it has one, otherwise the raw
+    prompt. wraps_own_prompt rows and plain-text rows pass through."""
+    if _is_wraps_own_prompt_row(row):
+        return row
+    question = str(row.get("source_text") or "").strip()
+    answer = str(row.get("target_text") or "").strip()
+    if not question or not answer:
+        return row
+    wrapped = f"{question}\n"
+    if _tokenizer_has_chat_template(tokenizer):
+        try:
+            rendered = tokenizer.apply_chat_template(
+                [{"role": "user", "content": question}],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        except Exception:
+            rendered = None
+        if isinstance(rendered, str) and rendered:
+            wrapped = rendered
+    return {
+        **row,
+        "text": f"{wrapped}{answer}",
+        "source_text": wrapped,
+        "target_text": answer,
+    }
+
+
+def _encode_causal_lm_example(
+    tokenizer: Any,
+    text: str,
+    target: str | None,
+    max_seq_length: int,
+) -> dict[str, list[int]]:
+    """Tokenize one causal-LM row with completion-only labels + EOS.
+
+    ``target`` is the completion substring at the end of ``text``; every
+    token before it is masked (-100) so loss lands on the answer only.
+    Plain-text rows (no target) train on every token. An EOS id is
+    appended so the model learns where answers end. Rows whose answer is
+    fully truncated come back with every label masked (callers drop them).
+    """
+    eos_id = getattr(tokenizer, "eos_token_id", None)
+    budget = max(1, max_seq_length - 1) if eos_id is not None else max_seq_length
+    ids = list(
+        tokenizer(text, truncation=True, max_length=budget, padding=False)["input_ids"]
+    )
+    # A truncated row didn't really end, so it gets no EOS — otherwise
+    # the model learns to stop mid-answer.
+    truncated = len(ids) >= budget
+    if eos_id is not None and not truncated and (not ids or ids[-1] != eos_id):
+        ids.append(int(eos_id))
+    labels = list(ids)
+
+    target = target or ""
+    if target.strip():
+        idx = text.rfind(target)
+        if idx < 0:
+            idx = text.rfind(target.strip())
+        if idx > 0:
+            prefix_ids = list(
+                tokenizer(text[:idx], truncation=False, padding=False)["input_ids"]
+            )
+            # Longest shared token prefix: if BPE merges across the
+            # prompt/answer boundary, the answer's first token stays
+            # trainable rather than being masked.
+            shared = 0
+            for a, b in zip(prefix_ids, ids):
+                if a != b:
+                    break
+                shared += 1
+            if truncated and len(prefix_ids) >= len(ids):
+                labels = [-100] * len(ids)
+            else:
+                labels[:shared] = [-100] * shared
+    return {"input_ids": ids, "attention_mask": [1] * len(ids), "labels": labels}
+
+
+class CausalLMCompletionCollator:
+    """Right-pads ``input_ids`` / ``attention_mask`` / ``labels`` by
+    position. Padding labels are -100; real EOS labels are never touched
+    even when ``pad_token_id == eos_token_id``."""
+
+    def __init__(self, *, pad_token_id: int, torch_module: Any) -> None:
+        self.pad_token_id = int(pad_token_id)
+        self.torch = torch_module
+
+    def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
+        width = max(len(f["input_ids"]) for f in features)
+        input_ids, attention_mask, labels = [], [], []
+        for f in features:
+            pad = width - len(f["input_ids"])
+            input_ids.append(list(f["input_ids"]) + [self.pad_token_id] * pad)
+            attention_mask.append(list(f["attention_mask"]) + [0] * pad)
+            labels.append(list(f["labels"]) + [-100] * pad)
+        tensor = self.torch.tensor
+        return {
+            "input_ids": tensor(input_ids, dtype=self.torch.long),
+            "attention_mask": tensor(attention_mask, dtype=self.torch.long),
+            "labels": tensor(labels, dtype=self.torch.long),
+        }
 
 
 def _is_valid_adapted_row(row: dict[str, Any], task_type: str) -> bool:
@@ -1458,59 +1631,6 @@ def _run_training_attempt(
         train_text = train_ds.map(to_text_record, remove_columns=train_ds.column_names)
         train_text = train_text.filter(lambda row: _is_valid_adapted_row(row, normalized_task_type))
 
-        # Chat-template byte-alignment pass (opt-in via
-        # ``use_tokenizer_chat_template`` config flag). Closes the
-        # residual train/eval format gap for QA-family rows
-        # (handlers where ``wraps_own_prompt() == False``): the
-        # ``_qa_to_chat_text`` heuristic format the trainer uses
-        # differs at the byte level from what
-        # ``tokenizer.apply_chat_template`` emits at eval. When the
-        # flag is on AND the tokenizer carries a chat_template,
-        # re-shape QA rows so the student trains on the same string
-        # the eval handler will rebuild at inference. wraps_own_prompt
-        # rows (β/ζ/η/θ/ι/κ-wrapped) are detected by source_text
-        # prefix and skipped — they're already byte-aligned via
-        # their adapter wraps.
-        if (
-            _coerce_bool(config.get("use_tokenizer_chat_template"), False)
-            and hasattr(processor_tokenizer, "apply_chat_template")
-            and bool(getattr(processor_tokenizer, "chat_template", None))
-        ):
-            def _rewrap_qa_row(row: dict[str, Any]) -> dict[str, Any]:
-                if _is_wraps_own_prompt_row(row):
-                    return row
-                question = str(row.get("source_text") or "").strip()
-                answer = str(row.get("target_text") or "").strip()
-                if not question or not answer:
-                    return row
-                try:
-                    wrapped = processor_tokenizer.apply_chat_template(
-                        [{"role": "user", "content": question}],
-                        tokenize=False,
-                        add_generation_prompt=True,
-                    )
-                except Exception:
-                    return row
-                if not isinstance(wrapped, str) or not wrapped:
-                    return row
-                # Student tokenizes ``text``; trainer's
-                # ``source_text`` / ``target_text`` are diagnostic.
-                # The wrapped prompt + answer + EOS reproduces the
-                # eval-time shape (eval calls apply_chat_template
-                # then generates from there).
-                return {
-                    **row,
-                    "text": f"{wrapped}{answer}",
-                    "source_text": wrapped,
-                    "target_text": answer,
-                }
-
-            train_text = train_text.map(_rewrap_qa_row)
-            runtime_environment["chat_template_rewrap"] = "applied"
-        elif _coerce_bool(config.get("use_tokenizer_chat_template"), False):
-            runtime_environment["chat_template_rewrap"] = (
-                "skipped_no_chat_template"
-            )
         if len(train_text) == 0:
             raise ValueError(
                 (
@@ -1522,17 +1642,6 @@ def _run_training_attempt(
         if eval_ds is not None:
             eval_text = eval_ds.map(to_text_record, remove_columns=eval_ds.column_names)
             eval_text = eval_text.filter(lambda row: _is_valid_adapted_row(row, normalized_task_type))
-            # Symmetric re-wrap so val metrics agree with the
-            # held-out eval format. Without this, train_text gets
-            # apply_chat_template wrapping but eval_text doesn't,
-            # and val loss / val F1 stop being comparable to
-            # held-out — surprises during training.
-            if (
-                _coerce_bool(config.get("use_tokenizer_chat_template"), False)
-                and hasattr(processor_tokenizer, "apply_chat_template")
-                and bool(getattr(processor_tokenizer, "chat_template", None))
-            ):
-                eval_text = eval_text.map(_rewrap_qa_row)
             if len(eval_text) == 0:
                 eval_text = None
 
@@ -1677,6 +1786,46 @@ def _run_training_attempt(
     if normalized_task_type == "classification":
         runtime_environment["label_space_size"] = len(label_space)
         runtime_environment["label_space_preview"] = label_space[:50]
+
+    # Train on the prompt format eval + serving use. Held-out eval wraps
+    # QA-family prompts with ``tokenizer.apply_chat_template`` (raw prompt
+    # when the tokenizer has none), so the trainer re-shapes those rows the
+    # same way. The hardcoded ``chat_template`` preset is only a fallback
+    # when this is switched off.
+    if (
+        train_text is not None
+        and normalized_task_type == "causal_lm"
+        and _coerce_bool(config.get("use_tokenizer_chat_template"), True)
+    ):
+        def _rewrap(row: dict[str, Any]) -> dict[str, Any]:
+            return _rewrap_prompt_completion_row(row, processor_tokenizer)
+
+        train_text = train_text.map(_rewrap)
+        if eval_text is not None:
+            eval_text = eval_text.map(_rewrap)
+        runtime_environment["chat_template_rewrap"] = (
+            "tokenizer_chat_template"
+            if _tokenizer_has_chat_template(processor_tokenizer)
+            else "raw_prompt"
+        )
+    else:
+        runtime_environment["chat_template_rewrap"] = f"preset:{chat_template}"
+
+    # Configs written before ``auto_epochs`` existed carry an explicit
+    # ``num_epochs`` — honour it so reruns stay reproducible.
+    auto_epochs = _coerce_bool(config.get("auto_epochs"), "num_epochs" not in config)
+    if train_text is not None and auto_epochs:
+        from app.services.training_epoch_policy import resolve_auto_epochs
+
+        epoch_plan = resolve_auto_epochs(
+            train_rows=len(train_text),
+            batch_size=batch_size,
+            gradient_accumulation_steps=grad_accum,
+        )
+        num_epochs = float(epoch_plan["num_epochs"])
+        grad_accum = int(epoch_plan["gradient_accumulation_steps"])
+        runtime_environment["auto_epochs"] = epoch_plan
+        warnings.append(f"Auto epochs: {epoch_plan['reason']}")
     use_bf16 = bool(use_cuda and want_bf16 and torch.cuda.is_bf16_supported())
     use_fp16 = bool(use_cuda and not use_bf16 and want_fp16)
     if use_bf16:
@@ -3000,23 +3149,65 @@ def _run_training_attempt(
             )
 
         else:
+            # Loss on the completion only (prompt tokens → -100) with an
+            # explicit EOS so the model learns to stop. The stock
+            # ``DataCollatorForLanguageModeling`` did neither: it trained
+            # on the prompt too, and because ``pad_token == eos_token`` on
+            # most small models it masked every EOS label as padding.
             def tokenize_rows(rows: dict[str, list[str]]) -> dict[str, Any]:
-                return processor_tokenizer(
-                    rows["text"],
-                    truncation=True,
-                    max_length=max_seq_length,
-                    padding=False,
-                )
+                encoded: dict[str, list[list[int]]] = {
+                    "input_ids": [],
+                    "attention_mask": [],
+                    "labels": [],
+                }
+                targets = rows.get("target_text") or [""] * len(rows["text"])
+                for text, target in zip(rows["text"], targets):
+                    example = _encode_causal_lm_example(
+                        processor_tokenizer, text, target, max_seq_length
+                    )
+                    for key in encoded:
+                        encoded[key].append(example[key])
+                return encoded
 
-            tokenized_train = train_text.map(tokenize_rows, batched=True, remove_columns=train_text.column_names)
-            tokenized_eval = (
-                eval_text.map(tokenize_rows, batched=True, remove_columns=eval_text.column_names)
-                if eval_text is not None
-                else None
+            def _has_trainable_labels(row: dict[str, Any]) -> bool:
+                return any(label != -100 for label in row["labels"])
+
+            tokenized_train = train_text.map(
+                tokenize_rows, batched=True, remove_columns=train_text.column_names
             )
+            kept_train = tokenized_train.filter(_has_trainable_labels)
+            dropped_rows = len(tokenized_train) - len(kept_train)
+            if dropped_rows:
+                warnings.append(
+                    f"Dropped {dropped_rows} training row(s) whose answer was cut off "
+                    f"by max_seq_length={max_seq_length}."
+                )
+            if len(kept_train) == 0:
+                raise ValueError(
+                    "Every training row's answer was truncated away by "
+                    f"max_seq_length={max_seq_length}; raise max_seq_length."
+                )
+            tokenized_train = kept_train
+            tokenized_eval = None
+            if eval_text is not None:
+                tokenized_eval = eval_text.map(
+                    tokenize_rows, batched=True, remove_columns=eval_text.column_names
+                ).filter(_has_trainable_labels)
+                if len(tokenized_eval) == 0:
+                    tokenized_eval = None
+            runtime_environment["loss_masking"] = "completion_only"
             trainer_kwargs["train_dataset"] = tokenized_train
-            trainer_kwargs["eval_dataset"] = tokenized_eval if has_eval_records else None
-            trainer_kwargs["data_collator"] = DataCollatorForLanguageModeling(tokenizer=processor_tokenizer, mlm=False)
+            trainer_kwargs["eval_dataset"] = (
+                tokenized_eval if has_eval_records and tokenized_eval is not None else None
+            )
+            trainer_kwargs["data_collator"] = CausalLMCompletionCollator(
+                pad_token_id=int(
+                    getattr(processor_tokenizer, "pad_token_id", None)
+                    or getattr(processor_tokenizer, "eos_token_id", None)
+                    or 0
+                ),
+                torch_module=torch,
+            )
 
         if distillation_enabled or distillation_offline:
             trainer = trainer_cls(**trainer_kwargs)
