@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
@@ -43,7 +43,7 @@ async function renderAndOpenSplit() {
     const user = userEvent.setup();
     render(
         <MemoryRouter>
-            <DatasetPrepPanel projectId={42} />
+            <DatasetPrepPanel projectId={42} onNextStep={() => undefined} />
         </MemoryRouter>,
     );
     // The split form (and the hydration hint) only render under the Split view.

@@ -318,7 +318,7 @@ describe('RerouteRecommendationPanel', () => {
         // Strip evidence from the fired signal.
         analysis.signals = analysis.signals.map((s) =>
             s.id === 'brief_mentions_retrieval' ? { ...s, evidence: {} } : s,
-        );
+        ) as typeof analysis.signals;
         apiMock.get.mockResolvedValueOnce({ data: analysis });
         renderPanel();
         await waitFor(() => {
@@ -338,7 +338,7 @@ describe('RerouteRecommendationPanel', () => {
             s.id === 'input_output_density_low'
                 ? { ...s, evidence: { density: 0.018273, density_threshold: 0.05, rows_sampled: 120 } }
                 : s,
-        );
+        ) as typeof analysis.signals;
         apiMock.get.mockResolvedValueOnce({ data: analysis });
         renderPanel();
         await waitFor(() => {

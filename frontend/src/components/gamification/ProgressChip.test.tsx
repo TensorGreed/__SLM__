@@ -124,7 +124,7 @@ const ACHIEVEMENT_CATALOG = {
     ],
 };
 
-async function seedProgression(state: typeof FRESH_STATE) {
+async function seedProgression(_state: typeof FRESH_STATE) {
     // The chip reads from the shared zustand store inside
     // useProgressionPoll. Seed it by reaching into the module's
     // internal store via a fresh render pass — we go via the

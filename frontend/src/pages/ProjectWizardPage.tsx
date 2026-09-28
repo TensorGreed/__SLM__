@@ -902,8 +902,8 @@ export default function ProjectWizardPage() {
                       {target.constraints.min_vram_gb && (
                         <div>Min VRAM: {target.constraints.min_vram_gb}GB</div>
                       )}
-                      {target.constraints.preferred_formats?.length > 0 && (
-                        <div>Preferred: {target.constraints.preferred_formats.join(', ').toUpperCase()}</div>
+                      {(target.constraints.preferred_formats?.length ?? 0) > 0 && (
+                        <div>Preferred: {(target.constraints.preferred_formats ?? []).join(', ').toUpperCase()}</div>
                       )}
                     </div>
                   </div>

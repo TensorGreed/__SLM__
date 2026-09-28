@@ -38,12 +38,6 @@ interface CleaningBatchError {
     error: string;
 }
 
-interface CleaningBatchResponse {
-    cleaned: number;
-    errors: CleaningBatchError[];
-    results: CleaningResult[];
-}
-
 interface CleaningTaskStatus {
     task_id: string;
     project_id: number;

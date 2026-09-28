@@ -51,13 +51,18 @@ interface TrainingPanelProps {
   setupMode?: 'essentials' | 'advanced';
 }
 
-interface ExperimentConfig {
+// The stored experiment config is the full TrainingConfig dump plus
+// runtime blocks (``_runtime``, ``_warm_start``…); the fields read here
+// are typed, everything else stays ``unknown``.
+interface ExperimentConfig extends Record<string, unknown> {
   num_epochs?: number;
+  auto_epochs?: boolean;
   learning_rate?: number | string;
   batch_size?: number;
   use_lora?: boolean;
   lora_r?: number;
   target_modules?: string[];
+  task_type?: string;
 }
 
 interface Experiment {
@@ -731,59 +736,62 @@ function parseNonNegativeInt(value: unknown): number {
   return Math.max(0, Math.trunc(num));
 }
 
-type ConfigFieldKey =
-  | 'training_mode'
-  | 'training_runtime_id'
-  | 'task_type'
-  | 'trainer_backend'
-  | 'chat_template'
-  | 'learning_rate'
-  | 'num_epochs'
-  | 'batch_size'
-  | 'gradient_accumulation_steps'
-  | 'max_seq_length'
-  | 'optimizer'
-  | 'save_steps'
-  | 'eval_steps'
-  | 'sequence_packing'
-  | 'use_lora'
-  | 'curriculum'
-  | 'lora_r'
-  | 'lora_alpha'
-  | 'target_modules'
-  | 'fp16'
-  | 'bf16'
-  | 'flash_attention'
-  | 'auto_oom_retry'
-  | 'max_oom_retries'
-  | 'oom_retry_seq_shrink'
-  | 'gradient_checkpointing'
-  | 'multimodal_require_media'
-  | 'alignment_auto_filter'
-  | 'alignment_quality_threshold'
-  | 'alignment_beta'
-  | 'alignment_max_prompt_length'
-  | 'alignment_max_length'
-  | 'alignment_min_keep_ratio'
-  | 'alignment_dataset_path'
-  | 'alignment_include_playground_feedback'
-  | 'alignment_playground_max_pairs'
-  | 'observability_enabled'
-  | 'observability_log_steps'
-  | 'observability_max_layers'
-  | 'observability_probe_attention'
-  | 'observability_probe_top_k'
-  // Quality-Lift phase 7 slice 3 — multi-seed variance reporting.
-  // ``seed`` is the base PRNG seed; ``num_seeds`` ≥ 2 fans the run
-  // out into a seed-group; ``seeds`` overrides the derived list with
-  // explicit values; ``parallel_seeds`` runs the children concurrently
-  // (multi-GPU only). The four keys plumb through ``includeField`` the
-  // same way every other config field does — ``training_service``
-  // already reads them from the experiment.config payload.
-  | 'seed'
-  | 'num_seeds'
-  | 'seeds'
-  | 'parallel_seeds';
+// Every config field the form can mark as user-touched. Quality-Lift phase 7
+// slice 3 added the multi-seed keys (seed / num_seeds / seeds / parallel_seeds).
+const CONFIG_FIELD_KEYS = [
+  'training_mode',
+  'training_runtime_id',
+  'task_type',
+  'trainer_backend',
+  'chat_template',
+  'learning_rate',
+  'num_epochs',
+  'batch_size',
+  'gradient_accumulation_steps',
+  'max_seq_length',
+  'optimizer',
+  'save_steps',
+  'eval_steps',
+  'sequence_packing',
+  'use_lora',
+  'curriculum',
+  'lora_r',
+  'lora_alpha',
+  'target_modules',
+  'fp16',
+  'bf16',
+  'flash_attention',
+  'auto_oom_retry',
+  'max_oom_retries',
+  'oom_retry_seq_shrink',
+  'gradient_checkpointing',
+  'multimodal_require_media',
+  'alignment_auto_filter',
+  'alignment_quality_threshold',
+  'alignment_beta',
+  'alignment_max_prompt_length',
+  'alignment_max_length',
+  'alignment_min_keep_ratio',
+  'alignment_dataset_path',
+  'alignment_include_playground_feedback',
+  'alignment_playground_max_pairs',
+  'observability_enabled',
+  'observability_log_steps',
+  'observability_max_layers',
+  'observability_probe_attention',
+  'observability_probe_top_k',
+  'seed',
+  'num_seeds',
+  'seeds',
+  'parallel_seeds',
+] as const;
+
+type ConfigFieldKey = (typeof CONFIG_FIELD_KEYS)[number];
+
+/** Fresh "nothing touched" map — one source so resets can't drift from the key list. */
+function untouchedConfig(): Record<ConfigFieldKey, boolean> {
+  return Object.fromEntries(CONFIG_FIELD_KEYS.map((key) => [key, false])) as Record<ConfigFieldKey, boolean>;
+}
 
 type TrainingWorkspaceView = 'overview' | 'setup' | 'runs';
 type TrainingSetupTab = 'basics' | 'config' | 'power' | 'review';
@@ -899,53 +907,7 @@ export default function TrainingPanel({
   // a deep-linked user lands with the section pre-opened.
   const [multiSeedExpanded, setMultiSeedExpanded] = useState(false);
   const [useProfileDefaults, setUseProfileDefaults] = useState(true);
-  const [touchedConfig, setTouchedConfig] = useState<Record<ConfigFieldKey, boolean>>({
-    training_mode: false,
-    training_runtime_id: false,
-    task_type: false,
-    trainer_backend: false,
-    chat_template: false,
-    learning_rate: false,
-    num_epochs: false,
-    batch_size: false,
-    gradient_accumulation_steps: false,
-    max_seq_length: false,
-    optimizer: false,
-    save_steps: false,
-    eval_steps: false,
-    sequence_packing: false,
-    use_lora: false,
-    curriculum: false,
-    lora_r: false,
-    lora_alpha: false,
-    target_modules: false,
-    fp16: false,
-    bf16: false,
-    flash_attention: false,
-    auto_oom_retry: false,
-    max_oom_retries: false,
-    oom_retry_seq_shrink: false,
-    gradient_checkpointing: false,
-    multimodal_require_media: false,
-    alignment_auto_filter: false,
-    alignment_quality_threshold: false,
-    alignment_beta: false,
-    alignment_max_prompt_length: false,
-    alignment_max_length: false,
-    alignment_min_keep_ratio: false,
-    alignment_dataset_path: false,
-    alignment_include_playground_feedback: false,
-    alignment_playground_max_pairs: false,
-    observability_enabled: false,
-    observability_log_steps: false,
-    observability_max_layers: false,
-    observability_probe_attention: false,
-    observability_probe_top_k: false,
-    seed: false,
-    num_seeds: false,
-    seeds: false,
-    parallel_seeds: false,
-  });
+  const [touchedConfig, setTouchedConfig] = useState<Record<ConfigFieldKey, boolean>>(untouchedConfig());
   const [lastCreateSummary, setLastCreateSummary] = useState<{
     domainPackApplied: string | null;
     domainPackSource: string | null;
@@ -2724,52 +2686,7 @@ export default function TrainingPanel({
     setObservabilityProbeTopK(6);
     setMultimodalRequireMedia(false);
     setUseProfileDefaults(true);
-    setTouchedConfig({
-      training_mode: false,
-      training_runtime_id: false,
-      task_type: false,
-      trainer_backend: false,
-      chat_template: false,
-      learning_rate: false,
-      num_epochs: false,
-      batch_size: false,
-      gradient_accumulation_steps: false,
-      max_seq_length: false,
-      optimizer: false,
-      save_steps: false,
-      eval_steps: false,
-      sequence_packing: false,
-      use_lora: false,
-      lora_r: false,
-      lora_alpha: false,
-      target_modules: false,
-      fp16: false,
-      bf16: false,
-      flash_attention: false,
-      auto_oom_retry: false,
-      max_oom_retries: false,
-      oom_retry_seq_shrink: false,
-      gradient_checkpointing: false,
-      multimodal_require_media: false,
-      alignment_auto_filter: false,
-      alignment_quality_threshold: false,
-      alignment_beta: false,
-      alignment_max_prompt_length: false,
-      alignment_max_length: false,
-      alignment_min_keep_ratio: false,
-      alignment_dataset_path: false,
-      alignment_include_playground_feedback: false,
-      alignment_playground_max_pairs: false,
-      observability_enabled: false,
-      observability_log_steps: false,
-      observability_max_layers: false,
-      observability_probe_attention: false,
-      observability_probe_top_k: false,
-      seed: false,
-      num_seeds: false,
-      seeds: false,
-      parallel_seeds: false,
-    });
+    setTouchedConfig(untouchedConfig());
     setLastCreateSummary(null);
     setEffectivePreview(null);
     setEffectivePreviewError('');
@@ -3173,48 +3090,7 @@ export default function TrainingPanel({
       setPreflightPlan(null);
       setPreflightPlanError('');
       setRecipeResolveError('');
-      setTouchedConfig({
-        training_mode: false,
-        training_runtime_id: false,
-        task_type: false,
-        trainer_backend: false,
-        chat_template: false,
-        learning_rate: false,
-        num_epochs: false,
-        batch_size: false,
-        gradient_accumulation_steps: false,
-        max_seq_length: false,
-        optimizer: false,
-        save_steps: false,
-        eval_steps: false,
-        sequence_packing: false,
-        use_lora: false,
-        lora_r: false,
-        lora_alpha: false,
-        target_modules: false,
-        fp16: false,
-        bf16: false,
-        flash_attention: false,
-        auto_oom_retry: false,
-        max_oom_retries: false,
-        oom_retry_seq_shrink: false,
-        gradient_checkpointing: false,
-        multimodal_require_media: false,
-        alignment_auto_filter: false,
-        alignment_quality_threshold: false,
-        alignment_beta: false,
-        alignment_max_prompt_length: false,
-        alignment_max_length: false,
-        alignment_min_keep_ratio: false,
-        alignment_dataset_path: false,
-        alignment_include_playground_feedback: false,
-        alignment_playground_max_pairs: false,
-        observability_enabled: false,
-        observability_log_steps: false,
-        observability_max_layers: false,
-        observability_probe_attention: false,
-        observability_probe_top_k: false,
-      });
+      setTouchedConfig(untouchedConfig());
     } catch (err) {
       setTrainingError(parseErrorEnvelope(err));
     }

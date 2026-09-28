@@ -73,7 +73,6 @@ export default function ProjectListPage() {
     const [briefText, setBriefText] = useState('');
     const [sampleInputsText, setSampleInputsText] = useState('');
     const [sampleOutputsText, setSampleOutputsText] = useState('');
-    const [riskNotesText, setRiskNotesText] = useState('');
     const [deploymentTarget, setDeploymentTarget] = useState('vllm_server');
     const [analyzeError, setAnalyzeError] = useState('');
     const [showAdvanced, setShowAdvanced] = useState(false);
@@ -127,7 +126,6 @@ export default function ProjectListPage() {
 
     const parsedSampleInputs = useMemo(() => parseMultiline(sampleInputsText), [sampleInputsText]);
     const parsedSampleOutputs = useMemo(() => parseMultiline(sampleOutputsText), [sampleOutputsText]);
-    const parsedRiskNotes = useMemo(() => parseMultiline(riskNotesText), [riskNotesText]);
 
     // Theme 7 decision engine — debounced analyze call. Runs only
     // while the create modal is open and the brief is long enough to
@@ -185,7 +183,6 @@ export default function ProjectListPage() {
         setBriefText('');
         setSampleInputsText('');
         setSampleOutputsText('');
-        setRiskNotesText('');
         setDeploymentTarget('vllm_server');
         setAnalyzeError('');
         setShowAdvanced(false);
@@ -549,16 +546,6 @@ export default function ProjectListPage() {
                                                 ))}
                                             </select>
                                         </div>
-                                    </div>
-                                    <div className="form-group">
-                                        <label className="form-label">Safety / compliance notes</label>
-                                        <textarea
-                                            className="input"
-                                            rows={3}
-                                            placeholder="One note per line (e.g. no PHI leakage, no legal advice)"
-                                            value={riskNotesText}
-                                            onChange={(e) => setRiskNotesText(e.target.value)}
-                                        />
                                     </div>
                                 </div>
                             )}

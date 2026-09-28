@@ -295,7 +295,7 @@ function PreviewItems({ fixKind, items }: PreviewItemsProps) {
                         <span className="autofix-modal__row-name">
                             {String(it.filename ?? '(unnamed)')}
                         </span>
-                        {it.error && (
+                        {Boolean(it.error) && (
                             <span className="autofix-modal__row-meta">
                                 {String(it.error).slice(0, 80)}
                             </span>

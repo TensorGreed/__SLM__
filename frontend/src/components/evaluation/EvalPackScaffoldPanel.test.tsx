@@ -220,7 +220,11 @@ describe('EvalPackScaffoldPanel', () => {
         };
     }
 
-    function makeEmptyPerClassResponse() {
+    function makeEmptyPerClassResponse(): {
+        classes: string[];
+        metrics: ReturnType<typeof makePerClassResponse>['metrics'];
+        source_eval_result_id: number | null;
+    } {
         return { classes: [], metrics: [], source_eval_result_id: null };
     }
 

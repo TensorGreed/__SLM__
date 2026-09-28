@@ -30,7 +30,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
+import { useOutletContext, useSearchParams } from 'react-router-dom';
 
 import { applyRecipeToProject, listRecipes, type Recipe } from '../api/recipes';
 import RecipeTileFrame from '../components/shared/RecipeTileFrame';
@@ -54,7 +54,6 @@ function extractErrorMessage(err: unknown, fallback: string): string {
 export default function ProjectRecipePickerPage() {
     const { projectId, project } =
         useOutletContext<ProjectWorkspaceContextValue>();
-    const navigate = useNavigate();
     const [searchParams] = useSearchParams();
 
     const [catalog, setCatalog] = useState<Recipe[]>([]);
