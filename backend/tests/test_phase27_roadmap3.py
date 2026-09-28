@@ -71,6 +71,24 @@ class Phase27Roadmap3Tests(unittest.TestCase):
                 elif path.is_dir():
                     path.rmdir()
 
+    def _stop_training(self, project_id: int, experiment_id: int, timeout_s: float = 20.0) -> None:
+        """Cancel the run and its bell watcher Job, then wait until no Job
+        is running. Left alive, the watcher polls the DB every 3s forever
+        (this run never reaches a terminal state here) and — on the shared
+        StaticPool connection — its session rollbacks wipe the NEXT test's
+        uncommitted inserts ("Could not refresh instance")."""
+        self.client.post(f"/api/projects/{project_id}/training/experiments/{experiment_id}/cancel")
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            resp = self.client.get("/api/jobs/active", params={"include_recently_completed": "false"})
+            jobs = resp.json().get("jobs", []) if resp.status_code == 200 else []
+            if not jobs:
+                return
+            for job in jobs:
+                self.client.post(f"/api/jobs/{job['id']}/cancel")
+            time.sleep(0.5)
+        self.fail(f"background jobs still running: {[j.get('kind') for j in jobs]}")
+
     def _create_project(self, name: str) -> int:
         unique_name = f"{name}-{uuid.uuid4().hex[:8]}"
         resp = self.client.post(
@@ -198,6 +216,7 @@ class Phase27Roadmap3Tests(unittest.TestCase):
         active_learning_runtime = runtime.get("active_learning_feedback", {})
         self.assertTrue(bool(active_learning_runtime.get("enabled")))
         self.assertGreaterEqual(int(active_learning_runtime.get("playground_rows", 0)), 1)
+        self._stop_training(project_id, experiment_id)
 
     def test_item2_observability_telemetry_record_and_simulate_emission(self):
         project_id = self._create_project("phase27-item2")
@@ -262,6 +281,7 @@ class Phase27Roadmap3Tests(unittest.TestCase):
         self.assertGreaterEqual(int(summary.get("event_count", 0)), 1)
         self.assertGreaterEqual(int(recent.get("count", 0)), 1)
         self.assertTrue(bool(summary.get("top_layers")))
+        self._stop_training(project_id, experiment_id)
 
     def test_item2_observability_stream_event_ingest_from_external_monitor(self):
         from app.services.training_service import TRAINING_EVENT_PREFIX, _monitor_external_training
