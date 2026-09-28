@@ -8,6 +8,8 @@ on:
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
+    # A hung test file used to hold the job until GitHub's 6h limit.
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: backend
@@ -86,10 +88,21 @@ jobs:
             # the flake; a genuinely broken file still fails all 3 attempts.
             ok=0
             for attempt in 1 2 3; do
-              if python -m pytest "$f" -q -p no:cacheprovider; then
+              # Per-file cap: a hang becomes a named failure instead of
+              # silently holding the job until the job timeout.
+              # (steps run under bash -e: capture the status with `||`.)
+              rc=0
+              timeout 600 python -m pytest "$f" -q -p no:cacheprovider || rc=$?
+              if [ "$rc" -eq 0 ]; then
                 ok=1; break
               fi
-              echo "::warning::$f failed attempt $attempt/3"
+              if [ "$rc" -eq 124 ]; then
+                # A hang won't fix itself on retry.
+                echo "::error::$f timed out after 600s"
+                break
+              else
+                echo "::warning::$f failed attempt $attempt/3"
+              fi
             done
             if [ "$ok" -ne 1 ]; then
               echo "::error::$f failed after 3 attempts"
