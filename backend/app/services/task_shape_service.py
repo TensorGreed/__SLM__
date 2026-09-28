@@ -100,6 +100,9 @@ TASK_SHAPES: dict[str, dict[str, Any]] = {
         "adapter_id": "default-canonical",
         "recipe_id": "generic-sft",
         "mapper_id": "text_only",
+        # Plain documents train as continued pretraining (packed LM), not
+        # SFT — see continued_pretraining_policy.
+        "training_mode": "domain_pretrain",
     },
 }
 

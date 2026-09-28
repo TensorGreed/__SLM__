@@ -4728,6 +4728,28 @@ async def create(
             profile_training_defaults=profile_training_defaults,
             fallback_training_mode=data.config.training_mode,
         )
+        # Documents-only projects continue-pretrain unless the caller chose
+        # a mode; CPT defaults fill whatever the caller didn't set.
+        from app.services.continued_pretraining_policy import (
+            apply_cpt_defaults,
+            resolve_training_mode,
+        )
+
+        project_row = await db.get(Project, project_id)
+        # A domain profile's generic "sft" default isn't a choice; a profile
+        # that picks something specific (e.g. dpo) is.
+        mode_was_provided = "training_mode" in provided_config_fields or (
+            "training_mode" in profile_defaults_applied
+            and resolved_training_mode != TrainingMode.SFT
+        )
+        resolved_training_mode = resolve_training_mode(
+            project_row, resolved_training_mode, mode_was_provided=mode_was_provided
+        )
+        config_payload["training_mode"] = resolved_training_mode.value
+        if resolved_training_mode == TrainingMode.DOMAIN_PRETRAIN:
+            profile_defaults_applied = list(profile_defaults_applied) + [
+                f"cpt:{key}" for key in apply_cpt_defaults(config_payload, provided_config_fields)
+            ]
 
         exp = await create_experiment(
             db,

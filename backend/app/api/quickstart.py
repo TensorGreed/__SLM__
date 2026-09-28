@@ -153,11 +153,20 @@ async def quickstart_train_default(
     else:
         task_type = "causal_lm"
 
+    from app.services.continued_pretraining_policy import (
+        apply_cpt_defaults,
+        resolve_training_mode,
+    )
+
+    training_mode = resolve_training_mode(project, None, mode_was_provided=False)
     config_payload: dict = {
         "base_model": base_model,
-        "training_mode": TrainingMode.SFT.value,
+        "training_mode": training_mode.value,
         "task_type": task_type,
     }
+    if training_mode == TrainingMode.DOMAIN_PRETRAIN:
+        # Documents-only project: continued pretraining on the passages.
+        apply_cpt_defaults(config_payload, set(config_payload))
 
     name = (
         f"Quickstart · {snapshot.get('name') or 'default config'}"
@@ -174,7 +183,7 @@ async def quickstart_train_default(
             base_model,
             config_payload,
             description,
-            TrainingMode.SFT,
+            training_mode,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))

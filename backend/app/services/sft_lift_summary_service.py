@@ -49,7 +49,18 @@ _PREFERRED_HEADLINE_METRICS: tuple[str, ...] = (
     "tool_success_rate",
     "llm_judge_pass_rate",
     "pass_rate",
+    "perplexity",
 )
+
+# Metrics where a DROP is the improvement (a lower perplexity means the
+# model predicts the domain's text better).
+_LOWER_IS_BETTER: frozenset[str] = frozenset({
+    "perplexity",
+    "mean_nll",
+    "bits_per_byte",
+    "hallucination_rate",
+    "eval_loss",
+})
 
 
 # Metric ids we should hide from the lift surface — they're either
@@ -60,6 +71,9 @@ _HIDDEN_METRICS: frozenset[str] = frozenset({
     "samples",
     "total",
     "correct",
+    # Perplexity-eval bookkeeping (sizes, not quality).
+    "eval_tokens",
+    "eval_documents",
 })
 
 
@@ -199,9 +213,10 @@ def _compute_metric_lifts(
             relative_delta_pct = None  # going from zero is "infinite" lift; skip
         else:
             relative_delta_pct = 0.0
-        if absolute_delta > 0.0001:
+        signed = -absolute_delta if metric_id in _LOWER_IS_BETTER else absolute_delta
+        if signed > 0.0001:
             direction = "improved"
-        elif absolute_delta < -0.0001:
+        elif signed < -0.0001:
             direction = "regressed"
         else:
             direction = "unchanged"

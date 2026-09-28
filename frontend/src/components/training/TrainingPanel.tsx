@@ -5248,7 +5248,7 @@ export default function TrainingPanel({
                           }}
                         >
                           <option value="sft">SFT</option>
-                          <option value="domain_pretrain">Domain Pretrain</option>
+                          <option value="domain_pretrain">Continued pretraining (documents)</option>
                           <option value="dpo">DPO</option>
                           <option value="orpo">ORPO</option>
                         </select>

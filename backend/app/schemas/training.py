@@ -1,7 +1,7 @@
 """Pydantic schemas for training configuration and experiment APIs."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -78,7 +78,9 @@ class TrainingConfig(BaseModel):
     lora_r: int = Field(16, ge=1, le=256)
     lora_alpha: int = Field(32, ge=1)
     lora_dropout: float = Field(0.05, ge=0, le=1)
-    target_modules: list[str] = Field(default_factory=lambda: ["q_proj", "v_proj"])
+    # A list of module names, or "all-linear" (every linear layer — the
+    # continued-pretraining default).
+    target_modules: list[str] | Literal["all-linear"] = Field(default_factory=lambda: ["q_proj", "v_proj"])
     
     # Compute / System
     fp16: bool = False

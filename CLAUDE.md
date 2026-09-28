@@ -357,6 +357,17 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   (`task_profile_requested` kept). UI: `TaskShapeConfirmCard` in the import
   wizard + DatasetPrepPanel. Other detectors (newbie-autopilot keywords, brief
   keywords, recipe header sniffer) still exist — fold them in as priors next.
+- **Continued pretraining (Wave 2c-1)** — documents-only projects (preset
+  task_profile `language_modeling`) resolve to `domain_pretrain` unless the
+  caller picked a mode (`continued_pretraining_policy.resolve_training_mode`;
+  a profile's generic "sft" default doesn't count), with `CPT_DEFAULTS`
+  (all-linear LoRA r64/α128, lr 1e-4, warmup .05, packing) only for unset
+  fields — wired in `POST /training/experiments` + quickstart. `train.py`
+  packs docs into `max_seq_length` blocks (`_pack_lm_blocks`, loss on all
+  tokens) before auto-epochs sizing. Eval: `eval_type="perplexity"` (and any
+  plain-text-only test split) → `_compute_perplexity` (perplexity / mean_nll /
+  bits_per_byte); lift treats `_LOWER_IS_BETTER` metrics as improved when they
+  drop. Real test: SmolLM2 CPT drops held-out ppl ~2.4 → ~1.2.
 - **Auto-RAG** — `auto_rag_service` builds BM25 indexes at training
   completion; `playground_chat` prepends top-K retrievals. Comparison
   panel + UI-triggered `auto_rag_ab --project` Job.

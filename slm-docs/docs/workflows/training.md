@@ -90,6 +90,16 @@ Rows are paired from `source_text`/`target_text` first. After that come
 against `answer`/`completion`/`output`/`response`. A display-only `text`
 field never overrides a real prompt/answer pair.
 
+## Only have documents? Continued pretraining
+
+If your data is plain documents with no question or answer columns (PDF, Word or HTML, for example), confirm the task type as **Plain text (learn the domain's language)**. Training then runs as **continued pretraining** (`training_mode: domain_pretrain`) unless you pick a mode yourself.
+
+- **Packing.** Every document is joined, with an end-of-text token between documents, and cut into full `max_seq_length` blocks. The model learns to predict every token. Nothing is padded away, and long documents aren't truncated.
+- **Defaults for this mode.** LoRA on **all linear layers** (`target_modules: "all-linear"`), `lora_r` 64 / `lora_alpha` 128, learning rate 1e-4, warmup 0.05, and packing on. They apply only to settings you didn't choose.
+- **How it's measured.** Held-out **perplexity** (plus mean NLL and bits per byte, which compares fairly across tokenizers) on the test split, for both the base model and your run. The automatic lift check reports it as `perplexity: 2.39 → 1.24 (better than base)`, and lower is better. Any held-out split that has only plain text is scored this way too, instead of failing.
+
+Continued pretraining teaches the model your domain's language. To make it *answer questions* from your documents, turn on document grounding in the Playground (see [Chat with a run](#after-training-did-it-help-and-chat-with-it)).
+
 ## After training: did it help, and chat with it
 
 - **Lift check (automatic).** When a real run finishes, a follow-up job evaluates the base model and your run on the held-out split. The bell then shows the headline change, e.g. `exact_match: 0.10 → 0.80 (better than base)`. Details: [Automatic "did fine-tuning help?" check](./evaluation-and-remediation.md#automatic-did-fine-tuning-help-check).

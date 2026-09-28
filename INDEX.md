@@ -109,6 +109,7 @@ session-start guidance.
 - `backend/app/services/cluster_explanation_service.py` — Per-cluster failure explanations (Theme 8 Epic 3).
 - `backend/app/services/coach_service.py` — Coach Mode service (USER-SUCCESS Epic 4).
 - `backend/app/services/compression_service.py` — Compression engine service — quantization, LoRA merge, benchmarking.
+- `backend/app/services/continued_pretraining_policy.py` — Continued pretraining for projects whose data is plain documents.
 - `backend/app/services/cost_estimator_service.py` — P18 — Cost estimator with provenance (priority.md, RM3).
 - `backend/app/services/curriculum_service.py` — Curriculum-style training row ranking (USER-SUCCESS Epic 6 Phase 6a).
 - `backend/app/services/data_adapter_service.py` — Data adapter SDK registry and execution helpers.
@@ -667,6 +668,7 @@ session-start guidance.
 - `backend/tests/test_coach_probe_divergence.py` — Coach-stage-2 phase 11 — probe-vs-gold divergence nudge.
 - `backend/tests/test_coach_reroute_nudge.py` — Tests for the Phase 7d Coach Mode reroute nudge.
 - `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
+- `backend/tests/test_continued_pretraining.py` — Continued pretraining for documents-only projects (Wave 2c-1).
 - `backend/tests/test_curriculum_ab.py` — Tests for the Phase 6c A/B harness (pure-function pieces).
 - `backend/tests/test_curriculum_api.py` — Tests for the curriculum-preview API (USER-SUCCESS Epic 6 Phase 6a).
 - `backend/tests/test_curriculum_phase6d_defaults.py` — Tests for the Phase 6d default-on heuristic + Coach Mode nudge.

@@ -54,7 +54,12 @@ def short_model_name(model_id: str) -> str:
 
 def eval_type_for_project(project: Project) -> str:
     """Informational eval_type label; the handler reads real metrics off
-    ``prepared/manifest.json``."""
+    ``prepared/manifest.json``. Documents-only projects (continued
+    pretraining) are measured by held-out perplexity."""
+    from app.services.continued_pretraining_policy import project_is_documents_only
+
+    if project_is_documents_only(project):
+        return "perplexity"
     snapshot = project.selected_recipe or {}
     scoring_mode = str(snapshot.get("scoring_mode") or "").strip()
     if scoring_mode == "span_set":

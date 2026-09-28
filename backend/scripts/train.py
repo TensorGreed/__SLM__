@@ -776,6 +776,35 @@ def _encode_causal_lm_example(
     return {"input_ids": ids, "attention_mask": [1] * len(ids), "labels": labels}
 
 
+def _pack_lm_blocks(
+    token_lists: list[list[int]],
+    block_size: int,
+    eos_id: int | None,
+    *,
+    min_tail_fraction: float = 0.25,
+) -> list[dict[str, list[int]]]:
+    """Continued-pretraining packing: join documents (each followed by EOS)
+    into one stream and cut it into ``block_size`` blocks, loss on every
+    token. One padded, truncated sequence per short passage wasted most of
+    the compute on padding and threw away the tail of long ones. A final
+    partial block shorter than ``min_tail_fraction`` of a block is dropped
+    (too little context to learn from)."""
+    stream: list[int] = []
+    for ids in token_lists:
+        if not ids:
+            continue
+        stream.extend(ids)
+        if eos_id is not None and ids[-1] != eos_id:
+            stream.append(int(eos_id))
+    blocks: list[dict[str, list[int]]] = []
+    for start in range(0, len(stream), block_size):
+        chunk = stream[start:start + block_size]
+        if len(chunk) < block_size and blocks and len(chunk) < block_size * min_tail_fraction:
+            break
+        blocks.append({"input_ids": chunk, "attention_mask": [1] * len(chunk), "labels": list(chunk)})
+    return blocks
+
+
 class CausalLMCompletionCollator:
     """Right-pads ``input_ids`` / ``attention_mask`` / ``labels`` by
     position. Padding labels are -100; real EOS labels are never touched
@@ -1811,6 +1840,42 @@ def _run_training_attempt(
     else:
         runtime_environment["chat_template_rewrap"] = f"preset:{chat_template}"
 
+    # Continued pretraining (domain_pretrain): pack every document into
+    # full ``max_seq_length`` blocks, loss on all tokens.
+    packed_train = None
+    packed_eval = None
+    if (
+        train_text is not None
+        and training_mode == "domain_pretrain"
+        and sequence_packing
+        and normalized_task_type == "causal_lm"
+        and not use_multimodal_collator
+    ):
+        from datasets import Dataset as _PackedDataset
+
+        eos_for_packing = getattr(processor_tokenizer, "eos_token_id", None)
+
+        def _doc_tokens(dataset: Any) -> list[list[int]]:
+            return [
+                list(processor_tokenizer(text, truncation=False, padding=False)["input_ids"])
+                for text in dataset["text"]
+                if isinstance(text, str) and text.strip()
+            ]
+
+        train_blocks = _pack_lm_blocks(_doc_tokens(train_text), max_seq_length, eos_for_packing)
+        if not train_blocks:
+            raise ValueError("No text to continue pretraining on after packing.")
+        packed_train = _PackedDataset.from_list(train_blocks)
+        if eval_text is not None:
+            eval_blocks = _pack_lm_blocks(_doc_tokens(eval_text), max_seq_length, eos_for_packing)
+            packed_eval = _PackedDataset.from_list(eval_blocks) if eval_blocks else None
+        runtime_environment["packing"] = {
+            "block_size": max_seq_length,
+            "train_rows": len(train_text),
+            "train_blocks": len(train_blocks),
+            "train_tokens": sum(len(b["input_ids"]) for b in train_blocks),
+        }
+
     # Configs written before ``auto_epochs`` existed carry an explicit
     # ``num_epochs`` — honour it so reruns stay reproducible.
     auto_epochs = _coerce_bool(config.get("auto_epochs"), "num_epochs" not in config)
@@ -1818,7 +1883,7 @@ def _run_training_attempt(
         from app.services.training_epoch_policy import resolve_auto_epochs
 
         epoch_plan = resolve_auto_epochs(
-            train_rows=len(train_text),
+            train_rows=len(packed_train) if packed_train is not None else len(train_text),
             batch_size=batch_size,
             gradient_accumulation_steps=grad_accum,
         )
@@ -1933,8 +1998,10 @@ def _run_training_attempt(
                 "LoRA training requested but peft is not installed. Install peft or set use_lora=false."
             ) from e
 
-        if not isinstance(target_modules, list) or not target_modules:
-            raise ValueError("target_modules must be a non-empty list when use_lora=true")
+        if target_modules == "all-linear":
+            pass  # PEFT resolves every linear layer (continued-pretraining default)
+        elif not isinstance(target_modules, list) or not target_modules:
+            raise ValueError("target_modules must be a non-empty list (or \"all-linear\") when use_lora=true")
         peft_task_key = {
             "causal_lm": "CAUSAL_LM",
             "seq2seq": "SEQ_2_SEQ_LM",
@@ -3146,6 +3213,19 @@ def _run_training_attempt(
             trainer_kwargs["data_collator"] = OfflineKDCollator(
                 pad_token_id=int(getattr(processor_tokenizer, "pad_token_id", 0) or 0),
                 top_k=distillation_offline_top_k,
+            )
+
+        elif packed_train is not None:
+            runtime_environment["loss_masking"] = "packed_lm"
+            trainer_kwargs["train_dataset"] = packed_train
+            trainer_kwargs["eval_dataset"] = packed_eval if has_eval_records else None
+            trainer_kwargs["data_collator"] = CausalLMCompletionCollator(
+                pad_token_id=int(
+                    getattr(processor_tokenizer, "pad_token_id", None)
+                    or getattr(processor_tokenizer, "eos_token_id", None)
+                    or 0
+                ),
+                torch_module=torch,
             )
 
         else:

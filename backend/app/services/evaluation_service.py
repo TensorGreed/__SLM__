@@ -2169,6 +2169,139 @@ def _run_local_inference(
     )
 
 
+# ── Perplexity (continued pretraining / plain-text projects) ─────────────
+
+PERPLEXITY_EVAL_TYPE = "perplexity"
+PERPLEXITY_MAX_TOKENS = 100_000
+PERPLEXITY_BLOCK = 1024
+
+
+def _heldout_texts(dataset_path: Path, max_docs: int) -> list[str]:
+    """Plain text of each held-out row (``text``, else its fields joined)."""
+    from app.services.dataset_service import _load_records_from_file
+
+    texts: list[str] = []
+    for row in _load_records_from_file(dataset_path):
+        if not isinstance(row, dict):
+            continue
+        text = row.get("text")
+        if not (isinstance(text, str) and text.strip()):
+            parts = [
+                str(v) for k, v in row.items()
+                if not str(k).startswith("_") and isinstance(v, str) and v.strip()
+            ]
+            text = "\n".join(parts)
+        if text and text.strip():
+            texts.append(text.strip())
+        if len(texts) >= max_docs:
+            break
+    return texts
+
+
+def _compute_perplexity(
+    model_ref: str,
+    texts: list[str],
+    *,
+    block_size: int = PERPLEXITY_BLOCK,
+    max_tokens: int = PERPLEXITY_MAX_TOKENS,
+) -> dict[str, Any]:
+    """Held-out next-token loss over packed documents (same packing as
+    continued-pretraining training). Loads a LoRA adapter dir on its base
+    transparently. Returns perplexity, mean NLL (nats/token) and bits per
+    byte — the tokenizer-independent one, comparable across base models."""
+    import math
+
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    ref_path = Path(model_ref)
+    tokenizer_source = model_ref
+    if ref_path.is_dir() and not (ref_path / "tokenizer_config.json").exists():
+        from app.services.adapter_merge_service import adapter_base_model
+
+        tokenizer_source = adapter_base_model(ref_path) or model_ref
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
+    use_cuda = torch.cuda.is_available()
+    model = AutoModelForCausalLM.from_pretrained(model_ref)
+    model = model.to("cuda" if use_cuda else "cpu").eval()
+    eos = tokenizer.eos_token_id
+
+    stream: list[int] = []
+    bytes_covered = 0
+    docs_used = 0
+    for text in texts:
+        ids = list(tokenizer(text, truncation=False, padding=False)["input_ids"])
+        if eos is not None:
+            ids.append(int(eos))
+        if stream and len(stream) + len(ids) > max_tokens:
+            break
+        stream.extend(ids)
+        bytes_covered += len(text.encode("utf-8"))
+        docs_used += 1
+    if len(stream) < 2:
+        raise ValueError("Not enough held-out text to measure perplexity.")
+
+    total_nll = 0.0
+    predicted = 0
+    with torch.no_grad():
+        for start in range(0, len(stream), block_size):
+            block = stream[start:start + block_size]
+            if len(block) < 2:
+                continue
+            input_ids = torch.tensor([block], device=model.device)
+            loss = model(input_ids=input_ids, labels=input_ids).loss
+            n = len(block) - 1
+            total_nll += float(loss) * n
+            predicted += n
+    mean_nll = total_nll / max(1, predicted)
+    return {
+        "perplexity": round(math.exp(mean_nll), 4),
+        "mean_nll": round(mean_nll, 5),
+        "bits_per_byte": round(total_nll / math.log(2) / max(1, bytes_covered), 5),
+        "eval_tokens": predicted,
+        "eval_documents": docs_used,
+    }
+
+
+async def _run_perplexity_evaluation(
+    db: AsyncSession,
+    *,
+    exp: Experiment,
+    experiment_id: int,
+    dataset: Any,
+    dataset_path: Path,
+    model_path: str | None,
+    max_samples: int,
+    reason: str,
+) -> EvalResult:
+    texts = _heldout_texts(dataset_path, max_docs=max(200, max_samples))
+    if not texts:
+        raise ValueError(f"No held-out text found in {dataset_path}.")
+    model_ref = str(_resolve_model_reference(exp, model_path))
+    metrics = await asyncio.to_thread(_compute_perplexity, model_ref, texts)
+    result = EvalResult(
+        experiment_id=experiment_id,
+        dataset_name=dataset.dataset_type.value,
+        eval_type=PERPLEXITY_EVAL_TYPE,
+        metrics=metrics,
+        pass_rate=None,
+        details={
+            "dataset": {
+                "id": dataset.id,
+                "name": dataset.name,
+                "dataset_type": dataset.dataset_type.value,
+                "file_path": str(dataset_path),
+            },
+            "inference": {"model_path": model_ref, "mode": "perplexity", "reason": reason},
+            "metric_directions": {"perplexity": "lower", "mean_nll": "lower", "bits_per_byte": "lower"},
+        },
+    )
+    db.add(result)
+    await db.flush()
+    await db.refresh(result)
+    return result
+
+
 async def run_heldout_evaluation(
     db: AsyncSession,
     project_id: int,
@@ -2182,7 +2315,7 @@ async def run_heldout_evaluation(
     judge_model: str = "meta-llama/Meta-Llama-3-70B-Instruct",
 ) -> EvalResult:
     """Run end-to-end evaluation by generating predictions on held-out data."""
-    supported = {"exact_match", "f1", "llm_judge"}
+    supported = {"exact_match", "f1", "llm_judge", PERPLEXITY_EVAL_TYPE}
     if eval_type not in supported:
         raise ValueError(f"Unsupported eval_type '{eval_type}'. Use one of: {', '.join(sorted(supported))}")
 
@@ -2197,6 +2330,12 @@ async def run_heldout_evaluation(
     # Pull the experiment's task_type so build_eval_context can fall
     # back to it when the prepared manifest doesn't declare a
     # task_profile (common for dataset-import projects).
+    if eval_type == PERPLEXITY_EVAL_TYPE:
+        return await _run_perplexity_evaluation(
+            db, exp=exp, experiment_id=experiment_id, dataset=dataset,
+            dataset_path=dataset_path, model_path=model_path,
+            max_samples=max_samples, reason="requested",
+        )
     exp_config = dict(exp.config or {})
     experiment_task_type = str(exp_config.get("task_type") or "").strip() or None
     eval_ctx, task_handler = build_eval_context(
@@ -2212,6 +2351,15 @@ async def run_heldout_evaluation(
         handler=task_handler,
         ctx=eval_ctx,
     )
+    if not pairs and _heldout_texts(dataset_path, max_docs=1):
+        # Plain documents (no prompt/answer columns): generation metrics
+        # have nothing to compare against — measure perplexity instead of
+        # failing.
+        return await _run_perplexity_evaluation(
+            db, exp=exp, experiment_id=experiment_id, dataset=dataset,
+            dataset_path=dataset_path, model_path=model_path,
+            max_samples=max_samples, reason="plain_text_split",
+        )
     if not pairs:
         raise ValueError(
             f"No valid evaluation rows found in {dataset_path}. "
