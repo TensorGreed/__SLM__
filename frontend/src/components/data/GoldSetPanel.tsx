@@ -7,7 +7,6 @@ import { useLocation } from 'react-router-dom';
 import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
-import CoachStrip from '../coach/CoachStrip';
 import GoldSetDiagnosticsPanel from './GoldSetDiagnosticsPanel';
 import LlmGoldGeneratePanel from './LlmGoldGeneratePanel';
 import GoldEntryRowBody from './GoldEntryRowBody';
@@ -393,7 +392,6 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                     </div>
                 </div>
 
-                <CoachStrip projectId={projectId} stage="gold_set" />
 
                 {/* V4 ML-native viz — class-balance bars + class-similarity
                     heatmap. Renders the actionable shape of the gold set so

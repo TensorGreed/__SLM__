@@ -2,7 +2,7 @@
  * Multi-tab workflow orchestrator page spanning data ingestion through model export.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Navigate, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 
 import PipelineProgress from '../components/dashboard/PipelineProgress';
@@ -16,9 +16,6 @@ import TrainingPanel from '../components/training/TrainingPanel';
 import EvalPanel from '../components/evaluation/EvalPanel';
 import CompressionPanel from '../components/compression/CompressionPanel';
 import ExportPanel from '../components/export/ExportPanel';
-import GettingStartedWizard from '../components/shared/GettingStartedWizard';
-import GuidedLearningRail from '../components/guide/GuidedLearningRail';
-import TabVideoLink from '../components/video/TabVideoLink';
 import api from '../api/client';
 import { PIPELINE_TABS } from '../types';
 import type { TabKey } from '../types';
@@ -68,10 +65,7 @@ export default function ProjectPipelinePage() {
     const { tabKey } = useParams<{ tabKey: string }>();
     const navigate = useNavigate();
     const { projectId, pipelineStatus, refreshPipelineStatus } = useOutletContext<ProjectWorkspaceContextValue>();
-    const { activeTab, setActiveTab, activeProject } = useProjectStore();
-
-    const [wizardDismissed, setWizardDismissed] = useState(false);
-    const showWizard = !wizardDismissed && pipelineStatus?.progress_percent === 0;
+    const { activeTab, setActiveTab } = useProjectStore();
 
     const resolvedTab = useMemo<TabKey | null>(() => (isTabKey(tabKey) ? tabKey : null), [tabKey]);
 
@@ -214,20 +208,6 @@ export default function ProjectPipelinePage() {
                         Run data preparation, training, evaluation, and export stages in sequence.
                     </p>
                 </div>
-                <div className="workspace-page-header-actions">
-                    <button
-                        className="btn btn-ghost"
-                        onClick={() => navigate(`/project/${projectId}/guide`)}
-                    >
-                        Open Guide
-                    </button>
-                    <button
-                        className="btn btn-secondary"
-                        onClick={() => navigate(`/project/${projectId}/wizard`)}
-                    >
-                        Open Guided Setup
-                    </button>
-                </div>
             </section>
             {pipelineStatus && (
                 <div className="card progress-card">
@@ -272,20 +252,7 @@ export default function ProjectPipelinePage() {
                 </div>
             )}
 
-            {showWizard ? (
-                <GettingStartedWizard
-                    onStart={() => {
-                        setWizardDismissed(true);
-                        setActiveTab('data');
-                        // ?import=auto tells IngestionPanel to open the
-                        // DatasetImportWizard immediately, so the user
-                        // lands one click from upload → recipe pick
-                        // without hunting for the "Import dataset"
-                        // button. The panel consumes + clears the param.
-                        navigate(`/project/${projectId}/pipeline/data?import=auto`);
-                    }}
-                />
-            ) : (
+            {/* Guidance lives in the one Coach bar above (layout). */}
                 <div className="project-tabs-container">
                     <div className="tabs">
                         {PIPELINE_TABS.map((tab) => {
@@ -314,16 +281,9 @@ export default function ProjectPipelinePage() {
                         })}
                     </div>
                     <div className="tab-content">
-                        <GuidedLearningRail
-                            project={activeProject}
-                            activeTab={resolvedTab}
-                            onNextStep={goToNextTab}
-                        />
-                        <TabVideoLink tabKey={resolvedTab} />
                         {renderTabContent()}
                     </div>
                 </div>
-            )}
         </div>
     );
 }

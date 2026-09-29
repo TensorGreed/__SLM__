@@ -5,7 +5,20 @@ title: Beginner mode
 
 # Beginner mode
 
-BrewSLM ships with a deliberate **beginner mode** so a new ML engineer never sees a concept they haven't been taught yet. It's a per-project boolean flag that hides advanced surfaces in the UI. Nothing about the backend changes — every endpoint stays callable. It's purely a UX layer.
+BrewSLM ships with a deliberate **beginner mode**, so a new ML engineer never sees a concept they haven't been taught yet. It's a per-project flag that hides advanced surfaces in the UI. Nothing in the backend changes, and every endpoint stays callable; it's purely a UX layer.
+
+**It's on by default for every new project**, whichever way the project was created: **+ New Project**, a sample project, a template, a manifest without an explicit setting, or the API. Experts switch it off per project.
+
+## One way in, one Coach
+
+- **Starting a project.** Use **+ New Project**: describe what the model should do, and BrewSLM sets up the task, recipe and base model. Alternatively, start from a sample project on the same page. An existing `brewslm.yaml` can be imported from the create dialog's **Advanced** section. Every path lands in the project workspace.
+- **The Coach bar.** It sits at the top of every workspace page, and it's the one guidance surface. It shows:
+  - where you are (stage and % done);
+  - the single **next step**, with **Continue →**;
+  - a short tip and a walkthrough video for the tab you're on;
+  - rule-based suggestions for that stage (data, cleaning, gold set, training, eval), with one-click fixes.
+- **The full plan.** **Full plan** opens the project home: the checklist with Lab Journal stamps, one-click Quickstart actions, and the beginner-mode switch.
+- **Switching it off.** The 🧭 toggle in the top bar turns the Coach off for a project. It defaults to on for beginner projects.
 
 ## What's hidden
 
@@ -14,11 +27,11 @@ BrewSLM ships with a deliberate **beginner mode** so a new ML engineer never see
 | Pipeline (data → export) | ✓ Always visible |
 | Training Configurations | ✓ Always visible |
 | Base Model Registry | ✓ Always visible |
-| Autopilot Planner | ✓ Always visible |
+| Autopilot (guided: goal → data → safe plan → train → chat) | ✓ Always visible |
 | Playground | ✓ Always visible |
 | Deployments | ✓ Always visible |
 | Observability | ✓ Always visible |
-| Guided Setup (wizard) | ✓ Always visible |
+| **Autopilot Planner** (plan diffs, repair preview, rollback) | Hidden |
 | **Adapter Studio** | Hidden |
 | **Extension Studio** | Hidden |
 | **Workflow Builder** | Hidden |

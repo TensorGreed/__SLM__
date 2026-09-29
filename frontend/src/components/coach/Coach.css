@@ -1,0 +1,46 @@
+.coach-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.coach-bar__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-md);
+}
+
+.coach-bar__badge {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-primary, var(--text-primary));
+}
+
+.coach-bar__where {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.coach-bar__next {
+  flex: 1 1 280px;
+  font-size: var(--font-size-sm);
+}
+
+.coach-bar__actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.coach-bar__tip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}

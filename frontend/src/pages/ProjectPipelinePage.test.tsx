@@ -37,10 +37,6 @@ vi.mock('../components/dashboard/PipelineProgress', () => ({
     default: () => <div data-testid="pipeline-progress" />,
 }));
 
-vi.mock('../components/shared/GettingStartedWizard', () => ({
-    default: () => <div data-testid="getting-started-wizard" />,
-}));
-
 vi.mock('../components/video/TabVideoLink', () => ({
     default: () => <div data-testid="tab-video-link" />,
 }));

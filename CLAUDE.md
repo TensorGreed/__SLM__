@@ -320,14 +320,25 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   `run_playbook`, `navigate`, `augment_from_cluster`.
   `NAVIGATE_TARGET_URLS` in `CoachSuggestion.tsx` maps target names
   to URLs.
-- **Guided Learning Mode** (Epic G G3) — `GuidedLearningRail`
-  (`components/guide/GuidedLearningRail.tsx`) renders under the pipeline
-  tab bar in `ProjectPipelinePage`, **gated on `project.beginner_mode`**
-  (null for advanced users). Per-tab: a "Guided step N of M · <stage>"
-  checkpoint line (complements `PipelineProgress`), a first-visit
-  contextual tip (dismissed per (project, tab) via localStorage key
-  `brewslm.guided.tip.<id>.<tab>`), and a "next step" CTA reusing
-  `ProjectPipelinePage.goToNextTab`. Pure orchestration — no new API/types.
+- **One intake + one Coach (Wave 3)** — `beginner_mode` defaults **True**
+  (model column, `ProjectCreate`, manifest `WorkflowSection`). Creation =
+  "+ New Project" (brief-driven) or a sample (DemoProjectTiles /
+  ProjectTemplateGallery under "Or start from a sample project"); manifest
+  import is a link in the create dialog's Advanced section. Magic Create's UI
+  and FirstRunCheatSheet are gone (the `/projects/magic-create` API remains).
+  Every path navigates to `/project/{id}` (index → `pipeline/data`).
+  **The Coach** (`components/coach/Coach.tsx`, mounted once in
+  `ProjectWorkspaceLayout`) is the single guidance surface: stage + %, next
+  step (`utils/flowGuide.getRecommendedAction`, skips hidden domain-pack step
+  in beginner mode; ingestion → `?import=auto`), per-tab tip
+  (`coachContext.TAB_TIP`, dismiss key `brewslm.coach.tip.<id>.<tab>`),
+  TabVideoLink, and `CoachStrip` for the route's stage (`coachLocationFor`).
+  Hidden on `/guide`, which is the Coach's "Full plan" page (QuickstartCard,
+  checklist + Lab Journal stamps, beginner toggle). Removed: GettingStartedWizard,
+  GuidedLearningRail, WorkspaceFlowHint, per-panel CoachStrip mounts, pipeline
+  header Guide/Guided Setup buttons. `useCoachMode(projectId, beginnerMode)`:
+  beginner projects default on; else gamification level < 5. Sidebar: one
+  "Autopilot" (`/wizard`); "Autopilot Planner" (`/autopilot`) advanced-only.
 - **Synthetic data** — two paths: (a) modern `synth_playbook_service`
   with recipe-aware playbooks + per-row `review_status="pending"`;
   (b) legacy `synthetic_service` with task framework + bridge to Jobs.

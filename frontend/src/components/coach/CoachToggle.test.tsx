@@ -25,7 +25,7 @@ describe('CoachToggle', () => {
         _resetCoachModeStoreForTests();
     });
 
-    it('renders the "on" pill by default for a newbie (level < 3)', async () => {
+    it('renders the "on" pill by default for a newbie (level < 5)', async () => {
         apiMock.get.mockResolvedValue({
             data: {
                 xp_balance: 50,

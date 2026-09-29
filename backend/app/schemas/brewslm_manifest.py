@@ -59,7 +59,9 @@ class ManifestMetadata(_StrictBase):
 
 
 class WorkflowSection(_StrictBase):
-    beginner_mode: bool = False
+    # Matches the project default (on); exported manifests carry the
+    # project's actual value explicitly.
+    beginner_mode: bool = True
     pipeline_stage: str = "ingestion"
     target_profile_id: str | None = "vllm_server"
     training_preferred_plan_profile: str | None = "balanced"

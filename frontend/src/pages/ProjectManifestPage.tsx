@@ -251,7 +251,7 @@ export default function ProjectManifestPage() {
                 `Applied ${response.data.applied_actions.length} action(s) to project ${response.data.project_name}.`,
             );
             if (newProjectId) {
-                navigate(`/project/${newProjectId}/pipeline/data`);
+                navigate(`/project/${newProjectId}`);
             }
         } catch (err) {
             setErrorMessage(extractErrorMessage(err, 'Apply failed.'));

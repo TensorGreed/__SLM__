@@ -3,18 +3,20 @@
  *
  * Compact chip rendered next to ``ProgressChip``. Reflects the
  * effective on/off state for the active project and flips it on
- * click. Default state is XP-gated (level < 3 → on), so brand-new
- * users see the toggle already lit.
+ * click. Beginner-mode projects default on; otherwise the default is
+ * XP-gated (gamification level < 5 → on), so brand-new users see the
+ * toggle already lit.
  */
 
 import { useCoachMode } from './useCoachMode';
 
 interface CoachToggleProps {
     projectId: number;
+    beginnerMode?: boolean;
 }
 
-export default function CoachToggle({ projectId }: CoachToggleProps) {
-    const { isOn, toggle, defaultOn, isReady } = useCoachMode(projectId);
+export default function CoachToggle({ projectId, beginnerMode = false }: CoachToggleProps) {
+    const { isOn, toggle, defaultOn, isReady } = useCoachMode(projectId, beginnerMode);
 
     // While the gamification level fetch is in flight, render in the
     // default state (no flicker between off→on when an override has

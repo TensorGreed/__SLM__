@@ -231,7 +231,7 @@ describe('ProjectManifestPage', () => {
         expect(scoped.getByText(/adapter_not_in_manifest:legacy_adapter/)).toBeInTheDocument();
     });
 
-    it('Apply posts to the project apply endpoint and navigates to pipeline/data on success', async () => {
+    it('Apply posts to the project apply endpoint and lands in the project workspace', async () => {
         mockSummaryEndpoint();
         apiMock.post.mockResolvedValueOnce({ data: APPLY_RESULT });
 
@@ -254,7 +254,7 @@ describe('ProjectManifestPage', () => {
             );
         });
         await waitFor(() => {
-            expect(navigateMock).toHaveBeenCalledWith('/project/42/pipeline/data');
+            expect(navigateMock).toHaveBeenCalledWith('/project/42');
         });
     });
 

@@ -52,7 +52,7 @@ export default function ProjectGuidePage() {
     );
 
     const steps = useMemo<GuideStep[]>(() => {
-        return [
+        const all: GuideStep[] = [
             {
                 id: 'domain',
                 title: 'Set domain context',
@@ -96,7 +96,9 @@ export default function ProjectGuidePage() {
                 complete: stageIndex >= 11,
             },
         ];
-    }, [projectId, project.domain_pack_id, project.domain_profile_id, project.base_model_name, stageIndex]);
+        // Domain packs/profiles are hidden in beginner mode — not a step.
+        return project.beginner_mode ? all.filter((step) => step.id !== 'domain') : all;
+    }, [projectId, project.domain_pack_id, project.domain_profile_id, project.base_model_name, project.beginner_mode, stageIndex]);
 
     const firstIncompleteIndex = steps.findIndex((step) => !step.complete);
 
@@ -116,9 +118,10 @@ export default function ProjectGuidePage() {
         <div className="project-guide-page workspace-page">
             <section className="card project-guide-hero">
                 <div>
-                    <h3>Start Here</h3>
+                    <h3>Coach · your plan</h3>
                     <p>
-                        Use this as your control center. It shows where your project is and what to do next.
+                        Where your project is, the one thing to do next, and every step to a model you can
+                        chat with. The Coach bar at the top of each page follows you through them.
                     </p>
                 </div>
                 <div className="project-guide-stage">
@@ -141,7 +144,7 @@ export default function ProjectGuidePage() {
 
             <section className="card project-guide-next">
                 <div>
-                    <h4>Recommended Next Action</h4>
+                    <h4>Next step</h4>
                     <p>{recommended.description}</p>
                 </div>
                 <button className="btn btn-primary" onClick={() => navigate(recommended.path)}>
@@ -154,8 +157,8 @@ export default function ProjectGuidePage() {
                     <h4>Beginner Mode</h4>
                     <p>
                         {project.beginner_mode
-                            ? 'Beginner Mode is enabled for this project. Use the guided wizard to refine your Domain Blueprint and launch safely.'
-                            : 'Enable beginner-guided onboarding by creating a Domain Blueprint from plain-English intent and examples.'}
+                            ? 'Beginner Mode is on: advanced tools are hidden and the Coach walks you through each step. Autopilot can run the whole path for you.'
+                            : 'Beginner Mode is off: every tool is visible. Turn it on to hide the advanced surfaces and get step-by-step coaching.'}
                     </p>
                     {project.active_domain_blueprint_version && (
                         <span className="badge badge-success">
@@ -164,7 +167,7 @@ export default function ProjectGuidePage() {
                     )}
                 </div>
                 <button className="btn btn-secondary" onClick={() => navigate(`/project/${projectId}/wizard`)}>
-                    Open Beginner Wizard
+                    Open Autopilot
                 </button>
                 <button className="btn btn-ghost" onClick={toggleBeginnerMode} disabled={toggleLoading}>
                     {toggleLoading

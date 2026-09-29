@@ -70,7 +70,9 @@ class Project(Base):
         String(128),
         default=None,
     )
-    beginner_mode: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # On by default (Wave 3): every new project starts in beginner mode;
+    # experts switch it off per project.
+    beginner_mode: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     active_domain_blueprint_version: Mapped[int | None] = mapped_column(
         default=None,
     )

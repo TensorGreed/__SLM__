@@ -477,13 +477,13 @@ session-start guidance.
 - `frontend/src/components/annotation/PreferencePairLabeler.tsx` — Preference-pair labeler (Story 1.3).
 - `frontend/src/components/annotation/SpanLabeler.tsx` — Keyboard + drag-to-select span (NER) labeler.
 - `frontend/src/components/autopilot/DecisionLogDrawer.tsx` — Persistent Autopilot Decision Log drawer (priority.md P6).
+- `frontend/src/components/coach/Coach.tsx` — The Coach — the one guidance surface (Wave 3).
 - `frontend/src/components/coach/CoachStrip.tsx` — Per-panel Coach Mode strip (USER-SUCCESS Epic 4 Phase 1).
 - `frontend/src/components/coach/CoachSuggestion.tsx` — One Coach Mode suggestion card with a click-to-execute action
 - `frontend/src/components/coach/CoachSuggestionTrace.tsx` — Decision-trace disclosure for a Coach suggestion (Arc 4).
 - `frontend/src/components/coach/CoachToggle.tsx` — TopBar toggle for Coach Mode (USER-SUCCESS Epic 4 Phase 1).
 - `frontend/src/components/compression/CompressionPanel.tsx` — Model quantization UI with format selection, ONNX/GGUF conversion, and benchmark reporting.
 - `frontend/src/components/dashboard/DemoProjectTiles.tsx` — DemoProjectTiles — entry-point tiles on the project list that seed a
-- `frontend/src/components/dashboard/FirstRunCheatSheet.tsx` — FirstRunCheatSheet — one-time orientation card on the project list
 - `frontend/src/components/dashboard/PipelineProgress.tsx` — Linear progress tracker showing pipeline stage completion with percentage and status indicators.
 - `frontend/src/components/dashboard/ProjectCard.tsx` — Project summary card displaying status, description, stats, and pipeline-stage progress.
 - `frontend/src/components/data/AutofixPreviewModal.tsx` — AutofixPreviewModal — D3.2 + D4 of the data-quality arc.
@@ -558,7 +558,6 @@ session-start guidance.
 - `frontend/src/components/gamification/AchievementToast.tsx` — Terminal-glow achievement / level-up toast for the Lab Journal.
 - `frontend/src/components/gamification/LabJournalDrawer.tsx` — Right-side overlay drawer that surfaces the full Lab Journal.
 - `frontend/src/components/gamification/ProgressChip.tsx` — Inline TopBar chip showing the project's current level + XP.
-- `frontend/src/components/guide/GuidedLearningRail.tsx` — GuidedLearningRail — Guided Learning Mode contextual band (Epic G phase G3).
 - `frontend/src/components/guide/QuickstartCard.tsx` — Quickstart card (Theme 1 Epic 4).
 - `frontend/src/components/layout/BrandMark.tsx` — BrandMark — BrewSLM logo glyph.
 - `frontend/src/components/layout/CommandPalette.tsx` — CommandPalette — global Cmd-K / Ctrl-K palette for fast navigation.
@@ -568,7 +567,6 @@ session-start guidance.
 - `frontend/src/components/layout/TopBar.tsx` — Header with user menu, runtime settings editor, documentation link, and notification bell.
 - `frontend/src/components/layout/TrainingKillSwitch.tsx` — Kill-switch action that surfaces in the NotificationBell when a
 - `frontend/src/components/layout/TrainingLossSparkline.tsx` — Inline live-loss sparkline for the NotificationBell training row.
-- `frontend/src/components/layout/WorkspaceFlowHint.tsx` — Advisory chip showing current pipeline stage progress and recommending the next action.
 - `frontend/src/components/manifest/ManifestExportButton.tsx` — ManifestExportButton — small reusable button that exports the project's
 - `frontend/src/components/manifest/ManifestSummaryCard.tsx` — ManifestSummaryCard — compact "Pipeline-as-Code" preview rendered at
 - `frontend/src/components/observability/EventDrilldownDrawer.tsx` — EventDrilldownDrawer — per-run event stream (priority.md P36, P31).
@@ -584,7 +582,6 @@ session-start guidance.
 - `frontend/src/components/shared/CommandSnippet.tsx` — CommandSnippet — collapsed "Show as CLI / API" disclosure rendered
 - `frontend/src/components/shared/EmptyState.tsx` — EmptyState — shared component for "this page has no data yet" surfaces.
 - `frontend/src/components/shared/ErrorPanel.tsx` — Shared error rendering component (Diagnostics Intervention A).
-- `frontend/src/components/shared/GettingStartedWizard.tsx` — Eight-step pipeline walkthrough modal introducing the data-to-deployment workflow.
 - `frontend/src/components/shared/HealthCheckButton.tsx` — HealthCheckButton — Diagnostics Intervention C.
 - `frontend/src/components/shared/HealthCheckModal.tsx` — HealthCheckModal — Diagnostics Intervention C.
 - `frontend/src/components/shared/NoRecipeEmptyState.tsx` — NoRecipeEmptyState — directive CTA shown when a panel can't render
@@ -901,12 +898,12 @@ session-start guidance.
 - `frontend/src/components/annotation/ClassificationLabeler.test.tsx` — ClassificationLabeler contract.
 - `frontend/src/components/annotation/PreferencePairLabeler.test.tsx` — PreferencePairLabeler contract.
 - `frontend/src/components/annotation/SpanLabeler.test.tsx` — SpanLabeler contract.
+- `frontend/src/components/coach/Coach.test.tsx` — _(no docstring)_
 - `frontend/src/components/coach/CoachStrip.test.tsx` — _(no docstring)_
 - `frontend/src/components/coach/CoachSuggestion.test.tsx` — _(no docstring)_
 - `frontend/src/components/coach/CoachSuggestionTrace.test.tsx` — Arc 4 — Coach decision-trace disclosure.
 - `frontend/src/components/coach/CoachToggle.test.tsx` — _(no docstring)_
 - `frontend/src/components/dashboard/DemoProjectTiles.test.tsx` — _(no docstring)_
-- `frontend/src/components/dashboard/FirstRunCheatSheet.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/AutofixPreviewModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataHealthReportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataStudioAssistPanel.test.tsx` — _(no docstring)_
@@ -973,7 +970,6 @@ session-start guidance.
 - `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/gamification/AchievementToast.test.tsx` — CRT achievement toast contract.
 - `frontend/src/components/gamification/ProgressChip.test.tsx` — ProgressChip + LabJournalDrawer contract.
-- `frontend/src/components/guide/GuidedLearningRail.test.tsx` — _(no docstring)_
 - `frontend/src/components/guide/QuickstartCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/CommandPalette.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/NotificationBell.test.tsx` — NotificationBell tests (Hardening Phase H1).

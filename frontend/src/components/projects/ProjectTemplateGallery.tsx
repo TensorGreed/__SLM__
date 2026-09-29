@@ -130,7 +130,7 @@ export default function ProjectTemplateGallery({
             );
             setActiveSlug(null);
             setProjectName('');
-            navigate(`/project/${project.id}/guide`);
+            navigate(`/project/${project.id}`);
         } catch (err) {
             setError(extractErrorMessage(err));
         } finally {

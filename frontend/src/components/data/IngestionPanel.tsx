@@ -15,7 +15,6 @@ import EDADashboard from './EDADashboard';
 import DatasetImportWizard from './DatasetImportWizard';
 import DocumentSampleAccordion from './DocumentSampleAccordion';
 import SavedMappingsPanel from './SavedMappingsPanel';
-import CoachStrip from '../coach/CoachStrip';
 import './IngestionPanel.css';
 
 interface IngestionPanelProps {
@@ -132,9 +131,8 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     const [showImportWizard, setShowImportWizard] = useState(false);
     const [savedMappingsRefreshKey, setSavedMappingsRefreshKey] = useState(0);
 
-    // Auto-open the DatasetImportWizard when arriving via the
-    // GettingStartedWizard's "Start" button (which navigates with
-    // ?import=auto). Consume the param so a refresh doesn't keep
+    // Auto-open the DatasetImportWizard when arriving via the Coach's
+    // "Import source data" next step (which navigates with ?import=auto). Consume the param so a refresh doesn't keep
     // re-opening the modal after the user has dismissed it once.
     const [searchParams, setSearchParams] = useSearchParams();
     useEffect(() => {
@@ -1025,7 +1023,6 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                     <span className="docs-count badge badge-accent">{documents.length}</span>
                 </div>
 
-                <CoachStrip projectId={projectId} stage="data" />
 
                 {isLoading ? (
                     <div className="docs-loading">

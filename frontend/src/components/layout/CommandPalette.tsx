@@ -94,11 +94,10 @@ function buildItems(
     const trainingItems: Array<[string, string, ReactNode]> = [
         ['Training Configurations', `${base}/training-config`, <Settings2 size={14} />],
         ['Base Model Registry', `${base}/models`, <Boxes size={14} />],
-        ['Autopilot Planner', `${base}/autopilot`, <ClipboardList size={14} />],
         ['Playground', `${base}/playground`, <Bot size={14} />],
         ['Deployments', `${base}/deployments`, <Rocket size={14} />],
         ['Observability', `${base}/observability`, <Activity size={14} />],
-        ['Guided Setup', `${base}/wizard`, <Sparkles size={14} />],
+        ['Autopilot', `${base}/wizard`, <Sparkles size={14} />],
     ];
 
     for (const [label, path, icon] of trainingItems) {
@@ -113,6 +112,14 @@ function buildItems(
     }
 
     if (!beginnerMode) {
+        items.push({
+            id: `${base}/autopilot`,
+            label: 'Autopilot Planner',
+            hint: `${base}/autopilot`,
+            section: 'Training',
+            icon: <ClipboardList size={14} />,
+            onSelect: () => navigate(`${base}/autopilot`),
+        });
         items.push({
             id: `${base}/adapter-studio`,
             label: 'Adapter Studio',

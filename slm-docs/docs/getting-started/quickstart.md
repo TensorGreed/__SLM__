@@ -93,7 +93,7 @@ The fastest path to a trained model is the **Autopilot** — describe what you w
 ### UI
 
 1. Open your project workspace.
-2. Click **Autopilot Planner** in the Training rail.
+2. Click **Autopilot Planner** in the Training rail. New projects start in beginner mode, which hides the Planner: click **Leave beginner mode** in the sidebar footer first, or use **Autopilot** (the guided five-step version) instead.
 3. Type a brief: *"Build a small Q&A assistant from a CSV of FAQ rows."*
 4. Click **Plan**. The planner shows the proposed dataset adapter, base model, training recipe, and target profile.
 5. Review the **provenance** column — `measured` vs `estimated` per component.

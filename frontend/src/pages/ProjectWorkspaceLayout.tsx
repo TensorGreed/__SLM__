@@ -8,7 +8,7 @@ import { Navigate, Outlet, useParams } from 'react-router-dom';
 import TopBar from '../components/layout/TopBar';
 import ProjectSidebar from '../components/layout/ProjectSidebar';
 import CommandPalette from '../components/layout/CommandPalette';
-import WorkspaceFlowHint from '../components/layout/WorkspaceFlowHint';
+import Coach from '../components/coach/Coach';
 import DecisionLogDrawer from '../components/autopilot/DecisionLogDrawer';
 import ManifestExportButton from '../components/manifest/ManifestExportButton';
 import ProgressChip from '../components/gamification/ProgressChip';
@@ -101,7 +101,7 @@ export default function ProjectWorkspaceLayout() {
                                 />
                             ) : null}
                             <ProgressChip projectId={projectId} />
-                            <CoachToggle projectId={projectId} />
+                            <CoachToggle projectId={projectId} beginnerMode={activeProject.beginner_mode} />
                             <HealthCheckButton projectId={projectId} />
                             <ManifestExportButton
                                 projectId={projectId}
@@ -115,7 +115,7 @@ export default function ProjectWorkspaceLayout() {
                     }
                 />
                 <div className="page-container">
-                    <WorkspaceFlowHint
+                    <Coach
                         projectId={projectId}
                         project={activeProject}
                         pipelineStatus={pipelineStatus}

@@ -422,14 +422,18 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                                     <span className="nav-label">Adapter Studio</span>
                                 </button>
                             )}
-                            <button
-                                className={`workspace-nav-item ${isAutopilotRoute ? 'active' : ''}`}
-                                onClick={() => navigate(`/project/${projectId}/autopilot`)}
-                                title="Autopilot Planner"
-                            >
-                                <ClipboardList size={15} />
-                                <span className="nav-label">Autopilot Planner</span>
-                            </button>
+                            {/* The plan-diff / repair-preview planner is an operator
+                                tool; beginners get the one Autopilot entry below. */}
+                            {!isBeginner && (
+                                <button
+                                    className={`workspace-nav-item ${isAutopilotRoute ? 'active' : ''}`}
+                                    onClick={() => navigate(`/project/${projectId}/autopilot`)}
+                                    title="Autopilot Planner"
+                                >
+                                    <ClipboardList size={15} />
+                                    <span className="nav-label">Autopilot Planner</span>
+                                </button>
+                            )}
                             <button
                                 className={`workspace-nav-item ${isPlaygroundRoute ? 'active' : ''}`}
                                 onClick={() => navigate(`/project/${projectId}/playground`)}
@@ -467,10 +471,10 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                             <button
                                 className={`workspace-nav-item ${isTrainingWizardRoute ? 'active' : ''}`}
                                 onClick={() => navigate(`/project/${projectId}/wizard`, { state: { sidebarRail: 'training' } })}
-                                title="Guided Setup"
+                                title="Autopilot — describe your goal; we set up the data, train and hand you a model to chat with"
                             >
                                 <Sparkles size={15} />
-                                <span className="nav-label">Guided Setup</span>
+                                <span className="nav-label">Autopilot</span>
                             </button>
                         </>
                     )}

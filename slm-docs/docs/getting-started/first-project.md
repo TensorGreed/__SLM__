@@ -137,7 +137,7 @@ For a first project, let the Autopilot pick the recipe. It chooses between safe-
 
 ### UI
 
-Training rail → **Autopilot Planner** → describe the goal in plain English: *"Support FAQ tone, concise answers, no hallucinations beyond the dataset."* → **Plan** → **One-click run**. The page swaps to live mode.
+Training rail → **Autopilot Planner** (visible once beginner mode is off; beginners use **Autopilot**, the guided five-step version) → describe the goal in plain English: *"Support FAQ tone, concise answers, no hallucinations beyond the dataset."* → **Plan** → **One-click run**. The page swaps to live mode.
 
 ### CLI
 

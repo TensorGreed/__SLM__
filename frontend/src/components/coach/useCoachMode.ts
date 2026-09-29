@@ -20,11 +20,12 @@ interface UseCoachModeResult {
 
 /**
  * Returns the effective Coach Mode on/off state for a project + a
- * toggle action. The default state is XP-gated: projects on a user
- * who's still onboarding (gamification level < 3) default ON; power
- * users default OFF. Manual per-project overrides win.
+ * toggle action. Beginner-mode projects default ON. Otherwise the
+ * default is XP-gated: a user still onboarding (gamification level < 5,
+ * see ``computeCoachDefaultOn``) defaults ON; power users default OFF.
+ * Manual per-project overrides always win.
  */
-export function useCoachMode(projectId: number): UseCoachModeResult {
+export function useCoachMode(projectId: number, beginnerMode = false): UseCoachModeResult {
     const [level, setLevel] = useState<number | null>(null);
     const [isReady, setIsReady] = useState(false);
     const manualOverrides = useCoachModeStore((s) => s.manualOverrides);
@@ -56,7 +57,7 @@ export function useCoachMode(projectId: number): UseCoachModeResult {
         };
     }, [projectId]);
 
-    const defaultOn = computeCoachDefaultOn(level);
+    const defaultOn = beginnerMode || computeCoachDefaultOn(level);
     const override = manualOverrides[String(projectId)];
     const isOn =
         override === 'on' ? true : override === 'off' ? false : defaultOn;

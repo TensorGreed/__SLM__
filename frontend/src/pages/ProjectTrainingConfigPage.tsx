@@ -11,7 +11,6 @@ import TrainabilityForecastPanel from '../components/training/TrainabilityForeca
 import TrainingConfigGapsPanel from '../components/training/TrainingConfigGapsPanel';
 import PlanRefinementCard from '../components/training/PlanRefinementCard';
 import TrainingPanel from '../components/training/TrainingPanel';
-import CoachStrip from '../components/coach/CoachStrip';
 import { recordRemediationEvent } from '../api/remediation';
 import { routeForecastAction } from '../utils/forecastActionRouter';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
@@ -67,7 +66,6 @@ export default function ProjectTrainingConfigPage() {
                 </div>
             </section>
 
-            <CoachStrip projectId={projectId} stage="training" />
 
             <ArchetypeComparisonPanel projectId={projectId} />
 

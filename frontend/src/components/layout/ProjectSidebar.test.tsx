@@ -93,11 +93,11 @@ describe('ProjectSidebar nav matrix', () => {
     expect(screen.getByText(String(heading))).toBeInTheDocument();
   });
 
-  it('keeps training context when clicking Guided Setup from training-config', async () => {
+  it('keeps training context when clicking Autopilot from training-config', async () => {
     const user = userEvent.setup();
     renderSidebar(['/project/1/training-config']);
 
-    await user.click(screen.getByRole('button', { name: 'Guided Setup' }));
+    await user.click(screen.getByRole('button', { name: 'Autopilot' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/project/1/wizard');
     expect(screen.getByText('Model Configuration')).toBeInTheDocument();
   });
@@ -144,8 +144,9 @@ describe('ProjectSidebar beginner-mode hiding', () => {
   it('hides Adapter Studio in training panel when beginner mode is on', () => {
     renderSidebar(['/project/1/training-config'], { beginnerMode: true });
     expect(screen.queryByRole('button', { name: 'Adapter Studio' })).not.toBeInTheDocument();
-    // Autopilot Planner still available.
-    expect(screen.getByRole('button', { name: 'Autopilot Planner' })).toBeInTheDocument();
+    // One Autopilot entry for beginners; the operator planner is advanced-only.
+    expect(screen.getByRole('button', { name: 'Autopilot' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Autopilot Planner' })).not.toBeInTheDocument();
   });
 
   it('hides Extension Studio under Training when beginner mode is on (priority.md P40)', () => {

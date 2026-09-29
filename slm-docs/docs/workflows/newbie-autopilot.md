@@ -40,7 +40,7 @@ Two-phase by design. **Plan** is read-only and cheap; **Run** acts on the snapsh
 
 ### UI
 
-Training rail → **Autopilot Planner**.
+Training rail → **Autopilot Planner**. The Planner is hidden in beginner mode, which is on by default for new projects. Beginners get **Autopilot** instead: goal → data → safe plan → train → chat.
 
 1. Top input: paste a brief in plain English. *"Support FAQ tone, concise, never hallucinate beyond dataset, deploy on vLLM."*
 2. Click **Plan**. The planner returns:

@@ -72,7 +72,7 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
     ).toBe(true);
   });
 
-  it('creates a brief-driven project on submit and navigates to /guide', async () => {
+  it('creates a brief-driven project on submit and lands in the workspace', async () => {
     const user = userEvent.setup();
     render(<ProjectListPage />);
     await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
@@ -99,7 +99,7 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
         }),
       );
     });
-    expect(navigateMock).toHaveBeenCalledWith('/project/101/guide');
+    expect(navigateMock).toHaveBeenCalledWith('/project/101');
   });
 
   it('toggle reveals the dense advanced fields (sample I/O, base model, starter pack)', async () => {

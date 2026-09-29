@@ -19,7 +19,7 @@ class ProjectCreate(BaseModel):
     target_profile_id: str | None = "vllm_server"
     gate_policy: dict | None = None
     budget_settings: dict | None = None
-    beginner_mode: bool = False
+    beginner_mode: bool = True  # on by default for every new project (Wave 3)
     brief_text: str | None = None
     sample_inputs: list[str] = Field(default_factory=list)
     sample_outputs: list[str] = Field(default_factory=list)

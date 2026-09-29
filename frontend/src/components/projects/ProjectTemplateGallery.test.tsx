@@ -150,7 +150,7 @@ describe('ProjectTemplateGallery', () => {
                 { project_name: 'Acme Ticket Router' },
             );
         });
-        expect(navigateMock).toHaveBeenCalledWith('/project/42/guide');
+        expect(navigateMock).toHaveBeenCalledWith('/project/42');
     });
 
     it('shows an inline error when the instantiate call fails', async () => {

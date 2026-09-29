@@ -55,7 +55,9 @@ export function getRecommendedAction(
 ): RecommendedAction {
     const currentStage = getCurrentStage(project, pipelineStatus);
 
-    if (!project.domain_pack_id && !project.domain_profile_id) {
+    // Domain packs/profiles are hidden in beginner mode — never send a
+    // newcomer to a page they can't see; defaults are fine to start.
+    if (!project.beginner_mode && !project.domain_pack_id && !project.domain_profile_id) {
         return {
             path: `/project/${projectId}/domain/packs`,
             title: 'Set domain context',
@@ -66,7 +68,8 @@ export function getRecommendedAction(
     switch (currentStage) {
         case 'ingestion':
             return {
-                path: `/project/${projectId}/pipeline/data`,
+                // ?import=auto opens the import wizard on arrival.
+                path: `/project/${projectId}/pipeline/data?import=auto`,
                 title: 'Import source data',
                 description: 'Upload files or import from a remote dataset source.',
             };

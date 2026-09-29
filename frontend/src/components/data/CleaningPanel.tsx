@@ -6,7 +6,6 @@ import { useState, useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
-import CoachStrip from '../coach/CoachStrip';
 import LabelNoiseReviewPanel from './LabelNoiseReviewPanel';
 import './CleaningPanel.css';
 
@@ -199,7 +198,6 @@ export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelPr
         <div className="cleaning-panel animate-fade-in">
             <div className="card cleaning-config">
                 <h3>Cleaning Configuration</h3>
-                <CoachStrip projectId={projectId} stage="cleaning" />
                 <div className="config-grid">
                     <div className="form-group">
                         <label className="form-label">Chunk Size (chars)</label>

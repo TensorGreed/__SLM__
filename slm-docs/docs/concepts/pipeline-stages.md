@@ -98,7 +98,7 @@ Notice the **`reason_code` is required** on `error` / `critical` severities. The
 | Stage 10 Compression | **Pipeline** rail → Compression tab. |
 | Stage 11 Export | **Pipeline** rail → Export tab, or **Training** rail → Deployments. |
 | `deployment` | **Training** rail → Deployments + Observability. |
-| `autopilot` | **Training** rail → Autopilot Planner. |
+| `autopilot` | **Training** rail → Autopilot (beginners) / Autopilot Planner (beginner mode off). |
 | `system` | **Training** rail → Observability (timeline filter `stage=system`). |
 
 ## Next

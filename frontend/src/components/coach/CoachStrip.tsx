@@ -17,10 +17,11 @@ import { useCoachMode } from './useCoachMode';
 interface CoachStripProps {
     projectId: number;
     stage: CoachStage;
+    beginnerMode?: boolean;
 }
 
-export default function CoachStrip({ projectId, stage }: CoachStripProps) {
-    const { isOn, isReady } = useCoachMode(projectId);
+export default function CoachStrip({ projectId, stage, beginnerMode = false }: CoachStripProps) {
+    const { isOn, isReady } = useCoachMode(projectId, beginnerMode);
     const [suggestions, setSuggestions] = useState<CoachSuggestion[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);

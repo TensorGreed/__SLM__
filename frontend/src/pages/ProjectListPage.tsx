@@ -11,7 +11,6 @@ import {
     type ApproachRecommendation,
 } from '../api/blueprintAnalyze';
 import DemoProjectTiles from '../components/dashboard/DemoProjectTiles';
-import FirstRunCheatSheet from '../components/dashboard/FirstRunCheatSheet';
 import ProjectCard from '../components/dashboard/ProjectCard';
 import TopBar from '../components/layout/TopBar';
 import ApproachChip from '../components/projects/ApproachChip';
@@ -53,9 +52,6 @@ export default function ProjectListPage() {
     const { projects, totalProjects, isLoadingProjects, fetchProjects, createProject, deleteProject } = useProjectStore();
 
     const [showModal, setShowModal] = useState(false);
-    const [showMagicModal, setShowMagicModal] = useState(false);
-    const [magicPrompt, setMagicPrompt] = useState('');
-    const [isMagicCreating, setIsMagicCreating] = useState(false);
     const [isCreating, setIsCreating] = useState(false);
 
     const [newName, setNewName] = useState('');
@@ -238,7 +234,9 @@ export default function ProjectListPage() {
             closeCreateModal();
             // Land on the project guide page so the Quickstart card is
             // the first surface — frictionless first-success path.
-            navigate(`/project/${project.id}/guide`);
+            // Every intake lands in the same place: the project workspace,
+            // where the Coach says what to do next.
+            navigate(`/project/${project.id}`);
         } catch (error) {
             const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
             if (typeof detail === 'string') {
@@ -258,22 +256,6 @@ export default function ProjectListPage() {
         }
     };
 
-    const handleMagicCreate = async () => {
-        if (!magicPrompt.trim()) return;
-        setIsMagicCreating(true);
-        try {
-            const res = await api.post('/projects/magic-create', { prompt: magicPrompt.trim() });
-            setShowMagicModal(false);
-            setMagicPrompt('');
-            navigate(`/project/${res.data.id}`);
-        } catch (error) {
-            const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-            alert(typeof detail === 'string' ? detail : 'Magic create failed');
-        } finally {
-            setIsMagicCreating(false);
-        }
-    };
-
     const handleDelete = async (id: number) => {
         if (confirm('Delete this project? This cannot be undone.')) {
             await deleteProject(id);
@@ -287,9 +269,6 @@ export default function ProjectListPage() {
                 subtitle={`${totalProjects} project${totalProjects !== 1 ? 's' : ''}`}
                 actions={
                     <div className="project-list-top-actions">
-                        <button className="btn btn-secondary" onClick={() => setShowMagicModal(true)}>
-                            ✨ Magic Create
-                        </button>
                         <button className="btn btn-primary" onClick={openCreateModal}>
                             + New Project
                         </button>
@@ -318,11 +297,13 @@ export default function ProjectListPage() {
                     </div>
                 </section>
 
-                <FirstRunCheatSheet />
-
-                <DemoProjectTiles />
-
-                <ProjectTemplateGallery hideWhenEmpty />
+                {/* One intake: "+ New Project" (describe the goal → we set it
+                    up, beginner mode on), or start from a ready-made sample. */}
+                <section className="project-list-samples" data-testid="project-list-samples">
+                    <h2 className="project-list-samples__title">Or start from a sample project</h2>
+                    <DemoProjectTiles />
+                    <ProjectTemplateGallery hideWhenEmpty />
+                </section>
 
                 {isLoadingProjects ? (
                     <div className="project-grid">
@@ -333,9 +314,8 @@ export default function ProjectListPage() {
                 ) : projects.length === 0 ? (
                     <EmptyState
                         title="No projects yet"
-                        description="Create your first BrewSLM project to start building, evaluating, and exporting domain-specific Small Language Models. Try Magic Create to describe what you want in plain English, or pick a starter template."
+                        description="Describe what you want your model to do and BrewSLM sets up the project for you — or start from one of the sample projects above."
                         primary={{ label: '+ Create First Project', onClick: openCreateModal }}
-                        secondary={{ label: '✨ Magic Create', onClick: () => setShowMagicModal(true) }}
                         docsHref="http://localhost:3001/docs/getting-started/quickstart"
                     />
                 ) : (
@@ -421,6 +401,16 @@ export default function ProjectListPage() {
                                         borderTop: '1px solid var(--border-color)',
                                     }}
                                 >
+                                    <p className="form-hint" data-testid="create-project-manifest-link">
+                                        Have a <code>brewslm.yaml</code>?{' '}
+                                        <button
+                                            type="button"
+                                            className="btn btn-ghost btn-sm"
+                                            onClick={() => { closeCreateModal(); navigate('/manifest/import'); }}
+                                        >
+                                            Import it instead
+                                        </button>
+                                    </p>
                                     <div className="form-group">
                                         <label className="form-label">Description override</label>
                                         <input
@@ -566,41 +556,6 @@ export default function ProjectListPage() {
                                 data-testid="create-project-submit"
                             >
                                 {isCreating ? 'Creating…' : 'Create project'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-
-            {showMagicModal && (
-                <div className="modal-overlay" onClick={() => !isMagicCreating && setShowMagicModal(false)}>
-                    <div className="modal" onClick={(e) => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h2 className="modal-title">Magic Create</h2>
-                            <button className="btn btn-ghost" onClick={() => !isMagicCreating && setShowMagicModal(false)}>✕</button>
-                        </div>
-                        <div className="modal-body">
-                            <p className="project-list-magic-copy">
-                                Describe the dataset or model you want to build. BrewSLM AI Architect will configure the pipeline, pick a base model, and assign the right domain packs for you.
-                            </p>
-                            <div className="form-group">
-                                <label className="form-label">What do you want to build?</label>
-                                <textarea
-                                    className="input"
-                                    placeholder="e.g. I have 500 PDFs of legal contracts and I want a model that extracts the liabilities."
-                                    value={magicPrompt}
-                                    onChange={(e) => setMagicPrompt(e.target.value)}
-                                    rows={4}
-                                    disabled={isMagicCreating}
-                                    autoFocus
-                                />
-                            </div>
-                        </div>
-                        <div className="modal-footer">
-                            <button className="btn btn-secondary" onClick={() => setShowMagicModal(false)} disabled={isMagicCreating}>Cancel</button>
-                            <button className="btn btn-primary" onClick={handleMagicCreate} disabled={!magicPrompt.trim() || isMagicCreating}>
-                                {isMagicCreating ? '✨ Architecting...' : 'Magic Create'}
                             </button>
                         </div>
                     </div>
