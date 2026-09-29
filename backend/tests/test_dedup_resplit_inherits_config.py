@@ -201,10 +201,13 @@ class DedupResplitInheritsConfigTests(unittest.TestCase):
         self._split(pid, {"stratify_by": "label", "seed": 7})
         # …but a fresh split with no dedup_rows must NOT inherit it.
         manifest = self._split(pid, {})
-        self.assertIsNone(manifest.get("stratify_by"))
-        self.assertIsNone(manifest.get("stratification_report"))
+        # Nothing inherited from the active version (seed stays default)…
         self.assertEqual(manifest.get("dedup_inherited_config"), [])
-        self.assertFalse(manifest.get("dedup_requested"))
+        self.assertEqual(manifest["resolved_split_config"]["seed"], 42)
+        # …though since Wave 2d a fresh split dedups and stratifies a
+        # categorical label on its own — by default, not by inheritance.
+        self.assertTrue(manifest.get("dedup_requested"))
+        self.assertTrue(manifest.get("stratify_auto"))
 
 
 class ActiveManifestSplitConfigTests(unittest.TestCase):

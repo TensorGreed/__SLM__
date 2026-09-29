@@ -166,10 +166,22 @@ def _intent_profiles(intent: str | None) -> set[str]:
         return set()
     from app.services.newbie_autopilot_service import _INTENT_PRESETS
 
+    # One prior, two keyword vocabularies: the autopilot presets and the
+    # project-brief task keywords (domain_blueprint_service).
+    keyword_table: list[tuple[str, tuple[str, ...]]] = [
+        (str(preset.get("task_profile") or ""), tuple(preset.get("keywords") or ()))
+        for preset in _INTENT_PRESETS
+    ]
+    try:
+        from app.services.domain_blueprint_service import TASK_KEYWORDS
+
+        keyword_table.extend(TASK_KEYWORDS.items())
+    except Exception:  # noqa: BLE001
+        pass
     matched: set[str] = set()
-    for preset in _INTENT_PRESETS:
-        if any(keyword in text for keyword in preset.get("keywords") or ()):
-            profile = canonical_task_profile(preset.get("task_profile"))
+    for task_profile, keywords in keyword_table:
+        if any(keyword in text for keyword in keywords):
+            profile = canonical_task_profile(task_profile)
             if profile:
                 matched.add(profile)
     return matched
@@ -404,3 +416,27 @@ async def sample_project_rows(db: AsyncSession, project_id: int, limit: int = 20
         for row in rows
         if isinstance(row, dict)
     ][:limit]
+
+
+async def project_data_task_profile(db: AsyncSession, project_id: int) -> tuple[str | None, str | None]:
+    """The task shape the project's DATA says it is: the confirmed shape
+    when there is one, else a confident detection over the current rows,
+    else ``(None, None)``. Returns ``(task_profile, source)`` with source
+    ``"confirmed"`` / ``"detected"``. Stated goals (autopilot intent,
+    project brief) are only priors — data wins when it speaks clearly."""
+    from app.models.project import Project
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        return None, None
+    preset = project.dataset_adapter_preset if isinstance(project.dataset_adapter_preset, dict) else {}
+    confirmed = canonical_task_profile(preset.get("task_profile"))
+    if confirmed:
+        return confirmed, "confirmed"
+    rows = await sample_project_rows(db, project_id)
+    if not rows:
+        return None, None
+    detection = detect_task_shape(rows)
+    if detection["needs_confirmation"]:
+        return None, None
+    return detection["top"]["task_profile"], "detected"

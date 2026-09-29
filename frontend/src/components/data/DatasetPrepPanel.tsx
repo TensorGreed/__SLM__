@@ -86,7 +86,13 @@ interface SplitManifest {
     } | null;
     profile_defaults_applied?: string[];
     stratify_by?: string | null;
+    /** True when the split stratified by ``label`` on its own. */
+    stratify_auto?: boolean;
     stratification_report?: StratificationReport | null;
+    include_types_resolution?: {
+        reason?: string | null;
+        cleaned_filter?: { kept?: number; dropped_unlabelled_passages?: number } | null;
+    } | null;
     disjoint_by?: string | null;
     disjoint_report?: DisjointReport | null;
     dedup_requested?: boolean;
@@ -2058,10 +2064,19 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                 </p>
                             </div>
                         )}
+                        {(splitManifest.include_types_resolution?.cleaned_filter?.dropped_unlabelled_passages ?? 0) > 0 && (
+                            <p className="form-hint" data-testid="dp-cleaned-filter-note">
+                                Kept {splitManifest.include_types_resolution?.cleaned_filter?.kept ?? 0} labelled cleaned row(s);
+                                left out {splitManifest.include_types_resolution?.cleaned_filter?.dropped_unlabelled_passages} unlabelled
+                                document passage(s) because synthetic/imported rows exist — passages without answers would dilute
+                                supervised training.
+                            </p>
+                        )}
                         {splitManifest.stratification_report && (
                             <div className="dp-resolved-panel dp-strat-panel">
                                 <div className="dp-resolved-title">
                                     Stratified by <code>{splitManifest.stratification_report.stratify_field}</code> — {splitManifest.stratification_report.group_count} group(s)
+                                    {splitManifest.stratify_auto ? ' (automatic — your rows have class labels, so every class reaches val/test)' : ''}
                                 </div>
                                 {splitManifest.stratification_report.missing_count > 0 && (
                                     <p className="dp-strat-warning">

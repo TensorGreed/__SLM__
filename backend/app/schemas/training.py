@@ -59,6 +59,14 @@ class TrainingConfig(BaseModel):
     optimizer: str = Field("paged_adamw_8bit", description="Optimizer type")
     lr_scheduler: str = Field("cosine", description="Learning rate scheduler")
     num_epochs: int = Field(3, ge=1, le=100)
+    class_weighting: Literal["auto", "none"] = Field(
+        "auto",
+        description=(
+            "Classification head only: weight the loss by inverse class "
+            "frequency when the largest class is >= 3x the smallest "
+            "(\"auto\"), or never (\"none\")."
+        ),
+    )
     auto_epochs: bool = Field(
         True,
         description=(

@@ -764,7 +764,13 @@ def resolve_newbie_autopilot_intent(
     target_profile_id: str = "vllm_server",
     primary_language: str = "english",
     available_vram_gb: float | None = None,
+    data_task_profile: str | None = None,
+    data_task_profile_source: str | None = None,
 ) -> dict[str, Any]:
+    """Map a plain-language goal to a starter preset. When the project's
+    data already says what the task is (``data_task_profile`` — confirmed
+    or confidently detected by ``task_shape_service``), that wins over the
+    keyword match on the goal text; the keywords stay as a prior."""
     normalized_intent = _normalize_intent(intent)
     if not normalized_intent:
         raise ValueError("intent is required")
@@ -779,11 +785,28 @@ def resolve_newbie_autopilot_intent(
             selected_score = score
             selected_keywords = matched
 
+    task_profile_source = "intent_keywords" if selected_score else "default"
+    intent_task_profile = str(selected.get("task_profile") or "instruction_sft")
+    if data_task_profile:
+        matching = next(
+            (p for p in _INTENT_PRESETS if p.get("task_profile") == data_task_profile),
+            None,
+        )
+        if matching is not None:
+            selected = dict(matching)
+        else:
+            selected = {**_DEFAULT_PRESET, "task_profile": data_task_profile}
+            if data_task_profile == "classification":
+                selected["task_type"] = "classification"
+        task_profile_source = f"data_{data_task_profile_source or 'detected'}"
+
     normalized_target = _normalize_target_profile(target_profile_id)
     target_defaults = _safe_defaults_for_target(normalized_target)
+    resolved_task_profile = str(selected.get("task_profile") or "instruction_sft")
     safe_training_config = {
         "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
-        "training_mode": "sft",
+        # Plain documents continue-pretrain (see continued_pretraining_policy).
+        "training_mode": "domain_pretrain" if resolved_task_profile == "language_modeling" else "sft",
         "training_runtime_id": "auto",
         "trainer_backend": "auto",
         "task_type": str(selected.get("task_type") or "causal_lm"),
@@ -802,6 +825,10 @@ def resolve_newbie_autopilot_intent(
         "training_plan_profile": "safe",
         **target_defaults,
     }
+    if resolved_task_profile == "language_modeling":
+        from app.services.continued_pretraining_policy import apply_cpt_defaults
+
+        apply_cpt_defaults(safe_training_config, set())
 
     return {
         "intent": normalized_intent,
@@ -811,9 +838,17 @@ def resolve_newbie_autopilot_intent(
         "preset_id": str(selected.get("preset_id") or _DEFAULT_PRESET["preset_id"]),
         "preset_label": str(selected.get("label") or _DEFAULT_PRESET["label"]),
         "preset_description": str(selected.get("description") or _DEFAULT_PRESET["description"]),
-        "task_profile": str(selected.get("task_profile") or "instruction_sft"),
+        "task_profile": resolved_task_profile,
+        # Where the task profile came from: "data_confirmed" /
+        # "data_detected" (the project's rows) beat "intent_keywords".
+        "task_profile_source": task_profile_source,
+        "intent_task_profile": intent_task_profile,
         "matched_keywords": selected_keywords,
-        "confidence": min(1.0, 0.35 + (0.15 * selected_score)),
+        "confidence": (
+            max(0.85, min(1.0, 0.35 + (0.15 * selected_score)))
+            if task_profile_source.startswith("data_")
+            else min(1.0, 0.35 + (0.15 * selected_score))
+        ),
         "safe_training_config": safe_training_config,
         "run_name_suggestion": build_newbie_autopilot_run_name(
             intent=normalized_intent,

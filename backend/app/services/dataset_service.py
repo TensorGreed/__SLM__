@@ -797,15 +797,18 @@ async def resolve_training_dataset_types(
     if synth_rows < 1:
         return requested_list, report
 
-    resolved = [
-        t for t in requested_list if t != DatasetType.CLEANED.value
-    ]
-    report["auto_excluded"] = [DatasetType.CLEANED.value]
+    # Row-level, not dataset-level: since cleaning keeps row files (CSV /
+    # XLSX / JSONL uploads) as labelled rows, dropping the whole CLEANED
+    # set threw away real training data. Only unlabelled text passages
+    # (document chunks) are the dilution risk — split_dataset drops just
+    # those and reports the counts.
+    report["cleaned_rows"] = "labelled_only"
     report["reason"] = (
-        f"synthetic dataset has {synth_rows} row(s); cleaned text "
-        "would dilute SFT signal (request both explicitly to override)."
+        f"synthetic dataset has {synth_rows} row(s); unlabelled document "
+        "passages in cleaned data would dilute the supervised signal, so "
+        "only labelled cleaned rows are kept."
     )
-    return resolved, report
+    return requested_list, report
 
 
 async def combine_datasets(
@@ -817,9 +820,15 @@ async def combine_datasets(
     adapter_config: dict[str, Any] | None = None,
     field_mapping: dict[str, str] | None = None,
     task_profile: str | None = None,
+    cleaned_labelled_only: bool = False,
+    cleaned_report: dict[str, int] | None = None,
 ) -> list[dict]:
     """
     Combine entries from cleaned/synthetic/gold datasets.
+
+    ``cleaned_labelled_only`` keeps only structured cleaned rows (row files
+    cleaned row-by-row, marked with ``row_index``) and drops unlabelled
+    document passages; counts land in ``cleaned_report``.
 
     Also supports `raw` datasets, which enables generic pipelines for remote imports
     and direct structured data sources without a mandatory cleaning step.
@@ -889,6 +898,14 @@ async def combine_datasets(
             continue
         path = Path(ds.file_path)
         rows = _load_records_from_file(path)
+        if cleaned_labelled_only and ds.dataset_type == DatasetType.CLEANED:
+            labelled = [row for row in rows if isinstance(row, dict) and "row_index" in row]
+            if cleaned_report is not None:
+                cleaned_report["kept"] = cleaned_report.get("kept", 0) + len(labelled)
+                cleaned_report["dropped_unlabelled_passages"] = (
+                    cleaned_report.get("dropped_unlabelled_passages", 0) + len(rows) - len(labelled)
+                )
+            rows = labelled
         normalized = _normalize_rows_for_training(
             rows,
             ds.dataset_type,
@@ -994,9 +1011,16 @@ async def split_dataset(
     task_profile: str | None = None,
     stratify_by: str | None = None,
     disjoint_by: str | None = None,
-    dedup_rows: bool = False,
+    dedup_rows: bool = True,
+    auto_stratify: bool = True,
 ) -> dict:
     """Split combined data into train/val/test and save as JSONL.
+
+    Defaults are the safe ones for a newcomer: exact + near-duplicate rows
+    are dropped before splitting (``dedup_rows``, reported in the
+    manifest), and when neither ``stratify_by`` nor ``disjoint_by`` is set
+    and the rows carry a categorical ``label``, the split is stratified by
+    it (``auto_stratify``) so rare classes still reach val/test.
 
     When ``stratify_by`` is set to a top-level field name (e.g.
     ``label`` for classification, ``answer`` for QA), entries are
@@ -1051,6 +1075,7 @@ async def split_dataset(
     included_source_types = resolved_type_strs[:]
     types = [DatasetType(t) for t in resolved_type_strs]
 
+    cleaned_report: dict[str, int] = {}
     entries = await combine_datasets(
         db,
         project_id,
@@ -1060,7 +1085,11 @@ async def split_dataset(
         adapter_config=adapter_config,
         field_mapping=field_mapping,
         task_profile=task_profile,
+        cleaned_labelled_only=dataset_type_report.get("cleaned_rows") == "labelled_only",
+        cleaned_report=cleaned_report,
     )
+    if cleaned_report:
+        dataset_type_report["cleaned_filter"] = cleaned_report
     if not entries:
         raise ValueError("No data available to split. Ingest and process documents first.")
 
@@ -1088,6 +1117,15 @@ async def split_dataset(
     total = len(entries)
     stratification_report: dict | None = None
     disjoint_report: dict | None = None
+    auto_stratified = False
+    if (
+        auto_stratify
+        and not (stratify_by and str(stratify_by).strip())
+        and not (disjoint_by and str(disjoint_by).strip())
+        and _looks_categorical(entries, "label")
+    ):
+        stratify_by = "label"
+        auto_stratified = True
     if stratify_by and str(stratify_by).strip():
         splits, stratification_report = _stratified_split_entries(
             entries,
@@ -1219,6 +1257,7 @@ async def split_dataset(
         "task_profile": _majority_task_profile(splits) or _normalize_task_profile_value(task_profile),
         "task_profile_requested": _normalize_task_profile_value(task_profile),
         "stratify_by": str(stratify_by).strip() if stratify_by else None,
+        "stratify_auto": auto_stratified,
         "stratification_report": stratification_report,
         "disjoint_by": str(disjoint_by).strip() if disjoint_by else None,
         "disjoint_report": disjoint_report,
@@ -1240,6 +1279,17 @@ async def split_dataset(
             pass
 
     return manifest
+
+
+def _looks_categorical(entries: list[dict[str, Any]], field: str, max_classes: int = 50) -> bool:
+    """True when ``field`` is present on (nearly) every row with a small
+    set of repeating string values — a class label worth stratifying on."""
+    values = [e.get(field) for e in entries if isinstance(e, dict)]
+    present = [v for v in values if isinstance(v, str) and v.strip()]
+    if len(entries) < 10 or len(present) < 0.9 * len(entries):
+        return False
+    distinct = len(set(present))
+    return 2 <= distinct <= max_classes and distinct < len(present) / 2
 
 
 def _majority_task_profile(splits: dict[str, list[dict[str, Any]]]) -> str | None:

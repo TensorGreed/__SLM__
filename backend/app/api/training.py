@@ -2167,6 +2167,8 @@ def _build_newbie_autopilot_plan(
     *,
     project_id: int,
     req: NewbieAutopilotIntentRequest,
+    data_task_profile: str | None = None,
+    data_task_profile_source: str | None = None,
 ) -> dict[str, object]:
     resolved_target_device = _resolve_autopilot_target_device(
         target_profile_id=req.target_profile_id,
@@ -2177,6 +2179,8 @@ def _build_newbie_autopilot_plan(
         target_profile_id=req.target_profile_id,
         primary_language=req.primary_language,
         available_vram_gb=req.available_vram_gb,
+        data_task_profile=data_task_profile,
+        data_task_profile_source=data_task_profile_source,
     )
     task_profile = str(plan.get("task_profile") or "instruction_sft")
     recommendation = recommend_training_base_models(
@@ -2289,12 +2293,18 @@ async def _build_newbie_autopilot_plan_v2(
         target_profile_id=req.target_profile_id,
         target_device=req.target_device,
     )
-    # 1. Resolve basic intent preset
+    # 1. Resolve basic intent preset — the project's data (confirmed /
+    # confidently detected task shape) beats keywords in the goal text.
+    from app.services.task_shape_service import project_data_task_profile
+
+    data_task_profile, data_task_profile_source = await project_data_task_profile(db, project_id)
     plan_meta = resolve_newbie_autopilot_intent(
         intent=req.intent,
         target_profile_id=req.target_profile_id,
         primary_language=req.primary_language,
         available_vram_gb=req.available_vram_gb,
+        data_task_profile=data_task_profile,
+        data_task_profile_source=data_task_profile_source,
     )
     task_profile = str(plan_meta.get("task_profile") or "instruction_sft")
     run_history = await _load_autopilot_run_history(
@@ -2519,8 +2529,16 @@ async def resolve_training_autopilot_intent(
 ):
     """Map plain-language user intent to a safe starter training preset."""
     await _get_project_or_404(db, project_id)
+    from app.services.task_shape_service import project_data_task_profile
+
+    data_task_profile, data_task_profile_source = await project_data_task_profile(db, project_id)
     try:
-        payload = _build_newbie_autopilot_plan(project_id=project_id, req=req)
+        payload = _build_newbie_autopilot_plan(
+            project_id=project_id,
+            req=req,
+            data_task_profile=data_task_profile,
+            data_task_profile_source=data_task_profile_source,
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {

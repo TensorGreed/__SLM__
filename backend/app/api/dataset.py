@@ -62,9 +62,13 @@ class SplitRequest(BaseModel):
     # "Re-split with dedup" leakage remediation. When true, exact- and
     # near-duplicate rows are dropped from the combined corpus BEFORE the
     # split, so no row can land in two prepared splits. Clears the
-    # ``leakage.split_overlap`` data-health signal. Off by default — a
-    # normal Prepare never silently drops rows.
-    dedup_rows: bool = False
+    # ``leakage.split_overlap`` data-health signal. On by default: a fresh
+    # split never starts life flagged as leaky; the manifest's
+    # ``dedup_report`` says how many rows were dropped.
+    dedup_rows: bool = True
+    # Stratify by a categorical ``label`` when the caller set neither
+    # ``stratify_by`` nor ``disjoint_by`` (manifest ``stratify_auto``).
+    auto_stratify: bool = True
 
     @model_validator(mode="after")
     def validate_ratios(self):
@@ -294,7 +298,10 @@ async def split(
         active_manifest: dict = {}
         active_resolved: dict = {}
         inherited_from_active: list[str] = []
-        if req.dedup_rows:
+        # Only an explicit ``dedup_rows`` request means "re-split the active
+        # version"; the default-on dedup of a fresh split doesn't inherit.
+        dedup_resplit = bool(req.dedup_rows and "dedup_rows" in provided)
+        if dedup_resplit:
             from app.services.eval_task_handler_service import read_prepared_manifest
             active_manifest = read_prepared_manifest(project_id) or {}
             active_resolved = _active_manifest_split_config(active_manifest)
@@ -324,10 +331,10 @@ async def split(
         # neither, so the dedup re-split reproduces the same grouping guarantee.
         stratify_by = req.stratify_by
         disjoint_by = req.disjoint_by
-        if req.dedup_rows and "stratify_by" not in provided and active_manifest.get("stratify_by"):
+        if dedup_resplit and "stratify_by" not in provided and active_manifest.get("stratify_by"):
             stratify_by = active_manifest["stratify_by"]
             inherited_from_active.append("stratify_by")
-        if req.dedup_rows and "disjoint_by" not in provided and active_manifest.get("disjoint_by"):
+        if dedup_resplit and "disjoint_by" not in provided and active_manifest.get("disjoint_by"):
             disjoint_by = active_manifest["disjoint_by"]
             inherited_from_active.append("disjoint_by")
 
@@ -339,7 +346,7 @@ async def split(
             field_mapping = dict(req.field_mapping or {})
             task_profile = str(req.task_profile or "").strip() or None
             adapter_source = "request"
-        elif req.dedup_rows and active_manifest.get("adapter_id"):
+        elif dedup_resplit and active_manifest.get("adapter_id"):
             # Reproduce the active version's adapter wiring on a dedup re-split.
             adapter_id = str(active_manifest.get("adapter_id") or "default-canonical")
             adapter_config = dict(active_manifest.get("adapter_config") or {})
@@ -371,6 +378,7 @@ async def split(
             stratify_by=stratify_by,
             disjoint_by=disjoint_by,
             dedup_rows=req.dedup_rows,
+            auto_stratify=req.auto_stratify,
         )
         manifest["domain_pack_applied"] = runtime.get("domain_pack_applied")
         manifest["domain_pack_source"] = runtime.get("domain_pack_source")

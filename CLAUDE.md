@@ -393,6 +393,19 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   documents" (default on when available) + Sources chip with `source_doc ·
   passage n`. `rag_sandbox_service` (RAG-compare) now uses the passage index /
   extracted text (it read PDF bytes before).
+- **Data defaults (Wave 2d)** — `split_dataset` defaults `dedup_rows=True`
+  (reported, same matcher as leakage) and `auto_stratify=True` (stratify by a
+  categorical `label` when no stratify/disjoint given → manifest
+  `stratify_auto`). The split API only inherits the active version's config
+  for an EXPLICIT `dedup_rows` request (`dedup_resplit`). When synthetic rows
+  exist, `resolve_training_dataset_types` keeps CLEANED as `labelled_only`:
+  `combine_datasets` drops just unlabelled passages (rows without
+  `row_index`), counts in `include_types_resolution.cleaned_filter`.
+  `train.py` classifier head uses `_class_weights` (≥3× imbalance, mean 1,
+  cap 10) via a weighted-CE Trainer (`class_weighting` auto|none).
+  Autopilot: `task_shape_service.project_data_task_profile` (confirmed, else
+  confident detection) beats intent keywords (`task_profile_source`); the
+  brief's `TASK_KEYWORDS` feed the same intent prior.
 - **Auto-RAG** — `auto_rag_service` builds BM25 indexes at training
   completion; `playground_chat` prepends top-K retrievals. Comparison
   panel + UI-triggered `auto_rag_ab --project` Job.

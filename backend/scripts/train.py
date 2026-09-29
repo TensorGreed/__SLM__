@@ -805,6 +805,31 @@ def _pack_lm_blocks(
     return blocks
 
 
+def _class_weights(
+    label_ids: list[int],
+    num_labels: int,
+    *,
+    min_imbalance: float = 3.0,
+    cap: float = 10.0,
+) -> list[float] | None:
+    """Inverse-frequency class weights (mean 1, capped) for an imbalanced
+    training set, or ``None`` when classes are roughly balanced (largest /
+    smallest present class < ``min_imbalance``). Classes absent from the
+    training rows get weight 1."""
+    counts = [0] * max(num_labels, 0)
+    for label in label_ids:
+        if 0 <= int(label) < num_labels:
+            counts[int(label)] += 1
+    present = [c for c in counts if c > 0]
+    if len(present) < 2 or max(present) / min(present) < min_imbalance:
+        return None
+    total = sum(present)
+    raw = [(total / (len(present) * c)) if c > 0 else None for c in counts]
+    known = [w for w in raw if w is not None]
+    mean = sum(known) / len(known)
+    return [min(cap, w / mean) if w is not None else 1.0 for w in raw]
+
+
 class CausalLMCompletionCollator:
     """Right-pads ``input_ids`` / ``attention_mask`` / ``labels`` by
     position. Padding labels are -100; real EOS labels are never touched
@@ -3082,6 +3107,34 @@ def _run_training_attempt(
             trainer_kwargs["train_dataset"] = tokenized_train
             trainer_kwargs["eval_dataset"] = tokenized_eval if has_eval_records else None
             trainer_kwargs["data_collator"] = DataCollatorWithPadding(tokenizer=processor_tokenizer)
+
+            # Imbalanced classes: weight the loss so the rare classes aren't
+            # ignored (a 90/10 split otherwise trains "always predict the
+            # majority"). "auto" only kicks in at >= 3x imbalance.
+            class_weighting = str(config.get("class_weighting", "auto")).strip().lower()
+            weights = (
+                _class_weights(list(tokenized_train["labels"]), len(label_space))
+                if class_weighting == "auto"
+                else None
+            )
+            runtime_environment["class_weights"] = (
+                dict(zip(label_space, [round(w, 4) for w in weights])) if weights else None
+            )
+            if weights and not (distillation_enabled or distillation_offline):
+                weight_tensor = torch.tensor(weights, dtype=torch.float32)
+
+                class WeightedLossTrainer(Trainer):
+                    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):  # noqa: ANN001
+                        labels = inputs.pop("labels")
+                        outputs = model(**inputs)
+                        loss = torch.nn.functional.cross_entropy(
+                            outputs.logits.float(),
+                            labels,
+                            weight=weight_tensor.to(outputs.logits.device),
+                        )
+                        return (loss, outputs) if return_outputs else loss
+
+                trainer_cls = WeightedLossTrainer
 
             if has_eval_records:
                 import numpy as np

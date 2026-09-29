@@ -23,6 +23,8 @@ flowchart LR
   snapshot --> launch["Launch experiment"]
 ```
 
+**The data comes first.** If the project's data already says what the task is, autopilot uses that over the keywords in your brief. "The data says" means either you've confirmed the task type, or the detector is confident about the uploaded rows. Keywords (from autopilot's presets and the project-brief vocabulary) are only a prior. The plan reports `task_profile_source` (`data_confirmed`, `data_detected` or `intent_keywords`) and what your words alone suggested (`intent_task_profile`). Documents-only data gets a continued-pretraining plan.
+
 Behind the scenes:
 
 1. Readiness — does this project have enough artifacts to even run? Reports blockers.

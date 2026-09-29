@@ -99,7 +99,12 @@ class ResolveTrainingDatasetTypesTests(unittest.TestCase):
 
     # ── Happy path ──────────────────────────────────────────────────
 
-    def test_excludes_cleaned_when_synthetic_has_rows(self):
+    # Wave 2d: the resolver no longer drops CLEANED wholesale — cleaned
+    # row files are labelled data. It keeps CLEANED and marks it
+    # "labelled_only"; split_dataset then drops just the unlabelled
+    # document passages (see test_split_defaults).
+
+    def test_filters_cleaned_to_labelled_rows_when_synthetic_has_rows(self):
         pid = self._create_project("auto-exclude")
         _seed_dataset(pid, DatasetType.SYNTHETIC, 2000)
 
@@ -111,10 +116,11 @@ class ResolveTrainingDatasetTypesTests(unittest.TestCase):
                 DatasetType.GOLD_DEV.value,
             ],
         )
-        self.assertNotIn(DatasetType.CLEANED.value, resolved)
+        self.assertIn(DatasetType.CLEANED.value, resolved)
         self.assertIn(DatasetType.SYNTHETIC.value, resolved)
         self.assertIn(DatasetType.GOLD_DEV.value, resolved)
-        self.assertEqual(report["auto_excluded"], [DatasetType.CLEANED.value])
+        self.assertEqual(report["auto_excluded"], [])
+        self.assertEqual(report["cleaned_rows"], "labelled_only")
         self.assertEqual(report["synthetic_rows"], 2000)
         self.assertIn("2000", report["reason"])
 
@@ -126,7 +132,8 @@ class ResolveTrainingDatasetTypesTests(unittest.TestCase):
         _seed_dataset(pid, DatasetType.SYNTHETIC, 50)
 
         resolved, report = _resolve(pid, None)
-        self.assertNotIn(DatasetType.CLEANED.value, resolved)
+        self.assertIn(DatasetType.CLEANED.value, resolved)
+        self.assertEqual(report["cleaned_rows"], "labelled_only")
         self.assertEqual(report["synthetic_rows"], 50)
 
     # ── No-ops ──────────────────────────────────────────────────────

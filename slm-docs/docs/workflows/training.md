@@ -100,6 +100,10 @@ If your data is plain documents with no question or answer columns (PDF, Word or
 
 Continued pretraining teaches the model your domain's language. To make it *answer questions* from your documents, turn on document grounding in the Playground (see [Chat with a run](#after-training-did-it-help-and-chat-with-it)).
 
+## Imbalanced classes
+
+For classification with a classifier head, when the largest class has at least 3× the rows of the smallest, the loss is **weighted by inverse class frequency** (weights average to 1 and are capped at 10×). Rare classes then count as much as common ones, instead of the model learning "always predict the majority". The chosen weights are recorded in `training_report.json` under `runtime_environment.class_weights`. Set `class_weighting: "none"` to turn this off.
+
 ## After training: did it help, and chat with it
 
 - **Lift check (automatic).** When a real run finishes, a follow-up job evaluates the base model and your run on the held-out split. The bell then shows the headline change, e.g. `exact_match: 0.10 → 0.80 (better than base)`. Details: [Automatic "did fine-tuning help?" check](./evaluation-and-remediation.md#automatic-did-fine-tuning-help-check).

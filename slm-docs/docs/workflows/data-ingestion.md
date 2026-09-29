@@ -250,6 +250,12 @@ curl -X POST http://localhost:8000/api/projects/1/synthetic/generate \
 
 Joins cleaned + synthetic rows (if any), runs the chosen adapter, splits train/val/test, and writes the prepared records to `DATA_DIR/projects/{id}/prepared/`.
 
+**Safe defaults.** You don't need to set any of these; each is reported in `prepared/manifest.json` and in the split result.
+
+- **Duplicates are removed before splitting** (`dedup_rows`, on by default). This covers exact and near-duplicate rows, matched the same way as the leakage check, so a fresh split doesn't leak rows between train and test. `dedup_report` says how many were dropped. Set `dedup_rows: false` to keep them.
+- **Class labels are balanced across splits** (`auto_stratify`, on by default). When you set neither *stratify by* nor *disjoint by*, and the rows carry a categorical `label` (2–50 repeating values), the split is stratified by it, so rare classes still reach val and test. The manifest shows `stratify_auto: true`. Your own stratify or disjoint choice always wins.
+- **Cleaned rows alongside synthetic or imported rows.** If a project has both, the labelled cleaned rows (uploaded CSV/XLSX/JSONL) are kept, and only *unlabelled document passages* are left out, because passages with no answers dilute supervised training. Before, the whole cleaned set was dropped. The counts appear under `include_types_resolution.cleaned_filter`. Documents-only projects are unaffected, because their continued pretraining uses the passages.
+
 The split form **hydrates from the active prepared version** on open: if the project has already been prepared, the stratify/disjoint field, ratios, seed, and chat template default to the config that produced the current splits (read from `prepared/manifest.json`) rather than empty fields — so a re-run reproduces the active split unless you change something. A "♻️ Reusing the active prepared version's split config" hint names which fields were filled. Edit any field to override.
 
 :::note Canonical split-config key
