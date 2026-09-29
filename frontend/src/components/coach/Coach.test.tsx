@@ -111,4 +111,32 @@ describe('Coach (the one guidance surface)', () => {
         expect(coachLocationFor('/project/1/training-config')).toEqual({ tab: 'training', stage: 'training' });
         expect(coachLocationFor('/project/1/playground')).toEqual({ tab: null, stage: null });
     });
+
+    it('shows the top suggestion, hides beginner-hidden targets, and expands on request', async () => {
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/gamification')) return { data: { level: 1 } };
+            if (url.endsWith('/coach/data')) {
+                const nav = (label: string, target: string) => ({ kind: 'navigate', label, params: { target } });
+                return {
+                    data: {
+                        project_id: 7, stage: 'data', handler_available: true,
+                        suggestions: [
+                            { id: 'a', title: 'First fix', body: '', severity: 'warning', action: nav('Go', 'training-config') },
+                            { id: 'b', title: 'Swap normalizer', body: '', severity: 'info', action: nav('Open', 'domain-pack-manager') },
+                            { id: 'c', title: 'Second fix', body: '', severity: 'info', action: nav('Go', 'recipe-picker') },
+                        ],
+                    },
+                };
+            }
+            return { data: {} };
+        });
+        const user = userEvent.setup();
+        renderAt('/project/7/pipeline/data');
+        expect(await screen.findByText('First fix')).toBeInTheDocument();
+        expect(screen.queryByText('Second fix')).toBeNull();
+        await user.click(screen.getByTestId('coach-strip-data-more'));
+        expect(screen.getByText('Second fix')).toBeInTheDocument();
+        // Beginner mode hides the Domain Pack Manager, so that nudge never shows.
+        expect(screen.queryByText('Swap normalizer')).toBeNull();
+    });
 });

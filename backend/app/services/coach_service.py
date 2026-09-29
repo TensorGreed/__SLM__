@@ -282,6 +282,20 @@ async def _load_archetype_comparison_safe(
         return None
 
 
+async def _project_has_any_data(db: AsyncSession, project_id: int) -> bool:
+    """True once any dataset of the project holds rows (imported, cleaned,
+    synthetic or gold)."""
+    from app.models.dataset import Dataset
+
+    result = await db.execute(
+        select(Dataset.id)
+        .where(Dataset.project_id == project_id)
+        .where(Dataset.record_count > 0)
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def _data_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -294,7 +308,10 @@ async def _data_stage_suggestions(
     suggestions: list[dict[str, Any]] = []
     row_count = await _read_gold_row_count(db, project.id)
 
-    if row_count < GOLD_ROW_COMFORTABLE_MIN:
+    # Nothing imported yet: "import your data" is the next step (the
+    # Coach bar says so). A critical "your gold set is empty — generate
+    # 300 synthetic rows" alarm before a single row exists is noise.
+    if row_count < GOLD_ROW_COMFORTABLE_MIN and await _project_has_any_data(db, project.id):
         topup = _topup_count(row_count)
         severity: Severity = "critical" if row_count <= GOLD_ROW_THIN_MAX else "warning"
         recipe_id = _recipe_id_for(project)

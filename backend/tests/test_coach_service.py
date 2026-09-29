@@ -194,6 +194,7 @@ class CoachServiceDirectCallTests(unittest.IsolatedAsyncioTestCase):
         row_count: int,
         *,
         with_recipe: bool = True,
+        has_data: bool = True,
     ) -> list[dict]:
         from unittest.mock import patch
 
@@ -203,15 +204,25 @@ class CoachServiceDirectCallTests(unittest.IsolatedAsyncioTestCase):
                 {"recipe_id": "classification"} if with_recipe else None
             )
 
+        async def _has_data(*_a, **_k):
+            return has_data
+
         with patch(
             "app.services.coach_service._read_gold_row_count",
             return_value=row_count,
-        ) as patched:
+        ) as patched, patch(
+            "app.services.coach_service._project_has_any_data", _has_data
+        ):
             async def _async_return(*_a, **_k):
                 return patched.return_value
 
             patched.side_effect = _async_return
             return await _data_stage_suggestions(db=None, project=_StubProject())  # type: ignore[arg-type]
+
+    async def test_no_gold_alarm_before_any_data_exists(self):
+        # Wave 3: with nothing imported the next step is "import data";
+        # an "empty gold set — generate 300 synthetic rows" alarm is noise.
+        self.assertEqual(await self._suggestions_for_row_count(0, has_data=False), [])
 
     async def test_thin_gold_triggers_critical_severity(self):
         suggestions = await self._suggestions_for_row_count(30)

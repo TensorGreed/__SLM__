@@ -18,14 +18,27 @@ interface CoachStripProps {
     projectId: number;
     stage: CoachStage;
     beginnerMode?: boolean;
+    /** Show only the top N suggestions, with a "Show N more" toggle. */
+    maxVisible?: number;
 }
 
-export default function CoachStrip({ projectId, stage, beginnerMode = false }: CoachStripProps) {
+// Surfaces beginner mode hides — never send a newcomer to a page they
+// can't see.
+const ADVANCED_ONLY_TARGETS = new Set(['domain-pack-manager']);
+
+function visibleFor(suggestion: CoachSuggestion, beginnerMode: boolean): boolean {
+    if (!beginnerMode) return true;
+    const target = (suggestion.action?.params as { target?: unknown } | undefined)?.target;
+    return !(typeof target === 'string' && ADVANCED_ONLY_TARGETS.has(target));
+}
+
+export default function CoachStrip({ projectId, stage, beginnerMode = false, maxVisible }: CoachStripProps) {
     const { isOn, isReady } = useCoachMode(projectId, beginnerMode);
     const [suggestions, setSuggestions] = useState<CoachSuggestion[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [refreshKey, setRefreshKey] = useState(0);
+    const [showAll, setShowAll] = useState(false);
 
     useEffect(() => {
         if (!isOn) return;
@@ -96,6 +109,8 @@ export default function CoachStrip({ projectId, stage, beginnerMode = false }: C
         );
     }
 
+    const shown = suggestions.filter((s) => visibleFor(s, beginnerMode));
+
     return (
         <div
             data-testid={`coach-strip-${stage}`}
@@ -106,7 +121,7 @@ export default function CoachStrip({ projectId, stage, beginnerMode = false }: C
                 marginBottom: 'var(--space-md)',
             }}
         >
-            {suggestions.length === 0 ? (
+            {shown.length === 0 ? (
                 <div
                     data-testid={`coach-strip-${stage}-healthy`}
                     style={{
@@ -119,14 +134,26 @@ export default function CoachStrip({ projectId, stage, beginnerMode = false }: C
                     Coach Mode · looks healthy on this surface.
                 </div>
             ) : (
-                suggestions.map((s) => (
-                    <CoachSuggestionCard
-                        key={s.id}
-                        projectId={projectId}
-                        suggestion={s}
-                        onActionCompleted={() => setRefreshKey((k) => k + 1)}
-                    />
-                ))
+                <>
+                    {(showAll || maxVisible === undefined ? shown : shown.slice(0, maxVisible)).map((s) => (
+                        <CoachSuggestionCard
+                            key={s.id}
+                            projectId={projectId}
+                            suggestion={s}
+                            onActionCompleted={() => setRefreshKey((k) => k + 1)}
+                        />
+                    ))}
+                    {maxVisible !== undefined && shown.length > maxVisible && (
+                        <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => setShowAll((v) => !v)}
+                            data-testid={`coach-strip-${stage}-more`}
+                        >
+                            {showAll ? 'Show fewer' : `Show ${shown.length - maxVisible} more suggestion${shown.length - maxVisible === 1 ? '' : 's'}`}
+                        </button>
+                    )}
+                </>
             )}
         </div>
     );

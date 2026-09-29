@@ -124,7 +124,14 @@ export default function Coach({ projectId, project, pipelineStatus }: CoachProps
                 </div>
             )}
             {tab && <TabVideoLink tabKey={tab} />}
-            {stage && <CoachStrip projectId={projectId} stage={stage} beginnerMode={project.beginner_mode} />}
+            {stage && (
+                <CoachStrip
+                    projectId={projectId}
+                    stage={stage}
+                    beginnerMode={project.beginner_mode}
+                    maxVisible={1}
+                />
+            )}
         </section>
     );
 }
