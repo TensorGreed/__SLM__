@@ -7,6 +7,37 @@ title: Evaluation + remediation
 
 Stage 9 of the [pipeline](pipeline-overview.md) plus the gold-set workbench (stage 3). Evaluation isn't just a number — it's the decision engine for what to fix next. BrewSLM wires the eval pack, the gold set, the failure clusters, and the remediation suggestions into one tight loop.
 
+## The default view: one summary card
+
+The Eval tab opens on a single card that answers three questions for the
+selected run (the latest trained run is picked for you):
+
+1. **Is it better than the base model?** — verdict: *better*, *worse*, *no
+   better*, *not evaluated yet*, or *evaluated, no base-model comparison yet*.
+2. **By how much?** — the headline metric, base → fine-tuned, with the
+   absolute and relative change. Both numbers come from the same held-out
+   split, and the baseline is always **this run's own base model**. Perplexity
+   (continued pretraining) counts as better when it drops.
+3. **Where does it still fail?** — up to 5 held-out examples it got wrong
+   (Expected / Got), plus how many failed out of how many were evaluated.
+
+If the run hasn't been evaluated yet, **Evaluate this run** queues a held-out
+exact-match eval on the `test` split as a background job (the bell tells you
+when it's done). Real training runs are evaluated against the base model
+automatically when they finish.
+
+Everything else — eval packs, gates and the scorecard, the probe pack, failure
+clusters, remediation, and the comparison panels — sits under **Advanced
+evaluation**. It is collapsed by default for beginner projects and open for
+everyone else.
+
+API: `GET /api/projects/{id}/evaluation/summary?experiment_id=` returns
+`verdict`, `headline` (`metric_id`, `baseline_value`, `trained_value`,
+`absolute_delta`, `relative_delta_pct`, `direction`), `failures` (≤5),
+`failed_count`, `evaluated_samples` and the run/baseline ids. Omit
+`experiment_id` to get the latest completed non-baseline run. Held-out eval
+results now store up to 20 failing rows in `details.failures_preview`.
+
 ## Step 1 — Build the gold set
 
 The **gold set** is the ground-truth labelled set you trust to grade everything else. Quality > quantity: 50–100 carefully-labelled rows beats 1000 sloppy ones.

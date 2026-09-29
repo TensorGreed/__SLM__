@@ -697,6 +697,16 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   decision engine for reroute recommendations.
   `sft_lift_summary_service.compute_sft_lift_summary(db, pid, experiment_id=)`
   pairs a run with **its own base model's** baseline (never another model's).
+  **Default Eval view (Wave 3b)** — `eval_summary_service.build_eval_summary`
+  (`GET /evaluation/summary?experiment_id=`, default = latest completed
+  non-baseline run) → verdict (better/worse/same/not_evaluated/no_baseline/
+  no_comparison/no_trained_run) + headline lift + ≤5 failures (from held-out
+  `details["failures_preview"]`, written by `run_heldout_evaluation`; falls
+  back to failing `predictions_preview` rows). `EvalSummaryCard` renders it at
+  the top of `EvalPanel` (+ "Evaluate this run" when not evaluated; its
+  `onResolved` auto-selects the server's run). All other eval surfaces sit
+  behind the "Advanced evaluation" toggle — collapsed when
+  `activeProject.beginner_mode`, open otherwise; ProbePack `onOpenRun` opens it.
 - **Export (Wave 1b)** — GGUF/ONNX/TensorRT export packages only
   `compressed/exp-<run>/` (compression_service files outputs there when the
   source path is under `experiments/<run>/`); no raw-weights fallback under a

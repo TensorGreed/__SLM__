@@ -2302,6 +2302,22 @@ async def _run_perplexity_evaluation(
     return result
 
 
+FAILURES_PREVIEW_LIMIT = 20
+
+
+def _prediction_failed(prediction: dict[str, Any]) -> bool:
+    """A held-out row the model got wrong: the handler's per-row exact
+    match when it recorded one, otherwise a normalized exact comparison
+    of prediction vs reference (classification labels, short answers)."""
+    em = prediction.get("row_exact_match")
+    if isinstance(em, (int, float)) and not isinstance(em, bool):
+        return em < 1
+    reference = prediction.get("reference")
+    if not isinstance(reference, str) or not reference.strip():
+        return False
+    return _normalize_answer(str(prediction.get("prediction") or "")) != _normalize_answer(reference)
+
+
 async def run_heldout_evaluation(
     db: AsyncSession,
     project_id: int,
@@ -2555,6 +2571,20 @@ async def run_heldout_evaluation(
         }
         for p in predictions[:5]
     ]
+    # Failing rows for the Eval tab's summary card ("5 failures") — the
+    # preview above is just the first rows, which are usually passes.
+    details["failures_preview"] = [
+        {
+            "prompt": str(p.get("prompt", ""))[:300],
+            "reference": str(p.get("reference", ""))[:300],
+            "prediction": str(p.get("prediction", ""))[:300],
+            "row_exact_match": p.get("row_exact_match"),
+            "row_f1": p.get("row_f1"),
+        }
+        for p in predictions
+        if _prediction_failed(p)
+    ][:FAILURES_PREVIEW_LIMIT]
+    details["failed_count"] = sum(1 for p in predictions if _prediction_failed(p))
     result.details = details
     await db.flush()
     await db.refresh(result)

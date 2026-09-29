@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import api from '../../api/client';
 import { useJobsStore } from '../../stores/jobsStore';
+import { useProjectStore } from '../../stores/projectStore';
 import { toast } from '../../stores/toastStore';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
@@ -29,6 +30,7 @@ import AutoRagComparisonPanel from './AutoRagComparisonPanel';
 import RerouteRecommendationPanel from './RerouteRecommendationPanel';
 import EvalGapsPanel from './EvalGapsPanel';
 import ProbePackPanel from './ProbePackPanel';
+import EvalSummaryCard from './EvalSummaryCard';
 import './EvalPanel.css';
 
 type EvalSubTab = 'runs' | 'workbench';
@@ -434,6 +436,10 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
     const [temperature, setTemperature] = useState(0);
     const [modelPath, setModelPath] = useState('');
     const [subTab, setSubTab] = useState<EvalSubTab>('runs');
+    // Wave 3b: beginners see one summary card; the full evaluation
+    // surface (gates, packs, probes, clusters, …) sits behind this toggle.
+    const beginnerMode = Boolean(useProjectStore((s) => s.activeProject?.beginner_mode));
+    const [advancedOpen, setAdvancedOpen] = useState(!beginnerMode);
 
     const [loadingExperiments, setLoadingExperiments] = useState(false);
     const [isEvaluating, setIsEvaluating] = useState(false);
@@ -997,40 +1003,16 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
 
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
-            <EvalGapsPanel projectId={projectId} />
-            <ProbePackPanel
-                projectId={projectId}
-                onOpenRun={(expId) => {
-                    void loadResults(expId);
-                    // Best-effort scroll to the now-selected run's scorecard.
-                    setTimeout(() => {
-                        document
-                            .getElementById('experiment-scorecard')
-                            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }, 0);
-                }}
-            />
-            <div className="eval-subtab-switch" role="tablist" aria-label="Evaluation sections">
-                <button
-                    type="button"
-                    role="tab"
-                    aria-selected={subTab === 'runs' ? 'true' : 'false'}
-                    className={`eval-subtab-btn ${subTab === 'runs' ? 'active' : ''}`}
-                    onClick={() => setSubTab('runs')}
-                >
-                    Eval runs
-                </button>
-                <button
-                    type="button"
-                    role="tab"
-                    aria-selected={subTab === 'workbench' ? 'true' : 'false'}
-                    className={`eval-subtab-btn ${subTab === 'workbench' ? 'active' : ''}`}
-                    onClick={() => setSubTab('workbench')}
-                >
-                    Workbench
-                </button>
-            </div>
-            {subTab === 'workbench' && <GoldSetWorkbenchPanel projectId={projectId} />}
+            {subTab === 'runs' && (
+                <EvalSummaryCard
+                    projectId={projectId}
+                    experimentId={selectedExp}
+                    refreshToken={evalResults.length}
+                    onResolved={(expId) => {
+                        if (selectedExp == null) void loadResults(expId);
+                    }}
+                />
+            )}
             {subTab === 'runs' && (<>
             <div className="card">
                 <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Select Experiment / Model</h3>
@@ -1065,6 +1047,57 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     {errorMessage}
                 </div>
             )}
+            </>)}
+            <button
+                type="button"
+                className="btn btn-secondary eval-advanced-toggle"
+                data-testid="eval-advanced-toggle"
+                onClick={() => {
+                    // Closing Advanced hides the Workbench sub-tab switch, so
+                    // fall back to the runs view the summary card lives in.
+                    if (advancedOpen) setSubTab('runs');
+                    setAdvancedOpen(!advancedOpen);
+                }}
+            >
+                {advancedOpen ? '▾ Hide advanced evaluation' : '▸ Advanced evaluation (gates, eval packs, probes, failure clusters, comparisons)'}
+            </button>
+            {advancedOpen && (<>
+            <EvalGapsPanel projectId={projectId} />
+            <ProbePackPanel
+                projectId={projectId}
+                onOpenRun={(expId) => {
+                    setAdvancedOpen(true);
+                    void loadResults(expId);
+                    // Best-effort scroll to the now-selected run's scorecard.
+                    setTimeout(() => {
+                        document
+                            .getElementById('experiment-scorecard')
+                            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 0);
+                }}
+            />
+            <div className="eval-subtab-switch" role="tablist" aria-label="Evaluation sections">
+                <button
+                    type="button"
+                    role="tab"
+                    aria-selected={subTab === 'runs' ? 'true' : 'false'}
+                    className={`eval-subtab-btn ${subTab === 'runs' ? 'active' : ''}`}
+                    onClick={() => setSubTab('runs')}
+                >
+                    Eval runs
+                </button>
+                <button
+                    type="button"
+                    role="tab"
+                    aria-selected={subTab === 'workbench' ? 'true' : 'false'}
+                    className={`eval-subtab-btn ${subTab === 'workbench' ? 'active' : ''}`}
+                    onClick={() => setSubTab('workbench')}
+                >
+                    Workbench
+                </button>
+            </div>
+            {subTab === 'workbench' && <GoldSetWorkbenchPanel projectId={projectId} />}
+            {subTab === 'runs' && (<>
 
             {selectedExp && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -2649,6 +2682,9 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 </div>
             )}
 
+            </>)}
+            </>)}
+
             {onNextStep && (
                 <StepFooter
                     currentStep="Evaluation"
@@ -2659,7 +2695,6 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     onNext={onNextStep}
                 />
             )}
-            </>)}
         </div>
     );
 }

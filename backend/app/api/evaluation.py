@@ -1245,6 +1245,20 @@ async def augment_failure_cluster_endpoint(
 # ── "Did SFT help?" lift summary (Theme 8 Epic 4) ───────────────────
 
 
+@router.get("/summary")
+async def get_eval_summary(
+    project_id: int,
+    experiment_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """The Eval tab's default card: better than the base model? by how
+    much? five failing examples. ``experiment_id`` defaults to the latest
+    completed trained run."""
+    from app.services.eval_summary_service import build_eval_summary
+
+    return await build_eval_summary(db, project_id, experiment_id=experiment_id)
+
+
 @router.get("/sft-lift-summary")
 async def get_sft_lift_summary(
     project_id: int,
