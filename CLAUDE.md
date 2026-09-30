@@ -320,7 +320,13 @@ quality gate** (simulate runtime). The eval→export tail is deferred
 ## Active surfaces / domains (high-level)
 
 - **Coach Mode** — `coach_service.py` emits stage suggestions
-  (`data` / `cleaning` / `gold_set` / `training` / `eval`). Frontend
+  (`data` / `cleaning` / `gold_set` / `synthetic` / `dataprep` / `training` /
+  `eval` / `export` — the last three stages added in Wave 3b: synthetic mix +
+  pending review, split missing/stale/test-too-small/leakage, export-vs-base
+  verdict from `eval_summary_service`). Shared nudges are stage-prefixed
+  helpers (`_split_leakage_nudge`, `_synth_review_pending_nudge`). Navigate
+  targets `pipeline-tab` (`params.tab`) and `dataprep-split` (+ the
+  `brewslm:open-split-form` event for same-page clicks). Frontend
   `CoachStrip` polls + renders via `CoachSuggestionCard`. Actions:
   `run_playbook`, `navigate`, `augment_from_cluster`.
   `NAVIGATE_TARGET_URLS` in `CoachSuggestion.tsx` maps target names

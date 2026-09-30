@@ -4,7 +4,15 @@
 
 import api from './client';
 
-export type CoachStage = 'data' | 'cleaning' | 'gold_set' | 'training' | 'eval';
+export type CoachStage =
+    | 'data'
+    | 'cleaning'
+    | 'gold_set'
+    | 'synthetic'
+    | 'dataprep'
+    | 'training'
+    | 'eval'
+    | 'export';
 export type CoachSeverity = 'info' | 'warning' | 'critical';
 
 export type CoachActionKind =

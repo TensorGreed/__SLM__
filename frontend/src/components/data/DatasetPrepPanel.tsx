@@ -957,6 +957,18 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         });
     };
 
+    // Coach deep-link (``…/pipeline/dataprep#split``) opens the split form
+    // on mount. A Coach click from this same tab doesn't remount the panel
+    // (react-router's pushState fires no hashchange), so the Coach also
+    // dispatches ``brewslm:open-split-form``.
+    useEffect(() => {
+        if (window.location.hash === '#split') scrollToSplitForm();
+        const onOpen = () => scrollToSplitForm();
+        window.addEventListener('brewslm:open-split-form', onOpen);
+        return () => window.removeEventListener('brewslm:open-split-form', onOpen);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     // In-page handler for the data-health leakage actions. Their
     // suggested_action.target is "dataprep" — the tab this panel is
     // already mounted on — so a navigate is a no-op. Handle them here

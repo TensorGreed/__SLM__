@@ -672,6 +672,7 @@ session-start guidance.
 - `backend/tests/test_cleaning_async_task.py` — Cleaning background-task pattern (Phase F UX fix for 100K-row cleans).
 - `backend/tests/test_cleaning_chunks_pagination.py` — GET /cleaning/chunks pagination + sampling contract.
 - `backend/tests/test_cluster_explanation_service.py` — Tests for the per-cluster failure explanation service
+- `backend/tests/test_coach_new_stages.py` — Coach coverage for the synthetic, data-prep and export stages (Wave 3b).
 - `backend/tests/test_coach_probe_divergence.py` — Coach-stage-2 phase 11 — probe-vs-gold divergence nudge.
 - `backend/tests/test_coach_reroute_nudge.py` — Tests for the Phase 7d Coach Mode reroute nudge.
 - `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
@@ -720,6 +721,7 @@ session-start guidance.
 - `backend/tests/test_gold_llm_service.py` — Tests for the LLM-assisted gold-set generation path.
 - `backend/tests/test_gold_set_diagnostics.py` — V4 of the ML-native visualisations arc — gold-set class balance
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
+- `backend/tests/test_heldout_dataset_resolution.py` — Held-out eval dataset resolution: aliases resolve by type priority.
 - `backend/tests/test_hyperparameter_sweep.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
 - `backend/tests/test_label_noise_slice1.py` — Quality-Lift phase 4 slice 1 — Label-noise scan service + endpoints.

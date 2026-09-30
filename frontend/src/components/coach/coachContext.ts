@@ -27,8 +27,11 @@ const COACH_STAGE_BY_TAB: Partial<Record<TabKey, CoachStage>> = {
     data: 'data',
     cleaning: 'cleaning',
     goldset: 'gold_set',
+    synthetic: 'synthetic',
+    dataprep: 'dataprep',
     training: 'training',
     eval: 'eval',
+    export: 'export',
 };
 
 export interface CoachLocation {

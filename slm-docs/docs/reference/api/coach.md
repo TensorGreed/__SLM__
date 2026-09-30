@@ -19,10 +19,10 @@ For curated narrative + UI / CLI walkthroughs see the corresponding section unde
 
 Return top suggestions for one workflow stage.
 
-``stage`` must be one of the values declared in
-``CoachStage``. Phase 1 only handles ``"data"``; other stages
-resolve to an empty list with ``handler_available=False`` so the
-UI can mount the strip ahead of the backend rollout.
+``stage`` must be one of the values declared in ``CoachStage``:
+``data``, ``cleaning``, ``gold_set``, ``synthetic``, ``dataprep``,
+``training``, ``eval`` or ``export``. A declared stage without a
+handler resolves to an empty list with ``handler_available=False``.
 
 **Parameters**
 

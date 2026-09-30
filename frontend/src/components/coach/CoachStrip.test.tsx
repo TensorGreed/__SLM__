@@ -441,6 +441,68 @@ describe('CoachStrip', () => {
         });
     });
 
+    it('routes the pipeline-tab target to the named pipeline tab', async () => {
+        installGetRouter({
+            data: {
+                project_id: 1,
+                stage: 'export',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'export:not-evaluated',
+                        title: "The latest model (run #12) hasn't been evaluated",
+                        body: 'Evaluate before exporting.',
+                        severity: 'warning',
+                        action: {
+                            kind: 'navigate',
+                            label: 'Evaluate it',
+                            params: { target: 'pipeline-tab', tab: 'eval' },
+                        },
+                    },
+                ],
+            },
+        });
+        render(<CoachStrip projectId={1} stage="export" />);
+        await userEvent.click(await screen.findByTestId('coach-suggestion-action-export:not-evaluated'));
+        await waitFor(() => {
+            expect(navigateMock).toHaveBeenCalledWith('/project/1/pipeline/eval');
+        });
+    });
+
+    it('opens the Dataset Prep split form on the dataprep-split target, same page included', async () => {
+        const opened = vi.fn();
+        window.addEventListener('brewslm:open-split-form', opened);
+        installGetRouter({
+            data: {
+                project_id: 1,
+                stage: 'dataprep',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'dataprep:no-split',
+                        title: 'Split your data before training',
+                        body: 'Training reads a prepared split.',
+                        severity: 'warning',
+                        action: {
+                            kind: 'navigate',
+                            label: 'Open the split form',
+                            params: { target: 'dataprep-split' },
+                        },
+                    },
+                ],
+            },
+        });
+        render(<CoachStrip projectId={1} stage="dataprep" />);
+        await userEvent.click(await screen.findByTestId('coach-suggestion-action-dataprep:no-split'));
+        await waitFor(() => {
+            expect(navigateMock).toHaveBeenCalledWith('/project/1/pipeline/dataprep#split');
+        });
+        // A click from the Dataset Prep tab itself doesn't remount the panel,
+        // so the Coach also fires the open event.
+        expect(opened).toHaveBeenCalledTimes(1);
+        window.removeEventListener('brewslm:open-split-form', opened);
+    });
+
     it('navigates to the training-config page on the training-config target', async () => {
         // Phase 6d's curriculum nudge + Phase 9d's auto-RAG nudge both
         // emit ``target: 'training-config'`` — same standalone-page

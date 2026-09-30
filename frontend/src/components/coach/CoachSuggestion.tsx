@@ -170,6 +170,14 @@ const NAVIGATE_TARGET_URLS: Record<
     // — they'd pick a pipeline recipe and the "no recipe selected"
     // signals would persist.
     'recipe-picker': (projectId) => `/project/${projectId}/recipe-picker`,
+    // Dataset Prep tab's split form (DatasetPrepPanel opens it on #split).
+    'dataprep-split': (projectId) => `/project/${projectId}/pipeline/dataprep#split`,
+    // Any pipeline tab by key (``params.tab``) — the synthetic / data-prep /
+    // export stages route between tabs (e.g. "Evaluate it" → eval).
+    'pipeline-tab': (projectId, params) => {
+        const tab = typeof params['tab'] === 'string' && params['tab'] ? params['tab'] : 'data';
+        return `/project/${projectId}/pipeline/${encodeURIComponent(tab)}`;
+    },
     // Training Config is its own page too (separate from the
     // pipeline tab) — same fix as recipe-picker. The Phase 6d
     // curriculum nudge + Phase 9d auto-RAG nudge both emit this.
@@ -472,6 +480,11 @@ export default function CoachSuggestionCard({
                         },
                     }),
                 );
+            }
+            // Same-page dispatch for the Dataset Prep split form (see
+            // DatasetPrepPanel) — the Coach bar sits above that tab.
+            if (target === 'dataprep-split' && typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('brewslm:open-split-form'));
             }
             if (typeof target === 'string' && target in NAVIGATE_TARGET_URLS) {
                 navigate(

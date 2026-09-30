@@ -16,7 +16,11 @@ BrewSLM ships with a deliberate **beginner mode**, so a new ML engineer never se
   - where you are (stage and % done);
   - the single **next step**, with **Continue →**;
   - a short tip and a walkthrough video for the tab you're on;
-  - rule-based suggestions for that stage (data, cleaning, gold set, training, eval), with one-click fixes.
+  - rule-based suggestions for that stage, with one-click fixes. Every tab a beginner walks through has them:
+    - **Data**, **Cleaning**, **Gold Set**, **Training** and **Eval**.
+    - **Synthetic**: rows still waiting for review, a training mix that is mostly synthetic, or no task type chosen yet.
+    - **Dataset Prep**: data not split yet, a split older than the data it was cut from, a test split too small to trust, or overlapping splits.
+    - **Export**: nothing trained yet, or the model you're about to ship lost to its base model or was never evaluated. It also flags a newer run that beat its base model but hasn't been exported.
 - **The full plan.** **Full plan** opens the project home: the checklist with Lab Journal stamps, one-click Quickstart actions, and the beginner-mode switch.
 - **Switching it off.** The 🧭 toggle in the top bar turns the Coach off for a project. It defaults to on for beginner projects.
 

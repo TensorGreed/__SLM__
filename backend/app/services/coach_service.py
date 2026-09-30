@@ -29,7 +29,9 @@ from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
 from app.models.project import Project
 
 
-CoachStage = Literal["data", "cleaning", "gold_set", "training", "eval"]
+CoachStage = Literal[
+    "data", "cleaning", "gold_set", "synthetic", "dataprep", "training", "eval", "export"
+]
 Severity = Literal["info", "warning", "critical"]
 
 # Thresholds describing what a "thin" / "comfortable" gold-set looks
@@ -886,6 +888,78 @@ DIVERSITY_TOPUP_DEFAULT: int = 50
 CLASS_BALANCE_TOPUP_DEFAULT: int = 50
 
 
+async def _synth_review_pending_nudge(
+    db: AsyncSession, project: Project, stage: str
+) -> dict[str, Any] | None:
+    """Synthetic rows waiting in the review queue → one nudge (shared by the
+    gold-set and synthetic stages; ``stage`` prefixes the id)."""
+    from app.services.synth_review_queue_service import list_review_queue
+
+    try:
+        queue = await list_review_queue(db, project.id)
+    except Exception:  # noqa: BLE001 — never block the gold_set strip on a queue read
+        queue = None
+    pending_count = int((queue or {}).get("total_pending") or 0)
+    if pending_count <= 0:
+        return None
+    # Severity scales with the pile-up. Up to 4 rows is just a
+    # "don't forget" nudge; 5+ means a meaningful chunk of data
+    # the user generated is silently missing from training, so
+    # warn. Never critical — pending rows aren't a failure mode,
+    # just an unfinished todo.
+    severity: Severity = "warning" if pending_count >= 5 else "info"
+    # Pull the top source bucket(s) so the body can name what's
+    # waiting (e.g. "from class_balance_fill") — more useful than
+    # an abstract count.
+    groups = (queue or {}).get("groups") or []
+    top_source = groups[0].get("synth_source") if groups else None
+    body_detail = ""
+    if top_source and "class_balance_fill" in str(top_source):
+        body_detail = (
+            " The class-imbalance suggestion you ran wrote into this "
+            "queue — accepting these rows is what actually lifts the "
+            "minority-class signal in training."
+        )
+    elif top_source:
+        body_detail = (
+            f" The largest pending source is `{top_source}`. Accept "
+            "to add to the training set; reject to drop."
+        )
+    # The top source bucket also flows into action.params.synth_source
+    # so the Coach navigate handler can build a focused URL —
+    # ``?focus_synth_source=<source>`` lets SynthReviewQueue render
+    # a one-click "Accept all N <source> rows" banner instead of
+    # making the user multi-select. When the queue has more than
+    # one source (mixed playbook runs), we still pin the largest
+    # bucket — usually the most recent / most-actioned one.
+    action_params: dict[str, Any] = {"target": "synthetic-review-queue"}
+    if top_source:
+        action_params["synth_source"] = top_source
+    return {
+        "id": f"{stage}:synth-review-pending",
+        "title": (
+            f"{pending_count} synthetic row"
+            f"{'' if pending_count == 1 else 's'} pending review"
+        ),
+        "body": (
+            "Generated synthetic rows land in the review queue with "
+            "`review_status=\"pending\"` and are excluded from "
+            "training until you accept them."
+            + body_detail
+        ).strip(),
+        "severity": severity,
+        "action": {
+            "kind": "navigate",
+            "label": "Open review queue",
+            "params": action_params,
+        },
+        "context": {
+            "total_pending": pending_count,
+            "top_source": top_source,
+        },
+    }
+
+
 async def _gold_set_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -1090,70 +1164,9 @@ async def _gold_set_stage_suggestions(
     # by default, so unreviewed synth rows are silently gated out of
     # training. This suggestion is the reminder + the one-click jump
     # to the queue UI so users don't lose the work they just generated.
-    from app.services.synth_review_queue_service import list_review_queue
-
-    try:
-        queue = await list_review_queue(db, project.id)
-    except Exception:  # noqa: BLE001 — never block the gold_set strip on a queue read
-        queue = None
-    pending_count = int((queue or {}).get("total_pending") or 0)
-    if pending_count > 0:
-        # Severity scales with the pile-up. Up to 4 rows is just a
-        # "don't forget" nudge; 5+ means a meaningful chunk of data
-        # the user generated is silently missing from training, so
-        # warn. Never critical — pending rows aren't a failure mode,
-        # just an unfinished todo.
-        severity: Severity = "warning" if pending_count >= 5 else "info"
-        # Pull the top source bucket(s) so the body can name what's
-        # waiting (e.g. "from class_balance_fill") — more useful than
-        # an abstract count.
-        groups = (queue or {}).get("groups") or []
-        top_source = groups[0].get("synth_source") if groups else None
-        body_detail = ""
-        if top_source and "class_balance_fill" in str(top_source):
-            body_detail = (
-                " The class-imbalance suggestion you ran wrote into this "
-                "queue — accepting these rows is what actually lifts the "
-                "minority-class signal in training."
-            )
-        elif top_source:
-            body_detail = (
-                f" The largest pending source is `{top_source}`. Accept "
-                "to add to the training set; reject to drop."
-            )
-        # The top source bucket also flows into action.params.synth_source
-        # so the Coach navigate handler can build a focused URL —
-        # ``?focus_synth_source=<source>`` lets SynthReviewQueue render
-        # a one-click "Accept all N <source> rows" banner instead of
-        # making the user multi-select. When the queue has more than
-        # one source (mixed playbook runs), we still pin the largest
-        # bucket — usually the most recent / most-actioned one.
-        action_params: dict[str, Any] = {"target": "synthetic-review-queue"}
-        if top_source:
-            action_params["synth_source"] = top_source
-        suggestions.append({
-            "id": "gold_set:synth-review-pending",
-            "title": (
-                f"{pending_count} synthetic row"
-                f"{'' if pending_count == 1 else 's'} pending review"
-            ),
-            "body": (
-                "Generated synthetic rows land in the review queue with "
-                "`review_status=\"pending\"` and are excluded from "
-                "training until you accept them."
-                + body_detail
-            ).strip(),
-            "severity": severity,
-            "action": {
-                "kind": "navigate",
-                "label": "Open review queue",
-                "params": action_params,
-            },
-            "context": {
-                "total_pending": pending_count,
-                "top_source": top_source,
-            },
-        })
+    review_nudge = await _synth_review_pending_nudge(db, project, "gold_set")
+    if review_nudge:
+        suggestions.append(review_nudge)
 
     return suggestions
 
@@ -1455,6 +1468,60 @@ async def _active_learning_ready_nudge(
     }
 
 
+async def _split_leakage_nudge(
+    db: AsyncSession, project: Project, stage: str
+) -> dict[str, Any] | None:
+    """Prepared train/val/test overlap → one nudge (shared by the training
+    and data-prep stages; ``stage`` prefixes the suggestion id). Guarded so a
+    malformed split file never blanks the rest of the stage."""
+    from app.services.data_health_service import scan_prepared_split_leakage
+
+    try:
+        split_leak = await scan_prepared_split_leakage(db, project.id)
+    except Exception:
+        split_leak = None
+    if split_leak is None or split_leak["severity"] not in ("warn", "block"):
+        return None
+    worst_pair = max(
+        split_leak["per_pair"].items(),
+        key=lambda kv: kv[1]["leaked"],
+    )[0]
+    pretty = worst_pair.replace("_in_", " rows also in ")
+    leak_sev: Severity = (
+        "critical" if split_leak["severity"] == "block" else "warning"
+    )
+    return {
+        "id": f"{stage}:split-leakage",
+        "title": "Your train / val / test splits overlap",
+        "body": (
+            f"{split_leak['total_leaked']} row(s) are shared across your "
+            f"prepared splits (worst: {pretty}). A row that's in both train "
+            "and validation makes the validation metric optimistic, so "
+            "early-stopping and checkpoint selection pick the wrong model — "
+            "and a test-split overlap inflates the final grade. Re-split "
+            "with deduplication before you train."
+        ),
+        "severity": leak_sev,
+        "action": {
+            "kind": "navigate",
+            "label": "Open dataset splits",
+            "params": {"target": "data-studio-splits"},
+        },
+        "rule_id": (
+            "split-leakage.block"
+            if split_leak["severity"] == "block"
+            else "split-leakage.warn"
+        ),
+        "context": {
+            "leaked": split_leak["total_leaked"],
+            "scanned": split_leak["total_scanned"],
+            "worst_fraction": split_leak["worst_frac"],
+            "per_pair": split_leak["per_pair"],
+            "examples": split_leak["examples"],
+        },
+    }
+
+
 async def _training_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -1506,53 +1573,10 @@ async def _training_stage_suggestions(
     # Prepared-split leakage leads: training on a set that overlaps your
     # val/test splits makes the metrics you'll judge this run by a lie,
     # so flag it before any forecast/base-model advice. Mirrors the
-    # gold-set stage's gold_set:train-leakage nudge; guarded so a
-    # malformed split file never blanks the rest of the stage.
-    from app.services.data_health_service import scan_prepared_split_leakage
-
-    try:
-        split_leak = await scan_prepared_split_leakage(db, project.id)
-    except Exception:
-        split_leak = None
-    if split_leak is not None and split_leak["severity"] in ("warn", "block"):
-        worst_pair = max(
-            split_leak["per_pair"].items(),
-            key=lambda kv: kv[1]["leaked"],
-        )[0]
-        pretty = worst_pair.replace("_in_", " rows also in ")
-        leak_sev: Severity = (
-            "critical" if split_leak["severity"] == "block" else "warning"
-        )
-        suggestions.append({
-            "id": "training:split-leakage",
-            "title": "Your train / val / test splits overlap",
-            "body": (
-                f"{split_leak['total_leaked']} row(s) are shared across your "
-                f"prepared splits (worst: {pretty}). A row that's in both train "
-                "and validation makes the validation metric optimistic, so "
-                "early-stopping and checkpoint selection pick the wrong model — "
-                "and a test-split overlap inflates the final grade. Re-split "
-                "with deduplication before you train."
-            ),
-            "severity": leak_sev,
-            "action": {
-                "kind": "navigate",
-                "label": "Open dataset splits",
-                "params": {"target": "data-studio-splits"},
-            },
-            "rule_id": (
-                "split-leakage.block"
-                if split_leak["severity"] == "block"
-                else "split-leakage.warn"
-            ),
-            "context": {
-                "leaked": split_leak["total_leaked"],
-                "scanned": split_leak["total_scanned"],
-                "worst_fraction": split_leak["worst_frac"],
-                "per_pair": split_leak["per_pair"],
-                "examples": split_leak["examples"],
-            },
-        })
+    # gold-set stage's gold_set:train-leakage nudge.
+    leak_nudge = await _split_leakage_nudge(db, project, "training")
+    if leak_nudge:
+        suggestions.append(leak_nudge)
 
     # Phase 6d — curriculum-learning nudge runs independently of the
     # trainability forecast (curriculum can lift F1 whether forecast
@@ -3042,12 +3066,316 @@ async def _eval_stage_suggestions(
     return suggestions
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Synthetic / data-prep / export stages (Wave 3b — Coach covers every
+# stage a beginner walks through, not just data → eval).
+# ─────────────────────────────────────────────────────────────────────
+
+# Accepted synthetic rows above this share of the training mix are a
+# warning: the model starts learning the generator's phrasing, and the
+# real-data held-out split no longer resembles what it trained on.
+SYNTHETIC_SHARE_WARN: float = 0.5
+# Don't lecture about the mix until there's a meaningful amount of it.
+SYNTHETIC_SHARE_MIN_ROWS: int = 20
+# A held-out test split this small makes every eval number noisy: one
+# row flipping moves exact-match by 5+ points.
+TEST_SPLIT_MIN_ROWS: int = 20
+
+
+def _pipeline_tab_action(label: str, tab: str) -> dict[str, Any]:
+    return {"kind": "navigate", "label": label, "params": {"target": "pipeline-tab", "tab": tab}}
+
+
+async def _dataset_of_type(
+    db: AsyncSession, project_id: int, dataset_type: DatasetType
+) -> Dataset | None:
+    result = await db.execute(
+        select(Dataset)
+        .where(Dataset.project_id == project_id, Dataset.dataset_type == dataset_type)
+        .order_by(Dataset.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+def _file_mtime(dataset: Dataset | None) -> float | None:
+    from pathlib import Path
+
+    if dataset is None or not dataset.file_path:
+        return None
+    path = Path(dataset.file_path)
+    try:
+        return path.stat().st_mtime if path.exists() else None
+    except OSError:
+        return None
+
+
+async def _synthetic_stage_suggestions(
+    db: AsyncSession, project: Project
+) -> list[dict[str, Any]]:
+    """Synthetic tab: unreviewed rows, a synthetic-heavy training mix, and
+    playbooks that can't run until a task type is chosen."""
+    suggestions: list[dict[str, Any]] = []
+    if not await _project_has_any_data(db, project.id):
+        return suggestions
+
+    if not _recipe_id_for(project):
+        suggestions.append({
+            "id": "synthetic:no-task-type",
+            "title": "Choose a task type to unlock synthetic playbooks",
+            "body": (
+                "Playbooks generate rows in your task's shape (question → answer, "
+                "text → label, …), so they need to know the task type first."
+            ),
+            "severity": "info",
+            "action": {
+                "kind": "navigate",
+                "label": "Choose task type",
+                "params": {"target": "recipe-picker"},
+            },
+            "rule_id": "synthetic.no-task-type",
+            "context": {},
+        })
+
+    review_nudge = await _synth_review_pending_nudge(db, project, "synthetic")
+    if review_nudge:
+        suggestions.append(review_nudge)
+
+    from app.services.synth_review_queue_service import list_review_queue
+
+    try:
+        queue = await list_review_queue(db, project.id)
+    except Exception:  # noqa: BLE001 — a queue read never blanks the strip
+        queue = None
+    accepted = int((queue or {}).get("total_accepted") or 0)
+    cleaned = await _dataset_of_type(db, project.id, DatasetType.CLEANED)
+    real_rows = int(getattr(cleaned, "record_count", 0) or 0)
+    total = accepted + real_rows
+    if accepted >= SYNTHETIC_SHARE_MIN_ROWS and total > 0:
+        share = accepted / total
+        if share > SYNTHETIC_SHARE_WARN:
+            suggestions.append({
+                "id": "synthetic:share-high",
+                "title": f"{round(share * 100)}% of your training rows are synthetic",
+                "body": (
+                    f"{accepted} accepted synthetic rows vs {real_rows} of your own. "
+                    "Past about half, the model starts learning the generator's "
+                    "phrasing instead of your domain, and it gets tested on real "
+                    "rows it has seen little of. Add more real examples, or reject "
+                    "the weakest synthetic groups in the review queue."
+                ),
+                "severity": "warning",
+                "action": {
+                    "kind": "navigate",
+                    "label": "Open review queue",
+                    "params": {"target": "synthetic-review-queue"},
+                },
+                "rule_id": "synthetic.share-high",
+                "context": {
+                    "accepted_synthetic": accepted,
+                    "real_rows": real_rows,
+                    "share": round(share, 3),
+                    "threshold": SYNTHETIC_SHARE_WARN,
+                },
+            })
+    return suggestions
+
+
+async def _dataprep_stage_suggestions(
+    db: AsyncSession, project: Project
+) -> list[dict[str, Any]]:
+    """Dataset Prep tab: no split yet, a split older than the data it was
+    cut from, a test split too small to trust, and split leakage."""
+    suggestions: list[dict[str, Any]] = []
+    cleaned = await _dataset_of_type(db, project.id, DatasetType.CLEANED)
+    synthetic = await _dataset_of_type(db, project.id, DatasetType.SYNTHETIC)
+    train = await _dataset_of_type(db, project.id, DatasetType.TRAIN)
+    test = await _dataset_of_type(db, project.id, DatasetType.TEST)
+    has_source = bool(
+        int(getattr(cleaned, "record_count", 0) or 0)
+        or int(getattr(synthetic, "record_count", 0) or 0)
+    )
+    train_rows = int(getattr(train, "record_count", 0) or 0)
+
+    if has_source and train_rows == 0:
+        suggestions.append({
+            "id": "dataprep:no-split",
+            "title": "Split your data before training",
+            "body": (
+                "Training reads a prepared train / validation / test split. "
+                "The test part is held back so you can later check whether the "
+                "fine-tuned model actually beats the base model."
+            ),
+            "severity": "warning",
+            "action": {
+                "kind": "navigate",
+                "label": "Open the split form",
+                "params": {"target": "dataprep-split"},
+            },
+            "rule_id": "dataprep.no-split",
+            "context": {},
+        })
+        return suggestions
+
+    if train_rows > 0:
+        split_at = _file_mtime(train)
+        source_times = [t for t in (_file_mtime(cleaned), _file_mtime(synthetic)) if t]
+        if split_at and source_times and max(source_times) > split_at + 1:
+            suggestions.append({
+                "id": "dataprep:stale-split",
+                "title": "Your data changed after you last split it",
+                "body": (
+                    "Rows cleaned or accepted since the last split aren't in the "
+                    "train / test files yet, so the next run won't see them. "
+                    "Re-split to include them."
+                ),
+                "severity": "warning",
+                "action": {
+                    "kind": "navigate",
+                    "label": "Re-split",
+                    "params": {"target": "dataprep-split"},
+                },
+                "rule_id": "dataprep.stale-split",
+                "context": {"split_mtime": split_at, "source_mtime": max(source_times)},
+            })
+
+        test_rows = int(getattr(test, "record_count", 0) or 0)
+        if test_rows < TEST_SPLIT_MIN_ROWS:
+            suggestions.append({
+                "id": "dataprep:test-split-small",
+                "title": (
+                    "No held-out test rows" if test_rows == 0
+                    else f"Only {test_rows} held-out test rows"
+                ),
+                "body": (
+                    f"Scores are measured on the test split. Below {TEST_SPLIT_MIN_ROWS} "
+                    "rows a single answer flipping moves the score by 5+ points, so "
+                    "\"better than base\" can be noise. Give the test split a larger "
+                    "share, or add more data before splitting."
+                ),
+                "severity": "critical" if test_rows == 0 else "warning",
+                "action": {
+                    "kind": "navigate",
+                    "label": "Open the split form",
+                    "params": {"target": "dataprep-split"},
+                },
+                "rule_id": "dataprep.test-split-empty" if test_rows == 0 else "dataprep.test-split-small",
+                "context": {"test_rows": test_rows, "min_rows": TEST_SPLIT_MIN_ROWS},
+            })
+
+    leak_nudge = await _split_leakage_nudge(db, project, "dataprep")
+    if leak_nudge:
+        suggestions.append(leak_nudge)
+    return suggestions
+
+
+async def _export_stage_suggestions(
+    db: AsyncSession, project: Project
+) -> list[dict[str, Any]]:
+    """Export tab: nothing trained, shipping a model that lost to (or was
+    never compared with) its base model, or exporting an older run than
+    the best one."""
+    from app.models.export import Export, ExportStatus
+    from app.services.eval_summary_service import build_eval_summary
+
+    suggestions: list[dict[str, Any]] = []
+    try:
+        summary = await build_eval_summary(db, project.id)
+    except Exception:  # noqa: BLE001 — a summary read never blanks the strip
+        return suggestions
+    verdict = summary.get("verdict")
+    run_id = summary.get("experiment_id")
+    run_label = f"run #{run_id}" if run_id else "your latest run"
+
+    if verdict == "no_trained_run":
+        suggestions.append({
+            "id": "export:no-trained-run",
+            "title": "Nothing to export yet",
+            "body": "Train a model first. Export packages a finished training run.",
+            "severity": "info",
+            "action": _pipeline_tab_action("Go to Training", "training"),
+            "rule_id": "export.no-trained-run",
+            "context": {},
+        })
+        return suggestions
+
+    headline = summary.get("headline") or {}
+    if verdict == "worse":
+        suggestions.append({
+            "id": "export:worse-than-base",
+            "title": f"The latest model ({run_label}) scored worse than its base model",
+            "body": (
+                f"On the held-out test split, {headline.get('metric_id', 'the score')} "
+                f"went {headline.get('baseline_value')} → {headline.get('trained_value')}. "
+                "Shipping it would be a downgrade from the model you started with. "
+                "Check the failures on the Eval tab first."
+            ),
+            "severity": "critical",
+            "action": _pipeline_tab_action("See where it fails", "eval"),
+            "rule_id": "export.worse-than-base",
+            "context": {"experiment_id": run_id, "headline": headline},
+        })
+    elif verdict == "same":
+        suggestions.append({
+            "id": "export:no-better-than-base",
+            "title": f"The latest model ({run_label}) is no better than its base model",
+            "body": (
+                "Fine-tuning didn't move the held-out score, so the export adds size "
+                "without adding skill. More (or cleaner) training data usually helps."
+            ),
+            "severity": "warning",
+            "action": _pipeline_tab_action("Open Eval", "eval"),
+            "rule_id": "export.no-better-than-base",
+            "context": {"experiment_id": run_id, "headline": headline},
+        })
+    elif verdict == "not_evaluated":
+        suggestions.append({
+            "id": "export:not-evaluated",
+            "title": f"The latest model ({run_label}) hasn't been evaluated",
+            "body": (
+                "You'd be exporting without knowing whether it beats the base model. "
+                "One click on the Eval tab scores it on your held-out test split."
+            ),
+            "severity": "warning",
+            "action": _pipeline_tab_action("Evaluate it", "eval"),
+            "rule_id": "export.not-evaluated",
+            "context": {"experiment_id": run_id},
+        })
+
+    if verdict == "better" and run_id:
+        result = await db.execute(
+            select(Export)
+            .where(Export.project_id == project.id, Export.status == ExportStatus.COMPLETED)
+            .order_by(Export.created_at.desc(), Export.id.desc())
+            .limit(1)
+        )
+        last_export = result.scalar_one_or_none()
+        exported_run = getattr(last_export, "experiment_id", None)
+        if last_export is not None and exported_run and exported_run != run_id:
+            suggestions.append({
+                "id": "export:newer-better-run",
+                "title": f"Run #{run_id} beats its base model and hasn't been exported",
+                "body": (
+                    f"Your last export packaged run #{exported_run}. "
+                    f"Run #{run_id} is newer and scored better than its base model."
+                ),
+                "severity": "info",
+                "action": _pipeline_tab_action("Export it", "export"),
+                "rule_id": "export.newer-better-run",
+                "context": {"experiment_id": run_id, "exported_experiment_id": exported_run},
+            })
+    return suggestions
+
+
 _STAGE_HANDLERS = {
     "data": _data_stage_suggestions,
     "cleaning": _cleaning_stage_suggestions,
     "gold_set": _gold_set_stage_suggestions,
     "training": _training_stage_suggestions,
     "eval": _eval_stage_suggestions,
+    "synthetic": _synthetic_stage_suggestions,
+    "dataprep": _dataprep_stage_suggestions,
+    "export": _export_stage_suggestions,
 }
 
 
