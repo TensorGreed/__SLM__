@@ -743,6 +743,17 @@ async def save_project_dataset_adapter_preference(
     return await resolve_project_dataset_adapter_preference(db, project_id)
 
 
+# What a split trains on by default. The gold set (GOLD_DEV + GOLD_TEST) is
+# NOT in it: gold rows are the answer key the model is scored against, and the
+# train↔gold leakage check flags any gold row found in training. (GOLD_DEV used
+# to be a default source, so the defaults themselves tripped that check.) A
+# caller can still pass include_types=[..., "gold_dev"] explicitly.
+DEFAULT_TRAINING_SOURCE_TYPES: tuple[DatasetType, ...] = (
+    DatasetType.CLEANED,
+    DatasetType.SYNTHETIC,
+)
+
+
 async def resolve_training_dataset_types(
     db: AsyncSession,
     project_id: int,
@@ -768,9 +779,7 @@ async def resolve_training_dataset_types(
     Returns ``(resolved_types, report)``.
     """
     requested_list = list(requested) if requested else [
-        DatasetType.CLEANED.value,
-        DatasetType.SYNTHETIC.value,
-        DatasetType.GOLD_DEV.value,
+        t.value for t in DEFAULT_TRAINING_SOURCE_TYPES
     ]
     report: dict[str, Any] = {
         "auto_excluded": [],
@@ -824,7 +833,7 @@ async def combine_datasets(
     cleaned_report: dict[str, int] | None = None,
 ) -> list[dict]:
     """
-    Combine entries from cleaned/synthetic/gold datasets.
+    Combine entries from cleaned/synthetic (and, when asked, gold) datasets.
 
     ``cleaned_labelled_only`` keeps only structured cleaned rows (row files
     cleaned row-by-row, marked with ``row_index``) and drops unlabelled
@@ -833,9 +842,8 @@ async def combine_datasets(
     Also supports `raw` datasets, which enables generic pipelines for remote imports
     and direct structured data sources without a mandatory cleaning step.
     """
-    default_types = [DatasetType.CLEANED, DatasetType.SYNTHETIC, DatasetType.GOLD_DEV]
     if include_types is None:
-        include_types = default_types
+        include_types = list(DEFAULT_TRAINING_SOURCE_TYPES)
 
     normalizer_hook_spec: dict[str, Any] | None = None
     try:
@@ -855,7 +863,7 @@ async def combine_datasets(
     datasets = list(result.scalars().all())
 
     # Fallback: if default sources are empty, use RAW so users can still continue.
-    if not datasets and include_types == default_types:
+    if not datasets and list(include_types) == list(DEFAULT_TRAINING_SOURCE_TYPES):
         result = await db.execute(
             select(Dataset).where(
                 Dataset.project_id == project_id,

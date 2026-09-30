@@ -26,6 +26,10 @@ exact-match eval on the `test` split as a background job (the bell tells you
 when it's done). Real training runs are evaluated against the base model
 automatically when they finish.
 
+`test` always means the prepared test split from Dataset Prep. The gold test
+set is used only when the project has no prepared split, so the base model and
+the fine-tuned model are always scored on the same rows.
+
 Everything else — eval packs, gates and the scorecard, the probe pack, failure
 clusters, remediation, and the comparison panels — sits under **Advanced
 evaluation**. It is collapsed by default for beginner projects and open for

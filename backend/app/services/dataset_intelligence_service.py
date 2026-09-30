@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.dataset import DatasetType
-from app.services.dataset_service import combine_datasets
+from app.services.dataset_service import DEFAULT_TRAINING_SOURCE_TYPES, combine_datasets
 
 
 def _utcnow_iso() -> str:
@@ -327,11 +327,7 @@ async def _load_rows(
         rows = await combine_datasets(
             db,
             project_id,
-            include_types=[
-                DatasetType.CLEANED,
-                DatasetType.SYNTHETIC,
-                DatasetType.GOLD_DEV,
-            ],
+            include_types=list(DEFAULT_TRAINING_SOURCE_TYPES),
             chat_template="llama3",
         )
         return rows[:sample_size], {"split": "combined", "source": "combined_datasets"}

@@ -415,7 +415,10 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   documents" (default on when available) + Sources chip with `source_doc ·
   passage n`. `rag_sandbox_service` (RAG-compare) now uses the passage index /
   extracted text (it read PDF bytes before).
-- **Data defaults (Wave 2d)** — `split_dataset` defaults `dedup_rows=True`
+- **Data defaults (Wave 2d)** — split sources default to
+  `dataset_service.DEFAULT_TRAINING_SOURCE_TYPES` = CLEANED + SYNTHETIC (Wave 3b:
+  GOLD_DEV is no longer a default source — the gold set is eval-only, and the
+  train↔gold leakage check flagged the defaults' own gold rows). `split_dataset` defaults `dedup_rows=True`
   (reported, same matcher as leakage) and `auto_stratify=True` (stratify by a
   categorical `label` when no stratify/disjoint given → manifest
   `stratify_auto`). The split API only inherits the active version's config
@@ -716,6 +719,11 @@ quality gate** (simulate runtime). The eval→export tail is deferred
 - **Evaluation** — `evaluation_service` runs eval packs; results land in
   `EvalResult` rows. Failure clusters, remediation plans, post-eval
   decision engine for reroute recommendations.
+  Held-out dataset aliases resolve by type **priority** then recency
+  (`evaluation_service._resolve_dataset_alias` → ordered list): `"test"` =
+  prepared TEST split, GOLD_TEST only if no split exists (it used to pick the
+  most recently updated of the two, so a gold edit could switch datasets
+  between the base and fine-tuned evals of one lift comparison).
   `sft_lift_summary_service.compute_sft_lift_summary(db, pid, experiment_id=)`
   pairs a run with **its own base model's** baseline (never another model's).
   **Default Eval view (Wave 3b)** — `eval_summary_service.build_eval_summary`

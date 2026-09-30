@@ -21,6 +21,7 @@ from app.models.experiment import Checkpoint, Experiment, ExperimentStatus, Trai
 from app.models.project import Project
 from app.schemas.training import ExperimentCreate, ExperimentResponse, TrainingConfig
 from app.services.dataset_service import (
+    DEFAULT_TRAINING_SOURCE_TYPES,
     preview_project_data_adapter,
     resolve_project_dataset_adapter_preference,
     save_project_dataset_adapter_preference,
@@ -922,11 +923,7 @@ async def _attempt_autopilot_auto_prepare_data(
         manifest = await split_dataset(
             db=db,
             project_id=project_id,
-            include_types=[
-                DatasetType.CLEANED.value,
-                DatasetType.SYNTHETIC.value,
-                DatasetType.GOLD_DEV.value,
-            ],
+            include_types=[t.value for t in DEFAULT_TRAINING_SOURCE_TYPES],
             adapter_id=adapter_id,
             adapter_config=adapter_config,
             field_mapping=field_mapping,

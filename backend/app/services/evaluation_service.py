@@ -917,23 +917,31 @@ async def run_evaluation(
     return eval_result
 
 
-def _resolve_dataset_alias(dataset_name: str) -> set[DatasetType]:
+def _resolve_dataset_alias(dataset_name: str) -> list[DatasetType]:
+    """Dataset types an eval ``dataset_name`` may mean, in PRIORITY order.
+
+    Order matters: ``"test"`` is the prepared test split first and the gold
+    test set only when no prepared split exists. It used to be an unordered
+    set resolved by "most recently updated", so a gold-set edit between the
+    base-model and fine-tuned evals silently switched datasets under a lift
+    comparison (and the base-model cache is keyed to prepared/test.jsonl).
+    """
     key = dataset_name.strip().lower()
-    aliases: dict[str, set[DatasetType]] = {
-        "heldout": {DatasetType.TEST, DatasetType.GOLD_TEST, DatasetType.VALIDATION},
-        "test": {DatasetType.TEST, DatasetType.GOLD_TEST},
-        "gold_test": {DatasetType.GOLD_TEST},
-        "validation": {DatasetType.VALIDATION, DatasetType.GOLD_DEV},
-        "val": {DatasetType.VALIDATION, DatasetType.GOLD_DEV},
-        "gold_dev": {DatasetType.GOLD_DEV},
-        "train": {DatasetType.TRAIN},
+    aliases: dict[str, list[DatasetType]] = {
+        "heldout": [DatasetType.TEST, DatasetType.GOLD_TEST, DatasetType.VALIDATION],
+        "test": [DatasetType.TEST, DatasetType.GOLD_TEST],
+        "gold_test": [DatasetType.GOLD_TEST],
+        "validation": [DatasetType.VALIDATION, DatasetType.GOLD_DEV],
+        "val": [DatasetType.VALIDATION, DatasetType.GOLD_DEV],
+        "gold_dev": [DatasetType.GOLD_DEV],
+        "train": [DatasetType.TRAIN],
     }
     if key in aliases:
         return aliases[key]
     try:
-        return {DatasetType(key)}
+        return [DatasetType(key)]
     except ValueError:
-        return set()
+        return []
 
 
 async def _resolve_heldout_dataset(
@@ -953,9 +961,10 @@ async def _resolve_heldout_dataset(
     requested = dataset_name.strip().lower()
     alias_types = _resolve_dataset_alias(dataset_name)
 
-    if alias_types:
+    # Priority across types, recency (``datasets`` is newest-first) within one.
+    for dataset_type in alias_types:
         for ds in datasets:
-            if ds.dataset_type in alias_types and ds.file_path:
+            if ds.dataset_type == dataset_type and ds.file_path:
                 return ds
 
     for ds in datasets:

@@ -150,6 +150,41 @@ class SplitDefaultsTests(unittest.TestCase):
         self.assertGreater(cleaned_filter["dropped_unlabelled_passages"], 0)  # docx passages left out
 
 
+    def test_gold_set_stays_out_of_the_default_split(self):
+        """The gold set is the answer key: the default split must not train on
+        it (the train↔gold leakage check would flag every gold row that did).
+        An explicit include_types can still opt gold dev in."""
+        csv = "question,answer\n" + "".join(f"How do I reset unit {i}?,Hold the button for {i} seconds.\n" for i in range(20))
+        self._upload_clean("faq.csv", csv.encode())
+        gold_dir = Path(settings.DATA_DIR) / "projects" / str(self.pid) / "gold"
+        gold_dir.mkdir(parents=True, exist_ok=True)
+        gold_path = gold_dir / "gold_dev.jsonl"
+        gold_path.write_text("".join(
+            json.dumps({"question": f"Gold-only question {i}?", "answer": f"Gold answer {i}."}) + "\n" for i in range(10)
+        ))
+
+        async def _seed():
+            async with async_session_factory() as db:
+                db.add(Dataset(project_id=self.pid, name="Gold dev", dataset_type=DatasetType.GOLD_DEV,
+                               file_path=str(gold_path), record_count=10))
+                await db.commit()
+
+        asyncio.run(_seed())
+        prep = Path(settings.DATA_DIR) / "projects" / str(self.pid) / "prepared"
+
+        def _prepared_text() -> str:
+            return "".join((prep / f"{name}.jsonl").read_text() for name in ("train", "val", "test")
+                           if (prep / f"{name}.jsonl").exists())
+
+        manifest = self._split()
+        self.assertNotIn("gold_dev", manifest["include_types_resolution"].get("resolved_types", ["cleaned", "synthetic"]))
+        self.assertNotIn("Gold-only question", _prepared_text())
+        self.assertEqual(sum(1 for line in _prepared_text().splitlines() if line.strip()), 20)
+
+        self._split(include_types=["cleaned", "gold_dev"])
+        self.assertIn("Gold-only question", _prepared_text())
+
+
 class DetectorPriorTests(unittest.TestCase):
     def test_data_beats_goal_keywords(self):
         plan = resolve_newbie_autopilot_intent(
