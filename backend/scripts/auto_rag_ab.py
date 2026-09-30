@@ -387,9 +387,8 @@ def evaluate_with_inference(
       ``train_rows`` argument is ignored in this mode. Use this when
       you want the comparison to predict what the project's actual
       playground will do (the playground reads
-      ``data/projects/{id}/auto_rag/bm25_index.json`` which is built
-      from the full Dataset corpus, not just the prepared train
-      split).
+      ``data/projects/{id}/auto_rag/bm25_index.json``, built over the
+      project's training rows — never the answer key or val/test).
     """
     import torch
     from peft import PeftModel
@@ -843,8 +842,7 @@ def run_project_comparison(
     print(f"[harness] train_rows={len(train_rows)} val_rows={len(val_rows)}")
 
     # Use the project's DEPLOYED BM25 index (built at training-
-    # completion by Phase 9b's hook over the full Dataset corpus, not
-    # just the prepared train split). This is what the playground
+    # completion by Phase 9b's hook over the training rows). This is what the playground
     # actually reads at inference time — so the comparison's lift
     # numbers predict real playground behavior. Falls through to the
     # Phase 9c transient-build path only when this project hasn't
@@ -853,6 +851,33 @@ def run_project_comparison(
     project_index_dir = (
         settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
     )
+    # An index built before the corpus excluded the answer key (or never
+    # built) is rebuilt over the prepared train split — the same rows the
+    # training-completion hook indexes. Retrieval must not be able to return
+    # a val row (or a gold row) together with its reference answer.
+    from app.services.auto_rag_service import (
+        QA_CORPUS_SOURCE,
+        build_bm25_index,
+        qa_index_is_current,
+    )
+    project_index_path = project_index_dir / "bm25_index.json"
+    if not qa_index_is_current(project_index_path):
+        recipe_id = "qa-sft"
+        if project_index_path.exists():
+            try:
+                recipe_id = str(
+                    json.loads(project_index_path.read_text(encoding="utf-8")).get("recipe_id")
+                    or recipe_id
+                )
+            except (json.JSONDecodeError, OSError):
+                pass
+        build_bm25_index(
+            train_rows,
+            recipe_id=recipe_id,
+            output_dir=project_index_dir,
+            corpus_source=QA_CORPUS_SOURCE,
+        )
+        print(f"[harness] rebuilt auto-RAG index over {len(train_rows)} train rows")
     off_f1s, off_records = evaluate_with_inference(
         base_model=base_model, model_dir=model_dir,
         val_rows=val_rows, train_rows=train_rows, with_rag=False,

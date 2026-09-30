@@ -148,6 +148,7 @@ class DocumentRetrievalTests(unittest.TestCase):
             [{"id": 1, "question": "K-7 warranty?", "answer": "Fourteen months"}],
             recipe_id="qa-sft",
             output_dir=qa_dir,
+            corpus_source=rag.QA_CORPUS_SOURCE,
         )
 
         async def _go(corpus):

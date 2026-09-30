@@ -220,6 +220,7 @@ def build_bm25_index(
     *,
     recipe_id: str,
     output_dir: Path,
+    corpus_source: str | None = None,
 ) -> AutoRagIndexManifest:
     """Build a BM25 index over ``rows`` and persist it to
     ``output_dir/bm25_index.json``.
@@ -283,6 +284,7 @@ def build_bm25_index(
         # rather than silently mis-scoring against a stale index.
         "recipe_id": recipe_id,
         "text_keys": list(text_keys),
+        "corpus_source": corpus_source,
         "bm25_k1": _BM25_K1,
         "bm25_b": _BM25_B,
         "doc_count": doc_count,
@@ -324,63 +326,42 @@ def build_bm25_index(
 # ─────────────────────────────────────────────────────────────────────
 
 
+# Stamped into the Q&A index so an index built over an older corpus (gold +
+# synthetic, before the answer key became eval-only) is rebuilt, not reused.
+QA_CORPUS_SOURCE = "training_rows_v1"
+
+
+def qa_index_is_current(index_path: Path) -> bool:
+    """True when the Q&A index on disk was built over the training corpus."""
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    return isinstance(payload, dict) and payload.get("corpus_source") == QA_CORPUS_SOURCE
+
+
 async def _load_rag_corpus_rows(db, project_id: int) -> list[dict[str, Any]]:
-    """Load the rows the BM25 index should be built over.
+    """Load the rows the BM25 index should be built over: the project's
+    training rows (``dataset_service.load_training_corpus_rows``).
 
-    Reuses ``dataset_service._load_records_from_file`` (which excludes
-    pending synth rows) so the corpus stays in sync with what the
-    training pipeline trained on. Same loader the preview API uses.
+    Never the answer key and never the val/test splits — the index used to
+    hold GOLD_DEV + GOLD_TEST rows, so retrieval could return the exact
+    question being scored together with its reference answer.
     """
-    from sqlalchemy import select
+    from app.services.dataset_service import load_training_corpus_rows
 
-    from app.config import settings
-    from app.models.dataset import Dataset, DatasetType
-    from app.services.dataset_service import _load_records_from_file
+    return await load_training_corpus_rows(db, project_id)
 
-    result = await db.execute(
-        select(Dataset).where(
-            Dataset.project_id == project_id,
-            Dataset.dataset_type.in_(
-                [
-                    DatasetType.GOLD_DEV,
-                    DatasetType.GOLD_TEST,
-                    DatasetType.SYNTHETIC,
-                ]
-            ),
-        )
-    )
-    rows: list[dict[str, Any]] = []
-    for dataset in result.scalars():
-        if not dataset.file_path:
-            continue
-        path = Path(dataset.file_path)
-        if not path.exists():
-            continue
-        rows.extend(_load_records_from_file(path))
-    # Also fall back to the prepared/train.jsonl file when the
-    # Dataset rows don't surface anything (e.g. older projects that
-    # never registered a Dataset row but did write the prepared
-    # split). Phase 9b's training-completion hook always has the
-    # prepared file written, so this fallback is the load-bearing
-    # path for index rebuilds.
-    if not rows:
-        prepared = (
-            settings.DATA_DIR / "projects" / str(project_id) / "prepared" / "train.jsonl"
-        )
-        if prepared.exists():
-            try:
-                with prepared.open(encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            rows.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            continue
-            except OSError:
-                pass
-    return rows
+
+def _drop_stale_qa_index(index_dir: Path) -> None:
+    """Remove a Q&A index built over an older corpus when it can't be rebuilt
+    (no training rows) — serving it would keep retrieving answer-key rows."""
+    index_path = index_dir / "bm25_index.json"
+    if index_path.exists() and not qa_index_is_current(index_path):
+        try:
+            index_path.unlink()
+        except OSError:
+            pass
 
 
 async def build_index_for_project(db, project_id: int) -> dict[str, Any]:
@@ -409,16 +390,19 @@ async def build_index_for_project(db, project_id: int) -> dict[str, Any]:
             "reason": f"recipe_has_no_auto_rag:{recipe_id}",
         }
     rows = await _load_rag_corpus_rows(db, project_id)
-    if not rows:
-        return {"built": False, "reason": "no_corpus_rows"}
     index_dir = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
+    if not rows:
+        _drop_stale_qa_index(index_dir)
+        return {"built": False, "reason": "no_corpus_rows"}
     try:
         manifest = build_bm25_index(
             rows,
             recipe_id=recipe_id,
             output_dir=index_dir,
+            corpus_source=QA_CORPUS_SOURCE,
         )
     except AutoRagUnavailable as e:
+        _drop_stale_qa_index(index_dir)
         return {"built": False, "reason": f"build_failed:{e}"}
     return {
         "built": True,
@@ -596,6 +580,11 @@ async def build_preamble_from_query(
     use_qa = corpus in {"qa", "auto"} and _qa_index_usable(project, project_id)
     if use_qa:
         index_dir = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
+        if not qa_index_is_current(index_dir / "bm25_index.json"):
+            # Built before the corpus excluded the answer key — rebuild over
+            # the training rows (drops the file when there are none).
+            use_qa = bool((await build_index_for_project(db, project_id)).get("built"))
+    if use_qa:
         try:
             hits = retrieve(query, index_dir=index_dir, k=k)
         except AutoRagUnavailable:

@@ -433,7 +433,14 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   brief's `TASK_KEYWORDS` feed the same intent prior.
 - **Auto-RAG** — `auto_rag_service` builds BM25 indexes at training
   completion; `playground_chat` prepends top-K retrievals. Comparison
-  panel + UI-triggered `auto_rag_ab --project` Job.
+  panel + UI-triggered `auto_rag_ab --project` Job. The Q&A corpus is the
+  project's **training rows** (`dataset_service.load_training_corpus_rows`:
+  `prepared/train.jsonl`, else CLEANED + accepted SYNTHETIC) — never GOLD_* or
+  val/test (it used to index the answer key, so retrieval could return the
+  scored question with its answer). Indexes carry `corpus_source`
+  (`QA_CORPUS_SOURCE`); an unstamped one is rebuilt (or dropped when there are
+  no training rows) by `build_preamble_from_query`, the preview endpoint and
+  `run_project_comparison`. `api/curriculum` preview ranks the same rows.
 - **Reroute-to-RAG** — `rag_project_service.clone_project_for_rag()`
   creates a sibling project with `runtime_config.rag_first=True`. The
   playground uses base model + retrieval (no LoRA).

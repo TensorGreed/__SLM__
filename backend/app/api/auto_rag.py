@@ -25,7 +25,9 @@ from app.database import get_db
 from app.models.project import Project
 from app.services.auto_rag_service import (
     AutoRagUnavailable,
+    QA_CORPUS_SOURCE,
     _load_rag_corpus_rows,
+    qa_index_is_current,
     build_bm25_index,
     recommended_text_keys_for_recipe,
     retrieve,
@@ -113,8 +115,8 @@ async def preview_auto_rag(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Project has no training rows yet — import an answer key "
-                "or generate synthetic rows first."
+                "Project has no training rows yet — import data or "
+                "generate synthetic rows first."
             ),
         )
 
@@ -128,6 +130,7 @@ async def preview_auto_rag(
     needs_rebuild = (
         not index_path.exists()
         or _index_row_count(index_path) != len(rows)
+        or not qa_index_is_current(index_path)
     )
     if needs_rebuild:
         try:
@@ -135,6 +138,7 @@ async def preview_auto_rag(
                 rows,
                 recipe_id=recipe_id,
                 output_dir=index_dir,
+                corpus_source=QA_CORPUS_SOURCE,
             )
         except AutoRagUnavailable as e:
             raise HTTPException(status_code=400, detail=str(e)) from e

@@ -12,7 +12,6 @@ reasonable for my data?" before betting training quality on them.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -47,8 +46,8 @@ async def preview_curriculum(
     ),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Compute the curriculum order for the project's gold + synthetic
-    accepted rows and return it as a sample for the UI / A/B harness.
+    """Compute the curriculum order for the project's training rows
+    and return it as a sample for the UI / A/B harness.
 
     Status codes:
       200 — ranking computed; payload includes scoring_mode +
@@ -90,8 +89,8 @@ async def preview_curriculum(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Project has no training rows yet — import an answer key "
-                "or generate synthetic rows first."
+                "Project has no training rows yet — import data or "
+                "generate synthetic rows first."
             ),
         )
 
@@ -144,38 +143,14 @@ async def preview_curriculum(
 async def _load_curriculum_input_rows(
     db: AsyncSession, project_id: int
 ) -> list[dict[str, Any]]:
-    """Load the rows the curriculum should rank.
+    """Load the rows the curriculum should rank: the project's training rows
+    (``prepared/train.jsonl``, which is what a curriculum run actually ranks;
+    cleaned + accepted synthetic before the first split). The answer key is
+    eval-only, so it is never ranked — the preview used to show gold rows,
+    which no training run sees."""
+    from app.services.dataset_service import load_training_corpus_rows
 
-    Reuses the dataset loader's existing gold + accepted-synth merge
-    semantics — by default ``_load_records_from_file`` excludes
-    pending synth rows, which is what we want (curriculum should only
-    rank what's actually going into training)."""
-    from sqlalchemy import select
-
-    from app.models.dataset import Dataset, DatasetType
-    from app.services.dataset_service import _load_records_from_file
-
-    result = await db.execute(
-        select(Dataset).where(
-            Dataset.project_id == project_id,
-            Dataset.dataset_type.in_(
-                [
-                    DatasetType.GOLD_DEV,
-                    DatasetType.GOLD_TEST,
-                    DatasetType.SYNTHETIC,
-                ]
-            ),
-        )
-    )
-    rows: list[dict[str, Any]] = []
-    for dataset in result.scalars():
-        if not dataset.file_path:
-            continue
-        path = Path(dataset.file_path)
-        if not path.exists():
-            continue
-        rows.extend(_load_records_from_file(path))
-    return rows
+    return await load_training_corpus_rows(db, project_id)
 
 
 def _row_id_key(row: dict[str, Any]) -> str:

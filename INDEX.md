@@ -646,6 +646,7 @@ session-start guidance.
 - `backend/tests/test_annotation_active_learning.py` — Epic F Phase 1 — active-learning row ranker for label-jobs.
 - `backend/tests/test_annotation_active_learning_phase2.py` — Epic F Phase 2 — span / preference-pair active strategy + Cohen's κ stats.
 - `backend/tests/test_annotation_promotion.py` — Story 1.6 — promote labeled rows → training dataset.
+- `backend/tests/test_answer_key_not_in_training_corpus.py` — The answer key is eval-only: auto-RAG and the curriculum preview read the
 - `backend/tests/test_archetype_drift_nudge.py` — Tests for the Phase 8c Coach Mode archetype-drift nudge
 - `backend/tests/test_archetype_service.py` — Tests for the archetype-extraction service + endpoint
 - `backend/tests/test_audio_transcript_adapter_prompt_wrap.py` — κ-fix tests — audio-transcript adapter writes the production

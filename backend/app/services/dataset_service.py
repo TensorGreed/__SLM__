@@ -754,6 +754,51 @@ DEFAULT_TRAINING_SOURCE_TYPES: tuple[DatasetType, ...] = (
 )
 
 
+async def load_training_corpus_rows(db: AsyncSession, project_id: int) -> list[dict[str, Any]]:
+    """The rows a project trains on, for features that mirror the training
+    corpus (auto-RAG's Q&A index, the curriculum preview).
+
+    ``prepared/train.jsonl`` when the project has been split — exactly what the
+    trainer reads, so val/test rows stay out. Before the first split: the
+    default training sources (cleaned + accepted synthetic). The answer key
+    (GOLD_DEV / GOLD_TEST) is never included: these used to read gold rows, so
+    retrieval could hand the model the very answers it was being scored on.
+    """
+    train_path = settings.DATA_DIR / "projects" / str(project_id) / "prepared" / "train.jsonl"
+    rows: list[dict[str, Any]] = []
+    if train_path.exists():
+        try:
+            with train_path.open(encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(row, dict):
+                        rows.append(row)
+        except OSError:
+            rows = []
+    if rows:
+        return rows
+
+    result = await db.execute(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type.in_(list(DEFAULT_TRAINING_SOURCE_TYPES)),
+        )
+    )
+    for dataset in result.scalars():
+        if not dataset.file_path:
+            continue
+        path = Path(dataset.file_path)
+        if path.exists():
+            rows.extend(_load_records_from_file(path))
+    return rows
+
+
 async def resolve_training_dataset_types(
     db: AsyncSession,
     project_id: int,
