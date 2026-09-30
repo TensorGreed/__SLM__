@@ -330,10 +330,39 @@ class SynthPlaybookAsyncEndpointTests(unittest.TestCase):
         cls._prev_auth_enabled = settings.AUTH_ENABLED
         settings.AUTH_ENABLED = False
         cls.client = _MODULE_CLIENT_CM
+        # No backends → the runner fails immediately. Otherwise it probes for
+        # Ollama / a teacher endpoint, which on CI runners takes ~60s to time
+        # out (on a dev box with Ollama running it generates for real); the
+        # still-running Job's rollback then wiped the next class's
+        # project insert on the shared StaticPool connection ("Project N not
+        # found" in HeldoutEvalAsyncEndpointTests, 3/3 attempts).
+        from unittest.mock import patch
+
+        # synth_playbook_service binds its own BACKEND_REGISTRY at import and
+        # passes it to pick_backend explicitly, so patch both references.
+        cls._backend_patches = [
+            patch("app.services.synth_backends.BACKEND_REGISTRY", []),
+            patch("app.services.synth_playbook_service.BACKEND_REGISTRY", []),
+        ]
+        for p in cls._backend_patches:
+            p.start()
 
     @classmethod
     def tearDownClass(cls):
+        for p in cls._backend_patches:
+            p.stop()
         settings.AUTH_ENABLED = cls._prev_auth_enabled
+
+    def tearDown(self):
+        # Don't let this test's Job outlive it (see setUpClass).
+        import time
+
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            resp = self.client.get("/api/jobs/active", params={"include_recently_completed": "false"})
+            if resp.status_code == 200 and not resp.json().get("jobs"):
+                return
+            time.sleep(0.1)
 
     def test_async_synth_returns_202_with_job_stub(self):
         resp = self.client.post(
@@ -384,6 +413,15 @@ class HeldoutEvalAsyncEndpointTests(unittest.TestCase):
         from unittest.mock import patch
 
         async def _no_model_in_test_env(*_args, **_kwargs):
+            # Hold briefly before failing so each test's follow-up request
+            # (e.g. the duplicate POST that must see an ACTIVE job → 409)
+            # lands while the Job is still running, instead of racing the
+            # runner's FAILED write on the shared StaticPool connection —
+            # that race lost the status update (Job stuck "running", every
+            # tearDown waiting its full 15s) or wiped a project insert.
+            import asyncio
+
+            await asyncio.sleep(0.5)
             raise ValueError("no model available in the test environment")
 
         cls._eval_patch = patch(

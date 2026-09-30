@@ -219,7 +219,12 @@ cd backend && python -m pytest -k "name_pattern"        # by name
   writes ("Project N not found", "Could not refresh instance", "Lock … bound
   to a different event loop"). And never let a Job run a real model eval
   (patch `run_heldout_evaluation`): on CI it downloads + runs on CPU and the
-  process hangs at exit. CI caps each non-phase file at 600s
+  process hangs at exit. Also stub synth backends (patch **both**
+  `synth_backends.BACKEND_REGISTRY` and `synth_playbook_service.BACKEND_REGISTRY`
+  — the service binds its own copy) or the runner probes/uses a real Ollama and
+  outlives the test; and make fake runners hold ~0.5s before failing so a
+  follow-up request doesn't race the FAILED write (see `test_jobs_service`).
+  CI caps each non-phase file at 600s
   (`::error::<file> timed out`) and the job at 90 min.
 
 ### Frontend
