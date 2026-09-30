@@ -303,9 +303,9 @@ def run_one_training(
 # ─────────────────────────────────────────────────────────────────────
 
 
-# Mirrors train.py's _qa_to_chat_text(llama3) but emits only the
-# prompt portion (user turn + assistant header). The model generates
-# the answer + <|eot_id|>.
+# Fallback for tokenizers WITHOUT a chat template (see
+# ``_build_inference_prompt``). Mirrors train.py's _qa_to_chat_text(llama3)
+# but emits only the prompt portion (user turn + assistant header).
 def _format_llama3_inference_prompt(question: str) -> str:
     return (
         "<|start_header_id|>user<|end_header_id|>\n\n"
@@ -345,6 +345,60 @@ def _format_llama3_rag_prompt(question: str, retrieved_pairs: list[dict[str, Any
     )
 
 
+def _build_inference_prompt(
+    tokenizer: Any,
+    question: str,
+    retrieved_pairs: list[dict[str, Any]] | None = None,
+) -> tuple[str, bool]:
+    """Prompt for one eval row, in the format the model was trained on.
+
+    Returns ``(prompt, used_chat_template)``. When the tokenizer ships a chat
+    template (virtually every modern checkpoint), the prompt is rendered with
+    it — the same contract as ``train.py`` (``use_tokenizer_chat_template``)
+    and ``evaluation_service._apply_chat_template_if_present``. The harness
+    used to hard-code Llama-3 headers for every model, so a ChatML model
+    (SmolLM2, Qwen) saw tokens it was never trained on and both A/B arms
+    scored near zero. The Llama-3 builders remain the fallback for tokenizers
+    without a template.
+
+    ``retrieved_pairs`` (with-RAG arm) become a leading system message, as in
+    the playground.
+    """
+    messages: list[dict[str, str]] = []
+    if retrieved_pairs is not None:
+        messages.append({"role": "system", "content": _build_rag_preamble(retrieved_pairs)})
+    messages.append({"role": "user", "content": question.strip()})
+    if getattr(tokenizer, "chat_template", None) and hasattr(tokenizer, "apply_chat_template"):
+        try:
+            rendered = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+        except Exception:  # noqa: BLE001 — e.g. a template with no system role
+            rendered = None
+        if isinstance(rendered, str) and rendered.strip():
+            return rendered, True
+    if retrieved_pairs is not None:
+        return _format_llama3_rag_prompt(question, retrieved_pairs), False
+    return _format_llama3_inference_prompt(question), False
+
+
+def _stop_token_ids(tokenizer: Any) -> list[int]:
+    """EOS plus whichever end-of-turn markers this tokenizer actually has."""
+    ids: list[int] = []
+    eos = getattr(tokenizer, "eos_token_id", None)
+    if isinstance(eos, int):
+        ids.append(eos)
+    unk = getattr(tokenizer, "unk_token_id", None)
+    for marker in ("<|eot_id|>", "<|im_end|>"):
+        try:
+            token_id = tokenizer.convert_tokens_to_ids(marker)
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(token_id, int) and token_id >= 0 and token_id != unk and token_id not in ids:
+            ids.append(token_id)
+    return ids
+
+
 _ASSISTANT_TAIL_RE = re.compile(r"<\|eot_id\|>.*", flags=re.DOTALL)
 
 
@@ -371,7 +425,8 @@ def evaluate_with_inference(
     index_dir_override: Path | None = None,
     progress_callback: "Callable[[int, int, str], None] | None" = None,
 ) -> tuple[list[float], list[dict[str, Any]]]:
-    """Load the trained model (base + LoRA), generate an answer for
+    """Load the trained model (base + LoRA adapter, or the full fine-tuned
+    model when the run saved one), generate an answer for
     each val row, score via ``evaluation_service.f1_score``. Returns
     (per-row F1s, per-row record dicts for debugging).
 
@@ -431,15 +486,23 @@ def evaluate_with_inference(
                     f"failed to build BM25 index for with-RAG eval: {e}"
                 ) from e
 
-    tokenizer = AutoTokenizer.from_pretrained(base_model)
+    # The run's own tokenizer (saved next to the adapter) carries the chat
+    # template it was trained with; fall back to the base model's.
+    tokenizer_source = str(model_dir) if (model_dir / "tokenizer_config.json").exists() else base_model
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
+    stop_ids = _stop_token_ids(tokenizer)
+    # A LoRA run saves only the adapter (load base + adapter); a full
+    # fine-tune saves the whole model (load it directly). The harness used to
+    # assume LoRA and crashed on full fine-tunes — the quickstart default.
+    is_adapter_run = (model_dir / "adapter_config.json").exists()
     base = AutoModelForCausalLM.from_pretrained(
-        base_model,
-        torch_dtype=torch.float16,
+        base_model if is_adapter_run else str(model_dir),
+        dtype=torch.float16,
         device_map="cuda",
     )
-    model = PeftModel.from_pretrained(base, str(model_dir))
+    model = PeftModel.from_pretrained(base, str(model_dir)) if is_adapter_run else base
     model.eval()
 
     f1s: list[float] = []
@@ -471,20 +534,28 @@ def evaluate_with_inference(
                     "question": payload.get("question", ""),
                     "answer": payload.get("answer", ""),
                 })
-            prompt = _format_llama3_rag_prompt(question, retrieved_pairs)
-        else:
-            prompt = _format_llama3_inference_prompt(question)
-        inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
+        prompt, used_template = _build_inference_prompt(
+            tokenizer, question, retrieved_pairs if with_rag else None
+        )
+        # A rendered chat template already carries its special tokens.
+        inputs = tokenizer(
+            prompt, return_tensors="pt", add_special_tokens=not used_template
+        ).to("cuda")
         with torch.no_grad():
             output_ids = model.generate(
                 **inputs,
                 max_new_tokens=GENERATION_MAX_NEW_TOKENS,
                 do_sample=False,
                 pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.convert_tokens_to_ids("<|eot_id|>"),
+                eos_token_id=stop_ids or None,
             )
-        decoded = tokenizer.decode(output_ids[0], skip_special_tokens=False)
-        generated = _clean_generated_answer(decoded)
+        if used_template:
+            # Only the newly generated tokens are the answer.
+            new_tokens = output_ids[0][inputs["input_ids"].shape[1]:]
+            generated = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+        else:
+            decoded = tokenizer.decode(output_ids[0], skip_special_tokens=False)
+            generated = _clean_generated_answer(decoded)
         score = f1_score(generated, reference)
         f1s.append(score)
         records.append({

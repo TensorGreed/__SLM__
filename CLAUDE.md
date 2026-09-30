@@ -441,6 +441,10 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   (`QA_CORPUS_SOURCE`); an unstamped one is rebuilt (or dropped when there are
   no training rows) by `build_preamble_from_query`, the preview endpoint and
   `run_project_comparison`. `api/curriculum` preview ranks the same rows.
+  The harness (`scripts/auto_rag_ab.py`) prompts with the **tokenizer's chat
+  template** (`_build_inference_prompt`; Llama-3 headers only as the
+  no-template fallback), decodes only the new tokens, and loads either
+  base + LoRA adapter or a full fine-tuned `model/` dir.
 - **Reroute-to-RAG** — `rag_project_service.clone_project_for_rag()`
   creates a sibling project with `runtime_config.rag_first=True`. The
   playground uses base model + retrieval (no LoRA).
@@ -457,6 +461,11 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   (preflight), `CloudBurstPlanningSection` (owns its state; `key={projectId}`),
   `TrainingRunView` (one run), `TrainingRunsList`. Add new config fields to the
   hook, not as panel `useState`.
+  `scripts/train.py` runs as a standalone script (`python scripts/train.py`
+  from the Celery worker), so it adds `backend/` to `sys.path` itself — its
+  lazy `from app...` imports otherwise fail with "No module named 'app'"
+  (`tests/test_train_script_standalone.py`). Real training needs the worker:
+  `celery -A app.worker.celery_app worker --pool=threads --concurrency=2`.
   **Core-loop defaults in `scripts/train.py` (2026-09-28 audit fix)**:
   prompt→answer pairs beat a display `text` field (`_extract_prompt_completion`);
   QA-family rows are re-rendered with the tokenizer's chat template

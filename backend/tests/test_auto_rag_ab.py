@@ -39,11 +39,13 @@ from scripts.auto_rag_ab import (  # noqa: E402
     QA_SFT_TEMPLATES,
     RunResult,
     TemplateSummary,
+    _build_inference_prompt,
     _build_rag_preamble,
     _clean_generated_answer,
     _flatten_qa_row,
     _format_llama3_inference_prompt,
     _format_llama3_rag_prompt,
+    _stop_token_ids,
     _split_70_15_15,
     aggregate_results,
     apply_gate,
@@ -168,6 +170,66 @@ class PromptBuilderTests(unittest.TestCase):
         self.assertIn("[2]", preamble)
         self.assertIn("[3]", preamble)
         self.assertIn("Reference Q&A pairs", preamble)
+
+
+class _ChatMLTokenizer:
+    """A tokenizer with a ChatML chat template (SmolLM2 / Qwen shape)."""
+
+    chat_template = "chatml"
+    eos_token_id = 2
+    unk_token_id = 0
+
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+        body = "".join(f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n" for m in messages)
+        return body + ("<|im_start|>assistant\n" if add_generation_prompt else "")
+
+    def convert_tokens_to_ids(self, token):
+        return {"<|im_end|>": 2}.get(token, self.unk_token_id)
+
+
+class _NoTemplateTokenizer:
+    chat_template = None
+    eos_token_id = 7
+    unk_token_id = None
+
+    def convert_tokens_to_ids(self, token):
+        return {"<|eot_id|>": 9}.get(token)
+
+
+class ChatTemplatePromptTests(unittest.TestCase):
+    """The harness must prompt a model in ITS chat format — it used to send
+    Llama-3 headers to every model, so ChatML models scored ~0 in both arms."""
+
+    def test_uses_the_tokenizers_chat_template(self):
+        prompt, used = _build_inference_prompt(_ChatMLTokenizer(), " What's the policy? ")
+        self.assertTrue(used)
+        self.assertEqual(prompt, "<|im_start|>user\nWhat's the policy?<|im_end|>\n<|im_start|>assistant\n")
+        self.assertNotIn("<|start_header_id|>", prompt)
+
+    def test_rag_arm_puts_the_preamble_in_a_system_turn(self):
+        prompt, used = _build_inference_prompt(
+            _ChatMLTokenizer(), "What about today?", [{"question": "How many PTO?", "answer": "Up to 5."}]
+        )
+        self.assertTrue(used)
+        self.assertLess(prompt.find("<|im_start|>system"), prompt.find("<|im_start|>user"))
+        self.assertIn("[1] Q: How many PTO?", prompt)
+        self.assertTrue(prompt.endswith("<|im_start|>assistant\n"))
+        # An empty retrieval still keeps the with-RAG arm's system turn.
+        empty, _ = _build_inference_prompt(_ChatMLTokenizer(), "Q?", [])
+        self.assertIn("<|im_start|>system", empty)
+
+    def test_falls_back_to_llama3_headers_without_a_template(self):
+        prompt, used = _build_inference_prompt(_NoTemplateTokenizer(), "Q?")
+        self.assertFalse(used)
+        self.assertEqual(prompt, _format_llama3_inference_prompt("Q?"))
+        rag, used = _build_inference_prompt(_NoTemplateTokenizer(), "Q?", [{"question": "a", "answer": "b"}])
+        self.assertFalse(used)
+        self.assertIn("<|start_header_id|>system<|end_header_id|>", rag)
+
+    def test_stop_tokens_are_the_ones_the_tokenizer_has(self):
+        # ChatML: <|im_end|> is the EOS (deduped); no <|eot_id|> (maps to unk).
+        self.assertEqual(_stop_token_ids(_ChatMLTokenizer()), [2])
+        self.assertEqual(_stop_token_ids(_NoTemplateTokenizer()), [7, 9])
 
 
 class GeneratedAnswerCleanerTests(unittest.TestCase):
