@@ -118,7 +118,7 @@ export default function DemoProjectTiles() {
                 <Rocket size={14} aria-hidden="true" />
                 <h2 id="demo-project-tiles-heading">Starter projects — quick demos</h2>
                 <span className="demo-project-tiles-hint">
-                    Pre-loaded with sample data, a gold set, and a ready-to-run autopilot plan.
+                    Pre-loaded with sample data, an answer key, and a ready-to-run autopilot plan.
                 </span>
             </div>
             {error && (

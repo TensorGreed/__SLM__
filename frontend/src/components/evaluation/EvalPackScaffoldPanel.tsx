@@ -155,7 +155,7 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
             // surface it as a quiet inline state rather than a red
             // error block.
             if (detail === 'recipe_required') {
-                setError('Choose a task type before scaffolding an eval pack.');
+                setError('Choose a task type before scaffolding a pass/fail rule set.');
                 setDraft(null);
                 setResponse(null);
             } else {
@@ -347,14 +347,14 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
         <section className="card eval-pack-scaffold" data-testid="eval-pack-scaffold">
             <header className="eval-pack-scaffold__head">
                 <div>
-                    <h3>Scaffolded eval pack</h3>
+                    <h3>Scaffolded pass/fail rule set</h3>
                     <p className="eval-pack-scaffold__subtitle">
                         Auto-generated from the <code>{response.recipe_id}</code> task type
                         {response.gold_set_summary.row_count > 0
-                            ? <> · gold set has <strong>{response.gold_set_summary.row_count}</strong> rows</>
+                            ? <> · answer key has <strong>{response.gold_set_summary.row_count}</strong> rows</>
                             : null}
                         . Edit any threshold below, then click <strong>Use scaffold</strong> to save it
-                        as this project's gate pack.
+                        as this project's rule set.
                     </p>
                 </div>
             </header>
@@ -405,13 +405,13 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
                             data-testid={`eval-pack-scaffold-task-${spec.task_profile}-per-class-hint`}
                         >
                             💡 Run a classification eval to discover per-class metrics
-                            (precision/recall/f1 per class) and gate them individually.
+                            (precision/recall/f1 per class) and add a rule for each.
                         </p>
                     )}
                     <table className="eval-pack-scaffold__gates">
                         <thead>
                             <tr>
-                                <th>Gate</th>
+                                <th>Rule</th>
                                 <th>Metric</th>
                                 <th>Operator</th>
                                 <th>Threshold</th>
@@ -588,7 +588,7 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
                             disabled={saving}
                             data-testid={`eval-pack-scaffold-task-${spec.task_profile}-add-gate`}
                         >
-                            + Add gate
+                            + Add rule
                         </button>
                     </div>
                 </div>

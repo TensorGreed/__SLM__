@@ -626,7 +626,7 @@ export default function ProjectDataStudioPage() {
                 handoffs: [
                     { label: 'Source Ingestion', target: 'data', signalSectionId: 'sources' },
                     { label: 'Domain Managers', target: 'domain', signalSectionId: 'domain' },
-                    { label: 'Gold Set', target: 'goldset', signalSectionId: 'gold-set' },
+                    { label: 'Answer Key', target: 'goldset', signalSectionId: 'gold-set' },
                     { label: 'Review', target: 'annotate', signalSectionId: 'review-queue' },
                     { label: 'Dataset Prep', target: 'dataprep', signalSectionId: 'prepare-dataset' },
                 ],
@@ -651,12 +651,12 @@ export default function ProjectDataStudioPage() {
             },
             {
                 id: 'gold-set' as const,
-                title: 'Gold Set workbench',
+                title: 'Answer key workbench',
                 summary: 'Trusted examples, validation status, field coverage, and review needs.',
                 group: 'examples' as const,
                 keywords: ['gold', 'trusted', 'examples', 'labels', 'validation'],
                 handoffs: [
-                    { label: 'Gold Set', target: 'goldset', signalSectionId: 'gold-set' },
+                    { label: 'Answer Key', target: 'goldset', signalSectionId: 'gold-set' },
                     { label: 'Review', target: 'annotate', signalSectionId: 'review-queue' },
                 ],
                 content: (
@@ -686,12 +686,12 @@ export default function ProjectDataStudioPage() {
             {
                 id: 'synthetic-recommendations' as const,
                 title: 'Synthetic recommendations',
-                summary: 'Domain-aware strategies based on task type, mappings, Gold Set, and review queue state.',
+                summary: 'Domain-aware strategies based on task type, mappings, answer key, and review queue state.',
                 group: 'examples' as const,
                 keywords: ['synthetic', 'recommendations', 'strategy', 'domain', 'gold'],
                 handoffs: [
                     { label: 'Synthetic', target: 'synthetic', signalSectionId: 'synthetic-recommendations' },
-                    { label: 'Gold Set', target: 'goldset', signalSectionId: 'gold-set' },
+                    { label: 'Answer Key', target: 'goldset', signalSectionId: 'gold-set' },
                 ],
                 content: (
                     <DataStudioSyntheticRecommendationsPanel
@@ -705,13 +705,13 @@ export default function ProjectDataStudioPage() {
             {
                 id: 'synthetic-quality' as const,
                 title: 'Synthetic quality',
-                summary: 'Synthetic row quality by playbook/source, status, confidence, duplicates, required fields, and Gold Set similarity.',
+                summary: 'Synthetic row quality by playbook/source, status, confidence, duplicates, required fields, and answer key similarity.',
                 group: 'examples' as const,
                 keywords: ['synthetic', 'quality', 'analytics', 'confidence', 'duplicates', 'gold similarity'],
                 handoffs: [
                     { label: 'Synthetic', target: 'synthetic', signalSectionId: 'synthetic-playbooks' },
                     { label: 'Review', target: 'annotate', signalSectionId: 'review-queue' },
-                    { label: 'Gold Set', target: 'goldset', signalSectionId: 'gold-set' },
+                    { label: 'Answer Key', target: 'goldset', signalSectionId: 'gold-set' },
                     { label: 'Dataset Prep', target: 'dataprep', signalSectionId: 'prepare-dataset' },
                     { label: 'Quality & Safety', target: 'quality-safety', signalSectionId: 'quality-safety' },
                 ],
@@ -725,13 +725,13 @@ export default function ProjectDataStudioPage() {
             {
                 id: 'review-queue' as const,
                 title: 'Review Queue',
-                summary: 'Synthetic, Gold Set, promoted, and annotation review needs grouped for triage.',
+                summary: 'Synthetic, answer key, promoted, and annotation review needs grouped for triage.',
                 group: 'release' as const,
                 keywords: ['review', 'queue', 'annotation', 'triage', 'promoted'],
                 handoffs: [
                     { label: 'Review', target: 'annotate', signalSectionId: 'review-queue' },
                     { label: 'Synthetic', target: 'synthetic', signalSectionId: 'synthetic-playbooks' },
-                    { label: 'Gold Set', target: 'goldset', signalSectionId: 'gold-set' },
+                    { label: 'Answer Key', target: 'goldset', signalSectionId: 'gold-set' },
                 ],
                 content: (
                     <DataStudioReviewQueuePanel
@@ -743,7 +743,7 @@ export default function ProjectDataStudioPage() {
             {
                 id: 'prepare-dataset' as const,
                 title: 'Prepare Dataset',
-                summary: 'Readiness checks for task type, mapping, splits, reviews, Gold Set, synthetic, and manifest outputs.',
+                summary: 'Readiness checks for task type, mapping, splits, reviews, answer key, synthetic, and manifest outputs.',
                 group: 'release' as const,
                 keywords: ['prepare', 'dataset', 'splits', 'manifest', 'data prep'],
                 handoffs: [

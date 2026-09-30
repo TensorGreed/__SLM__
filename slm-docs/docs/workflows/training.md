@@ -80,7 +80,7 @@ than any hyperparameter:
 
 | Default | What it means | Opt out |
 |---|---|---|
-| **Eval-matched prompt format** | Rows are rendered with the base model's own chat template (`tokenizer.apply_chat_template`), the same prompt shape held-out eval and serving use. Base models without a template train on the raw prompt. | `"use_tokenizer_chat_template": false` falls back to the `chat_template` preset (`llama3` / `chatml` / `zephyr` / `phi3`). |
+| **Eval-matched prompt format** | Rows are rendered with the base model's own chat template (`tokenizer.apply_chat_template`), the same prompt shape evaluation on test examples and serving use. Base models without a template train on the raw prompt. | `"use_tokenizer_chat_template": false` falls back to the `chat_template` preset (`llama3` / `chatml` / `zephyr` / `phi3`). |
 | **Answer-only loss** | Prompt tokens are masked (label `-100`), so the model learns to *answer*, not to echo questions. Plain-text rows (no answer field) still train on every token. | — |
 | **Learns to stop** | Every row ends in a real end-of-sequence token that is never masked as padding, so answers don't ramble. Rows whose answer is cut off by `max_seq_length` are dropped, with a warning. | — |
 | **Epochs scale with your data** | `auto_epochs` aims for about 200 optimizer steps. Epochs are capped by dataset size: 4 below 100 rows, 5 below 1,000, 3 otherwise. Tiny datasets first shrink gradient accumulation rather than re-reading rows. The chosen plan is recorded in the run's `training_report.json` under `runtime_environment.auto_epochs`. | Pass `num_epochs` explicitly (UI field, `--num-epochs`, or API config). An explicit count is used exactly. |
@@ -96,7 +96,7 @@ If your data is plain documents with no question or answer columns (PDF, Word or
 
 - **Packing.** Every document is joined, with an end-of-text token between documents, and cut into full `max_seq_length` blocks. The model learns to predict every token. Nothing is padded away, and long documents aren't truncated.
 - **Defaults for this mode.** LoRA on **all linear layers** (`target_modules: "all-linear"`), `lora_r` 64 / `lora_alpha` 128, learning rate 1e-4, warmup 0.05, and packing on. They apply only to settings you didn't choose.
-- **How it's measured.** Held-out **perplexity** (plus mean NLL and bits per byte, which compares fairly across tokenizers) on the test split, for both the base model and your run. The automatic lift check reports it as `perplexity: 2.39 → 1.24 (better than base)`, and lower is better. Any held-out split that has only plain text is scored this way too, instead of failing.
+- **How it's measured.** **Perplexity** (plus mean NLL and bits per byte, which compares fairly across tokenizers) on the test examples (the prepared test split), for both the base model and your run. The automatic lift check reports it as `perplexity: 2.39 → 1.24 (better than base)`, and lower is better. Any test split that has only plain text is scored this way too, instead of failing.
 
 Continued pretraining teaches the model your domain's language. To make it *answer questions* from your documents, turn on document grounding in the Playground (see [Chat with a run](#after-training-did-it-help-and-chat-with-it)).
 
@@ -106,7 +106,7 @@ For classification with a classifier head, when the largest class has at least 3
 
 ## After training: did it help, and chat with it
 
-- **Lift check (automatic).** When a real run finishes, a follow-up job evaluates the base model and your run on the held-out split. The bell then shows the headline change, e.g. `exact_match: 0.10 → 0.80 (better than base)`. Details: [Automatic "did fine-tuning help?" check](./evaluation-and-remediation.md#automatic-did-fine-tuning-help-check).
+- **Lift check (automatic).** When a real run finishes, a follow-up job evaluates the base model and your run on the same test examples. The bell then shows the headline change, e.g. `exact_match: 0.10 → 0.80 (better than base)`. Details: [Automatic "did fine-tuning help?" check](./evaluation-and-remediation.md#automatic-did-fine-tuning-help-check).
 - **Answer from your documents.** After cleaning, your document passages (PDF, Word, HTML, text; not row files) are indexed for retrieval under `auto_rag/documents/`. The index is rebuilt automatically when cleaning runs again. In the Playground, **Answer from your documents** is on by default once passages exist.
   - **What happens per message.** The top passages go into the prompt, with an instruction to answer only from them, cite them as `[n]`, and say "I don't know" otherwise.
   - **Where sources show up.** Each reply's **Sources** chip lists the passages that were retrieved (`manual.pdf · passage 3`).
@@ -164,11 +164,11 @@ The watcher is **lazy-on-fetch**: there's no background worker; the frontend pol
 
 ### Winner-vs-gate verdict
 
-The sweep's `best_label` is whoever has the highest `quality_score`, even if that "best" never cleared the project's evaluation gate. The honest layer on top runs each completed cell through `evaluate_experiment_auto_gates` and surfaces a three-state verdict:
+The sweep's `best_label` is whoever has the highest `quality_score`, even if that "best" never cleared the project's pass/fail rules (evaluation gate). The honest layer on top runs each completed cell through `evaluate_experiment_auto_gates` and surfaces a three-state verdict:
 
-- `promote` — at least one completed cell cleared the project's evaluation pack gate. The UI renders a green banner naming the pack (`evalpack.demo`, etc.) and the winner row gets a `gate ✓` badge. This is the only state where a promote-to-base action is honest.
+- `promote` — at least one completed cell passed the project's pass/fail rules (evaluation pack gate). The UI renders a green banner naming the pack (`evalpack.demo`, etc.) and the winner row gets a `gate ✓` badge (banner: "✓ Winner passed the pass/fail rules"). This is the only state where a promote-to-base action is honest.
 - `inconclusive` — every completed cell has eval results but none cleared the gate. The UI renders an amber banner with the gate name + a one-line handoff: *"Open the Failure clusters panel to see why each cell missed."* Each cell row gets a `gate ✗ · <gate_id>` badge so the user can see which gate failed without opening the cell.
-- `pending` — cells are still running, or completed cells don't have eval results yet (`gate_passed=null`). No promote/inconclusive claim made; the banner reads "Gate verdict pending" without a failure-cluster handoff.
+- `pending` — cells are still running, or completed cells don't have eval results yet (`gate_passed=null`). No promote/inconclusive claim made; the banner reads "Pass/fail verdict pending" without a failure-cluster handoff.
 
 A pack with zero gates would trivially return `passed=True` for every cell — that's exactly the vanity case the honesty pass is preventing. The annotator detects `gate_count == 0` and treats the cell as "not measurable" (`gate_passed=null`) rather than letting "no gates configured" masquerade as "winner found".
 
@@ -195,7 +195,7 @@ Legacy fallback: `get_sweep_pareto` and `list_project_sweeps` still honour the o
 
 ## Trainability forecast
 
-The **trainability forecast** runs *before* preflight, on the Training Config page. It looks at the project's task type + gold set + base model and predicts whether the upcoming run is likely to clear the default Auto-Gates. Advisory only — it never blocks the run; if the verdict is amber/red the Train button just relabels to "Train anyway".
+The **trainability forecast** runs *before* preflight, on the Training Config page. It looks at the project's task type + answer key + base model and predicts whether the upcoming run is likely to clear the default pass/fail rules (Auto-Gates). Advisory only — it never blocks the run; if the verdict is amber/red the Train button just relabels to "Train anyway".
 
 ### Task-type-agnostic signals (always run)
 
@@ -213,10 +213,10 @@ Dispatched by the task type's `task_profile`. A non-classification project never
 |---|---|---|
 | `classification` | `class_imbalance` | Shannon entropy of the label distribution is low (warn at `<1.0`, block at `<0.5`). |
 | `classification` | `per_class_minimum_unmet` | Any class has fewer than 5 examples (warn) or fewer than 2 (block). The corpus-wide minimum doesn't catch per-class starvation. |
-| `classification` | `label_vocab_fragmented` | Two or more labels collapse to the same canonical (lowercased + stripped) form — `"positive"` vs `"Positive"`. Same drift class the gold-set add form already warns about. |
-| `classification` | `single_class_dominance` | Any one class is more than 80% of the gold set. The model defaults to that class regardless of other signals. |
+| `classification` | `label_vocab_fragmented` | Two or more labels collapse to the same canonical (lowercased + stripped) form — `"positive"` vs `"Positive"`. Same drift class the answer-key add form already warns about. |
+| `classification` | `single_class_dominance` | Any one class is more than 80% of the answer key. The model defaults to that class regardless of other signals. |
 | `span-extraction` | `format_inconsistency` | Some gold rows have missing/invalid span structures (non-dict, non-int offsets, `start > end`). |
-| `span-extraction` | `entity_type_coverage_thin` | Fewer than 3 distinct entity types across the gold set (warn). Single-type tasks block. |
+| `span-extraction` | `entity_type_coverage_thin` | Fewer than 3 distinct entity types across the answer key (warn). Single-type tasks block. |
 | `span-extraction` | `span_offset_invalid` | `text[start:end]` doesn't match `span.text` on some rows — silent offset rot that tanks exact-match scoring. Block when more than 10% of rows are bad. |
 | `span-extraction` | `negative_examples_missing` | No rows have an empty entities list. Without negatives the model learns "always extract something" and over-fires. |
 | `summarization` | `summary_doc_ratio_outliers` | Rows where the summary is more than 70% of the document length — usually a mislabeled paraphrase or the wrong column loaded into the summary slot. |
@@ -231,7 +231,7 @@ Every cache-miss compute writes one row to `training_forecast_snapshots`. The Tr
 
 `GET /api/admin/forecast/calibration?recipe=<id>` exposes forecast-vs-reality calibration: every experiment is paired with the user's most-recent forecast snapshot at creation time, and resolved against the actual gate-pass verdict when `evaluate_experiment_auto_gates` runs. The response buckets resolved observations into 10%-confidence bands so per-recipe calibration drift (e.g. predicted 70-80% but actually passing 40% of the time) is visible without leaving the JSON. Used for retuning the heuristic coefficients in `trainability_forecast_service.estimate_gate_pass_prob`. No UI in v1 — admin-only endpoint.
 
-Next to the sparkline a three-chip strip shows the last three verdict deltas (`▼ -24%`, `· 0%`, `▲ +12%`). The user can pin down whether a gold-set edit or synth run actually moved the needle without re-reading the signal list.
+Next to the sparkline a three-chip strip shows the last three verdict deltas (`▼ -24%`, `· 0%`, `▲ +12%`). The user can pin down whether an answer-key edit or synth run actually moved the needle without re-reading the signal list.
 
 Cache hits do not add to history — only true recomputes do, so the sparkline reflects iteration, not idle polling. Snapshots older than 60 days are pruned on insert.
 

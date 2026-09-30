@@ -231,7 +231,7 @@ export default function PerSliceMetricsTable({
                 className="per-slice-table__empty"
                 data-testid="per-slice-empty"
             >
-                Define slices in the eval pack to see per-slice metric
+                Define slices in the pass/fail rule set to see per-slice metric
                 breakdowns here.
             </div>
         );
@@ -246,8 +246,8 @@ export default function PerSliceMetricsTable({
                 <h4>Per-slice metrics</h4>
                 <p className="per-slice-table__hint">
                     One row per slice, one column per metric.
-                    Failed-gate cells highlighted in red — every
-                    highlight cites a real gate threshold the user
+                    Cells that fail a rule are highlighted in red — every
+                    highlight cites a real rule threshold the user
                     set, never an invented bar.
                 </p>
             </header>
@@ -319,8 +319,8 @@ export default function PerSliceMetricsTable({
                                                 data-testid={`per-slice-cell-${sliceId}-${col}`}
                                                 title={matchingGate
                                                     ? (matchingGate.passed
-                                                        ? `Passes gate ${matchingGate.metric_id} (${matchingGate.operator} ${matchingGate.threshold ?? '?'})`
-                                                        : `Fails gate ${matchingGate.metric_id} (${matchingGate.operator} ${matchingGate.threshold ?? '?'})`)
+                                                        ? `Passes rule ${matchingGate.metric_id} (${matchingGate.operator} ${matchingGate.threshold ?? '?'})`
+                                                        : `Fails rule ${matchingGate.metric_id} (${matchingGate.operator} ${matchingGate.threshold ?? '?'})`)
                                                     : undefined}
                                             >
                                                 {display}

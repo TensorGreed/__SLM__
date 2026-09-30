@@ -42,7 +42,7 @@ export default function ExperimentClassifierHeadBadge({
             title={
                 'This experiment trained a classifier head '
                 + '(task_type=classification → AutoModelForSequenceClassification). '
-                + 'δ: held-out eval dispatches through the head’s logits '
+                + 'δ: eval on test examples dispatches through the head’s logits '
                 + 'directly rather than ``model.generate()`` — the LM head '
                 + 'was never trained to emit label tokens, so generation '
                 + 'would produce garbage. The eval result’s runtime '

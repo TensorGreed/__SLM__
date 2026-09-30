@@ -143,7 +143,7 @@ async def start_heldout_eval_job(
 
         return await _run_with_heartbeat(
             handle,
-            describe=f"Held-out eval (max {run_kwargs.get('max_samples')} rows)",
+            describe=f"Eval on test examples (max {run_kwargs.get('max_samples')} rows)",
             work=_work,
         )
 

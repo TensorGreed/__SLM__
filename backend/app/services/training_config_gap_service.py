@@ -167,7 +167,7 @@ _LAYMAN: dict[str, dict[str, str]] = {
         "why": "Without intermediate eval steps you can't tell when the model peaked, can't trigger early-stopping, and can't catch overfit before it happens. Tighten eval_steps so the run produces at least 3-5 eval points per epoch.",
     },
     "training_config.epochs_high_for_small_data": {
-        "plain": "You have a small gold set but you're asking the trainer to loop over it many times.",
+        "plain": "You have a small training set but you're asking the trainer to loop over it many times.",
         "why": "Small data + many epochs = memorisation. The model will hit perfect scores on the rows it saw and fall apart on anything new. Either add more rows or cut epochs down.",
     },
     "training_config.warmup_low_for_aggressive_lr": {

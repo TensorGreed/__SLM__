@@ -344,7 +344,7 @@ describe('ScorecardPanel', () => {
     render(<ScorecardPanel projectId={1} experimentId={21} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Behavioral tests/)).toBeInTheDocument();
+      expect(screen.getByText(/Your custom checks/)).toBeInTheDocument();
     });
 
     // Quality gates section (top) renders min_f1 but NOT the
@@ -426,7 +426,7 @@ describe('ScorecardPanel', () => {
     render(<ScorecardPanel projectId={1} experimentId={22} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Behavioral tests/)).toBeInTheDocument();
+      expect(screen.getByText(/Your custom checks/)).toBeInTheDocument();
     });
 
     // MFT-specific badge.
@@ -478,7 +478,7 @@ describe('ScorecardPanel', () => {
     render(<ScorecardPanel projectId={1} experimentId={23} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Behavioral tests/)).toBeInTheDocument();
+      expect(screen.getByText(/Your custom checks/)).toBeInTheDocument();
     });
     // Capped indicator surfaces so the user knows trials were sampled.
     expect(screen.getByText(/capped/)).toBeInTheDocument();
@@ -559,7 +559,7 @@ describe('ScorecardPanel', () => {
     render(<ScorecardPanel projectId={1} experimentId={31} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Behavioral tests/)).toBeInTheDocument();
+      expect(screen.getByText(/Your custom checks/)).toBeInTheDocument();
     });
     // The per-slice gate surfaces the slice id explicitly in the Test column.
     expect(screen.getByText(/slice: long_input/)).toBeInTheDocument();
@@ -629,7 +629,7 @@ describe('ScorecardPanel', () => {
     apiMock.get.mockResolvedValueOnce({ data: scorecard });
     render(<ScorecardPanel projectId={1} experimentId={32} />);
     await waitFor(() => {
-      expect(screen.getByText(/Behavioral tests/)).toBeInTheDocument();
+      expect(screen.getByText(/Your custom checks/)).toBeInTheDocument();
     });
     // Slice badge surfaces even without a parent top-level row.
     expect(screen.getByText(/slice: hindi/)).toBeInTheDocument();
@@ -716,7 +716,7 @@ describe('ScorecardPanel', () => {
     render(<ScorecardPanel projectId={1} experimentId={7} />);
     const link = await screen.findByTestId('scorecard-probe-link');
     expect(link).toHaveAttribute('href', '#probe-pack-panel');
-    expect(link).toHaveTextContent('Inspect probes');
+    expect(link).toHaveTextContent('Inspect built-in checks');
   });
 
   it('groups gate_source=probe_pack gates under an Independent ruler section', async () => {

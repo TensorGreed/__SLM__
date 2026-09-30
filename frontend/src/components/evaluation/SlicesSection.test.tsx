@@ -168,7 +168,7 @@ describe('SlicesSection', () => {
         const gateBtn = screen.getByTestId('slices-gate-long_input');
         await user.click(gateBtn);
 
-        const dialog = await screen.findByRole('dialog', { name: /Gate this slice/i });
+        const dialog = await screen.findByRole('dialog', { name: /Add a pass\/fail rule for this slice/i });
         // Suggested metric_id surfaces in the dialog using the
         // canonical per_slice.<id>.<metric> shape.
         expect(within(dialog).getByText('per_slice.long_input.f1')).toBeInTheDocument();

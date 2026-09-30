@@ -37,9 +37,9 @@ interface Props {
 }
 
 const VERDICT_LABELS: Record<ForecastResult['overall'], { label: string; tone: string }> = {
-    likely_pass: { label: 'Likely to pass gates', tone: 'ok' },
+    likely_pass: { label: 'Likely to pass the pass/fail rules', tone: 'ok' },
     borderline: { label: 'Borderline — could go either way', tone: 'warn' },
-    likely_fail: { label: 'Likely to fall short of gates', tone: 'block' },
+    likely_fail: { label: 'Likely to fall short of the pass/fail rules', tone: 'block' },
 };
 
 const SEVERITY_ICON: Record<ForecastSeverity, string> = {
@@ -51,8 +51,8 @@ const SEVERITY_ICON: Record<ForecastSeverity, string> = {
 const SUGGESTED_ACTION_LABEL: Record<SuggestedActionKind, string> = {
     synth_augment: 'Generate more training rows',
     synth_balance: 'Balance class distribution',
-    synth_diversify: 'Diversify gold set',
-    fix_gold_rows: 'Fix invalid gold rows',
+    synth_diversify: 'Diversify answer key',
+    fix_gold_rows: 'Fix invalid answer-key rows',
 };
 
 

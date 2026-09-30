@@ -72,7 +72,7 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
         try {
             setPack(await fetchProbePack(projectId));
         } catch {
-            setError('Could not load the probe pack.');
+            setError('Could not load the built-in checks.');
             setPack(null);
         } finally {
             setLoading(false);
@@ -119,7 +119,7 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
             });
             await load();
         } catch {
-            setError('Could not save the gate config.');
+            setError('Could not save the pass/fail rule.');
         } finally {
             setGateSaving(false);
         }
@@ -160,7 +160,7 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
     if (loading && !pack) {
         return (
             <section className="probe-pack probe-pack--loading" data-testid="probe-pack">
-                Loading independent probe pack…
+                Loading built-in checks…
             </section>
         );
     }
@@ -180,7 +180,7 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
         return (
             <section id="probe-pack-panel" className="probe-pack probe-pack--inapplicable" data-testid="probe-pack" data-applicable="false">
                 <header className="probe-pack__head">
-                    <h3 className="probe-pack__title">Independent probe pack</h3>
+                    <h3 className="probe-pack__title">Built-in checks</h3>
                 </header>
                 <p className="probe-pack__note">{pack.note}</p>
             </section>
@@ -207,14 +207,14 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                         {graded ? 'Graded · independent pass-rate' : 'Assembled · not yet graded'}
                     </span>
                     <h3 className="probe-pack__title">
-                        Independent probe pack ({pack.probe_count})
+                        Built-in checks ({pack.probe_count})
                     </h3>
                 </div>
                 <p className="probe-pack__note">{pack.note}</p>
                 {graded && run ? (
                     <div className="probe-pack__score" data-testid="probe-pack-score">
                         <span className="probe-pack__score-headline">
-                            Weighted probe pass-rate:{' '}
+                            Weighted built-in check pass rate:{' '}
                             <strong>{Math.round((run.probe_pass_rate ?? 0) * 100)}%</strong>{' '}
                             ({run.passed}/{run.total}
                             {typeof run.unweighted_pass_rate === 'number' &&
@@ -248,8 +248,8 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                             ))}
                         </ul>
                         <p className="probe-pack__score-note">
-                            Graded against probes you didn't author — independent of
-                            your gold-set pass-rate.
+                            Graded against checks you didn't author — independent of
+                            your answer-key pass rate.
                         </p>
                         {(typeof run.judge_calls === 'number' ||
                             typeof run.judge_cached === 'number') && (
@@ -328,7 +328,7 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                                 >
                                     {' '}· ▏ marks a score-weight change
                                     {showReweighted
-                                        ? ' (dashed = probes re-scored under current weights, comparable)'
+                                        ? ' (dashed = built-in checks re-scored under current weights, comparable)'
                                         : ' (trend not comparable across it)'}
                                 </span>
                             )}
@@ -339,7 +339,7 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                             width={W}
                             height={H}
                             role="img"
-                            aria-label="Gold-set vs independent probe pass-rate over recent runs"
+                            aria-label="Answer-key vs built-in check pass rate over recent runs"
                         >
                             <polyline className="probe-pack__spark-gold" points={goldPts} fill="none" />
                             <polyline className="probe-pack__spark-probe" points={probePts} fill="none" />
@@ -390,7 +390,7 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                                         }
                                     >
                                         <title>
-                                            {`gold ${Math.round(p.gold_pass_rate * 100)}% · probe ${Math.round(p.probe_pass_rate * 100)}%`}
+                                            {`answer key ${Math.round(p.gold_pass_rate * 100)}% · built-in checks ${Math.round(p.probe_pass_rate * 100)}%`}
                                             {p.run_at ? ` · ${new Date(p.run_at).toLocaleDateString()}` : ''}
                                         </title>
                                     </circle>
@@ -398,11 +398,11 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                             })}
                         </svg>
                         <div className="probe-pack__trend-legend">
-                            <span className="probe-pack__legend-gold">gold set</span>
-                            <span className="probe-pack__legend-probe">independent probes</span>
+                            <span className="probe-pack__legend-gold">answer key</span>
+                            <span className="probe-pack__legend-probe">built-in checks</span>
                             {showReweighted && (
                                 <span className="probe-pack__legend-reweighted">
-                                    probes · current weights
+                                    built-in checks · current weights
                                 </span>
                             )}
                         </div>
@@ -412,8 +412,8 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                             return (
                                 <div className="probe-pack__trend-readout" data-testid="probe-pack-trend-readout">
                                     {p.run_at ? `${new Date(p.run_at).toLocaleDateString()}: ` : ''}
-                                    gold <strong>{Math.round(p.gold_pass_rate * 100)}%</strong>
-                                    {' · '}probe <strong>{Math.round(p.probe_pass_rate * 100)}%</strong>
+                                    answer key <strong>{Math.round(p.gold_pass_rate * 100)}%</strong>
+                                    {' · '}built-in checks <strong>{Math.round(p.probe_pass_rate * 100)}%</strong>
                                     {showReweighted && typeof p.probe_pass_rate_reweighted === 'number' && (
                                         <span data-testid="probe-pack-readout-reweighted">
                                             {' · '}comparable{' '}
@@ -455,11 +455,11 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                         onChange={(e) => setGateEnabled(e.target.checked)}
                         data-testid="probe-gate-enabled"
                     />
-                    Enforce as an eval gate
+                    Enforce as a pass/fail rule
                 </label>
                 {gateEnabled && (
                     <span className="probe-pack__gate-threshold">
-                        require probe pass-rate ≥
+                        require built-in check pass rate ≥
                         <input
                             type="number"
                             min={0}
@@ -468,7 +468,7 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                             onChange={(e) => setGatePct(Number(e.target.value))}
                             data-testid="probe-gate-threshold"
                             className="probe-pack__gate-input"
-                            aria-label="Minimum probe pass-rate percent"
+                            aria-label="Minimum built-in check pass rate percent"
                         />
                         %
                     </span>
@@ -480,11 +480,11 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                     disabled={gateSaving}
                     data-testid="probe-gate-save"
                 >
-                    {gateSaving ? 'Saving…' : 'Save gate'}
+                    {gateSaving ? 'Saving…' : 'Save rule'}
                 </button>
                 <p className="probe-pack__gate-note">
-                    Off by default. When on, a low independent probe score
-                    <strong> blocks</strong> the eval gate — not just nudges.
+                    Off by default. When on, a low built-in check score
+                    <strong> fails</strong> the pass/fail rules — not just nudges.
                 </p>
             </div>
 

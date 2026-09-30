@@ -31,7 +31,7 @@ curl -X POST http://localhost:8000/api/projects \
   -d '{"name": "Support FAQ", "template": "support"}'
 ```
 
-The template pre-fills sensible defaults for an FAQ-style assistant: starter eval pack, conservative training preset, vLLM as the default target profile. You can override any of these later.
+The template pre-fills sensible defaults for an FAQ-style assistant: starter pass/fail rules (eval pack), conservative training preset, vLLM as the default target profile. You can override any of these later.
 
 ## Step 2 — Ingest your dataset
 
@@ -84,13 +84,13 @@ curl -X POST http://localhost:8000/api/projects/1/datasets/clean \
 
 If the PII scan blocks the run with `reason_code=cleaning_pii_block`, see [Common blockers](../reliability/common-blockers.md).
 
-## Step 4 — Build a gold set
+## Step 4 — Build an answer key
 
-The gold set is the ground-truth eval set. The workbench helps you label 50–100 rows by sampling intelligently.
+The answer key (API name: *gold set*) is the ground-truth eval set. The workbench helps you label 50–100 rows by sampling intelligently.
 
 ### UI
 
-Pipeline rail → **Gold set** → **Sample 100 rows (stratified)**. Each row has a textarea — paste the gold answer and approve. Submit; the gold version locks (draft → locked).
+Pipeline rail → **Answer Key** → **Sample 100 rows (stratified)**. Each row has a textarea — paste the correct answer and approve. Submit; the answer-key version locks (draft → locked).
 
 ### CLI
 
@@ -166,7 +166,7 @@ Once training finishes, the Eval stage kicks off automatically (Autopilot path) 
 
 ### UI
 
-Pipeline rail → **Eval** → **Run evaluation**. Each gate (exact match, LLM-judge, safety) lands as a row with pass / fail and a per-gate metric. The **Failure Clusters** card below groups errors by reason code — click one to see exemplars.
+Pipeline rail → **Eval** → **Run evaluation**. Each pass/fail rule (exact match, LLM-judge, safety) lands as a row with pass / fail and its metric. The **Failure Clusters** card below groups errors by reason code — click one to see exemplars.
 
 ### CLI
 
@@ -183,7 +183,7 @@ curl -X POST http://localhost:8000/api/projects/1/eval/run \
   -d '{"experiment_id": 1, "pack_id": "support-default"}'
 ```
 
-If any gate fails, the **Remediation** panel suggests concrete fixes (data, hyperparameters, prompt template). Apply, re-run training, re-evaluate.
+If any pass/fail rule fails, the **Remediation** panel suggests concrete fixes (data, hyperparameters, prompt template). Apply, re-run training, re-evaluate.
 
 ## Step 8 — Export
 

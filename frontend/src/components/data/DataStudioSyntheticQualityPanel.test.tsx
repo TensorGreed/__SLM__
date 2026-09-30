@@ -191,7 +191,7 @@ const qualityPayload = {
             reason: 'Accept, reject, or inspect synthetic rows.',
         },
         {
-            label: 'Open Gold Set',
+            label: 'Open answer key',
             target_tab: 'goldset',
             reason: 'Strengthen trusted anchors.',
         },

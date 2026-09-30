@@ -853,7 +853,7 @@ async def generate_remediation_plan(
             "Evaluation does not contain failing samples to remediate.",
             error_code="REMEDIATION_NOT_REQUIRED",
             actionable_fix=(
-                "Run a broader held-out or LLM-judge evaluation with failure examples, then regenerate remediation."
+                "Run a broader test-example or LLM-judge evaluation with failure examples, then regenerate remediation."
             ),
             metadata={
                 "experiment_id": int(experiment_id),

@@ -110,7 +110,7 @@ export default function GoldSetDiagnosticsPanel({ projectId }: GoldSetDiagnostic
             setData(res.data);
         } catch (err) {
             const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-            setError(typeof detail === 'string' ? detail : 'Failed to load gold-set diagnostics.');
+            setError(typeof detail === 'string' ? detail : 'Failed to load answer key diagnostics.');
             setData(null);
         } finally {
             setLoading(false);
@@ -124,7 +124,7 @@ export default function GoldSetDiagnosticsPanel({ projectId }: GoldSetDiagnostic
     if (loading && !data) {
         return (
             <div className="gold-diag gold-diag--loading" data-testid="gold-diag">
-                Loading gold-set diagnostics…
+                Loading answer key diagnostics…
             </div>
         );
     }
@@ -146,13 +146,13 @@ export default function GoldSetDiagnosticsPanel({ projectId }: GoldSetDiagnostic
         return (
             <section className="gold-diag" data-testid="gold-diag">
                 <header className="gold-diag__head">
-                    <h3 className="gold-diag__title">Gold-set diagnostics</h3>
+                    <h3 className="gold-diag__title">Answer key diagnostics</h3>
                 </header>
                 <p className="gold-diag__empty" data-testid="gold-diag-empty">
                     {data.total_rows === 0 ? (
-                        <>No gold rows yet — diagnostics activate once the gold set has at least a few labeled examples.</>
+                        <>No answer-key rows yet — diagnostics activate once the answer key has at least a few labeled examples.</>
                     ) : (
-                        <>No classification labels in this gold set. Class balance + class-similarity heatmap are classification-shape diagnostics; for span-extraction or summarization gold sets this panel stays quiet.</>
+                        <>No classification labels in this answer key. Class balance + class-similarity heatmap are classification-shape diagnostics; for span-extraction or summarization answer keys this panel stays quiet.</>
                     )}
                 </p>
             </section>
@@ -165,7 +165,7 @@ export default function GoldSetDiagnosticsPanel({ projectId }: GoldSetDiagnostic
     return (
         <section className="gold-diag" data-testid="gold-diag">
             <header className="gold-diag__head">
-                <h3 className="gold-diag__title">Gold-set diagnostics</h3>
+                <h3 className="gold-diag__title">Answer key diagnostics</h3>
                 <span className="gold-diag__head-meta">
                     {balance.total} rows · {balance.labels.length} classes · entropy{' '}
                     <strong>{balance.entropy_nats.toFixed(2)}</strong> nats
@@ -175,7 +175,7 @@ export default function GoldSetDiagnosticsPanel({ projectId }: GoldSetDiagnostic
             {/* Class-balance bars ------------------------------------ */}
             <div className="gold-diag__balance" data-testid="gold-diag-balance">
                 <p className="gold-diag__hint">
-                    Class balance — share of the gold set per label, sorted descending. The dashed
+                    Class balance — share of the answer key per label, sorted descending. The dashed
                     line marks the <strong>{(IMBALANCE_THRESHOLD * 100).toFixed(0)}%</strong>{' '}
                     floor Coach Mode uses to flag under-represented classes; a bar below the line
                     will fire the imbalance signal at training time.

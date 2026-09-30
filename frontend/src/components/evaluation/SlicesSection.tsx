@@ -238,13 +238,12 @@ function GateThisSliceModal({
                 className="slices-section__modal"
                 onClick={(e) => e.stopPropagation()}
                 role="dialog"
-                aria-label="Gate this slice"
+                aria-label="Add a pass/fail rule for this slice"
             >
-                <h4>Gate this slice</h4>
+                <h4>Add a pass/fail rule for this slice</h4>
                 <p>
-                    Add this metric_id to a gate in the Gates section to enforce
-                    a per-slice threshold. The format mirrors phase 2 slice 3's
-                    canonical gate path.
+                    Add this metric_id to a pass/fail rule in the rule set to enforce
+                    a per-slice threshold.
                 </p>
                 <div className="slices-section__modal-metric-row">
                     <code className="slices-section__modal-metric">{metricId}</code>
@@ -258,7 +257,7 @@ function GateThisSliceModal({
                 </div>
                 <p className="slices-section__modal-help">
                     Use ``worst_slice_gte`` / ``worst_slice_lte`` as the operator
-                    if you want a single gate to enforce the threshold across
+                    if you want a single rule to enforce the threshold across
                     every slice automatically (no need to add one per slice).
                 </p>
                 <div className="slices-section__modal-actions">
@@ -416,7 +415,7 @@ export default function SlicesSection({ projectId, onGateSlice }: SlicesSectionP
             </datalist>
             <PackSectionEditor<SliceDefinition>
                 title="Slices"
-                description="Named subsets of eval rows. Every eval emits per-slice metrics for any slice defined here; gates can target a specific slice via per_slice.<id>.<metric> or use worst_slice_gte / worst_slice_lte."
+                description="Named subsets of eval rows. Every eval emits per-slice metrics for any slice defined here; pass/fail rules can target a specific slice via per_slice.<id>.<metric> or use worst_slice_gte / worst_slice_lte."
                 initialItems={items}
                 // Stable index-based key so the input doesn't unmount
                 // every time the user edits ``slice_id`` (which would
@@ -436,10 +435,10 @@ export default function SlicesSection({ projectId, onGateSlice }: SlicesSectionP
                             type="button"
                             className="btn btn-ghost btn-sm slices-section__gate-button"
                             onClick={() => openGateModal(slice.slice_id)}
-                            title="Show a copy-pasteable metric_id for gating this slice"
+                            title="Show a copy-pasteable metric_id for a pass/fail rule on this slice"
                             data-testid={`slices-gate-${slice.slice_id}`}
                         >
-                            <Target size={12} aria-hidden="true" /> Gate this slice
+                            <Target size={12} aria-hidden="true" /> Add a pass/fail rule for this slice
                         </button>
                     ) : null
                 }

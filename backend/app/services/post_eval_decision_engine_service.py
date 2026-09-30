@@ -259,16 +259,16 @@ def _signal_goldset_answer_diversity_high(
     n_rows = sum(1 for s in token_sets if s)
     fired = mean is not None and mean < _DIVERSITY_THRESHOLD
     if mean is None:
-        detail = "Not enough gold-set output text to assess diversity."
+        detail = "Not enough answer-key output text to assess diversity."
     elif fired:
         detail = (
-            f"Gold-set answers are highly diverse "
+            f"Answers in the answer key are highly diverse "
             f"(mean pairwise Jaccard {mean:.2f} < {_DIVERSITY_THRESHOLD}) "
             f"— retrieval is likely to beat memorization."
         )
     else:
         detail = (
-            f"Gold-set answers overlap a lot "
+            f"Answers in the answer key overlap a lot "
             f"(mean pairwise Jaccard {mean:.2f}); SFT memorization is viable."
         )
     return {
@@ -295,7 +295,7 @@ def _signal_input_output_density_low(
     mean = sum(ratios) / len(ratios) if ratios else None
     fired = mean is not None and mean < _DENSITY_THRESHOLD
     if mean is None:
-        detail = "Not enough gold-set rows with both input and output text."
+        detail = "Not enough answer-key rows with both input and output text."
     elif fired:
         detail = (
             f"Output is a tiny slice of input "
@@ -364,7 +364,7 @@ def _classify_recommendation(
             "confidence": confidence,
             "rationale": (
                 f"Low pass rate ({pass_rate}) + retrieval-shaped signals fired ({which}). "
-                f"A RAG-first project would retrieve from your gold set at inference "
+                f"A RAG-first project would retrieve from your answer key at inference "
                 f"instead of relying on what the model memorized during fine-tuning."
             ),
         }

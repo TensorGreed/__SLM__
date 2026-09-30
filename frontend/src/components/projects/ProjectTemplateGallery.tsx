@@ -150,7 +150,7 @@ export default function ProjectTemplateGallery({
             }}
         >
             <div>
-                <h3 style={{ margin: 0 }}>Starter projects — with data + gold set</h3>
+                <h3 style={{ margin: 0 }}>Starter projects — with data + answer key</h3>
                 <p
                     style={{
                         margin: '4px 0 0',
@@ -158,7 +158,7 @@ export default function ProjectTemplateGallery({
                         fontSize: '0.9rem',
                     }}
                 >
-                    Curated starting kits with pre-loaded data, gold sets, and
+                    Curated starting kits with pre-loaded data, answer keys, and
                     task type defaults. You can spin up multiple projects from the
                     same starter — each gets its own data + experiments.
                 </p>

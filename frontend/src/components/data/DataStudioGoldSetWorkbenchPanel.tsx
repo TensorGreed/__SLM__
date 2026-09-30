@@ -30,8 +30,8 @@ interface DataStudioGoldSetWorkbenchPanelProps {
 
 const GOLD_VERDICT_COPY: Record<DataStudioGoldSetWorkbench['verdict'], { label: string; detail: string }> = {
     empty: {
-        label: 'No gold set',
-        detail: 'Start a trusted reference set before relying on evals.',
+        label: 'No answer key',
+        detail: 'Start a trusted answer key before relying on evals.',
     },
     attention: {
         label: 'Needs review',
@@ -39,13 +39,13 @@ const GOLD_VERDICT_COPY: Record<DataStudioGoldSetWorkbench['verdict'], { label: 
     },
     ready: {
         label: 'Ready',
-        detail: 'Gold Set checks look ready for evaluation and regression tracking.',
+        detail: 'Answer key checks look ready for evaluation and regression tracking.',
     },
 };
 
 const DATASET_TYPE_LABELS: Record<string, string> = {
-    gold_dev: 'Gold dev',
-    gold_test: 'Gold test',
+    gold_dev: 'Practice answer key',
+    gold_test: 'Final answer key',
 };
 
 function formatNumber(value: number | undefined): string {
@@ -62,7 +62,7 @@ function compactJson(value: unknown): string {
 }
 
 function labelForDatasetType(type: string | undefined): string {
-    if (!type) return 'Gold set';
+    if (!type) return 'Answer key';
     return DATASET_TYPE_LABELS[type] || type.replace(/_/g, ' ');
 }
 
@@ -101,7 +101,7 @@ export default function DataStudioGoldSetWorkbenchPanel({
             setGoldSet(data);
             setError(null);
         } catch (err: any) {
-            setError(err?.response?.data?.detail || err?.message || 'Failed to load Gold Set summary.');
+            setError(err?.response?.data?.detail || err?.message || 'Failed to load answer key summary.');
         } finally {
             setLoading(false);
         }
@@ -128,7 +128,7 @@ export default function DataStudioGoldSetWorkbenchPanel({
     if (loading && !goldSet) {
         return (
             <section className="data-studio-gold data-studio-gold--loading">
-                <span>Loading Gold Set summary...</span>
+                <span>Loading answer key summary...</span>
             </section>
         );
     }
@@ -137,7 +137,7 @@ export default function DataStudioGoldSetWorkbenchPanel({
         return (
             <section className="data-studio-gold data-studio-gold--error">
                 <div>
-                    <h3>Gold Set workbench</h3>
+                    <h3>Answer key workbench</h3>
                     <p>{error}</p>
                 </div>
                 <button type="button" className="btn btn-secondary" onClick={() => void loadGoldSet()}>
@@ -168,7 +168,7 @@ export default function DataStudioGoldSetWorkbenchPanel({
         >
             <div className="data-studio-gold__header">
                 <div>
-                    <p className="data-studio-gold__eyebrow">Gold Set</p>
+                    <p className="data-studio-gold__eyebrow">Answer Key</p>
                     <h3><Term id="gold_set" advanced /> workbench</h3>
                     <p>{verdict.detail}</p>
                 </div>
@@ -180,14 +180,14 @@ export default function DataStudioGoldSetWorkbenchPanel({
                         type="button"
                         className="btn btn-ghost data-studio-gold__refresh"
                         onClick={() => void loadGoldSet()}
-                        aria-label="Refresh Gold Set summary"
+                        aria-label="Refresh answer key summary"
                     >
                         <RefreshCw size={16} aria-hidden="true" />
                     </button>
                 </div>
             </div>
 
-            <div className="data-studio-gold__metrics" aria-label="Gold Set metrics">
+            <div className="data-studio-gold__metrics" aria-label="Answer key metrics">
                 <div className="data-studio-gold__metric">
                     <ClipboardCheck size={18} aria-hidden="true" />
                     <span>Trusted examples</span>
@@ -220,7 +220,7 @@ export default function DataStudioGoldSetWorkbenchPanel({
                 </div>
                 <button type="button" className="btn btn-primary" onClick={onOpenGoldSet}>
                     <ExternalLink size={16} aria-hidden="true" />
-                    Open Gold Set workflow
+                    Open answer key workflow
                 </button>
             </div>
 
@@ -256,7 +256,7 @@ export default function DataStudioGoldSetWorkbenchPanel({
                         </div>
                     ) : (
                         <p className="data-studio-gold__empty">
-                            No Gold Set dataset has been created for this project yet.
+                            No answer key has been created for this project yet.
                         </p>
                     )}
 
@@ -274,7 +274,7 @@ export default function DataStudioGoldSetWorkbenchPanel({
                         </ul>
                     ) : (
                         <p className="data-studio-gold__empty">
-                            No Gold Set review issues are active.
+                            No answer key review issues are active.
                         </p>
                     )}
                 </div>
@@ -315,7 +315,7 @@ export default function DataStudioGoldSetWorkbenchPanel({
                         </div>
                     ) : (
                         <p className="data-studio-gold__empty">
-                            Trusted example previews appear after gold rows are added.
+                            Trusted example previews appear after answer-key rows are added.
                         </p>
                     )}
                 </div>

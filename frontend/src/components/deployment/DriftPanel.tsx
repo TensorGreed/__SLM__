@@ -94,7 +94,7 @@ export default function DriftPanel({
     const runDriftCheck = useCallback(async () => {
         const gold = Number.parseInt(goldSetId, 10);
         if (!Number.isFinite(gold) || gold <= 0) {
-            setError('Enter a gold-set id (an integer Dataset id).');
+            setError('Enter an answer key id (an integer Dataset id).');
             return;
         }
         const predictionsRaw = predictionsText.trim();
@@ -207,12 +207,12 @@ export default function DriftPanel({
                 <summary>Run a drift check</summary>
                 <div className="drift-launcher-form">
                     <label>
-                        <span>Gold-set id</span>
+                        <span>Answer key id</span>
                         <input
                             type="number"
                             value={goldSetId}
                             onChange={(e) => setGoldSetId(e.target.value)}
-                            aria-label="Gold-set id"
+                            aria-label="Answer key id"
                         />
                     </label>
                     <label>
@@ -251,7 +251,7 @@ export default function DriftPanel({
                 {!loading && !history.length && (
                     <EmptyState
                         title="No drift checks yet"
-                        description="A drift check re-runs your gold-set eval against the live endpoint and compares to the promote-time baseline. Run one weekly or after any infra change."
+                        description="A drift check re-scores your answer key against the live endpoint and compares to the promote-time baseline. Run one weekly or after any infra change."
                         docsHref="http://localhost:3001/docs/deployment/drift-checks"
                     />
                 )}

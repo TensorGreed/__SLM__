@@ -91,7 +91,7 @@ const FIX_HEADLINE: Record<string, string> = {
         + 'max_seq_length and would be silently truncated at training '
         + 'time. Applying truncates them now so the cut is visible.',
     normalize_schema:
-        'These gold rows use non-canonical field names (class → label, '
+        'These answer-key rows use non-canonical field names (class → label, '
         + 'text → input, etc.). Applying renames them in place.',
 };
 

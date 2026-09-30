@@ -361,7 +361,7 @@ class DataHealthTests(unittest.TestCase):
         self.assertEqual(sig["severity"], "block")
         self.assertEqual(sig["context"]["leaked"], 5)
         self.assertEqual(sig["context"]["per_split"]["gold_test"]["leaked"], 5)
-        self.assertIn("GOLD_TEST", sig["headline"])
+        self.assertIn("final answer key", sig["headline"])
         self.assertEqual(body["overall"], "block")
         # Honest contract: plain-English + why carry through.
         self.assertTrue(sig["plain_english"])

@@ -170,8 +170,8 @@ describe('HealthCheckModal', () => {
                     },
                     {
                         name: 'gold_set', status: 'warn', elapsed_ms: 5,
-                        message: 'Gold set is empty (0 rows).',
-                        remediation: 'Open Pipeline → Gold set and seed rows.',
+                        message: 'Answer key is empty (0 rows).',
+                        remediation: 'Open Pipeline → Answer Key and seed rows.',
                         envelope: null, metadata: { gold_row_count: 0 },
                     },
                 ],

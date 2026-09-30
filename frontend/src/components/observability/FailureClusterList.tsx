@@ -108,15 +108,15 @@ function ClusterRow({ cluster, projectId, onSelectRun }: ClusterRowProps) {
             );
             const gate = resp.data.new_gate;
             toast.success(
-                `Added gate "${gate.gate_id}" (${gate.metric_id} ${gate.operator} ${gate.threshold}) to the scaffolded pack — tighten it in the eval pack editor when ready.`,
+                `Added pass/fail rule "${gate.gate_id}" (${gate.metric_id} ${gate.operator} ${gate.threshold}) to the scaffolded rule set — tighten it in the rule editor when ready.`,
             );
         } catch (err) {
-            const msg = extractErrorMessage(err, 'Failed to adopt gate.');
+            const msg = extractErrorMessage(err, 'Failed to add the pass/fail rule.');
             // The slice-1 validator returns codes like
             // ``no_gate_suggestion_for_reason_code:<code>`` — surface
             // the raw code so the user knows whether to retry with
             // overrides or add a gate manually.
-            toast.error(`Could not adopt gate: ${msg}`);
+            toast.error(`Could not add the pass/fail rule: ${msg}`);
         } finally {
             setAdopting(false);
         }
@@ -155,9 +155,9 @@ function ClusterRow({ cluster, projectId, onSelectRun }: ClusterRowProps) {
                     onClick={() => void handleAdoptGate()}
                     disabled={adopting}
                     data-testid={`failure-cluster-${cluster.id}-adopt-gate`}
-                    aria-label={`Adopt a gate targeting ${cluster.reason_code}`}
+                    aria-label={`Add a pass/fail rule targeting ${cluster.reason_code}`}
                 >
-                    {adopting ? 'Adopting…' : 'Adopt as gate'}
+                    {adopting ? 'Adopting…' : 'Add as pass/fail rule'}
                 </button>
             </div>
             {open && (

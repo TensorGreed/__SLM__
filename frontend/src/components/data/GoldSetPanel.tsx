@@ -538,7 +538,7 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                         }}
                     >
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-sm)' }}>
-                            <strong>Trainability forecast flagged this gold set.</strong>
+                            <strong>Trainability forecast flagged this answer key.</strong>
                             <button
                                 type="button"
                                 className="btn btn-link"
@@ -658,8 +658,8 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                     })}
                     {entries.length === 0 && (
                         <EmptyState
-                            title="No gold-set entries yet"
-                            description="The gold set is the labelled ground-truth eval set. Add Q&A pairs above — 50–100 carefully labelled rows is enough to start scoring training runs."
+                            title="No answer-key entries yet"
+                            description="The answer key is the labelled ground-truth set your model is scored against. Add Q&A pairs above — 50–100 carefully labelled rows is enough to start scoring training runs."
                             docsHref="http://localhost:3001/docs/workflows/evaluation-and-remediation"
                         />
                     )}

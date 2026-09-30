@@ -230,7 +230,7 @@ async def run_playbook(
     gold_rows = await _load_gold_rows(db, project_id)
     if not gold_rows:
         raise ValueError(
-            "Project has no gold rows. Import a gold set or instantiate "
+            "Project has no answer-key rows. Import an answer key or instantiate "
             "from a project template first."
         )
 

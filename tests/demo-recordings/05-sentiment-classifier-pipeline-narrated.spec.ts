@@ -94,7 +94,7 @@ test('Video 05 — Sentiment Classifier pipeline narrated', async ({ page }) => 
 
     // ── Section: gold set (with distribution callout) ────────────────
     sectionStart = Date.now();
-    await page.locator('button.tab[title="Gold Set"]').click();
+    await page.locator('button.tab[title="Answer Key"]').click();
     await page.waitForTimeout(1500);
     await focusOn(page, '.tab-content');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v05-goldset.png`, fullPage: false });

@@ -193,7 +193,7 @@ describe('DriftReviewQueuePanel', () => {
         await waitFor(() => {
             expect(screen.getByTestId('drift-review-last-summary')).toBeInTheDocument();
         });
-        expect(screen.getByTestId('drift-review-last-summary').textContent).toMatch(/3 traps/);
+        expect(screen.getByTestId('drift-review-last-summary').textContent).toMatch(/3 suggested rows/);
         expect(screen.getByTestId('drift-review-last-summary').textContent).toMatch(/hallucination/);
     });
 

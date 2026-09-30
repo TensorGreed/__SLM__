@@ -57,7 +57,7 @@ describe('EvalSummaryCard', () => {
         expect(screen.getByTestId('eval-summary-headline')).toHaveTextContent('0.200 (base)');
         expect(screen.getByTestId('eval-summary-headline')).toHaveTextContent('+0.350 (+175%)');
         expect(screen.getByText(/Run #21 · exp-21 vs base SmolLM2-135M/)).toBeInTheDocument();
-        expect(screen.getByTestId('eval-summary-failures')).toHaveTextContent('9 of 20 held-out examples');
+        expect(screen.getByTestId('eval-summary-failures')).toHaveTextContent('9 of 20 test examples');
         expect(screen.getByText('Call support')).toBeInTheDocument();
         expect(apiMock.get).toHaveBeenCalledWith('/projects/7/evaluation/summary', { params: { experiment_id: 21 } });
     });

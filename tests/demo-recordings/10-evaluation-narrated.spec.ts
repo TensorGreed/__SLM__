@@ -161,16 +161,16 @@ test('Video 10 — Evaluation narrated', async ({ page, request }) => {
         await expBtn.first().click();
         await page.waitForTimeout(1500);
     }
-    // Scroll to the Auto-Gate panel — the FAIL badge + the failing
+    // Scroll to the pass/fail rules panel — the FAIL badge + the failing
     // gate names land here.
-    await focusOn(page, ':text("Auto Gate")');
+    await focusOn(page, ':text("Pass/fail rules")');
     await padTo(page, sectionStart, dur.watching);
 
     // ── Section: results ────────────────────────────────────────────
     sectionStart = Date.now();
     // Slowly walk the viewer down: Auto-Gate first, then the pass-
     // rate table, then the sample predictions card.
-    await focusOn(page, ':text("Auto Gate")');
+    await focusOn(page, ':text("Pass/fail rules")');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v10-eval-tab-after.png`, fullPage: true });
     // ~⅓ into the results section, scroll to the pass-rate table.
     await page.waitForTimeout(dur.results * 1000 * 0.35);

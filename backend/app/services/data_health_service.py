@@ -181,11 +181,11 @@ _LAYMAN: dict[str, dict[str, str]] = {
         "why": "Silent truncation drops the tail of these documents. The model never sees the end (answer, closing tag, rationale). Truncating now makes the truncation explicit and visible at the file level rather than hidden at training time.",
     },
     "leakage.gold_train_overlap": {
-        "plain": "Some of your gold-set rows also appear in your training data — identical or near-identical copies.",
-        "why": "The gold set is the ruler that decides whether your model works. If the model already saw those rows during training, it can recite the answers from memory and the eval pass-rate is inflated — a green score that doesn't mean the model generalises. Hold the gold set out: remove the leaked rows from training, or re-split so the gold rows are never trained on. A GOLD_TEST leak is the worst kind — that split is your final grade.",
+        "plain": "Some of your answer-key rows also appear in your training data — identical or near-identical copies.",
+        "why": "The answer key is the ruler that decides whether your model works. If the model already saw those rows during training, it can recite the answers from memory and the eval pass-rate is inflated — a green score that doesn't mean the model generalises. Keep the answer key out of training: remove the leaked rows from training, or re-split so the answer-key rows are never trained on. A leak from the final answer key is the worst kind — that set is your final grade.",
     },
     "leakage.no_overlap": {
-        "plain": "Your gold-set rows are held out — none of them appear in the training data.",
+        "plain": "Your answer-key rows are kept out of training — none of them appear in the training data.",
         "why": "",
     },
     "leakage.split_overlap": {
@@ -197,8 +197,8 @@ _LAYMAN: dict[str, dict[str, str]] = {
         "why": "",
     },
     "shape.gold_field_variants": {
-        "plain": "Your gold rows use non-canonical field names (`class` instead of `label`, `text` instead of `input`).",
-        "why": "The trainer + eval pipeline both expect canonical names; non-canonical rows are either silently skipped or mis-mapped, which collapses your effective gold-set size without telling you. Renaming is a safe one-shot fix.",
+        "plain": "Your answer-key rows use non-canonical field names (`class` instead of `label`, `text` instead of `input`).",
+        "why": "The trainer + eval pipeline both expect canonical names; non-canonical rows are either silently skipped or mis-mapped, which collapses your effective answer-key size without telling you. Renaming is a safe one-shot fix.",
     },
     "shape.no_recipe_selected": {
         "plain": "You haven't chosen a task type yet (classification, span-extraction, summarization, qa-sft, etc.).",
@@ -227,7 +227,7 @@ _LAYMAN: dict[str, dict[str, str]] = {
         "why": "The trainer treats each spelling as its own class — your effective per-class count is smaller than it looks, and the model won't generalise across the variants. A quick rename to the canonical label fixes it.",
     },
     "single_class_dominance": {
-        "plain": "One class makes up most of your gold set — everything else is a small slice.",
+        "plain": "One class makes up most of your answer key — everything else is a small slice.",
         "why": "The model can hit high accuracy just by always predicting the dominant class. The minority classes won't get learned and your evaluation number will be misleading.",
     },
 }
@@ -535,7 +535,7 @@ async def _cleaning_group(
                 plain_english=(
                     "Your task type is span-extraction (PII detection, NER, entity "
                     "extraction, etc.) — the model learns by seeing PII in the "
-                    "source documents and the gold-set spans pointing at it. "
+                    "source documents and the answer-key spans pointing at it. "
                     "Auto-redaction is intentionally disabled for this project "
                     "shape so the training signal isn't destroyed. If you need "
                     "redaction for a separate non-training use, do it manually "
@@ -1034,7 +1034,7 @@ async def _phase4_gold_schema_signal(
         id="shape.gold_field_variants",
         severity="warn",
         headline=(
-            f"{total_renames} gold row(s) in sample use non-canonical "
+            f"{total_renames} answer-key row(s) in sample use non-canonical "
             f"field names (e.g. {', '.join(rename_counts.keys())})."
         ),
         suggested_action={
@@ -1067,7 +1067,7 @@ async def _balance_group(db: AsyncSession, project: Project) -> dict[str, Any]:
         return {
             "id": "balance",
             "title": "Class balance",
-            "subtitle": "Classification gold-set distribution",
+            "subtitle": "Classification answer-key distribution",
             "signals": [],
         }
 
@@ -1083,7 +1083,7 @@ async def _balance_group(db: AsyncSession, project: Project) -> dict[str, Any]:
         return {
             "id": "balance",
             "title": "Class balance",
-            "subtitle": "Classification gold-set distribution",
+            "subtitle": "Classification answer-key distribution",
             "signals": [],
         }
 
@@ -1112,7 +1112,7 @@ async def _balance_group(db: AsyncSession, project: Project) -> dict[str, Any]:
             id="balance.healthy",
             severity="ok",
             headline="Class balance looks healthy — no imbalance or per-class signals firing.",
-            plain_english="Your gold set's classes are spread evenly enough that the trainer should learn each one without lopsidedness.",
+            plain_english="Your answer key's classes are spread evenly enough that the trainer should learn each one without lopsidedness.",
             why_it_matters="",
             context={"gold_rows": len(gold_rows)},
         ))
@@ -1120,7 +1120,7 @@ async def _balance_group(db: AsyncSession, project: Project) -> dict[str, Any]:
     return {
         "id": "balance",
         "title": "Class balance",
-        "subtitle": "Classification gold-set distribution",
+        "subtitle": "Classification answer-key distribution",
         "signals": signals,
     }
 
@@ -1526,14 +1526,14 @@ async def _leakage_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
                 id="leakage.no_overlap",
                 severity="ok",
                 headline=(
-                    f"No leakage — {scanned} gold rows checked against "
+                    f"No leakage — {scanned} answer-key rows checked against "
                     f"{scan['train_rows_scanned']} training rows, none overlap."
                 ),
                 context=context,
             ))
         else:
             test_note = (
-                f" — including {test_leaked} GOLD_TEST row(s) (your final grade)"
+                f" — including {test_leaked} row(s) from the final answer key (your final grade)"
                 if test_leaked
                 else ""
             )
@@ -1541,12 +1541,12 @@ async def _leakage_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
                 id="leakage.gold_train_overlap",
                 severity=scan["severity"],
                 headline=(
-                    f"{leaked} of {scanned} gold rows ({scan['frac'] * 100:.0f}%) "
+                    f"{leaked} of {scanned} answer-key rows ({scan['frac'] * 100:.0f}%) "
                     f"also appear in training data{test_note}."
                 ),
                 suggested_action={
                     "kind": "navigate",
-                    "label": "Re-split so gold is held out",
+                    "label": "Re-split so the answer key stays out of training",
                     "target": "dataprep",
                 },
                 context=context,
@@ -1574,7 +1574,7 @@ async def _leakage_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
                 severity="ok",
                 headline=(
                     f"Train / val / test splits are disjoint — "
-                    f"{scanned} held-out rows checked, none shared."
+                    f"{scanned} validation and test rows checked, none shared."
                 ),
                 context=context,
             ))

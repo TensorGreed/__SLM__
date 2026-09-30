@@ -221,7 +221,7 @@ export default function ProjectPipelinePage() {
             {autoGate && (
                 <div className="card pipeline-auto-gate-card">
                     <div className="pipeline-auto-gate-header">
-                        <h3>Auto Gate</h3>
+                        <h3>Pass/fail rules</h3>
                         <span className={`badge ${autoGate.passed ? 'badge-success' : 'badge-error'}`}>
                             {autoGate.passed ? 'PASS' : 'FAIL'}
                         </span>
@@ -231,7 +231,7 @@ export default function ProjectPipelinePage() {
                             Experiment: <strong>#{autoGate.experiment_id}</strong>
                         </span>
                         <span>
-                            Pack: <strong>{autoGate.pack_id || 'auto'}</strong>
+                            Rule set: <strong>{autoGate.pack_id || 'auto'}</strong>
                         </span>
                         {autoGate.captured_at && (
                             <span>
@@ -241,7 +241,7 @@ export default function ProjectPipelinePage() {
                     </div>
                     {autoGate.failed_gate_ids.length > 0 && (
                         <div className="pipeline-auto-gate-warn">
-                            Failed required gates: {autoGate.failed_gate_ids.join(', ')}
+                            Failed required rules: {autoGate.failed_gate_ids.join(', ')}
                         </div>
                     )}
                     {autoGate.missing_required_metrics.length > 0 && (

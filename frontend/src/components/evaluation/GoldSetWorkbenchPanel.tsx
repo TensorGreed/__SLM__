@@ -264,7 +264,7 @@ export default function GoldSetWorkbenchPanel({ projectId }: GoldSetWorkbenchPan
             );
             setPack(res.data);
         } catch (err) {
-            setPackError(errorDetail(err, 'Could not generate starter eval pack.'));
+            setPackError(errorDetail(err, 'Could not generate a starter pass/fail rule set.'));
         } finally {
             setIsGeneratingPack(false);
         }
@@ -274,7 +274,7 @@ export default function GoldSetWorkbenchPanel({ projectId }: GoldSetWorkbenchPan
 
     const runSample = useCallback(async () => {
         if (goldSetId === null) {
-            setBuilderError('Pick a gold set first.');
+            setBuilderError('Pick an answer key first.');
             return;
         }
         if (sourceDatasetId === null) {
@@ -561,7 +561,7 @@ export default function GoldSetWorkbenchPanel({ projectId }: GoldSetWorkbenchPan
                     </div>
                 ) : (
                     <p className="gold-workbench-pack-note">
-                        No preview yet. Click <em>Generate pack</em> to derive starter gates from your project plan.
+                        No preview yet. Click <em>Generate pack</em> to derive starter pass/fail rules from your project plan.
                     </p>
                 )}
             </section>
@@ -569,7 +569,7 @@ export default function GoldSetWorkbenchPanel({ projectId }: GoldSetWorkbenchPan
             <section className="card gold-workbench-section">
                 <div className="gold-workbench-section-head">
                     <div>
-                        <h3>Gold-set builder</h3>
+                        <h3>Answer-key builder</h3>
                         <p className="gold-workbench-subtitle">
                             Sample rows from a source dataset into a draft version of your gold set. Dedup is keyed on row content.
                         </p>
@@ -585,13 +585,13 @@ export default function GoldSetWorkbenchPanel({ projectId }: GoldSetWorkbenchPan
                 {datasetsError && <div className="gold-workbench-error">{datasetsError}</div>}
                 <div className="gold-workbench-grid">
                     <div className="form-group">
-                        <label>Gold set</label>
+                        <label>Answer key</label>
                         <select
                             className="input"
                             value={goldSetId ?? ''}
                             onChange={(e) => setGoldSetId(e.target.value === '' ? null : Number(e.target.value))}
                         >
-                            <option value="">— pick a gold set —</option>
+                            <option value="">— pick an answer key —</option>
                             {goldSets.map((ds) => (
                                 <option key={ds.id} value={ds.id}>
                                     #{ds.id} · {ds.name} ({ds.dataset_type}, {ds.record_count} rows)
@@ -673,7 +673,7 @@ export default function GoldSetWorkbenchPanel({ projectId }: GoldSetWorkbenchPan
                         onClick={() => void runSample()}
                         disabled={isSampling || goldSetId === null || sourceDatasetId === null}
                     >
-                        {isSampling ? 'Sampling…' : 'Sample rows into gold set'}
+                        {isSampling ? 'Sampling…' : 'Sample rows into answer key'}
                     </button>
                     {lastSample && (
                         <span className="gold-workbench-actions-note">
@@ -872,7 +872,7 @@ export default function GoldSetWorkbenchPanel({ projectId }: GoldSetWorkbenchPan
                 {queue.length === 0 ? (
                     <p className="gold-workbench-pack-note">
                         {goldSetId === null
-                            ? 'Pick a gold set to see its reviewer queue.'
+                            ? 'Pick an answer key to see its reviewer queue.'
                             : 'No queue entries. Auto-assign a reviewer when sampling, or set a reviewer on individual rows.'}
                     </p>
                 ) : (

@@ -5188,8 +5188,8 @@ async def start(
                 "error_code": "TRAINING_DISABLED_FOR_RAG_FIRST_PROJECT",
                 "message": (
                     "This is a RAG-first project — it answers using the base "
-                    "model + retrieval from the gold set, no training run "
-                    "required. To train an SFT model on this gold set, open "
+                    "model + retrieval from the answer key, no training run "
+                    "required. To train an SFT model on this answer key, open "
                     "the parent project (provenance link) or create a new "
                     "qa-sft project from the same data."
                 ),

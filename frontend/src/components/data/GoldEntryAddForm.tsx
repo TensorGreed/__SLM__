@@ -580,7 +580,7 @@ export default function GoldEntryAddForm({
                                 }}
                             >
                                 New label — not seen in this project's
-                                gold rows yet.
+                                answer-key rows yet.
                             </div>
                         )}
                     </div>
@@ -709,7 +709,7 @@ export default function GoldEntryAddForm({
                                     }}
                                 >
                                     New type — not seen in this project's
-                                    gold rows yet.
+                                    answer-key rows yet.
                                 </div>
                             )}
                         </div>

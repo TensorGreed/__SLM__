@@ -221,7 +221,7 @@ describe('QuickstartCard', () => {
         await user.click(screen.getByTestId('quickstart-import-button'));
 
         const nudge = await screen.findByTestId('quickstart-train-nudge');
-        expect(nudge).toHaveTextContent(/Imported 20 rows \+ 6 gold-set entries/);
+        expect(nudge).toHaveTextContent(/Imported 20 rows \+ 6 answer-key entries/);
         expect(nudge).toHaveTextContent(/Train a model on them next/);
     });
 
@@ -287,7 +287,7 @@ describe('QuickstartCard', () => {
         expect(nudge).toHaveTextContent(
             /Experiment #7 started on HuggingFaceTB\/SmolLM2-135M-Instruct/,
         );
-        expect(nudge).toHaveTextContent(/evaluate against the gold set/i);
+        expect(nudge).toHaveTextContent(/evaluate against the answer key/i);
     });
 
     // ── Baseline tile (Theme 8 Epic 1) ──────────────────────────

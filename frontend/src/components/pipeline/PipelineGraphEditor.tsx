@@ -193,8 +193,8 @@ function getNodeConfigPresets(stepType: string): NodeConfigPreset[] {
             },
             {
                 id: 'evaluation.heldout',
-                label: 'Heldout Eval',
-                description: 'Run heldout evaluation on latest completed experiment.',
+                label: 'Eval on test examples',
+                description: 'Evaluate the latest completed experiment on its test examples.',
                 config: {
                     mode: 'heldout',
                     dataset_name: 'test',

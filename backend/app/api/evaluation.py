@@ -180,7 +180,7 @@ async def run_eval_on_heldout(
         job = await start_heldout_eval_job(
             db,
             kind="heldout_evaluation",
-            title=f"Held-out eval · experiment #{req.experiment_id}",
+            title=f"Eval on test examples · experiment #{req.experiment_id}",
             project_id=project_id,
             run_kwargs={
                 "project_id": project_id,
@@ -624,7 +624,7 @@ async def experiment_scorecard(
 
         if must_pass and not report.get("passed"):
             is_ship = False
-            reasons.append(f"Failed {len(failed_gates)} mandatory gates.")
+            reasons.append(f"Failed {len(failed_gates)} required pass/fail rules.")
 
         if blocked_if_missing and missing_metrics:
             is_ship = False

@@ -173,8 +173,8 @@ class DataprepStageTests(unittest.IsolatedAsyncioTestCase):
         empty = await self._run(dict(base))
         small_nudge = next(s for s in small if s["id"] == "dataprep:test-split-small")
         empty_nudge = next(s for s in empty if s["id"] == "dataprep:test-split-small")
-        self.assertEqual((small_nudge["severity"], small_nudge["title"]), ("warning", "Only 6 held-out test rows"))
-        self.assertEqual((empty_nudge["severity"], empty_nudge["title"]), ("critical", "No held-out test rows"))
+        self.assertEqual((small_nudge["severity"], small_nudge["title"]), ("warning", "Only 6 test examples"))
+        self.assertEqual((empty_nudge["severity"], empty_nudge["title"]), ("critical", "No test examples"))
 
     async def test_split_leakage_reuses_shared_nudge(self):
         leak = {

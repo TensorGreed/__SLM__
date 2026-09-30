@@ -160,7 +160,7 @@ const syntheticPayload = {
                                 id: 'gold_examples',
                                 label: 'Gold anchors',
                                 status: 'met',
-                                message: '2 file-backed Gold Set rows can anchor generation.',
+                                message: '2 file-backed answer-key rows can anchor generation.',
                                 target_tab: 'goldset',
                             },
                             {
@@ -217,7 +217,7 @@ const syntheticPayload = {
             id: 'gold_examples',
             label: 'Gold examples',
             status: 'met',
-            message: '2 file-backed gold rows can seed playbook generation.',
+            message: '2 file-backed answer-key rows can seed playbook generation.',
             target_tab: 'goldset',
         },
         {
@@ -350,7 +350,7 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
                                     ...syntheticPayload.domain_libraries.libraries[0].playbooks[0],
                                     id: 'generic_domain:baseline_variants',
                                     readiness: 'blocked',
-                                    readiness_reason: 'Task type, playbook mode, or Gold Set prerequisites need setup first.',
+                                    readiness_reason: 'Task type, playbook mode, or answer key prerequisites need setup first.',
                                     generation_path: {
                                         backend: 'ollama',
                                         available: false,

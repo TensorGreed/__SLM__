@@ -986,8 +986,8 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
             // split controls with the one thing they need to know.
             scrollToSplitForm();
             toast.info(
-                'Leaked rows must be dropped from your TRAINING data — the gold set stays the ' +
-                'held-out ruler, so BrewSLM won\'t auto-delete it. Re-prepare after removing the ' +
+                'Leaked rows must be dropped from your TRAINING data — the answer key stays ' +
+                'out of training, so BrewSLM won\'t auto-delete it. Re-prepare after removing the ' +
                 'overlap from cleaned/synthetic rows.',
             );
             return true;
@@ -1239,7 +1239,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                         <option value="raw">Raw</option>
                         <option value="cleaned">Cleaned</option>
                         <option value="synthetic">Synthetic</option>
-                        <option value="gold_dev">Gold Dev</option>
+                        <option value="gold_dev">Practice answer key</option>
                     </select>
                     <button className="btn-primary" onClick={loadProfile} disabled={profileLoading}>
                         {profileLoading ? '⏳ Profiling...' : '📋 Run Profile'}
@@ -1450,7 +1450,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                         <option value="raw">Raw</option>
                         <option value="cleaned">Cleaned</option>
                         <option value="synthetic">Synthetic</option>
-                        <option value="gold_dev">Gold Dev</option>
+                        <option value="gold_dev">Practice answer key</option>
                         <option value="train">Train</option>
                         <option value="validation">Validation</option>
                         <option value="test">Test</option>

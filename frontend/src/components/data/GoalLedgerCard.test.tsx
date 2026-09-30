@@ -56,10 +56,10 @@ function _progressFixture(overrides: Partial<Record<string, unknown>> = {}) {
             },
             {
                 id: 'gold_set',
-                label: 'Gold Set ready',
+                label: 'Answer key ready',
                 value: 0.12,
                 status: 'attention',
-                detail: '12 gold rows · 100 recommended.',
+                detail: '12 answer-key rows · 100 recommended.',
                 concept_id: 'gold_set',
             },
             {
@@ -83,7 +83,7 @@ function _progressFixture(overrides: Partial<Record<string, unknown>> = {}) {
         pending_components: ['predicted_pass', 'eval_pass_rate'],
         blockers: [
             'Only 30 training rows (need ≥50).',
-            'Only 12 gold rows (need ≥100).',
+            'Only 12 answer-key rows (need ≥100).',
         ],
         status: 'in_progress',
         ...overrides,
@@ -212,7 +212,7 @@ describe('GoalLedgerCard', () => {
                         status: 'met', detail: 'ready', concept_id: 'task_shape',
                     },
                     {
-                        id: 'gold_set', label: 'Gold Set ready', value: 1.0,
+                        id: 'gold_set', label: 'Answer key ready', value: 1.0,
                         status: 'met', detail: 'ready', concept_id: 'gold_set',
                     },
                     {
@@ -248,13 +248,13 @@ describe('GoalLedgerCard', () => {
         ).toMatch(/Only 30 training rows/);
         expect(
             screen.getByTestId('goal-ledger-blockers').textContent,
-        ).toMatch(/Only 12 gold rows/);
+        ).toMatch(/Only 12 answer-key rows/);
     });
 
     it('renders the matching Term label per component (Arc G compound)', async () => {
         // Each component's concept_id is wired into the Term registry,
         // so the label rendered is the registry's beginnerLabel
-        // (e.g. gold_set → "Reference Set"). This pins the
+        // (e.g. gold_set → "Answer key"). This pins the
         // Term/glossary integration: drop a concept_id from the
         // registry and the test fails loud.
         apiMock.get.mockResolvedValueOnce({ data: _progressFixture() });
@@ -268,7 +268,7 @@ describe('GoalLedgerCard', () => {
         // concept's full definition; we assert the visible label and
         // the existence of the button (the Term trigger).
         const card = screen.getByTestId('goal-ledger-component-gold_set');
-        expect(card.textContent).toMatch(/Gold Set ready/);
+        expect(card.textContent).toMatch(/Answer key ready/);
         expect(card.querySelector('.term-trigger')).not.toBeNull();
     });
 
@@ -296,7 +296,7 @@ describe('GoalLedgerCard', () => {
                     status: 'met', detail: 'ready', concept_id: 'task_shape',
                 },
                 {
-                    id: 'gold_set', label: 'Gold Set ready', value: 1.0,
+                    id: 'gold_set', label: 'Answer key ready', value: 1.0,
                     status: 'met', detail: 'ready', concept_id: 'gold_set',
                 },
                 {

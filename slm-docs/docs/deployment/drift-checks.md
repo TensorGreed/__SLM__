@@ -5,14 +5,14 @@ title: Drift checks
 
 # Drift checks
 
-Telemetry tells you *how* the deployment is serving. A drift check tells you *whether the answers are still right.* It re-runs your gold-set eval against the **live endpoint** (not the offline checkpoint) and compares to the baseline pass rate captured at promote time.
+Telemetry tells you *how* the deployment is serving. A drift check tells you *whether the answers are still right.* It re-runs your answer-key (gold set) eval against the **live endpoint** (not the offline checkpoint) and compares to the baseline pass rate captured at promote time.
 
 ## Why drift differs from smoke
 
 | Smoke | Drift |
 |---|---|
 | Runs once, **before** promote. | Runs on-demand or scheduled, **after** promote. |
-| Few prompts (default 5). | Full gold set (or a configurable slice). |
+| Few prompts (default 5). | Full answer key (or a configurable slice). |
 | Catches obvious blockers (tokenizer mismatch, OOM). | Catches subtle regressions (model file replaced, dataset poisoned upstream, runtime upgrade changed numerics). |
 | Doesn't check the live endpoint. | Calls the live endpoint exactly as a user would. |
 
@@ -22,7 +22,7 @@ A typical workflow runs drift weekly + after any infra change. Drift is also che
 
 ### UI
 
-Deployments detail → **Drift check** tab → **Run check now**. A modal asks which gold set + how many prompts (default: all). Click **Start**.
+Deployments detail → **Drift check** tab → **Run check now**. A modal asks which answer key (by its gold-set dataset id) + how many prompts (default: all). Click **Start**.
 
 Results stream in row by row. The summary card at top shows:
 

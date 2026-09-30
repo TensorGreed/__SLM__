@@ -63,7 +63,7 @@ export default function TrainingMultiSeedSection({
             <div id="multi-seed-body" data-testid="training-multi-seed-body">
               <p className="form-hint" style={{ marginTop: 0 }}>
                 Run N independent trainings with different
-                seeds, then judge gates by mean − std (no
+                seeds, then judge pass/fail rules by mean − std (no
                 vanity metrics). Default 1 keeps single-run
                 behavior.
               </p>
@@ -149,7 +149,7 @@ export default function TrainingMultiSeedSection({
                         .filter(Boolean).length
                     : numSeeds}{' '}
                   independent trainings under one{' '}
-                  <code>seed_group_id</code>; gates will
+                  <code>seed_group_id</code>; pass/fail rules will
                   judge the run by <code>mean − std</code>{' '}
                   (the lower bound) so a vanity-good seed
                   can't paper over a flaky run.

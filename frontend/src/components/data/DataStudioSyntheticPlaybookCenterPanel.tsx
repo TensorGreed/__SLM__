@@ -52,7 +52,7 @@ const PREREQUISITE_SETUP_LABEL: Record<string, string> = {
     recipe: 'Choose a task type',
     playbook_mode: 'Pick a playbook mode',
     mapping: 'Fix mapping',
-    gold_examples: 'Open Gold Set',
+    gold_examples: 'Open answer key',
     local_ollama: 'Configure Ollama',
     review_gate: 'Review pending rows',
 };

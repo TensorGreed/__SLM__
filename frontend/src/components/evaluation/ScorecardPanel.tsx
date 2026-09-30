@@ -306,7 +306,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                         data-testid="scorecard-independent-section"
                       >
                         <td colSpan={5}>
-                          Independent ruler — graded against probes you didn't author
+                          Independent ruler — graded against built-in checks you didn't author
                         </td>
                       </tr>
                     )}
@@ -320,7 +320,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                         {probeGate && (
                           <span
                             className="scorecard-probe-badge"
-                            title="Graded against the platform-authored held-out probe pack — independent of your gold set."
+                            title="Graded against the platform-authored built-in checks — independent of your answer key."
                             data-testid="scorecard-probe-badge"
                           >
                             Independent ruler
@@ -364,7 +364,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                             data-testid="scorecard-probe-link"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            Inspect probes →
+                            Inspect built-in checks →
                           </a>
                         )}
                       </td>
@@ -411,7 +411,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                                   <div className="scorecard-drilldown-note">
                                     Mean {gate.actual!.toFixed(3)} {gate.operator === 'gte' ? '≥' : '≤'} threshold
                                     {' '}{gate.threshold}, but lower-bound policy applies the std and the gate value
-                                    {' '}{gate.gate_value?.toFixed(3)} fails. Drop std (more seeds) or relax the gate.
+                                    {' '}{gate.gate_value?.toFixed(3)} fails. Drop std (more seeds) or relax the rule.
                                   </div>
                                 )}
                               </>
@@ -485,7 +485,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                                   <div className="scorecard-drilldown-note">
                                     Slice <strong>{gate.worst_slice_id}</strong> dragged the worst-slice metric to
                                     {' '}{gate.actual?.toFixed(3)} {gate.operator === 'worst_slice_gte' ? '<' : '>'}{' '}threshold
-                                    {' '}{gate.threshold}. Investigate that slice's data or relax the gate.
+                                    {' '}{gate.threshold}. Investigate that slice's data or relax the rule.
                                   </div>
                                 )}
                                 {policyHint && (
@@ -508,7 +508,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
 
         {gate_report.checks.some(isBehavioralGate) && (
           <div className="scorecard-behavioral-section">
-            <h3>Behavioral tests</h3>
+            <h3>Your custom checks</h3>
             <table className="gates-table scorecard-behavioral-table">
               <thead>
                 <tr>
@@ -708,7 +708,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
       </div>
 
       <div className="scorecard-footer">
-        <p>Decisions are deterministic and reproducible based on project gate policy.</p>
+        <p>Decisions are deterministic and reproducible based on the project's pass/fail rules.</p>
       </div>
     </div>
   );

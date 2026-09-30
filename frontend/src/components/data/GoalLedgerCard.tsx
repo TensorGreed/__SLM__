@@ -151,7 +151,7 @@ function ComponentRow({ component }: { component: GoalProgressComponent }) {
                     data-testid={`goal-ledger-gate-breakdown-${component.id}`}
                 >
                     <summary>
-                        Gate breakdown <small>({breakdown.length} gate{breakdown.length === 1 ? '' : 's'})</small>
+                        Pass/fail rule breakdown <small>({breakdown.length} rule{breakdown.length === 1 ? '' : 's'})</small>
                     </summary>
                     <ul>
                         {breakdown.map((gate) => (

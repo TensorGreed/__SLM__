@@ -103,7 +103,7 @@ describe('CoachStrip', () => {
                 suggestions: [
                     {
                         id: 'data:gold-row-count',
-                        title: 'Your gold set has 30 rows',
+                        title: 'Your answer key has 30 rows',
                         body: 'Most useful first models need at least 100 rows.',
                         severity: 'critical',
                         action: {
@@ -120,7 +120,7 @@ describe('CoachStrip', () => {
         await waitFor(() => {
             expect(screen.getByTestId('coach-suggestion-data:gold-row-count')).toBeInTheDocument();
         });
-        expect(screen.getByText(/Your gold set has 30 rows/)).toBeInTheDocument();
+        expect(screen.getByText(/Your answer key has 30 rows/)).toBeInTheDocument();
         expect(screen.getByTestId('coach-suggestion-action-data:gold-row-count').textContent).toMatch(/Generate 70/);
     });
 
@@ -133,7 +133,7 @@ describe('CoachStrip', () => {
                 suggestions: [
                     {
                         id: 'data:gold-row-count',
-                        title: 'Your gold set is thin',
+                        title: 'Your answer key is thin',
                         body: 'Add more rows.',
                         severity: 'critical',
                         action: {

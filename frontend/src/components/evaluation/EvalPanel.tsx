@@ -1024,7 +1024,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 ) : experiments.length === 0 ? (
                     <EmptyState
                         title="No experiments to evaluate"
-                        description="Train an experiment first — then come back here, pick a gold set, pick an eval pack, and run a scored evaluation."
+                        description="Train an experiment first — then come back here, pick an answer key, pick a pass/fail rule set, and run a scored evaluation."
                         docsHref="http://localhost:3001/docs/workflows/evaluation-and-remediation"
                     />
                 ) : (
@@ -1059,7 +1059,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     setAdvancedOpen(!advancedOpen);
                 }}
             >
-                {advancedOpen ? '▾ Hide advanced evaluation' : '▸ Advanced evaluation (gates, eval packs, probes, failure clusters, comparisons)'}
+                {advancedOpen ? '▾ Hide advanced evaluation' : '▸ Advanced evaluation (pass/fail rules, built-in checks, custom checks, failure clusters, comparisons)'}
             </button>
             {advancedOpen && (<>
             <EvalGapsPanel projectId={projectId} />
@@ -1134,7 +1134,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                             );
                         })()}
                         <button className="btn btn-primary" onClick={() => setShowRunForm((open) => !open)}>
-                            + Run Held-out Evaluation
+                            + Evaluate on test examples
                         </button>
                     </div>
                 </div>
@@ -1145,10 +1145,10 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     <div className="eval-pack-header">
                         <div>
                             <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 4 }}>
-                                Evaluation Pack & Auto Gates
+                                Pass/fail rules
                             </h3>
                             <p className="eval-pack-subtitle">
-                                Choose a project-level gate profile and review pass/fail checks for the selected experiment.
+                                Choose the project's rule set and review each pass/fail rule for the selected experiment.
                             </p>
                         </div>
                         <span className={`badge ${gateStatusBadge.className}`}>{gateStatusBadge.label}</span>
@@ -1156,7 +1156,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
 
                     <div className="eval-pack-controls">
                         <div className="form-group">
-                            <label className="form-label">Project Gate Pack</label>
+                            <label className="form-label">Project rule set</label>
                             <select
                                 className="input"
                                 value={preferredPackId ?? AUTO_PACK_VALUE}
@@ -1166,7 +1166,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                 <option value={AUTO_PACK_VALUE}>Auto (domain profile fallback)</option>
                                 {evaluationPacks.map((pack, index) => (
                                     <option key={`${pack.pack_id}:${index}`} value={pack.pack_id}>
-                                        {pack.display_name} ({pack.gate_count} gates)
+                                        {pack.display_name} ({pack.gate_count} rules)
                                     </option>
                                 ))}
                             </select>
@@ -1223,14 +1223,14 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     )}
 
                     {isLoadingGateReport ? (
-                        <div className="eval-pack-note">Running gate checks...</div>
+                        <div className="eval-pack-note">Checking pass/fail rules...</div>
                     ) : gateErrorMessage ? (
                         <div className="eval-pack-error">{gateErrorMessage}</div>
                     ) : gateReport ? (
                         <>
                             <div className="eval-gate-summary">
                                 <span>
-                                    Required gate failures: <strong>{gateReport.failed_gate_ids.length}</strong>
+                                    Required rules failed: <strong>{gateReport.failed_gate_ids.length}</strong>
                                 </span>
                                 <span>
                                     Missing required metrics: <strong>{gateReport.missing_required_metrics.length}</strong>
@@ -1525,18 +1525,18 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
 
             {showRunForm && (
                 <div className="card" style={{ border: '1px solid var(--color-primary)' }}>
-                    <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Configure Held-out Evaluation</h3>
+                    <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Evaluate on test examples</h3>
                     <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 'var(--space-lg)' }}>
-                        This runs inference on held-out dataset rows and stores exact-match, F1, or LLM-judge results.
+                        This runs inference on rows the model never trained on and stores exact-match, F1, or LLM-judge results.
                     </p>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 'var(--space-lg)' }}>
                         <div className="form-group">
                             <label className="form-label">Dataset</label>
                             <select className="input" value={datasetName} onChange={(e) => setDatasetName(e.target.value)}>
-                                <option value="test">Test</option>
+                                <option value="test">Test examples</option>
                                 <option value="validation">Validation</option>
-                                <option value="gold_test">Gold Test</option>
-                                <option value="gold_dev">Gold Dev</option>
+                                <option value="gold_test">Final answer key</option>
+                                <option value="gold_dev">Practice answer key</option>
                             </select>
                         </div>
                         <div className="form-group">
@@ -1766,7 +1766,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
 
                     <div style={{ marginTop: 'var(--space-lg)' }}>
                         <button className="btn btn-primary" onClick={() => void runHeldoutEval()} disabled={isEvaluating}>
-                            {isEvaluating ? 'Running Held-out Evaluation...' : 'Run Evaluation'}
+                            {isEvaluating ? 'Evaluating on test examples...' : 'Run Evaluation'}
                         </button>
                     </div>
                 </div>
@@ -1947,7 +1947,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                 </ResponsiveContainer>
                             ) : (
                                 <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', textAlign: 'center', padding: 20 }}>
-                                    No LLM-judge benchmarks run yet.<br />Run a held-out eval with metric set to LLM Judge.
+                                    No LLM-judge benchmarks run yet.<br />Evaluate on test examples with metric set to LLM Judge.
                                 </div>
                             )}
                         </div>

@@ -379,7 +379,7 @@ async def compute_frontier_comparison(
         quality["status"] = "no_frontier_eval"
         quality["message"] = (
             f"No {frontier_name} baseline eval on this eval set. Evaluate {frontier_name} on "
-            "the same gold set and set config.frontier_baseline_run_id (or the eval pack's), "
+            "the same answer key and set config.frontier_baseline_run_id (or the pass/fail rule set's), "
             "so quality can be compared honestly."
         )
     else:

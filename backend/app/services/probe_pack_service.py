@@ -457,8 +457,8 @@ def get_probe_pack(task_profile: str | None) -> dict[str, Any]:
             "probes": [],
             "status": "no_pack_for_profile",
             "note": (
-                "No platform probe pack exists for this task shape yet — "
-                "your gold set is still the only ruler. Coming for more "
+                "No built-in checks exist for this task shape yet — "
+                "your answer key is still the only ruler. Coming for more "
                 "shapes."
             ),
         }
@@ -478,10 +478,10 @@ def get_probe_pack(task_profile: str | None) -> dict[str, Any]:
         # an independent probe_pass_rate into the gate is the next slice.
         "status": "ready_not_run",
         "note": (
-            "Platform-authored — you did not write these. Each probe checks "
+            "Platform-authored — you did not write these. Each check tests "
             "a property that must hold for ANY model on this task shape "
             "(robustness, refusal, no-fabrication, degenerate-input), so the "
-            "result is independent of your domain labels and your gold set."
+            "result is independent of your domain labels and your answer key."
         ),
     }
 

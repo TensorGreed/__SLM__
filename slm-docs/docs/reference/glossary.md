@@ -11,6 +11,15 @@ Every term you'll encounter, alphabetised. Use Cmd-F.
 
 The mapping layer between your raw row shape and BrewSLM's canonical record (`{"text": ..., "messages": [...], ...}`). Adapters can be built-in (`qa-pair`, `chat-messages`, `structured-extraction`, `preference-pair`, `default-canonical`, `auto`) or plugin-defined. See [Adapter examples](../getting-started/adapter-studio-examples.md).
 
+## Answer key
+
+The rows you write (or approve) with the correct answer, so BrewSLM can score the model against them. The UI shows two:
+
+- **Practice answer key**: rows you score against while you iterate. API name: `gold_dev` (`DatasetType.GOLD_DEV`), stored at `data/projects/{id}/gold/gold_dev.jsonl`.
+- **Final answer key**: the rows you keep untouched for the final grade. API name: `gold_test` (`DatasetType.GOLD_TEST`).
+
+The **Answer Key** tab (Pipeline) edits it; the answer key is never a default training source. API name: *gold set* (`/api/projects/{id}/gold/...`, the gold workbench routes). See [Gold set](#gold-set) for the two editing surfaces.
+
 ## Artifact
 
 Any persisted output a downstream stage might depend on — a cleaned dataset, a checkpoint, an export bundle. Tracked in `artifact_records` with a `schema_ref` like `slm.checkpoint/v1`. See [Projects + artifacts](../concepts/projects-and-artifacts.md).
@@ -26,6 +35,10 @@ The pretrained model you fine-tune from. Registered in the Universal Base Model 
 ## Beginner mode
 
 Per-project flag that hides advanced UI surfaces (Adapter Studio, Extension Studio, Workflow Builder, Pipeline presets, Pipeline-as-Code, Domain Packs, Domain Profiles). Backend behaviour unchanged. See [Beginner mode](../concepts/beginner-mode.md).
+
+## Built-in checks
+
+Checks BrewSLM writes for you, so a model is also graded against something you didn't author: robustness, refusing unsafe or unsupported requests, not over-refusing, and handling empty input. Shown in the **Built-in checks** panel on the Eval tab (under **Advanced evaluation**). API name: *probe pack* (`/api/projects/{id}/probe-pack`, metric `probe_pass_rate`). See [Probe pack](#probe-pack-held-out-platform-authored).
 
 ## Checkpoint
 
@@ -47,6 +60,10 @@ The 0.8 floor the [Schema introspection](#schema-introspection) pipeline applies
 
 A version pin on a plugin contract, e.g. `slm.data_adapter/v3`. A plugin declaring an older version is rejected by the loader. See [Plugin contracts](../extensions/contracts.md).
 
+## Custom checks
+
+Checks you write yourself: CheckList-style invariance (INV), directional (DIR) and minimum-functionality (MFT) tests that run on every evaluation and can be gated per slice. Shown as **Custom checks** under **Advanced evaluation**. API name: *behavioral tests* (`behavioral_tests` in the eval pack, `behavioral.*` metric ids).
+
 ## Decision log
 
 Persistent record of every autopilot planning + repair action, with provenance per component. See [Newbie Autopilot → Decision log](../workflows/newbie-autopilot.md#decision-log).
@@ -65,11 +82,11 @@ A typed contract describing task family + compliance + runtime preferences. Atta
 
 ## Drift check
 
-Re-runs the gold-set eval against the **live deployment** endpoint and compares to the baseline pass rate. Three verdicts: `passing`, `borderline`, `drift_detected`. See [Drift checks](../deployment/drift-checks.md).
+Re-runs the answer-key eval against the **live deployment** endpoint and compares to the baseline pass rate. Three verdicts: `passing`, `borderline`, `drift_detected`. See [Drift checks](../deployment/drift-checks.md).
 
 ## Eval pack
 
-Bundle of task-aware metric schemas + gate policies. Built-in packs cover general / QA / classification / summarisation / preference; custom packs via [scaffolding](../extensions/scaffold.md). Contract version `slm.evaluation-pack/v2`.
+The API name for a project's **pass/fail rule set** (see [Pass/fail rules](#passfail-rules)): a bundle of task-aware metric schemas + gate policies. Built-in packs cover general / QA / classification / summarisation / preference; custom packs via [scaffolding](../extensions/scaffold.md). Contract version `slm.evaluation-pack/v2`.
 
 ## Failure cluster
 
@@ -82,26 +99,26 @@ See [Failure clusters](../observability/failure-clusters.md).
 
 ## Gate policy
 
-Rules on eval metrics that determine whether a model passes a stage or is allowed to promote. `required` gates block; `optional` gates allow degradation within tolerance.
+The API name for **pass/fail rules** (see [Pass/fail rules](#passfail-rules)): rules on eval metrics that determine whether a model passes a stage or is allowed to promote. `required` gates block; `optional` gates allow degradation within tolerance.
 
 ## Gold set
 
-The ground-truth labelled set you trust for evaluation. Two parallel surfaces:
+The API name for the **[answer key](#answer-key)**: the ground-truth labelled set you trust for evaluation. Two parallel surfaces:
 
 - **Gold workbench** (Pipeline → Gold workbench) — sampling + reviewer-queue
   flow with versioned `draft → locked` state machine. DB-backed
   (`GoldSetRow` / `GoldSetVersion`). Best for hand-labelling at scale.
-- **Gold set tab** (Pipeline → Gold set) — direct row CRUD + LLM-assisted
+- **Answer Key tab** (Pipeline → Answer Key) — direct row CRUD + LLM-assisted
   generation. JSONL-backed on disk at `data/projects/{id}/gold/gold_dev.jsonl`.
   Best for bootstrapping a small set fast.
 
 Both surfaces share the same on-disk JSONL — workbench rows materialize
-into it, gold-set-tab rows append to it. The evaluator reads either path.
+into it, Answer Key tab rows append to it. The evaluator reads either path.
 See [Evaluation + remediation](../workflows/evaluation-and-remediation.md).
 
 ## Train ↔ gold leakage
 
-When rows in your gold set (the ruler that decides "does the model work?")
+When rows in your answer key (API name: gold set; the ruler that decides "does the model work?")
 also appear in the training data — identical or near-identical copies. A
 leaked gold set makes the eval pass-rate a lie: the model can recite the
 answers from memory, so a green gate no longer means the model generalises.
@@ -110,9 +127,9 @@ catching both exact duplicates (the common bad-split / copy-paste case) and
 near-duplicates (synthetic paraphrases of gold rows bleeding into train,
 detected via token-set Jaccard ≥ 0.9). Any overlap warns; ≥ 10% of gold rows
 blocks. A `GOLD_TEST` leak — the held-out final grade — is called out
-separately as the worst kind. There is no one-click auto-fix (deciding which
+separately as the worst kind (the UI calls it the *final answer key*). There is no one-click auto-fix (deciding which
 copy is canonical is a judgement call); the Coach nudge routes you to re-split
-so the gold set is held out. See
+so the answer key is held out. See
 [Evaluation + remediation](../workflows/evaluation-and-remediation.md).
 
 The same scanner also checks the **prepared splits** (`leakage.split_overlap`):
@@ -140,16 +157,17 @@ report is shown):
   silently turn a stratified split into a uniform one. The manifest lists what
   was inherited (`dedup_inherited_config`), and the result is snapshotted as a
   new prepared version like any Prepare.
-- **`leakage.gold_train_overlap` → "Re-split so gold is held out".** This is a
+- **`leakage.gold_train_overlap` → "Re-split so the answer key is held out".** This is a
   judgement call (which copy is canonical — the training row or the gold row?),
   so BrewSLM will **not** auto-delete. The button scrolls you to the split form
   and explains the one rule: drop the leaked rows from your **training** data;
-  the gold set stays the held-out ruler. Re-prepare once the overlap is gone.
+  the answer key stays the held-out ruler. Re-prepare once the overlap is gone.
 
 ## Probe pack (held-out, platform-authored)
 
-The gold set is the ruler *you* authored — and a newbie's gold set can be easy
-or biased. A **probe pack** is the independent complement: a small, recipe-keyed
+The API name for **[built-in checks](#built-in-checks)**. The answer key (gold
+set) is the ruler *you* authored — and a newbie's answer key can be easy or
+biased. A **probe pack** is the independent complement: a small, recipe-keyed
 set of adversarial probes BrewSLM ships, that you never wrote, so the gate can
 grade against something you didn't choose. Because the platform can't know your
 domain's labels or answers, every probe checks a **property** that must hold for
@@ -168,7 +186,7 @@ Packs are keyed by task profile (classification, instruction_sft, rag_qa,
 structured_extraction, summarization) and viewable on the eval tab. When you run
 an evaluation, the pack runs against the trained model, scores each property,
 and folds an independent `probe_pass_rate` into the eval metrics beside your
-gold-set pass-rate — the panel flips from "Assembled · not yet graded" to a real
+answer-key pass-rate — the **Built-in checks** panel flips from "Assembled · not yet graded" to a real
 per-property result with a ✓/✕ per probe. Classification packs are graded with a
 classifier-head predictor (robustness + degenerate probes); generative shapes
 (instruction_sft, rag_qa, structured_extraction, summarization) are graded with
@@ -182,7 +200,7 @@ verdict came from the `deterministic` check, the `heuristic`, or the `judge`.
 
 ## Hallucination trap
 
-A gold row whose reference answer is *"I don't know"* / *"that's not in the
+An answer-key (gold) row whose reference answer is *"I don't know"* / *"that's not in the
 source"* — designed to test whether the model refuses fabrication. Tagged
 via `is_hallucination_trap: true` on the row. The LLM-gen panel accepts an
 explicit count of traps in its row-mix distribution (qa-sft only). See
@@ -190,7 +208,7 @@ explicit count of traps in its row-mix distribution (qa-sft only). See
 
 ## Row mix (gold set)
 
-The difficulty + hallucination-trap distribution across a qa-sft gold set.
+The difficulty + hallucination-trap distribution across a qa-sft answer key.
 The panel surfaces it as `N entries: X easy / Y medium / Z hard · W traps`
 with a filter dropdown to scan a single bucket. The LLM-gen path accepts
 an explicit `{easy, medium, hard, hallucination_traps}` distribution and
@@ -213,7 +231,7 @@ student share a tokenizer. See [Distillation workflow](../workflows/distillation
 
 ## Label drift
 
-When a project's gold set accumulates `positive` / `Positive` / `Positive (with sentiment)`
+When a project's answer key (gold set) accumulates `positive` / `Positive` / `Positive (with sentiment)`
 as separate labels — silently fragmenting eval metrics. The classification add-form
 surfaces a soft amber-border warning on the Label input when you type a value not
 in the existing vocabulary (case-insensitive). Same soft-warning pattern on the
@@ -234,6 +252,10 @@ Provenance label meaning the value came from real observation. See [Measured vs 
 ## Estimated
 
 Provenance label meaning the value came from a heuristic. Same page.
+
+## Pass/fail rules
+
+The thresholds a model must meet on its eval metrics before it counts as passing or may be promoted (e.g. "exact match ≥ 0.7"). Required rules block; optional rules allow degradation within tolerance. The set of rules a project uses is its **pass/fail rule set**. Shown as **Pass/fail rules** on the Eval tab and the scorecard. API names: *gate* (a single rule; `gate_id`, `min_probe_pass_rate`, …), *gate policy*, and *eval pack* (the rule set, `slm.evaluation-pack/v2`). See [Eval pack](#eval-pack) and [Gate policy](#gate-policy).
 
 ## Plugin contract
 
@@ -350,7 +372,7 @@ The API / catalog name (`/api/starter-packs`, `starter_pack_id`) for what the UI
 
 ## Starter project
 
-A ready-made project you can launch from the project list (**Or begin with a starter project**). Two galleries: **Starter projects — quick demos** (the seeded demo projects with a ready-to-run autopilot plan) and **Starter projects — with data + gold set** (project templates; click **Use this starter**). API: `/api/project-templates` and the demo-project endpoints.
+A ready-made project you can launch from the project list (**Or begin with a starter project**). Two galleries: **Starter projects — quick demos** (the seeded demo projects with a ready-to-run autopilot plan) and **Starter projects — with data + answer key** (project templates; click **Use this starter**). API: `/api/project-templates` and the demo-project endpoints.
 
 ## Stage
 
@@ -359,6 +381,10 @@ One of the 11 canonical pipeline stages (ingestion → export) + three virtual s
 ## Strict mode
 
 Autopilot mode that refuses to take any fallback path; surfaces every blocker verbatim. Reach for it when reproducibility matters more than convenience.
+
+## Suggested answer-key rows
+
+Fresh "the right answer is *I don't know*" rows BrewSLM drafts after a drift check, aimed at the failure patterns your recent evals showed. You accept or reject each one; accepted rows join your answer key. Shown as **Suggested answer-key rows** under **Advanced evaluation**. API name: *drift traps* (`/api/projects/{id}/drift/...`, the drift review queue). See [Hallucination trap](#hallucination-trap).
 
 ## Support bundle
 
@@ -393,9 +419,13 @@ What shape of task the project trains: Q&A (`qa-sft`), classification, span extr
 
 One inference observation pushed to BrewSLM by your serving runtime (status, latency_ms, prompt_tokens, completion_tokens, TTFT). Rolls up into the deployment telemetry window. See [Post-deploy telemetry](../deployment/telemetry.md).
 
+## Test examples
+
+The prepared **test** split from Dataset Prep: rows held back from training so the model is scored on examples it never saw. "Better than base?" on the Eval tab compares the base model and the fine-tuned model on the same test examples. The eval dataset alias `test` always means these rows; the final answer key is used only when the project has no prepared split. API name: the `test` split / `DatasetType.TEST` (`prepared/test.jsonl`), "held-out" in older API docs.
+
 ## Trainability forecast
 
-Pre-training "will this clear gates?" prediction shown above the Preflight button on the Training Config page. Combines task-type-agnostic signals (row count, gold-set diversity, gate-pass probability heuristic) with per-task-type signals dispatched by `task_profile`. Classification adds class-imbalance, per-class minimums, label-vocab fragmentation, and single-class dominance. Span-extraction adds span-offset validity, entity-type coverage, and negative-example presence. Summarization adds summary/document length-ratio outlier detection. Advisory only — never blocks training; the Train button shifts to "Train anyway" when the verdict is amber/red. A snapshot of every cache-miss compute is persisted to `training_forecast_snapshots` and surfaced as a sparkline + verdict-delta strip above the signal list so the user can see whether their last edit moved the needle (60-day retention). See [Training workflow](../workflows/training.md#trainability-forecast).
+Pre-training "will this clear the pass/fail rules?" prediction shown above the Preflight button on the Training Config page. Combines task-type-agnostic signals (row count, answer-key diversity, rule-pass probability heuristic) with per-task-type signals dispatched by `task_profile`. Classification adds class-imbalance, per-class minimums, label-vocab fragmentation, and single-class dominance. Span-extraction adds span-offset validity, entity-type coverage, and negative-example presence. Summarization adds summary/document length-ratio outlier detection. Advisory only — never blocks training; the Train button shifts to "Train anyway" when the verdict is amber/red. A snapshot of every cache-miss compute is persisted to `training_forecast_snapshots` and surfaced as a sparkline + verdict-delta strip above the signal list so the user can see whether their last edit moved the needle (60-day retention). See [Training workflow](../workflows/training.md#trainability-forecast).
 
 ## Training mode
 

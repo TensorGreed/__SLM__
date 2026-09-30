@@ -5,7 +5,22 @@ title: Evaluation + remediation
 
 # Evaluation + remediation
 
-Stage 9 of the [pipeline](pipeline-overview.md) plus the gold-set workbench (stage 3). Evaluation isn't just a number — it's the decision engine for what to fix next. BrewSLM wires the eval pack, the gold set, the failure clusters, and the remediation suggestions into one tight loop.
+Stage 9 of the [pipeline](pipeline-overview.md) plus the answer-key workbench (stage 3). Evaluation isn't just a number — it's the decision engine for what to fix next. BrewSLM wires the pass/fail rules, the answer key, the failure clusters, and the remediation suggestions into one tight loop.
+
+## What the UI calls things
+
+The UI uses plain names for eval data; the API, CLI and file names keep the technical ones.
+
+| In the UI | What it is | API / code name |
+|---|---|---|
+| **Answer key** (practice / final) | Rows you wrote or approved with the correct answer | gold set (`gold_dev` / `gold_test`) |
+| **Test examples** | The prepared test split, held back from training | `test` split (`prepared/test.jsonl`) |
+| **Built-in checks** | Checks BrewSLM writes (robustness, refusal, grounding) | probe pack (`probe_pass_rate`) |
+| **Custom checks** | Checks you write (INV / DIR / MFT) | behavioral tests |
+| **Pass/fail rules** | Metric thresholds a run must meet | gates; the rule set is the eval pack |
+| **Suggested answer-key rows** | "I don't know" rows drafted after a drift check | drift traps |
+
+See the [glossary](../reference/glossary.md#answer-key) for each term.
 
 ## The default view: one summary card
 
@@ -15,22 +30,22 @@ selected run (the latest trained run is picked for you):
 1. **Is it better than the base model?** — verdict: *better*, *worse*, *no
    better*, *not evaluated yet*, or *evaluated, no base-model comparison yet*.
 2. **By how much?** — the headline metric, base → fine-tuned, with the
-   absolute and relative change. Both numbers come from the same held-out
-   split, and the baseline is always **this run's own base model**. Perplexity
+   absolute and relative change. Both numbers come from the same **test
+   examples**, and the baseline is always **this run's own base model**. Perplexity
    (continued pretraining) counts as better when it drops.
-3. **Where does it still fail?** — up to 5 held-out examples it got wrong
+3. **Where does it still fail?** — up to 5 test examples it got wrong
    (Expected / Got), plus how many failed out of how many were evaluated.
 
-If the run hasn't been evaluated yet, **Evaluate this run** queues a held-out
-exact-match eval on the `test` split as a background job (the bell tells you
+If the run hasn't been evaluated yet, **Evaluate this run** queues an
+exact-match eval on the test examples (the `test` split) as a background job (the bell tells you
 when it's done). Real training runs are evaluated against the base model
 automatically when they finish.
 
-`test` always means the prepared test split from Dataset Prep. The gold test
-set is used only when the project has no prepared split, so the base model and
+Test examples always means the prepared test split from Dataset Prep. The final
+answer key (`gold_test`) is used only when the project has no prepared split, so the base model and
 the fine-tuned model are always scored on the same rows.
 
-Everything else — eval packs, gates and the scorecard, the probe pack, failure
+Everything else — pass/fail rules and the scorecard, built-in and custom checks, failure
 clusters, remediation, and the comparison panels — sits under **Advanced
 evaluation**. It is collapsed by default for beginner projects and open for
 everyone else.
@@ -42,27 +57,27 @@ API: `GET /api/projects/{id}/evaluation/summary?experiment_id=` returns
 `experiment_id` to get the latest completed non-baseline run. Held-out eval
 results now store up to 20 failing rows in `details.failures_preview`.
 
-## Step 1 — Build the gold set
+## Step 1 — Build the answer key {#step-1--build-the-gold-set}
 
-The **gold set** is the ground-truth labelled set you trust to grade everything else. Quality > quantity: 50–100 carefully-labelled rows beats 1000 sloppy ones.
+The **answer key** (API name: *gold set*) is the ground-truth labelled set you trust to grade everything else. Rows go into the **practice answer key** (`gold_dev`, scored while you iterate) or the **final answer key** (`gold_test`, kept for the final grade). Neither is a default training source. Quality > quantity: 50–100 carefully-labelled rows beats 1000 sloppy ones.
 
 ### UI
 
-Pipeline → **Gold set** → **Sample N rows**. Pick a strategy:
+Pipeline → **Answer Key** → **Sample N rows**. Pick a strategy:
 
 | Strategy | When |
 |---|---|
-| `random` | First gold set ever, no priors. |
+| `random` | First answer key ever, no priors. |
 | `stratified` | You have labels / classes / intents — sample evenly across them. |
 | `targeted` | You've seen failure clusters — sample rows that match a pattern. |
 
-For each sampled row, paste the gold answer and approve. The workbench tracks `pending` → `in_review` → `approved` / `rejected`. When all rows are approved, submit the version → it locks (draft → locked).
+For each sampled row, paste the correct answer and approve. The workbench tracks `pending` → `in_review` → `approved` / `rejected`. When all rows are approved, submit the version → it locks (draft → locked).
 
-A locked gold version is **immutable**. New rows make a new version.
+A locked answer-key version is **immutable**. New rows make a new version.
 
-### Gold-set diagnostics (V4 ML-native viz)
+### Answer-key diagnostics (V4 ML-native viz)
 
-The Gold-set tab renders a `GoldSetDiagnosticsPanel` above the entry list whenever the gold set has at least a few classification rows. Two complementary views from a single `GET /api/projects/{id}/gold/diagnostics` call:
+The Answer Key tab renders a `GoldSetDiagnosticsPanel` above the entry list whenever the answer key has at least a few classification rows. Two complementary views from a single `GET /api/projects/{id}/gold/diagnostics` call:
 
 - **Class-balance bars** — one row per label sorted descending. The bar shows share-of-total; a dashed line at **15%** marks the same imbalance floor Coach Mode's `class_imbalance` signal fires below, so a bar dropping under the line previews exactly what'll be flagged at training time. Classes below the floor turn red. Header reports total rows, class count, and Shannon entropy.
 - **Class-similarity heatmap** — rows × cols = labels. Each cell is the mean pairwise Jaccard between a sample of rows from each class (default 12 per class):
@@ -70,7 +85,7 @@ The Gold-set tab renders a `GoldSetDiagnosticsPanel` above the entry list whenev
     - **Off-diagonal cells** measure inter-class confusability. ~1.0 = even a perfect classifier can't separate the classes from text alone. ~0.0 = the classes are easy to tell apart.
 - **Cells with `n/a`** = the class doesn't have enough rows for similarity scoring; named in a footnote rather than fabricated as 0.
 
-Non-classification gold sets (span-extraction, summarization, qa-sft) render an empty-state hint — class balance is a classification concept. Span-extraction has its own diversity signals via the trainability forecast (`entity_type_coverage_thin`, `negative_examples_missing`).
+Non-classification answer keys (span-extraction, summarization, qa-sft) render an empty-state hint — class balance is a classification concept. Span-extraction has its own diversity signals via the trainability forecast (`entity_type_coverage_thin`, `negative_examples_missing`).
 
 ### CLI
 
@@ -98,9 +113,9 @@ curl -X POST http://localhost:8000/api/projects/1/gold-sets/sample \
 curl -X POST http://localhost:8000/api/projects/1/gold-sets/1/submit
 ```
 
-## Step 1b — Or: build the gold set with a cloud LLM
+## Step 1b — Or: build the answer key with a cloud LLM {#step-1b--or-build-the-gold-set-with-a-cloud-llm}
 
-Pipeline → **Gold set** (the older tab next to the workbench) carries an
+Pipeline → **Answer Key** (the older tab next to the workbench) carries an
 LLM-assisted path that works across all four task types: **qa-sft**,
 **classification**, **span-extraction**, **summarization**. Use it when:
 
@@ -154,7 +169,7 @@ The four bucket counts sum to the actual row count (replaces the simple
 Count field). The LLM is told the breakdown explicitly + asked to tag
 each row with its `difficulty` + `is_hallucination_trap` fields. Tags
 round-trip into the JSONL via `/gold/import` so you can filter your
-gold set by difficulty later.
+answer key by difficulty later.
 
 ### Review & edit prompt before sending (advanced)
 
@@ -186,9 +201,9 @@ The entries list renders each task type with its own row body:
 
 ### Manual add — per-task-type inline form
 
-The **Add gold row** form below the entries list switches its fields based
+The add-row form (**+ Add Row**) below the entries list switches its fields based
 on the project's task type. For classification it shows Text + a Label
-combobox (`<datalist>` autocompleted from existing gold-row labels). For
+combobox (`<datalist>` autocompleted from existing answer-key labels). For
 span-extraction the form has a Text textarea + an **Entities JSON** editor
 with live offset validation, plus a "Highlight to select" helper:
 
@@ -240,11 +255,11 @@ curl -X POST http://localhost:8000/api/projects/1/gold/add \
   -d '{"text":"Where is my refund?","label":"billing","dataset_type":"gold_dev"}'
 ```
 
-## Eval-pack scaffold (task-type-aware starter)
+## Pass/fail rules scaffold (task-type-aware starter)
 
-If your project doesn't yet have a preferred eval pack set, the Eval tab surfaces a **Scaffolded eval pack** panel under the pack picker. The panel auto-generates a draft tailored to the project's `selected_recipe.recipe_id`:
+If your project doesn't yet have a preferred pass/fail rule set (eval pack), the Eval tab surfaces a **Scaffolded pass/fail rule set** panel under the pack picker. The panel auto-generates a draft tailored to the project's `selected_recipe.recipe_id`:
 
-| Task type | Metrics | Gates |
+| Task type | Metrics | Pass/fail rules (gates) |
 |---|---|---|
 | `classification` | macro_f1, accuracy | `min_macro_f1` ≥ 0.65, `min_accuracy` ≥ 0.70, `min_per_class_f1` ≥ 0.50, optional `min_safety_pass_rate` ≥ 0.93 |
 | `span-extraction` | span_set_f1, span_set_precision, span_set_recall | `min_span_set_f1` ≥ 0.65 + per-side precision/recall thresholds |
@@ -252,7 +267,7 @@ If your project doesn't yet have a preferred eval pack set, the Eval tab surface
 | `qa-sft` | exact_match, f1, llm_judge_pass_rate | `min_exact_match` ≥ 0.45, `min_f1` ≥ 0.60, `min_llm_judge_pass_rate` ≥ 0.75 |
 | `generic-sft`, `code-review` | exact_match/f1/llm_judge_pass_rate | Pragmatic defaults tuned per task type |
 
-Each gate's threshold + required flag is editable inline. Click **Use scaffold** to persist — the draft is saved to `project.runtime_config["scaffolded_evaluation_pack"]` and `evaluation_preferred_pack_id` flips to `evalpack.project.scaffolded`, which the eval pack resolver routes through the new `project_scaffold` source.
+Each rule's threshold + required flag is editable inline. Click **Use scaffold** to persist — the draft is saved to `project.runtime_config["scaffolded_evaluation_pack"]` and `evaluation_preferred_pack_id` flips to `evalpack.project.scaffolded`, which the eval pack resolver routes through the new `project_scaffold` source.
 
 API:
 
@@ -268,11 +283,11 @@ curl -X POST http://localhost:8000/api/projects/1/evaluation/pack-scaffold \
 
 ## Catch problems before training: trainability forecast
 
-The gold set is also the input to the **trainability forecast** (Training Config page). The forecast runs the same task-type-aware signal sweep on the gold set *before* training so you can patch the data shape upfront instead of waiting for the eval to surface it. Signals overlap with the failure clusters below (per-class starvation, label-vocab drift, span-offset rot, summary/doc mismatch) but trigger at design time, not post-mortem. See [Training → Trainability forecast](training.md#trainability-forecast) for the full signal list.
+The answer key is also the input to the **trainability forecast** (Training Config page). The forecast runs the same task-type-aware signal sweep on the answer key *before* training so you can patch the data shape upfront instead of waiting for the eval to surface it. Signals overlap with the failure clusters below (per-class starvation, label-vocab drift, span-offset rot, summary/doc mismatch) but trigger at design time, not post-mortem. See [Training → Trainability forecast](training.md#trainability-forecast) for the full signal list.
 
-## Fix-in-gold-set deep links
+## Fix-in-answer-key deep links
 
-When you expand a failure-cluster card on the Eval tab, a **Fix in gold set** button next to the cluster-augment control deep-links into the gold-set workbench with the LLM-gen panel pre-configured: `distribution.hallucination_traps` defaults to 5 and the focus textarea is prefilled with a one-line summary of the cluster's failure pattern (reason code + classifier explanation). The destination panel shows a dismissible "Generating traps for cluster X" banner so you can verify what was prefilled before clicking Generate. Non-qa-sft recipes still get the focus hint; the trap distribution UI is qa-sft-only.
+When you expand a failure-cluster card on the Eval tab, a **Fix in answer key** button next to the cluster-augment control deep-links into the answer-key workbench with the LLM-gen panel pre-configured: `distribution.hallucination_traps` defaults to 5 and the focus textarea is prefilled with a one-line summary of the cluster's failure pattern (reason code + classifier explanation). The destination panel shows a dismissible "Generating traps for cluster X" banner so you can verify what was prefilled before clicking Generate. Non-qa-sft recipes still get the focus hint; the trap distribution UI is qa-sft-only.
 
 ## Eval comparison + "Fix the gap" rollback
 
@@ -293,13 +308,13 @@ The Eval tab also answers the production buying question — *"is my cheap local
 - **Cost + latency** are labeled by provenance. Frontier figures come from a small **published-reference table** (gpt-4o-mini / gpt-4o / claude-3.5-haiku public pricing + typical latency, `as_of`-stamped). SLM figures are `estimated` from the project's latest model-benchmark sweep (throughput → $/1M tokens at the GPU hourly rate; latency from the same sweep). No sweep yet → the SLM side is `unavailable` with a CTA, never guessed.
 - Pick the comparison target with `?frontier_model_id=` (default `gpt-4o-mini`). API: `GET .../evaluation/frontier-comparison/{experiment_id}`.
 
-> To populate the quality number, evaluate a frontier model on your gold set and point the report at that run (a one-click frontier-eval runner is planned follow-up work).
+> To populate the quality number, evaluate a frontier model on your answer key and point the report at that run (a one-click frontier-eval runner is planned follow-up work).
 
-## Drift-triggered hallucination-trap refresh (admin opt-in)
+## Suggested answer-key rows: drift-triggered hallucination-trap refresh (admin opt-in)
 
-Projects can opt into automatic hallucination-trap refresh from the **Drift-trap review queue** panel under the Eval tab. When auto-refresh is off, the panel shows an opt-in banner with a one-click "Enable auto-refresh" button; when it's on, a status chip surfaces the per-refresh trap count and a "Disable" link. Either way, the panel's "Generate now" button always works — it hits the manual `POST /drift/refresh-traps` endpoint and reloads the queue.
+Projects can opt into automatic hallucination-trap refresh from the **Suggested answer-key rows** panel under the Eval tab (API name: *drift traps*). When auto-refresh is off, the panel shows an opt-in banner with a one-click "Enable auto-refresh" button; when it's on, a status chip surfaces the per-refresh trap count and a "Disable" link. Either way, the panel's "Generate now" button always works — it hits the manual `POST /drift/refresh-traps` endpoint and reloads the queue.
 
-Each pending row carries the cluster pattern (`reason_code`) that motivated it plus a task-type-shaped preview of the trap. Per-row Accept and Reject buttons triage in place: accepting appends the row to `gold_test.jsonl`; rejecting marks the row in the audit trail. Switch the status filter to **Accepted**, **Rejected**, or **All (audit)** to see triaged rows after the fact.
+Each pending row carries the cluster pattern (`reason_code`) that motivated it plus a task-type-shaped preview of the trap. Per-row Accept and Reject buttons triage in place: accepting appends the row to the final answer key (`gold_test.jsonl`); rejecting marks the row in the audit trail. Switch the status filter to **Accepted**, **Rejected**, or **All (audit)** to see triaged rows after the fact.
 
 Settings persist under `runtime_config.drift_refresh_traps` (enabled + count, count clamped to [1, 20]). When opted-in, every per-deployment drift check fires the trap-refresh runner alongside its normal eval, populating the queue with fresh traps targeting the last 7 days of failure-cluster patterns.
 
@@ -326,9 +341,9 @@ The runner falls back to deterministic placeholder traps when no LLM API key is 
 
 Every click on a suggested-action button — from the trainability forecast panel and from the failure-cluster cards — fires a fire-and-forget `POST /api/projects/{id}/remediation/events` with `{kind, params, outcome}`. When the next eval result lands for the project, `evaluate_experiment_auto_gates` stamps every pending event in the window with `evaluation_lift_pct = (current_pass_rate - previous_pass_rate) × 100`. `GET /api/admin/remediation/outcomes?kind=<action_kind>` aggregates by kind with median + mean lift, positive-lift count, and a positive-lift rate so admins can spot suggestion sources that get clicked but don't correlate with improvements. No UI in v1 — admin reads the JSON.
 
-## Step 2 — Pick an eval pack
+## Step 2 — Pick pass/fail rules
 
-An **eval pack** bundles task-aware metric schemas + gate policies. Built-in packs cover the common cases; you can scaffold custom packs via [Extensions → Scaffold](../extensions/scaffold.md).
+A project's **pass/fail rule set** (API name: *eval pack*) bundles task-aware metric schemas + gate policies — the individual **pass/fail rules**. Built-in packs cover the common cases; you can scaffold custom packs via [Extensions → Scaffold](../extensions/scaffold.md).
 
 | Pack id | Use it for |
 |---|---|
@@ -348,7 +363,7 @@ Each pack's task spec defines:
 
 After every **real** training run completes, BrewSLM queues a `post_training_lift_eval` job; watch it in the notification bell. The job does three things:
 
-1. **Evaluates the base model.** It runs the un-fine-tuned base model on the held-out `test` split (up to 100 rows, greedy decoding). The result is cached per base model, and it's reused until `prepared/test.jsonl` changes.
+1. **Evaluates the base model.** It runs the un-fine-tuned base model on the test examples (the `test` split) (up to 100 rows, greedy decoding). The result is cached per base model, and it's reused until `prepared/test.jsonl` changes.
 2. **Evaluates your run.** It runs the fine-tuned checkpoint on the same split with the same settings.
 3. **Reports the lift.** It reports the headline metric, for example `exact_match: 0.10 → 0.80 (better than base)`. The **Did SFT help?** panel on the Eval tab shows the full comparison for the selected run. It always compares against the baseline for **that run's base model**, never another model's.
 
@@ -367,9 +382,9 @@ API: `GET /api/projects/{id}/evaluation/sft-lift-summary?experiment_id=<run>` pi
 
 ### UI
 
-Pipeline → **Eval** → **Run evaluation**. Pick the trained experiment + eval pack. Click **Start**. The page fills with:
+Pipeline → **Eval** → **Run evaluation**. Pick the trained experiment + pass/fail rule set (eval pack). Click **Start**. The page fills with:
 
-- **Gate row per metric** — pass / fail + score.
+- **Pass/fail rule row per metric** — pass / fail + score.
 - **Classification breakdown** — for classification eval results, a per-class P/R/F1 bar chart (sorted by F1 ascending — the worst class lands at the top, the row the user actually needs to look at) plus a confusion-matrix heatmap (gold rows × predicted columns, diagonal green, off-diagonal red, intensity scaled by row share). An `unparsed` column appears whenever the model emitted a label outside the candidate set — distinct visual treatment so "wrong known class" and "emitted gibberish" don't read the same. See `ClassificationChartsPanel`.
 - **Failure cluster card** below — folds errors by `(reason_code, signature)`.
 - **Remediation suggestions card** — per cluster, what to try next.
@@ -413,7 +428,7 @@ The eval-stage failure clusters (P12) live separately from the cross-stage [fail
 | Safety / policy violation | Output crosses a guardrail. | Tighten the domain pack's safety hook + retrain with refusal examples. |
 | Off-by-one (classification) | Confusing two adjacent labels. | More examples of the boundary case. |
 
-Click any cluster → **Exemplars** → see the actual model output vs gold. The drilldown also links to the originating RunEvent + the dataset row id.
+Click any cluster → **Exemplars** → see the actual model output vs the answer key. The drilldown also links to the originating RunEvent + the dataset row id.
 
 ## Step 5 — Apply remediation
 
@@ -454,22 +469,22 @@ brewslm eval compare --project 1 --experiment-a 42 --experiment-b 43
 curl "http://localhost:8000/api/projects/1/eval/compare?a=42&b=43"
 ```
 
-## Promotion gate mindset
+## Pass/fail rules mindset
 
-The eval pack's gate policy is your **safety rail**, not bureaucracy. A good policy answers:
+Your pass/fail rules (the eval pack's gate policy) are your **safety rail**, not bureaucracy. A good policy answers:
 
-- **Must pass** — `required` gates that block promote on fail.
-- **Can degrade slightly** — `optional` gates with a tolerance.
+- **Must pass** — `required` rules that block promote on fail.
+- **Can degrade slightly** — `optional` rules with a tolerance.
 - **Always unacceptable** — safety / hallucination thresholds with no tolerance.
 
-Eval gates feed directly into the [Deployability score](../deployment/rollback-and-score.md) and the deployment promote check. Don't loosen gates just to pass — that's how regressions ship.
+Pass/fail rules feed directly into the [Deployability score](../deployment/rollback-and-score.md) and the deployment promote check. Don't loosen rules just to pass — that's how regressions ship.
 
 ## Reason codes you might hit
 
 | Code | Means |
 |---|---|
 | `eval_runtime_error` | Generic failure inside the eval runner. Check the timeline. |
-| `eval_dataset_missing` | Eval pack referenced a dataset (e.g., gold set) that no longer exists. |
+| `eval_dataset_missing` | Eval pack referenced a dataset (e.g., the answer key) that no longer exists. |
 | `eval_judge_unavailable` | LLM judge call failed (provider down, quota, config). The eval will fall back to non-judge metrics; see decision log. |
 
 ## Next

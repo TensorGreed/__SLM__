@@ -16,7 +16,7 @@ export const TAB_TIP: Record<TabKey, string> = {
     dataprep: 'Split your data into train / validation / test sets the trainer can consume.',
     tokenization: 'See how your text becomes tokens — catch truncation and out-of-vocabulary surprises before you train.',
     training: 'Pick a base model and hyperparameters on the Training Config page, then launch a run. Live metrics appear here.',
-    eval: 'Score the trained model against your gold set and the independent probe pack — honest numbers, gates that can fail.',
+    eval: 'Score the trained model against your answer key and the built-in checks — honest numbers, pass/fail rules that can fail.',
     compression: 'Shrink the model (quantize / distill) so it fits your deployment target.',
     export: 'Package the finished model for download or deployment. You made it!',
 };

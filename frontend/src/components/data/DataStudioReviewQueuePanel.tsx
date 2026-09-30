@@ -133,11 +133,11 @@ interface DataStudioReviewQueuePanelProps {
 const REVIEW_VERDICT_COPY: Record<DataStudioReviewQueue['verdict'], { label: string; detail: string }> = {
     empty: {
         label: 'No queue',
-        detail: 'Create synthetic, Gold Set, or annotation review work to start a queue.',
+        detail: 'Create synthetic, answer key, or annotation review work to start a queue.',
     },
     attention: {
         label: 'Needs review',
-        detail: 'Review work is open across synthetic, Gold Set, or annotation workflows.',
+        detail: 'Review work is open across synthetic, answer key, or annotation workflows.',
     },
     ready: {
         label: 'Clear',

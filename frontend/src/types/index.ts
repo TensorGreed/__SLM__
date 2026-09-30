@@ -632,7 +632,7 @@ export interface StarterPackCatalogResponse {
 export const PIPELINE_TABS = [
     { key: 'data', label: 'Data', icon: '📂', stage: 'ingestion' },
     { key: 'cleaning', label: 'Cleaning', icon: '🧹', stage: 'cleaning' },
-    { key: 'goldset', label: 'Gold Set', icon: '🏆', stage: 'gold_set' },
+    { key: 'goldset', label: 'Answer Key', icon: '🏆', stage: 'gold_set' },
     { key: 'synthetic', label: 'Synthetic', icon: '🧪', stage: 'synthetic' },
     { key: 'dataprep', label: 'Dataset Prep', icon: '📋', stage: 'dataset_prep' },
     { key: 'tokenization', label: 'Tokenization', icon: '🔤', stage: 'tokenization' },

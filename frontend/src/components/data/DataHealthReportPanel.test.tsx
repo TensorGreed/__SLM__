@@ -476,9 +476,9 @@ describe('DataHealthReportPanel', () => {
                         {
                             id: 'leakage.gold_train_overlap',
                             severity: 'block' as const,
-                            headline: '3 of 5 gold rows (60%) also appear in training data — including 2 GOLD_TEST row(s) (your final grade).',
-                            plain_english: 'Some of your gold-set rows also appear in your training data.',
-                            why_it_matters: 'The gold set is the ruler that decides whether your model works.',
+                            headline: '3 of 5 answer-key rows (60%) also appear in training data — including 2 final answer-key row(s).',
+                            plain_english: 'Some of your answer-key rows also appear in your training data.',
+                            why_it_matters: 'The answer key is the ruler that decides whether your model works.',
                             suggested_action: { kind: 'navigate', label: 'Re-split so gold is held out', target: 'dataprep' },
                             context: {
                                 examples: [

@@ -105,11 +105,11 @@ export default function RerouteRecommendationPanel({ projectId, evalResultId }: 
                 <RerouteCard
                     flavor="try-rag"
                     title="This task looks more like a RAG fit"
-                    subtitle={`Your eval is at ${formatPassRate(analysis.pass_rate)}. Switching approach would keep your gold set.`}
+                    subtitle={`Your eval is at ${formatPassRate(analysis.pass_rate)}. Switching approach would keep your answer key.`}
                     rationale={analysis.recommendation.rationale}
                     confidence={analysis.recommendation.confidence}
                     signals={firedSignals}
-                    primaryLabel="Switch to RAG (keeps your gold set)"
+                    primaryLabel="Switch to RAG (keeps your answer key)"
                     onPrimaryClick={() => setConfirming(true)}
                     primaryDisabled={cloning}
                 />
@@ -311,9 +311,9 @@ function SwitchToRagConfirmModal({
                         <strong>#{projectId}</strong>:
                     </p>
                     <ul>
-                        <li>Copies your gold set + raw / prepared data forward</li>
+                        <li>Copies your answer key + raw / prepared data forward</li>
                         <li>Uses the base model with retrieval (no training run)</li>
-                        <li>Builds the BM25 retrieval index from your gold rows</li>
+                        <li>Builds the BM25 retrieval index from your answer-key rows</li>
                         <li>
                             Links back to this project as a parent — you can keep
                             iterating on this SFT run independently

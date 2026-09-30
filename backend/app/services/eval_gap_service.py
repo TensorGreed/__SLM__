@@ -112,16 +112,16 @@ _LAYMAN: dict[str, dict[str, str]] = {
         "why": "Eval gaps depend on knowing the task shape (classification vs span vs qa-sft). Choose a task type to enable the scan.",
     },
     "eval_gaps.archetype_coverage_low": {
-        "plain": "Your gold set looks materially smaller, less balanced, or less diverse than the gold sets of task types that have trained successfully in the past.",
-        "why": "Archetypes are built from prior-passing projects — when your gold set sits below their p25 on multiple features, the model you train on it will likely underperform too. Add rows, rebalance classes, or improve diversity until the gold set lands inside the band.",
+        "plain": "Your answer key looks materially smaller, less balanced, or less diverse than the answer keys of task types that have trained successfully in the past.",
+        "why": "Archetypes are built from prior-passing projects — when your answer key sits below their p25 on multiple features, the model you train on it will likely underperform too. Add rows, rebalance classes, or improve diversity until the answer key lands inside the band.",
     },
     "eval_gaps.no_regression_baseline": {
         "plain": "You don't have a promoted baseline checkpoint to compare new runs against.",
         "why": "Without a baseline every eval reads as 'is this number good?' instead of 'did this number beat my last best?'. Promote a green run's checkpoint as the baseline so new runs surface as regressions or wins rather than standalone numbers.",
     },
     "eval_gaps.train_eval_label_kl_high": {
-        "plain": "The label distribution in your training set doesn't match the label distribution in your gold/eval set.",
-        "why": "Eval is supposed to predict prod performance. When the train and eval distributions don't match, the F1 you ship doesn't tell you what users will see — usually the prod number is much worse. Either rebalance the gold set to match training or rebalance training to match what's in the wild.",
+        "plain": "The label distribution in your training set doesn't match the label distribution in your answer key.",
+        "why": "Eval is supposed to predict prod performance. When the train and eval distributions don't match, the F1 you ship doesn't tell you what users will see — usually the prod number is much worse. Either rebalance the answer key to match training or rebalance training to match what's in the wild.",
     },
 }
 
@@ -236,7 +236,7 @@ async def _archetype_coverage_signal(
             id="eval_gaps.archetype_coverage_low",
             severity="ok",
             headline=(
-                f"Gold set lands inside the task type's archetype band on "
+                f"Answer key lands inside the task type's archetype band on "
                 f"all {total} features."
             ),
             context={
@@ -800,7 +800,7 @@ async def preview_patch(
             raise ValueError(
                 "No completed run with pass_rate ≥ "
                 f"{BASELINE_PROMOTE_MIN_PASS_RATE} found — nothing to "
-                "promote. Train a run that clears the gate first."
+                "promote. Train a run that passes your pass/fail rules first."
             )
         exp, ckpt, pass_rate = candidate
         return {
@@ -848,9 +848,9 @@ async def preview_patch(
             or len(eval_labels) < KL_MIN_EVAL_ROWS
         ):
             raise ValueError(
-                "Not enough labelled rows in TRAIN + GOLD_DEV to plan "
+                "Not enough labelled rows in training + the practice answer key to plan "
                 f"a rebalance (need ≥ {KL_MIN_TRAIN_ROWS} train and "
-                f"≥ {KL_MIN_EVAL_ROWS} dev rows)."
+                f"≥ {KL_MIN_EVAL_ROWS} practice answer-key rows)."
             )
         current, target, kl_before, kl_after = _compute_rebalance_plan(
             train_labels, eval_labels,
@@ -863,12 +863,12 @@ async def preview_patch(
             "project_id": int(project_id),
             "signal_id": signal_id,
             "patch_kind": kind,
-            "patch_label": "Trim GOLD_DEV toward train distribution",
+            "patch_label": "Trim the practice answer key toward the training distribution",
             "plain_english": (
-                "Drops over-represented rows from GOLD_DEV so its "
+                "Drops over-represented rows from the practice answer key so its "
                 "label distribution matches your training set. "
-                "GOLD_TEST is intentionally untouched (held-out "
-                "integrity). Trim-only — under-represented classes "
+                "The final answer key is intentionally untouched (it "
+                "stays an honest final grade). Trim-only — under-represented classes "
                 "are left alone to avoid duplicate-row vanity data."
             ),
             "before": {"counts": current, "kl_nats": round(kl_before, 4)},
@@ -912,7 +912,7 @@ async def apply_patch(
         path = preview.get("gold_dev_path")
         target_counts = preview["after"]["counts"]
         if not path:
-            raise ValueError("No GOLD_DEV file found to rewrite.")
+            raise ValueError("No practice answer-key file found to rewrite.")
         gold_path = Path(path)
         _, rows = await _load_gold_dev_jsonl(db, project_id)
         # Group rows by label; sample down to the target per class.

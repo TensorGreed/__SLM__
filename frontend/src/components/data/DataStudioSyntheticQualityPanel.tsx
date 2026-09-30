@@ -351,7 +351,7 @@ export default function DataStudioSyntheticQualityPanel({
                     </small>
                 </div>
                 <div>
-                    <strong>Gold anchors</strong>
+                    <strong>Answer-key anchors</strong>
                     <small>
                         {formatNumber(analytics.quality_bands.gold_similarity.gold_anchor_rows)} anchors ·{' '}
                         {formatNumber(analytics.quality_bands.gold_similarity.low_similarity_rows)} low similarity

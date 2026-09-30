@@ -79,7 +79,7 @@ describe('BehavioralTestsSection', () => {
         mockGetSequence(EMPTY_BT_RESPONSE, EMPTY_SLICES_RESPONSE);
         render(<BehavioralTestsSection projectId={1} />);
         await waitFor(() => {
-            expect(screen.getByText(/No test.* defined yet/i)).toBeInTheDocument();
+            expect(screen.getByText(/No check.* defined yet/i)).toBeInTheDocument();
         });
         // Both endpoints were hit in parallel on mount.
         const urls = apiMock.get.mock.calls.map((c) => c[0]);
@@ -183,7 +183,7 @@ describe('BehavioralTestsSection', () => {
         });
 
         await user.click(screen.getByTestId('bt-gate-typo_invariance'));
-        const dialog = await screen.findByRole('dialog', { name: /Gate this test/i });
+        const dialog = await screen.findByRole('dialog', { name: /Add a pass\/fail rule for this check/i });
         // Top-level metric_id always present.
         expect(within(dialog).getByText('behavioral.typo_invariance.pass_rate')).toBeInTheDocument();
         // Per-slice variants — one per slice from the slice_definitions load.
@@ -210,7 +210,7 @@ describe('BehavioralTestsSection', () => {
         await waitFor(() => expect(screen.getByTestId('bt-item-0-id')).toBeInTheDocument());
 
         await user.click(screen.getByTestId('bt-gate-typo_invariance'));
-        const dialog = await screen.findByRole('dialog', { name: /Gate this test/i });
+        const dialog = await screen.findByRole('dialog', { name: /Add a pass\/fail rule for this check/i });
         // Top-level still present.
         expect(within(dialog).getByText('behavioral.typo_invariance.pass_rate')).toBeInTheDocument();
         // No per-slice header.

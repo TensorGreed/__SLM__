@@ -90,7 +90,7 @@ test('Video 02 — BrewSLM Quickstart full arc', async ({ page }) => {
     await clickTab('Cleaning', 'v02-cleaning-tab.png');
     // Gold Set fullPage spans all 200 rows (~22000px). Capture viewport-
     // only so the screenshot is usable for narration / docs.
-    await clickTab('Gold Set', 'v02-goldset-tab.png', false);
+    await clickTab('Answer Key', 'v02-goldset-tab.png', false);
     await clickTab('Dataset Prep');
     await clickTab('Training', 'v02-training-tab-empty.png');
     await clickTab('Data');

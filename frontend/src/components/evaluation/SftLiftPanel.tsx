@@ -56,7 +56,7 @@ function formatAbsDelta(d: number): string {
 
 function GateBadge({ status }: { status: SftLiftGateStatus }) {
     const labels: Record<SftLiftGateStatus, { label: string; tone: string }> = {
-        cleared: { label: '✓ gate cleared by training', tone: 'success' },
+        cleared: { label: '✓ pass/fail rules passed after training', tone: 'success' },
         still_failing: { label: '❌ still below threshold', tone: 'error' },
         regressed: { label: '⚠ regressed — baseline passed, trained fails', tone: 'warning' },
         always_passed: { label: '✓ already passing pre-SFT', tone: 'success' },
@@ -397,7 +397,7 @@ export default function SftLiftPanel({
             {gate_status.length > 0 && (
                 <div data-testid="sft-lift-gate-rows">
                     <h5 style={{ margin: '0 0 var(--space-xs)' }}>
-                        Gate status against{' '}
+                        Pass/fail rules from{' '}
                         <code>{summary.eval_pack_id || 'evalpack.general.default'}</code>
                         {' '}·{' '}
                         <span data-testid="sft-lift-gate-summary">

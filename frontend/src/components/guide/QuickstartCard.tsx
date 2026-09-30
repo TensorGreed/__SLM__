@@ -329,7 +329,7 @@ export default function QuickstartCard({
                         showImportToTrainNudge && importState.status === 'success'
                             ? {
                                 testid: 'quickstart-train-nudge',
-                                message: `Imported ${importState.result.source_row_count} rows + ${importState.result.gold_row_count} gold-set entries + train/val/test splits. Train a model on them next.`,
+                                message: `Imported ${importState.result.source_row_count} rows + ${importState.result.gold_row_count} answer-key entries + train/val/test splits. Train a model on them next.`,
                                 onDismiss: () => dismissNudge(NUDGE_IMPORT_TO_TRAIN),
                             }
                             : null
@@ -344,7 +344,7 @@ export default function QuickstartCard({
                     description={
                         evalState.status === 'success'
                             ? `Eval queued (job #${evalState.result.job_id}) — bell will notify when ready.`
-                            : 'Runs eval on the latest experiment against your gold/test split.'
+                            : 'Runs eval on the latest experiment against your test examples.'
                     }
                     state={evalState}
                     onRun={runEval}
@@ -356,7 +356,7 @@ export default function QuickstartCard({
                         showTrainToEvalNudge && trainState.status === 'success'
                             ? {
                                 testid: 'quickstart-eval-nudge',
-                                message: `Experiment #${trainState.result.experiment_id} started on ${trainState.result.base_model}. Once it's done, evaluate against the gold set.`,
+                                message: `Experiment #${trainState.result.experiment_id} started on ${trainState.result.base_model}. Once it's done, evaluate against the answer key.`,
                                 onDismiss: () => dismissNudge(NUDGE_TRAIN_TO_EVAL),
                             }
                             : null

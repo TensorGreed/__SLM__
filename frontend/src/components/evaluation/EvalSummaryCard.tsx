@@ -117,7 +117,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                             Run #{runId}
                             {summary.trained?.experiment_name ? ` · ${summary.trained.experiment_name}` : ''}
                             {summary.baseline?.base_model ? ` vs base ${summary.baseline.base_model}` : ''}
-                            {summary.evaluated_samples ? ` · ${summary.evaluated_samples} held-out examples` : ''}
+                            {summary.evaluated_samples ? ` · ${summary.evaluated_samples} test examples` : ''}
                         </p>
                     )}
                 </div>
@@ -150,7 +150,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                 <div className="eval-summary__failures" data-testid="eval-summary-failures">
                     <h4>
                         Where it still fails
-                        {summary.failed_count ? ` — ${summary.failed_count} of ${summary.evaluated_samples ?? '?'} held-out examples` : ''}
+                        {summary.failed_count ? ` — ${summary.failed_count} of ${summary.evaluated_samples ?? '?'} test examples` : ''}
                     </h4>
                     <ol>
                         {summary.failures.map((failure, index) => (
@@ -167,7 +167,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
             )}
             {summary.eval_type === 'perplexity' && (
                 <p className="eval-summary__message">
-                    Measured by held-out perplexity (lower is better) — continued pretraining on your documents has no
+                    Measured by perplexity on test examples (lower is better) — continued pretraining on your documents has no
                     right/wrong answers per row.
                 </p>
             )}

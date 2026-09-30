@@ -143,7 +143,7 @@ describe('ProbePackPanel', () => {
         );
         const score = screen.getByTestId('probe-pack-score');
         // Weighted headline (25%) with the raw rate (50%) shown for honesty.
-        expect(score).toHaveTextContent('Weighted probe pass-rate');
+        expect(score).toHaveTextContent('Weighted built-in check pass rate');
         expect(score).toHaveTextContent('25%');
         expect(score).toHaveTextContent('raw 50%');
         expect(score).toHaveTextContent('independent of');
@@ -239,10 +239,10 @@ describe('ProbePackPanel', () => {
         render(<ProbePackPanel projectId={7} onOpenRun={vi.fn()} />);
         const readout = await screen.findByTestId('probe-pack-trend-readout');
         // Default readout = latest run (probe 70%).
-        expect(readout).toHaveTextContent('probe 70%');
+        expect(readout).toHaveTextContent('built-in checks 70%');
         // Hover the older point → readout switches to it (probe 50%).
         await user.hover(screen.getByTestId('probe-spark-point-0'));
-        expect(screen.getByTestId('probe-pack-trend-readout')).toHaveTextContent('probe 50%');
+        expect(screen.getByTestId('probe-pack-trend-readout')).toHaveTextContent('built-in checks 50%');
     });
 
     it('renders no sparkline with fewer than 2 history points', async () => {

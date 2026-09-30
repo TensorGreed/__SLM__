@@ -112,7 +112,7 @@ describe('GoldSetDiagnosticsPanel', () => {
         });
         render(<GoldSetDiagnosticsPanel projectId={7} />);
         await waitFor(() => {
-            expect(screen.getByTestId('gold-diag-empty').textContent).toMatch(/No gold rows yet/);
+            expect(screen.getByTestId('gold-diag-empty').textContent).toMatch(/No answer-key rows yet/);
         });
     });
 

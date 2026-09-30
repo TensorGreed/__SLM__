@@ -117,7 +117,7 @@ test('Video 02 — narrated take', async ({ page }) => {
 
     // ── Section: gold set (viewport-only screenshot) ─────────────────
     sectionStart = Date.now();
-    await page.locator('button.tab[title="Gold Set"]').click();
+    await page.locator('button.tab[title="Answer Key"]').click();
     await page.waitForTimeout(800);
     await focusOn(page, '.tab-content');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v02n-goldset-tab.png`, fullPage: false });

@@ -648,7 +648,7 @@ def _signal_row_count(
             ),
             "detail": (
                 f"You're {deficit} rows short of the task type's recommended "
-                f"minimum. Training will likely fail its eval gates."
+                f"minimum. Training will likely fail its pass/fail rules."
             ),
             "suggested_action": {
                 "kind": "synth_augment",
@@ -694,7 +694,7 @@ def _signal_goldset_diversity(gold_rows: list[dict[str, Any]]) -> tuple[Forecast
                 "id": "goldset_diversity_low",
                 "severity": "ok",
                 "headline": "Not enough rows to score diversity.",
-                "detail": "Need at least 2 gold rows.",
+                "detail": "Need at least 2 answer-key rows.",
                 "suggested_action": None,
             },
             1.0,
@@ -709,7 +709,7 @@ def _signal_goldset_diversity(gold_rows: list[dict[str, Any]]) -> tuple[Forecast
                 "id": "goldset_diversity_low",
                 "severity": "warn",
                 "headline": (
-                    f"Gold-set rows look similar to each other "
+                    f"Answer-key rows look similar to each other "
                     f"(mean overlap {mean_jaccard:.2f})."
                 ),
                 "detail": (
@@ -729,7 +729,7 @@ def _signal_goldset_diversity(gold_rows: list[dict[str, Any]]) -> tuple[Forecast
         {
             "id": "goldset_diversity_low",
             "severity": "ok",
-            "headline": f"Gold-set diversity looks healthy (overlap {mean_jaccard:.2f}).",
+            "headline": f"Answer-key diversity looks healthy (overlap {mean_jaccard:.2f}).",
             "detail": "Rows vary enough that the model has signal to learn from.",
             "suggested_action": None,
         },
@@ -758,12 +758,12 @@ def _signal_gate_pass_probability(
 
     if prob >= 0.65:
         severity: Literal["ok", "warn", "block"] = "ok"
-        headline = f"Predicted gate-pass probability: ~{pct}%"
+        headline = f"Predicted chance of passing your pass/fail rules: ~{pct}%"
         detail = "Most signals look healthy. Expect a usable first training run."
         action: dict | None = None
     elif prob >= 0.40:
         severity = "warn"
-        headline = f"Predicted gate-pass probability: ~{pct}%"
+        headline = f"Predicted chance of passing your pass/fail rules: ~{pct}%"
         detail = (
             "Borderline configuration. The model may pass or fail; "
             "addressing the warnings above improves your odds."
@@ -771,10 +771,10 @@ def _signal_gate_pass_probability(
         action = None
     else:
         severity = "warn"
-        headline = f"Predicted gate-pass probability: ~{pct}%"
+        headline = f"Predicted chance of passing your pass/fail rules: ~{pct}%"
         detail = (
             "Multiple signals suggest the first training run will not "
-            "clear gates. Address the issues above before training, "
+            "pass your pass/fail rules. Address the issues above before training, "
             "or expect to iterate."
         )
         action = {
@@ -959,7 +959,7 @@ def _signal_label_vocab_fragmented(counts: dict[str, int]) -> ForecastSignal | N
         ),
         "detail": (
             f"Fragmented: {'; '.join(rendered_groups)}{suffix}. The trainer "
-            f"treats each as a distinct class; merge them in the gold set "
+            f"treats each as a distinct class; merge them in the answer key "
             f"so the model learns the canonical label."
         ),
         "suggested_action": {
@@ -993,7 +993,7 @@ def _signal_single_class_dominance(counts: dict[str, int]) -> ForecastSignal | N
         "id": "single_class_dominance",
         "severity": "warn",
         "headline": (
-            f"'{top_label}' is {fraction:.0%} of the gold set — the model "
+            f"'{top_label}' is {fraction:.0%} of the answer key — the model "
             f"will default to it."
         ),
         "detail": (
@@ -1096,10 +1096,10 @@ def _signal_format_consistency(
     return {
         "id": "format_inconsistency",
         "severity": severity,
-        "headline": f"{len(invalid_row_ids)} gold rows have invalid span structures.",
+        "headline": f"{len(invalid_row_ids)} answer-key rows have invalid span structures.",
         "detail": (
             f"{bad_frac:.0%} of rows fail schema validation. The model "
-            f"can't learn a structure that isn't consistent in the gold set."
+            f"can't learn a structure that isn't consistent in the answer key."
         ),
         "suggested_action": {
             "kind": "fix_gold_rows",
@@ -1141,7 +1141,7 @@ def _signal_entity_type_coverage(gold_rows: list[dict[str, Any]]) -> ForecastSig
             "id": "entity_type_coverage_thin",
             "severity": "ok",
             "headline": (
-                f"Gold set covers {len(types)} entity types — above the "
+                f"Answer key covers {len(types)} entity types — above the "
                 f"{ENTITY_TYPE_COVERAGE_MIN}-type minimum."
             ),
             "detail": f"Types: {', '.join(sorted(types))}.",
@@ -1153,7 +1153,7 @@ def _signal_entity_type_coverage(gold_rows: list[dict[str, Any]]) -> ForecastSig
         "id": "entity_type_coverage_thin",
         "severity": severity,
         "headline": (
-            f"Only {len(types)} entity type(s) in the gold set — task type "
+            f"Only {len(types)} entity type(s) in the answer key — task type "
             f"benefits from at least {ENTITY_TYPE_COVERAGE_MIN}."
         ),
         "detail": (
@@ -1268,7 +1268,7 @@ def _signal_negative_examples_missing(gold_rows: list[dict[str, Any]]) -> Foreca
                 f"learn 'sometimes there's nothing to extract'."
             ),
             "detail": (
-                f"Recommended: 10-20% of the gold set as rows with empty "
+                f"Recommended: 10-20% of the answer key as rows with empty "
                 f"entities so the model doesn't over-extract."
             ),
             "suggested_action": None,
@@ -1277,7 +1277,7 @@ def _signal_negative_examples_missing(gold_rows: list[dict[str, Any]]) -> Foreca
     return {
         "id": "negative_examples_missing",
         "severity": "warn",
-        "headline": "No negative examples in the gold set.",
+        "headline": "No negative examples in the answer key.",
         "detail": (
             "Every row has at least one span. Without rows that have an "
             "empty entities list, the model learns 'always extract "

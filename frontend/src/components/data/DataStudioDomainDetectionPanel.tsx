@@ -43,8 +43,8 @@ const DOMAIN_VERDICT_COPY: Record<DataStudioDomainDetection['verdict'], { label:
 const DATASET_TYPE_LABELS: Record<string, string> = {
     raw: 'Raw',
     cleaned: 'Cleaned',
-    gold_dev: 'Gold dev',
-    gold_test: 'Gold test',
+    gold_dev: 'Practice answer key',
+    gold_test: 'Final answer key',
     synthetic: 'Synthetic',
     train: 'Train',
     validation: 'Validation',

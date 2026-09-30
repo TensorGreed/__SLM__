@@ -239,11 +239,11 @@ export default function BehavioralResultsTable({ metrics }: BehavioralResultsTab
             data-testid="behavioral-results-table"
         >
             <header className="behavioral-results__header">
-                <h4>Behavioral tests</h4>
+                <h4>Your custom checks</h4>
                 <p className="behavioral-results__hint">
-                    Pass-rate per test from the behavioral runner —
-                    one row per authored test, independent of whether
-                    a gate references it. Click <code>▶</code> on a
+                    Pass rate per check from the custom-check runner —
+                    one row per authored check, independent of whether
+                    a pass/fail rule references it. Click <code>▶</code> on a
                     row to see the per-slice breakdown.
                 </p>
             </header>

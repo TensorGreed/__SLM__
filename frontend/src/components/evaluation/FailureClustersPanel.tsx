@@ -425,9 +425,9 @@ export default function FailureClustersPanel({
                                                         : route.path,
                                                 );
                                             }}
-                                            title="Generate 5 hallucination traps for this cluster in the gold-set workbench"
+                                            title="Generate 5 hallucination traps for this cluster in the answer-key workbench"
                                         >
-                                            Fix in gold set
+                                            Fix in answer key
                                         </button>
                                         {cluster.classifier_reason && (
                                             <p className="failure-cluster-reason">{cluster.classifier_reason}</p>

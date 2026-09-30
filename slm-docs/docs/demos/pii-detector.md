@@ -18,7 +18,7 @@ land in a fully-seeded project:
 
 - **61 training rows** of synthetic chat / log / form / DM-style
   snippets with entity offsets pre-labelled.
-- **200 gold rows** for held-out evaluation. Coverage: all 10 entity
+- **200 answer-key (gold) rows** for evaluation. Coverage: all 10 entity
   types, 1–4 entities per row (mean 2.4), char offsets verified by
   construction. 200 is the literature sweet spot for narrow-task eval
   — small enough to label well, large enough that a single mislabel
@@ -157,7 +157,7 @@ both. One prediction can't free-pass two gold spans.
 ### Compliance-grade gating
 
 To gate on per-class recall (e.g. "minimum 99% credit_card recall
-before ship"), add a gate to your eval pack that keys on the
+before ship"), add a pass/fail rule (a gate in your eval pack) that keys on the
 per-class metric path:
 
 ```yaml
@@ -669,7 +669,7 @@ now rank=8"). On older builds:
 
 ### "Network error" during held-out eval
 
-Vite-proxy timeout. Held-out eval on 200 gold rows takes 10–20 min on
+Vite-proxy timeout. Evaluating on 200 answer-key rows takes 10–20 min on
 local-GPU Qwen-1.5B; the default ~10-min proxy cut killed the request
 while the backend was still inferring. Fixed in
 [Story 1.7](https://github.com/anugram/__SLM__/blob/main/frontend/src/components/evaluation/EvalPanel.tsx)

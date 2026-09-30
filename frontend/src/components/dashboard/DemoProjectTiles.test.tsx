@@ -19,7 +19,7 @@ const CATALOG: DemoCatalogResponse = {
             slug: 'support-faq',
             name: 'Demo · Support FAQ',
             headline: 'Build a support assistant from real ticket Q&A',
-            description: '20 cleaned tickets + 6 gold rows.',
+            description: '20 cleaned tickets + 6 answer-key rows.',
             task_profile: 'instruction_sft',
             target_profile: 'vllm_server',
             suggested_brief: 'Build a support FAQ assistant.',

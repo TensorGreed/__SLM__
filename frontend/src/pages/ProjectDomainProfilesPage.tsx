@@ -22,7 +22,7 @@ export default function ProjectDomainProfilesPage() {
                         <Term id="domain_profile" plural advanced />
                     </h2>
                     <p className="workspace-page-subtitle">
-                        Configure task schemas, quality <Term id="gate" plural />, and deployment checks for the active domain.
+                        Configure task schemas, <Term id="gate" plural />, and deployment checks for the active domain.
                     </p>
                 </div>
             </section>

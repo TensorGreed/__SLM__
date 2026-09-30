@@ -38,7 +38,7 @@ describe('Term component', () => {
     it('pluralizes when plural prop is set', () => {
         apiMock.get.mockResolvedValue({ data: { entries: [] } });
         render(<Term id="gate" plural />);
-        expect(screen.getByRole('button')).toHaveTextContent('Pass/Fail Checks');
+        expect(screen.getByRole('button')).toHaveTextContent('Pass/fail rules');
     });
 
     it('opens the popover on click and shows plain-language copy', async () => {

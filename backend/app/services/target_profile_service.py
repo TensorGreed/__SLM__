@@ -96,7 +96,7 @@ _BUILTIN_TARGET_PROFILES = [
             "from the training corpus as a system-message preamble "
             "for each request — generalizes via retrieval instead of "
             "memorization. Best fit for knowledge-retrieval tasks "
-            "where reference Q&A pairs already exist in the gold set."
+            "where reference Q&A pairs already exist in the answer key."
         ),
         "device_class": "server",
         "constraints": {

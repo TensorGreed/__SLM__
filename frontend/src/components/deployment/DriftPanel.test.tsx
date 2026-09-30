@@ -116,7 +116,7 @@ describe('DriftPanel', () => {
         // Open the launcher
         await user.click(screen.getByText(/Run a drift check/i));
 
-        await user.type(screen.getByLabelText(/Gold-set id/i), '42');
+        await user.type(screen.getByLabelText(/Answer key id/i), '42');
         await user.clear(screen.getByLabelText(/Tolerance/i));
         await user.type(screen.getByLabelText(/Tolerance/i), '0.10');
         const predictionsInput = screen.getByLabelText(/Predictions JSON/i);
@@ -146,7 +146,7 @@ describe('DriftPanel', () => {
 
         const user = userEvent.setup();
         await user.click(screen.getByText(/Run a drift check/i));
-        await user.type(screen.getByLabelText(/Gold-set id/i), '42');
+        await user.type(screen.getByLabelText(/Answer key id/i), '42');
         const predictionsInput = screen.getByLabelText(/Predictions JSON/i);
         await user.click(predictionsInput);
         await user.paste('not json');

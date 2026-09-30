@@ -32,7 +32,7 @@ interface HealthCheckModalProps {
 const CHECK_LABELS: Record<string, string> = {
     project_exists: 'Project accessible',
     recipe_applied: 'Task type applied',
-    gold_set: 'Gold set seeded',
+    gold_set: 'Answer key seeded',
     data_health: 'Data Health Report',
     trainability_forecast: 'Trainability forecast',
     synth_catalog: 'Synth playbook catalog',

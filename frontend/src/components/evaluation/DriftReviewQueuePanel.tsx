@@ -188,13 +188,13 @@ export default function DriftReviewQueuePanel({ projectId, recipeId }: Props) {
             });
             await loadQueue();
             toast.success(
-                `Generated ${result.generated} trap${result.generated === 1 ? '' : 's'}. Review in the queue.`,
+                `Generated ${result.generated} suggested row${result.generated === 1 ? '' : 's'}. Review in the queue.`,
             );
         } catch (err: any) {
             const detail = err?.response?.data?.detail;
             if (detail === 'recipe_required') {
                 toast.error(
-                    'Choose a task type before generating drift traps.',
+                    'Choose a task type before generating suggested answer-key rows.',
                 );
             } else {
                 toast.error(detail || err?.message || 'Refresh failed');
@@ -211,7 +211,7 @@ export default function DriftReviewQueuePanel({ projectId, recipeId }: Props) {
                 await triageDriftRow(projectId, row.id, { accept });
                 toast.success(
                     accept
-                        ? `Row #${row.id} accepted — appended to gold_test.`
+                        ? `Row #${row.id} accepted — added to the final answer key.`
                         : `Row #${row.id} rejected.`,
                 );
                 await loadQueue();
@@ -248,11 +248,11 @@ export default function DriftReviewQueuePanel({ projectId, recipeId }: Props) {
         <section className="card drift-review" data-testid="drift-review">
             <header className="drift-review__head">
                 <div>
-                    <h3 className="drift-review__title">Drift-trap review queue</h3>
+                    <h3 className="drift-review__title">Suggested answer-key rows</h3>
                     <p className="drift-review__subtitle">
                         Fresh hallucination traps generated against the project's recent
-                        failure-cluster patterns. Accept rows you want in
-                        <code>gold_test</code>; reject the ones that miss.
+                        failure-cluster patterns. Accept rows you want in the
+                        final answer key; reject the ones that miss.
                     </p>
                 </div>
                 <div className="drift-review__controls">
@@ -307,7 +307,7 @@ export default function DriftReviewQueuePanel({ projectId, recipeId }: Props) {
                     className="drift-review__status-chip"
                     data-testid="drift-review-auto-on"
                 >
-                    Auto-refresh on · <strong>{settings.count}</strong> traps per drift check
+                    Auto-refresh on · <strong>{settings.count}</strong> suggested rows per drift check
                     {' · '}
                     <button
                         type="button"
@@ -326,7 +326,7 @@ export default function DriftReviewQueuePanel({ projectId, recipeId }: Props) {
                     className="drift-review__last-summary"
                     data-testid="drift-review-last-summary"
                 >
-                    Last refresh generated <strong>{lastSummary.generated}</strong> trap
+                    Last refresh generated <strong>{lastSummary.generated}</strong> suggested row
                     {lastSummary.generated === 1 ? '' : 's'}
                     {lastSummary.simulated ? ' (simulated — no LLM key configured)' : ''}
                     {lastSummary.clusters.length > 0
@@ -338,7 +338,7 @@ export default function DriftReviewQueuePanel({ projectId, recipeId }: Props) {
                                 return [...acc, ', ', el];
                             }, [])}
                           </>
-                        : ' (no recent clusters — generic traps).'}
+                        : ' (no recent clusters — generic suggestions).'}
                 </div>
             )}
 
@@ -348,7 +348,7 @@ export default function DriftReviewQueuePanel({ projectId, recipeId }: Props) {
                     data-testid="drift-review-empty"
                 >
                     {statusFilter === 'pending'
-                        ? 'No pending traps. Click Generate now to spin some, or wait for the next drift check.'
+                        ? 'No pending suggested rows. Click Generate now to spin some, or wait for the next drift check.'
                         : `No ${statusFilter === 'all' ? '' : statusFilter} rows.`}
                 </p>
             ) : (

@@ -9,10 +9,10 @@ import { wrapTermsInBody } from './CoachSuggestion';
 
 describe('wrapTermsInBody', () => {
     it('returns the raw text when no known terms appear', () => {
-        const nodes = wrapTermsInBody('Your gold set has 50 rows.');
+        const nodes = wrapTermsInBody('Your answer key has 50 rows.');
         // Single plain-string node.
         expect(nodes.length).toBe(1);
-        expect(nodes[0]).toBe('Your gold set has 50 rows.');
+        expect(nodes[0]).toBe('Your answer key has 50 rows.');
     });
 
     it('wraps a single known term in a Term popover', () => {

@@ -328,7 +328,7 @@ function PromptReviewSection({
                     >
                         Locked to <strong>{review.known_labels.length}</strong>{' '}
                         label{review.known_labels.length === 1 ? '' : 's'}{' '}
-                        from your existing gold rows:{' '}
+                        from your existing answer-key rows:{' '}
                         <span style={{ fontFamily: 'monospace' }}>
                             {review.known_labels.join(', ')}
                         </span>
@@ -940,7 +940,7 @@ export default function LlmGoldGeneratePanel({
                 >
                     BrewSLM builds a project-aware prompt, calls the LLM you
                     pick, and shows the generated Q&A pairs for review.
-                    Nothing is saved to the gold set until you click
+                    Nothing is saved to the answer key until you click
                     "Save selected" below.
                 </p>
             </header>

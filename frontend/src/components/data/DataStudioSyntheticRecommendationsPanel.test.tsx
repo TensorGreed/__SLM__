@@ -114,7 +114,7 @@ const recommendationsPayload = {
             reason: 'Run playbooks in the existing Synthetic tab.',
         },
         {
-            label: 'Open Gold Set workflow',
+            label: 'Open answer key workflow',
             target_tab: 'goldset',
             reason: 'Improve trusted anchors.',
         },

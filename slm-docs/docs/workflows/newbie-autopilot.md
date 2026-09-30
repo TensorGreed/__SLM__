@@ -5,7 +5,7 @@ title: Newbie Autopilot
 
 # Newbie Autopilot
 
-Autopilot v3 takes a plain-language brief and proposes a full pipeline plan: adapter, base model, training preset, eval pack, target profile. Every decision is **labelled with provenance** (`measured` vs `estimated`) and written to a persisted decision log so you can audit what it did and why.
+Autopilot v3 takes a plain-language brief and proposes a full pipeline plan: adapter, base model, training preset, pass/fail rules (eval pack), target profile. Every decision is **labelled with provenance** (`measured` vs `estimated`) and written to a persisted decision log so you can audit what it did and why.
 
 It's the fastest way to get from "I have an idea" to "the model is training", and the safest way to iterate without forgetting what changed between runs.
 
@@ -47,7 +47,7 @@ Training rail → **Autopilot Planner**. The Planner is hidden in beginner mode,
    - Proposed dataset adapter + reason.
    - Proposed base model + provenance.
    - Proposed training preset + estimated cost / GPU-hours / CO2.
-   - Proposed eval pack + gates.
+   - Proposed pass/fail rules (eval pack + gates).
    - Proposed target profile.
    - **Blockers** (if any) with concrete remediation links.
    - **Strict-mode preview** — what would be refused under stricter rules.
@@ -100,7 +100,7 @@ curl -X POST http://localhost:8000/api/projects/1/autopilot/repair-preview \
 | Target profile incompatible (e.g. 7B on mobile_cpu) | Fall back to next-larger target OR suggest compression. |
 | Adapter `auto` couldn't match | Pick a default-canonical adapter if the columns look canonical. |
 | LR too aggressive for tiny dataset | Scale LR by `sqrt(rows/1000)` and add warmup. |
-| Eval pack missing | Generate a starter from the project plan. |
+| Pass/fail rules (eval pack) missing | Generate a starter from the project plan. |
 
 Strict mode refuses every repair and surfaces the blockers verbatim. Reach for strict mode when **reproducibility matters more than convenience** — e.g., a CI gate.
 
@@ -138,7 +138,7 @@ curl -X POST http://localhost:8000/api/projects/1/autopilot/rollback \
   -d '{"snapshot_id": "snap_8c9d…"}'
 ```
 
-The snapshot captures: project plan, dataset state, eval pack, training config — everything autopilot might have nudged.
+The snapshot captures: project plan, dataset state, pass/fail rules (eval pack), training config — everything autopilot might have nudged.
 
 ## When *not* to use autopilot
 

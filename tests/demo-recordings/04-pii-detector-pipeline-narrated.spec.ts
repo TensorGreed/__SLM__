@@ -102,7 +102,7 @@ test('Video 04 — PII Detector pipeline narrated', async ({ page }) => {
 
     // ── Section: gold set ────────────────────────────────────────────
     sectionStart = Date.now();
-    await page.locator('button.tab[title="Gold Set"]').click();
+    await page.locator('button.tab[title="Answer Key"]').click();
     await page.waitForTimeout(1500);
     await focusOn(page, '.tab-content');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v04-goldset.png`, fullPage: false });

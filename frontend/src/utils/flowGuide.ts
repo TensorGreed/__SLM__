@@ -24,7 +24,7 @@ export const PIPELINE_STAGE_ORDER: PipelineStage[] = [
 export const PIPELINE_STAGE_LABEL: Record<PipelineStage, string> = {
     ingestion: 'Data Ingestion',
     cleaning: 'Data Cleaning',
-    gold_set: 'Gold Set',
+    gold_set: 'Answer Key',
     synthetic: 'Synthetic Data',
     dataset_prep: 'Dataset Prep',
     data_adapter_preview: 'Adapter Preview',
@@ -121,7 +121,7 @@ export function getRecommendedAction(
             return {
                 path: `/project/${projectId}/pipeline/eval`,
                 title: 'Evaluate model quality',
-                description: 'Run benchmark/eval pack and inspect gate results.',
+                description: 'Run the eval and check which pass/fail rules passed.',
             };
         case 'compression':
             return {

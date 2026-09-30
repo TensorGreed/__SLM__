@@ -788,7 +788,7 @@ class SweepOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(out["verdict"], "inconclusive")
         self.assertFalse(out["gate_summary"]["any_cell_cleared"])
-        self.assertIn("No completed cell cleared", out["verdict_reason"])
+        self.assertIn("No completed cell passed", out["verdict_reason"])
 
     def test_verdict_pending_when_cells_still_running(self):
         project_id = self._create_project()

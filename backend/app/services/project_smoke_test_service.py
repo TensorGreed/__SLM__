@@ -316,11 +316,11 @@ async def _check_gold_set(
                 name="gold_set",
                 status="warn",
                 elapsed_ms=elapsed,
-                message="Gold set is empty (0 rows).",
+                message="Answer key is empty (0 rows).",
                 remediation=(
-                    "Open Pipeline → Gold set and seed at least 5-10 "
+                    "Open Pipeline → Answer Key and seed at least 5-10 "
                     "labelled rows. Training + evaluation require some "
-                    "gold rows to learn / measure against."
+                    "answer-key rows to learn / measure against."
                 ),
                 metadata={"gold_row_count": 0},
             )
@@ -328,7 +328,7 @@ async def _check_gold_set(
             name="gold_set",
             status="ok",
             elapsed_ms=elapsed,
-            message=f"Gold set has {n} row{'s' if n != 1 else ''}.",
+            message=f"Answer key has {n} row{'s' if n != 1 else ''}.",
             metadata={"gold_row_count": n},
         )
     except Exception as exc:  # noqa: BLE001
@@ -336,7 +336,7 @@ async def _check_gold_set(
             name="gold_set",
             status="fail",
             elapsed_ms=int((time.monotonic() - started) * 1000),
-            message="Couldn't load gold rows.",
+            message="Couldn't load answer-key rows.",
             envelope=_envelope_from_exception(stage="gold", exc=exc),
         )
 

@@ -91,7 +91,7 @@ export default function ProjectGuidePage() {
             {
                 id: 'ship',
                 title: 'Evaluate and ship',
-                detail: 'Run evaluation gates, quantize/compress, and export artifacts.',
+                detail: 'Check the pass/fail rules, quantize/compress, and export artifacts.',
                 path: `/project/${projectId}/pipeline/eval`,
                 complete: stageIndex >= 11,
             },

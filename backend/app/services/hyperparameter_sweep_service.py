@@ -743,20 +743,20 @@ def _compute_verdict(
     is short and meant to be rendered directly under the verdict badge.
     """
     if gate_summary.get("any_cell_cleared"):
-        return "promote", "At least one cell cleared the project gate."
+        return "promote", "At least one cell passed the project's pass/fail rules."
 
     has_running = any(r["status"] in {"running", "pending", "queued"} for r in rows)
     measurable = int(gate_summary.get("measurable_count") or 0)
 
     if has_running and measurable == 0:
-        return "pending", "Cells still training; gate verdict pending."
+        return "pending", "Cells still training; pass/fail verdict pending."
     if has_running:
-        return "pending", "Some cells finished without clearing the gate; others still running."
+        return "pending", "Some cells finished without passing the pass/fail rules; others still running."
     if measurable == 0:
         # All cells are done (or cancelled) but no eval results exist for
         # any of them. Common when training failed before eval ran.
-        return "inconclusive", "No cell produced eval results; gate is not measurable."
-    return "inconclusive", "No completed cell cleared the project gate."
+        return "inconclusive", "No cell produced eval results; pass/fail rules are not measurable."
+    return "inconclusive", "No completed cell passed the project's pass/fail rules."
 
 
 # ─────────────────────────────────────────────────────────────────────

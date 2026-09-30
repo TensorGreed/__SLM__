@@ -266,12 +266,12 @@ function GateThisTestModal({
                 className="bt-section__modal"
                 onClick={(e) => e.stopPropagation()}
                 role="dialog"
-                aria-label="Gate this test"
+                aria-label="Add a pass/fail rule for this check"
             >
-                <h4>Gate this test</h4>
+                <h4>Add a pass/fail rule for this check</h4>
                 <p>
-                    Add one of these metric_ids to a gate in the Gates section.
-                    Phase 5 slice 2's flattener emits them so the existing gate
+                    Add one of these metric_ids to a pass/fail rule in the rule set.
+                    Every eval emits them, so the existing rule
                     evaluator picks them up with no new code.
                 </p>
                 <div className="bt-section__modal-metric-row">
@@ -290,9 +290,9 @@ function GateThisTestModal({
                             Per-slice variants (Quality-Lift phase 6)
                         </p>
                         <p className="bt-section__modal-help">
-                            Gate the same test on a specific slice. A single
-                            INV test can pass overall but fail on a slice —
-                            per-slice gates catch that regression.
+                            Add a rule for the same check on a specific slice. A single
+                            INV check can pass overall but fail on a slice —
+                            per-slice rules catch that regression.
                         </p>
                         <div className="bt-section__modal-slice-list">
                             {sliceIds.map((sid) => {
@@ -347,7 +347,7 @@ export default function BehavioralTestsSection({
             setItems(btResp.behavioral_tests ?? []);
             setSlices(sliceResp?.slice_definitions?.slices ?? []);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : 'Failed to load behavioral tests.';
+            const message = err instanceof Error ? err.message : 'Failed to load custom checks.';
             setLoadError(message);
         } finally {
             setLoading(false);
@@ -727,26 +727,26 @@ export default function BehavioralTestsSection({
     return (
         <div className="bt-section">
             <PackSectionEditor<BehavioralTest>
-                title="Behavioral tests"
-                description="CheckList-style robustness probes (INV / DIR / MFT). Every eval runs these against the trained checkpoint; gates can fail ship on a regression via behavioral.<test_id>.pass_rate (or per-slice via behavioral.<test_id>.per_slice.<slice_id>.pass_rate)."
+                title="Your custom checks"
+                description="CheckList-style robustness checks (INV / DIR / MFT). Every eval runs these against the trained checkpoint; a pass/fail rule can block shipping on a regression via behavioral.<test_id>.pass_rate (or per-slice via behavioral.<test_id>.per_slice.<slice_id>.pass_rate)."
                 initialItems={items}
                 itemKey={(_test, index) => String(index)}
                 newItem={makeNewTest}
                 renderItem={renderItem}
                 isItemValid={isTestValid}
                 onSave={handleSave}
-                addLabel="Add behavioral test"
-                itemLabel="test"
+                addLabel="Add custom check"
+                itemLabel="check"
                 renderItemHeaderTrailing={(test) =>
                     TEST_ID_RE.test(test.test_id) ? (
                         <button
                             type="button"
                             className="btn btn-ghost btn-sm bt-section__gate-button"
                             onClick={() => openGateModal(test.test_id)}
-                            title="Show copy-pasteable metric_ids for gating this test"
+                            title="Show copy-pasteable metric_ids for a pass/fail rule on this check"
                             data-testid={`bt-gate-${test.test_id}`}
                         >
-                            <Target size={12} aria-hidden="true" /> Gate this test
+                            <Target size={12} aria-hidden="true" /> Add a pass/fail rule for this check
                         </button>
                     ) : null
                 }

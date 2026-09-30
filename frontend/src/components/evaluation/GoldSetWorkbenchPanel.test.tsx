@@ -79,7 +79,7 @@ describe('GoldSetWorkbenchPanel', () => {
             expect(apiMock.get).toHaveBeenCalledWith('/projects/1/datasets');
         });
 
-        const sampleBtn = await screen.findByRole('button', { name: /sample rows into gold set/i });
+        const sampleBtn = await screen.findByRole('button', { name: /sample rows into answer key/i });
         await user.click(sampleBtn);
 
         await waitFor(() => {
@@ -118,7 +118,7 @@ describe('GoldSetWorkbenchPanel', () => {
         render(<GoldSetWorkbenchPanel projectId={1} />);
         await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
 
-        await user.click(await screen.findByRole('button', { name: /sample rows into gold set/i }));
+        await user.click(await screen.findByRole('button', { name: /sample rows into answer key/i }));
         await screen.findByText(/row #202/i);
 
         await user.click(screen.getByRole('button', { name: /approve \(a\)/i }));
@@ -150,7 +150,7 @@ describe('GoldSetWorkbenchPanel', () => {
 
         render(<GoldSetWorkbenchPanel projectId={1} />);
         await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
-        await user.click(await screen.findByRole('button', { name: /sample rows into gold set/i }));
+        await user.click(await screen.findByRole('button', { name: /sample rows into answer key/i }));
         await screen.findByText(/row #303/i);
 
         const labeller = screen.getByLabelText(/single-row labeller with keyboard shortcuts/i);
@@ -179,7 +179,7 @@ describe('GoldSetWorkbenchPanel', () => {
             .getAllByRole('combobox')
             .find((el) => (el as HTMLSelectElement).value === 'random') as HTMLSelectElement;
         await user.selectOptions(strategySelect, 'stratified');
-        await user.click(await screen.findByRole('button', { name: /sample rows into gold set/i }));
+        await user.click(await screen.findByRole('button', { name: /sample rows into answer key/i }));
 
         expect(
             await screen.findByText(/stratified sampling needs a stratify-by field/i),

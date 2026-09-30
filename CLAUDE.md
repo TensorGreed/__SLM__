@@ -719,6 +719,11 @@ quality gate** (simulate runtime). The eval→export tail is deferred
 - **Evaluation** — `evaluation_service` runs eval packs; results land in
   `EvalResult` rows. Failure clusters, remediation plans, post-eval
   decision engine for reroute recommendations.
+  **UI vocabulary (Wave 3b-5, labels only — APIs/ids/keys keep the old names):**
+  gold set → *answer key* (GOLD_DEV = practice, GOLD_TEST = final); prepared
+  TEST split → *test examples*; probe pack → *built-in checks*; behavioral
+  tests → *custom checks*; gates / eval pack → *pass/fail rules* (/ *rule set*);
+  drift traps → *suggested answer-key rows*. Use these in new UI + Coach copy.
   Held-out dataset aliases resolve by type **priority** then recency
   (`evaluation_service._resolve_dataset_alias` → ordered list): `"test"` =
   prepared TEST split, GOLD_TEST only if no split exists (it used to pick the

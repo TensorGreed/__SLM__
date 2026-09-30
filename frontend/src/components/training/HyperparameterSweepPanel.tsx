@@ -492,9 +492,9 @@ export default function HyperparameterSweepPanel({
                             data-verdict={sweep.verdict}
                         >
                             <strong className="hp-sweep__verdict-label">
-                                {sweep.verdict === 'promote' && '✓ Winner cleared the gate'}
-                                {sweep.verdict === 'inconclusive' && 'Inconclusive — nobody cleared the gate'}
-                                {sweep.verdict === 'pending' && 'Gate verdict pending'}
+                                {sweep.verdict === 'promote' && '✓ Winner passed the pass/fail rules'}
+                                {sweep.verdict === 'inconclusive' && 'Inconclusive — nobody passed the pass/fail rules'}
+                                {sweep.verdict === 'pending' && 'Pass/fail verdict pending'}
                             </strong>
                             {sweep.gate_summary?.pack_id && (
                                 <span className="hp-sweep__verdict-pack">
@@ -601,7 +601,7 @@ export default function HyperparameterSweepPanel({
                                             <span
                                                 className="hp-sweep__badge hp-sweep__badge--gate-pass"
                                                 data-testid={`hp-row-${c.label}-gate-pass`}
-                                                title="Cleared the project's evaluation gate"
+                                                title="Passed the project's pass/fail rules"
                                             >
                                                 gate ✓
                                             </span>
@@ -613,7 +613,7 @@ export default function HyperparameterSweepPanel({
                                                 title={
                                                     c.gate_failed_ids && c.gate_failed_ids.length
                                                         ? `Failed: ${c.gate_failed_ids.join(', ')}`
-                                                        : 'Did not clear the project gate'
+                                                        : 'Did not pass the project\'s pass/fail rules'
                                                 }
                                             >
                                                 gate ✗{c.gate_failed_ids && c.gate_failed_ids.length

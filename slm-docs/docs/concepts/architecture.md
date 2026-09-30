@@ -56,7 +56,7 @@ Most workflows flow through the canonical 11-stage pipeline:
 
 ```mermaid
 flowchart LR
-  i[Ingestion] --> c[Cleaning] --> g[Gold set]
+  i[Ingestion] --> c[Cleaning] --> g[Answer key]
   g --> s[Synthetic] --> p[Dataset prep] --> a[Adapter preview]
   a --> t[Tokenization] --> tr[Training] --> e[Evaluation]
   e --> co[Compression] --> ex[Export]

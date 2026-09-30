@@ -370,7 +370,7 @@ describe('HyperparameterSweepPanel', () => {
         await waitFor(() => {
             const verdict = screen.getByTestId('hp-verdict');
             expect(verdict.getAttribute('data-verdict')).toBe('promote');
-            expect(verdict.textContent).toMatch(/Winner cleared the gate/);
+            expect(verdict.textContent).toMatch(/Winner passed the pass\/fail rules/);
             expect(verdict.textContent).toMatch(/evalpack\.demo/);
         });
         // Winner row gets the gate-pass badge.
@@ -430,7 +430,7 @@ describe('HyperparameterSweepPanel', () => {
         await waitFor(() => {
             const verdict = screen.getByTestId('hp-verdict');
             expect(verdict.getAttribute('data-verdict')).toBe('pending');
-            expect(verdict.textContent).toMatch(/Gate verdict pending/);
+            expect(verdict.textContent).toMatch(/Pass\/fail verdict pending/);
             // No "Failure clusters" handoff during pending.
             expect(verdict.textContent).not.toMatch(/Failure clusters/);
         });

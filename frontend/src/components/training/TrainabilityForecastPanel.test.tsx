@@ -60,7 +60,7 @@ describe('TrainabilityForecastPanel', () => {
         await waitFor(() => {
             expect(screen.getByTestId('trainability-forecast')).toBeInTheDocument();
         });
-        expect(screen.getByText('Likely to pass gates')).toBeInTheDocument();
+        expect(screen.getByText('Likely to pass the pass/fail rules')).toBeInTheDocument();
         // Confidence chip in the header (one of two occurrences of "~72%"
         // — the other lives inside the gate_pass_probability signal row).
         const confidenceChip = screen.getByText('Predicted gate-pass:').parentElement;
@@ -203,7 +203,7 @@ describe('TrainabilityForecastPanel', () => {
         });
         await userEvent.click(screen.getByRole('button', { name: /Retry/i }));
         await waitFor(() => {
-            expect(screen.getByText('Likely to pass gates')).toBeInTheDocument();
+            expect(screen.getByText('Likely to pass the pass/fail rules')).toBeInTheDocument();
         });
     });
 
@@ -494,7 +494,7 @@ describe('TrainabilityForecastPanel', () => {
         });
         render(<TrainabilityForecastPanel projectId={1} />);
         await waitFor(() => {
-            expect(screen.getByText('Likely to pass gates')).toBeInTheDocument();
+            expect(screen.getByText('Likely to pass the pass/fail rules')).toBeInTheDocument();
         });
         expect(screen.queryByTestId('trainability-forecast-history')).not.toBeInTheDocument();
     });

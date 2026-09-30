@@ -156,15 +156,15 @@ The [Autopilot decision log](../workflows/newbie-autopilot.md#decision-log) show
 
 ### `eval_judge_unavailable`
 
-**Symptom**: an eval pack with LLM-judge metrics fails partway.
+**Symptom**: a pass/fail rule set (eval pack) with LLM-judge metrics fails partway.
 
-**Fix**: check the LLM provider's status / quota / API key. The eval falls back to non-judge metrics; see the decision log for what gates ran without the judge.
+**Fix**: check the LLM provider's status / quota / API key. The eval falls back to non-judge metrics; see the decision log for which pass/fail rules ran without the judge.
 
 ### `eval_dataset_missing`
 
-**Symptom**: eval pack referenced a gold set that no longer exists.
+**Symptom**: the pass/fail rule set (eval pack) referenced an answer key (gold set) that no longer exists.
 
-**Fix**: re-create the gold set OR pick a different eval pack.
+**Fix**: re-create the answer key OR pick a different pass/fail rule set.
 
 ## Export / deployment
 

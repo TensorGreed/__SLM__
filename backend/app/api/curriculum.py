@@ -90,7 +90,7 @@ async def preview_curriculum(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Project has no training rows yet — import a gold set "
+                "Project has no training rows yet — import an answer key "
                 "or generate synthetic rows first."
             ),
         )

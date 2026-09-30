@@ -116,7 +116,7 @@ _FEATURE_LABELS: dict[str, str] = {
     "hard_negative_ratio": "Hard-negative share of synth",
     "input_length_chars": "Input length (chars)",
     "output_length_chars": "Output length (chars)",
-    "goldset_diversity": "Gold-set diversity (1 - mean pairwise Jaccard)",
+    "goldset_diversity": "Answer-key diversity (1 - mean pairwise Jaccard)",
 }
 
 
@@ -719,7 +719,7 @@ def _suggestion_for(
     # No automatic playbook here yet; this is the manual path.
     if feature_id == "goldset_diversity" and status == "below":
         return (
-            "Your gold set is less diverse than the cohort — rows likely "
+            "Your answer key is less diverse than the cohort — rows likely "
             "repeat similar wording. Open Data Studio's diversity tools to "
             "spot the clusters.",
             {

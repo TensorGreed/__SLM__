@@ -103,16 +103,16 @@ const goldPayload = {
         {
             id: 'gold_rows_need_review',
             severity: 'warning',
-            title: 'Gold rows need review',
-            message: '2 gold rows are pending, in review, or waiting on changes.',
-            action_label: 'Review Gold Set',
+            title: 'Answer-key rows need review',
+            message: '2 answer-key rows are pending, in review, or waiting on changes.',
+            action_label: 'Review answer key',
             target_tab: 'goldset',
         },
     ],
     entry_point: {
-        label: 'Open Gold Set workflow',
+        label: 'Open answer key workflow',
         target_tab: 'goldset',
-        reason: 'Use the existing Gold Set panel to add, review, sample, or lock trusted examples.',
+        reason: 'Use the existing answer key panel to add, review, sample, or lock trusted examples.',
     },
 };
 
@@ -135,10 +135,10 @@ describe('DataStudioGoldSetWorkbenchPanel', () => {
         expect(screen.getByText('1 / 5')).toBeInTheDocument();
         expect(screen.getAllByText('2').length).toBeGreaterThan(0);
         expect(screen.getAllByText('Support Gold Dev').length).toBeGreaterThan(0);
-        expect(screen.getByText('Gold rows need review')).toBeInTheDocument();
+        expect(screen.getByText('Answer-key rows need review')).toBeInTheDocument();
         expect(screen.getAllByText(/password/i).length).toBeGreaterThan(0);
 
-        fireEvent.click(screen.getByRole('button', { name: /Open Gold Set workflow/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Open answer key workflow/i }));
         expect(onOpenGoldSet).toHaveBeenCalledTimes(1);
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/gold-set');
     });
@@ -174,9 +174,9 @@ describe('DataStudioGoldSetWorkbenchPanel', () => {
                     {
                         id: 'no_gold_sets',
                         severity: 'blocker',
-                        title: 'No gold set yet',
-                        message: 'Create a small trusted gold set before relying on evaluations.',
-                        action_label: 'Open Gold Set',
+                        title: 'No answer key yet',
+                        message: 'Create a small trusted answer key before relying on evaluations.',
+                        action_label: 'Open answer key',
                         target_tab: 'goldset',
                     },
                 ],
@@ -186,9 +186,9 @@ describe('DataStudioGoldSetWorkbenchPanel', () => {
         render(<DataStudioGoldSetWorkbenchPanel projectId={1} onOpenGoldSet={vi.fn()} />);
 
         await waitFor(() => {
-            expect(screen.getByText('No gold set')).toBeInTheDocument();
+            expect(screen.getByText('No answer key')).toBeInTheDocument();
         });
-        expect(screen.getByText(/No Gold Set dataset has been created/i)).toBeInTheDocument();
-        expect(screen.getByText('No gold set yet')).toBeInTheDocument();
+        expect(screen.getByText(/No answer key has been created/i)).toBeInTheDocument();
+        expect(screen.getByText('No answer key yet')).toBeInTheDocument();
     });
 });

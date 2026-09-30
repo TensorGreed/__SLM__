@@ -511,7 +511,7 @@ async def reroute_to_rag(
 
         async def _runner(handle: JobProgressHandle) -> dict:
             await handle.set_progress(
-                message="Copying gold set + raw + prepared files…"
+                message="Copying answer key + raw + prepared files…"
             )
             from app.database import async_session_factory
 

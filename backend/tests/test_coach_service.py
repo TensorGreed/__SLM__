@@ -753,7 +753,7 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(n["action"]["params"]["target"], "data-studio-splits")
         self.assertEqual(n["rule_id"], "train-gold-leakage.block")
         # GOLD_TEST contamination is called out explicitly.
-        self.assertIn("GOLD_TEST", n["body"])
+        self.assertIn("final answer key", n["body"])
         self.assertEqual(n["context"]["leaked"], 7)
 
     async def test_no_leakage_emits_no_nudge(self):

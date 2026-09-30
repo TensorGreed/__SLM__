@@ -161,21 +161,21 @@ async def _gold_set_component(
     if gold is None:
         return (
             0.0,
-            "No Gold Set yet — promote trusted rows to start.",
-            ["Gold Set is empty."],
+            "No answer key yet — promote trusted rows to start.",
+            ["Answer key is empty."],
         )
     rows = int(gold.record_count or 0)
     if rows >= DEFAULT_GOLD_TARGET:
         return (
             1.0,
-            f"{rows} gold rows ready (≥ {DEFAULT_GOLD_TARGET}).",
+            f"{rows} answer-key rows ready (≥ {DEFAULT_GOLD_TARGET}).",
             [],
         )
     ratio = _clamp01(rows / DEFAULT_GOLD_TARGET)
     return (
         ratio,
-        f"{rows} gold rows · {DEFAULT_GOLD_TARGET} recommended.",
-        [f"Only {rows} gold rows (need ≥{DEFAULT_GOLD_TARGET})."],
+        f"{rows} answer-key rows · {DEFAULT_GOLD_TARGET} recommended.",
+        [f"Only {rows} answer-key rows (need ≥{DEFAULT_GOLD_TARGET})."],
     )
 
 
@@ -392,7 +392,7 @@ async def compute_progress(
         },
         {
             "id": "gold_set",
-            "label": "Gold Set ready",
+            "label": "Answer key ready",
             "value": gold_value,
             "status": _status_for(gold_value),
             "detail": gold_detail,

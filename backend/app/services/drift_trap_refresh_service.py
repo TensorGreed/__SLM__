@@ -167,7 +167,7 @@ async def _simulate_traps(
                 "answer": "I don't have reliable information about this — please consult an authoritative source.",
                 "difficulty": "hard",
                 "is_hallucination_trap": True,
-                "rationale": f"Probes hallucination on '{cluster_label}' pattern.",
+                "rationale": f"Checks for hallucination on '{cluster_label}' pattern.",
             }
         rows.append({
             "payload": payload,

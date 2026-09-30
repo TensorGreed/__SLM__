@@ -55,7 +55,7 @@ interface Props {
 const MODE_LABELS: Record<SynthMode, { label: string; hint: string }> = {
     positives_paraphrase: {
         label: 'Paraphrase positives',
-        hint: 'Generate alternative phrasings of existing gold rows. Same labels / answers, varied wording.',
+        hint: 'Generate alternative phrasings of existing answer-key rows. Same labels / answers, varied wording.',
     },
     hard_negatives: {
         label: 'Hard negatives',

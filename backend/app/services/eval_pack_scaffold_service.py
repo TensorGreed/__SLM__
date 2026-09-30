@@ -170,13 +170,13 @@ def scaffold_pack(
         "gates": [_gate_dict(*entry) for entry in spec["gates"]],
     }
     row_count = (gold_set_summary or {}).get("row_count")
-    suffix = f" (gold set: {row_count} rows)" if row_count else ""
+    suffix = f" (answer key: {row_count} rows)" if row_count else ""
     return {
         "pack_id": SCAFFOLDED_PACK_ID,
         "display_name": f"Scaffolded · {spec['display_name']}",
         "description": (
-            f"Auto-generated starter eval pack tuned for the '{recipe_id}' task type"
-            f"{suffix}. Edit the gates inline before saving — nothing is "
+            f"Auto-generated starter pass/fail rule set tuned for the '{recipe_id}' task type"
+            f"{suffix}. Edit the rules inline before saving — nothing is "
             f"persisted until you click 'Use scaffold'."
         ),
         "version": "1.0.0",

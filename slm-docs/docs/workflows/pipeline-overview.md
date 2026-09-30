@@ -15,7 +15,7 @@ For the conceptual primer see [Concepts → Pipeline stages](../concepts/pipelin
 |---|---|---|---|
 | 1 | Ingestion | [Data ingestion](data-ingestion.md) | `RawDocument` rows under `DATA_DIR/projects/{id}/raw/`. |
 | 2 | Cleaning | [Data ingestion](data-ingestion.md#step-2--clean) | Cleaned dataset version, PII stats. |
-| 3 | Gold set | [Evaluation + remediation](evaluation-and-remediation.md#step-1--build-the-gold-set) | `GoldSetVersion` (the eval ground truth). |
+| 3 | Answer key | [Evaluation + remediation](evaluation-and-remediation.md#step-1--build-the-gold-set) | `GoldSetVersion` (the eval ground truth). |
 | 4 | Synthetic | [Data ingestion](data-ingestion.md#optional--synthetic-augmentation) | Generated Q&A pairs joined to a dataset. |
 | 5 | Dataset prep | [Data ingestion](data-ingestion.md#step-3--dataset-prep) | Normalised, deduped, split records. |
 | 6 | Adapter preview | [Adapter examples](../getting-started/adapter-studio-examples.md) | Adapter contract for the data shape. |
@@ -38,7 +38,7 @@ flowchart LR
   train --> export
 ```
 
-A typical project does 3–5 iteration loops before its first deployment. The platform's job is to make those loops cheap (training manifest replay, eval pack reuse, autopilot suggestions) — not to discourage them.
+A typical project does 3–5 iteration loops before its first deployment. The platform's job is to make those loops cheap (training manifest replay, pass/fail rule reuse, autopilot suggestions) — not to discourage them.
 
 ## When stages unlock
 
@@ -47,10 +47,10 @@ Beginner mode gates stage tabs by **what artifacts already exist**. The Pipeline
 | To unlock | You need |
 |---|---|
 | Cleaning | At least one ingested document. |
-| Gold set / Synthetic | A cleaned dataset. |
+| Answer key / Synthetic | A cleaned dataset. |
 | Dataset prep / Tokenization | A cleaned dataset (gold/synthetic are optional). |
 | Training | A tokenized dataset + a selected base model. |
-| Evaluation | A completed training run + a gold set + an eval pack. |
+| Evaluation | A completed training run + an answer key + pass/fail rules (eval pack). |
 | Compression / Export | A trained checkpoint. |
 
 The unlock logic is the same one the [readiness service](../reliability/common-blockers.md) reports on for `brewslm doctor`.
@@ -62,7 +62,7 @@ Sidebar
 ├── Pipeline rail       (stages 1–7, 9–11)
 │   ├── Data            → ingestion
 │   ├── Cleaning        → cleaning
-│   ├── Gold set        → gold_set
+│   ├── Answer Key      → gold_set
 │   ├── Synthetic       → synthetic
 │   ├── Data prep       → dataset_prep
 │   ├── Tokenization    → tokenization

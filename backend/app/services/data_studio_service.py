@@ -159,7 +159,7 @@ _DOMAIN_DEFINITIONS: tuple[dict[str, Any], ...] = (
         ),
         "risks": (
             "Sensitive values should be masked or synthesized before training.",
-            "False positives and false negatives both matter; keep a gold test set.",
+            "False positives and false negatives both matter; keep a final answer key.",
         ),
     },
     {
@@ -1057,7 +1057,7 @@ def _domain_setup_guidance(candidate: dict[str, Any]) -> list[dict[str, str]]:
             },
             {
                 "id": "source_gates",
-                "title": "Evaluation gates",
+                "title": "Pass/fail rules",
                 "recommendation": "Track F1, source coverage, unknown-answer pass rate, and safety pass rate.",
                 "why": "Good policy models should be correct, source-backed, and cautious around ambiguity.",
             },
@@ -1079,7 +1079,7 @@ def _domain_setup_guidance(candidate: dict[str, Any]) -> list[dict[str, str]]:
             {
                 "id": "false_negatives",
                 "title": "Risk focus",
-                "recommendation": "Gate promotion on recall, F1, and safety pass rate.",
+                "recommendation": "Add pass/fail rules on recall, F1, and safety pass rate before promotion.",
                 "why": "False negatives can leak sensitive data, so recall needs more weight than broad accuracy.",
             },
             {
@@ -1112,7 +1112,7 @@ def _domain_setup_guidance(candidate: dict[str, Any]) -> list[dict[str, str]]:
         {
             "id": "evaluation",
             "title": "Evaluation",
-            "recommendation": "Set promotion gates before training so wins and regressions are measurable.",
+            "recommendation": "Set pass/fail rules before training so wins and regressions are measurable.",
             "why": "Power users can tune metrics in the draft profile before assigning it.",
         },
         {
@@ -2024,7 +2024,7 @@ async def build_data_studio_gold_set_workbench(
     db: AsyncSession,
     project_id: int,
 ) -> dict[str, Any]:
-    """Return a read-only Gold Set workbench summary for Data Studio."""
+    """Return a read-only answer-key workbench summary for Data Studio."""
 
     project = await db.get(Project, project_id)
     if project is None:
@@ -2187,9 +2187,9 @@ async def build_data_studio_gold_set_workbench(
             _issue(
                 "no_gold_sets",
                 "blocker",
-                "No gold set yet",
-                "Create a small trusted gold set before relying on evaluations or regression checks.",
-                action_label="Open Gold Set",
+                "No answer key yet",
+                "Create a small trusted answer key before relying on evaluations or regression checks.",
+                action_label="Open Answer Key",
                 target_tab="goldset",
             )
         )
@@ -2198,9 +2198,9 @@ async def build_data_studio_gold_set_workbench(
             _issue(
                 "no_gold_examples",
                 "blocker",
-                "Gold set has no examples",
-                "Add trusted Q&A pairs or sample rows into the Gold Set workbench.",
-                action_label="Add gold examples",
+                "Answer key has no examples",
+                "Add trusted Q&A pairs or sample rows into the answer-key workbench.",
+                action_label="Add answer-key examples",
                 target_tab="goldset",
             )
         )
@@ -2209,9 +2209,9 @@ async def build_data_studio_gold_set_workbench(
             _issue(
                 "thin_gold_set",
                 "warning",
-                "Gold set is thin",
+                "Answer key is thin",
                 f"{totals['trusted_examples']} trusted example(s) are available; add at least {_GOLD_SET_MIN_STARTER_ROWS} to start evaluating reliably.",
-                action_label="Grow Gold Set",
+                action_label="Grow Answer Key",
                 target_tab="goldset",
             )
         )
@@ -2221,9 +2221,9 @@ async def build_data_studio_gold_set_workbench(
             _issue(
                 "gold_rows_need_review",
                 "warning",
-                "Gold rows need review",
-                f"{totals['review_needed']} gold row(s) are pending, in review, or waiting on changes.",
-                action_label="Review Gold Set",
+                "Answer-key rows need review",
+                f"{totals['review_needed']} answer-key row(s) are pending, in review, or waiting on changes.",
+                action_label="Review Answer Key",
                 target_tab="goldset",
             )
         )
@@ -2239,7 +2239,7 @@ async def build_data_studio_gold_set_workbench(
                 "gold_expected_fields_missing",
                 "warning",
                 "Expected-answer fields are not visible",
-                "Gold examples should include expected outputs so evaluations can score model responses.",
+                "Answer-key examples should include expected outputs so evaluations can score model responses.",
                 action_label="Review fields",
                 target_tab="goldset",
             )
@@ -2251,7 +2251,7 @@ async def build_data_studio_gold_set_workbench(
                 "gold_label_metadata_missing",
                 "info",
                 "Label metadata is light",
-                "Difficulty, category, reviewer, or risk labels make gold-set coverage easier to audit.",
+                "Difficulty, category, reviewer, or risk labels make answer-key coverage easier to audit.",
                 action_label="Add labels",
                 target_tab="goldset",
             )
@@ -2292,9 +2292,9 @@ async def build_data_studio_gold_set_workbench(
         "coverage": aggregate_coverage,
         "issues": issues,
         "entry_point": {
-            "label": "Open Gold Set workflow",
+            "label": "Open Answer Key workflow",
             "target_tab": "goldset",
-            "reason": "Use the existing Gold Set panel to add, review, sample, or lock trusted examples.",
+            "reason": "Use the existing answer-key panel to add, review, sample, or lock trusted examples.",
         },
     }
 
@@ -2615,13 +2615,13 @@ def _synthetic_library_prerequisites(
 
     if file_backed_gold_rows > 0:
         gold_status = "met"
-        gold_message = f"{file_backed_gold_rows} file-backed Gold Set row(s) can anchor generation."
+        gold_message = f"{file_backed_gold_rows} file-backed answer-key row(s) can anchor generation."
     elif gold_rows > 0:
         gold_status = "attention"
-        gold_message = "Gold examples exist, but current playbooks need file-backed Gold Set rows."
+        gold_message = "Answer-key examples exist, but current playbooks need file-backed answer-key rows."
     else:
         gold_status = "missing"
-        gold_message = "Add trusted Gold Set examples before running this library."
+        gold_message = "Add trusted answer-key examples before running this library."
 
     if bool((ollama_backend or {}).get("available")):
         ollama_status = "met"
@@ -2641,7 +2641,7 @@ def _synthetic_library_prerequisites(
         _prerequisite("recipe", "Task type compatibility", recipe_status, recipe_message, target_tab="data"),
         _prerequisite("playbook_mode", "Playbook mode", mode_status, mode_message, target_tab="synthetic"),
         _prerequisite("mapping", "Required fields", mapping_status, mapping_message, target_tab="dataprep"),
-        _prerequisite("gold_examples", "Gold anchors", gold_status, gold_message, target_tab="goldset"),
+        _prerequisite("gold_examples", "Answer-key anchors", gold_status, gold_message, target_tab="goldset"),
         _prerequisite("local_ollama", "Local Ollama", ollama_status, ollama_message, target_tab="synthetic"),
         _prerequisite("review_gate", "Review gate", review_status, review_message, target_tab="synthetic"),
     ]
@@ -2724,13 +2724,13 @@ def _synthetic_domain_playbook_libraries(
             warning_count = sum(1 for item in prerequisites if item["status"] == "attention")
             if blocker_count:
                 readiness = "blocked"
-                readiness_reason = "Task type, playbook mode, or Gold Set prerequisites need setup first."
+                readiness_reason = "Task type, playbook mode, or answer-key prerequisites need setup first."
             elif warning_count:
                 readiness = "attention"
                 readiness_reason = "The library can be reviewed, but setup or review gates need attention."
             else:
                 readiness = "ready"
-                readiness_reason = "Task type, local backend, Gold anchors, mapping, and review gates look ready."
+                readiness_reason = "Task type, local backend, answer-key anchors, mapping, and review gates look ready."
 
             playbooks.append({
                 "id": f"{domain_id}:{strategy.get('id') or mode}",
@@ -2955,12 +2955,12 @@ async def build_data_studio_synthetic_playbook_center(
         prerequisites.append(
             _prerequisite(
                 "gold_examples",
-                "Gold examples",
+                "Answer-key examples",
                 "missing" if gold_rows <= 0 else "attention",
                 (
-                    "Add file-backed Gold Set rows before running current playbooks."
+                    "Add file-backed answer-key rows before running current playbooks."
                     if gold_rows <= 0
-                    else "Gold examples exist, but current playbooks read from Gold Set JSONL files."
+                    else "Answer-key examples exist, but current playbooks read from answer-key JSONL files."
                 ),
                 target_tab="goldset",
             )
@@ -2969,9 +2969,9 @@ async def build_data_studio_synthetic_playbook_center(
             _issue(
                 "synthetic_gold_rows_missing",
                 "warning",
-                "Gold rows are not ready for playbooks",
-                "Current playbooks generate from Gold Set rows; add or import trusted gold examples first.",
-                action_label="Open Gold Set",
+                "Answer-key rows are not ready for playbooks",
+                "Current playbooks generate from answer-key rows; add or import trusted answer-key examples first.",
+                action_label="Open Answer Key",
                 target_tab="goldset",
             )
         )
@@ -2979,9 +2979,9 @@ async def build_data_studio_synthetic_playbook_center(
         prerequisites.append(
             _prerequisite(
                 "gold_examples",
-                "Gold examples",
+                "Answer-key examples",
                 "met",
-                f"{file_backed_gold_rows} file-backed gold row(s) can seed playbook generation.",
+                f"{file_backed_gold_rows} file-backed answer-key row(s) can seed playbook generation.",
                 target_tab="goldset",
             )
         )
@@ -3376,26 +3376,26 @@ async def build_data_studio_synthetic_recommendations(
             _issue(
                 "synthetic_recommendation_gold_set_needs_work",
                 "warning",
-                "Gold Set should be strengthened first",
-                "Current playbooks use trusted Gold Set examples as anchors for generation.",
-                action_label="Review Gold Set",
+                "Answer key should be strengthened first",
+                "Current playbooks use trusted answer-key examples as anchors for generation.",
+                action_label="Review Answer Key",
                 target_tab="goldset",
             )
         )
         evidence = [
-            f"{trusted_examples}/{min_examples} recommended trusted Gold Set example(s) are ready.",
-            f"{review_needed} Gold Set row(s) still need review.",
+            f"{trusted_examples}/{min_examples} recommended trusted answer-key example(s) are ready.",
+            f"{review_needed} answer-key row(s) still need review.",
         ]
         if label_field_count <= 0:
-            evidence.append("Gold Set label metadata is not visible yet.")
+            evidence.append("Answer-key label metadata is not visible yet.")
         recommendations.append(
             _synthetic_recommendation(
                 rec_id="strengthen_gold_set_before_synthetic_generation",
-                title="Strengthen Gold Set anchors before generation",
+                title="Strengthen answer-key anchors before generation",
                 strategy="gold coverage",
                 priority="medium",
                 target_tab="goldset",
-                action_label="Review Gold Set",
+                action_label="Review Answer Key",
                 rationale="Better trusted anchors reduce synthetic drift and make generated rows easier to review.",
                 domain_reason=f"{domain_label} synthetic data should preserve domain-specific labels, boundaries, and expected answers.",
                 evidence=evidence + domain_evidence,
@@ -3476,7 +3476,7 @@ async def build_data_studio_synthetic_recommendations(
                 "synthetic_recommendation_domain_confidence_low",
                 "info",
                 "Domain signal is weak",
-                "Add representative source or Gold Set rows before relying on domain-specific synthetic recommendations.",
+                "Add representative source or answer-key rows before relying on domain-specific synthetic recommendations.",
                 action_label="Add representative rows",
                 target_tab="data",
             )
@@ -3497,7 +3497,7 @@ async def build_data_studio_synthetic_recommendations(
             mode, mode_available = _pick_playbook_mode(desired_modes, compatible_modes)
             evidence = domain_evidence + [
                 f"Compatible playbook modes: {', '.join(sorted(compatible_modes)) or 'none'}.",
-                f"Gold Set trusted examples: {trusted_examples}.",
+                f"Trusted answer-key examples: {trusted_examples}.",
             ]
             recommendations.append(
                 _synthetic_recommendation(
@@ -3576,7 +3576,7 @@ async def build_data_studio_synthetic_recommendations(
                 "reason": "Run playbooks, generate rows, and review synthetic output in the existing Synthetic tab.",
             },
             {
-                "label": "Open Gold Set workflow",
+                "label": "Open Answer Key workflow",
                 "target_tab": "goldset",
                 "reason": "Improve trusted anchors before generating more rows.",
             },
@@ -4119,36 +4119,36 @@ async def build_data_studio_synthetic_quality_analytics(
     if total_rows > 0 and not gold_texts:
         findings.append(_synthetic_quality_finding(
             "synthetic_quality_gold_missing",
-            "Gold Set anchors missing",
+            "Answer-key anchors missing",
             "warning",
             "attention",
-            "Synthetic rows cannot be compared with trusted Gold Set anchors yet.",
+            "Synthetic rows cannot be compared with trusted answer-key anchors yet.",
             count=total_rows,
             target_tab="goldset",
-            owner="Gold Set",
+            owner="Answer Key",
             evidence=["Add trusted examples to estimate whether synthetic rows are close to the target domain."],
-            action_label="Open Gold Set",
+            action_label="Open Answer Key",
         ))
     elif low_gold_similarity > 0:
         findings.append(_synthetic_quality_finding(
             "synthetic_quality_gold_similarity_low",
-            "Low Gold Set similarity",
+            "Low answer-key similarity",
             "warning",
             "attention",
-            f"{low_gold_similarity} synthetic row(s) are far from trusted Gold Set wording.",
+            f"{low_gold_similarity} synthetic row(s) are far from trusted answer-key wording.",
             count=low_gold_similarity,
             target_tab="goldset",
-            owner="Gold Set",
+            owner="Answer Key",
             evidence=["Very low similarity can indicate domain drift or under-anchored generation."],
-            action_label="Review Gold Set",
+            action_label="Review Answer Key",
         ))
     if high_gold_similarity > 0:
         findings.append(_synthetic_quality_finding(
             "synthetic_quality_gold_similarity_high",
-            "High Gold Set overlap",
+            "High answer-key overlap",
             "info",
             "attention",
-            f"{high_gold_similarity} synthetic row(s) are very close to trusted Gold Set examples.",
+            f"{high_gold_similarity} synthetic row(s) are very close to trusted answer-key examples.",
             count=high_gold_similarity,
             target_tab="synthetic",
             owner="Synthetic Review",
@@ -4324,10 +4324,10 @@ async def build_data_studio_synthetic_quality_analytics(
             {
                 "label": "Open Review Queue",
                 "target_tab": "review-queue",
-                "reason": "Use Data Studio review triage for synthetic, Gold Set, and annotation review work.",
+                "reason": "Use Data Studio review triage for synthetic, answer-key, and annotation review work.",
             },
             {
-                "label": "Open Gold Set",
+                "label": "Open Answer Key",
                 "target_tab": "goldset",
                 "reason": "Strengthen trusted anchors used for similarity and review decisions.",
             },
@@ -4600,23 +4600,23 @@ async def build_data_studio_review_queue(
             _issue(
                 "review_queue_gold_needs_review",
                 "warning",
-                "Gold Set rows need review",
-                f"{gold_review_needed} Gold Set row(s) are pending, in review, or waiting on changes.",
-                action_label="Review Gold Set",
+                "Answer-key rows need review",
+                f"{gold_review_needed} answer-key row(s) are pending, in review, or waiting on changes.",
+                action_label="Review Answer Key",
                 target_tab="goldset",
             )
         )
         triage.append(
             _review_triage_item(
                 item_id="review_gold_set_rows",
-                title="Review Gold Set rows",
+                title="Review answer-key rows",
                 priority="high",
                 count=gold_review_needed,
                 message="Trusted evaluation examples should be reviewed before training and eval decisions depend on them.",
-                action_label="Open Gold Set",
+                action_label="Open Answer Key",
                 target_tab="goldset",
                 evidence=[
-                    f"{gold_trusted} trusted Gold Set example(s) are ready.",
+                    f"{gold_trusted} trusted answer-key example(s) are ready.",
                     f"{int(gold_totals.get('queue_pending') or 0)} assigned queue item(s) are pending.",
                 ],
             )
@@ -4688,7 +4688,7 @@ async def build_data_studio_review_queue(
                 target_tab="dataprep",
                 evidence=[
                     f"{synthetic_accepted} accepted synthetic row(s).",
-                    f"{gold_trusted} trusted Gold Set example(s).",
+                    f"{gold_trusted} trusted answer-key example(s).",
                     f"{annotation_promoted} promoted annotation row(s).",
                 ],
             )
@@ -4700,7 +4700,7 @@ async def build_data_studio_review_queue(
                 "review_queue_no_review_sources",
                 "info",
                 "No review queue yet",
-                "Generate synthetic rows, add Gold Set examples, or create annotation jobs to start review flow.",
+                "Generate synthetic rows, add answer-key examples, or create annotation jobs to start review flow.",
                 action_label="Open Synthetic",
                 target_tab="synthetic",
             )
@@ -4711,7 +4711,7 @@ async def build_data_studio_review_queue(
                 title="Create a review source",
                 priority="low",
                 count=0,
-                message="Review queues appear after synthetic generation, Gold Set sampling, or annotation seeding.",
+                message="Review queues appear after synthetic generation, answer-key sampling, or annotation seeding.",
                 action_label="Open Synthetic",
                 target_tab="synthetic",
                 evidence=[],
@@ -4755,7 +4755,7 @@ async def build_data_studio_review_queue(
             by_source.append(
                 _review_group(
                     key=f"gold:{dataset.get('id')}:review",
-                    label=str(dataset.get("name") or "Gold Set"),
+                    label=str(dataset.get("name") or "Answer Key"),
                     kind="gold_set",
                     status="needs_review",
                     count=review_needed,
@@ -4766,7 +4766,7 @@ async def build_data_studio_review_queue(
             by_source.append(
                 _review_group(
                     key=f"gold:{dataset.get('id')}:trusted",
-                    label=str(dataset.get("name") or "Gold Set"),
+                    label=str(dataset.get("name") or "Answer Key"),
                     kind="gold_set",
                     status="trusted",
                     count=trusted,
@@ -4831,14 +4831,14 @@ async def build_data_studio_review_queue(
         ),
         _status_group(
             status="gold_review_needed",
-            label="Gold Set review needed",
+            label="Answer-key review needed",
             count=gold_review_needed,
             target_tab="goldset",
             kind="gold_set",
         ),
         _status_group(
             status="gold_trusted",
-            label="Gold Set trusted",
+            label="Answer key trusted",
             count=gold_trusted,
             target_tab="goldset",
             kind="gold_set",
@@ -4935,9 +4935,9 @@ async def build_data_studio_review_queue(
                 "reason": "Accept or reject pending synthetic rows in the existing Synthetic tab.",
             },
             {
-                "label": "Open Gold Set review",
+                "label": "Open Answer Key review",
                 "target_tab": "goldset",
-                "reason": "Review trusted examples and Gold Set workbench rows in the existing Gold Set workflow.",
+                "reason": "Review trusted examples and answer-key workbench rows in the existing answer-key workflow.",
             },
             {
                 "label": "Open Annotation workspace",
@@ -5415,7 +5415,7 @@ async def build_data_studio_overview(
                 "no_trainable_rows",
                 "blocker",
                 "No trainable rows yet",
-                "Import data, create gold rows, or accept reviewed synthetic rows before preparing a dataset.",
+                "Import data, create answer-key rows, or accept reviewed synthetic rows before preparing a dataset.",
                 action_label="Add sources",
                 target_tab="data",
             )
@@ -7125,7 +7125,7 @@ async def build_data_studio_prepare_dataset(
                 "prepare_no_trainable_rows",
                 "blocker",
                 "No trainable rows",
-                "Add sources, create Gold Set examples, or accept synthetic rows before preparing a dataset.",
+                "Add sources, create answer-key examples, or accept synthetic rows before preparing a dataset.",
                 action_label="Add sources",
                 target_tab="data",
             )
@@ -7193,9 +7193,9 @@ async def build_data_studio_prepare_dataset(
         review_blockers.append(
             _prepare_review_blocker(
                 "gold_needs_review",
-                "Gold Set rows need review",
+                "Answer-key rows need review",
                 gold_review_needed,
-                "Gold Set examples are more valuable after approval or lock review.",
+                "Answer-key examples are more valuable after approval or lock review.",
                 severity="warning",
                 target_tab="goldset",
             )
@@ -7204,9 +7204,9 @@ async def build_data_studio_prepare_dataset(
             _issue(
                 "prepare_gold_needs_review",
                 "warning",
-                "Gold Set review is open",
-                f"{gold_review_needed} Gold Set row(s) still need review.",
-                action_label="Open Gold Set",
+                "Answer-key review is open",
+                f"{gold_review_needed} answer-key row(s) still need review.",
+                action_label="Open Answer Key",
                 target_tab="goldset",
             )
         )
@@ -8126,7 +8126,7 @@ def _quality_domain_authored_checks(
                 domain_label=domain_label,
                 evidence=[
                     f"Synthetic pending: {synthetic_pending}.",
-                    f"Gold Set review needed: {gold_review_needed}.",
+                    f"Answer-key review needed: {gold_review_needed}.",
                     f"Annotation review/promotion: {annotation_review_needed + annotation_unpromoted}.",
                 ],
                 action_label="Open Review",
@@ -8981,7 +8981,7 @@ async def build_data_studio_quality_safety(
                 "review",
                 "attention",
                 "warning",
-                f"{review_count} Gold Set or annotation review item(s) still need attention.",
+                f"{review_count} answer-key or annotation review item(s) still need attention.",
                 count=review_count,
                 target_tab="annotate" if annotation_review_needed or annotation_unpromoted else "goldset",
                 workflow_owner="Review",
@@ -8989,7 +8989,7 @@ async def build_data_studio_quality_safety(
                 domain_id=domain_id,
                 domain_label=domain_label,
                 evidence=[
-                    f"Gold Set review needed: {gold_review_needed}.",
+                    f"Answer-key review needed: {gold_review_needed}.",
                     f"Annotation review needed: {annotation_review_needed}.",
                     f"Annotation labels not promoted: {annotation_unpromoted}.",
                 ],
@@ -9197,7 +9197,7 @@ async def build_data_studio_quality_safety(
             "requires_confirmation": True,
         },
         {
-            "label": "Open Gold Set",
+            "label": "Open Answer Key",
             "target_tab": "goldset",
             "reason": "Review trusted examples and field coverage before training decisions depend on them.",
             "requires_confirmation": True,
@@ -9205,7 +9205,7 @@ async def build_data_studio_quality_safety(
         {
             "label": "Open Review",
             "target_tab": "synthetic" if synthetic_pending else "annotate",
-            "reason": "Clear synthetic, Gold Set, or annotation review items before preparation.",
+            "reason": "Clear synthetic, answer-key, or annotation review items before preparation.",
             "requires_confirmation": True,
         },
         {
@@ -10074,12 +10074,12 @@ async def build_data_studio_coach_rail(
         },
         {
             "id": "gold_set",
-            "label": "Gold Set",
+            "label": "Answer Key",
             "payload": gold,
             "target_tab": "goldset",
-            "action_label": "Open Gold Set",
-            "ready_message": "Trusted Gold Set examples are ready.",
-            "empty_message": "Gold Set examples are not ready yet.",
+            "action_label": "Open Answer Key",
+            "ready_message": "Trusted answer-key examples are ready.",
+            "empty_message": "Answer-key examples are not ready yet.",
         },
         {
             "id": "synthetic_playbooks",

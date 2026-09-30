@@ -367,7 +367,7 @@ async def _materialize_demo_bundle_into_project(
         project_id=project.id,
         name=f"{project_name} · gold",
         dataset_type=DatasetType.GOLD_DEV,
-        description="Hand-labelled gold-set rows for the demo project.",
+        description="Hand-labelled answer-key rows for the demo project.",
         record_count=len(gold_rows),
         file_path=str(gold_jsonl_path),
         metadata_={"demo_slug": slug, "frozen": True},

@@ -50,7 +50,7 @@ vi.mock('../components/data/CleaningPanel', () => ({
 }));
 
 vi.mock('../components/data/GoldSetPanel', () => ({
-    default: () => <section data-testid="panel-goldset-tab">Gold Set Tab</section>,
+    default: () => <section data-testid="panel-goldset-tab">Answer Key Tab</section>,
 }));
 
 vi.mock('../components/data/SyntheticPanel', () => ({

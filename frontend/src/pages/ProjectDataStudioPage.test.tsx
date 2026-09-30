@@ -44,7 +44,7 @@ const { navigateMock, setActiveTabMock, routeState, contextState, coachRailPaylo
             { id: 'mapping', status: 'ready', label: 'Mapping', target_tab: 'dataprep', message: 'Mapping is ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
             { id: 'domain', status: 'attention', label: 'Domain', target_tab: 'domain', message: 'Domain needs confirmation.', blocker_count: 0, warning_count: 1, info_count: 0 },
             { id: 'quality_safety', status: 'attention', label: 'Quality & Safety', target_tab: 'dataprep', message: 'Quality warnings need review.', blocker_count: 0, warning_count: 1, info_count: 0 },
-            { id: 'gold_set', status: 'ready', label: 'Gold Set', target_tab: 'goldset', message: 'Gold Set is ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
+            { id: 'gold_set', status: 'ready', label: 'Answer Key', target_tab: 'goldset', message: 'Answer key is ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
             { id: 'synthetic_playbooks', status: 'attention', label: 'Synthetic Playbooks', target_tab: 'synthetic', message: 'Synthetic prerequisites need review.', blocker_count: 0, warning_count: 1, info_count: 0 },
             { id: 'synthetic_recommendations', status: 'ready', label: 'Synthetic Recommendations', target_tab: 'synthetic', message: 'Recommendations are ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
             { id: 'synthetic_quality', status: 'attention', label: 'Synthetic Quality', target_tab: 'synthetic', message: 'Synthetic quality needs review.', blocker_count: 0, warning_count: 1, info_count: 0 },
@@ -377,7 +377,7 @@ describe('ProjectDataStudioPage', () => {
         await user.click(await within(filters).findByRole('button', { name: /^Ready\s+9$/i }));
 
         const review = screen.getByTestId('data-studio-section-review-queue');
-        const readyGoldChip = await within(review).findByRole('button', { name: /^Gold Set\s+Ready$/i });
+        const readyGoldChip = await within(review).findByRole('button', { name: /^Answer Key\s+Ready$/i });
         const blockerReviewChip = await within(review).findByRole('button', { name: /^Review\s+Blocker$/i });
         const attentionSyntheticChip = await within(review).findByRole('button', { name: /^Synthetic\s+Attention$/i });
 
@@ -412,7 +412,7 @@ describe('ProjectDataStudioPage', () => {
         expect(domainChip).toHaveAttribute('data-status', 'attention');
         expect(within(domainChip).getByText('Attention')).toBeInTheDocument();
 
-        const goldChip = await within(gold).findByRole('button', { name: /^Gold Set\s+Ready$/i });
+        const goldChip = await within(gold).findByRole('button', { name: /^Answer Key\s+Ready$/i });
         expect(goldChip).toHaveAttribute('data-status', 'ready');
         expect(within(goldChip).getByText('Ready')).toBeInTheDocument();
 

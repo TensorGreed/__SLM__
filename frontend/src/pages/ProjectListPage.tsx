@@ -486,7 +486,7 @@ export default function ProjectListPage() {
                                         </select>
                                         <div className="form-hint">
                                             Optional domain preset: defaults for model family, adapter
-                                            profile, evaluation gates, and safety reminders.
+                                            profile, pass/fail rules, and safety reminders.
                                         </div>
                                     </div>
                                     {selectedStarterPack && (

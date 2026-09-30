@@ -981,7 +981,7 @@ async def _resolve_heldout_dataset(
 
 def _load_eval_rows(file_path: Path) -> list[dict]:
     if not file_path.exists():
-        raise FileNotFoundError(f"Held-out dataset file not found: {file_path}")
+        raise FileNotFoundError(f"Test-example file not found: {file_path}")
 
     rows: list[dict] = []
     suffix = file_path.suffix.lower()
@@ -2248,7 +2248,7 @@ def _compute_perplexity(
         bytes_covered += len(text.encode("utf-8"))
         docs_used += 1
     if len(stream) < 2:
-        raise ValueError("Not enough held-out text to measure perplexity.")
+        raise ValueError("Not enough test-example text to measure perplexity.")
 
     total_nll = 0.0
     predicted = 0
@@ -2285,7 +2285,7 @@ async def _run_perplexity_evaluation(
 ) -> EvalResult:
     texts = _heldout_texts(dataset_path, max_docs=max(200, max_samples))
     if not texts:
-        raise ValueError(f"No held-out text found in {dataset_path}.")
+        raise ValueError(f"No test-example text found in {dataset_path}.")
     model_ref = str(_resolve_model_reference(exp, model_path))
     metrics = await asyncio.to_thread(_compute_perplexity, model_ref, texts)
     result = EvalResult(

@@ -546,7 +546,7 @@ export default function ProjectAutopilotPage() {
                     {!preview && !dryRunResponse && !applyResult ? (
                         <EmptyState
                             title="No plan yet"
-                            description="Type a plain-English brief above and click Preview Plan to see what autopilot would do — adapter, base model, task type, eval pack, target. Nothing mutates until you click Apply."
+                            description="Type a plain-English brief above and click Preview Plan to see what autopilot would do — adapter, base model, task type, pass/fail rules, target. Nothing mutates until you click Apply."
                             docsHref="http://localhost:3001/docs/workflows/newbie-autopilot"
                         />
                     ) : null}

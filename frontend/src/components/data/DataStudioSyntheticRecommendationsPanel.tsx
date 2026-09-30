@@ -34,7 +34,7 @@ interface DataStudioSyntheticRecommendationsPanelProps {
 const RECOMMENDATION_VERDICT_COPY: Record<DataStudioSyntheticRecommendations['verdict'], { label: string; detail: string }> = {
     empty: {
         label: 'No advice',
-        detail: 'Add domain evidence, a task type, or Gold Set rows to unlock recommendations.',
+        detail: 'Add domain evidence, a task type, or answer-key rows to unlock recommendations.',
     },
     attention: {
         label: 'Review advice',

@@ -348,14 +348,14 @@ async def _data_stage_suggestions(
         # warning case is the less-urgent "you could comfortably
         # train but more rows would help" framing.
         if row_count <= GOLD_ROW_THIN_MAX:
-            title = f"Your gold set has {row_count} rows"
+            title = f"Your answer key has {row_count} rows"
             body = (
                 "Most useful first models need at least 100 rows of labeled "
                 f"examples. Generating ~{topup} synthetic positives via the "
                 "task type's paraphrase playbook bridges the gap fast."
             )
         else:
-            title = f"Your gold set has {row_count} rows — could be stronger"
+            title = f"Your answer key has {row_count} rows — could be stronger"
             body = (
                 f"You're past the 100-row floor, but {GOLD_ROW_COMFORTABLE_MIN}+ "
                 "rows is the comfortable zone for narrow tasks. Generating "
@@ -992,12 +992,12 @@ async def _gold_set_stage_suggestions(
         # picker — same fallback used on the data stage.
         return [{
             "id": "gold_set:no-recipe",
-            "title": "Choose a task type before reviewing the gold set",
+            "title": "Choose a task type before reviewing the answer key",
             "body": (
                 "Coach Mode needs the task type's profile (classification, "
-                "qa-sft, span-extraction, etc.) to score gold-set health. "
+                "qa-sft, span-extraction, etc.) to score answer-key health. "
                 "Selecting a task type also unlocks the synth playbook "
-                "suggestions that bridge gaps in your gold set."
+                "suggestions that bridge gaps in your answer key."
             ),
             "severity": "info",
             "action": {
@@ -1035,18 +1035,18 @@ async def _gold_set_stage_suggestions(
         )
         suggestions.append({
             "id": "gold_set:train-leakage",
-            "title": "Gold rows are leaking into your training data",
+            "title": "Answer-key rows are leaking into your training data",
             "body": (
-                f"{leak['total_leaked']} of {leak['total_scanned']} gold rows "
+                f"{leak['total_leaked']} of {leak['total_scanned']} answer-key rows "
                 f"({leak['frac'] * 100:.0f}%) are identical or near-identical to "
                 f"rows the model trains on"
                 + (
-                    f", including {test_leaked} GOLD_TEST row(s) — your final grade"
+                    f", including {test_leaked} row(s) from your final answer key — your final grade"
                     if test_leaked
                     else ""
                 )
                 + ". Your eval pass-rate is measuring memorisation, not skill. "
-                "Re-split so the gold set is held out before you trust the score."
+                "Re-split so the answer key stays out of training before you trust the score."
             ),
             "severity": leak_severity,
             "action": {
@@ -1135,7 +1135,7 @@ async def _gold_set_stage_suggestions(
     if diversity_signal.get("severity") == "warn":
         suggestions.append({
             "id": "gold_set:diversity-low",
-            "title": str(diversity_signal.get("headline", "Gold set lacks diversity")),
+            "title": str(diversity_signal.get("headline", "Answer key lacks diversity")),
             "body": (
                 str(diversity_signal.get("detail", "")) + " "
                 "Paraphrasing your existing positives is a safe first lift — "
@@ -1708,9 +1708,9 @@ async def _training_stage_suggestions(
         )
         body = (
             (dominant_blocker["headline"] + " " if dominant_blocker else "")
-            + "Either lift the gold set (more rows, better balance) or move "
+            + "Either lift the answer key (more rows, better balance) or move "
             "to a stronger base model — the current pairing isn't projected "
-            "to pass the auto-gate."
+            "to pass your pass/fail rules."
             + action_hint
         )
     else:  # borderline
@@ -1892,7 +1892,7 @@ async def _multi_seed_variance_nudge(
                 f"The {name} metric showed std={std_val:.3f} on "
                 f"mean={mean_val:.3f} the last time you ran "
                 "multi-seed — a {rel_pct:.1f}% relative spread. Going "
-                "back to num_seeds=1 hides that variance: the gate's "
+                "back to num_seeds=1 hides that variance: the pass/fail rules' "
                 "mean−std lower bound (phase 1) goes back to looking "
                 "artificially tight, and a re-run could flip the "
                 "verdict. Set num_seeds≥3 to keep the verdict honest."
@@ -1931,7 +1931,7 @@ async def _multi_seed_variance_nudge(
         "id": "training:variance-unknown",
         "title": "Last run was single-seed — variance is unmeasured",
         "body": (
-            "The gate verdicts on your latest run came from a single "
+            "The pass/fail verdicts on your latest run came from a single "
             "seed, so you don't know whether each metric reflects the "
             "model or the seed. Re-run with num_seeds=3 to get a "
             "mean−std lower-bound verdict (no-vanity-metrics rule)."
@@ -2027,23 +2027,23 @@ async def _inconclusive_sweep_nudge(
             f"{name} ({count} cell{'s' if count != 1 else ''})"
             for name, count in top_gates
         )
-        gate_blurb = f" Gate(s) missed: {rendered}."
+        gate_blurb = f" Rules missed: {rendered}."
 
     measurable = int((pareto.get("gate_summary") or {}).get("measurable_count") or 0)
     cell_count = int(pareto.get("cell_count") or 0)
 
     body = (
-        f"Sweep {latest_sweep_id} finished with no cell clearing the project "
-        f"gate ({measurable}/{cell_count} measurable)."
+        f"Sweep {latest_sweep_id} finished with no cell clearing the project's "
+        f"pass/fail rules ({measurable}/{cell_count} measurable)."
         + gate_blurb
         + " Failure clusters explain why each cell missed; promoting any of "
-        "these would just ship a sub-gate model."
+        "these would just ship a model that fails your pass/fail rules."
     )
 
     return {
         "id": "training:sweep-inconclusive",
         "title": (
-            f"Sweep inconclusive — {measurable}/{cell_count} cells, none cleared gate"
+            f"Sweep inconclusive — {measurable}/{cell_count} cells, none passed your rules"
         ),
         "body": body,
         "severity": "warning",
@@ -2158,7 +2158,7 @@ def _reroute_recommendation_nudge(
         body_parts.append("Signals that fired:\n" + evidence_lines)
     body_parts.append(
         "Switching creates a sibling project that uses the base model + "
-        "retrieval from your gold set — no training run required. Your "
+        "retrieval from your answer key — no training run required. Your "
         "current SFT project stays intact for comparison."
     )
 
@@ -2342,20 +2342,20 @@ async def _missing_per_class_gates_nudge(
     return {
         "id": "eval:no-per-class-gates",
         "title": (
-            f"Your eval pack doesn't gate per-class metrics — "
+            f"Your pass/fail rules don't check per-class metrics — "
             f"{len(classes)} class(es) discovered"
         ),
         "body": (
             f"Macro F1 alone can hide a rare class collapsing — a 90/10 "
             f"split can hit 0.9 accuracy with `f1_minority` near zero. "
             f"Your latest eval surfaced classes {sample}{more}. Adding "
-            f"a `precision_<class>` or `recall_<class>` gate in the eval "
-            f"pack editor catches the regression the moment it shows up."
+            f"a `precision_<class>` or `recall_<class>` rule to your pass/fail "
+            f"rules catches the regression the moment it shows up."
         ),
         "severity": "info",
         "action": {
             "kind": "navigate",
-            "label": "Open eval pack editor",
+            "label": "Open pass/fail rules",
             "params": {"target": "eval-pack-editor"},
         },
         "rule_id": "per-class-gates.absent",
@@ -2463,21 +2463,21 @@ async def _behavioral_tests_without_per_slice_gates_nudge(
     return {
         "id": "eval:behavioral-tests-without-per-slice-gates",
         "title": (
-            f"You have {len(test_ids)} behavioral test{'s' if len(test_ids) != 1 else ''} "
+            f"You have {len(test_ids)} custom check{'s' if len(test_ids) != 1 else ''} "
             f"and {len(slice_ids)} slice{'s' if len(slice_ids) != 1 else ''} but no "
-            "per-slice gates"
+            "per-slice pass/fail rules"
         ),
         "body": (
-            "Your behavioral tests run per-slice now (an INV test might pass at "
+            "Your custom checks run per-slice now (an INV check might pass at "
             "0.92 overall but fail at 0.55 on a specific slice). Without a "
-            "per-slice gate, that regression won't block ship. Add a gate like "
-            f"``{suggested_metric_id} >= 0.85`` in the eval pack editor to "
+            "per-slice rule, that regression won't block ship. Add a pass/fail rule like "
+            f"``{suggested_metric_id} >= 0.85`` to "
             "enforce robustness per slice."
         ),
         "severity": "info",
         "action": {
             "kind": "navigate",
-            "label": "Open eval pack editor",
+            "label": "Open pass/fail rules",
             "params": {"target": "eval-pack-editor"},
         },
         "rule_id": "behavioral-tests.per-slice-ungated",
@@ -2550,19 +2550,19 @@ async def _behavioral_tests_without_gates_nudge(
     return {
         "id": "eval:behavioral-tests-without-gates",
         "title": (
-            f"You have {len(test_ids)} behavioral test{'s' if len(test_ids) != 1 else ''} "
-            "but no gates referencing them"
+            f"You have {len(test_ids)} custom check{'s' if len(test_ids) != 1 else ''} "
+            "but no pass/fail rules referencing them"
         ),
         "body": (
-            f"Behavioral tests {sample}{more} run on every eval and surface in the "
-            "scorecard, but a failing test won't block ship until you add a gate "
-            "on ``behavioral.<test_id>.pass_rate``. Without a gate, robustness "
+            f"Custom checks {sample}{more} run on every eval and surface in the "
+            "scorecard, but a failing check won't block ship until you add a pass/fail rule "
+            "on ``behavioral.<test_id>.pass_rate``. Without a rule, robustness "
             "regressions are visible but not enforced."
         ),
         "severity": "info",
         "action": {
             "kind": "navigate",
-            "label": "Open eval pack editor",
+            "label": "Open pass/fail rules",
             "params": {"target": "eval-pack-editor"},
         },
         "rule_id": "behavioral-tests.ungated",
@@ -2771,23 +2771,23 @@ def _probe_gold_divergence_nudge(
         base_rule = "probe-gold-divergence.warn"
     return {
         "id": "eval:probe-gold-divergence",
-        "title": "Your gold set says green, but the independent ruler disagrees",
+        "title": "Your answer key says green, but the built-in checks disagree",
         "body": (
-            f"Your gold-set pass-rate is {gold_rate * 100:.0f}%, but the held-out "
-            f"probe pack — adversarial probes you didn't author — scored only "
+            f"Your answer-key pass-rate is {gold_rate * 100:.0f}%, but the built-in "
+            f"checks — adversarial checks you didn't author — scored only "
             f"{probe_rate * 100:.0f}%, a {divergence * 100:.0f}-point gap. "
-            f"{len(failing_ids)} probe(s) failed"
+            f"{len(failing_ids)} check(s) failed"
             + (f" ({shown}{more})" if shown else "")
-            + ". Your gold set may be too easy, or blind to what the probes catch "
-            "(robustness, refusal, grounding). Inspect the failing probes before "
-            "you trust the green gate."
+            + ". Your answer key may be too easy, or blind to what the built-in checks catch "
+            "(robustness, refusal, grounding). Inspect the failing checks before "
+            "you trust the green result."
             + dominant_note
             + streak_note
         ),
         "severity": severity,
         "action": {
             "kind": "navigate",
-            "label": "Inspect failing probes",
+            "label": "Inspect failing checks",
             "params": {"target": "probe-pack-panel"},
         },
         "rule_id": "probe-gold-divergence.persistent" if persistent else base_rule,
@@ -3244,12 +3244,12 @@ async def _dataprep_stage_suggestions(
             suggestions.append({
                 "id": "dataprep:test-split-small",
                 "title": (
-                    "No held-out test rows" if test_rows == 0
-                    else f"Only {test_rows} held-out test rows"
+                    "No test examples" if test_rows == 0
+                    else f"Only {test_rows} test examples"
                 ),
                 "body": (
-                    f"Scores are measured on the test split. Below {TEST_SPLIT_MIN_ROWS} "
-                    "rows a single answer flipping moves the score by 5+ points, so "
+                    f"Scores are measured on the test examples. Below {TEST_SPLIT_MIN_ROWS} "
+                    "examples a single answer flipping moves the score by 5+ points, so "
                     "\"better than base\" can be noise. Give the test split a larger "
                     "share, or add more data before splitting."
                 ),
@@ -3305,7 +3305,7 @@ async def _export_stage_suggestions(
             "id": "export:worse-than-base",
             "title": f"The latest model ({run_label}) scored worse than its base model",
             "body": (
-                f"On the held-out test split, {headline.get('metric_id', 'the score')} "
+                f"On the test examples, {headline.get('metric_id', 'the score')} "
                 f"went {headline.get('baseline_value')} → {headline.get('trained_value')}. "
                 "Shipping it would be a downgrade from the model you started with. "
                 "Check the failures on the Eval tab first."
@@ -3320,7 +3320,7 @@ async def _export_stage_suggestions(
             "id": "export:no-better-than-base",
             "title": f"The latest model ({run_label}) is no better than its base model",
             "body": (
-                "Fine-tuning didn't move the held-out score, so the export adds size "
+                "Fine-tuning didn't move the test-example score, so the export adds size "
                 "without adding skill. More (or cleaner) training data usually helps."
             ),
             "severity": "warning",
@@ -3334,7 +3334,7 @@ async def _export_stage_suggestions(
             "title": f"The latest model ({run_label}) hasn't been evaluated",
             "body": (
                 "You'd be exporting without knowing whether it beats the base model. "
-                "One click on the Eval tab scores it on your held-out test split."
+                "One click on the Eval tab scores it on your test examples."
             ),
             "severity": "warning",
             "action": _pipeline_tab_action("Evaluate it", "eval"),
