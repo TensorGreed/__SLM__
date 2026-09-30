@@ -36,6 +36,8 @@ brewslm project list-demos                     # show what's bundled
 brewslm project create-demo --slug support-faq # seed a fresh demo project
 ```
 
+The Support FAQ sample ships 150 resolved tickets (30 topics, each asked five different ways) and a 200-row answer key. Its built-in split is 108 train / 21 validation / 21 test rows, so the lift check and the auto-RAG comparison are measured on 21 rows each. Validation and test rows are new phrasings of topics the train split covers. A Support FAQ project created before this change keeps its old 20-ticket data until you reset the sample.
+
 Or the project-template gallery (8 cloneable starting kits):
 
 ```bash

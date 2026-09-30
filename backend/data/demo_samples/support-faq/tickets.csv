@@ -2,7 +2,7 @@ question,answer
 How do I reset my password?,"Open Settings → Security and click ""Reset password"". You'll get an email with a one-time link within a minute. Links expire after 15 minutes."
 Where can I download my invoice?,"Invoices live under Billing → History. Click any row to open the PDF, or use the ""Download all"" button to grab a zip of the last 12 months."
 How do I add a teammate?,"Go to Settings → Team and click ""Invite member"". Pick their role (Owner, Editor, Viewer) and send the invite. They'll get an email with a sign-up link."
-Can I change my plan mid-month?,"Yes. Open Billing → Plan and pick a new tier. Upgrades are pro-rated immediately. Downgrades take effect at the end of the current cycle."
+Can I change my plan mid-month?,Yes. Open Billing → Plan and pick a new tier. Upgrades are pro-rated immediately. Downgrades take effect at the end of the current cycle.
 Why am I getting a 401 from the API?,"401 means the API key is missing, malformed, or revoked. Check Settings → API Keys to confirm the key is active and copy the latest value. If it's still failing, regenerate."
 How do I export my data?,"Open Settings → Export and click ""Request export"". You'll receive an email with a download link when the zip is ready, usually within 5 minutes for small accounts."
 The dashboard isn't loading. What should I check?,"First refresh the page; intermittent CDN issues sometimes cause a blank screen. If it persists, open status.example.com to confirm there's no incident. Still stuck? Open a support ticket."
@@ -13,9 +13,139 @@ How do I enable two-factor auth?,"Settings → Security → ""Enable 2FA"". Scan
 Why don't I see the Reports tab?,"The Reports tab is only visible to Pro and Enterprise plans. If you've just upgraded, log out and back in to refresh your session permissions."
 Can I cancel anytime?,"Yes. Settings → Billing → ""Cancel subscription"". Your account stays active until the end of the current billing period; we don't pro-rate the unused portion on cancel."
 How do I delete my account?,"Settings → Account → ""Delete account"". This permanently removes your data within 30 days. Export anything you need first; we can't recover deleted accounts."
-Is my data encrypted?,"Yes. Data at rest is encrypted with AES-256 and data in transit uses TLS 1.3. The full security overview is at example.com/security."
+Is my data encrypted?,Yes. Data at rest is encrypted with AES-256 and data in transit uses TLS 1.3. The full security overview is at example.com/security.
 How do I change the email on my account?,"Settings → Account → ""Email address"" → enter the new one. You'll get a verification email at the new address; the change applies once you confirm."
-Can I use single sign-on?,"SSO via OIDC and SAML is available on the Enterprise plan. Contact sales to enable it for your workspace."
+Can I use single sign-on?,SSO via OIDC and SAML is available on the Enterprise plan. Contact sales to enable it for your workspace.
 Why didn't my webhook fire?,"Check Settings → Webhooks → click the endpoint → ""Recent deliveries"". Failed deliveries show the response code and body. We retry 4× over 24 hours with exponential backoff."
 How do I import data from a CSV?,"Open the Datasets tab → ""Upload"" → drag the CSV. The importer maps columns automatically; you can rename fields on the preview screen before confirming."
 What's included in the free trial?,"Free trial is 14 days of the Pro plan: unlimited datasets, 5 active projects, 600 API requests/min. No credit card required to start."
+Can I get a refund?,"Within 14 days of the most recent charge, email support@example.com and we'll issue a full refund. After 14 days we credit your next invoice instead."
+How do I add a custom domain?,"Settings → Domains → Add. We show the DNS records to create, and verification completes within 5 minutes of propagation."
+Where are your server regions located?,"We run in us-east, us-west, eu-west and ap-southeast. You choose the region when creating a workspace; changing it later requires support."
+How do I add an avatar to my profile?,"Open the profile icon at the top-right, go to Profile and choose Upload image. We accept PNG or JPG files of up to 5MB."
+Can I use the app without an internet connection?,"Partly. Any project you opened during the last 7 days can be read offline, and edits you make are queued on your device and synced after you reconnect."
+How long are deleted projects kept?,30 days in a soft-delete state. Restore them from Settings → Trash. After 30 days they are permanently removed.
+Does the product have a mobile app?,"Yes, iOS and Android apps are in their app stores. You sign in with the same login as the web app."
+Is it possible to pause my subscription?,Pausing isn't something we offer. What you can do is move down to the Free plan whenever you like; all of your data is kept.
+How can I tell how much of my plan I have used?,"The Usage page in Settings → Billing shows it. On top of that, an email goes out as soon as any limit reaches 80%."
+Can I customize email notifications?,Yes. In Settings → Notifications you can toggle each event independently or set a Quiet hours window.
+"I forgot my password, how can I get back in?","No problem. Under Settings → Security there is a Reset password button. We email you a one-time link in about a minute, and it stays valid for 15 minutes."
+I need a PDF of last month's bill.,Go to Billing → History and click the row for that month to open its PDF. Download all gives you a zip covering the last 12 months.
+How can I give a colleague access to our workspace?,"Invite them from Settings → Team with Invite member. Choose Owner, Editor or Viewer, and they receive a sign-up link by email."
+How do I upgrade my subscription?,Pick the new tier under Billing → Plan. An upgrade starts right away and is pro-rated for the rest of the month.
+My API calls return Unauthorized. What's wrong?,"Unauthorized (401) points at the key: it is absent, mistyped or revoked. Confirm it is active in Settings → API Keys, re-copy it, and regenerate if that doesn't help."
+Can I get a copy of everything in my account?,"Yes. Request export in Settings → Export builds a zip and emails you the download link, typically in under 5 minutes for a small account."
+I only see a blank screen after logging in.,"A blank screen is often a temporary CDN hiccup, so refresh first. Then check status.example.com for an incident, and open a support ticket if it keeps happening."
+I leaked an API key by accident. What should I do?,"Revoke it right away: Settings → API Keys, open the key's row and press Revoke. It dies instantly, and you can generate a replacement on that screen."
+Can my assistant log in with my email too?,"Accounts can't be shared that way, because every account needs its own unique email. Invite your assistant as a teammate using their address."
+How many API requests can I make per minute?,"It depends on the plan: 60 per minute on Free, 600 on Pro and 6000 on Enterprise. Going over returns a 429 with a Retry-After header."
+Can I add an extra login step to protect my account?,"Yes, turn on 2FA under Settings → Security. You scan a QR code with an authenticator app such as Authy, then store the backup codes safely."
+Reports is missing from my menu.,Reports is limited to the Pro and Enterprise plans. After an upgrade you need to log out and back in so your session picks up the new permissions.
+How do I stop my subscription?,"Use Cancel subscription in Settings → Billing. You keep access until the billing period ends, and the unused part is not pro-rated."
+I want to close my account for good.,"Choose Delete account under Settings → Account. Your data is permanently removed within 30 days and cannot be recovered, so export what you need beforehand."
+How do you protect stored data?,"Stored data is encrypted at rest with AES-256, and everything in transit travels over TLS 1.3. See example.com/security for the full overview."
+I have a new work email. How do I update it?,"Enter it under Settings → Account → Email address. We send a verification message to the new address, and the switch happens when you confirm."
+Do you support SAML login?,"Yes, SAML (and OIDC) single sign-on comes with the Enterprise plan. Sales can switch it on for your workspace."
+My endpoint never received the event.,"Open the endpoint in Settings → Webhooks and look at Recent deliveries. A failed attempt lists the response code and body, and we retry 4 times across 24 hours."
+Can I bulk upload records from a spreadsheet?,"Yes, save it as CSV and drag it into Datasets → Upload. Columns are mapped automatically, and you can rename fields on the preview before you confirm."
+How long does the trial last?,"14 days. During that time you are on the Pro plan, with unlimited datasets, 5 active projects and 600 API requests per minute, and no card is needed."
+I was charged by mistake. How do I get my money back?,Write to support@example.com. If the charge is less than 14 days old you get a full refund; older charges become a credit on the next invoice.
+Can I use my own domain name?,"Yes. Add it under Settings → Domains, create the DNS records we display, and it verifies within 5 minutes once they propagate."
+Can I host my data in Europe?,"Yes, pick eu-west when you create the workspace. The other regions are us-east, us-west and ap-southeast, and moving later has to go through support."
+Can I change my profile picture?,Yes. Open Profile from the profile icon (top-right) and choose Upload image. It accepts PNG or JPG files up to 5MB.
+Can I keep working on a flight?,You can read any project opened in the last 7 days while offline. Edits are queued locally and sync once you are back online.
+I deleted a project by accident. Can I get it back?,"Yes, if it was within 30 days. Go to Settings → Trash and restore it. Projects are removed for good after those 30 days."
+Can I use it on my phone?,You can: install the iOS or Android app from the app store and use the same login you use on the web.
+Can I put my plan on hold for a few months?,"There's no hold or pause option. Downgrading to Free is available whenever you want, and your data is kept."
+Am I close to my plan's limits?,Check the Usage page under Settings → Billing. You'll also get an email once you reach 80% of any limit.
+I'm getting too many emails. How do I turn them down?,Go to Settings → Notifications and switch off the events you don't want. A Quiet hours window is available too.
+Where is the option to change a lost password?,It's in Settings → Security: hit Reset password and watch your inbox. The one-time link arrives within a minute and expires 15 minutes later.
+How do I get all my invoices for the year?,Billing → History has a Download all button that zips the last 12 months of invoices. Individual rows open as PDFs.
+Where do I invite new users?,"Settings → Team → Invite member. Select one of the three roles (Owner, Editor, Viewer); the person gets an email containing a sign-up link."
+"If I downgrade today, when does it apply?",A downgrade chosen in Billing → Plan applies at the end of the current billing cycle. Only upgrades take effect immediately (pro-rated).
+The API rejects my key. How do I fix it?,"A rejected key gives a 401. Open Settings → API Keys, make sure the key is still active, paste the current value again, or generate a new one."
+Where is the data export option?,Under Settings → Export. Click Request export and wait for the email with the download link; small accounts are ready in about 5 minutes.
+Is the service down?,"Check status.example.com for any incident. If nothing is reported, refresh the page (CDN glitches can blank the dashboard) and open a support ticket if it still fails."
+How do I disable an old key?,Open the key's row in Settings → API Keys and choose Revoke. It stops working at once; create a new key from the same view if you need one.
+Is it possible to register two accounts under one address?,"No, one email address maps to exactly one account. For shared access, add the other person as a teammate with a separate email."
+Why am I getting 429 errors?,"429 means you hit the rate limit (60/min Free, 600/min Pro, 6000/min Enterprise). Wait for the time in the Retry-After header before retrying."
+Which authenticator apps work with 2FA?,"Any standard one: 1Password, Authy and Google Authenticator all work. Enable 2FA in Settings → Security, scan the QR code and keep the backup codes."
+I upgraded to Pro but still can't open Reports.,Log out and log back in. The Reports tab (Pro and Enterprise only) appears once your session permissions are refreshed.
+"If I cancel now, do I lose access immediately?",No. After you cancel in Settings → Billing the account remains active through the end of the current billing period. There is no pro-rated refund for the remainder.
+Can a deleted account be restored?,"No, deleted accounts can't be recovered. Deletion (Settings → Account → Delete account) wipes your data within 30 days, so export first."
+What encryption do you use?,AES-256 for data at rest and TLS 1.3 for data in transit. Details are in the security overview at example.com/security.
+Why is my old email still showing after I changed it?,The change only applies after you confirm the verification email sent to the new address. You can re-enter it in Settings → Account → Email address.
+How do we connect Okta to our workspace?,"Okta connects through SSO, which supports OIDC and SAML on the Enterprise plan. Get in touch with sales to have it enabled."
+How can I debug webhook failures?,"Recent deliveries, under the endpoint in Settings → Webhooks, shows each failed delivery's response code and body. Retries happen 4× over 24 hours with exponential backoff."
+The importer guessed my column names wrong. Can I fix them?,You can rename fields on the preview screen before confirming. Start again from the Datasets tab → Upload and drag the CSV in.
+Do I need a credit card to try it?,"No credit card is required. The trial gives you 14 days of Pro: unlimited datasets, 5 active projects and 600 API requests/min."
+What's your refund policy?,"Full refund when you contact support@example.com within 14 days of the latest charge. Past that window, the amount is credited to your next invoice."
+Which DNS records do I need for my domain?,"The exact records are shown after you click Add in Settings → Domains. Once they propagate, verification takes up to 5 minutes."
+How do I move my workspace to another region?,"Region changes after creation require support, so contact us. Available regions are us-east, us-west, eu-west and ap-southeast."
+My photo won't upload. What formats are allowed?,"Only PNG and JPG, with a 5MB maximum. Upload it from the top-right profile icon → Profile → Upload image."
+What happens to my edits when I lose connection?,They queue locally and sync when you reconnect. Offline reading covers projects you opened within the last 7 days.
+Where is the trash?,"Under Settings → Trash. Deleted projects stay there for 30 days, can be restored during that time, and are then permanently removed."
+Is there an iPhone app?,"Yes, there is an iOS app (and an Android one) in the app stores. It uses your existing web login."
+I won't use the product over the summer. What are my options?,"Subscriptions can't be paused, so the usual route is to downgrade to Free for that time. Your data stays in place."
+Will you warn me before I run out of quota?,"Yes, we send an email at 80% of any limit. The live numbers are in Settings → Billing → Usage."
+How do I stop notifications at night?,Set a Quiet hours window in Settings → Notifications. Each event can also be toggled on or off separately.
+The password reset link says it expired. What now?,Reset links only last 15 minutes. Request a fresh one from Settings → Security → Reset password; the new email shows up within a minute.
+Where are my receipts?,"Every receipt is listed in Billing → History. Open a row for the PDF, or grab the 12-month zip with Download all."
+What roles can I assign when inviting someone?,"Owner, Editor or Viewer. You pick the role in Settings → Team → Invite member, and the invite goes out as an email sign-up link."
+Will I be charged the full price if I upgrade halfway through the month?,"No, upgrades are pro-rated from the day you switch in Billing → Plan. Downgrades wait until the cycle ends."
+What does a 401 response mean?,"It means we couldn't authenticate the request: the API key was missing, malformed or revoked. Verify it under Settings → API Keys and regenerate if needed."
+How long does an export take?,Usually within 5 minutes for small accounts. Start it from Settings → Export → Request export and we email the link when the zip is ready.
+My dashboard keeps spinning forever.,"Try a refresh, since CDN issues come and go. If it still won't load, look at status.example.com, and raise a support ticket when no incident is listed."
+Does revoking a key take effect right away?,"Yes, immediately. Revoke lives in Settings → API Keys on the key's row, and the same view lets you generate a replacement."
+We want one login for the whole team. Is that allowed?,"Each person needs an account tied to their own unique email. Rather than sharing a login, invite everyone as teammates."
+Does Pro have a higher API limit than Free?,Yes. Free allows 60 requests a minute and Pro allows 600; Enterprise goes up to 6000. A 429 response tells you when to retry via Retry-After.
+Where do I set up two-step verification?,"In Settings → Security, click Enable 2FA. Scan the QR code using your authenticator app and put the backup codes somewhere safe."
+Which plans include the Reports tab?,"Pro and Enterprise. If you recently upgraded and it hasn't appeared, signing out and in again refreshes your permissions."
+Will I get money back for the unused days when I cancel?,We don't pro-rate the unused portion. Cancelling from Settings → Billing keeps your account active until the billing period is over.
+How long until my data is gone after I delete my account?,"Within 30 days of clicking Delete account in Settings → Account. It is permanent, so run an export before you do it."
+Our security team is asking about TLS. What version do you support?,"Data in transit uses TLS 1.3, and data at rest is encrypted with AES-256. Point your team to example.com/security for the overview."
+Can I switch my login to a different address?,"Yes. Go to Settings → Account, edit Email address and confirm the verification email that lands in the new inbox."
+Which plan do I need for SSO?,"Enterprise. SSO works over OIDC or SAML, and you contact sales to enable it for the workspace."
+Do you retry webhooks that fail?,Yes: 4 retries over 24 hours with exponential backoff. You can inspect each attempt in Settings → Webhooks → the endpoint → Recent deliveries.
+Where do I upload a CSV file?,"In the Datasets tab, click Upload and drop the file. The importer auto-maps the columns and shows a preview where fields can be renamed."
+What limits apply while I'm trialling?,"Trial accounts get Pro limits for 14 days: 5 active projects, unlimited datasets and 600 API requests a minute. You can start without a card."
+It's been three weeks since I paid. Can I still get refunded?,"After 14 days we can't refund to your card, but we credit your next invoice. Email support@example.com to set that up."
+My custom domain still says unverified.,Verification finishes within 5 minutes of DNS propagation. Double-check the records listed in Settings → Domains against your DNS provider.
+Which regions can I pick from?,"Four: us-east, us-west, eu-west and ap-southeast. The choice is made during workspace creation and only support can change it afterwards."
+Where do I set a picture for my account?,"Top-right profile icon, then Profile, then Upload image. Use a PNG or JPG no larger than 5MB."
+Why can't I open an old project without internet?,Offline access only covers projects opened in the last 7 days. Open it while connected first; later changes queue locally and sync on reconnect.
+Can I recover a project deleted two months ago?,No. Deleted projects sit in Settings → Trash for 30 days only; after that they are permanently removed and can't be restored.
+Do I need a separate account for the mobile app?,"No, the iOS and Android apps use the same login as the web app. Download them from the app stores."
+Will I lose my data if I downgrade to Free?,"No, your data is kept when you downgrade to Free. That is also what we suggest instead of pausing, which we don't offer."
+Where can I check how much of my quota is used?,Open Settings → Billing and go to Usage. An email alert goes out when any limit reaches 80%.
+Where do I manage alerts?,"Settings → Notifications. Every event has its own toggle, and Quiet hours lets you silence them for a time window."
+Can you send me a new password?,We never send passwords. Use Reset password in Settings → Security instead: a one-time link is emailed within a minute and works for 15 minutes.
+My accountant wants our billing documents. Where do I find them?,"Send them the PDFs from Billing → History. Click a row for a single invoice, or Download all for a zip of the past 12 months."
+My coworker never got access. How do I set them up?,"Send an invite: Settings → Team, click Invite member, choose a role (Owner, Editor, Viewer). They join through the sign-up link in the email."
+Where do I switch to a different tier?,Billing → Plan lists the tiers. Moving up is immediate and pro-rated; moving down kicks in when the current cycle finishes.
+Requests worked yesterday but now fail with 401.,"The key was probably revoked or changed. Look at Settings → API Keys to see whether it is active, copy the latest value, and regenerate it if the 401 continues."
+I want to back up my data before leaving.,"Use Settings → Export and press Request export. A zip is prepared and the download link is emailed to you, normally within 5 minutes."
+Nothing shows up on the home page. Who do I contact?,"Refresh once, then look at status.example.com. If there is no incident and the page is still empty, open a support ticket and we'll dig in."
+Where can I delete an API token we no longer use?,"Go to Settings → API Keys, click that token's row and hit Revoke. The token is dead immediately; a new one can be generated there too."
+Why does sign-up say my email is already in use?,"Because an account already exists for that address, and emails must be unique. If someone else needs access, invite them as a teammate with their own email."
+How do I know when I can retry after being throttled?,"Read the Retry-After header on the 429 response. Limits are 60 requests/min for Free, 600 for Pro and 6000 for Enterprise."
+What are the backup codes for?,"They let you in if you lose your authenticator app, so save them safely. You get them when you Enable 2FA in Settings → Security and scan the QR code."
+How do I get access to reporting?,"Reporting lives in the Reports tab, which needs a Pro or Enterprise plan. Once you upgrade, log out and back in to see it."
+Is there a contract lock-in?,"No lock-in, you can cancel whenever you like via Settings → Billing → Cancel subscription. Access continues to the end of the period, without pro-rating."
+Where is the option to remove my profile entirely?,Settings → Account has Delete account. Be sure to export anything important: data is erased within 30 days and we cannot bring it back.
+Where can I read about your security practices?,The security overview is at example.com/security. In short: AES-256 encryption at rest and TLS 1.3 in transit.
+Where do I update my contact email?,"Settings → Account → Email address. Type the new one, then click the link in the verification email to make it take effect."
+Can employees sign in with our company identity provider?,"They can with SSO (OIDC or SAML), an Enterprise plan feature. Ask sales to turn it on for your workspace."
+Where can I see what our server answered to a webhook?,"Settings → Webhooks, click the endpoint, then Recent deliveries. Failures include the response code and body; we retry 4× in 24 hours."
+Do I have to map columns manually when importing?,"No, mapping is automatic when you drag a CSV into Datasets → Upload. The preview screen lets you rename any field before confirming."
+Can I test the Pro features before paying?,"Yes, the free trial is the Pro plan for 14 days (unlimited datasets, 5 active projects, 600 API requests/min) and needs no credit card."
+Who do I contact about a refund?,"Email support@example.com. Charges from the last 14 days are refunded in full, and anything older is applied as credit to the next invoice."
+Where do I connect our company domain?,"In Settings → Domains, press Add and copy the DNS records shown. We verify the domain within 5 minutes after the records propagate."
+Do you have servers in Asia?,"We have ap-southeast, alongside us-east, us-west and eu-west. Select it at workspace creation, because switching later needs support."
+What's the size limit for avatars?,"5MB, in PNG or JPG format. You add it under Profile → Upload image, reached from the profile icon at the top-right."
+Is an internet connection always required?,"Not always: projects opened in the past 7 days are readable offline, and your changes wait in a local queue until the connection returns."
+Is deleting a project permanent?,Not right away: it is soft-deleted for 30 days and can be restored from Settings → Trash. Once 30 days pass it is gone permanently.
+Where do I download the Android version?,"From the Android app store. An iOS app exists too, and both work with the same login as the web."
+Is there a way to stop paying temporarily without cancelling?,"Pausing isn't supported. You can drop to the Free plan at any time, keep all your data, and upgrade again later."
+I got an email about hitting 80% of a limit. What does it mean?,It means one of your plan limits is 80% used. See exactly which one in Settings → Billing → Usage.
+Can I mute only some notification types?,"Yes, each event has an independent toggle under Settings → Notifications. Use Quiet hours if you want a silent window instead."

@@ -882,6 +882,7 @@ session-start guidance.
 - `backend/tests/test_stratified_split.py` — Unit tests for ``_stratified_split_entries`` (Gap #4 fix).
 - `backend/tests/test_structured_adapter_prompt_wrap.py` — ζ-fix tests — structured-extraction adapter writes the
 - `backend/tests/test_student_teacher_comparison.py` — Student-vs-teacher distillation comparison — Track 1, Epic A, slice 3.
+- `backend/tests/test_support_faq_demo_bundle.py` — The Support FAQ demo bundle must be big enough to measure, and honest.
 - `backend/tests/test_synth_backends_schema_aware.py` — Tests for the ``schema_aware`` backend flag (USER-SUCCESS Epic 5 Phase 5c).
 - `backend/tests/test_synth_nemo_backend.py` — Tests for the NeMo Data Designer / NIM synth backend (USER-SUCCESS Epic 5 Phase 5a).
 - `backend/tests/test_synth_playbook_epic2b.py` — Tests for USER-SUCCESS Epic 2b — hard-negatives, class-balance,

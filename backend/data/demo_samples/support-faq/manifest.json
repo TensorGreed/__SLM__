@@ -2,7 +2,7 @@
   "slug": "support-faq",
   "name": "Demo · Support FAQ",
   "headline": "Build a support assistant from real ticket Q&A",
-  "description": "A pre-loaded project with 20 cleaned support tickets + 6 hand-labelled gold rows. Click Autopilot Planner and paste the suggested brief to see the whole pipeline work end-to-end.",
+  "description": "A pre-loaded project with 150 resolved support tickets (30 topics, each asked five different ways) + a 200-row hand-labelled answer key. Click Autopilot Planner and paste the suggested brief to see the whole pipeline work end-to-end.",
   "task_profile": "instruction_sft",
   "target_profile": "vllm_server",
   "training_preferred_plan_profile": "balanced",
