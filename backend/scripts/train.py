@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+import sys
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,13 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# The runtime launches this file as ``python scripts/train.py``, which puts
+# ``scripts/`` (not ``backend/``) on sys.path — so the lazy ``from app...``
+# imports below (auto-epochs policy, distillation, eval handlers) raised
+# "No module named 'app'" and every real run failed.
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
 DEFAULT_DATA_DIR = REPO_ROOT / "data"
 
 SUPPORTED_TASK_TYPES = {"causal_lm", "seq2seq", "classification"}

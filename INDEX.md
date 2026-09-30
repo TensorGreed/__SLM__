@@ -893,6 +893,7 @@ session-start guidance.
 - `backend/tests/test_task_shape.py` — Unified task-shape detector + confirm (Wave 2b).
 - `backend/tests/test_theme5_epic1_video_flow_cli.py` — Theme 5 Epic 1 — brewslm CLI gap-fill commands for the 11-video flow.
 - `backend/tests/test_tokenization_analyze_splits.py` — V3 of the ML-native visualisations arc — POST /tokenization/analyze-splits.
+- `backend/tests/test_train_script_standalone.py` — ``scripts/train.py`` is launched as a standalone script by the training
 - `backend/tests/test_trainability_forecast_service.py` — Tests for the trainability forecast service (USER-SUCCESS Epic 1).
 - `backend/tests/test_training_config_gap_patch.py` — Training Config Gap patch engine — Coach-stage-2 phase 2.
 - `backend/tests/test_training_config_gap_phase3.py` — Phase-3 additions to the training-config gap scanner.
