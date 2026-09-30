@@ -599,6 +599,7 @@ session-start guidance.
 - `frontend/src/components/training/ArchetypeComparisonPanel.tsx` — ArchetypeComparisonPanel — USER-SUCCESS Epic 8 Phase 8b.
 - `frontend/src/components/training/ChatPlaygroundPanel.tsx` — Interactive prompt session manager supporting multiple inference backends and providers.
 - `frontend/src/components/training/CheckpointsPanel.tsx` — CheckpointsPanel — P20 Checkpoints side panel.
+- `frontend/src/components/training/CloudBurstPlanningSection.tsx` — Cloud Burst planning (Power tools): quote a remote GPU lease, build a
 - `frontend/src/components/training/DatasetFitCard.tsx` — DatasetFitCard — "Why this dataset isn't ready for SFT" explainer
 - `frontend/src/components/training/ExperimentClassifierHeadBadge.tsx` — Surfaces the "classifier head detected" signal on the experiment
 - `frontend/src/components/training/ExperimentCompare.tsx` — Multi-experiment loss-trajectory visualizer with synchronized step alignment.
@@ -614,9 +615,15 @@ session-start guidance.
 - `frontend/src/components/training/TokenizationPanel.tsx` — Token distribution analyzer with histogram and sequence-length statistics.
 - `frontend/src/components/training/TrainAnywayButton.tsx` — TrainAnywayButton — USER-SUCCESS Epic 1 supplement.
 - `frontend/src/components/training/TrainabilityForecastPanel.tsx` — TrainabilityForecastPanel — USER-SUCCESS Epic 1.
+- `frontend/src/components/training/TrainingAdvancedPeftSection.tsx` — Advanced & PEFT column (Power): LoRA, precision, OOM retry, alignment
 - `frontend/src/components/training/TrainingConfigGapsPanel.tsx` — TrainingConfigGapsPanel — Coach-stage-2 phase 1.
 - `frontend/src/components/training/TrainingConfigPatchPreviewModal.tsx` — TrainingConfigPatchPreviewModal — Coach-stage-2 phase 2.
+- `frontend/src/components/training/TrainingModelEssentialsSection.tsx` — Model & essentials column: base model + recommender / benchmark (Power), core
+- `frontend/src/components/training/TrainingMultiSeedSection.tsx` — Multi-seed variance reporting (Power): base seed, seed count, explicit
 - `frontend/src/components/training/TrainingPanel.tsx` — Training orchestrator panel — config editor, run launcher, live metrics, checkpoints, and post-run review.
+- `frontend/src/components/training/TrainingRunView.tsx` — One training run in focus: status + cancel, warnings, live signals, loss
+- `frontend/src/components/training/TrainingRunsList.tsx` — Experiment list: per-run status, live loss sparkline + kill switch for
+- `frontend/src/components/training/TrainingValidationSection.tsx` — Validation & Planning (Power tools): effective-config preview, capability
 - `frontend/src/components/training/WarmStartDeltaChart.tsx` — WarmStartDeltaChart — Track 1, Epic B/C.
 - `frontend/src/components/training/WhyThisPlanPanel.tsx` — WhyThisPlanPanel — P20 Training Planner reproducibility & cost view.
 - `frontend/src/components/video/TabVideoLink.tsx` — TabVideoLink — small "▶ Watch the 2-minute walkthrough" affordance
@@ -1012,6 +1019,7 @@ session-start guidance.
 - `frontend/src/components/training/TrainabilityForecastPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingConfigGapsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingConfigPatchPreviewModal.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/TrainingPanel.back.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingPanel.multiSeed.test.tsx` — Quality-Lift phase 7 slice 3 — MultiSeedConfigSection tests.
 - `frontend/src/components/training/TrainingPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WarmStartDeltaChart.test.tsx` — _(no docstring)_

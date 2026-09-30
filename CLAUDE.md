@@ -426,6 +426,16 @@ quality gate** (simulate runtime). The eval→export tail is deferred
 - **Training** — `training_service.start_training` dispatches to
   simulate / external subprocess runtime. Watcher Job mirrors progress
   into the bell. Trainability forecast precedes the launch.
+  **`TrainingPanel.tsx` layout (Wave 3b split, 6.4k → 2.5k lines)** — the
+  panel is the orchestrator (loading, payload, websocket run stream, launch).
+  Config field state lives in `useTrainingConfigForm` (the panel destructures
+  it; config sections take `form={configForm}`); shapes in
+  `trainingPanelTypes.ts`, pure helpers/builders in `trainingPanelUtils.ts`.
+  Sections: `TrainingModelEssentialsSection` / `TrainingMultiSeedSection` /
+  `TrainingAdvancedPeftSection` (config columns), `TrainingValidationSection`
+  (preflight), `CloudBurstPlanningSection` (owns its state; `key={projectId}`),
+  `TrainingRunView` (one run), `TrainingRunsList`. Add new config fields to the
+  hook, not as panel `useState`.
   **Core-loop defaults in `scripts/train.py` (2026-09-28 audit fix)**:
   prompt→answer pairs beat a display `text` field (`_extract_prompt_completion`);
   QA-family rows are re-rendered with the tokenizer's chat template
