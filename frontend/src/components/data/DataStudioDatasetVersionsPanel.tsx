@@ -384,7 +384,7 @@ export default function DataStudioDatasetVersionsPanel({
     }
 
     const verdict = VERSION_VERDICT_COPY[versions.verdict];
-    const recipeName = versions.source_context.recipe?.name || 'No recipe';
+    const recipeName = versions.source_context.recipe?.name || 'No task type';
     const domainName = versions.source_context.domain?.profile_display_name
         || versions.source_context.domain?.pack_display_name
         || 'Generic domain';

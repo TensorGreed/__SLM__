@@ -26,8 +26,8 @@ function makeForecast(overrides: Partial<ForecastResult> = {}): ForecastResult {
             {
                 id: 'row_count_below_minimum',
                 severity: 'ok',
-                headline: '200 training rows — above recipe minimum.',
-                detail: 'Recipe minimum is 50; you\'re comfortably above.',
+                headline: '200 training rows — above task type minimum.',
+                detail: 'Task type minimum is 50; you\'re comfortably above.',
                 suggested_action: null,
                 cost_estimate: null,
             },
@@ -76,7 +76,7 @@ describe('TrainabilityForecastPanel', () => {
                     {
                         id: 'row_count_below_minimum',
                         severity: 'block',
-                        headline: 'Only 16 training rows — recipe recommends at least 50.',
+                        headline: 'Only 16 training rows — task type recommends at least 50.',
                         detail: 'You\'re 34 rows short.',
                         suggested_action: {
                             kind: 'synth_augment',
@@ -178,9 +178,9 @@ describe('TrainabilityForecastPanel', () => {
         });
     });
 
-    it('returns null silently when the project has no recipe (400)', async () => {
+    it('returns null silently when the project has no task type (400)', async () => {
         apiMock.get.mockRejectedValue({
-            response: { status: 400, data: { detail: 'Project has no selected recipe' } },
+            response: { status: 400, data: { detail: 'Project has no task type selected' } },
         });
         const { container } = render(<TrainabilityForecastPanel projectId={99} />);
         // Wait for the loading state to clear.

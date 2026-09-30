@@ -315,7 +315,7 @@ export default function TrainingPanel({
     if (canConfigureExperiments && experimentStats.total === 0) {
       return {
         title: 'Create your first experiment',
-        detail: 'Open Setup and use recipe + preflight before launching.',
+        detail: 'Open Setup and use a training preset + preflight before launching.',
       };
     }
     if (canViewRuns && experimentStats.running > 0) {
@@ -789,13 +789,13 @@ export default function TrainingPanel({
       setRecipeResolveError('');
     } catch (err: any) {
       setTrainingRecipes([]);
-      setRecipeResolveError(err?.response?.data?.detail || 'Failed to load recipe catalog');
+      setRecipeResolveError(err?.response?.data?.detail || 'Failed to load training presets');
     }
   };
 
   const applySelectedRecipe = async () => {
     if (!selectedRecipeId) {
-      setRecipeResolveError('Select a recipe first.');
+      setRecipeResolveError('Select a training preset first.');
       return;
     }
     setRecipeResolveLoading(true);
@@ -837,10 +837,10 @@ export default function TrainingPanel({
         ? res.data.recipe_missing_required_fields.filter(Boolean)
         : [];
       if (missing.length > 0) {
-        setRecipeResolveError(`Recipe applied, but missing required fields: ${missing.join(', ')}`);
+        setRecipeResolveError(`Preset applied, but missing required fields: ${missing.join(', ')}`);
       }
     } catch (err: any) {
-      setRecipeResolveError(err?.response?.data?.detail || 'Failed to apply recipe');
+      setRecipeResolveError(err?.response?.data?.detail || 'Failed to apply preset');
     } finally {
       setRecipeResolveLoading(false);
     }
@@ -2009,7 +2009,7 @@ export default function TrainingPanel({
               <strong>Create Experiment</strong>
               <span className="training-create-shell__hint">
                 {isSetupAdvancedMode
-                  ? 'Use recipe + defaults for quick setup, then open advanced sections only if needed.'
+                  ? 'Use a training preset + defaults for quick setup, then open advanced sections only if needed.'
                   : 'Essentials mode keeps only launch-critical controls visible. Switch to Advanced for full tuning.'}
               </span>
             </div>
@@ -2058,14 +2058,14 @@ export default function TrainingPanel({
                   </div>
                 </div>
                 <div className="form-group form-group--spaced">
-                  <label className="form-label">Recipe Starter</label>
+                  <label className="form-label">Training preset</label>
                   <div className="form-inline-actions">
                     <select
                       className="input training-recipe-select"
                       value={selectedRecipeId}
                       onChange={(e) => setSelectedRecipeId(e.target.value)}
                     >
-                      <option value="">Select recipe</option>
+                      <option value="">Select preset</option>
                       {trainingRecipes.map((recipe) => (
                         <option key={recipe.recipe_id} value={recipe.recipe_id}>
                           {recipe.display_name}
@@ -2077,7 +2077,7 @@ export default function TrainingPanel({
                       onClick={() => void applySelectedRecipe()}
                       disabled={recipeResolveLoading || !selectedRecipeId}
                     >
-                      {recipeResolveLoading ? 'Applying...' : 'Apply Recipe'}
+                      {recipeResolveLoading ? 'Applying...' : 'Apply preset'}
                     </button>
                     <button
                       className="btn btn-secondary"
@@ -2088,7 +2088,7 @@ export default function TrainingPanel({
                     </button>
                   </div>
                   <div className="form-hint">
-                    Recipe applies a domain-agnostic config patch, then runtime/profile defaults and preflight.
+                    A training preset applies a domain-agnostic config patch, then runtime/profile defaults and preflight.
                   </div>
                   {recipeResolveError && (
                     <div className="training-alert training-alert--warning training-alert--tight">

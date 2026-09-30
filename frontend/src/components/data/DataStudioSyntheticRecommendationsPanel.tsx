@@ -34,7 +34,7 @@ interface DataStudioSyntheticRecommendationsPanelProps {
 const RECOMMENDATION_VERDICT_COPY: Record<DataStudioSyntheticRecommendations['verdict'], { label: string; detail: string }> = {
     empty: {
         label: 'No advice',
-        detail: 'Add domain evidence, a recipe, or Gold Set rows to unlock recommendations.',
+        detail: 'Add domain evidence, a task type, or Gold Set rows to unlock recommendations.',
     },
     attention: {
         label: 'Review advice',
@@ -206,7 +206,7 @@ export default function DataStudioSyntheticRecommendationsPanel({
 
     const verdict = RECOMMENDATION_VERDICT_COPY[recommendations.verdict];
     const domainLabel = recommendations.domain.label || 'Generic Domain';
-    const recipeLabel = recommendations.recipe?.name || recommendations.recipe?.id || 'No recipe';
+    const recipeLabel = recommendations.recipe?.name || recommendations.recipe?.id || 'No task type';
 
     return (
         <section
@@ -242,7 +242,7 @@ export default function DataStudioSyntheticRecommendationsPanel({
                 </div>
                 <div className="data-studio-synth-recs__metric">
                     <Route size={18} aria-hidden="true" />
-                    <span>Recipe</span>
+                    <span>Task type</span>
                     <strong>{recipeLabel}</strong>
                 </div>
                 <div className="data-studio-synth-recs__metric">

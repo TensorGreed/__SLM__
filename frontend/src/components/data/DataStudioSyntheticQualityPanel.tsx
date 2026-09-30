@@ -233,7 +233,7 @@ export default function DataStudioSyntheticQualityPanel({
     }
 
     const verdict = SYNTHETIC_QUALITY_COPY[analytics.verdict];
-    const recipeLabel = analytics.recipe?.name || analytics.recipe?.id || 'No recipe';
+    const recipeLabel = analytics.recipe?.name || analytics.recipe?.id || 'No task type';
 
     return (
         <section

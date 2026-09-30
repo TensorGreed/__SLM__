@@ -69,15 +69,15 @@ export default function NoRecipeEmptyState({
         <div data-testid={testId}>
             <EmptyState
                 icon="🧭"
-                title="Pick a recipe first"
+                title="Choose a task type first"
                 description={
                     `${surface} is recipe-scoped — each task shape `
                     + `(Q&A, classification, span extraction, …) ships `
-                    + `its own behavior. Pick a recipe to unlock this `
+                    + `its own behavior. Choose a task type to unlock this `
                     + `surface; existing projects can change it later.`
                 }
                 primary={{
-                    label: 'Pick a recipe',
+                    label: 'Choose a task type',
                     href,
                 }}
             />

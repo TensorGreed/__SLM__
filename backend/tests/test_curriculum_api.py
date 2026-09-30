@@ -114,7 +114,7 @@ class CurriculumPreviewApiTests(unittest.TestCase):
         pid = resp.json()["id"]
         preview = self.client.get(f"/api/projects/{pid}/curriculum/preview")
         self.assertEqual(preview.status_code, 400, preview.text)
-        self.assertIn("recipe", preview.text.lower())
+        self.assertIn("task type", preview.text.lower())
 
     def test_qa_sft_recipe_returns_400_curriculum_unavailable(self):
         """qa-sft has no curriculum scoring mode in Phase 6a — the

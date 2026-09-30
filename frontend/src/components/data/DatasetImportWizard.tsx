@@ -386,7 +386,7 @@ export default function DatasetImportWizard({
 
     const stepLabel: Record<WizardStep, string> = {
         source: '1. Source',
-        recipe: '2. Recipe',
+        recipe: '2. Task type',
         map: '3. Map',
         preview: '4. Preview & Confirm',
     };
@@ -464,7 +464,7 @@ export default function DatasetImportWizard({
                                 }}
                             />
                             {introspection.task_shape && (
-                                <p className="form-hint">Or pick a recipe yourself:</p>
+                                <p className="form-hint">Or choose the task type yourself:</p>
                             )}
                             <RecipePicker
                                 headers={introspection.columns}
@@ -522,7 +522,7 @@ export default function DatasetImportWizard({
                                         borderRadius: 'var(--radius-md)',
                                     }}
                                 >
-                                    Recipe selection didn't persist to the project
+                                    Task type selection didn't persist to the project
                                     record ({recipePersistError}). You can continue
                                     importing; training defaults will need to be set
                                     by hand later.
@@ -540,7 +540,7 @@ export default function DatasetImportWizard({
                                         borderRadius: 'var(--radius-md)',
                                     }}
                                 >
-                                    Recipe picker overridden. Configuring mapping
+                                    Task type suggestions skipped. Configuring mapping
                                     manually.{' '}
                                     <button
                                         type="button"
@@ -548,7 +548,7 @@ export default function DatasetImportWizard({
                                         style={{ padding: 0, fontSize: '0.85rem' }}
                                         onClick={() => setStep('recipe')}
                                     >
-                                        Show recipe suggestions →
+                                        Show task type suggestions →
                                     </button>
                                 </div>
                             )}
@@ -637,7 +637,7 @@ function RecipeSummaryChip({ recipe, suggestion, onChange }: RecipeSummaryChipPr
                 {recipe.icon}
             </span>
             <div style={{ flex: 1 }}>
-                <strong>Recipe:</strong> {recipe.name}{' '}
+                <strong>Task type:</strong> {recipe.name}{' '}
                 {confidencePct !== null && (
                     <span style={{ color: 'var(--text-secondary)' }}>
                         ({confidencePct}% match)
@@ -655,7 +655,7 @@ function RecipeSummaryChip({ recipe, suggestion, onChange }: RecipeSummaryChipPr
                 style={{ fontSize: '0.85rem' }}
                 onClick={onChange}
             >
-                Change recipe
+                Change task type
             </button>
         </div>
     );

@@ -124,7 +124,7 @@ export function describeWarmStartReason(reason: string | undefined): string {
     case 'warm_start':
       return `Warm start from ${name || 'a pre-fine-tuned checkpoint'}`;
     case 'no_checkpoint_recommended':
-      return 'Cold start — this recipe recommends no warm-start checkpoint';
+      return 'Cold start — this training preset recommends no warm-start checkpoint';
     case 'checkpoint_planned':
       return `Cold start — warm start "${name}" is planned, not built yet`;
     case 'checkpoint_not_registered':

@@ -194,7 +194,7 @@ export default function DriftReviewQueuePanel({ projectId, recipeId }: Props) {
             const detail = err?.response?.data?.detail;
             if (detail === 'recipe_required') {
                 toast.error(
-                    'Pick a recipe before generating drift traps.',
+                    'Choose a task type before generating drift traps.',
                 );
             } else {
                 toast.error(detail || err?.message || 'Refresh failed');

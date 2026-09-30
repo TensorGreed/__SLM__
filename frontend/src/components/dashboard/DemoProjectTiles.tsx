@@ -77,7 +77,7 @@ export default function DemoProjectTiles() {
                 );
                 navigate(`/project/${response.data.project.id}`);
             } catch (err) {
-                setError(extractErrorMessage(err, 'Could not seed the demo project.'));
+                setError(extractErrorMessage(err, 'Could not seed the starter project.'));
                 setSeedingSlug(null);
             }
         },
@@ -101,7 +101,7 @@ export default function DemoProjectTiles() {
                 );
                 navigate(`/project/${response.data.project.id}`);
             } catch (err) {
-                setError(extractErrorMessage(err, 'Could not reset the demo project.'));
+                setError(extractErrorMessage(err, 'Could not reset the starter project.'));
                 setResettingSlug(null);
             }
         },
@@ -116,7 +116,7 @@ export default function DemoProjectTiles() {
         <section className="demo-project-tiles" aria-labelledby="demo-project-tiles-heading">
             <div className="demo-project-tiles-header">
                 <Rocket size={14} aria-hidden="true" />
-                <h2 id="demo-project-tiles-heading">Try a demo project</h2>
+                <h2 id="demo-project-tiles-heading">Starter projects — quick demos</h2>
                 <span className="demo-project-tiles-hint">
                     Pre-loaded with sample data, a gold set, and a ready-to-run autopilot plan.
                 </span>
@@ -138,7 +138,7 @@ export default function DemoProjectTiles() {
                                 className="demo-project-tile"
                                 disabled={otherBusy || isResetting}
                                 onClick={() => void seedAndOpen(archetype.slug)}
-                                aria-label={`Open the ${archetype.name} demo project`}
+                                aria-label={`Open the ${archetype.name} starter project`}
                             >
                                 <div className="demo-project-tile-header">
                                     <span className="demo-project-tile-name">{archetype.name}</span>
@@ -162,7 +162,7 @@ export default function DemoProjectTiles() {
                                 className="demo-project-tile-reset"
                                 disabled={otherBusy || isSeeding}
                                 onClick={() => void resetAndOpen(archetype.slug, archetype.name)}
-                                aria-label={`Reset the ${archetype.name} demo project`}
+                                aria-label={`Reset the ${archetype.name} starter project`}
                             >
                                 {isResetting ? 'Resetting…' : '↺ Reset to fresh'}
                             </button>

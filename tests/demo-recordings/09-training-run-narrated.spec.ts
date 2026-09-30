@@ -84,7 +84,7 @@ test('Video 09 — Training Run narrated', async ({ page, request }) => {
 
     // Open support-faq + land on Data tab
     await page
-        .locator('[aria-label="Open the Demo · Support FAQ demo project"]')
+        .locator('[aria-label="Open the Demo · Support FAQ starter project"]')
         .click();
     await page.waitForURL(/\/project\/\d+\/pipeline\/data/, { timeout: 30_000 });
 

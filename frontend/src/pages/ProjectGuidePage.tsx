@@ -77,7 +77,7 @@ export default function ProjectGuidePage() {
             {
                 id: 'trainconfig',
                 title: 'Configure training',
-                detail: 'Choose model, runtime profile, hyperparameters, and recipe.',
+                detail: 'Choose model, runtime profile, hyperparameters, and training preset.',
                 path: `/project/${projectId}/training-config`,
                 complete: Boolean(project.base_model_name),
             },
@@ -162,7 +162,7 @@ export default function ProjectGuidePage() {
                     </p>
                     {project.active_domain_blueprint_version && (
                         <span className="badge badge-success">
-                            Active Blueprint v{project.active_domain_blueprint_version}
+                            Project plan v{project.active_domain_blueprint_version}
                         </span>
                     )}
                 </div>
@@ -229,7 +229,7 @@ export default function ProjectGuidePage() {
                         Workflow Builder
                     </button>
                     <button className="btn btn-ghost" onClick={() => navigate(`/project/${projectId}/recipes`)}>
-                        Pipeline Recipes
+                        Pipeline Presets
                     </button>
                     <button className="btn btn-ghost" onClick={() => navigate(`/project/${projectId}/domain/profiles`)}>
                         Domain Profiles

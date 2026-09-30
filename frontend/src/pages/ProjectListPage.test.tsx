@@ -102,7 +102,7 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
     expect(navigateMock).toHaveBeenCalledWith('/project/101');
   });
 
-  it('toggle reveals the dense advanced fields (sample I/O, base model, starter pack)', async () => {
+  it('toggle reveals the dense advanced fields (sample I/O, base model, domain preset)', async () => {
     const user = userEvent.setup();
     render(<ProjectListPage />);
     await user.click(screen.getByRole('button', { name: /\+ New Project/i }));

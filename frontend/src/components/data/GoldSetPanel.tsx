@@ -430,9 +430,9 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                             fontSize: '0.9rem',
                         }}
                     >
-                        Pick a recipe (Project Settings → Recipe) to
+                        Choose a task type (Data tab → task type picker) to
                         unlock manual gold-row entry. The form's
-                        fields depend on the recipe shape.
+                        fields depend on the task type.
                     </div>
                 )}
             </div>

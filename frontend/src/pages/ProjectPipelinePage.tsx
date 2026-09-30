@@ -173,7 +173,7 @@ export default function ProjectPipelinePage() {
                             <div>
                                 <h3>Configure before you run</h3>
                                 <p>
-                                    Pick model, hyperparameters, recipe, and run preflight checks on the
+                                    Pick model, hyperparameters, training preset, and run preflight checks on the
                                     Training Config page. Runs and live metrics stay here on the pipeline.
                                 </p>
                             </div>

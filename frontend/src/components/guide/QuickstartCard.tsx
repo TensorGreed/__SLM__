@@ -275,7 +275,7 @@ export default function QuickstartCard({
                     description={
                         importState.status === 'success'
                             ? `Imported ${importState.result.source_row_count} rows from ${importState.result.slug} (${importState.result.prepared_train_rows} train · ${importState.result.prepared_val_rows} val · ${importState.result.prepared_test_rows} test)`
-                            : 'Bundled demo data tailored to your recipe.'
+                            : 'Bundled demo data tailored to your task type.'
                     }
                     state={importState}
                     onRun={runImport}
@@ -292,7 +292,7 @@ export default function QuickstartCard({
                     title="Baseline (untrained)"
                     description={
                         !hasBaseModel
-                            ? 'Pick a recipe first — baseline runs against the recipe\'s suggested model.'
+                            ? 'Choose a task type first — baseline runs against the task type\'s suggested model.'
                             : baselineState.status === 'success'
                                 ? `Baseline queued (job #${baselineState.result.job_id}) — bell will notify when ready.`
                                 : 'Optional but recommended — gives your post-training numbers an anchor.'
@@ -313,10 +313,10 @@ export default function QuickstartCard({
                     title="Train default config"
                     description={
                         !hasBaseModel
-                            ? 'Pick a recipe in the dataset-import wizard first — it sets the base model used here.'
+                            ? 'Choose a task type in the dataset-import wizard first — it sets the base model used here.'
                             : trainState.status === 'success'
                                 ? `Experiment #${trainState.result.experiment_id} started on ${trainState.result.base_model}`
-                                : 'Launches a training run using the recipe defaults already on this project.'
+                                : 'Launches a training run using the task type defaults already on this project.'
                     }
                     state={trainState}
                     onRun={runTrain}

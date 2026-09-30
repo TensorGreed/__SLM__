@@ -388,9 +388,9 @@ export default function ProjectAutopilotPage() {
                         <div
                             className="autopilot-prefill-hint"
                             role="status"
-                            aria-label="Intent pre-filled from demo project"
+                            aria-label="Intent pre-filled from starter project"
                         >
-                            <span>✨ Pre-filled from this demo project's suggested brief — tweak as needed before previewing.</span>
+                            <span>✨ Pre-filled from this starter project's suggested brief — tweak as needed before previewing.</span>
                         </div>
                     )}
                     <label className="autopilot-field">
@@ -546,7 +546,7 @@ export default function ProjectAutopilotPage() {
                     {!preview && !dryRunResponse && !applyResult ? (
                         <EmptyState
                             title="No plan yet"
-                            description="Type a plain-English brief above and click Preview Plan to see what autopilot would do — adapter, base model, recipe, eval pack, target. Nothing mutates until you click Apply."
+                            description="Type a plain-English brief above and click Preview Plan to see what autopilot would do — adapter, base model, task type, eval pack, target. Nothing mutates until you click Apply."
                             docsHref="http://localhost:3001/docs/workflows/newbie-autopilot"
                         />
                     ) : null}

@@ -111,7 +111,7 @@ export default function DataStudioOverviewPanel({
     const domainName = overview.domain?.display_name
         || overview.domain?.profile_id
         || 'Generic domain';
-    const recipeName = overview.recipe?.name || 'No recipe selected';
+    const recipeName = overview.recipe?.name || 'No task type selected';
 
     return (
         <section
@@ -158,7 +158,7 @@ export default function DataStudioOverviewPanel({
                     <strong>{formatNumber(overview.row_counts.synthetic_pending)}</strong>
                 </div>
                 <div className="data-studio-overview__metric">
-                    <span>Recipe</span>
+                    <span>Task type</span>
                     <strong>{recipeName}</strong>
                 </div>
                 <div className="data-studio-overview__metric">

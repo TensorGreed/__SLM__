@@ -216,14 +216,14 @@ async def run_playbook(
     selected_recipe = project.selected_recipe or {}
     recipe_id = selected_recipe.get("recipe_id")
     if not recipe_id:
-        raise ValueError("Project has no selected recipe")
+        raise ValueError("Project has no task type selected")
     if get_recipe(recipe_id) is None:
-        raise ValueError(f"Recipe '{recipe_id}' not found in the catalog")
+        raise ValueError(f"Task type '{recipe_id}' not found in the catalog")
 
     playbook = get_playbook(recipe_id, mode)
     if playbook is None:
         raise ValueError(
-            f"No playbook registered for (recipe={recipe_id}, mode={mode.value}). "
+            f"No playbook registered for (task type={recipe_id}, mode={mode.value}). "
             f"v1 ships POSITIVES_PARAPHRASE only — Epic 2b adds the rest."
         )
 

@@ -42,13 +42,13 @@ test('Video 02 — BrewSLM Quickstart full arc', async ({ page }) => {
     await expect(tilesContainer).toBeVisible();
 
     const supportFaqTile = page.locator(
-        '[aria-label="Open the Demo · Support FAQ demo project"]',
+        '[aria-label="Open the Demo · Support FAQ starter project"]',
     );
     const piiTile = page.locator(
-        '[aria-label="Open the Demo · PII / PCI Detector demo project"]',
+        '[aria-label="Open the Demo · PII / PCI Detector starter project"]',
     );
     const sentimentTile = page.locator(
-        '[aria-label="Open the Demo · Sentiment classifier demo project"]',
+        '[aria-label="Open the Demo · Sentiment classifier starter project"]',
     );
     await expect(supportFaqTile).toBeVisible();
     await expect(piiTile).toBeVisible();

@@ -40,7 +40,7 @@ interface DataStudioPrepareDatasetPanelProps {
 const PREPARE_VERDICT_COPY: Record<DataStudioPrepareDataset['verdict'], { label: string; detail: string }> = {
     blocked: {
         label: 'Blocked',
-        detail: 'Fix recipe, source, or mapping blockers before creating prepared split files.',
+        detail: 'Fix task type, source, or mapping blockers before creating prepared split files.',
     },
     attention: {
         label: 'Check before prepare',
@@ -48,7 +48,7 @@ const PREPARE_VERDICT_COPY: Record<DataStudioPrepareDataset['verdict'], { label:
     },
     ready: {
         label: 'Ready',
-        detail: 'Recipe, mapping, splits, manifest, and versions are aligned for downstream training.',
+        detail: 'Task type, mapping, splits, manifest, and versions are aligned for downstream training.',
     },
 };
 
@@ -325,7 +325,7 @@ export default function DataStudioPrepareDatasetPanel({
             </div>
 
             <div className="data-studio-prepare__signals">
-                <span>{selectedRecipe?.name || 'No recipe'}</span>
+                <span>{selectedRecipe?.name || 'No task type'}</span>
                 <span>{labelForToken(prepare.splits.status)} splits</span>
                 <span>{labelForToken(prepare.manifest.status)} manifest</span>
                 <span>{formatPercent(prepare.mapping.mapping_success_rate)} mapping success</span>
@@ -340,7 +340,7 @@ export default function DataStudioPrepareDatasetPanel({
                     disabled={!prepare.can_prepare || running}
                     title={
                         prepare.can_prepare
-                            ? 'Build train/validation/test JSONLs in place using the current recipe + mapping.'
+                            ? 'Build train/validation/test JSONLs in place using the current task type + mapping.'
                             : 'Resolve blockers above before running prepare.'
                     }
                     data-testid="data-studio-prepare-run"

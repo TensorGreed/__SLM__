@@ -150,8 +150,8 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
     const handleToggleBeginnerMode = async () => {
         const enabling = !isBeginner;
         const message = enabling
-            ? 'Switch to beginner mode? Recipes, Domain Packs, Domain Profiles, Workflow Builder, and the Extension Studio will be hidden to keep the workspace focused. You can leave beginner mode at any time.'
-            : 'Leave beginner mode? You will regain access to Recipes, Domain Packs, Domain Profiles, Workflow Builder, and the Extension Studio. You can turn beginner mode back on from Project Settings at any time.';
+            ? 'Switch to beginner mode? Pipeline presets, Domain Packs, Domain Profiles, Workflow Builder, and the Extension Studio will be hidden to keep the workspace focused. You can leave beginner mode at any time.'
+            : 'Leave beginner mode? You will regain access to Pipeline presets, Domain Packs, Domain Profiles, Workflow Builder, and the Extension Studio. You can turn beginner mode back on from Project Settings at any time.';
         if (!window.confirm(message)) {
             return;
         }
@@ -246,7 +246,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
     const panelHeadingByRail: Record<RailKey, { kicker: string; title: string }> = {
         pipeline: { kicker: 'Pipeline', title: 'Runs and Stages' },
         training: { kicker: 'Training', title: 'Model Configuration' },
-        workflow: { kicker: 'Automation', title: 'Recipes and Flows' },
+        workflow: { kicker: 'Automation', title: 'Presets and Flows' },
         domain: { kicker: 'Domain', title: 'Packs and Profiles' },
     };
 
@@ -493,10 +493,10 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                             <button
                                 className={`workspace-nav-item ${isRecipesRoute ? 'active' : ''}`}
                                 onClick={() => navigate(`/project/${projectId}/recipes`)}
-                                title="Pipeline recipes — pipeline-DAG composition (recipe.pipeline.sft_default, lora_fast, …). Distinct from the task-shape recipe (qa-sft, classification, …) which is set via the in-page CTAs + Coach Mode."
+                                title="Pipeline presets — end-to-end pipeline composition (recipe.pipeline.sft_default, lora_fast, …). Distinct from the project's task type (qa-sft, classification, …), which is set via the in-page CTAs + Coach Mode."
                             >
                                 <BookOpen size={15} />
-                                <span className="nav-label">Pipeline recipes</span>
+                                <span className="nav-label">Pipeline presets</span>
                             </button>
                             <button
                                 className={`workspace-nav-item ${isManifestRoute ? 'active' : ''}`}
@@ -553,7 +553,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                             Beginner mode
                         </div>
                         <p className="beginner-note">
-                            Recipes, Domain Packs, Workflow, and advanced studios are hidden to keep the workspace focused.
+                            Pipeline presets, Domain Packs, Workflow, and advanced studios are hidden to keep the workspace focused.
                         </p>
                         <button
                             type="button"

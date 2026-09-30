@@ -634,7 +634,7 @@ def _signal_row_count(
             "id": "row_count_below_minimum",
             "severity": "ok",
             "headline": f"{train_row_count} training rows",
-            "detail": "Recipe doesn't declare a minimum row count.",
+            "detail": "Task type doesn't declare a minimum row count.",
             "suggested_action": None,
         }
     if train_row_count < minimum_rows:
@@ -643,11 +643,11 @@ def _signal_row_count(
             "id": "row_count_below_minimum",
             "severity": "block",
             "headline": (
-                f"Only {train_row_count} training rows — recipe recommends "
+                f"Only {train_row_count} training rows — task type recommends "
                 f"at least {minimum_rows}."
             ),
             "detail": (
-                f"You're {deficit} rows short of the recipe's recommended "
+                f"You're {deficit} rows short of the task type's recommended "
                 f"minimum. Training will likely fail its eval gates."
             ),
             "suggested_action": {
@@ -660,7 +660,7 @@ def _signal_row_count(
             "id": "row_count_below_minimum",
             "severity": "warn",
             "headline": (
-                f"{train_row_count} training rows — recipe recommends "
+                f"{train_row_count} training rows — task type recommends "
                 f"{minimum_rows}+ for reliable results."
             ),
             "detail": (
@@ -676,8 +676,8 @@ def _signal_row_count(
     return {
         "id": "row_count_below_minimum",
         "severity": "ok",
-        "headline": f"{train_row_count} training rows — above recipe minimum.",
-        "detail": f"Recipe minimum is {minimum_rows}; you're comfortably above.",
+        "headline": f"{train_row_count} training rows — above task type minimum.",
+        "detail": f"Task type minimum is {minimum_rows}; you're comfortably above.",
         "suggested_action": None,
     }
 
@@ -1153,7 +1153,7 @@ def _signal_entity_type_coverage(gold_rows: list[dict[str, Any]]) -> ForecastSig
         "id": "entity_type_coverage_thin",
         "severity": severity,
         "headline": (
-            f"Only {len(types)} entity type(s) in the gold set — recipe "
+            f"Only {len(types)} entity type(s) in the gold set — task type "
             f"benefits from at least {ENTITY_TYPE_COVERAGE_MIN}."
         ),
         "detail": (
@@ -1585,10 +1585,10 @@ async def forecast_training(
     selected_recipe = project.selected_recipe or {}
     recipe_id = selected_recipe.get("recipe_id") or ""
     if not recipe_id:
-        raise ValueError("Project has no selected recipe")
+        raise ValueError("Project has no task type selected")
     recipe = get_recipe(recipe_id)
     if recipe is None:
-        raise ValueError(f"Recipe '{recipe_id}' not found in the catalog")
+        raise ValueError(f"Task type '{recipe_id}' not found in the catalog")
 
     base_model_name = (
         project.base_model_name

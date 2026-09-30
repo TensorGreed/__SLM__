@@ -48,16 +48,16 @@ const BLOCK_REPORT = {
         },
         {
             id: 'shape',
-            title: 'Data shape vs recipe',
-            subtitle: 'Does the data fit the recipe?',
+            title: 'Data shape vs task type',
+            subtitle: 'Does the data fit the task type?',
             signals: [
                 {
                     id: 'shape.no_recipe_selected',
                     severity: 'block' as const,
-                    headline: 'No recipe selected for this project.',
-                    plain_english: "You haven't picked a recipe yet (classification, span-extraction, summarization, qa-sft, etc.).",
+                    headline: 'No task type selected for this project.',
+                    plain_english: "You haven't chosen a task type yet (classification, span-extraction, summarization, qa-sft, etc.).",
                     why_it_matters: "Without it, the platform can't tell you whether your data will work.",
-                    suggested_action: { kind: 'navigate', label: 'Open recipe picker', target: 'recipe-picker' },
+                    suggested_action: { kind: 'navigate', label: 'Choose task type', target: 'recipe-picker' },
                     context: {},
                 },
             ],
@@ -432,7 +432,7 @@ describe('DataHealthReportPanel', () => {
             data: {
                 fix_kind: 'redact_pii',
                 would_apply_count: 0,
-                summary: 'PII redaction is unsafe for span-extraction recipes.',
+                summary: 'PII redaction is unsafe for span-extraction task types.',
                 details: { blocked_reason: 'span_extraction_needs_pii' },
                 items: [],
                 safe_to_apply: false,

@@ -129,7 +129,7 @@ celery -A app.celery_app worker -l info
 
 **Fix**: the runner's CUDA OOM auto-retry planner usually halves the batch size and retries. If it gives up:
 
-- Drop batch_size more (the recipe knob).
+- Drop batch_size more (the training-preset knob).
 - Reduce context length.
 - Switch base model to a smaller variant.
 - Move to a larger target (server vs edge).
@@ -140,7 +140,7 @@ The [Autopilot decision log](../workflows/newbie-autopilot.md#decision-log) show
 
 **Symptom**: run hits the wallclock budget and is cancelled.
 
-**Fix**: raise the budget in the recipe (`max_minutes`), reduce dataset size for the first iteration, or use a smaller model.
+**Fix**: raise the budget in the training preset (`max_minutes`), reduce dataset size for the first iteration, or use a smaller model.
 
 ### VRAM blocker at preflight
 

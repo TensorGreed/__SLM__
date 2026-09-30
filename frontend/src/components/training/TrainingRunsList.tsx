@@ -47,8 +47,8 @@ export default function TrainingRunsList({
           title="No experiments yet"
           description={
             hideCreateControls
-              ? 'No runs yet. Open Training Config to pick a recipe + base model, then launch your first experiment.'
-              : 'Create a training experiment to fine-tune your first model. The Autopilot Planner is the fastest path — type a plain-English brief and it picks the recipe.'
+              ? 'No runs yet. Open Training Config to choose a task type + base model, then launch your first experiment.'
+              : 'Create a training experiment to fine-tune your first model. The Autopilot Planner is the fastest path — type a plain-English brief and it picks the task type.'
           }
           docsHref="http://localhost:3001/docs/workflows/training"
         />

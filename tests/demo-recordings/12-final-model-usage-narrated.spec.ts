@@ -90,7 +90,7 @@ test('Video 12 — Final Model Usage narrated', async ({ page }) => {
     await page.waitForURL((url) => url.pathname === '/', { timeout: 15_000 });
 
     await page
-        .locator('[aria-label="Open the Demo · Support FAQ demo project"]')
+        .locator('[aria-label="Open the Demo · Support FAQ starter project"]')
         .click();
     await page.waitForURL(/\/project\/\d+\/pipeline\/data/, { timeout: 30_000 });
     const projectId = (page.url().match(/\/project\/(\d+)\//) || [])[1] ?? '';

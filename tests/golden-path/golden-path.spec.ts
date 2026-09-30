@@ -30,7 +30,7 @@ import { test, expect } from '@playwright/test';
 
 const ADMIN = 'admin';
 const ADMIN_KEY = 'sk-mock-admin-key';
-const SAMPLE_TILE = 'Open the Demo · Support FAQ demo project';
+const SAMPLE_TILE = 'Open the Demo · Support FAQ starter project';
 
 test('golden path: login → sample → beginner pipeline → train completes', async ({ page }) => {
   const tileAria = SAMPLE_TILE;

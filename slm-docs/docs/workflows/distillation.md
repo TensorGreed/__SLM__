@@ -40,7 +40,7 @@ one bad row costs one row, not the whole capture.
 
 ## 2 · Train in distillation mode
 
-Pick a KD recipe — `recipe.kd.classification`, `recipe.kd.qa`, or
+Pick a KD training preset — `recipe.kd.classification`, `recipe.kd.qa`, or
 `recipe.kd.span_extraction` — or set `training_mode="distillation"` on any
 causal-LM config. The trainer reads the capture artifact and optimizes:
 

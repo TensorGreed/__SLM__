@@ -108,7 +108,7 @@ describe('HealthCheckModal', () => {
         expect(row1.textContent).toMatch(/X.*accessible/);
         expect(row1.textContent).toMatch(/5ms/);
         const row2 = screen.getByTestId('health-check-modal-check-recipe_applied');
-        expect(row2.textContent).toMatch(/Recipe applied/);
+        expect(row2.textContent).toMatch(/Task type applied/);
         expect(row2.textContent).toMatch(/classification/);
     });
 
@@ -122,17 +122,17 @@ describe('HealthCheckModal', () => {
                         name: 'recipe_applied',
                         status: 'fail',
                         elapsed_ms: 3,
-                        message: 'No recipe selected on this project.',
-                        remediation: 'Open Pipeline → Recipe picker.',
+                        message: 'No task type selected on this project.',
+                        remediation: 'Open Pipeline → Task type picker.',
                         envelope: {
                             error_code: 'SMOKE_RECIPE_MISSING',
                             stage: 'project',
-                            message: 'No recipe selected on this project.',
-                            actionable_fix: 'Open Pipeline → Recipe picker.',
+                            message: 'No task type selected on this project.',
+                            actionable_fix: 'Open Pipeline → Task type picker.',
                             docs_url: '/docs/troubleshooting',
                             troubleshooting_id: 'err_abcdefghi',
                             metadata: null,
-                            detail: 'No recipe selected.',
+                            detail: 'No task type selected.',
                         },
                         metadata: {},
                     },
@@ -154,7 +154,7 @@ describe('HealthCheckModal', () => {
         // Remediation is shown inline above the envelope too.
         expect(
             screen.getByTestId('health-check-modal-remediation-recipe_applied').textContent,
-        ).toMatch(/Recipe picker/);
+        ).toMatch(/Task type picker/);
     });
 
     it('overall badge reflects the worst-severity status', async () => {

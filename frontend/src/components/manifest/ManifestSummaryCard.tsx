@@ -85,7 +85,7 @@ export default function ManifestSummaryCard({ projectId, projectName }: Manifest
                         <span className="value">{apiVersion}</span>
                     </div>
                     <div className="manifest-summary-cell">
-                        <span className="label">blueprint domain</span>
+                        <span className="label">project plan domain</span>
                         <span className="value">{blueprintDomain}</span>
                     </div>
                     <div className="manifest-summary-cell">

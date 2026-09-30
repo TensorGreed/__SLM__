@@ -857,7 +857,7 @@ class TrainabilityForecastApiTests(unittest.TestCase):
         pid = create_resp.json()["id"]
         resp = self.client.get(f"/api/projects/{pid}/training/forecast")
         self.assertEqual(resp.status_code, 400, resp.text)
-        self.assertIn("recipe", resp.text.lower())
+        self.assertIn("task type", resp.text.lower())
 
     def test_forecast_templates_with_thin_data_predict_borderline_or_fail(self):
         # Templates ship with healthy data — but a *fresh* template

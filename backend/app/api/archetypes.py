@@ -92,7 +92,7 @@ async def get_project_archetype_comparison(
                 detail={
                     "error_code": "RECIPE_REQUIRED",
                     "message": (
-                        "Project has no selected recipe — can't "
+                        "Project has no task type selected — can't "
                         "compare to an archetype without knowing "
                         "the task shape."
                     ),

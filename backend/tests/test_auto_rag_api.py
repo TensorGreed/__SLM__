@@ -93,7 +93,7 @@ class AutoRagPreviewApiTests(unittest.TestCase):
             params={"query": "anything"},
         )
         self.assertEqual(preview.status_code, 400, preview.text)
-        self.assertIn("recipe", preview.text.lower())
+        self.assertIn("task type", preview.text.lower())
 
     def test_classification_recipe_returns_400_unsupported(self):
         """Phase 9a covers qa-sft only; classification has no RAG

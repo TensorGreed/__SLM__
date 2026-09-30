@@ -337,7 +337,7 @@ async def _data_stage_suggestions(
         else:
             action = {
                 "kind": "navigate",
-                "label": "Pick a recipe first",
+                "label": "Choose a task type first",
                 "params": {"target": "recipe-picker"},
             }
 
@@ -350,7 +350,7 @@ async def _data_stage_suggestions(
             body = (
                 "Most useful first models need at least 100 rows of labeled "
                 f"examples. Generating ~{topup} synthetic positives via the "
-                "recipe's paraphrase playbook bridges the gap fast."
+                "task type's paraphrase playbook bridges the gap fast."
             )
         else:
             title = f"Your gold set has {row_count} rows — could be stronger"
@@ -918,17 +918,17 @@ async def _gold_set_stage_suggestions(
         # picker — same fallback used on the data stage.
         return [{
             "id": "gold_set:no-recipe",
-            "title": "Pick a recipe before reviewing the gold set",
+            "title": "Choose a task type before reviewing the gold set",
             "body": (
-                "Coach Mode needs the recipe's task profile (classification, "
+                "Coach Mode needs the task type's profile (classification, "
                 "qa-sft, span-extraction, etc.) to score gold-set health. "
-                "Selecting a recipe also unlocks the synth playbook "
+                "Selecting a task type also unlocks the synth playbook "
                 "suggestions that bridge gaps in your gold set."
             ),
             "severity": "info",
             "action": {
                 "kind": "navigate",
-                "label": "Open recipe picker",
+                "label": "Choose task type",
                 "params": {"target": "recipe-picker"},
             },
         }]
@@ -1489,16 +1489,16 @@ async def _training_stage_suggestions(
         # affordance consistent across surfaces.
         return [{
             "id": "training:no-recipe",
-            "title": "Pick a recipe before training",
+            "title": "Choose a task type before training",
             "body": (
-                "The trainability forecast (L1) needs a recipe selected so it "
-                "can score predicted F1 against the recipe's task difficulty + "
+                "The trainability forecast (L1) needs a task type selected so it "
+                "can score predicted F1 against the task type's difficulty + "
                 "minimum row count."
             ),
             "severity": "info",
             "action": {
                 "kind": "navigate",
-                "label": "Open recipe picker",
+                "label": "Choose task type",
                 "params": {"target": "recipe-picker"},
             },
         }]
@@ -1666,7 +1666,7 @@ async def _training_stage_suggestions(
             },
         }
         action_hint = (
-            f" The recipe's next-heaviest alternative is "
+            f" The task type's next-heaviest alternative is "
             f"{recommended_base} ({_params_for(recommended_base) or '?'}M params)."
         )
     else:

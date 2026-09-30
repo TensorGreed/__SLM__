@@ -69,11 +69,11 @@ export const TERM_DEFINITIONS: Record<string, TermDefinition> = {
     },
     recipe: {
         id: 'recipe',
-        advancedLabel: 'Recipe',
-        beginnerLabel: 'Training Plan',
+        advancedLabel: 'Training preset',
+        beginnerLabel: 'Training preset',
         glossaryKey: 'recipe',
         category: 'training',
-        fallback: 'A saved, reusable training plan — base model, adapter, data, and eval settings bundled together.',
+        fallback: 'A named bundle of training hyperparameters (learning rate, epochs, LoRA settings, …) you can apply to a run as a starting point.',
         academyUrl: `${ACADEMY_ROOT}/with-brewslm/recipes-and-handlers.html`,
     },
     adapter: {
@@ -123,8 +123,8 @@ export const TERM_DEFINITIONS: Record<string, TermDefinition> = {
     },
     blueprint: {
         id: 'blueprint',
-        advancedLabel: 'Blueprint',
-        beginnerLabel: 'Domain Plan',
+        advancedLabel: 'Project plan',
+        beginnerLabel: 'Project plan',
         glossaryKey: 'blueprint',
         category: 'domain',
         fallback: 'A normalized domain plan generated from your brief.',

@@ -1100,7 +1100,7 @@ def _domain_setup_guidance(candidate: dict[str, Any]) -> list[dict[str, str]]:
         {
             "id": "task_shape",
             "title": "Task shape",
-            "recommendation": f"Use a {label} profile aligned to the detected recipe and fields.",
+            "recommendation": f"Use a {label} profile aligned to the detected task type and fields.",
             "why": "Domain profiles make required fields, splits, metrics, and review gates explicit.",
         },
         {
@@ -2542,7 +2542,7 @@ def _synthetic_expected_output_shape(recipe_payload: dict[str, Any] | None, requ
 def _synthetic_prompt_focus(domain_id: str, strategy: dict[str, Any]) -> list[str]:
     focus = [
         str(strategy.get("domain_reason") or ""),
-        "Preserve the active recipe's canonical input/output fields.",
+        "Preserve the active task type's canonical input/output fields.",
         "Prefer local Ollama generation unless the user explicitly selects another backend.",
     ]
     if domain_id == "pii_pci_detection":
@@ -2557,7 +2557,7 @@ def _synthetic_prompt_focus(domain_id: str, strategy: dict[str, Any]) -> list[st
 def _synthetic_review_gates(domain_id: str, pending_synth: int) -> list[str]:
     gates = [
         "Human review is required before generated rows enter prepared datasets.",
-        "Reject rows that do not match the active recipe shape.",
+        "Reject rows that do not match the active task type shape.",
     ]
     if pending_synth > 0:
         gates.append("Clear the current synthetic review queue before generating a large new batch.")
@@ -2585,23 +2585,23 @@ def _synthetic_library_prerequisites(
     recipe_id = str((recipe_payload or {}).get("id") or "")
     if not recipe_payload:
         recipe_status = "missing"
-        recipe_message = "Choose a recipe before using a domain-specific synthetic library."
+        recipe_message = "Choose a task type before using a domain-specific synthetic library."
     elif recipe_compatible:
         recipe_status = "met"
         recipe_message = f"{recipe_id} matches this domain library."
     else:
         recipe_status = "attention"
-        recipe_message = f"{recipe_id} can still generate rows, but this domain usually fits another recipe."
+        recipe_message = f"{recipe_id} can still generate rows, but this domain usually fits another task type."
 
     if not recipe_payload:
         mode_status = "missing"
-        mode_message = "Compatible playbook modes appear after a recipe is selected."
+        mode_message = "Compatible playbook modes appear after a task type is selected."
     elif mode_available:
         mode_status = "met"
-        mode_message = "At least one curated playbook mode is registered for the active recipe."
+        mode_message = "At least one curated playbook mode is registered for the active task type."
     else:
         mode_status = "missing"
-        mode_message = "No registered playbook mode currently matches this domain strategy and recipe."
+        mode_message = "No registered playbook mode currently matches this domain strategy and task type."
 
     if not recipe_payload or mapping_verdict == "empty":
         mapping_status = "attention"
@@ -2611,7 +2611,7 @@ def _synthetic_library_prerequisites(
         mapping_message = f"Required mapping fields need review: {', '.join(missing_fields[:4])}."
     else:
         mapping_status = "met"
-        mapping_message = "Required recipe fields look ready in the current mapping preview."
+        mapping_message = "Required task type fields look ready in the current mapping preview."
 
     if file_backed_gold_rows > 0:
         gold_status = "met"
@@ -2638,7 +2638,7 @@ def _synthetic_library_prerequisites(
     )
 
     return [
-        _prerequisite("recipe", "Recipe compatibility", recipe_status, recipe_message, target_tab="data"),
+        _prerequisite("recipe", "Task type compatibility", recipe_status, recipe_message, target_tab="data"),
         _prerequisite("playbook_mode", "Playbook mode", mode_status, mode_message, target_tab="synthetic"),
         _prerequisite("mapping", "Required fields", mapping_status, mapping_message, target_tab="dataprep"),
         _prerequisite("gold_examples", "Gold anchors", gold_status, gold_message, target_tab="goldset"),
@@ -2670,7 +2670,7 @@ def _synthetic_domain_playbook_libraries(
     ]
     mapping_verdict = str(mapping_preview.get("verdict") or "empty")
     recipe_id = str((recipe_payload or {}).get("id") or "")
-    recipe_label = str((recipe_payload or {}).get("name") or recipe_id or "No recipe")
+    recipe_label = str((recipe_payload or {}).get("name") or recipe_id or "No task type")
     libraries: list[dict[str, Any]] = []
 
     for candidate in _synthetic_library_domain_candidates(domain_detection):
@@ -2682,7 +2682,7 @@ def _synthetic_domain_playbook_libraries(
                 "title": "Generate baseline variants after domain confirmation",
                 "strategy": "positive paraphrase",
                 "desired_modes": ("positives_paraphrase",),
-                "domain_reason": "Synthetic rows are safer when the domain and recipe are confirmed first.",
+                "domain_reason": "Synthetic rows are safer when the domain and task type are confirmed first.",
             }
         ]
         recommended_recipes = [str(item) for item in list(definition.get("recipes") or []) if str(item).strip()]
@@ -2724,13 +2724,13 @@ def _synthetic_domain_playbook_libraries(
             warning_count = sum(1 for item in prerequisites if item["status"] == "attention")
             if blocker_count:
                 readiness = "blocked"
-                readiness_reason = "Recipe, playbook mode, or Gold Set prerequisites need setup first."
+                readiness_reason = "Task type, playbook mode, or Gold Set prerequisites need setup first."
             elif warning_count:
                 readiness = "attention"
                 readiness_reason = "The library can be reviewed, but setup or review gates need attention."
             else:
                 readiness = "ready"
-                readiness_reason = "Recipe, local backend, Gold anchors, mapping, and review gates look ready."
+                readiness_reason = "Task type, local backend, Gold anchors, mapping, and review gates look ready."
 
             playbooks.append({
                 "id": f"{domain_id}:{strategy.get('id') or mode}",
@@ -2889,9 +2889,9 @@ async def build_data_studio_synthetic_playbook_center(
         prerequisites.append(
             _prerequisite(
                 "recipe",
-                "Recipe selected",
+                "Task type selected",
                 "missing",
-                "Pick a recipe so BrewSLM can show compatible synthetic playbooks.",
+                "Choose a task type so BrewSLM can show compatible synthetic playbooks.",
                 target_tab="data",
             )
         )
@@ -2899,9 +2899,9 @@ async def build_data_studio_synthetic_playbook_center(
             _issue(
                 "synthetic_recipe_missing",
                 "blocker",
-                "Recipe not selected",
-                "Synthetic playbooks are recipe-aware; choose a recipe before generating rows.",
-                action_label="Choose recipe",
+                "Task type not selected",
+                "Synthetic playbooks are task-type-aware; choose a task type before generating rows.",
+                action_label="Choose task type",
                 target_tab="data",
             )
         )
@@ -2909,7 +2909,7 @@ async def build_data_studio_synthetic_playbook_center(
         prerequisites.append(
             _prerequisite(
                 "recipe",
-                "Recipe selected",
+                "Task type selected",
                 "met",
                 f"{recipe_payload.get('name') or recipe_id} is active.",
                 target_tab="data",
@@ -2931,7 +2931,7 @@ async def build_data_studio_synthetic_playbook_center(
                 "synthetic_no_compatible_playbooks",
                 "blocker",
                 "No compatible playbooks",
-                f"The active recipe '{recipe_id}' does not have a registered synthetic playbook.",
+                f"The active task type '{recipe_id}' does not have a registered synthetic playbook.",
                 action_label="Open Synthetic",
                 target_tab="synthetic",
             )
@@ -2943,9 +2943,9 @@ async def build_data_studio_synthetic_playbook_center(
                 "Compatible playbooks",
                 "met" if recipe_id else "attention",
                 (
-                    f"{len(compatible_catalog)} playbook mode(s) match the active recipe."
+                    f"{len(compatible_catalog)} playbook mode(s) match the active task type."
                     if recipe_id
-                    else f"{len(full_catalog)} playbook mode(s) are available after a recipe is selected."
+                    else f"{len(full_catalog)} playbook mode(s) are available after a task type is selected."
                 ),
                 target_tab="synthetic",
             )
@@ -3314,22 +3314,22 @@ async def build_data_studio_synthetic_recommendations(
             _issue(
                 "synthetic_recommendation_recipe_missing",
                 "blocker",
-                "Recipe needed before recommending playbooks",
-                "Pick a recipe so recommendations can target compatible synthetic strategies.",
-                action_label="Choose recipe",
+                "Task type needed before recommending playbooks",
+                "Choose a task type so recommendations can target compatible synthetic strategies.",
+                action_label="Choose task type",
                 target_tab="data",
             )
         )
         recommendations.append(
             _synthetic_recommendation(
                 rec_id="setup_recipe_for_synthetic_recommendations",
-                title="Choose a recipe before generating synthetic data",
+                title="Choose a task type before generating synthetic data",
                 strategy="setup",
                 priority="high",
                 target_tab="data",
-                action_label="Choose recipe",
-                rationale="Synthetic playbooks are recipe-aware and should match the training contract.",
-                domain_reason=f"{domain_label} recommendations become more precise after the training recipe is known.",
+                action_label="Choose task type",
+                rationale="Synthetic playbooks are task-type-aware and should match the training contract.",
+                domain_reason=f"{domain_label} recommendations become more precise after the task type is known.",
                 evidence=domain_evidence,
                 confidence=0.82,
                 playbook_mode=None,
@@ -3488,7 +3488,7 @@ async def build_data_studio_synthetic_recommendations(
             "title": "Generate baseline variants after domain confirmation",
             "strategy": "positive paraphrase",
             "desired_modes": ("positives_paraphrase",),
-            "domain_reason": "Synthetic rows are safer when the domain and recipe are confirmed first.",
+            "domain_reason": "Synthetic rows are safer when the domain and task type are confirmed first.",
         }
     ]
     if recipe is not None and domain_confidence >= 0.3:
@@ -4070,11 +4070,11 @@ async def build_data_studio_synthetic_quality_analytics(
             "Missing required fields",
             "blocker",
             "blocked",
-            f"{missing_required_count} synthetic row(s) are missing required recipe fields.",
+            f"{missing_required_count} synthetic row(s) are missing required task type fields.",
             count=missing_required_count,
             target_tab="dataprep",
             owner="Data Prep",
-            evidence=[f"Required fields: {', '.join(required_fields) or 'recipe not selected'}."],
+            evidence=[f"Required fields: {', '.join(required_fields) or 'task type not selected'}."],
             action_label="Review mapping",
         ))
     if duplicate_signal_count > 0:
@@ -5402,9 +5402,9 @@ async def build_data_studio_overview(
             _issue(
                 "missing_recipe",
                 "blocker",
-                "Recipe not selected",
-                "Pick a task recipe so BrewSLM knows the training shape and validation rules.",
-                action_label="Choose recipe",
+                "Task type not selected",
+                "Choose a task type so BrewSLM knows the training shape and validation rules.",
+                action_label="Choose task type",
                 target_tab="data",
             )
         )
@@ -6035,8 +6035,8 @@ def _mapping_build_templates(
         templates.append(
             _mapping_template_from_fields(
                 template_id=f"recipe-{_mapping_template_slug(recipe_payload.get('id'))}",
-                label=f"{recipe_payload.get('name') or recipe_payload.get('id')} recipe defaults",
-                description="Uses the selected recipe's expected input/output columns as the starter mapping.",
+                label=f"{recipe_payload.get('name') or recipe_payload.get('id')} task type defaults",
+                description="Uses the selected task type's expected input/output columns as the starter mapping.",
                 source="recipe",
                 fields=build_fields("recipe-defaults"),
                 current_mapping=field_mapping,
@@ -6267,9 +6267,9 @@ async def build_data_studio_mapping_preview(
             _issue(
                 "missing_recipe",
                 "warning",
-                "Recipe not selected",
-                "Pick a recipe to validate the mapping against the task shape you plan to train.",
-                action_label="Choose recipe",
+                "Task type not selected",
+                "Choose a task type to validate the mapping against the task shape you plan to train.",
+                action_label="Choose task type",
                 target_tab="data",
             )
         )
@@ -6387,7 +6387,7 @@ async def build_data_studio_mapping_preview(
             _issue(
                 "no_mapped_rows",
                 "blocker",
-                "No rows mapped to the recipe shape",
+                "No rows mapped to the task type shape",
                 "The active adapter could not turn sampled rows into canonical training records.",
                 action_label="Open adapter preview",
                 target_tab="dataprep",
@@ -6439,8 +6439,8 @@ async def build_data_studio_mapping_preview(
             _issue(
                 "adapter_differs_from_recipe",
                 "info",
-                "Adapter preset differs from recipe default",
-                f"Using {preference_adapter_id} from {preference_source}; the recipe default is {recipe_adapter_id}.",
+                "Adapter preset differs from task type default",
+                f"Using {preference_adapter_id} from {preference_source}; the task type default is {recipe_adapter_id}.",
                 action_label="Review adapter",
                 target_tab="dataprep",
             )
@@ -7112,9 +7112,9 @@ async def build_data_studio_prepare_dataset(
             _issue(
                 "prepare_missing_recipe",
                 "blocker",
-                "Recipe not selected",
-                "Pick a recipe before preparing splits so BrewSLM knows the training shape.",
-                action_label="Choose recipe",
+                "Task type not selected",
+                "Choose a task type before preparing splits so BrewSLM knows the training shape.",
+                action_label="Choose task type",
                 target_tab="data",
             )
         )
@@ -7331,7 +7331,7 @@ async def build_data_studio_prepare_dataset(
 
     if recipe_payload is None:
         recipe_status = "missing"
-        recipe_message = "Choose a recipe to make split and adapter checks recipe-aware."
+        recipe_message = "Choose a task type to make split and adapter checks task-type-aware."
     else:
         recipe_status = "met"
         recipe_message = f"{recipe_payload.get('name') or recipe_payload.get('id')} is selected."
@@ -7341,10 +7341,10 @@ async def build_data_studio_prepare_dataset(
         mapping_message = "No previewable rows are available for adapter contract checks."
     elif recipe_payload is None:
         mapping_status = "attention"
-        mapping_message = "Mapping can be previewed, but it is not tied to a selected recipe yet."
+        mapping_message = "Mapping can be previewed, but it is not tied to a selected task type yet."
     elif mapping_contract_pass:
         mapping_status = "met"
-        mapping_message = "Adapter mapping passes the required field contract for the selected recipe."
+        mapping_message = "Adapter mapping passes the required field contract for the selected task type."
     else:
         mapping_status = "attention"
         mapping_message = "Adapter mapping needs review before creating prepared split files."
@@ -7368,7 +7368,7 @@ async def build_data_studio_prepare_dataset(
     checks = [
         _prepare_check(
             "recipe",
-            "Recipe readiness",
+            "Task type readiness",
             recipe_status,
             recipe_message,
             target_tab="data",
@@ -8806,7 +8806,7 @@ async def build_data_studio_quality_safety(
                 "quality",
                 "ready",
                 "info",
-                "Required recipe fields are present in the mapping preview.",
+                "Required task type fields are present in the mapping preview.",
                 count=0,
                 target_tab="dataprep",
                 workflow_owner="Data Prep",
@@ -9638,9 +9638,9 @@ async def build_data_studio_dataset_versions(
             _issue(
                 "dataset_versions_recipe_missing",
                 "info",
-                "Recipe context is missing",
-                "A selected recipe makes version reuse easier to interpret for training and evaluation.",
-                action_label="Choose recipe",
+                "Task type context is missing",
+                "A selected task type makes version reuse easier to interpret for training and evaluation.",
+                action_label="Choose task type",
                 target_tab="data",
             )
         )
@@ -10051,7 +10051,7 @@ async def build_data_studio_coach_rail(
             "payload": mapping,
             "target_tab": "dataprep",
             "action_label": "Review Mapping",
-            "ready_message": "Schema mapping is aligned with the recipe.",
+            "ready_message": "Schema mapping is aligned with the task type.",
             "empty_message": "Mapping needs previewable source rows.",
         },
         {
@@ -10088,7 +10088,7 @@ async def build_data_studio_coach_rail(
             "target_tab": "synthetic",
             "action_label": "Open Synthetic",
             "ready_message": "Synthetic playbook prerequisites are ready.",
-            "empty_message": "Synthetic playbooks need recipe context.",
+            "empty_message": "Synthetic playbooks need task type context.",
         },
         {
             "id": "synthetic_recommendations",

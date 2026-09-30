@@ -32,7 +32,7 @@ describe('Term component', () => {
     it('renders the advanced label when advanced prop is set', () => {
         apiMock.get.mockResolvedValue({ data: { entries: [] } });
         render(<Term id="recipe" advanced />);
-        expect(screen.getByRole('button')).toHaveTextContent('Recipe');
+        expect(screen.getByRole('button')).toHaveTextContent('Training preset');
     });
 
     it('pluralizes when plural prop is set', () => {

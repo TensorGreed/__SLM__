@@ -82,7 +82,7 @@ test('Video 06 — BYO Custom Samples narrated', async ({ page, request }) => {
     // Land on the project list. Focus on the existing tile strip /
     // header area so the viewer sees the platform's entry point.
     let sectionStart = Date.now();
-    await focusOn(page, ':text("Try a demo project")');
+    await focusOn(page, ':text("Starter projects — quick demos")');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v06-project-list.png`, fullPage: true });
     await padTo(page, sectionStart, dur.cold_open);
 

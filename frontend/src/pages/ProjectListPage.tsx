@@ -300,7 +300,7 @@ export default function ProjectListPage() {
                 {/* One intake: "+ New Project" (describe the goal → we set it
                     up, beginner mode on), or start from a ready-made sample. */}
                 <section className="project-list-samples" data-testid="project-list-samples">
-                    <h2 className="project-list-samples__title">Or start from a sample project</h2>
+                    <h2 className="project-list-samples__title">Or begin with a starter project</h2>
                     <DemoProjectTiles />
                     <ProjectTemplateGallery hideWhenEmpty />
                 </section>
@@ -314,7 +314,7 @@ export default function ProjectListPage() {
                 ) : projects.length === 0 ? (
                     <EmptyState
                         title="No projects yet"
-                        description="Describe what you want your model to do and BrewSLM sets up the project for you — or start from one of the sample projects above."
+                        description="Describe what you want your model to do and BrewSLM sets up the project for you — or start from one of the starter projects above."
                         primary={{ label: '+ Create First Project', onClick: openCreateModal }}
                         docsHref="http://localhost:3001/docs/getting-started/quickstart"
                     />
@@ -453,7 +453,7 @@ export default function ProjectListPage() {
                                             />
                                             <div className="form-hint">
                                                 HuggingFace model ID (135M–8B). Leave blank to
-                                                inherit from your recipe.
+                                                inherit from your task type.
                                             </div>
                                         </div>
                                         <div className="form-group">
@@ -471,13 +471,13 @@ export default function ProjectListPage() {
                                         </div>
                                     </div>
                                     <div className="form-group">
-                                        <label className="form-label">Starter pack</label>
+                                        <label className="form-label">Domain preset</label>
                                         <select
                                             className="input"
                                             value={newStarterPackId}
                                             onChange={(e) => setNewStarterPackId(e.target.value)}
                                         >
-                                            <option value="">No starter pack</option>
+                                            <option value="">No domain preset</option>
                                             {starterPacks.map((pack) => (
                                                 <option key={pack.id} value={pack.id}>
                                                     {pack.display_name} ({pack.id})
@@ -485,7 +485,7 @@ export default function ProjectListPage() {
                                             ))}
                                         </select>
                                         <div className="form-hint">
-                                            Optional domain defaults for model family, adapter
+                                            Optional domain preset: defaults for model family, adapter
                                             profile, evaluation gates, and safety reminders.
                                         </div>
                                     </div>

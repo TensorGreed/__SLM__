@@ -17,7 +17,7 @@ Any persisted output a downstream stage might depend on — a cleaned dataset, a
 
 ## Autopilot
 
-The planner that turns a plain-language brief into a full pipeline plan (adapter, model, recipe, eval pack, target). v3 persists a decision log, snapshots state for rollback, and supports strict mode. See [Newbie Autopilot](../workflows/newbie-autopilot.md).
+The planner that turns a plain-language brief into a full pipeline plan (adapter, model, training preset, eval pack, target). v3 persists a decision log, snapshots state for rollback, and supports strict mode. See [Newbie Autopilot](../workflows/newbie-autopilot.md).
 
 ## Base model
 
@@ -25,7 +25,7 @@ The pretrained model you fine-tune from. Registered in the Universal Base Model 
 
 ## Beginner mode
 
-Per-project flag that hides advanced UI surfaces (Adapter Studio, Extension Studio, Workflow Builder, Recipes, Pipeline-as-Code, Domain Packs, Domain Profiles). Backend behaviour unchanged. See [Beginner mode](../concepts/beginner-mode.md).
+Per-project flag that hides advanced UI surfaces (Adapter Studio, Extension Studio, Workflow Builder, Pipeline presets, Pipeline-as-Code, Domain Packs, Domain Profiles). Backend behaviour unchanged. See [Beginner mode](../concepts/beginner-mode.md).
 
 ## Checkpoint
 
@@ -239,6 +239,20 @@ Provenance label meaning the value came from a heuristic. Same page.
 
 Formal Protocol interface for one of four plugin kinds (data_adapter, training_runtime, domain_pack, eval_pack). Validators check module interface, schema compliance, version metadata, and safe-reload support. See [Plugin contracts](../extensions/contracts.md).
 
+## Preset
+
+A named bundle of defaults you apply as a starting point. The UI uses three kinds:
+
+- **Domain preset**: domain defaults (model family, adapter, gates, target, safety reminders) picked at project creation. API name: *starter pack*.
+- **Training preset**: a named bundle of training hyperparameters (learning rate, epochs, LoRA settings, …) applied on the Training Config page (**Training preset** → **Apply preset**). API name: training *recipe*.
+- **Pipeline preset**: an end-to-end composition of domain defaults, workflow template, training preset, dataset adapter and eval pack (**Pipeline presets** page: **Preview preset** / **Apply preset** / **Apply + Run Workflow**). Hidden in beginner mode. API name: pipeline *recipe*.
+
+See [Recipe](#recipe) for the API routes.
+
+## Project plan
+
+The normalised domain plan generated from your brief (the *domain blueprint* in the API: `/api/domain-blueprints`, `Project.active_domain_blueprint_version`). The project home shows the active version as **Project plan vN** (e.g. "Project plan v2").
+
 ## Provenance
 
 The `measured` / `estimated` / `mixed` label attached to a metric. Every numeric output in BrewSLM has one. See [Measured vs estimated](../reliability/measured-vs-estimated.md).
@@ -263,7 +277,13 @@ Stable enum from `app/models/reason_codes.py`. Required on `error` / `critical` 
 
 ## Recipe
 
-A named training-config template (e.g. `safe-balanced-sft`, `lora-fast`, `classification`). Carries default learning rate, batch size, epochs, scheduler. Resolved at training start with provenance per field.
+The internal / API name for three different things that the UI now labels separately:
+
+- **[Task type](#task-type)**: the project's task-shape recipe (`qa-sft`, `classification`, `span-extraction`, `summarization`, `generic-sft`, `rag-protocol`, …). API: `GET /api/recipes`, `GET /api/recipes/{recipe_id}`, `PUT /api/projects/{id}/recipe`; stored on `Project.selected_recipe`.
+- **Training preset** (see [Preset](#preset)): a named bundle of training hyperparameters (`recipe.sft.balanced`, `recipe.lora.fast`, `recipe.kd.*`, alignment `recipe.alignment.*`). API: `/api/projects/{id}/training/recipes`, `/training/recipes/resolve`, `/training/alignment/recipes`; CLI `--recipe`; manifest/config key `recipe`.
+- **Pipeline preset** (see [Preset](#preset)): an end-to-end pipeline composition (`recipe.pipeline.sft_default`, `recipe.pipeline.lora_fast`, …). API: `/api/projects/{id}/pipeline/recipes` (+ `/resolve`, `/apply`, `/run`, `/runs`).
+
+The identifiers, routes, JSON keys and DB columns keep the word `recipe`; only the UI labels changed.
 
 ## Remediation suggestion
 
@@ -326,7 +346,11 @@ Plugin sources via Phase H.
 
 ## Starter pack
 
-Novice-oriented bootstrap that pre-fills model family, adapter, gates, target, and safety reminders for a domain. Picked at project creation time.
+The API / catalog name (`/api/starter-packs`, `starter_pack_id`) for what the UI calls a **domain preset** (see [Preset](#preset)): a novice-oriented bootstrap that pre-fills model family, adapter, gates, target, and safety reminders for a domain. Picked in the **Advanced** section of the create-project dialog.
+
+## Starter project
+
+A ready-made project you can launch from the project list (**Or begin with a starter project**). Two galleries: **Starter projects — quick demos** (the seeded demo projects with a ready-to-run autopilot plan) and **Starter projects — with data + gold set** (project templates; click **Use this starter**). API: `/api/project-templates` and the demo-project endpoints.
 
 ## Stage
 
@@ -361,13 +385,17 @@ The introspector's `--auto` flow detects every shape above *except* `kv_to_struc
 
 Deployment-environment shape: `mobile_cpu`, `browser_webgpu`, `edge_gpu`, `vllm_server`. Determines weight budget, compression preference, runtime constraints. Pluggable via the target-profile plugin kind.
 
+## Task type
+
+What shape of task the project trains: Q&A (`qa-sft`), classification, span extraction, summarization, generic instruction tuning, RAG protocol. It bundles the task shape, dataset adapter, scoring mode and a suggested base model, and it drives synthetic-data playbooks, eval gates and Coach signals. Chosen in the dataset-import wizard or on the **Choose a task type for this project** page. API name: *recipe* (see [Recipe](#recipe)).
+
 ## Telemetry sample
 
 One inference observation pushed to BrewSLM by your serving runtime (status, latency_ms, prompt_tokens, completion_tokens, TTFT). Rolls up into the deployment telemetry window. See [Post-deploy telemetry](../deployment/telemetry.md).
 
 ## Trainability forecast
 
-Pre-training "will this clear gates?" prediction shown above the Preflight button on the Training Config page. Combines recipe-agnostic signals (row count, gold-set diversity, gate-pass probability heuristic) with per-recipe signals dispatched by `task_profile`. Classification adds class-imbalance, per-class minimums, label-vocab fragmentation, and single-class dominance. Span-extraction adds span-offset validity, entity-type coverage, and negative-example presence. Summarization adds summary/document length-ratio outlier detection. Advisory only — never blocks training; the Train button shifts to "Train anyway" when the verdict is amber/red. A snapshot of every cache-miss compute is persisted to `training_forecast_snapshots` and surfaced as a sparkline + verdict-delta strip above the signal list so the user can see whether their last edit moved the needle (60-day retention). See [Training workflow](../workflows/training.md#trainability-forecast).
+Pre-training "will this clear gates?" prediction shown above the Preflight button on the Training Config page. Combines task-type-agnostic signals (row count, gold-set diversity, gate-pass probability heuristic) with per-task-type signals dispatched by `task_profile`. Classification adds class-imbalance, per-class minimums, label-vocab fragmentation, and single-class dominance. Span-extraction adds span-offset validity, entity-type coverage, and negative-example presence. Summarization adds summary/document length-ratio outlier detection. Advisory only — never blocks training; the Train button shifts to "Train anyway" when the verdict is amber/red. A snapshot of every cache-miss compute is persisted to `training_forecast_snapshots` and surfaced as a sparkline + verdict-delta strip above the signal list so the user can see whether their last edit moved the needle (60-day retention). See [Training workflow](../workflows/training.md#trainability-forecast).
 
 ## Training mode
 

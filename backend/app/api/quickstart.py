@@ -136,7 +136,7 @@ async def quickstart_train_default(
         raise HTTPException(
             400,
             (
-                "Project has no base_model_name. Pick a recipe in the dataset-"
+                "Project has no base_model_name. Choose a task type in the dataset-"
                 "import wizard, or set the model manually in Training → Config."
             ),
         )
@@ -339,7 +339,7 @@ async def quickstart_baseline_eval(
         raise HTTPException(
             400,
             (
-                "Project has no base_model_name. Pick a recipe in the dataset-"
+                "Project has no base_model_name. Choose a task type in the dataset-"
                 "import wizard, or set the model manually in Training → Config."
             ),
         )

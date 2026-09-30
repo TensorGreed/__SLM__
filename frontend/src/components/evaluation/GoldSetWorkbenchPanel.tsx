@@ -264,7 +264,7 @@ export default function GoldSetWorkbenchPanel({ projectId }: GoldSetWorkbenchPan
             );
             setPack(res.data);
         } catch (err) {
-            setPackError(errorDetail(err, 'Could not generate starter pack.'));
+            setPackError(errorDetail(err, 'Could not generate starter eval pack.'));
         } finally {
             setIsGeneratingPack(false);
         }
@@ -500,7 +500,7 @@ export default function GoldSetWorkbenchPanel({ projectId }: GoldSetWorkbenchPan
                     <div>
                         <h3>Generated pack preview</h3>
                         <p className="gold-workbench-subtitle">
-                            Auto-generate a starter evaluation pack from the project blueprint + active dataset.
+                            Auto-generate a starter evaluation pack from the project plan + active dataset.
                         </p>
                     </div>
                     <button
@@ -561,7 +561,7 @@ export default function GoldSetWorkbenchPanel({ projectId }: GoldSetWorkbenchPan
                     </div>
                 ) : (
                     <p className="gold-workbench-pack-note">
-                        No preview yet. Click <em>Generate pack</em> to derive starter gates from your project blueprint.
+                        No preview yet. Click <em>Generate pack</em> to derive starter gates from your project plan.
                     </p>
                 )}
             </section>

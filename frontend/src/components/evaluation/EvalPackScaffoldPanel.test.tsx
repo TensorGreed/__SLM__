@@ -91,7 +91,7 @@ describe('EvalPackScaffoldPanel', () => {
             expect(screen.getByTestId('eval-pack-scaffold-empty')).toBeInTheDocument();
         });
         expect(screen.getByTestId('eval-pack-scaffold-empty').textContent)
-            .toMatch(/Pick a recipe/);
+            .toMatch(/Choose a task type/);
     });
 
     it('saves edits via POST and fires onSaved + success toast on success', async () => {

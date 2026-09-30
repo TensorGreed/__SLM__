@@ -155,7 +155,7 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
             // surface it as a quiet inline state rather than a red
             // error block.
             if (detail === 'recipe_required') {
-                setError('Pick a recipe before scaffolding an eval pack.');
+                setError('Choose a task type before scaffolding an eval pack.');
                 setDraft(null);
                 setResponse(null);
             } else {
@@ -349,7 +349,7 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
                 <div>
                     <h3>Scaffolded eval pack</h3>
                     <p className="eval-pack-scaffold__subtitle">
-                        Auto-generated from the <code>{response.recipe_id}</code> recipe
+                        Auto-generated from the <code>{response.recipe_id}</code> task type
                         {response.gold_set_summary.row_count > 0
                             ? <> · gold set has <strong>{response.gold_set_summary.row_count}</strong> rows</>
                             : null}

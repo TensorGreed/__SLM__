@@ -111,7 +111,7 @@ describe('RecipePicker', () => {
         expect(screen.getByTestId('recipe-recommended-badge')).toBeInTheDocument();
 
         const why = screen.getByTestId('recipe-why-qa-sft');
-        expect(why).toHaveTextContent(/Why this recipe/i);
+        expect(why).toHaveTextContent(/Why this task type/i);
         expect(why).toHaveTextContent('question');
         expect(why).toHaveTextContent('answer');
         expect(why).toHaveTextContent(/input/);
@@ -280,7 +280,7 @@ describe('RecipePicker', () => {
         });
 
         const why = screen.getByTestId('recipe-why-generic-sft');
-        expect(why).toHaveTextContent(/None of the more specific recipes matched/i);
+        expect(why).toHaveTextContent(/None of the more specific task types matched/i);
         expect(screen.getByTestId('recipe-confidence-generic-sft')).toHaveTextContent('fallback');
     });
 

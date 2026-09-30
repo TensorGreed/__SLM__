@@ -31,7 +31,7 @@ interface HealthCheckModalProps {
 // the backend show up with their raw name until a label is added here.
 const CHECK_LABELS: Record<string, string> = {
     project_exists: 'Project accessible',
-    recipe_applied: 'Recipe applied',
+    recipe_applied: 'Task type applied',
     gold_set: 'Gold set seeded',
     data_health: 'Data Health Report',
     trainability_forecast: 'Trainability forecast',

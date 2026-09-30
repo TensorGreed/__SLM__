@@ -49,7 +49,7 @@ interface DataStudioSyntheticPlaybookCenterPanelProps {
  * fall back to a generic "Set up" label.
  */
 const PREREQUISITE_SETUP_LABEL: Record<string, string> = {
-    recipe: 'Pick a recipe',
+    recipe: 'Choose a task type',
     playbook_mode: 'Pick a playbook mode',
     mapping: 'Fix mapping',
     gold_examples: 'Open Gold Set',
@@ -64,7 +64,7 @@ function prerequisiteSetupLabel(item: DataStudioSyntheticPrerequisite): string {
 const SYNTHETIC_VERDICT_COPY: Record<DataStudioSyntheticPlaybookCenter['verdict'], { label: string; detail: string }> = {
     empty: {
         label: 'No playbooks',
-        detail: 'Select a recipe to unlock recipe-aware synthetic playbooks.',
+        detail: 'Choose a task type to unlock task-type-aware synthetic playbooks.',
     },
     attention: {
         label: 'Needs setup',
@@ -147,7 +147,7 @@ function DomainPlaybookCard({
                 <span>{playbook.generation_path.available ? playbook.generation_path.describe : 'Ollama setup'}</span>
                 <span>{playbook.generation_path.paid_required ? 'paid backend' : 'local default'}</span>
                 <span>{playbook.mode_available ? 'mode available' : 'mode missing'}</span>
-                <span>{playbook.recipe_compatible ? 'recipe fit' : 'recipe review'}</span>
+                <span>{playbook.recipe_compatible ? 'task type fit' : 'task type review'}</span>
             </div>
             <div className="data-studio-synth__domain-details">
                 <div>
@@ -213,7 +213,7 @@ function DomainLibraryCard({
                 <span>
                     {library.recommended_recipes.length
                         ? `Recommended: ${library.recommended_recipes.join(', ')}`
-                        : 'Any recipe'}
+                        : 'Any task type'}
                 </span>
             </div>
             <div className="data-studio-synth__domain-prereqs">
@@ -310,7 +310,7 @@ export default function DataStudioSyntheticPlaybookCenterPanel({
     }
 
     const verdict = SYNTHETIC_VERDICT_COPY[center.verdict];
-    const recipeLabel = center.recipe?.name || center.recipe?.id || 'No recipe';
+    const recipeLabel = center.recipe?.name || center.recipe?.id || 'No task type';
     const ollamaReady = center.recommended_backend.available;
     const backendLabel = ollamaReady ? center.recommended_backend.describe : 'Ollama not ready';
 
@@ -434,7 +434,7 @@ export default function DataStudioSyntheticPlaybookCenterPanel({
                         </div>
                     ) : (
                         <p className="data-studio-synth__empty">
-                            Pick a recipe to see compatible playbook modes.
+                            Choose a task type to see compatible playbook modes.
                         </p>
                     )}
 

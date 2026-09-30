@@ -1,7 +1,7 @@
 /**
  * Project-template gallery — surfaces every available template on
  * the project-list page above the project grid. Each card has a
- * "Use this template" button that opens a small inline name-prompt;
+ * "Use this starter" button that opens a small inline name-prompt;
  * confirming creates a new project from the template and navigates
  * the user into it.
  *
@@ -76,7 +76,7 @@ export default function ProjectTemplateGallery({
                 style={{ padding: 'var(--space-md)' }}
             >
                 <div style={{ color: 'var(--text-secondary)' }}>
-                    Loading templates…
+                    Loading starter projects…
                 </div>
             </section>
         );
@@ -91,7 +91,7 @@ export default function ProjectTemplateGallery({
                 style={{ padding: 'var(--space-md)' }}
             >
                 <div style={{ color: 'var(--text-secondary)' }}>
-                    No project templates available yet.
+                    No starter projects available yet.
                 </div>
             </section>
         );
@@ -124,7 +124,7 @@ export default function ProjectTemplateGallery({
                 trimmed,
             );
             addToast(
-                `Created '${project.name}' from template`,
+                `Created '${project.name}' from starter project`,
                 'success',
                 4000,
             );
@@ -150,7 +150,7 @@ export default function ProjectTemplateGallery({
             }}
         >
             <div>
-                <h3 style={{ margin: 0 }}>Start from a template</h3>
+                <h3 style={{ margin: 0 }}>Starter projects — with data + gold set</h3>
                 <p
                     style={{
                         margin: '4px 0 0',
@@ -159,8 +159,8 @@ export default function ProjectTemplateGallery({
                     }}
                 >
                     Curated starting kits with pre-loaded data, gold sets, and
-                    recipe defaults. You can spin up multiple projects from the
-                    same template — each gets its own data + experiments.
+                    task type defaults. You can spin up multiple projects from the
+                    same starter — each gets its own data + experiments.
                 </p>
             </div>
 
@@ -324,7 +324,7 @@ export default function ProjectTemplateGallery({
                                     data-testid={`project-template-pick-${template.slug}`}
                                     style={{ marginTop: 'auto' }}
                                 >
-                                    Use this template
+                                    Use this starter
                                 </button>
                             )}
                         </article>

@@ -64,7 +64,7 @@ describe('ProjectAutopilotPage — Phase 3.1 demo-project intent pre-fill', () =
         );
     });
 
-    it('shows the "pre-filled from demo project" hint banner', () => {
+    it('shows the "pre-filled from starter project" hint banner', () => {
         setProject({
             id: 99,
             name: 'Demo · Support FAQ',
@@ -75,7 +75,7 @@ describe('ProjectAutopilotPage — Phase 3.1 demo-project intent pre-fill', () =
         });
         render(<ProjectAutopilotPage />);
         expect(
-            screen.getByRole('status', { name: /Intent pre-filled from demo project/i }),
+            screen.getByRole('status', { name: /Intent pre-filled from starter project/i }),
         ).toBeInTheDocument();
     });
 
@@ -92,7 +92,7 @@ describe('ProjectAutopilotPage — Phase 3.1 demo-project intent pre-fill', () =
         );
         // And no hint banner.
         expect(
-            screen.queryByRole('status', { name: /pre-filled from demo project/i }),
+            screen.queryByRole('status', { name: /pre-filled from starter project/i }),
         ).not.toBeInTheDocument();
     });
 

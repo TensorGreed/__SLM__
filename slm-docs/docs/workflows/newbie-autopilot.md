@@ -5,7 +5,7 @@ title: Newbie Autopilot
 
 # Newbie Autopilot
 
-Autopilot v3 takes a plain-language brief and proposes a full pipeline plan: adapter, base model, training recipe, eval pack, target profile. Every decision is **labelled with provenance** (`measured` vs `estimated`) and written to a persisted decision log so you can audit what it did and why.
+Autopilot v3 takes a plain-language brief and proposes a full pipeline plan: adapter, base model, training preset, eval pack, target profile. Every decision is **labelled with provenance** (`measured` vs `estimated`) and written to a persisted decision log so you can audit what it did and why.
 
 It's the fastest way to get from "I have an idea" to "the model is training", and the safest way to iterate without forgetting what changed between runs.
 
@@ -46,7 +46,7 @@ Training rail → **Autopilot Planner**. The Planner is hidden in beginner mode,
 2. Click **Plan**. The planner returns:
    - Proposed dataset adapter + reason.
    - Proposed base model + provenance.
-   - Proposed training recipe + estimated cost / GPU-hours / CO2.
+   - Proposed training preset + estimated cost / GPU-hours / CO2.
    - Proposed eval pack + gates.
    - Proposed target profile.
    - **Blockers** (if any) with concrete remediation links.
@@ -100,7 +100,7 @@ curl -X POST http://localhost:8000/api/projects/1/autopilot/repair-preview \
 | Target profile incompatible (e.g. 7B on mobile_cpu) | Fall back to next-larger target OR suggest compression. |
 | Adapter `auto` couldn't match | Pick a default-canonical adapter if the columns look canonical. |
 | LR too aggressive for tiny dataset | Scale LR by `sqrt(rows/1000)` and add warmup. |
-| Eval pack missing | Generate a starter from the project blueprint. |
+| Eval pack missing | Generate a starter from the project plan. |
 
 Strict mode refuses every repair and surfaces the blockers verbatim. Reach for strict mode when **reproducibility matters more than convenience** — e.g., a CI gate.
 
@@ -138,12 +138,12 @@ curl -X POST http://localhost:8000/api/projects/1/autopilot/rollback \
   -d '{"snapshot_id": "snap_8c9d…"}'
 ```
 
-The snapshot captures: project blueprint, dataset state, eval pack, training config — everything autopilot might have nudged.
+The snapshot captures: project plan, dataset state, eval pack, training config — everything autopilot might have nudged.
 
 ## When *not* to use autopilot
 
 - **You already have a known-good training manifest.** Just `brewslm train rerun --experiment <id>` instead.
-- **You're iterating on a single knob.** Edit the recipe directly; autopilot adds noise.
+- **You're iterating on a single knob.** Edit the training preset directly; autopilot adds noise.
 - **You're past the first iteration and want to test a specific hypothesis** ("what if we scale to 4B?"). Use the Training Configurations page.
 
 Autopilot pays off on first / second iterations and when something blocks you. After that, the manifest replay loop is faster.

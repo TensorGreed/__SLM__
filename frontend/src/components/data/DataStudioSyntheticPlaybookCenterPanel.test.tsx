@@ -137,7 +137,7 @@ const syntheticPayload = {
                         prerequisites: [
                             {
                                 id: 'recipe',
-                                label: 'Recipe compatibility',
+                                label: 'Task type compatibility',
                                 status: 'met',
                                 message: 'classification matches this domain library.',
                                 target_tab: 'data',
@@ -153,7 +153,7 @@ const syntheticPayload = {
                                 id: 'mapping',
                                 label: 'Required fields',
                                 status: 'met',
-                                message: 'Required recipe fields look ready.',
+                                message: 'Required task type fields look ready.',
                                 target_tab: 'dataprep',
                             },
                             {
@@ -208,7 +208,7 @@ const syntheticPayload = {
     prerequisites: [
         {
             id: 'recipe',
-            label: 'Recipe selected',
+            label: 'Task type selected',
             status: 'met',
             message: 'Classification is active.',
             target_tab: 'data',
@@ -301,7 +301,7 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/synthetic-playbooks');
     });
 
-    it('renders no-recipe local Ollama setup guidance', async () => {
+    it('renders no-task-type local Ollama setup guidance', async () => {
         apiMock.get.mockResolvedValueOnce({
             data: {
                 ...syntheticPayload,
@@ -339,9 +339,9 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
                             source: 'fallback',
                             confidence: 0.25,
                             status: 'blocked',
-                            summary: 'Synthetic rows are safer when the domain and recipe are confirmed first.',
+                            summary: 'Synthetic rows are safer when the domain and task type are confirmed first.',
                             active_recipe_id: null,
-                            active_recipe_label: 'No recipe',
+                            active_recipe_label: 'No task type',
                             recommended_recipes: [],
                             recipe_compatible: false,
                             compatible_modes: [],
@@ -350,7 +350,7 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
                                     ...syntheticPayload.domain_libraries.libraries[0].playbooks[0],
                                     id: 'generic_domain:baseline_variants',
                                     readiness: 'blocked',
-                                    readiness_reason: 'Recipe, playbook mode, or Gold Set prerequisites need setup first.',
+                                    readiness_reason: 'Task type, playbook mode, or Gold Set prerequisites need setup first.',
                                     generation_path: {
                                         backend: 'ollama',
                                         available: false,
@@ -361,9 +361,9 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
                                     prerequisites: [
                                         {
                                             id: 'recipe',
-                                            label: 'Recipe compatibility',
+                                            label: 'Task type compatibility',
                                             status: 'missing',
-                                            message: 'Choose a recipe before using a domain-specific synthetic library.',
+                                            message: 'Choose a task type before using a domain-specific synthetic library.',
                                             target_tab: 'data',
                                         },
                                     ],
@@ -381,9 +381,9 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
                 prerequisites: [
                     {
                         id: 'recipe',
-                        label: 'Recipe selected',
+                        label: 'Task type selected',
                         status: 'missing',
-                        message: 'Pick a recipe so BrewSLM can show compatible synthetic playbooks.',
+                        message: 'Choose a task type so BrewSLM can show compatible synthetic playbooks.',
                         target_tab: 'data',
                     },
                     {
@@ -398,9 +398,9 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
                     {
                         id: 'synthetic_recipe_missing',
                         severity: 'blocker',
-                        title: 'Recipe not selected',
-                        message: 'Synthetic playbooks are recipe-aware.',
-                        action_label: 'Choose recipe',
+                        title: 'Task type not selected',
+                        message: 'Synthetic playbooks are task-type-aware.',
+                        action_label: 'Choose task type',
                         target_tab: 'data',
                     },
                 ],
@@ -410,11 +410,11 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
         render(<DataStudioSyntheticPlaybookCenterPanel projectId={1} onOpenSynthetic={vi.fn()} />);
 
         await waitFor(() => {
-            expect(screen.getAllByText(/No recipe/i).length).toBeGreaterThan(0);
+            expect(screen.getAllByText(/No task type/i).length).toBeGreaterThan(0);
         });
         expect(screen.getByText('Ollama not ready')).toBeInTheDocument();
-        expect(screen.getAllByText('Recipe not selected').length).toBeGreaterThan(0);
-        expect(screen.getAllByText(/Pick a recipe/i).length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Task type not selected').length).toBeGreaterThan(0);
+        expect(screen.getAllByText(/Choose a task type/i).length).toBeGreaterThan(0);
     });
 
     // ─────────────────────────────────────────────────────────────────
@@ -429,7 +429,7 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
         prerequisites: [
             {
                 id: 'recipe',
-                label: 'Recipe selected',
+                label: 'Task type selected',
                 status: 'met',
                 message: 'Classification is active.',
                 target_tab: 'data',

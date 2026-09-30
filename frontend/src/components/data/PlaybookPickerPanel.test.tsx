@@ -69,7 +69,7 @@ describe('PlaybookPickerPanel', () => {
         await waitFor(() => {
             expect(screen.getByTestId('playbook-picker-empty')).toBeInTheDocument();
         });
-        expect(screen.getByText(/Select a recipe/)).toBeInTheDocument();
+        expect(screen.getByText(/Choose a task type/)).toBeInTheDocument();
     });
 
     it('renders the shared "pick a recipe first" CTA when the server flags recipe_required', async () => {
@@ -96,7 +96,7 @@ describe('PlaybookPickerPanel', () => {
             ).toBeInTheDocument();
         });
         const cta = screen.getByTestId('playbook-picker-empty-recipe-required');
-        expect(cta.textContent).toMatch(/Pick a recipe first/);
+        expect(cta.textContent).toMatch(/Choose a task type first/);
         // CTA button points at the standalone task-shape recipe-picker
         // page (NOT /recipes — that's the pipeline-DAG recipes page,
         // a different concept). Always includes a return_to so the
@@ -578,7 +578,7 @@ describe('PlaybookPickerPanel', () => {
 
         // Banner explains the fallback so the user isn't confused.
         const banner = screen.getByTestId('playbook-picker-prefill-banner');
-        expect(banner.textContent).toMatch(/isn't in this recipe/);
+        expect(banner.textContent).toMatch(/isn't in this task type/);
     });
 
     it('renders no prefill banner when the URL carries no prefill params', async () => {

@@ -1347,7 +1347,7 @@ async def build_prompt_preview(
     if not recipe_id:
         raise GoldGenerationError(
             "RECIPE_REQUIRED",
-            "Project has no selected recipe — pick a recipe before "
+            "Project has no task type selected — choose a task type before "
             "generating gold rows.",
         )
     if recipe_id not in SUPPORTED_RECIPES:
@@ -1460,7 +1460,7 @@ async def generate_gold_qa_via_llm(
     if not recipe_id:
         raise GoldGenerationError(
             "RECIPE_REQUIRED",
-            "Project has no selected recipe — pick a recipe before "
+            "Project has no task type selected — choose a task type before "
             "generating gold Q&A.",
         )
     if recipe_id not in SUPPORTED_RECIPES:
@@ -1671,7 +1671,7 @@ def _build_prompt_for_recipe(
         )
     raise GoldGenerationError(
         "RECIPE_NOT_SUPPORTED",
-        f"No prompt builder registered for recipe '{recipe_id}'.",
+        f"No prompt builder registered for task type '{recipe_id}'.",
     )
 
 
@@ -1708,7 +1708,7 @@ def _parse_rows_for_recipe(
         return _parse_summarization_rows(content, expected_count)
     raise GoldGenerationError(
         "RECIPE_NOT_SUPPORTED",
-        f"No parser registered for recipe '{recipe_id}'.",
+        f"No parser registered for task type '{recipe_id}'.",
     )
 
 

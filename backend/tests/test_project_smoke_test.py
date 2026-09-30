@@ -111,7 +111,7 @@ class ProjectSmokeTestApiTests(unittest.TestCase):
         body = resp.json()
         checks = self._checks_by_name(body)
         self.assertEqual(checks["recipe_applied"]["status"], "fail")
-        self.assertIn("recipe", checks["recipe_applied"]["message"].lower())
+        self.assertIn("task type", checks["recipe_applied"]["message"].lower())
         # synth_catalog correctly skips (no recipe means nothing to
         # enumerate — that's not a platform bug, just nothing to test).
         self.assertEqual(checks["synth_catalog"]["status"], "skip")

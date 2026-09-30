@@ -11,7 +11,7 @@ Stage 8 of the [pipeline](pipeline-overview.md). BrewSLM treats training as a **
 
 | Want | Surface |
 |---|---|
-| Pick recipe + model interactively, see resolved defaults | UI → Training rail → **Configurations** |
+| Pick a training preset + model interactively, see resolved defaults | UI → Training rail → **Configurations** |
 | Reproduce a known-good run | UI / CLI → `train rerun --experiment N` |
 | Brief in plain English, accept the plan | UI / CLI → Autopilot → [Newbie autopilot](newbie-autopilot.md) |
 | Tweak one config knob | UI → Training Configurations → edit + **Apply + start** |
@@ -22,9 +22,9 @@ Stage 8 of the [pipeline](pipeline-overview.md). BrewSLM treats training as a **
 
 Training rail → **Configurations**.
 
-1. Pick a **Recipe** from the dropdown. Recipes are pre-tuned config templates: `safe-balanced-sft`, `lora-fast`, `classification`, `seq2seq`, etc. The picker shows their key knobs at a glance.
+1. Pick a **Training preset** from the dropdown and click **Apply preset** (the API and CLI call these *recipes*). Training presets are pre-tuned config bundles: `safe-balanced-sft`, `lora-fast`, `classification`, `seq2seq`, etc. The picker shows their key knobs at a glance.
 2. **Base model** — defaults to the project default; override here.
-3. **Training mode** — `sft` / `dpo` / `orpo` / `classification` / `seq2seq` / `distillation` (filtered to what the recipe + model support). `distillation` trains against captured teacher logits — see [Distillation](distillation.md).
+3. **Training mode** — `sft` / `dpo` / `orpo` / `classification` / `seq2seq` / `distillation` (filtered to what the preset + model support). `distillation` trains against captured teacher logits — see [Distillation](distillation.md).
 4. **Resolved defaults panel** below shows every field that will be applied with provenance (`recipe` / `domain_pack` / `model_metadata` / `default`).
 5. **Cost estimate card** — gpu_hours, USD, CO2, provenance, confidence band. Pulled from real history when available; estimated otherwise. See [Measured vs estimated](../reliability/measured-vs-estimated.md).
 6. Click **Preflight**. If green, click **Start training**.
@@ -118,9 +118,9 @@ For classification with a classifier head, when the largest class has at least 3
 
 ## Warm-start checkpoints
 
-A recipe can recommend a **pre-fine-tuned warm-start checkpoint** — a base model already task-pretuned on open corpora, so your rows only teach the *delta* (~3–5× fewer rows for the same quality). Recipes carry the recommendation as `recommended_starting_checkpoint`; the task-shaped offline-KD recipes already point at the planned task bases:
+A training preset (API: recipe) can recommend a **pre-fine-tuned warm-start checkpoint** — a base model already task-pretuned on open corpora, so your rows only teach the *delta* (~3–5× fewer rows for the same quality). Recipes carry the recommendation as `recommended_starting_checkpoint`; the task-shaped offline-KD recipes already point at the planned task bases:
 
-| Recipe | Recommended checkpoint |
+| Training preset | Recommended checkpoint |
 | --- | --- |
 | `recipe.kd.classification` | `classifier-base-135m` |
 | `recipe.kd.qa` | `qa-base-135m` |
@@ -130,7 +130,7 @@ Checkpoints live in a local registry at `backend/data/pretrained_checkpoints/<na
 
 **Where you see it.** The resolution is surfaced as a **Starting weights** line so you always know which weights a run used:
 
-- *Before launch* — applying a recipe (or running preflight) shows a Starting-weights chip in the Training Config setup, and a **Starting Weights** row in the advanced **Resolved Defaults** panel. The `/recipes/resolve`, `/experiments/effective-config`, and `/experiments/preflight` responses all carry a `warm_start` preview block.
+- *Before launch* — applying a training preset (or running preflight) shows a Starting-weights chip in the Training Config setup, and a **Starting Weights** row in the advanced **Resolved Defaults** panel. The `/recipes/resolve`, `/experiments/effective-config`, and `/experiments/preflight` responses all carry a `warm_start` preview block.
 - *After launch* — the **Why this plan** panel's Strategy section shows it for the active run, and the captured **run manifest** records it under `warm_start` (lifted out of the transient `_runtime` block because *which weights a run used* is reproducibility-relevant provenance).
 
 > **Status:** the registry, recipe field, resolution, and UI/manifest surfacing are wired and tested. The warm-start **trainer** (`backend/scripts/train_warmstart_checkpoint.py`) resolves a license-audited corpus for the checkpoint's `task_shape` (Dolly-15k, CC BY-SA 3.0, sliced by category), enforces a permissive-license gate, full-fine-tunes the base, runs an identity-swap fairness spot-check, and flips the manifest to `status: "available"` with training + fairness provenance. Run it with `python scripts/train_warmstart_checkpoint.py --checkpoint qa-base-135m` (add `--smoke` for a tiny synthetic-corpus dry run). **`qa-base-135m`, `classifier-base-135m`, and `ner-base-135m` are trained and available** (weights are gitignored; regenerate locally with the script); `sql-base-135m` stays `planned` until a text-to-SQL corpus is wired. Scaling the corpus beyond the Dolly slices and publishing under `TensorGreed/` is follow-up work.
@@ -195,21 +195,21 @@ Legacy fallback: `get_sweep_pareto` and `list_project_sweeps` still honour the o
 
 ## Trainability forecast
 
-The **trainability forecast** runs *before* preflight, on the Training Config page. It looks at the project's recipe + gold set + base model and predicts whether the upcoming run is likely to clear the default Auto-Gates. Advisory only — it never blocks the run; if the verdict is amber/red the Train button just relabels to "Train anyway".
+The **trainability forecast** runs *before* preflight, on the Training Config page. It looks at the project's task type + gold set + base model and predicts whether the upcoming run is likely to clear the default Auto-Gates. Advisory only — it never blocks the run; if the verdict is amber/red the Train button just relabels to "Train anyway".
 
-### Recipe-agnostic signals (always run)
+### Task-type-agnostic signals (always run)
 
 | Signal | Fires when |
 |---|---|
-| `row_count_below_minimum` | Labeled-corpus size is below the recipe's `min_rows_recommended` (block) or below 1.5× (warn). |
+| `row_count_below_minimum` | Labeled-corpus size is below the task type's `min_rows_recommended` (block) or below 1.5× (warn). |
 | `goldset_diversity_low` | Mean pairwise token-Jaccard over gold rows is above 0.40 — rows look too similar to each other. |
-| `gate_pass_probability` | The overall heuristic; combines row count, base-model capacity, recipe difficulty, diversity, and (for classification) class entropy. |
+| `gate_pass_probability` | The overall heuristic; combines row count, base-model capacity, task-type difficulty, diversity, and (for classification) class entropy. |
 
-### Per-recipe signals
+### Per-task-type signals
 
-Dispatched by the recipe's `task_profile`. A non-classification project never sees the classification signals and vice versa — the forecast was previously qa-sft-flavored and now adapts per recipe.
+Dispatched by the task type's `task_profile`. A non-classification project never sees the classification signals and vice versa — the forecast was previously qa-sft-flavored and now adapts per task type.
 
-| Recipe | Signal | Fires when |
+| Task type | Signal | Fires when |
 |---|---|---|
 | `classification` | `class_imbalance` | Shannon entropy of the label distribution is low (warn at `<1.0`, block at `<0.5`). |
 | `classification` | `per_class_minimum_unmet` | Any class has fewer than 5 examples (warn) or fewer than 2 (block). The corpus-wide minimum doesn't catch per-class starvation. |

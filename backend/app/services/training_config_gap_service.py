@@ -155,12 +155,12 @@ def _params_floor_m(task_difficulty: float, labelled_rows: int) -> int:
 
 _LAYMAN: dict[str, dict[str, str]] = {
     "training_config.no_recipe_selected": {
-        "plain": "You haven't picked a recipe yet, so the platform can't tell what shape your training data should take or which hyperparameters fit.",
-        "why": "Without a recipe the gap scanner has no baseline to compare your config against. Pick one (the picker bundles a recommended base model and a known-good hyperparameter starting point) and re-check this panel.",
+        "plain": "You haven't chosen a task type yet, so the platform can't tell what shape your training data should take or which hyperparameters fit.",
+        "why": "Without a task type the gap scanner has no baseline to compare your config against. Pick one (the picker bundles a recommended base model and a known-good hyperparameter starting point) and re-check this panel.",
     },
     "training_config.base_model_undersized": {
         "plain": "The base model you've picked is on the small side for your task and how much labelled data you have.",
-        "why": "Tiny models train fast but plateau early — past a few hundred labelled rows on a hard task they stop improving no matter how clean the data is. Moving to the next-heaviest base in the recipe usually buys 5-15 F1 points for ~2x the train time.",
+        "why": "Tiny models train fast but plateau early — past a few hundred labelled rows on a hard task they stop improving no matter how clean the data is. Moving to the next-heaviest base in the task type usually buys 5-15 F1 points for ~2x the train time.",
     },
     "training_config.eval_cadence_too_sparse": {
         "plain": "With your current settings, the trainer will only stop to check itself a handful of times — or maybe just at the end. You won't see a learning curve.",
@@ -476,7 +476,7 @@ def _base_model_undersized_signal(
             severity="ok",
             headline=(
                 f"{current_base} ({current_params}M params) is sized "
-                f"reasonably for this recipe + {labelled_rows} labelled rows."
+                f"reasonably for this task type + {labelled_rows} labelled rows."
             ),
             context={
                 "current_base_model": current_base,
@@ -489,7 +489,7 @@ def _base_model_undersized_signal(
 
     severity: Severity = "block" if current_params * 2 < floor else "warn"
     body = (
-        f"{current_base} has {current_params}M params; this recipe + "
+        f"{current_base} has {current_params}M params; this task type + "
         f"{labelled_rows} labelled rows usually wants ≥ {floor}M."
     )
     action: dict[str, Any]
@@ -938,10 +938,10 @@ async def scan_training_config_gaps(
         signals.append(_make_signal(
             id="training_config.no_recipe_selected",
             severity="block",
-            headline="No recipe selected — pick one to scan config gaps.",
+            headline="No task type selected — pick one to scan config gaps.",
             suggested_action={
                 "kind": "navigate",
-                "label": "Open recipe picker",
+                "label": "Choose task type",
                 "target": "recipe-picker",
                 "params": {},
             },

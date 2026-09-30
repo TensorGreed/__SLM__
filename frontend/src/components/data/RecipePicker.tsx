@@ -62,7 +62,7 @@ function extractErrorMessage(err: unknown): string {
         const message = (err as { message?: unknown }).message;
         if (typeof message === 'string' && message.trim()) return message;
     }
-    return 'Could not load recipe suggestions.';
+    return 'Could not load task type suggestions.';
 }
 
 export default function RecipePicker({
@@ -126,7 +126,7 @@ export default function RecipePicker({
         <div data-testid="recipe-picker">
             <div style={{ marginBottom: 'var(--space-md)' }}>
                 <h3 style={{ margin: 0, fontSize: '1.1rem' }}>
-                    Pick a recipe for this dataset
+                    Choose a task type for this dataset
                 </h3>
                 <p
                     style={{
@@ -135,9 +135,9 @@ export default function RecipePicker({
                         fontSize: '0.9rem',
                     }}
                 >
-                    A recipe bundles the task shape, adapter, scoring mode, and
+                    A task type bundles the task shape, adapter, scoring mode, and
                     suggested base model — so you don't have to wire these
-                    together by hand. We ranked the recipes against the
+                    together by hand. We ranked the task types against the
                     columns in your file: <code>{headers.join(', ') || '—'}</code>.
                 </p>
             </div>
@@ -147,7 +147,7 @@ export default function RecipePicker({
                     role="status"
                     style={{ color: 'var(--text-secondary)', padding: 'var(--space-md) 0' }}
                 >
-                    Loading recipe suggestions…
+                    Loading task type suggestions…
                 </div>
             )}
 
@@ -176,7 +176,7 @@ export default function RecipePicker({
                         borderRadius: 'var(--radius-md)',
                     }}
                 >
-                    No recipe suggestions could be produced for these headers.
+                    No task type suggestions could be produced for these headers.
                     Use <em>Override</em> below to configure the import manually.
                 </div>
             )}
@@ -205,8 +205,8 @@ export default function RecipePicker({
                         data-testid="recipe-picker-toggle-all"
                     >
                         {showAll
-                            ? 'Hide other recipes'
-                            : `Show ${remainder.length} more recipe${remainder.length === 1 ? '' : 's'}`}
+                            ? 'Hide other task types'
+                            : `Show ${remainder.length} more task type${remainder.length === 1 ? '' : 's'}`}
                     </button>
 
                     {showAll && (
@@ -256,7 +256,7 @@ export default function RecipePicker({
                     onClick={onOverride}
                     style={{ fontSize: '0.85rem' }}
                     data-testid="recipe-picker-override"
-                    title="Skip recipe selection and configure mapping by hand."
+                    title="Skip task type selection and configure mapping by hand."
                 >
                     Override — configure manually →
                 </button>
@@ -358,12 +358,12 @@ function RecipeCard({ suggestion, recipe, isTop, onSelect }: RecipeCardProps) {
                     }}
                     data-testid={`recipe-why-${suggestion.recipe_id}`}
                 >
-                    <strong>Why this recipe?</strong>{' '}
+                    <strong>Why this task type?</strong>{' '}
                     {suggestion.fallback ? (
                         <span>
-                            None of the more specific recipes matched your columns,
-                            so we're offering the generic instruction-tuning recipe
-                            as a safe default. You can pick any other recipe with
+                            None of the more specific task types matched your columns,
+                            so we're offering the generic instruction-tuning task type
+                            as a safe default. You can choose any other task type with
                             the toggle above.
                         </span>
                     ) : (
@@ -387,7 +387,7 @@ function RecipeCard({ suggestion, recipe, isTop, onSelect }: RecipeCardProps) {
                     onClick={onSelect}
                     data-testid={`recipe-select-${suggestion.recipe_id}`}
                 >
-                    {isTop ? 'Use this recipe →' : 'Use this instead'}
+                    {isTop ? 'Use this task type →' : 'Use this instead'}
                 </button>
             </div>
         </RecipeTileFrame>

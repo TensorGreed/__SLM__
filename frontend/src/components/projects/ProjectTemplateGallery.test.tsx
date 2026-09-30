@@ -104,7 +104,7 @@ describe('ProjectTemplateGallery', () => {
         ).toHaveTextContent('Auto-route inbound support tickets.');
     });
 
-    it('opens the inline name prompt when "Use this template" is clicked', async () => {
+    it('opens the inline name prompt when "Use this starter" is clicked', async () => {
         apiMock.get.mockResolvedValueOnce({ data: SAMPLE_TEMPLATES });
         renderWithRouter(<ProjectTemplateGallery />);
 

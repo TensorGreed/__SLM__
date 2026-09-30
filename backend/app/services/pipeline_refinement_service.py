@@ -176,7 +176,7 @@ def assess_plan_health(profile: dict[str, Any], *, recipe_min_rows: int | None) 
     if not profile.get("recipe_id"):
         signals.append(_signal(
             "plan.no_recipe", "block",
-            "No recipe selected — pick a task shape before refining the plan.",
+            "No task type selected — choose one before refining the plan.",
             target_tab="data",
         ))
 

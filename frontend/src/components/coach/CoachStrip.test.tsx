@@ -415,12 +415,12 @@ describe('CoachStrip', () => {
                 suggestions: [
                     {
                         id: 'data:no-recipe',
-                        title: 'Pick a recipe',
-                        body: 'Coach needs the recipe to score.',
+                        title: 'Choose a task type',
+                        body: 'Coach needs the task type to score.',
                         severity: 'warning',
                         action: {
                             kind: 'navigate',
-                            label: 'Open recipe picker',
+                            label: 'Choose task type',
                             params: { target: 'recipe-picker' },
                         },
                     },

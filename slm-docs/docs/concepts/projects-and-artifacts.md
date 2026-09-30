@@ -16,7 +16,7 @@ Every API request goes through a project. The project is what authorization chec
 | `status` | `active` / `archived`. Archived projects are hidden from new work. |
 | `beginner_mode` | Hides advanced surfaces in the UI. See [Beginner mode](beginner-mode.md). |
 | `domain_pack_id`, `domain_profile_id` | Active domain overlay (see [Domain Packs](../workflows/pipeline-overview.md)). |
-| `active_domain_blueprint_version` | Pinned blueprint version for reproducibility. |
+| `active_domain_blueprint_version` | Pinned project-plan (domain blueprint) version for reproducibility. |
 | `created_at`, `updated_at` | Standard timestamps. |
 
 ## Create a project

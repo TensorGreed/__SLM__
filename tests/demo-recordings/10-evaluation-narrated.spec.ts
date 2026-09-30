@@ -73,7 +73,7 @@ test('Video 10 — Evaluation narrated', async ({ page, request }) => {
     await page.waitForURL((url) => url.pathname === '/', { timeout: 15_000 });
 
     await page
-        .locator('[aria-label="Open the Demo · Support FAQ demo project"]')
+        .locator('[aria-label="Open the Demo · Support FAQ starter project"]')
         .click();
     await page.waitForURL(/\/project\/\d+\/pipeline\/data/, { timeout: 30_000 });
 

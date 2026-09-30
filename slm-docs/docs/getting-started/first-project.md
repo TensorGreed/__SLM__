@@ -31,7 +31,7 @@ curl -X POST http://localhost:8000/api/projects \
   -d '{"name": "Support FAQ", "template": "support"}'
 ```
 
-The template pre-fills sensible defaults for an FAQ-style assistant: starter eval pack, conservative training recipe, vLLM as the default target profile. You can override any of these later.
+The template pre-fills sensible defaults for an FAQ-style assistant: starter eval pack, conservative training preset, vLLM as the default target profile. You can override any of these later.
 
 ## Step 2 — Ingest your dataset
 
@@ -133,7 +133,7 @@ curl -X POST http://localhost:8000/api/projects/1/models/12/validate
 
 ## Step 6 — Train
 
-For a first project, let the Autopilot pick the recipe. It chooses between safe-SFT, LoRA-fast, and a small full-fine-tune based on dataset size + base model.
+For a first project, let the Autopilot pick the training preset. It chooses between safe-SFT, LoRA-fast, and a small full-fine-tune based on dataset size + base model.
 
 ### UI
 

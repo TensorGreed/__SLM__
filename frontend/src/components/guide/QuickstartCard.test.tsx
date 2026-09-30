@@ -119,7 +119,7 @@ describe('QuickstartCard', () => {
         const trainBtn = screen.getByTestId('quickstart-train-button') as HTMLButtonElement;
         expect(trainBtn.disabled).toBe(true);
         expect(screen.getByTestId('quickstart-train-description')).toHaveTextContent(
-            /Pick a recipe in the dataset-import wizard/,
+            /Choose a task type in the dataset-import wizard/,
         );
     });
 
@@ -297,7 +297,7 @@ describe('QuickstartCard', () => {
         const btn = screen.getByTestId('quickstart-baseline-button') as HTMLButtonElement;
         expect(btn.disabled).toBe(true);
         expect(screen.getByTestId('quickstart-baseline-description')).toHaveTextContent(
-            /Pick a recipe first/,
+            /Choose a task type first/,
         );
     });
 

@@ -210,7 +210,7 @@ describe('AutoRagComparisonPanel — run-comparison button', () => {
         const cta = await screen.findByTestId(
             'auto-rag-comparison-recipe-required',
         );
-        expect(cta.textContent).toMatch(/Pick a recipe first/);
+        expect(cta.textContent).toMatch(/Choose a task type first/);
         const link = cta.querySelector('a') as HTMLAnchorElement;
         const href = link.getAttribute('href') || '';
         expect(href.startsWith('/project/4/recipe-picker?')).toBe(true);

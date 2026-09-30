@@ -491,7 +491,7 @@ describe('GoldSetPanel — entries filter + mix summary', { retry: 2 }, () => {
         // hint itself (the LLM-generate stub is gated off too in
         // this case, can't wait on it).
         const hint = await screen.findByTestId('gold-add-form-hidden-hint');
-        expect(hint.textContent).toMatch(/Pick a recipe/);
+        expect(hint.textContent).toMatch(/Choose a task type/);
         // Form gone.
         expect(screen.queryByTestId('gold-add-form')).not.toBeInTheDocument();
     });

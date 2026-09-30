@@ -201,16 +201,16 @@ _LAYMAN: dict[str, dict[str, str]] = {
         "why": "The trainer + eval pipeline both expect canonical names; non-canonical rows are either silently skipped or mis-mapped, which collapses your effective gold-set size without telling you. Renaming is a safe one-shot fix.",
     },
     "shape.no_recipe_selected": {
-        "plain": "You haven't picked a recipe yet (classification, span-extraction, summarization, qa-sft, etc.).",
-        "why": "The recipe is what tells the platform what shape your training data should look like — without it, the platform can't tell you whether your data will work, what fields are missing, or how to score the trained model.",
+        "plain": "You haven't chosen a task type yet (classification, span-extraction, summarization, qa-sft, etc.).",
+        "why": "The task type is what tells the platform what shape your training data should look like — without it, the platform can't tell you whether your data will work, what fields are missing, or how to score the trained model.",
     },
     "shape.no_prepared_dataset": {
         "plain": "Your data hasn't been split into training / validation / test sets yet.",
         "why": "The trainer needs three separate, non-overlapping sets: one to learn from, one to monitor learning during training, and one to grade the final model. The dataset-prep step builds these.",
     },
     "shape.corpus_too_small": {
-        "plain": "The labelled corpus is below the recipe's recommended minimum row count.",
-        "why": "Small models trained on tiny datasets either memorise (perfect on training, terrible on new inputs) or fail to learn the task at all. The recipe's minimum is where past projects of the same shape started getting reliable results.",
+        "plain": "The labelled corpus is below the task type's recommended minimum row count.",
+        "why": "Small models trained on tiny datasets either memorise (perfect on training, terrible on new inputs) or fail to learn the task at all. The task type's minimum is where past projects of the same shape started getting reliable results.",
     },
     # Delegated from trainability_forecast_service — same headlines,
     # plain-English versions here.
@@ -533,7 +533,7 @@ async def _cleaning_group(
                     f"(required for span-extraction training)."
                 ),
                 plain_english=(
-                    "Your recipe is span-extraction (PII detection, NER, entity "
+                    "Your task type is span-extraction (PII detection, NER, entity "
                     "extraction, etc.) — the model learns by seeing PII in the "
                     "source documents and the gold-set spans pointing at it. "
                     "Auto-redaction is intentionally disabled for this project "
@@ -852,18 +852,18 @@ async def _shape_group(db: AsyncSession, project: Project) -> dict[str, Any]:
         signals.append(_make_signal(
             id="shape.no_recipe_selected",
             severity="block",
-            headline="No recipe selected for this project.",
+            headline="No task type selected for this project.",
             suggested_action={
                 "kind": "navigate",
-                "label": "Open recipe picker",
+                "label": "Choose task type",
                 "target": "recipe-picker",
             },
             context={},
         ))
         return {
             "id": "shape",
-            "title": "Data shape vs recipe",
-            "subtitle": "Does the data fit the recipe?",
+            "title": "Data shape vs task type",
+            "subtitle": "Does the data fit the task type?",
             "signals": signals,
         }
 
@@ -916,7 +916,7 @@ async def _shape_group(db: AsyncSession, project: Project) -> dict[str, Any]:
                     f"Train/val/test prepared: {train} / {val} / {test} rows "
                     f"(no recipe-level minimum to compare against)."
                 ),
-                plain_english="The recipe doesn't declare a minimum row count, so the platform can't gate on size — but the splits exist.",
+                plain_english="The task type doesn't declare a minimum row count, so the platform can't gate on size — but the splits exist.",
                 why_it_matters="",
                 context={"train": train, "val": val, "test": test, "recipe_id": recipe_id},
             ))
@@ -926,7 +926,7 @@ async def _shape_group(db: AsyncSession, project: Project) -> dict[str, Any]:
                 id="shape.corpus_too_small",
                 severity=severity,
                 headline=(
-                    f"Only {train} training rows — the {recipe_id} recipe recommends "
+                    f"Only {train} training rows — the {recipe_id} task type recommends "
                     f"at least {minimum_rows}."
                 ),
                 suggested_action={
@@ -947,7 +947,7 @@ async def _shape_group(db: AsyncSession, project: Project) -> dict[str, Any]:
                 id="shape.corpus_too_small",
                 severity="ok",
                 headline=(
-                    f"{train} training rows — above the {recipe_id} recipe minimum "
+                    f"{train} training rows — above the {recipe_id} task type minimum "
                     f"of {minimum_rows}."
                 ),
                 plain_english="",
@@ -970,8 +970,8 @@ async def _shape_group(db: AsyncSession, project: Project) -> dict[str, Any]:
 
     return {
         "id": "shape",
-        "title": "Data shape vs recipe",
-        "subtitle": "Does the data fit the recipe?",
+        "title": "Data shape vs task type",
+        "subtitle": "Does the data fit the task type?",
         "signals": signals,
     }
 

@@ -69,8 +69,8 @@ async def preview_curriculum(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Project has no selected recipe — curriculum ranking "
-                "needs the recipe to pick the right scoring mode."
+                "Project has no task type selected — curriculum ranking "
+                "needs the task type to pick the right scoring mode."
             ),
         )
 
@@ -79,9 +79,9 @@ async def preview_curriculum(
         raise HTTPException(
             status_code=400,
             detail=(
-                f"No curriculum scoring mode ships for recipe "
+                f"No curriculum scoring mode ships for task type "
                 f"{recipe_id!r} yet. Phase 6a covers classification "
-                f"only; other recipes plug in in later phases."
+                f"only; other task types plug in in later phases."
             ),
         )
 

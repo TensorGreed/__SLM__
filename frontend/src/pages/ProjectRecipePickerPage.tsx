@@ -92,7 +92,7 @@ export default function ProjectRecipePickerPage() {
             .catch((err) => {
                 if (cancelled) return;
                 setLoadError(
-                    extractErrorMessage(err, 'Could not load the recipe catalog.'),
+                    extractErrorMessage(err, 'Could not load the task type catalog.'),
                 );
             })
             .finally(() => {
@@ -109,7 +109,7 @@ export default function ProjectRecipePickerPage() {
         try {
             await applyRecipeToProject(projectId, recipe.id);
             toast.success(
-                `Recipe set: ${recipe.name}. Base model defaulted to ${recipe.suggested_base_model}.`,
+                `Task type set: ${recipe.name}. Base model defaulted to ${recipe.suggested_base_model}.`,
                 4000,
             );
             // Hard-navigate so the destination page re-fetches the
@@ -120,7 +120,7 @@ export default function ProjectRecipePickerPage() {
             window.location.assign(returnTo);
         } catch (err) {
             toast.error(
-                extractErrorMessage(err, `Could not apply recipe ${recipe.id}.`),
+                extractErrorMessage(err, `Could not apply task type ${recipe.id}.`),
             );
             setApplyingId(null);
         }
@@ -139,7 +139,7 @@ export default function ProjectRecipePickerPage() {
             }}
         >
             <header>
-                <h1 style={{ margin: 0 }}>Pick a recipe for this project</h1>
+                <h1 style={{ margin: 0 }}>Choose a task type for this project</h1>
                 <p
                     style={{
                         margin: 'var(--space-xs) 0 0',
@@ -147,10 +147,10 @@ export default function ProjectRecipePickerPage() {
                         fontSize: '0.95rem',
                     }}
                 >
-                    A recipe bundles the task shape, adapter, scoring mode, and
+                    A task type bundles the task shape, adapter, scoring mode, and
                     suggested base model — it shapes synthetic-data playbooks,
                     eval gates, and Coach Mode signals. You can change the
-                    recipe later, but doing so may invalidate generated synth
+                    task type later, but doing so may invalidate generated synth
                     rows.
                 </p>
                 {currentRecipeId && (
@@ -173,7 +173,7 @@ export default function ProjectRecipePickerPage() {
                     data-testid="project-recipe-picker-loading"
                     style={{ color: 'var(--text-secondary)' }}
                 >
-                    Loading recipe catalog…
+                    Loading task types…
                 </p>
             )}
 
@@ -268,7 +268,7 @@ export default function ProjectRecipePickerPage() {
                                             ? 'Currently applied'
                                             : isApplying
                                                 ? 'Applying…'
-                                                : 'Use this recipe'}
+                                                : 'Use this task type'}
                                     </button>
                                 </div>
                             </RecipeTileFrame>

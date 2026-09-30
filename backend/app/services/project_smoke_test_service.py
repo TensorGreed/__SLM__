@@ -259,7 +259,7 @@ async def _check_recipe_applied(
                 name="recipe_applied",
                 status="skip",
                 elapsed_ms=elapsed,
-                message="Project doesn't exist — recipe check skipped.",
+                message="Project doesn't exist — task type check skipped.",
             )
         selected = project.selected_recipe or {}
         recipe_id = selected.get("recipe_id") if isinstance(selected, dict) else None
@@ -268,28 +268,28 @@ async def _check_recipe_applied(
                 name="recipe_applied",
                 status="fail",
                 elapsed_ms=elapsed,
-                message="No recipe selected on this project.",
+                message="No task type selected on this project.",
                 remediation=(
-                    "Open Pipeline → Recipe picker and apply a recipe. "
+                    "Open Pipeline → Task type picker and choose a task type. "
                     "Many downstream flows (synth, training, eval) require "
-                    "a recipe to be applied first."
+                    "a task type to be applied first."
                 ),
                 envelope={
                     "error_code": "SMOKE_RECIPE_MISSING",
                     "stage": "project",
-                    "message": "No recipe selected on this project.",
-                    "actionable_fix": "Open Pipeline → Recipe picker and apply a recipe.",
+                    "message": "No task type selected on this project.",
+                    "actionable_fix": "Open Pipeline → Task type picker and choose a task type.",
                     "docs_url": "/docs/troubleshooting",
                     "troubleshooting_id": _new_trace_id(),
                     "metadata": None,
-                    "detail": "No recipe selected.",
+                    "detail": "No task type selected.",
                 },
             )
         return SmokeCheckResult(
             name="recipe_applied",
             status="ok",
             elapsed_ms=elapsed,
-            message=f"Recipe '{recipe_id}' is applied.",
+            message=f"Task type '{recipe_id}' is applied.",
             metadata={"recipe_id": recipe_id},
         )
     except Exception as exc:  # noqa: BLE001
@@ -297,7 +297,7 @@ async def _check_recipe_applied(
             name="recipe_applied",
             status="fail",
             elapsed_ms=int((time.monotonic() - started) * 1000),
-            message="Couldn't read the project's selected recipe.",
+            message="Couldn't read the project's selected task type.",
             envelope=_envelope_from_exception(stage="project", exc=exc),
         )
 
@@ -444,7 +444,7 @@ async def _check_synth_catalog(
                 name="synth_catalog",
                 status="skip",
                 elapsed_ms=elapsed_pre,
-                message="No recipe — synth catalog has nothing to enumerate.",
+                message="No task type — synth catalog has nothing to enumerate.",
             )
         from app.services.synth_playbook_service import available_playbooks_for_recipe
         playbooks = available_playbooks_for_recipe(recipe_id)
@@ -455,10 +455,10 @@ async def _check_synth_catalog(
                 name="synth_catalog",
                 status="warn",
                 elapsed_ms=elapsed,
-                message=f"No playbooks registered for recipe '{recipe_id}'.",
+                message=f"No playbooks registered for task type '{recipe_id}'.",
                 remediation=(
                     "The synth panel will show an empty mode list. "
-                    "Confirm the recipe ID matches one with playbooks "
+                    "Confirm the task type ID matches one with playbooks "
                     "(classification, qa-sft, span-extraction, summarization)."
                 ),
                 metadata={"recipe_id": recipe_id, "playbook_count": 0},
@@ -467,7 +467,7 @@ async def _check_synth_catalog(
             name="synth_catalog",
             status="ok",
             elapsed_ms=elapsed,
-            message=f"{n} synth playbook{'s' if n != 1 else ''} registered for recipe '{recipe_id}'.",
+            message=f"{n} synth playbook{'s' if n != 1 else ''} registered for task type '{recipe_id}'.",
             metadata={"recipe_id": recipe_id, "playbook_count": n},
         )
     except Exception as exc:  # noqa: BLE001
@@ -553,7 +553,7 @@ async def _check_prepared_splits(
                 message="No labelled corpus yet (0 rows in train/cleaned/synthetic).",
                 remediation=(
                     "Open Pipeline → Ingest or Synth to add rows. "
-                    "Training needs at least the recipe's minimum row count."
+                    "Training needs at least the task type's minimum row count."
                 ),
                 metadata={"labelled_row_count": 0, "dataset_count": len(datasets)},
             )
@@ -620,7 +620,7 @@ async def _check_adapter_handler_format(
                 name="adapter_handler_format",
                 status="skip",
                 elapsed_ms=elapsed_pre,
-                message="No recipe — can't compare adapters.",
+                message="No task type — can't compare adapters.",
             )
         from app.services.recipe_service import get_recipe
         recipe = get_recipe(recipe_id)
@@ -629,7 +629,7 @@ async def _check_adapter_handler_format(
                 name="adapter_handler_format",
                 status="skip",
                 elapsed_ms=elapsed_pre,
-                message=f"Recipe '{recipe_id}' not in catalog.",
+                message=f"Task type '{recipe_id}' not in catalog.",
             )
         expected_adapter = getattr(recipe, "adapter_id", None)
 
@@ -643,7 +643,7 @@ async def _check_adapter_handler_format(
                 name="adapter_handler_format",
                 status="skip",
                 elapsed_ms=elapsed,
-                message=f"Recipe '{recipe_id}' doesn't declare an adapter.",
+                message=f"Task type '{recipe_id}' doesn't declare an adapter.",
             )
         if not actual_adapter:
             return SmokeCheckResult(
@@ -687,7 +687,7 @@ async def _check_adapter_handler_format(
                     status="warn",
                     elapsed_ms=elapsed,
                     message=(
-                        f"Adapter '{actual_adapter}' matches recipe "
+                        f"Adapter '{actual_adapter}' matches task type "
                         f"'{recipe_id}' BUT the prepared rows don't "
                         f"contain the prompt format the "
                         f"{peek['handler_id']} handler builds at eval "
@@ -722,7 +722,7 @@ async def _check_adapter_handler_format(
                 status="ok",
                 elapsed_ms=elapsed,
                 message=(
-                    f"Adapter '{actual_adapter}' matches recipe '{recipe_id}'"
+                    f"Adapter '{actual_adapter}' matches task type '{recipe_id}'"
                     + (
                         f" + prepared rows carry the {peek['handler_id']} "
                         f"handler's prompt format."
@@ -742,7 +742,7 @@ async def _check_adapter_handler_format(
             status="warn",
             elapsed_ms=elapsed,
             message=(
-                f"Recipe '{recipe_id}' expects adapter "
+                f"Task type '{recipe_id}' expects adapter "
                 f"'{expected_adapter}' but dataset was prepped with "
                 f"'{actual_adapter}'. Held-out eval will likely produce "
                 f"unparseable predictions because the trainer's prompt "
@@ -963,7 +963,7 @@ async def _check_classifier_head_vs_handler(
                     elapsed_ms=elapsed,
                     message=(
                         f"Experiment #{experiment.id} ships a classifier "
-                        f"head AND recipe '{recipe_id}' routes through "
+                        f"head AND task type '{recipe_id}' routes through "
                         f"the classification handler — δ dispatches "
                         f"through the head's logits at eval time."
                     ),
@@ -986,7 +986,7 @@ async def _check_classifier_head_vs_handler(
                     message=(
                         f"Experiment #{experiment.id} ships a "
                         f"classification head (PEFT task_type=SEQ_CLS, "
-                        f"{artifacts['num_labels']} labels) BUT recipe "
+                        f"{artifacts['num_labels']} labels) BUT task type "
                         f"'{recipe_id}' routes through a generation-mode "
                         f"handler ('{recipe_task_profile}'). The trained "
                         f"head's logits go unused at eval time and the "
@@ -995,7 +995,7 @@ async def _check_classifier_head_vs_handler(
                         f"SQLi-detector project before δ landed."
                     ),
                     remediation=(
-                        "Pick one: (a) switch the project's recipe to "
+                        "Pick one: (a) switch the project's task type to "
                         "'classification' so δ routes eval through the "
                         "head's logits; or (b) retrain with "
                         "``training_config.task_type`` left default "
@@ -1060,7 +1060,7 @@ async def _check_classifier_head_vs_handler(
                         f"Experiment #{experiment.id} ships a "
                         f"{modality} multimodal head "
                         f"({multimodal_artifacts['model_loader_class']}) "
-                        f"AND recipe '{recipe_id}' routes through a "
+                        f"AND task type '{recipe_id}' routes through a "
                         f"{modality}-aligned profile "
                         f"('{recipe_task_profile}') — multimodal "
                         f"dispatch loads the right class + processor "
@@ -1086,14 +1086,14 @@ async def _check_classifier_head_vs_handler(
                         f"Experiment #{experiment.id} ships a "
                         f"{modality} adapter "
                         f"({multimodal_artifacts['model_loader_class']}) "
-                        f"BUT recipe '{recipe_id}' routes through "
-                        f"'{recipe_task_profile}' — the recipe's prompt "
+                        f"BUT task type '{recipe_id}' routes through "
+                        f"'{recipe_task_profile}' — the task type's prompt "
                         f"format won't have the multimodal scaffold the "
                         f"trainer wrote, so held-out metrics may look "
                         f"off even though the loader is correct."
                     ),
                     remediation=(
-                        f"Switch the project's recipe to a {modality}-"
+                        f"Switch the project's task type to a {modality}-"
                         f"aligned profile so the prompt shape matches "
                         f"what the multimodal adapter wrote at training. "
                         f"For vision: {sorted(aligned)}. For audio: see "
@@ -1148,7 +1148,7 @@ async def _check_classifier_head_vs_handler(
                 elapsed_ms=elapsed,
                 message=(
                     f"Experiment #{experiment.id} ships a seq2seq "
-                    f"head AND recipe '{recipe_id}' routes through a "
+                    f"head AND task type '{recipe_id}' routes through a "
                     f"seq2seq-compatible profile "
                     f"('{recipe_task_profile}') — ε dispatches through "
                     f"AutoModelForSeq2SeqLM at eval time."
@@ -1170,21 +1170,21 @@ async def _check_classifier_head_vs_handler(
                 elapsed_ms=elapsed,
                 message=(
                     f"Experiment #{experiment.id} ships a seq2seq "
-                    f"adapter (PEFT task_type=SEQ_2_SEQ_LM) BUT recipe "
+                    f"adapter (PEFT task_type=SEQ_2_SEQ_LM) BUT task type "
                     f"'{recipe_id}' routes through a causal-LM-style "
-                    f"profile ('{recipe_task_profile}'). The recipe's "
+                    f"profile ('{recipe_task_profile}'). The task type's "
                     f"prompt format won't match what the encoder-"
                     f"decoder model was trained against — held-out "
                     f"eval will run through ε's seq2seq dispatcher "
                     f"but the generated text may still look off."
                 ),
                 remediation=(
-                    "Pick one: (a) switch the project's recipe to a "
+                    "Pick one: (a) switch the project's task type to a "
                     "seq2seq-aligned profile (summarization, "
                     "translation, seq2seq) so the prompt shape matches "
                     "what the encoder-decoder model expects; or (b) "
                     "retrain with ``task_type`` left default so the "
-                    "trainer uses AutoModelForCausalLM and the recipe's "
+                    "trainer uses AutoModelForCausalLM and the task type's "
                     "prompt format applies."
                 ),
                 metadata={

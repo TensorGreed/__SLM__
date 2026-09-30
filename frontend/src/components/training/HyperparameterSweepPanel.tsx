@@ -171,7 +171,7 @@ function formatAgo(iso: string | null): string {
 // Human-friendly basis label. The "no_history" case is special — surface
 // it as "rough" so the user knows the number is a default, not measured.
 const BUDGET_BASIS_LABEL: Record<PreflightBudget['basis'], string> = {
-    same_base_and_recipe: 'based on same base + recipe',
+    same_base_and_recipe: 'based on same base + task type',
     same_base_model: 'based on same base model',
     project_default: 'based on this project’s sweeps',
     no_history: 'rough estimate, no prior runs',

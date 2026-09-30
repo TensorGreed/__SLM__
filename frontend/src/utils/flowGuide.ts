@@ -109,7 +109,7 @@ export function getRecommendedAction(
                 return {
                     path: `/project/${projectId}/training-config`,
                     title: 'Configure model and hyperparameters',
-                    description: 'Pick base model, runtime profile, and training recipe.',
+                    description: 'Pick base model, runtime profile, and training preset.',
                 };
             }
             return {
@@ -139,7 +139,7 @@ export function getRecommendedAction(
             return {
                 path: `/project/${projectId}/recipes`,
                 title: 'Automate repeated runs',
-                description: 'Apply recipe-driven workflows for repeatable experiments.',
+                description: 'Apply pipeline presets for repeatable experiments.',
             };
         default:
             return {

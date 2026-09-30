@@ -428,8 +428,8 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
             >
                 <p>
                     {recipeId
-                        ? `No playbooks shipped for the '${recipeId}' recipe yet. Use the manual generators below.`
-                        : 'Select a recipe on the Data tab to enable playbook-driven synthesis.'}
+                        ? `No playbooks shipped for the '${recipeId}' task type yet. Use the manual generators below.`
+                        : 'Choose a task type on the Data tab to enable playbook-driven synthesis.'}
                 </p>
             </section>
         );
@@ -449,8 +449,8 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 <h3 className="playbook-picker__title">Synthetic data playbooks</h3>
                 <p className="playbook-picker__subtitle">
                     {recipeId
-                        ? <>Recipe: <strong>{recipeId}</strong></>
-                        : 'No recipe set'}
+                        ? <>Task type: <strong>{recipeId}</strong></>
+                        : 'No task type set'}
                     {' · '}
                     {available.length} mode{available.length === 1 ? '' : 's'} available
                 </p>
@@ -467,7 +467,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                         {prefill.mode && requestedModeAvailable
                             ? <>: mode <strong>{MODE_LABELS[prefill.mode]?.label || prefill.mode}</strong></>
                             : prefill.mode && !requestedModeAvailable
-                                ? <> — requested mode <code>{prefill.raw}</code> isn't in this recipe; using the catalog default</>
+                                ? <> — requested mode <code>{prefill.raw}</code> isn't in this task type; using the catalog default</>
                                 : null}
                         {prefill.count !== null
                             ? <>, target <strong>{prefill.count}</strong> rows</>

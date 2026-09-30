@@ -49,7 +49,7 @@ const MAPPING_VERDICT_COPY: Record<DataStudioMappingPreview['verdict'], { label:
     },
     ready: {
         label: 'Ready',
-        detail: 'Sampled rows match the active recipe mapping contract.',
+        detail: 'Sampled rows match the active task type mapping contract.',
     },
 };
 
@@ -94,7 +94,7 @@ function templateStatusLabel(status: string): string {
 
 function templateSourceLabel(source: string): string {
     if (source === 'auto_fix') return 'Detected';
-    if (source === 'recipe') return 'Recipe';
+    if (source === 'recipe') return 'Task type';
     if (source === 'adapter') return 'Adapter';
     if (source === 'domain') return 'Domain';
     return source.replace(/_/g, ' ');
@@ -311,7 +311,7 @@ export default function DataStudioMappingPreviewPanel({
                     <div>
                         <h4>Mapping templates</h4>
                         <p>
-                            Compare recipe, adapter, domain, and detected templates before saving mapping changes in Data Prep.
+                            Compare task type, adapter, domain, and detected templates before saving mapping changes in Data Prep.
                         </p>
                     </div>
                     <div className="data-studio-mapping__template-metrics">
@@ -331,7 +331,7 @@ export default function DataStudioMappingPreviewPanel({
                     </p>
                 ) : (
                     <p className="data-studio-mapping__template-guidance">
-                        Template recommendations appear after a recipe, adapter, or domain contract is available.
+                        Template recommendations appear after a task type, adapter, or domain contract is available.
                     </p>
                 )}
 
@@ -358,7 +358,7 @@ export default function DataStudioMappingPreviewPanel({
                     </div>
                 ) : (
                     <p className="data-studio-mapping__empty">
-                        No mapping templates are available for the current recipe and source sample yet.
+                        No mapping templates are available for the current task type and source sample yet.
                     </p>
                 )}
             </div>

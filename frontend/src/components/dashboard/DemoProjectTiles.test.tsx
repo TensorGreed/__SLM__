@@ -98,7 +98,7 @@ describe('DemoProjectTiles', () => {
         const user = userEvent.setup();
         await user.click(
             screen.getByRole('button', {
-                name: /Open the Demo · Support FAQ demo project/i,
+                name: /Open the Demo · Support FAQ starter project/i,
             }),
         );
 
@@ -134,7 +134,7 @@ describe('DemoProjectTiles', () => {
         const user = userEvent.setup();
         await user.click(
             screen.getByRole('button', {
-                name: /Open the Demo · Support FAQ demo project/i,
+                name: /Open the Demo · Support FAQ starter project/i,
             }),
         );
 
@@ -153,12 +153,12 @@ describe('DemoProjectTiles', () => {
 
         const user = userEvent.setup();
         const supportButton = screen.getByRole('button', {
-            name: /Open the Demo · Support FAQ demo project/i,
+            name: /Open the Demo · Support FAQ starter project/i,
         });
         await user.click(supportButton);
 
         const sentimentButton = screen.getByRole('button', {
-            name: /Open the Demo · Sentiment classifier demo project/i,
+            name: /Open the Demo · Sentiment classifier starter project/i,
         });
         expect(sentimentButton).toBeDisabled();
         expect(supportButton).toHaveTextContent(/Seeding…/);
@@ -185,7 +185,7 @@ describe('DemoProjectTiles', () => {
         await screen.findByText('Demo · Support FAQ');
         const user = userEvent.setup();
         await user.click(
-            screen.getByRole('button', { name: /Reset the Demo · Support FAQ demo project/i }),
+            screen.getByRole('button', { name: /Reset the Demo · Support FAQ starter project/i }),
         );
 
         await waitFor(() => {
@@ -203,7 +203,7 @@ describe('DemoProjectTiles', () => {
         await screen.findByText('Demo · Support FAQ');
         const user = userEvent.setup();
         await user.click(
-            screen.getByRole('button', { name: /Reset the Demo · Support FAQ demo project/i }),
+            screen.getByRole('button', { name: /Reset the Demo · Support FAQ starter project/i }),
         );
 
         expect(apiMock.post).not.toHaveBeenCalled();

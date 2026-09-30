@@ -108,11 +108,11 @@ KL_MIN_EVAL_ROWS = 10
 
 _LAYMAN: dict[str, dict[str, str]] = {
     "eval_gaps.no_recipe_selected": {
-        "plain": "You haven't picked a recipe yet, so we can't reason about your eval setup.",
-        "why": "Eval gaps depend on knowing the task shape (classification vs span vs qa-sft). Pick a recipe to enable the scan.",
+        "plain": "You haven't chosen a task type yet, so we can't reason about your eval setup.",
+        "why": "Eval gaps depend on knowing the task shape (classification vs span vs qa-sft). Choose a task type to enable the scan.",
     },
     "eval_gaps.archetype_coverage_low": {
-        "plain": "Your gold set looks materially smaller, less balanced, or less diverse than the gold sets of recipes that have trained successfully in the past.",
+        "plain": "Your gold set looks materially smaller, less balanced, or less diverse than the gold sets of task types that have trained successfully in the past.",
         "why": "Archetypes are built from prior-passing projects — when your gold set sits below their p25 on multiple features, the model you train on it will likely underperform too. Add rows, rebalance classes, or improve diversity until the gold set lands inside the band.",
     },
     "eval_gaps.no_regression_baseline": {
@@ -236,7 +236,7 @@ async def _archetype_coverage_signal(
             id="eval_gaps.archetype_coverage_low",
             severity="ok",
             headline=(
-                f"Gold set lands inside the recipe's archetype band on "
+                f"Gold set lands inside the task type's archetype band on "
                 f"all {total} features."
             ),
             context={
@@ -259,7 +259,7 @@ async def _archetype_coverage_signal(
         severity=severity,
         headline=(
             f"{below_count} of {total} archetype features sit below the "
-            f"recipe's p25 band — top: {top.get('label') or top.get('feature_id')}."
+            f"task type's p25 band — top: {top.get('label') or top.get('feature_id')}."
         ),
         suggested_action={
             "kind": "navigate",
@@ -441,7 +441,7 @@ async def _train_eval_label_kl_signal(
             severity="ok",
             headline=(
                 "Train/eval label-KL only applies to classification "
-                "recipes — skipping for this task."
+                "task types — skipping for this task."
             ),
             context={"task_profile": task_profile},
         )
@@ -573,10 +573,10 @@ async def scan_eval_gaps(
         signals.append(_make_signal(
             id="eval_gaps.no_recipe_selected",
             severity="block",
-            headline="No recipe selected — pick one to scan eval gaps.",
+            headline="No task type selected — pick one to scan eval gaps.",
             suggested_action={
                 "kind": "navigate",
-                "label": "Open recipe picker",
+                "label": "Choose task type",
                 "target": "recipe-picker",
                 "params": {},
             },

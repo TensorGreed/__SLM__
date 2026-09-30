@@ -90,7 +90,7 @@ test('Video 02 — narrated take', async ({ page }) => {
     await expect(page.locator('.demo-project-tiles')).toBeVisible();
     await focusOn(page, '.demo-project-tiles');
     const supportFaqTile = page.locator(
-        '[aria-label="Open the Demo · Support FAQ demo project"]',
+        '[aria-label="Open the Demo · Support FAQ starter project"]',
     );
     await expect(supportFaqTile).toBeVisible();
     await supportFaqTile.hover();

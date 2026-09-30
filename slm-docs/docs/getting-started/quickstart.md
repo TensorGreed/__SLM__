@@ -95,7 +95,7 @@ The fastest path to a trained model is the **Autopilot** — describe what you w
 1. Open your project workspace.
 2. Click **Autopilot Planner** in the Training rail. New projects start in beginner mode, which hides the Planner: click **Leave beginner mode** in the sidebar footer first, or use **Autopilot** (the guided five-step version) instead.
 3. Type a brief: *"Build a small Q&A assistant from a CSV of FAQ rows."*
-4. Click **Plan**. The planner shows the proposed dataset adapter, base model, training recipe, and target profile.
+4. Click **Plan**. The planner shows the proposed dataset adapter, base model, training preset, and target profile.
 5. Review the **provenance** column — `measured` vs `estimated` per component.
 6. Click **One-click run**. The autopilot creates the project artifacts, starts a training job in the built-in simulator, and routes you to the live monitor.
 
@@ -160,7 +160,7 @@ In about ten minutes you've:
 
 - Cloned the repo + installed dependencies.
 - Brought up three services (backend, frontend, docs).
-- Created a project with a starter template.
+- Created a project from a starter project.
 - Run the autopilot loop: brief → plan → train → eval.
 - Inspected the result on the UI + CLI + API.
 

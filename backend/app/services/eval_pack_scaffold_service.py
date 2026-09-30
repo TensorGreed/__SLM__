@@ -175,7 +175,7 @@ def scaffold_pack(
         "pack_id": SCAFFOLDED_PACK_ID,
         "display_name": f"Scaffolded · {spec['display_name']}",
         "description": (
-            f"Auto-generated starter pack tuned for the '{recipe_id}' recipe"
+            f"Auto-generated starter eval pack tuned for the '{recipe_id}' task type"
             f"{suffix}. Edit the gates inline before saving — nothing is "
             f"persisted until you click 'Use scaffold'."
         ),

@@ -176,9 +176,9 @@ The card reads, for example, "Looks like **Question answering** (92% confident)"
 **What confirming does:**
 
 - Saves the shape where dataset prep, training and evaluation read it (the project's dataset adapter preference).
-- Snapshots the matching recipe.
+- Snapshots the matching task type (API: recipe).
 - Keeps any base model you already chose.
-- Picking a recipe by hand also updates that preference. Before, a recipe picked in the wizard never reached training.
+- Choosing a task type by hand also updates that preference. Before, a task type chosen in the wizard never reached training.
 
 **API:**
 
@@ -264,7 +264,7 @@ The split form **hydrates from the active prepared version** on open: if the pro
 
 ### Data Health Report (D1+D2 of the data-quality arc)
 
-The Data Prep tab opens with an aggregated **Data Health Report** at the top — a single panel that pulls every data-quality signal scattered across the platform (ingestion, cleaning, shape vs recipe, classification balance) into one traffic-light scorecard. Backed by `GET /api/projects/{id}/data-health`.
+The Data Prep tab opens with an aggregated **Data Health Report** at the top — a single panel that pulls every data-quality signal scattered across the platform (ingestion, cleaning, shape vs task type, classification balance) into one traffic-light scorecard. Backed by `GET /api/projects/{id}/data-health`.
 
 Each signal row carries:
 
@@ -282,10 +282,10 @@ Groups, in order:
 |---|---|
 | Ingestion | Document count, parse-failure rate (warn at 10%, block at 25%). |
 | Cleaning | PII findings + redaction status, low-quality fraction (block at 30%), duplicate-document share via `text_hash` (block at 30%). |
-| Shape vs recipe | Recipe selected? Train/val/test prepared? Corpus size above the recipe minimum? |
+| Shape vs task type | Task type chosen? Train/val/test prepared? Corpus size above the task type's minimum? |
 | Class balance | Classification-only: delegated to the trainability forecast's existing signals (`class_imbalance`, `per_class_minimum_unmet`, `label_vocab_fragmented`, `single_class_dominance`) so the report and Coach Mode share one source of truth for the thresholds. |
 
-Empty groups (e.g. Balance for non-classification recipes) are silently skipped.
+Empty groups (e.g. Balance for non-classification task types) are silently skipped.
 
 #### Auto-fixes (preview-then-apply) — D3 + D4
 
@@ -304,7 +304,7 @@ The contract is:
 | `cleaning.pii_unredacted` | `redact_pii` | Re-runs `clean_document(..., redact=True)` on every doc that has PII findings but `redact_pii` flag unset. Cleaning is itself idempotent — this just re-renders the cleaned text with PII replaced by `[REDACTED]`. Skips docs that aren't yet cleaned (would require running the full pipeline; the user should click Clean first). Preview lists each affected doc + its PII finding count. |
 | `balance.label_vocab_fragmented` | `canonicalise_labels` (D4) | Classification-only. Groups labels by their normalised form (lowercase + collapsed whitespace), picks the most-common variant as canonical (ties broken alphabetically), and rewrites every gold-set JSONL row whose label sits in a non-canonical bucket. Idempotent (re-running on already-canonicalised gold is a no-op). Preview shows the merge map: `"Positive" (3) + "POSITIVE" (1) → "positive" (15 canonical)`. Refuses on non-classification recipes (`safe_to_apply: false`). |
 
-**Recipe-aware PII guard**: for `structured_extraction` recipes (PII detection, NER, entity extraction) the source-document PII IS the training signal — auto-redacting it would destroy what the model needs to learn. For these projects, the data-health signal flips to `ok` severity with explanatory copy, the **Preview** button is hidden in the panel, the preview endpoint returns `safe_to_apply: false` with `details.blocked_reason = "span_extraction_needs_pii"` so the modal can't apply, and a direct call to `POST /data-health/autofix` with `fix_kind=redact_pii` returns 400. If you need redaction for a separate non-training use, do it manually on a copy of the cleaned outputs.
+**Task-type-aware PII guard**: for `structured_extraction` task types (PII detection, NER, entity extraction) the source-document PII IS the training signal — auto-redacting it would destroy what the model needs to learn. For these projects, the data-health signal flips to `ok` severity with explanatory copy, the **Preview** button is hidden in the panel, the preview endpoint returns `safe_to_apply: false` with `details.blocked_reason = "span_extraction_needs_pii"` so the modal can't apply, and a direct call to `POST /data-health/autofix` with `fix_kind=redact_pii` returns 400. If you need redaction for a separate non-training use, do it manually on a copy of the cleaned outputs.
 
 **Endpoints**:
 
@@ -403,7 +403,7 @@ Before kicking off training, verify on the Dataset Prep tab:
 | Training on noisy scraped text | Eval bounces around, lots of `adapter_schema_mismatch`. | Stricter cleaning + dedup. |
 | Mixing two task shapes in one dataset | Adapter `auto` chooses something weird; some rows fail validation. | Split into two projects or pick a multi-task adapter. |
 | No validation split | Training "passes" but real eval is bad. | Use the 80/10/10 default. |
-| Ignoring class imbalance for classification | Model collapses to majority class. | Resample or class-weight in the recipe. |
+| Ignoring class imbalance for classification | Model collapses to majority class. | Resample or class-weight in the training preset. |
 
 Fixing these wins more than hyperparameter tuning.
 

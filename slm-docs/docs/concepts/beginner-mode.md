@@ -7,11 +7,11 @@ title: Beginner mode
 
 BrewSLM ships with a deliberate **beginner mode**, so a new ML engineer never sees a concept they haven't been taught yet. It's a per-project flag that hides advanced surfaces in the UI. Nothing in the backend changes, and every endpoint stays callable; it's purely a UX layer.
 
-**It's on by default for every new project**, whichever way the project was created: **+ New Project**, a sample project, a template, a manifest without an explicit setting, or the API. Experts switch it off per project.
+**It's on by default for every new project**, whichever way the project was created: **+ New Project**, a starter project, a manifest without an explicit setting, or the API. Experts switch it off per project.
 
 ## One way in, one Coach
 
-- **Starting a project.** Use **+ New Project**: describe what the model should do, and BrewSLM sets up the task, recipe and base model. Alternatively, start from a sample project on the same page. An existing `brewslm.yaml` can be imported from the create dialog's **Advanced** section. Every path lands in the project workspace.
+- **Starting a project.** Use **+ New Project**: describe what the model should do, and BrewSLM sets up the task type and base model. Alternatively, start from a starter project on the same page. An existing `brewslm.yaml` can be imported from the create dialog's **Advanced** section. Every path lands in the project workspace.
 - **The Coach bar.** It sits at the top of every workspace page, and it's the one guidance surface. It shows:
   - where you are (stage and % done);
   - the single **next step**, with **Continue →**;
@@ -35,7 +35,7 @@ BrewSLM ships with a deliberate **beginner mode**, so a new ML engineer never se
 | **Adapter Studio** | Hidden |
 | **Extension Studio** | Hidden |
 | **Workflow Builder** | Hidden |
-| **Recipes** | Hidden |
+| **Pipeline presets** | Hidden |
 | **Pipeline as Code (manifest)** | Hidden |
 | **Domain Packs** | Hidden |
 | **Domain Profiles** | Hidden |
@@ -47,7 +47,7 @@ Hidden surfaces are still **reachable directly via URL** (e.g., `/project/7/exte
 These four classes of "hidden" surface each represent a power-user concept that a first-time ML engineer doesn't need to learn yet:
 
 - **Adapter Studio / Extension Studio** — assume you understand the data adapter / runtime / pack plugin contracts. Without that, the UI is overwhelming.
-- **Workflow Builder / Recipes** — assume you've already run a few experiments and want to template them. Premature for a first project.
+- **Workflow Builder / Pipeline presets** — assume you've already run a few experiments and want to template them. Premature for a first project.
 - **Pipeline as Code** — assumes you're ready to code-review your project as YAML. Useful once a project stabilises, distracting before then.
 - **Domain Packs / Profiles** — assumes you understand the domain overlay concept. The default `general-pack-v1` is fine until you outgrow it.
 

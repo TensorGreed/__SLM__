@@ -66,7 +66,7 @@ test('Video 03 — Support FAQ pipeline narrated', async ({ page }) => {
     await page.getByRole('button', { name: /^Sign in$/ }).click();
     await page.waitForURL((url) => url.pathname === '/', { timeout: 15_000 });
     await page
-        .locator('[aria-label="Open the Demo · Support FAQ demo project"]')
+        .locator('[aria-label="Open the Demo · Support FAQ starter project"]')
         .click();
     await page.waitForURL(/\/project\/\d+\/pipeline\/data/, { timeout: 30_000 });
     await expect(page.locator('button.tab[title="Data"]')).toBeVisible();

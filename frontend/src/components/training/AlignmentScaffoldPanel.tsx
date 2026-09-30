@@ -257,7 +257,7 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
           typeof (err as { response?: { data?: { detail?: string } } }).response?.data?.detail === 'string'
             ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail || ''
             : '';
-        setError(detail || 'Failed to load alignment recipes.');
+        setError(detail || 'Failed to load alignment presets.');
       }
     };
     void load();
@@ -293,7 +293,7 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
 
   const resolveRecipe = async () => {
     if (!selectedRecipeId) {
-      setError('Select an alignment recipe first.');
+      setError('Select an alignment preset first.');
       return;
     }
     setLoading(true);
@@ -313,7 +313,7 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
         typeof (err as { response?: { data?: { detail?: string } } }).response?.data?.detail === 'string'
           ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail || ''
           : '';
-      setError(detail || 'Failed to resolve alignment recipe.');
+      setError(detail || 'Failed to resolve alignment preset.');
     } finally {
       setLoading(false);
     }
@@ -480,7 +480,7 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
 
       <div className="alignment-scaffold__controls">
         <div className="form-group">
-          <label className="form-label">Recipe</label>
+          <label className="form-label">Preset</label>
           <select
             className="input"
             value={selectedRecipeId}
@@ -494,7 +494,7 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
           </select>
         </div>
         <button className="btn btn-secondary" onClick={() => void resolveRecipe()} disabled={loading || !selectedRecipeId}>
-          Resolve Recipe Patch
+          Preview Preset Patch
         </button>
       </div>
 

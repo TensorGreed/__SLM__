@@ -287,9 +287,9 @@ describe('DataStudioPrepareDatasetPanel', () => {
                     {
                         id: 'prepare_missing_recipe',
                         severity: 'blocker',
-                        title: 'Recipe not selected',
-                        message: 'Pick a recipe before preparing splits so BrewSLM knows the training shape.',
-                        action_label: 'Choose recipe',
+                        title: 'Task type not selected',
+                        message: 'Choose a task type before preparing splits so BrewSLM knows the training shape.',
+                        action_label: 'Choose task type',
                         target_tab: 'data',
                     },
                 ],
@@ -304,9 +304,9 @@ describe('DataStudioPrepareDatasetPanel', () => {
         });
 
         expect(screen.getByText('Blocked')).toBeInTheDocument();
-        expect(screen.getByText('No recipe')).toBeInTheDocument();
+        expect(screen.getByText('No task type')).toBeInTheDocument();
         expect(screen.getByText('Synthetic rows pending review')).toBeInTheDocument();
-        expect(screen.getByText('Recipe not selected')).toBeInTheDocument();
+        expect(screen.getByText('Task type not selected')).toBeInTheDocument();
         expect(screen.getByText('Read-only check')).toBeInTheDocument();
 
         fireEvent.click(screen.getByRole('button', { name: /Synthetic rows pending review/i }));

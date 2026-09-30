@@ -93,8 +93,8 @@ async def preview_auto_rag(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Project has no selected recipe — auto-RAG needs the "
-                "recipe to pick the right text fields for the corpus."
+                "Project has no task type selected — auto-RAG needs the "
+                "task type to pick the right text fields for the corpus."
             ),
         )
 
@@ -102,8 +102,8 @@ async def preview_auto_rag(
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Recipe {recipe_id!r} has no auto-RAG corpus shape "
-                f"yet. Phase 9a covers qa-sft only; other recipes "
+                f"Task type {recipe_id!r} has no auto-RAG corpus shape "
+                f"yet. Phase 9a covers qa-sft only; other task types "
                 f"plug in in later phases."
             ),
         )
@@ -199,8 +199,8 @@ async def get_auto_rag_comparison(
             detail={
                 "error_code": "RECIPE_REQUIRED",
                 "message": (
-                    "Project has no selected recipe — auto-RAG "
-                    "comparison needs the recipe to pick the "
+                    "Project has no task type selected — auto-RAG "
+                    "comparison needs the task type to pick the "
                     "retrieval corpus shape."
                 ),
             },
@@ -209,7 +209,7 @@ async def get_auto_rag_comparison(
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Recipe {recipe_id!r} has no auto-RAG corpus shape yet "
+                f"Task type {recipe_id!r} has no auto-RAG corpus shape yet "
                 f"(Phase 9a covers qa-sft only)."
             ),
         )
@@ -301,13 +301,13 @@ async def run_auto_rag_comparison(
     if not recipe_id:
         raise HTTPException(
             status_code=400,
-            detail="Project has no selected recipe — auto-RAG comparison needs one.",
+            detail="Project has no task type selected — auto-RAG comparison needs one.",
         )
     if recommended_text_keys_for_recipe(recipe_id) is None:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Recipe {recipe_id!r} has no auto-RAG corpus shape yet "
+                f"Task type {recipe_id!r} has no auto-RAG corpus shape yet "
                 f"(Phase 9a covers qa-sft only)."
             ),
         )

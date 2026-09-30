@@ -555,7 +555,7 @@ export default function ProjectDataStudioPage() {
             {
                 id: 'overview' as const,
                 title: 'Overview readiness',
-                summary: 'One-page status for recipe, sources, domain, reviews, and the next action.',
+                summary: 'One-page status for task type, sources, domain, reviews, and the next action.',
                 group: 'start' as const,
                 keywords: ['status', 'readiness', 'recipe', 'next action', 'checks'],
                 handoffs: [
@@ -588,7 +588,7 @@ export default function ProjectDataStudioPage() {
             {
                 id: 'mapping' as const,
                 title: 'Schema mapping',
-                summary: 'Recipe-aware mapping preview before Data Prep writes prepared artifacts.',
+                summary: 'Task-type-aware mapping preview before Data Prep writes prepared artifacts.',
                 group: 'shape' as const,
                 keywords: ['schema', 'fields', 'mapping', 'contract', 'adapter'],
                 handoffs: [
@@ -686,7 +686,7 @@ export default function ProjectDataStudioPage() {
             {
                 id: 'synthetic-recommendations' as const,
                 title: 'Synthetic recommendations',
-                summary: 'Domain-aware strategies based on recipe, mappings, Gold Set, and review queue state.',
+                summary: 'Domain-aware strategies based on task type, mappings, Gold Set, and review queue state.',
                 group: 'examples' as const,
                 keywords: ['synthetic', 'recommendations', 'strategy', 'domain', 'gold'],
                 handoffs: [
@@ -743,7 +743,7 @@ export default function ProjectDataStudioPage() {
             {
                 id: 'prepare-dataset' as const,
                 title: 'Prepare Dataset',
-                summary: 'Readiness checks for recipe, mapping, splits, reviews, Gold Set, synthetic, and manifest outputs.',
+                summary: 'Readiness checks for task type, mapping, splits, reviews, Gold Set, synthetic, and manifest outputs.',
                 group: 'release' as const,
                 keywords: ['prepare', 'dataset', 'splits', 'manifest', 'data prep'],
                 handoffs: [

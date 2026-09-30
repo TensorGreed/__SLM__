@@ -188,7 +188,7 @@ export default function ProjectModelsPage() {
         <div>
           <h2 className="workspace-page-title">Universal Base Model Registry</h2>
           <p className="workspace-page-subtitle">
-            Import and inspect base models, then validate compatibility with your Domain Blueprint, dataset adapter, runtime, and target.
+            Import and inspect base models, then validate compatibility with your project plan, dataset adapter, runtime, and target.
           </p>
         </div>
       </section>

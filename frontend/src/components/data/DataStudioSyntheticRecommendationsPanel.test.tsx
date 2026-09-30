@@ -185,7 +185,7 @@ describe('DataStudioSyntheticRecommendationsPanel', () => {
         );
     });
 
-    it('renders setup recommendations when recipe and Ollama are missing', async () => {
+    it('renders setup recommendations when task type and Ollama are missing', async () => {
         apiMock.get.mockResolvedValueOnce({
             data: {
                 ...recommendationsPayload,
@@ -208,12 +208,12 @@ describe('DataStudioSyntheticRecommendationsPanel', () => {
                     {
                         ...recommendationsPayload.recommendations[0],
                         id: 'setup_recipe_for_synthetic_recommendations',
-                        title: 'Choose a recipe before generating synthetic data',
+                        title: 'Choose a task type before generating synthetic data',
                         strategy: 'setup',
                         priority: 'high',
                         target_tab: 'data',
-                        action_label: 'Choose recipe',
-                        domain_reason: 'Generic Domain recommendations become more precise after the training recipe is known.',
+                        action_label: 'Choose task type',
+                        domain_reason: 'Generic Domain recommendations become more precise after the task type is known.',
                         generation_path: {
                             backend: 'ollama',
                             available: false,
@@ -244,9 +244,9 @@ describe('DataStudioSyntheticRecommendationsPanel', () => {
                     {
                         id: 'synthetic_recommendation_recipe_missing',
                         severity: 'blocker',
-                        title: 'Recipe needed before recommending playbooks',
-                        message: 'Pick a recipe so recommendations can target compatible synthetic strategies.',
-                        action_label: 'Choose recipe',
+                        title: 'Task type needed before recommending playbooks',
+                        message: 'Choose a task type so recommendations can target compatible synthetic strategies.',
+                        action_label: 'Choose task type',
                         target_tab: 'data',
                     },
                 ],
@@ -257,14 +257,14 @@ describe('DataStudioSyntheticRecommendationsPanel', () => {
         render(<DataStudioSyntheticRecommendationsPanel projectId={1} onOpenTab={onOpenTab} />);
 
         await waitFor(() => {
-            expect(screen.getByText('Choose a recipe before generating synthetic data')).toBeInTheDocument();
+            expect(screen.getByText('Choose a task type before generating synthetic data')).toBeInTheDocument();
         });
 
         expect(screen.getByText('Generic Domain')).toBeInTheDocument();
         expect(screen.getByText('Ollama setup')).toBeInTheDocument();
         expect(screen.getByText('Start local Ollama for free generation')).toBeInTheDocument();
 
-        fireEvent.click(screen.getByRole('button', { name: /Choose recipe/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Choose task type/i }));
         expect(onOpenTab).toHaveBeenCalledWith('data');
     });
 });

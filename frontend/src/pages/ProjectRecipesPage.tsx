@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 
 import api from '../api/client';
-import Term from '../components/shared/Term';
 import { useProjectStore } from '../stores/projectStore';
 import type {
     PipelineRecipeApplyResponse,
@@ -103,7 +102,7 @@ export default function ProjectRecipesPage() {
             setCatalog(res.data);
         } catch (error) {
             setCatalog(null);
-            setErrorMessage(`Failed to load recipes: ${extractErrorMessage(error)}`);
+            setErrorMessage(`Failed to load pipeline presets: ${extractErrorMessage(error)}`);
         } finally {
             setIsLoadingCatalog(false);
         }
@@ -224,7 +223,7 @@ export default function ProjectRecipesPage() {
 
     const handleResolve = async () => {
         if (!selectedRecipeId) {
-            setErrorMessage('Select a recipe first.');
+            setErrorMessage('Select a preset first.');
             return;
         }
 
@@ -250,7 +249,7 @@ export default function ProjectRecipesPage() {
             );
             setResolveResult(res.data);
             setApplyResult(null);
-            setStatusMessage(`Resolved recipe ${selectedRecipeId}.`);
+            setStatusMessage(`Previewed preset ${selectedRecipeId}.`);
         } catch (error) {
             setErrorMessage(`Resolve failed: ${extractErrorMessage(error)}`);
         } finally {
@@ -260,7 +259,7 @@ export default function ProjectRecipesPage() {
 
     const handleApply = async () => {
         if (!selectedRecipeId) {
-            setErrorMessage('Select a recipe first.');
+            setErrorMessage('Select a preset first.');
             return;
         }
 
@@ -288,7 +287,7 @@ export default function ProjectRecipesPage() {
             );
             setApplyResult(res.data);
             setResolveResult(null);
-            setStatusMessage(`Applied recipe ${selectedRecipeId}.`);
+            setStatusMessage(`Applied preset ${selectedRecipeId}.`);
             await Promise.all([loadCatalog(), loadState(), fetchProject(projectId), refreshPipelineStatus()]);
         } catch (error) {
             setErrorMessage(`Apply failed: ${extractErrorMessage(error)}`);
@@ -299,7 +298,7 @@ export default function ProjectRecipesPage() {
 
     const handleRunRecipe = async () => {
         if (!selectedRecipeId) {
-            setErrorMessage('Select a recipe first.');
+            setErrorMessage('Select a preset first.');
             return;
         }
 
@@ -337,8 +336,8 @@ export default function ProjectRecipesPage() {
             setSelectedRecipeRun(record);
             setStatusMessage(
                 body.queued
-                    ? `Recipe run queued (${record.recipe_run_id}) on ${runBackend}.`
-                    : `Recipe run completed (${record.recipe_run_id}) with status ${record.workflow_status}.`,
+                    ? `Preset run queued (${record.recipe_run_id}) on ${runBackend}.`
+                    : `Preset run completed (${record.recipe_run_id}) with status ${record.workflow_status}.`,
             );
             await Promise.all([loadCatalog(), loadState(), loadRuns(), fetchProject(projectId), refreshPipelineStatus()]);
             if (record.recipe_run_id) {
@@ -433,9 +432,9 @@ export default function ProjectRecipesPage() {
         <div className="pipeline-recipes-page workspace-page">
             <div className="card pipeline-recipes-header">
                 <div>
-                    <h3>Pipeline Recipes</h3>
+                    <h3>Pipeline Presets</h3>
                     <p className="pipeline-recipes-subtitle">
-                        Apply end-to-end blueprints that wire domain defaults, workflow template, training recipe,
+                        Apply end-to-end presets that wire domain defaults, workflow template, training preset,
                         dataset adapter preset, and evaluation pack.
                     </p>
                 </div>
@@ -460,7 +459,7 @@ export default function ProjectRecipesPage() {
 
             <div className="pipeline-recipes-layout">
                 <section className="card pipeline-recipes-catalog">
-                    <h4><Term id="recipe" advanced /> Catalog</h4>
+                    <h4>Preset catalog</h4>
                     <div className="pipeline-recipes-list">
                         {catalog?.recipes.map((recipe) => {
                             const active = recipe.recipe_id === selectedRecipeId;
@@ -491,7 +490,7 @@ export default function ProjectRecipesPage() {
                     </div>
                     {catalog?.training_recipe_ids && (
                         <p className="pipeline-recipes-footnote">
-                            Available training recipe ids: {catalog.training_recipe_ids.join(', ')}
+                            Available training preset ids: {catalog.training_recipe_ids.join(', ')}
                         </p>
                     )}
                     {catalog?.recommendation_context && (
@@ -513,7 +512,7 @@ export default function ProjectRecipesPage() {
                 <section className="card pipeline-recipes-controls">
                     <h4>Resolve or Apply</h4>
 
-                    <label className="pipeline-recipes-label">Selected Recipe</label>
+                    <label className="pipeline-recipes-label">Selected preset</label>
                     <select
                         className="input"
                         value={selectedRecipeId}
@@ -557,7 +556,7 @@ export default function ProjectRecipesPage() {
                                 checked={markActive}
                                 onChange={(event) => setMarkActive(event.target.checked)}
                             />
-                            Mark recipe as active
+                            Mark preset as active
                         </label>
                     </div>
 
@@ -604,14 +603,14 @@ export default function ProjectRecipesPage() {
                             onClick={() => void handleResolve()}
                             disabled={!selectedRecipeId || isResolving || isApplying}
                         >
-                            {isResolving ? 'Resolving...' : 'Resolve Blueprint'}
+                            {isResolving ? 'Resolving...' : 'Preview preset'}
                         </button>
                         <button
                             className="btn btn-primary"
                             onClick={() => void handleApply()}
                             disabled={!selectedRecipeId || isApplying || isResolving || isRunningRecipe}
                         >
-                            {isApplying ? 'Applying...' : 'Apply Blueprint'}
+                            {isApplying ? 'Applying...' : 'Apply preset'}
                         </button>
                         <button
                             className="btn btn-primary"
@@ -629,7 +628,7 @@ export default function ProjectRecipesPage() {
                                 <strong>{selectedRecipe.display_name}</strong>
                             </div>
                             <div>
-                                <span className="pipeline-recipes-meta-label">Recipe ID</span>
+                                <span className="pipeline-recipes-meta-label">Preset ID</span>
                                 <code>{selectedRecipe.recipe_id}</code>
                             </div>
                         </div>
@@ -639,7 +638,7 @@ export default function ProjectRecipesPage() {
 
             <section className="card pipeline-recipes-results">
                 <div className="pipeline-recipes-results-head">
-                    <h4>Recipe State and Resolution</h4>
+                    <h4>Preset state and resolution</h4>
                     {preflightOk !== null && (
                         <span className={`badge ${preflightOk ? 'badge-success' : 'badge-error'}`}>
                             Preflight {preflightOk ? 'PASS' : 'FAIL'}
@@ -659,7 +658,7 @@ export default function ProjectRecipesPage() {
 
                 <div className="pipeline-recipes-state-grid">
                     <div>
-                        <span className="pipeline-recipes-meta-label">Active recipe</span>
+                        <span className="pipeline-recipes-meta-label">Active preset</span>
                         <strong>{stateRecipeId(activeState) || 'none'}</strong>
                     </div>
                     <div>
@@ -674,14 +673,14 @@ export default function ProjectRecipesPage() {
 
                 <div className="pipeline-recipes-runs">
                     <div className="pipeline-recipes-runs-head">
-                        <h5>Recipe Runs</h5>
+                        <h5>Preset runs</h5>
                         <button className="btn btn-ghost" onClick={() => void loadRuns()} disabled={isLoadingRuns}>
                             {isLoadingRuns ? 'Refreshing...' : 'Refresh Runs'}
                         </button>
                     </div>
 
                     {recipeRuns.length === 0 ? (
-                        <p className="pipeline-recipes-empty">No recipe runs yet.</p>
+                        <p className="pipeline-recipes-empty">No preset runs yet.</p>
                     ) : (
                         <div className="pipeline-recipes-runs-grid">
                             <div className="pipeline-recipes-runs-list">
@@ -803,7 +802,7 @@ export default function ProjectRecipesPage() {
                     </pre>
                 ) : (
                     <p className="pipeline-recipes-empty">
-                        Resolve or apply a recipe to preview concrete wiring details.
+                        Preview or apply a preset to see concrete wiring details.
                     </p>
                 )}
             </section>
