@@ -36,10 +36,14 @@ vi.mock('../../stores/toastStore', () => ({ toast: toastMock }));
 // jobsStore.refreshAfterLocalChange is fired after a successful run —
 // stub it so the test doesn't spin up the real polling loop.
 const refreshSpy = vi.fn();
+// The panel reads this project's comparison Jobs from the store (hook form)
+// and calls getState().refreshAfterLocalChange after starting one.
+const jobsState: { jobs: Array<Record<string, unknown>> } = { jobs: [] };
 vi.mock('../../stores/jobsStore', () => ({
-    useJobsStore: {
-        getState: () => ({ refreshAfterLocalChange: refreshSpy }),
-    },
+    useJobsStore: Object.assign(
+        (selector: (state: { jobs: unknown[] }) => unknown) => selector(jobsState),
+        { getState: () => ({ refreshAfterLocalChange: refreshSpy, jobs: jobsState.jobs }) },
+    ),
 }));
 
 import AutoRagComparisonPanel from './AutoRagComparisonPanel';
@@ -343,5 +347,108 @@ describe('AutoRagComparisonPanel — base model next to the fine-tuned run', () 
         expect(await screen.findByTestId('auto-rag-comparison-base-lift')).toHaveTextContent('+29.1%');
         expect(screen.getByTestId('auto-rag-comparison-finetuned-run-btn')).toBeInTheDocument();
         expect(screen.getByText('Base-only question?')).toBeInTheDocument();
+    });
+});
+
+
+describe('AutoRagComparisonPanel — live refresh + stale run', () => {
+    const PAYLOAD = {
+        ...HAPPY_CACHED_PAYLOAD,
+        project_id: 18,
+        experiment_id: 25,
+        latest_experiment_id: 25,
+        stale: false,
+        base: null,
+    };
+    const job = (status: string, extra: Record<string, unknown> = {}) => ({
+        id: 91,
+        kind: 'auto_rag_comparison',
+        project_id: 18,
+        status,
+        params: { model: 'fine_tuned' },
+        progress_message: 'scoring row 3/21 (with-RAG)',
+        completed_at: status === 'succeeded' ? '2026-10-01T18:00:00Z' : null,
+        ...extra,
+    });
+
+    beforeEach(() => {
+        apiMock.get.mockReset();
+        apiMock.post.mockReset();
+        jobsState.jobs = [];
+    });
+
+    it('re-reads the comparison when its Job finishes, without a reload', async () => {
+        apiMock.get
+            .mockResolvedValueOnce({ status: 200, data: PAYLOAD })
+            .mockResolvedValueOnce({
+                status: 200,
+                data: { ...PAYLOAD, summary: { ...PAYLOAD.summary, off_mean_f1: 0.4321 } },
+            });
+        jobsState.jobs = [job('running')];
+        const { rerender } = render(<AutoRagComparisonPanel projectId={18} />);
+
+        expect(await screen.findByTestId('auto-rag-comparison-off-f1')).toHaveTextContent('0.1000');
+        // While the Job runs: progress on that side, and no second run allowed.
+        expect(screen.getByTestId('auto-rag-comparison-running')).toHaveTextContent('scoring row 3/21');
+        expect(screen.getByTestId('auto-rag-comparison-rerun-btn')).toBeDisabled();
+        expect(screen.getByTestId('auto-rag-comparison-base-run-btn')).toBeDisabled();
+        expect(apiMock.get).toHaveBeenCalledTimes(1);
+
+        jobsState.jobs = [job('succeeded')];
+        rerender(<AutoRagComparisonPanel projectId={18} />);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('auto-rag-comparison-off-f1')).toHaveTextContent('0.4321');
+        });
+        expect(apiMock.get).toHaveBeenCalledTimes(2);
+        expect(screen.queryByTestId('auto-rag-comparison-running')).not.toBeInTheDocument();
+        expect(screen.getByTestId('auto-rag-comparison-rerun-btn')).not.toBeDisabled();
+    });
+
+    it('ignores comparison Jobs of other projects and other Job kinds', async () => {
+        apiMock.get.mockResolvedValueOnce({ status: 200, data: PAYLOAD });
+        jobsState.jobs = [job('running', { project_id: 4 }), job('running', { id: 92, kind: 'training_start' })];
+        const { rerender } = render(<AutoRagComparisonPanel projectId={18} />);
+        await screen.findByTestId('auto-rag-comparison-off-f1');
+        expect(screen.queryByTestId('auto-rag-comparison-running')).not.toBeInTheDocument();
+
+        jobsState.jobs = [job('succeeded', { project_id: 4 })];
+        rerender(<AutoRagComparisonPanel projectId={18} />);
+        await screen.findByTestId('auto-rag-comparison-off-f1');
+        expect(apiMock.get).toHaveBeenCalledTimes(1);
+    });
+
+    it('fills the empty state in when the first comparison finishes', async () => {
+        apiMock.get
+            .mockRejectedValueOnce({ response: { status: 404, data: { detail: 'No auto-RAG comparison cached yet' } } })
+            .mockResolvedValueOnce({ status: 200, data: PAYLOAD });
+        jobsState.jobs = [job('running', { params: { model: 'base' } })];
+        const { rerender } = render(<AutoRagComparisonPanel projectId={18} />);
+
+        expect(await screen.findByTestId('auto-rag-comparison-running')).toHaveTextContent(/Base-model comparison running/);
+        expect(screen.getByTestId('auto-rag-comparison-run-btn')).toBeDisabled();
+
+        jobsState.jobs = [job('succeeded', { params: { model: 'base' } })];
+        rerender(<AutoRagComparisonPanel projectId={18} />);
+        expect(await screen.findByTestId('auto-rag-comparison-off-f1')).toBeInTheDocument();
+    });
+
+    it('flags a fine-tuned comparison measured on an older run', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            status: 200,
+            data: { ...PAYLOAD, latest_experiment_id: 26, stale: true },
+        });
+        render(<AutoRagComparisonPanel projectId={18} />);
+
+        const note = await screen.findByTestId('auto-rag-comparison-stale');
+        expect(note).toHaveTextContent('These numbers are for run #25');
+        expect(note).toHaveTextContent('Your latest run is #26');
+    });
+
+    it('shows no stale flag when the comparison is for the latest run', async () => {
+        apiMock.get.mockResolvedValueOnce({ status: 200, data: PAYLOAD });
+        render(<AutoRagComparisonPanel projectId={18} />);
+        await screen.findByTestId('auto-rag-comparison-off-f1');
+        expect(screen.queryByTestId('auto-rag-comparison-stale')).not.toBeInTheDocument();
     });
 });

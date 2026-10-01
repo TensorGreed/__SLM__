@@ -181,7 +181,9 @@ async def get_auto_rag_comparison(
       200 — at least one comparison cached on disk. Top-level
             ``summary`` / ``rows`` are the fine-tuned run's (``summary`` is
             null when only the base-model comparison exists); ``base`` is
-            the base-model comparison or null.
+            the base-model comparison or null. ``stale`` is true when the
+            fine-tuned comparison was measured on an older run than
+            ``latest_experiment_id``.
       400 — project missing a recipe (detail is a dict with
             ``error_code="RECIPE_REQUIRED"``) OR recipe is set but
             ineligible for auto-RAG (detail is a string).
@@ -234,9 +236,23 @@ async def get_auto_rag_comparison(
                 f"the comparison."
             ),
         )
+    # The fine-tuned comparison is a cache for ONE run. Report the project's
+    # latest trained run too, so the panel can say when the numbers shown are
+    # for an older run than the one the user just trained.
+    from app.services.eval_summary_service import _latest_trained_experiment_id
+
+    latest_experiment_id = await _latest_trained_experiment_id(db, project_id)
+    measured_experiment_id = (fine_tuned or {}).get("experiment_id")
     return {
         "project_id": project_id,
         "recipe_id": recipe_id,
+        "latest_experiment_id": latest_experiment_id,
+        "stale": bool(
+            fine_tuned is not None
+            and isinstance(measured_experiment_id, int)
+            and latest_experiment_id is not None
+            and measured_experiment_id != latest_experiment_id
+        ),
         # Top-level fields describe the fine-tuned comparison (None / empty
         # when only the base-model one has been run).
         "cached_at": (fine_tuned or {}).get("cached_at"),

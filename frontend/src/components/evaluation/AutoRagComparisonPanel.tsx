@@ -13,7 +13,7 @@
  * generations for the selected model.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '../../api/client';
 import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
 import { useJobsStore } from '../../stores/jobsStore';
@@ -57,6 +57,10 @@ interface AutoRagComparisonResponse {
     experiment_id?: number | null;
     base_model?: string | null;
     base?: AutoRagModelComparison | null;
+    /** The project's latest trained run, and whether the fine-tuned
+     *  comparison was measured on an older one. */
+    latest_experiment_id?: number | null;
+    stale?: boolean;
 }
 
 function hasSummary(summary: AutoRagSummary | null | undefined): summary is AutoRagSummary {
@@ -84,6 +88,35 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
     const [errorCode, setErrorCode] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
     const [rowsModel, setRowsModel] = useState<ComparisonModel>('fine_tuned');
+    // Bumped to re-read the cached comparisons without the loading flash.
+    const [reloadToken, setReloadToken] = useState(0);
+
+    // This project's comparison Jobs, from the store the bell polls. One in
+    // flight → show which side is running; one finishing → re-read the cache,
+    // so the numbers appear without a page reload.
+    const jobs = useJobsStore((state) => state.jobs);
+    const comparisonJobs = (jobs || []).filter(
+        (job) => job.kind === 'auto_rag_comparison' && job.project_id === projectId,
+    );
+    const inFlightJob = comparisonJobs.find(
+        (job) => job.status === 'queued' || job.status === 'running',
+    ) ?? null;
+    const runningModel: ComparisonModel | null = inFlightJob
+        ? (inFlightJob.params?.model === 'base' ? 'base' : 'fine_tuned')
+        : null;
+    const runningMessage = inFlightJob?.progress_message || null;
+    const finishedKey = comparisonJobs
+        .filter((job) => job.status === 'succeeded')
+        .map((job) => `${job.id}:${job.completed_at ?? ''}`)
+        .sort()
+        .join(',');
+    const lastFinishedKey = useRef<string | null>(null);
+    useEffect(() => {
+        if (lastFinishedKey.current !== null && lastFinishedKey.current !== finishedKey) {
+            setReloadToken((token) => token + 1);
+        }
+        lastFinishedKey.current = finishedKey;
+    }, [finishedKey]);
 
     const handleRunComparison = async (model: ComparisonModel = 'fine_tuned') => {
         if (submitting) return;
@@ -130,18 +163,27 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
         }
     };
 
+    const loadedProject = useRef<number | null>(null);
     useEffect(() => {
         let cancelled = false;
-        setLoading(true);
-        setError(null);
-        setStatus(null);
-        setErrorCode(null);
+        // A refresh after a Job finishes keeps the current numbers on screen
+        // until the new ones arrive; only a project switch shows "Loading…".
+        const silent = loadedProject.current === projectId;
+        loadedProject.current = projectId;
+        if (!silent) {
+            setLoading(true);
+            setError(null);
+            setStatus(null);
+            setErrorCode(null);
+        }
         api.get<AutoRagComparisonResponse>(
             `/projects/${projectId}/auto-rag/comparison`,
         ).then((resp) => {
             if (cancelled) return;
             setData(resp.data);
             setStatus(resp.status);
+            setError(null);
+            setErrorCode(null);
         }).catch((err) => {
             if (cancelled) return;
             setStatus(err?.response?.status ?? null);
@@ -166,7 +208,9 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
         return () => {
             cancelled = true;
         };
-    }, [projectId]);
+    }, [projectId, reloadToken]);
+
+    const busy = submitting || inFlightJob !== null;
 
     if (loading) {
         return (
@@ -217,7 +261,7 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
                         type="button"
                         className="btn btn-primary"
                         onClick={() => void handleRunComparison('fine_tuned')}
-                        disabled={submitting}
+                        disabled={busy}
                         data-testid="auto-rag-comparison-run-btn"
                     >
                         {submitting ? 'Starting…' : 'Run comparison'}
@@ -226,7 +270,7 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
                         type="button"
                         className="btn btn-secondary"
                         onClick={() => void handleRunComparison('base')}
-                        disabled={submitting}
+                        disabled={busy}
                         data-testid="auto-rag-comparison-run-base-btn"
                     >
                         Run on the base model
@@ -237,6 +281,12 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
                         trained run. Track progress in the notification bell.
                     </span>
                 </div>
+                {inFlightJob && (
+                    <p className="auto-rag-comparison__running" data-testid="auto-rag-comparison-running">
+                        {runningModel === 'base' ? 'Base-model comparison' : 'Comparison'} running
+                        {runningMessage ? ` — ${runningMessage}` : '…'} The results appear here when it finishes.
+                    </p>
+                )}
                 <details className="auto-rag-comparison__cli-fallback">
                     <summary>Or run from the CLI</summary>
                     <pre
@@ -326,6 +376,13 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
                     comparison={fineTunedReady ? fineTuned : null}
                     emptyText="Not run yet. Needs a completed training run."
                     submitting={submitting}
+                    disabled={busy}
+                    runningMessage={runningModel === 'fine_tuned' ? (runningMessage || 'starting…') : null}
+                    staleNote={
+                        fineTunedReady && data.stale && data.latest_experiment_id != null
+                            ? `These numbers are for run #${fineTuned.experiment_id}. Your latest run is #${data.latest_experiment_id} — re-run to measure it.`
+                            : null
+                    }
                     onRun={() => void handleRunComparison('fine_tuned')}
                 />
                 <ModelComparisonCard
@@ -336,6 +393,9 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
                     comparison={baseReady ? base : null}
                     emptyText="Not run yet. Shows what retrieval alone does, without your fine-tune."
                     submitting={submitting}
+                    disabled={busy}
+                    runningMessage={runningModel === 'base' ? (runningMessage || 'starting…') : null}
+                    staleNote={null}
                     onRun={() => void handleRunComparison('base')}
                 />
             </div>
@@ -386,6 +446,13 @@ interface ModelComparisonCardProps {
     comparison: AutoRagModelComparison | null;
     emptyText: string;
     submitting: boolean;
+    /** A comparison Job is starting or in flight for this project (either
+     *  model) — only one may run at a time. */
+    disabled: boolean;
+    /** Progress text when THIS side's Job is in flight. */
+    runningMessage: string | null;
+    /** Shown when the numbers are for an older run than the latest. */
+    staleNote: string | null;
     onRun: () => void;
 }
 
@@ -397,20 +464,29 @@ function ModelComparisonCard({
     comparison,
     emptyText,
     submitting,
+    disabled,
+    runningMessage,
+    staleNote,
     onRun,
 }: ModelComparisonCardProps) {
     const summary = comparison?.summary ?? null;
+    const running = runningMessage !== null && (
+        <p className="auto-rag-comparison__running" data-testid={`${testIdPrefix}-running`}>
+            Running — {runningMessage}
+        </p>
+    );
     if (!comparison || !summary) {
         return (
             <div className="auto-rag-comparison__model auto-rag-comparison__model--empty" data-testid={`${testIdPrefix}-card`}>
                 <div className="auto-rag-comparison__model-title">{title}</div>
                 <div className="auto-rag-comparison__model-sub">{provenance}</div>
                 <p className="auto-rag-comparison__model-empty">{emptyText}</p>
+                {running}
                 <button
                     type="button"
                     className="btn btn-primary auto-rag-comparison__rerun"
                     onClick={onRun}
-                    disabled={submitting}
+                    disabled={disabled}
                     data-testid={runTestId}
                 >
                     {submitting ? 'Starting…' : 'Run'}
@@ -437,13 +513,19 @@ function ModelComparisonCard({
                     type="button"
                     className="btn btn-secondary auto-rag-comparison__rerun"
                     onClick={onRun}
-                    disabled={submitting}
+                    disabled={disabled}
                     data-testid={`${testIdPrefix}-rerun-btn`}
                     title="Re-runs inference twice (with + without RAG) on the val split. Watch progress in the notification bell."
                 >
                     {submitting ? 'Starting…' : 'Re-run comparison'}
                 </button>
             </div>
+            {staleNote && (
+                <p className="auto-rag-comparison__stale" data-testid={`${testIdPrefix}-stale`}>
+                    {staleNote}
+                </p>
+            )}
+            {running}
             <div className="auto-rag-comparison__totals">
                 <div className="auto-rag-comparison__totals-cell">
                     <div className="auto-rag-comparison__totals-label">Without RAG</div>

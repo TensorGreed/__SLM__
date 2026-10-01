@@ -456,6 +456,49 @@ class AutoRagComparisonApiTests(unittest.TestCase):
         self.assertIsNone(body["base"]["experiment_id"])
         self.assertEqual(len(body["base"]["rows"]), 1)
 
+    def test_flags_a_comparison_measured_on_an_older_run(self):
+        """The cache is for one run; after another run trains, the numbers
+        shown are no longer for "your latest model" — say so."""
+        import asyncio
+        from app.database import async_session_factory
+        from app.models.experiment import Experiment, ExperimentStatus, TrainingMode
+
+        project = self._instantiate_template("policy-qa-style", "AutoRAG Comparison Stale")
+
+        async def _add_run(name: str, config: dict | None = None) -> int:
+            async with async_session_factory() as db:
+                exp = Experiment(
+                    project_id=project["id"], name=name, status=ExperimentStatus.COMPLETED,
+                    training_mode=TrainingMode.SFT, base_model="HuggingFaceTB/SmolLM2-135M-Instruct",
+                    config=config or {},
+                )
+                db.add(exp)
+                await db.commit()
+                return exp.id
+
+        first = asyncio.run(_add_run("run one"))
+        self._seed_cached_comparison(project["id"], {
+            "cached_at": "2026-10-01T11:00:00+00:00", "experiment_id": first,
+            "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+            "summary": {"off_mean_f1": 0.18, "on_mean_f1": 0.15, "relative_lift_pct": -18.3,
+                        "n_val_rows": 21, "rag_k": 3},
+            "rows": [],
+        })
+        url = f"/api/projects/{project['id']}/auto-rag/comparison"
+        body = self.client.get(url).json()
+        self.assertEqual(body["latest_experiment_id"], first)
+        self.assertFalse(body["stale"])
+
+        # A baseline (base-model eval) row is not a newer trained run.
+        asyncio.run(_add_run("Baseline", {"is_baseline": True}))
+        self.assertFalse(self.client.get(url).json()["stale"])
+
+        second = asyncio.run(_add_run("run two"))
+        body = self.client.get(url).json()
+        self.assertEqual(body["latest_experiment_id"], second)
+        self.assertEqual(body["experiment_id"], first)
+        self.assertTrue(body["stale"])
+
     def test_base_only_comparison_is_a_200_not_a_404(self):
         """A RAG-first project never trains: the base-model comparison alone
         must render, with the fine-tuned side reported as not run."""
@@ -467,6 +510,7 @@ class AutoRagComparisonApiTests(unittest.TestCase):
         self.assertIsNone(body["summary"])
         self.assertEqual(body["rows"], [])
         self.assertEqual(body["base"]["summary"]["n_val_rows"], 21)
+        self.assertFalse(body["stale"])
 
 
 if __name__ == "__main__":

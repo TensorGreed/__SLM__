@@ -454,6 +454,12 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   /auto-rag/comparison/run?model=base` runs the base one (same Job kind, same
   one-in-flight guard). `AutoRagComparisonPanel` shows the two as side-by-side
   cards with run id / base model provenance + a "highest of the four" line.
+  The GET also returns `latest_experiment_id` + `stale` (fine-tuned cache is
+  for an older run → warning on the card). The panel reads its project's
+  `auto_rag_comparison` Jobs from `useJobsStore((s) => s.jobs)`: in flight →
+  progress on that card + all Run buttons disabled; a newly succeeded Job →
+  silent re-fetch (no loading flash). Tests mock the store as a callable with
+  `getState`.
 - **Reroute-to-RAG** — `rag_project_service.clone_project_for_rag()`
   creates a sibling project with `runtime_config.rag_first=True`. The
   playground uses base model + retrieval (no LoRA).

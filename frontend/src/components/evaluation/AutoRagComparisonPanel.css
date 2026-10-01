@@ -315,3 +315,19 @@
     color: var(--accent, #3b82f6);
     font-weight: 600;
 }
+
+.auto-rag-comparison__stale {
+    margin: 0;
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-warning-border, #f59e0b);
+    background: var(--color-warning-bg, #fffbeb);
+    color: var(--color-warning-fg, #92400e);
+}
+
+.auto-rag-comparison__running {
+    margin: 0;
+    font-size: 12px;
+    color: var(--accent, #3b82f6);
+}
