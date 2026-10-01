@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -178,13 +178,14 @@ async def get_auto_rag_comparison(
     expensive (~2 min on GB10) and out-of-band by design.
 
     Status codes:
-      200 — comparison cached on disk; payload includes aggregate F1
-            (with / without RAG) + per-row records with retrieved
-            chunks for the expandable cards.
+      200 — at least one comparison cached on disk. Top-level
+            ``summary`` / ``rows`` are the fine-tuned run's (``summary`` is
+            null when only the base-model comparison exists); ``base`` is
+            the base-model comparison or null.
       400 — project missing a recipe (detail is a dict with
             ``error_code="RECIPE_REQUIRED"``) OR recipe is set but
             ineligible for auto-RAG (detail is a string).
-      404 — project not found OR no comparison cached yet (the
+      404 — project not found OR neither comparison cached yet (the
             ``detail`` includes the exact harness command to run).
     """
     project = await db.get(Project, project_id)
@@ -217,10 +218,13 @@ async def get_auto_rag_comparison(
                 f"(Phase 9a covers qa-sft only)."
             ),
         )
-    cache_path = (
-        settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / "comparison.json"
-    )
-    if not cache_path.exists():
+    auto_rag_dir = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
+    # Two cached comparisons, one per model: the latest fine-tuned run
+    # (comparison.json) and the untouched base model (comparison_base.json,
+    # the RAG-first question). Either may be missing.
+    fine_tuned = _read_cached_comparison(auto_rag_dir / "comparison.json")
+    base = _read_cached_comparison(auto_rag_dir / "comparison_base.json")
+    if fine_tuned is None and base is None:
         raise HTTPException(
             status_code=404,
             detail=(
@@ -230,6 +234,26 @@ async def get_auto_rag_comparison(
                 f"the comparison."
             ),
         )
+    return {
+        "project_id": project_id,
+        "recipe_id": recipe_id,
+        # Top-level fields describe the fine-tuned comparison (None / empty
+        # when only the base-model one has been run).
+        "cached_at": (fine_tuned or {}).get("cached_at"),
+        "summary": (fine_tuned or {}).get("summary"),
+        "rows": (fine_tuned or {}).get("rows") or [],
+        "experiment_id": (fine_tuned or {}).get("experiment_id"),
+        "base_model": (fine_tuned or base or {}).get("base_model"),
+        "base": base,
+    }
+
+
+def _read_cached_comparison(cache_path: Path) -> dict[str, Any] | None:
+    """One cached comparison file as ``{cached_at, summary, rows,
+    experiment_id, base_model}``; None when missing. An unreadable file is a
+    503 — a half-written cache shouldn't look like "not run yet"."""
+    if not cache_path.exists():
+        return None
     try:
         payload = json.loads(cache_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
@@ -238,11 +262,11 @@ async def get_auto_rag_comparison(
             detail=f"Cached comparison at {cache_path} is unreadable: {e}",
         ) from e
     return {
-        "project_id": project_id,
-        "recipe_id": recipe_id,
         "cached_at": payload.get("cached_at"),
         "summary": payload.get("summary") or {},
         "rows": payload.get("rows") or [],
+        "experiment_id": payload.get("experiment_id"),
+        "base_model": payload.get("base_model"),
     }
 
 
@@ -265,6 +289,14 @@ def _index_row_count(index_path: Path) -> int:
 @router.post("/comparison/run", status_code=202)
 async def run_auto_rag_comparison(
     project_id: int,
+    model: Literal["fine_tuned", "base"] = Query(
+        "fine_tuned",
+        description=(
+            "Which model to score with and without retrieval: the latest "
+            "fine-tuned run (default), or the project's untouched base model "
+            "(\"does retrieval alone help?\" — written to comparison_base.json)."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Hardening — spawn the auto-RAG comparison as a background Job
@@ -272,8 +304,10 @@ async def run_auto_rag_comparison(
     --project <id>``).
 
     The Job runner loads the project's latest COMPLETED experiment's
-    LoRA, runs inference twice over the val split (with-RAG /
-    without-RAG), writes the per-row ``comparison.json`` the existing
+    model (or, with ``model=base``, the untouched base model — no trained
+    run needed), runs inference twice over the val split (with-RAG /
+    without-RAG), writes the per-row ``comparison.json`` (or
+    ``comparison_base.json``) the existing
     ``GET /comparison`` endpoint reads, and publishes per-row progress
     into the notification bell ("scoring row 12/28 (with-RAG)").
 
@@ -350,6 +384,8 @@ async def run_auto_rag_comparison(
             },
         )
 
+    base_only = model == "base"
+
     async def _runner(handle: JobProgressHandle) -> dict[str, Any]:
         import asyncio
         import time
@@ -423,6 +459,7 @@ async def run_auto_rag_comparison(
                 run_project_comparison,
                 project_id,
                 progress_callback=_sync_callback,
+                base_only=base_only,
             )
         finally:
             stop_event.set()
@@ -436,6 +473,8 @@ async def run_auto_rag_comparison(
         # comparison.json on disk is the canonical full payload.
         return {
             "project_id": project_id,
+            "model": "base" if base_only else "fine_tuned",
+            "base_model": payload.get("base_model"),
             "experiment_id": payload.get("experiment_id"),
             "off_mean_f1": summary.get("off_mean_f1"),
             "on_mean_f1": summary.get("on_mean_f1"),
@@ -443,7 +482,8 @@ async def run_auto_rag_comparison(
             "relative_lift_pct": summary.get("relative_lift_pct"),
             "n_val_rows": summary.get("n_val_rows"),
             "comparison_path": str(
-                settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / "comparison.json"
+                settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
+                / ("comparison_base.json" if base_only else "comparison.json")
             ),
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -451,9 +491,17 @@ async def run_auto_rag_comparison(
     job = await start_job(
         db,
         kind="auto_rag_comparison",
-        title=f"Auto-RAG comparison · project #{project_id}",
+        title=(
+            f"Auto-RAG comparison · base model · project #{project_id}"
+            if base_only
+            else f"Auto-RAG comparison · project #{project_id}"
+        ),
         runner=_runner,
         project_id=project_id,
-        params={"project_id": project_id, "recipe_id": recipe_id},
+        params={
+            "project_id": project_id,
+            "recipe_id": recipe_id,
+            "model": "base" if base_only else "fine_tuned",
+        },
     )
     return serialize_job(job)

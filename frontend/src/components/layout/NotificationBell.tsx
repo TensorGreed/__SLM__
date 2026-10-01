@@ -166,6 +166,7 @@ function jobOutcomeSummary(job: Job): string | null {
         const lift = typeof r.relative_lift_pct === 'number' ? r.relative_lift_pct : null;
         const nVal = typeof r.n_val_rows === 'number' ? r.n_val_rows : null;
         const parts: string[] = [];
+        if (r.model === 'base') parts.push('base model');
         if (offF1 !== null && onF1 !== null) {
             parts.push(`off F1 ${offF1.toFixed(2)} → on F1 ${onF1.toFixed(2)}`);
         } else if (onF1 !== null) {

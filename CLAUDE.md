@@ -448,7 +448,12 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   at 1.5× the longest training answer (`_generation_cap`, 32–128 tokens).
   `--project N --base-only` scores the **base model** with/without retrieval
   (the RAG-first question) → `auto_rag/comparison_base.json`; it never
-  overwrites the fine-tuned `comparison.json` the panel reads.
+  overwrites the fine-tuned `comparison.json`. `GET /auto-rag/comparison`
+  returns the fine-tuned comparison at the top level (`summary` null if not
+  run) plus `base` (or null); 404 only when neither exists. `POST
+  /auto-rag/comparison/run?model=base` runs the base one (same Job kind, same
+  one-in-flight guard). `AutoRagComparisonPanel` shows the two as side-by-side
+  cards with run id / base model provenance + a "highest of the four" line.
 - **Reroute-to-RAG** — `rag_project_service.clone_project_for_rag()`
   creates a sibling project with `runtime_config.rag_first=True`. The
   playground uses base model + retrieval (no LoRA).

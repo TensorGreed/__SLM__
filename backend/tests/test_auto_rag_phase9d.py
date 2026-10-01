@@ -319,8 +319,10 @@ class AutoRagComparisonApiTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 201, resp.text)
         return resp.json()
 
-    def _seed_cached_comparison(self, project_id: int, payload: dict) -> Path:
-        path = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / "comparison.json"
+    def _seed_cached_comparison(
+        self, project_id: int, payload: dict, filename: str = "comparison.json"
+    ) -> Path:
+        path = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path
@@ -415,6 +417,56 @@ class AutoRagComparisonApiTests(unittest.TestCase):
         self.assertEqual(body["summary"]["on_mean_f1"], 0.30)
         self.assertEqual(len(body["rows"]), 1)
         self.assertEqual(body["rows"][0]["question"], "How many PTO days?")
+        # Provenance of the fine-tuned side, and no base-model comparison yet.
+        self.assertEqual(body["experiment_id"], 42)
+        self.assertEqual(body["base_model"], "HuggingFaceTB/SmolLM2-135M-Instruct")
+        self.assertIsNone(body["base"])
+
+    def _base_payload(self) -> dict:
+        return {
+            "cached_at": "2026-10-01T12:00:00+00:00",
+            "experiment_id": None,
+            "model": "base",
+            "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+            "model_dir": None,
+            "summary": {"off_mean_f1": 0.11, "on_mean_f1": 0.14, "absolute_lift": 0.03,
+                        "relative_lift_pct": 29.1, "n_val_rows": 21, "rag_k": 3},
+            "rows": [{
+                "question": "Q?", "reference": "A.",
+                "without_rag": {"generated": "x", "f1": 0.0},
+                "with_rag": {"generated": "A.", "f1": 1.0, "retrieved_row_count": 3},
+            }],
+        }
+
+    def test_base_model_comparison_is_returned_next_to_the_fine_tuned_one(self):
+        project = self._instantiate_template("policy-qa-style", "AutoRAG Comparison Both")
+        self._seed_cached_comparison(project["id"], {
+            "cached_at": "2026-10-01T11:00:00+00:00", "experiment_id": 7,
+            "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+            "summary": {"off_mean_f1": 0.18, "on_mean_f1": 0.15, "relative_lift_pct": -18.3,
+                        "n_val_rows": 21, "rag_k": 3},
+            "rows": [],
+        })
+        self._seed_cached_comparison(project["id"], self._base_payload(), "comparison_base.json")
+        body = self.client.get(f"/api/projects/{project['id']}/auto-rag/comparison").json()
+        self.assertEqual(body["summary"]["off_mean_f1"], 0.18)
+        self.assertEqual(body["experiment_id"], 7)
+        self.assertEqual(body["base"]["summary"]["on_mean_f1"], 0.14)
+        self.assertEqual(body["base"]["base_model"], "HuggingFaceTB/SmolLM2-135M-Instruct")
+        self.assertIsNone(body["base"]["experiment_id"])
+        self.assertEqual(len(body["base"]["rows"]), 1)
+
+    def test_base_only_comparison_is_a_200_not_a_404(self):
+        """A RAG-first project never trains: the base-model comparison alone
+        must render, with the fine-tuned side reported as not run."""
+        project = self._instantiate_template("policy-qa-style", "AutoRAG Comparison Base Only")
+        self._seed_cached_comparison(project["id"], self._base_payload(), "comparison_base.json")
+        resp = self.client.get(f"/api/projects/{project['id']}/auto-rag/comparison")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertIsNone(body["summary"])
+        self.assertEqual(body["rows"], [])
+        self.assertEqual(body["base"]["summary"]["n_val_rows"], 21)
 
 
 if __name__ == "__main__":

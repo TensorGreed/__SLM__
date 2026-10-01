@@ -245,3 +245,103 @@ describe('AutoRagComparisonPanel — run-comparison button', () => {
         expect(container.firstChild).toBeNull();
     });
 });
+
+
+describe('AutoRagComparisonPanel — base model next to the fine-tuned run', () => {
+    const BASE = {
+        cached_at: '2026-10-01T12:00:00Z',
+        experiment_id: null,
+        base_model: 'HuggingFaceTB/SmolLM2-135M-Instruct',
+        summary: {
+            off_mean_f1: 0.1056,
+            on_mean_f1: 0.1363,
+            absolute_lift: 0.0307,
+            relative_lift_pct: 29.1,
+            n_val_rows: 21,
+            rag_k: 3,
+        },
+        rows: [
+            {
+                question: 'Base-only question?',
+                reference: 'ref',
+                without_rag: { generated: 'no idea', f1: 0.0 },
+                with_rag: { generated: 'grounded', f1: 0.5, retrieved_row_count: 3 },
+            },
+        ],
+    };
+    const FINE_TUNED = {
+        ...HAPPY_CACHED_PAYLOAD,
+        experiment_id: 25,
+        base_model: 'HuggingFaceTB/SmolLM2-135M-Instruct',
+        summary: { ...HAPPY_CACHED_PAYLOAD.summary, off_mean_f1: 0.179, on_mean_f1: 0.1462, relative_lift_pct: -18.3 },
+    };
+
+    beforeEach(() => {
+        apiMock.get.mockReset();
+        apiMock.post.mockReset();
+        toastMock.info.mockReset();
+        refreshSpy.mockReset();
+    });
+
+    it('shows both models with their own numbers and provenance', async () => {
+        apiMock.get.mockResolvedValueOnce({ status: 200, data: { ...FINE_TUNED, base: BASE } });
+        render(<AutoRagComparisonPanel projectId={18} />);
+
+        expect(await screen.findByTestId('auto-rag-comparison-off-f1')).toHaveTextContent('0.1790');
+        expect(screen.getByTestId('auto-rag-comparison-lift')).toHaveTextContent('-18.3%');
+        expect(screen.getByTestId('auto-rag-comparison-base-off-f1')).toHaveTextContent('0.1056');
+        expect(screen.getByTestId('auto-rag-comparison-base-on-f1')).toHaveTextContent('0.1363');
+        expect(screen.getByTestId('auto-rag-comparison-base-lift')).toHaveTextContent('+29.1%');
+        // Provenance: which run and which base model each side measured.
+        expect(screen.getByTestId('auto-rag-comparison-card')).toHaveTextContent('run #25');
+        expect(screen.getByTestId('auto-rag-comparison-base-card')).toHaveTextContent('SmolLM2-135M-Instruct');
+        // The verdict names the highest of the four numbers — here the
+        // fine-tuned run WITHOUT retrieval, not a flattering one.
+        expect(screen.getByTestId('auto-rag-comparison-verdict')).toHaveTextContent(
+            /run #25 without retrieval \(F1 0\.179\)/,
+        );
+    });
+
+    it('switches the per-row list between the two models', async () => {
+        apiMock.get.mockResolvedValueOnce({ status: 200, data: { ...FINE_TUNED, base: BASE } });
+        const user = userEvent.setup();
+        render(<AutoRagComparisonPanel projectId={18} />);
+
+        await screen.findByTestId('auto-rag-comparison-rows-base');
+        expect(screen.queryByText('Base-only question?')).not.toBeInTheDocument();
+        await user.click(screen.getByTestId('auto-rag-comparison-rows-base'));
+        expect(screen.getByText('Base-only question?')).toBeInTheDocument();
+        expect(screen.getByTestId('auto-rag-comparison-rows-caption')).toHaveTextContent(/base model/);
+    });
+
+    it('offers to run the base-model comparison when only the fine-tuned one exists', async () => {
+        apiMock.get.mockResolvedValueOnce({ status: 200, data: { ...FINE_TUNED, base: null } });
+        apiMock.post.mockResolvedValueOnce({ status: 202, data: { id: 77 } });
+        const user = userEvent.setup();
+        render(<AutoRagComparisonPanel projectId={18} />);
+
+        await user.click(await screen.findByTestId('auto-rag-comparison-base-run-btn'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/18/auto-rag/comparison/run',
+                null,
+                { params: { model: 'base' } },
+            );
+        });
+        expect(toastMock.info).toHaveBeenCalledWith(expect.stringMatching(/Base-model/), 4000);
+        // No verdict while one side is missing.
+        expect(screen.queryByTestId('auto-rag-comparison-verdict')).not.toBeInTheDocument();
+    });
+
+    it('renders a base-only comparison (no trained run yet)', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            status: 200,
+            data: { project_id: 18, recipe_id: 'qa-sft', cached_at: null, summary: null, rows: [], base_model: BASE.base_model, base: BASE },
+        });
+        render(<AutoRagComparisonPanel projectId={18} />);
+
+        expect(await screen.findByTestId('auto-rag-comparison-base-lift')).toHaveTextContent('+29.1%');
+        expect(screen.getByTestId('auto-rag-comparison-finetuned-run-btn')).toBeInTheDocument();
+        expect(screen.getByText('Base-only question?')).toBeInTheDocument();
+    });
+});

@@ -148,6 +148,27 @@ class RunComparisonEndpointTests(unittest.TestCase):
         finally:
             _clear_inflight_comparison_jobs(project["id"])
 
+    def test_base_model_run_shares_the_in_flight_guard(self):
+        """``?model=base`` is the same GPU-heavy Job kind: one comparison per
+        project at a time, whichever model it scores."""
+        project = self._instantiate_template(
+            "policy-qa-style", "ARC run-comparison base model"
+        )
+        _seed_inflight_comparison_job(project["id"])
+        try:
+            resp = self.client.post(
+                f"/api/projects/{project['id']}/auto-rag/comparison/run",
+                params={"model": "base"},
+            )
+            self.assertEqual(resp.status_code, 409, resp.text)
+            bad = self.client.post(
+                f"/api/projects/{project['id']}/auto-rag/comparison/run",
+                params={"model": "teacher"},
+            )
+            self.assertEqual(bad.status_code, 422, bad.text)
+        finally:
+            _clear_inflight_comparison_jobs(project["id"])
+
     # The "202 success-shape" path isn't unit-tested here because the
     # runner fires asynchronously and loads torch + a real LoRA on GPU
     # the moment it gets event-loop time. Cancelling the Job row after
