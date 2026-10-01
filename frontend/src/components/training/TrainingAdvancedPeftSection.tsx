@@ -141,6 +141,7 @@ export default function TrainingAdvancedPeftSection({
                 <label className="form-label">Target Modules (comma-separated)</label>
                 <input
                   className="input"
+                  placeholder="auto — every linear layer on small models (up to 2B), q_proj, v_proj on larger"
                   value={targetModules}
                   onChange={(e) => {
                     setTargetModules(e.target.value);

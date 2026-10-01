@@ -1513,7 +1513,7 @@ def _run_training_attempt(
     lora_r = _coerce_int(config.get("lora_r"), 16, minimum=1)
     lora_alpha = _coerce_int(config.get("lora_alpha"), 32, minimum=1)
     lora_dropout = _coerce_float(config.get("lora_dropout"), 0.05, minimum=0.0)
-    target_modules = config.get("target_modules", ["q_proj", "v_proj"])
+    target_modules = config.get("target_modules", "auto")
     gradient_checkpointing = _coerce_bool(config.get("gradient_checkpointing"), True)
     want_flash_attention = _coerce_bool(config.get("flash_attention"), True)
     want_fp16 = _coerce_bool(config.get("fp16"), False)
@@ -2031,6 +2031,17 @@ def _run_training_attempt(
                 "LoRA training requested but peft is not installed. Install peft or set use_lora=false."
             ) from e
 
+        if target_modules == "auto":
+            from app.services.lora_target_policy import resolve_lora_target_modules
+
+            lora_target_plan = resolve_lora_target_modules(
+                target_modules,
+                model_params=sum(p.numel() for p in model.parameters()),
+                task_type=normalized_task_type,
+            )
+            target_modules = lora_target_plan["target_modules"]
+            runtime_environment["lora_target_modules"] = lora_target_plan
+            warnings.append(f"LoRA target modules: {lora_target_plan['reason']}")
         if target_modules == "all-linear":
             pass  # PEFT resolves every linear layer (continued-pretraining default)
         elif not isinstance(target_modules, list) or not target_modules:

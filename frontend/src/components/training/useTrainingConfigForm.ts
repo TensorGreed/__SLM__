@@ -36,7 +36,7 @@ export function useTrainingConfigForm() {
   const [curriculum, setCurriculum] = useState(false);
   const [loraR, setLoraR] = useState(16);
   const [loraAlpha, setLoraAlpha] = useState(32);
-  const [targetModules, setTargetModules] = useState('q_proj, v_proj');
+  const [targetModules, setTargetModules] = useState(''); // empty = auto (backend picks by model size)
   const [fp16, setFp16] = useState(false);
   const [bf16, setBf16] = useState(true);
   const [flashAttention, setFlashAttention] = useState(true);

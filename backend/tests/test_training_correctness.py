@@ -234,6 +234,48 @@ class AutoEpochPolicyTests(unittest.TestCase):
             self.assertLess(plan["num_epochs"], EPOCHS_WARN_FOR_SMALL)
 
 
+class LoraTargetPolicyTests(unittest.TestCase):
+    """``target_modules="auto"`` (the default): every linear layer on small
+    causal-LM models — q/v alone left SmolLM2-135M and Qwen2.5-1.5B unable to
+    learn the facts — and the classic q_proj/v_proj otherwise."""
+
+    def test_schema_default_is_auto(self):
+        self.assertEqual(TrainingConfig(base_model="x").target_modules, "auto")
+        self.assertEqual(
+            TrainingConfig(base_model="x", target_modules=["q_proj"]).target_modules, ["q_proj"]
+        )
+
+    def test_auto_resolves_by_model_size(self):
+        from app.services.lora_target_policy import (
+            AUTO_ALL_LINEAR_MAX_PARAMS,
+            resolve_lora_target_modules,
+        )
+
+        small = resolve_lora_target_modules("auto", model_params=135_000_000)
+        self.assertEqual(small["target_modules"], "all-linear")
+        self.assertTrue(small["auto"])
+        edge = resolve_lora_target_modules("auto", model_params=AUTO_ALL_LINEAR_MAX_PARAMS)
+        self.assertEqual(edge["target_modules"], "all-linear")
+        large = resolve_lora_target_modules("auto", model_params=7_000_000_000)
+        self.assertEqual(large["target_modules"], ["q_proj", "v_proj"])
+        unknown = resolve_lora_target_modules("auto", model_params=None)
+        self.assertEqual(unknown["target_modules"], ["q_proj", "v_proj"])
+
+    def test_auto_keeps_classic_targets_for_other_tasks(self):
+        from app.services.lora_target_policy import resolve_lora_target_modules
+
+        plan = resolve_lora_target_modules("auto", model_params=135_000_000, task_type="classification")
+        self.assertEqual(plan["target_modules"], ["q_proj", "v_proj"])
+
+    def test_explicit_choice_is_never_overridden(self):
+        from app.services.lora_target_policy import resolve_lora_target_modules
+
+        for explicit in (["q_proj", "v_proj"], ["k_proj"], "all-linear"):
+            plan = resolve_lora_target_modules(explicit, model_params=135_000_000)
+            self.assertEqual(plan["target_modules"], explicit)
+            self.assertFalse(plan["auto"])
+
+
 # ── Real training ───────────────────────────────────────────────────
 
 REAL_MODEL = os.environ.get("BREWSLM_REAL_TRAIN_MODEL", "HuggingFaceTB/SmolLM2-135M-Instruct")

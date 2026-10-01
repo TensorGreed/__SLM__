@@ -151,7 +151,7 @@ export default function ExperimentCompare({ projectId, experimentIds, onClose }:
                         <tr>
                             <th>LoRA Target</th>
                             {data.map(exp => <td key={exp.id}>
-                                {exp.config?.use_lora ? `r=${exp.config?.lora_r} | ${exp.config?.target_modules?.join(', ')}` : 'Full Fine-tune'}
+                                {exp.config?.use_lora ? `r=${exp.config?.lora_r} | ${Array.isArray(exp.config?.target_modules) ? exp.config.target_modules.join(', ') : (exp.config?.target_modules ?? 'auto')}` : 'Full Fine-tune'}
                             </td>)}
                         </tr>
                         <tr className="compare-metric-row">

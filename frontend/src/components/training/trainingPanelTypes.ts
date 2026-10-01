@@ -23,7 +23,7 @@ export interface ExperimentConfig extends Record<string, unknown> {
   batch_size?: number;
   use_lora?: boolean;
   lora_r?: number;
-  target_modules?: string[];
+  target_modules?: string[] | string;
   task_type?: string;
 }
 

@@ -185,6 +185,7 @@ session-start guidance.
 - `backend/app/services/jobs_service.py` — Generic background-job framework (Hardening Phase H1).
 - `backend/app/services/label_noise_scoring_service.py` — Quality-Lift phase 4 slice 1 — Label-noise scoring (Confident-Learning-lite).
 - `backend/app/services/local_chat_service.py` — In-process chat with a trained run's checkpoint (Playground "experiment"
+- `backend/app/services/lora_target_policy.py` — Which layers LoRA adapts when the config says ``target_modules="auto"``.
 - `backend/app/services/manifest_apply_service.py` — Manifest validate / diff / apply services (priority.md P22).
 - `backend/app/services/model_benchmark_service.py` — Real sampled benchmark sweep for model-selection onboarding.
 - `backend/app/services/model_introspection_service.py` — Model introspection helpers for Hugging Face compatible model IDs.

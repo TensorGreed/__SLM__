@@ -87,9 +87,11 @@ class TrainingConfig(BaseModel):
     lora_r: int = Field(16, ge=1, le=256)
     lora_alpha: int = Field(32, ge=1)
     lora_dropout: float = Field(0.05, ge=0, le=1)
-    # A list of module names, or "all-linear" (every linear layer — the
-    # continued-pretraining default).
-    target_modules: list[str] | Literal["all-linear"] = Field(default_factory=lambda: ["q_proj", "v_proj"])
+    # "auto" (default): every linear layer for small causal-LM models, the
+    # classic q_proj/v_proj otherwise — resolved by ``lora_target_policy``
+    # in train.py from the loaded model's size. Or a list of module names,
+    # or "all-linear" (every linear layer — the continued-pretraining default).
+    target_modules: list[str] | Literal["all-linear", "auto"] = "auto"
     
     # Compute / System
     fp16: bool = False

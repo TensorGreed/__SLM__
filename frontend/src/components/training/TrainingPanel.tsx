@@ -418,7 +418,12 @@ export default function TrainingPanel({
     if (includeField('curriculum')) config.curriculum = curriculum;
     if (includeField('lora_r')) config.lora_r = loraR;
     if (includeField('lora_alpha')) config.lora_alpha = loraAlpha;
-    if (includeField('target_modules')) config.target_modules = parsedTargetModules;
+    // Empty = auto: the trainer adapts every linear layer on small models and
+    // q_proj/v_proj on larger ones. "all-linear" / "auto" are sent as keywords.
+    if (includeField('target_modules') && parsedTargetModules.length > 0) {
+      const keyword = parsedTargetModules.length === 1 ? parsedTargetModules[0].toLowerCase() : '';
+      config.target_modules = keyword === 'all-linear' || keyword === 'auto' ? keyword : parsedTargetModules;
+    }
     if (includeField('fp16')) config.fp16 = fp16;
     if (includeField('bf16')) config.bf16 = bf16;
     if (includeField('flash_attention')) config.flash_attention = flashAttention;
@@ -526,7 +531,9 @@ export default function TrainingPanel({
     setCurriculum(parseBoolean(config.curriculum, curriculum));
     setLoraR(Math.max(1, parseNumber(config.lora_r, loraR)));
     setLoraAlpha(Math.max(1, parseNumber(config.lora_alpha, loraAlpha)));
-    if (Array.isArray(config.target_modules)) {
+    if (typeof config.target_modules === 'string') {
+      setTargetModules(config.target_modules === 'auto' ? '' : config.target_modules);
+    } else if (Array.isArray(config.target_modules)) {
       setTargetModules(
         config.target_modules
           .map((item) => String(item).trim())
