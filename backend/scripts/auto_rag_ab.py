@@ -448,7 +448,7 @@ def _clean_generated_answer(decoded: str) -> str:
 def evaluate_with_inference(
     *,
     base_model: str,
-    model_dir: Path,
+    model_dir: Path | None,
     val_rows: list[dict[str, Any]],
     train_rows: list[dict[str, Any]],
     with_rag: bool,
@@ -504,6 +504,8 @@ def evaluate_with_inference(
     else:
         # Phase 9c gate path — build a transient BM25 next to the
         # model dir so each seed's index is isolated.
+        if model_dir is None:
+            raise RuntimeError("base-model evaluation needs index_dir_override")
         index_dir = model_dir.parent / "auto_rag"
         if with_rag:
             try:
@@ -519,7 +521,11 @@ def evaluate_with_inference(
 
     # The run's own tokenizer (saved next to the adapter) carries the chat
     # template it was trained with; fall back to the base model's.
-    tokenizer_source = str(model_dir) if (model_dir / "tokenizer_config.json").exists() else base_model
+    tokenizer_source = (
+        str(model_dir)
+        if model_dir is not None and (model_dir / "tokenizer_config.json").exists()
+        else base_model
+    )
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -528,9 +534,11 @@ def evaluate_with_inference(
     # A LoRA run saves only the adapter (load base + adapter); a full
     # fine-tune saves the whole model (load it directly). The harness used to
     # assume LoRA and crashed on full fine-tunes — the quickstart default.
-    is_adapter_run = (model_dir / "adapter_config.json").exists()
+    # ``model_dir=None`` scores the untouched base model (what a RAG-first
+    # project serves: base + retrieval, no fine-tune).
+    is_adapter_run = model_dir is not None and (model_dir / "adapter_config.json").exists()
     base = AutoModelForCausalLM.from_pretrained(
-        base_model if is_adapter_run else str(model_dir),
+        base_model if (is_adapter_run or model_dir is None) else str(model_dir),
         dtype=torch.float16,
         device_map="cuda",
     )
@@ -877,6 +885,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "template gate flow used for Phase 9c."
         ),
     )
+    parser.add_argument(
+        "--base-only", action="store_true",
+        help=(
+            "With --project: score the project's BASE model with and without "
+            "retrieval (no fine-tuned run needed) and write "
+            "auto_rag/comparison_base.json. Answers 'does retrieval alone "
+            "help?' — the RAG-first question."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -885,11 +902,20 @@ def run_project_comparison(
     *,
     seed: int = 0,
     progress_callback: "Callable[[int, int, str], None] | None" = None,
+    base_only: bool = False,
 ) -> dict[str, Any]:
     """Phase 9d — generate the per-project comparison the Eval-tab
     panel reads. Reuses the per-row eval inference loop with the
     project's latest COMPLETED experiment's model_dir. Writes
     ``data/projects/{project_id}/auto_rag/comparison.json``.
+
+    ``base_only=True`` scores the project's **base model** with and without
+    retrieval instead of the latest fine-tuned run — the question a
+    RAG-first project asks ("does retrieval alone get me there?"). A model
+    fine-tuned on bare question → answer pairs never saw a retrieval
+    preamble, so its with-RAG arm understates what retrieval can do. The
+    result goes to ``comparison_base.json`` (``"model": "base"``) and never
+    overwrites the fine-tuned comparison the panel reads.
 
     This function is invoked from the CLI's ``--project`` mode (and
     can be called programmatically by a future API trigger if we
@@ -916,6 +942,22 @@ def run_project_comparison(
             (project_id,),
         )
         exp_row = cur.fetchone()
+        project_row = con.execute(
+            "SELECT base_model_name FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+
+    model_dir: Path | None
+    if base_only:
+        base_model = str((project_row["base_model_name"] if project_row else "") or "").strip()
+        if not base_model and exp_row is not None:
+            base_model = str(exp_row["base_model"])
+        if not base_model:
+            raise RuntimeError(
+                f"Project {project_id} has no base model. Choose a task type "
+                f"(it suggests one) or train a run first."
+            )
+        model_dir = None
+    else:
         if exp_row is None:
             raise RuntimeError(
                 f"No COMPLETED experiment found for project {project_id}. "
@@ -923,9 +965,8 @@ def run_project_comparison(
             )
         model_dir = Path(str(exp_row["output_dir"])) / "model"
         base_model = str(exp_row["base_model"])
-
-    if not model_dir.exists():
-        raise RuntimeError(f"Trained model dir missing at {model_dir}.")
+        if not model_dir.exists():
+            raise RuntimeError(f"Trained model dir missing at {model_dir}.")
 
     # Use the project's prepared train + val files as the eval set.
     prepared_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
@@ -941,7 +982,7 @@ def run_project_comparison(
     with val_file.open(encoding="utf-8") as f:
         val_rows = [json.loads(line) for line in f if line.strip()]
 
-    print(f"[harness] project={project_id} model={model_dir}")
+    print(f"[harness] project={project_id} model={model_dir or base_model + ' (base model)'}")
     print(f"[harness] train_rows={len(train_rows)} val_rows={len(val_rows)}")
 
     # Use the project's DEPLOYED BM25 index (built at training-
@@ -1020,9 +1061,10 @@ def run_project_comparison(
     payload = {
         "project_id": project_id,
         "cached_at": datetime.now(timezone.utc).isoformat(),
-        "experiment_id": int(exp_row["id"]),
+        "experiment_id": None if base_only else int(exp_row["id"]),
+        "model": "base" if base_only else "fine_tuned",
         "base_model": base_model,
-        "model_dir": str(model_dir),
+        "model_dir": None if base_only else str(model_dir),
         "summary": {
             "off_mean_f1": off_mean,
             "on_mean_f1": on_mean,
@@ -1034,7 +1076,10 @@ def run_project_comparison(
         },
         "rows": combined_rows,
     }
-    cache_path = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / "comparison.json"
+    cache_path = (
+        settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
+        / ("comparison_base.json" if base_only else "comparison.json")
+    )
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"[harness] wrote comparison to {cache_path}")
@@ -1047,7 +1092,7 @@ def main(argv: list[str] | None = None) -> int:
     # Phase 9d per-project mode — short-circuits the template gate
     # flow and writes the cached comparison for the Eval-tab panel.
     if args.project is not None:
-        run_project_comparison(args.project)
+        run_project_comparison(args.project, base_only=bool(args.base_only))
         return 0
 
     templates = tuple(args.templates) if args.templates else QA_SFT_TEMPLATES

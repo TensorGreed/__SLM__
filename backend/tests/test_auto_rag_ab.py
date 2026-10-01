@@ -256,6 +256,14 @@ class GenerationCapTests(unittest.TestCase):
         self.assertEqual(_generation_cap(_WordTokenizer(), []), GENERATION_MAX_NEW_TOKENS)
 
 
+class BaseOnlyFlagTests(unittest.TestCase):
+    def test_base_only_is_opt_in(self):
+        from scripts.auto_rag_ab import _parse_args
+
+        self.assertFalse(_parse_args(["--project", "3"]).base_only)
+        self.assertTrue(_parse_args(["--project", "3", "--base-only"]).base_only)
+
+
 class GeneratedAnswerCleanerTests(unittest.TestCase):
     def test_strips_prompt_prefix_and_eot_tail(self):
         decoded = (

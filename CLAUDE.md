@@ -446,6 +446,9 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   no-template fallback), decodes only the new tokens, and loads either
   base + LoRA adapter or a full fine-tuned `model/` dir. Generation is capped
   at 1.5× the longest training answer (`_generation_cap`, 32–128 tokens).
+  `--project N --base-only` scores the **base model** with/without retrieval
+  (the RAG-first question) → `auto_rag/comparison_base.json`; it never
+  overwrites the fine-tuned `comparison.json` the panel reads.
 - **Reroute-to-RAG** — `rag_project_service.clone_project_for_rag()`
   creates a sibling project with `runtime_config.rag_first=True`. The
   playground uses base model + retrieval (no LoRA).
@@ -462,6 +465,12 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   (preflight), `CloudBurstPlanningSection` (owns its state; `key={projectId}`),
   `TrainingRunView` (one run), `TrainingRunsList`. Add new config fields to the
   hook, not as panel `useState`.
+  **LoRA targets default to `"auto"`** (`services/lora_target_policy.py`,
+  resolved in `train.py` from the loaded model's real parameter count):
+  `all-linear` for causal-LM models ≤ 2B params (q/v alone under-fit
+  SmolLM2-135M and Qwen2.5-1.5B), classic `q_proj`/`v_proj` otherwise; an
+  explicit list or `"all-linear"` is never overridden. `target_modules` can be
+  a string — don't `.join()` it blindly in the UI.
   `scripts/train.py` runs as a standalone script (`python scripts/train.py`
   from the Celery worker), so it adds `backend/` to `sys.path` itself — its
   lazy `from app...` imports otherwise fail with "No module named 'app'"
