@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import statistics
 import subprocess
@@ -52,10 +53,13 @@ QA_SFT_TEMPLATES: tuple[str, ...] = ("policy-qa-style",)
 # Gate threshold mirrors Epic 6c: ≥5% lift, non-overlapping 1σ bands.
 GATE_MIN_LIFT_PCT: float = 5.0
 
-# Generation budget per val row. SmolLM2-135M with max_new_tokens=200
-# costs ~2-4s on GB10. Larger budget yields longer answers but the
-# QA template answers are typically 1-3 sentences — 200 is plenty.
-GENERATION_MAX_NEW_TOKENS: int = 200
+# Upper bound on the generation budget per val row (the held-out eval's
+# default). The budget actually used is sized to the project's answers —
+# see ``_generation_cap``.
+GENERATION_MAX_NEW_TOKENS: int = 128
+GENERATION_MIN_NEW_TOKENS: int = 32
+# Headroom over the longest training answer.
+GENERATION_CAP_HEADROOM: float = 1.5
 
 # Top-K retrieval count for the with-RAG condition. Matches the
 # Phase 9b default (PlaygroundChatRequest.auto_rag_k default is 3).
@@ -382,6 +386,33 @@ def _build_inference_prompt(
     return _format_llama3_inference_prompt(question), False
 
 
+def _generation_cap(tokenizer: Any, train_rows: list[dict[str, Any]]) -> int:
+    """Generation budget for one answer: 1.5x the longest TRAINING answer,
+    within [GENERATION_MIN_NEW_TOKENS, GENERATION_MAX_NEW_TOKENS].
+
+    A small model that never emits its end-of-turn token rambles until the
+    budget runs out; with a flat 200-token budget a correct first sentence
+    was buried under ~150 tokens of filler and token-F1 scored it near zero
+    (the with-RAG arm, which copies the preamble's Q/A pattern, worst of
+    all). The cap comes from the training answers, never the val references.
+    """
+    longest = 0
+    for row in train_rows:
+        answer = str(row.get("answer") or "").strip()
+        if not answer:
+            continue
+        try:
+            longest = max(longest, len(tokenizer(answer, add_special_tokens=False)["input_ids"]))
+        except Exception:  # noqa: BLE001
+            continue
+    if longest <= 0:
+        return GENERATION_MAX_NEW_TOKENS
+    return max(
+        GENERATION_MIN_NEW_TOKENS,
+        min(GENERATION_MAX_NEW_TOKENS, math.ceil(longest * GENERATION_CAP_HEADROOM)),
+    )
+
+
 def _stop_token_ids(tokenizer: Any) -> list[int]:
     """EOS plus whichever end-of-turn markers this tokenizer actually has."""
     ids: list[int] = []
@@ -439,7 +470,7 @@ def evaluate_with_inference(
       corpus may differ.
     * ``index_dir_override=<path>`` (Phase 9d per-project path) —
       use an **existing** BM25 index at the given path. The
-      ``train_rows`` argument is ignored in this mode. Use this when
+      ``train_rows`` only sizes the generation cap in this mode. Use this when
       you want the comparison to predict what the project's actual
       playground will do (the playground reads
       ``data/projects/{id}/auto_rag/bm25_index.json``, built over the
@@ -493,6 +524,7 @@ def evaluate_with_inference(
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
     stop_ids = _stop_token_ids(tokenizer)
+    max_new_tokens = _generation_cap(tokenizer, train_rows)
     # A LoRA run saves only the adapter (load base + adapter); a full
     # fine-tune saves the whole model (load it directly). The harness used to
     # assume LoRA and crashed on full fine-tunes — the quickstart default.
@@ -544,7 +576,7 @@ def evaluate_with_inference(
         with torch.no_grad():
             output_ids = model.generate(
                 **inputs,
-                max_new_tokens=GENERATION_MAX_NEW_TOKENS,
+                max_new_tokens=max_new_tokens,
                 do_sample=False,
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=stop_ids or None,

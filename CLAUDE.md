@@ -444,7 +444,8 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   The harness (`scripts/auto_rag_ab.py`) prompts with the **tokenizer's chat
   template** (`_build_inference_prompt`; Llama-3 headers only as the
   no-template fallback), decodes only the new tokens, and loads either
-  base + LoRA adapter or a full fine-tuned `model/` dir.
+  base + LoRA adapter or a full fine-tuned `model/` dir. Generation is capped
+  at 1.5× the longest training answer (`_generation_cap`, 32–128 tokens).
 - **Reroute-to-RAG** — `rag_project_service.clone_project_for_rag()`
   creates a sibling project with `runtime_config.rag_first=True`. The
   playground uses base model + retrieval (no LoRA).
@@ -475,7 +476,9 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   (`_encode_causal_lm_example` + `CausalLMCompletionCollator` — don't go back
   to `DataCollatorForLanguageModeling`, it masks EOS when pad==eos);
   `auto_epochs` (default on, `services/training_epoch_policy.py`) sizes
-  epochs to row count — an explicit `num_epochs` disables it (schema
+  epochs to row count (target ~200 optimizer steps; small data drops gradient
+  accumulation to 1 *before* adding epochs; ceilings 4 / 8 / 3 epochs for
+  <100 / <1000 / larger — 108 rows → 8 epochs, 216 steps) — an explicit `num_epochs` disables it (schema
   validator). Regression net: `tests/test_training_correctness.py`
   (real SmolLM2 fine-tune must beat base on a held-out split; skips
   without torch / cached model).

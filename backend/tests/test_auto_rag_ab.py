@@ -45,6 +45,7 @@ from scripts.auto_rag_ab import (  # noqa: E402
     _flatten_qa_row,
     _format_llama3_inference_prompt,
     _format_llama3_rag_prompt,
+    _generation_cap,
     _stop_token_ids,
     _split_70_15_15,
     aggregate_results,
@@ -230,6 +231,29 @@ class ChatTemplatePromptTests(unittest.TestCase):
         # ChatML: <|im_end|> is the EOS (deduped); no <|eot_id|> (maps to unk).
         self.assertEqual(_stop_token_ids(_ChatMLTokenizer()), [2])
         self.assertEqual(_stop_token_ids(_NoTemplateTokenizer()), [7, 9])
+
+
+class _WordTokenizer:
+    def __call__(self, text, add_special_tokens=False):
+        return {"input_ids": text.split()}
+
+
+class GenerationCapTests(unittest.TestCase):
+    """The budget is sized to the project's answers: a flat 200 tokens let a
+    model that never stops bury a correct first sentence under filler."""
+
+    def test_cap_is_headroom_over_the_longest_training_answer(self):
+        rows = [{"answer": "one two three"}, {"answer": " ".join(["w"] * 40)}, {"question": "no answer"}]
+        self.assertEqual(_generation_cap(_WordTokenizer(), rows), 60)
+
+    def test_cap_is_bounded(self):
+        from scripts.auto_rag_ab import GENERATION_MAX_NEW_TOKENS, GENERATION_MIN_NEW_TOKENS
+
+        self.assertEqual(_generation_cap(_WordTokenizer(), [{"answer": "Yes."}]), GENERATION_MIN_NEW_TOKENS)
+        long_rows = [{"answer": " ".join(["w"] * 500)}]
+        self.assertEqual(_generation_cap(_WordTokenizer(), long_rows), GENERATION_MAX_NEW_TOKENS)
+        # No usable answers → the upper bound, not zero.
+        self.assertEqual(_generation_cap(_WordTokenizer(), []), GENERATION_MAX_NEW_TOKENS)
 
 
 class GeneratedAnswerCleanerTests(unittest.TestCase):
