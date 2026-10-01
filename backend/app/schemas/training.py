@@ -70,8 +70,9 @@ class TrainingConfig(BaseModel):
     auto_epochs: bool = Field(
         True,
         description=(
-            "Scale epochs (and, for tiny datasets, gradient accumulation) to "
-            "the training-row count via ``training_epoch_policy``; "
+            "Scale epochs (and, for small datasets, gradient accumulation — "
+            "it shrinks before epochs are added) to the training-row count "
+            "via ``training_epoch_policy``; "
             "``num_epochs`` is ignored while on. Set False to use "
             "``num_epochs`` exactly."
         ),

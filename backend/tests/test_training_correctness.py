@@ -197,6 +197,23 @@ class AutoEpochPolicyTests(unittest.TestCase):
         self.assertGreaterEqual(plan["steps_per_epoch"], MIN_STEPS_PER_EPOCH)
         self.assertLessEqual(plan["num_epochs"], max_epochs_for_rows(40))
 
+    def test_small_dataset_reaches_the_step_target(self):
+        """108 rows used to get 9 steps x 5 epochs = 45 optimizer steps (GA
+        shrank only to 3, epochs capped at 5) and the run barely moved. The
+        accumulation drops to 1 first, then epochs rise to the ceiling."""
+        from app.services.training_epoch_policy import TARGET_OPTIMIZER_STEPS
+
+        plan = resolve_auto_epochs(train_rows=108, batch_size=4, gradient_accumulation_steps=4)
+        self.assertEqual(plan["gradient_accumulation_steps"], 1)
+        self.assertGreaterEqual(plan["total_steps"], TARGET_OPTIMIZER_STEPS)
+        self.assertLessEqual(plan["num_epochs"], max_epochs_for_rows(108))
+        # Enough rows to hit the target in a few epochs: accumulation shrinks
+        # only as far as needed, and epochs stay low.
+        mid = resolve_auto_epochs(train_rows=600, batch_size=4, gradient_accumulation_steps=4)
+        self.assertGreater(mid["gradient_accumulation_steps"], 1)
+        self.assertGreaterEqual(mid["total_steps"], TARGET_OPTIMIZER_STEPS)
+        self.assertLessEqual(mid["num_epochs"], 3)
+
     def test_large_dataset_gets_one_epoch(self):
         plan = resolve_auto_epochs(train_rows=50_000, batch_size=4, gradient_accumulation_steps=4)
         self.assertEqual(plan["num_epochs"], 1)
