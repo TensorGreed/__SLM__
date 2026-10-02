@@ -331,3 +331,42 @@
     font-size: 12px;
     color: var(--accent, #3b82f6);
 }
+
+/* Row counts + "is the lift more than noise?" under each model's numbers. */
+.auto-rag-comparison__evidence {
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    border-left: 3px solid var(--border-default);
+    padding: 4px 0 4px 10px;
+}
+
+.auto-rag-comparison__evidence-label {
+    display: inline-block;
+    margin-right: 8px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 11px;
+    background: var(--gray-100, #f3f4f6);
+    color: var(--text-primary);
+}
+
+.auto-rag-comparison__evidence--within_noise,
+.auto-rag-comparison__evidence--too_few_rows {
+    border-left-color: var(--color-warning-border, #f59e0b);
+}
+
+.auto-rag-comparison__evidence--within_noise .auto-rag-comparison__evidence-label,
+.auto-rag-comparison__evidence--too_few_rows .auto-rag-comparison__evidence-label {
+    background: var(--color-warning-bg, #fffbeb);
+    color: var(--color-warning-fg, #92400e);
+}
+
+.auto-rag-comparison__evidence--better {
+    border-left-color: var(--color-success-fg, #166534);
+}
+
+.auto-rag-comparison__evidence--worse {
+    border-left-color: var(--color-error, #b91c1c);
+}

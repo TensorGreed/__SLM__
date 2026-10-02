@@ -183,7 +183,10 @@ async def get_auto_rag_comparison(
             null when only the base-model comparison exists); ``base`` is
             the base-model comparison or null. ``stale`` is true when the
             fine-tuned comparison was measured on an older run than
-            ``latest_experiment_id``.
+            ``latest_experiment_id``. Each comparison carries ``evidence``
+            (rows better / worse / same, a 95% interval for the mean per-row
+            change, and a verdict: better / worse / within_noise /
+            too_few_rows) so a lift on a few rows isn't read as a result.
       400 — project missing a recipe (detail is a dict with
             ``error_code="RECIPE_REQUIRED"``) OR recipe is set but
             ineligible for auto-RAG (detail is a string).
@@ -260,6 +263,7 @@ async def get_auto_rag_comparison(
         "rows": (fine_tuned or {}).get("rows") or [],
         "experiment_id": (fine_tuned or {}).get("experiment_id"),
         "base_model": (fine_tuned or base or {}).get("base_model"),
+        "evidence": (fine_tuned or {}).get("evidence"),
         "base": base,
     }
 
@@ -277,13 +281,34 @@ def _read_cached_comparison(cache_path: Path) -> dict[str, Any] | None:
             status_code=503,
             detail=f"Cached comparison at {cache_path} is unreadable: {e}",
         ) from e
+    rows = payload.get("rows") or []
     return {
         "cached_at": payload.get("cached_at"),
         "summary": payload.get("summary") or {},
-        "rows": payload.get("rows") or [],
+        "rows": rows,
         "experiment_id": payload.get("experiment_id"),
         "base_model": payload.get("base_model"),
+        "evidence": _lift_evidence(rows),
     }
+
+
+def _lift_evidence(rows: list[Any]) -> dict[str, Any]:
+    """How solid the with-RAG vs without-RAG difference is: rows better /
+    worse / same and whether the mean per-row change is within noise.
+    Computed from the cached per-row F1 pairs, so older caches get it too."""
+    from app.services.paired_comparison_stats import paired_difference_evidence
+
+    without: list[float] = []
+    with_rag: list[float] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        off = (row.get("without_rag") or {}).get("f1") if isinstance(row.get("without_rag"), dict) else None
+        on = (row.get("with_rag") or {}).get("f1") if isinstance(row.get("with_rag"), dict) else None
+        if isinstance(off, (int, float)) and isinstance(on, (int, float)):
+            without.append(float(off))
+            with_rag.append(float(on))
+    return paired_difference_evidence(without, with_rag)
 
 
 def _index_row_count(index_path: Path) -> int:

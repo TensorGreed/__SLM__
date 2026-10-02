@@ -36,12 +36,27 @@ interface AutoRagSummary {
     rag_k: number;
 }
 
+/** How solid the with-RAG vs without-RAG difference is (backend
+ *  ``paired_comparison_stats``): row counts + a 95% interval for the mean
+ *  per-row F1 change. */
+interface LiftEvidence {
+    n: number;
+    better: number;
+    worse: number;
+    same: number;
+    mean_diff: number | null;
+    ci_low: number | null;
+    ci_high: number | null;
+    verdict: 'better' | 'worse' | 'within_noise' | 'too_few_rows';
+}
+
 interface AutoRagModelComparison {
     cached_at: string | null;
     summary: AutoRagSummary | null;
     rows: AutoRagRow[];
     experiment_id?: number | null;
     base_model?: string | null;
+    evidence?: LiftEvidence | null;
 }
 
 type ComparisonModel = 'fine_tuned' | 'base';
@@ -56,6 +71,7 @@ interface AutoRagComparisonResponse {
     rows: AutoRagRow[];
     experiment_id?: number | null;
     base_model?: string | null;
+    evidence?: LiftEvidence | null;
     base?: AutoRagModelComparison | null;
     /** The project's latest trained run, and whether the fine-tuned
      *  comparison was measured on an older one. */
@@ -65,6 +81,46 @@ interface AutoRagComparisonResponse {
 
 function hasSummary(summary: AutoRagSummary | null | undefined): summary is AutoRagSummary {
     return !!summary && typeof summary.off_mean_f1 === 'number' && typeof summary.on_mean_f1 === 'number';
+}
+
+function signedF1(value: number): string {
+    return `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(3)}`;
+}
+
+function rowCountsText(ev: LiftEvidence): string {
+    const rows = (count: number) => `${count} row${count === 1 ? '' : 's'}`;
+    const parts = [`helped ${rows(ev.better)}`, `hurt ${rows(ev.worse)}`];
+    if (ev.same > 0) parts.push(`no change on ${ev.same}`);
+    return `Retrieval ${parts.join(', ')}.`;
+}
+
+/** The sentence that keeps a lift on a few rows from being read as a
+ *  result. ``trained`` adds the run-to-run caveat: the interval covers
+ *  which rows were sampled, not what another training seed would give. */
+function evidenceNote(ev: LiftEvidence, trained: boolean): { label: string; text: string } {
+    const range = ev.mean_diff !== null && ev.ci_low !== null && ev.ci_high !== null
+        ? `average change ${signedF1(ev.mean_diff)} F1 per row, 95% range ${signedF1(ev.ci_low)} to ${signedF1(ev.ci_high)}`
+        : null;
+    if (ev.verdict === 'too_few_rows') {
+        return {
+            label: 'Too few rows to tell',
+            text: `Only ${ev.n} scored row${ev.n === 1 ? '' : 's'} — not enough to tell a gain from noise.`,
+        };
+    }
+    if (ev.verdict === 'within_noise') {
+        return {
+            label: 'Within noise',
+            text: `On ${ev.n} rows the ${range} — it includes zero, so this lift could be chance. Don't read it as a gain or a loss.`,
+        };
+    }
+    const direction = ev.verdict === 'better' ? 'gain' : 'drop';
+    const seedCaveat = trained
+        ? ' This is one training run: another seed can move it, so re-train and re-run before relying on it.'
+        : '';
+    return {
+        label: ev.verdict === 'better' ? 'Gain on these rows' : 'Drop on these rows',
+        text: `On ${ev.n} rows the ${range} — a ${direction} beyond row-to-row noise.${seedCaveat}`,
+    };
 }
 
 function shortModelName(name: string | null | undefined): string {
@@ -314,6 +370,7 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
         rows: data.rows || [],
         experiment_id: data.experiment_id,
         base_model: data.base_model,
+        evidence: data.evidence ?? null,
     };
     const base: AutoRagModelComparison | null = data.base ?? null;
     const fineTunedReady = hasSummary(fineTuned.summary);
@@ -333,14 +390,20 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
     // measured, so the sentence never compares against a missing side.
     let verdict: string | null = null;
     if (fineTunedReady && baseReady && fineTuned.summary && base?.summary) {
-        const candidates = [
-            { label: `${fineTunedTitle.toLowerCase()} without retrieval`, f1: fineTuned.summary.off_mean_f1 },
-            { label: `${fineTunedTitle.toLowerCase()} with retrieval`, f1: fineTuned.summary.on_mean_f1 },
-            { label: `base model without retrieval`, f1: base.summary.off_mean_f1 },
-            { label: `base model with retrieval`, f1: base.summary.on_mean_f1 },
+        const candidates: Array<{ label: string; f1: number; retrievalEvidence: LiftEvidence | null }> = [
+            { label: `${fineTunedTitle.toLowerCase()} without retrieval`, f1: fineTuned.summary.off_mean_f1, retrievalEvidence: null },
+            { label: `${fineTunedTitle.toLowerCase()} with retrieval`, f1: fineTuned.summary.on_mean_f1, retrievalEvidence: fineTuned.evidence ?? null },
+            { label: `base model without retrieval`, f1: base.summary.off_mean_f1, retrievalEvidence: null },
+            { label: `base model with retrieval`, f1: base.summary.on_mean_f1, retrievalEvidence: base.evidence ?? null },
         ];
         const best = candidates.reduce((a, b) => (b.f1 > a.f1 ? b : a));
         verdict = `Highest of the four: ${best.label} (F1 ${best.f1.toFixed(3)}).`;
+        // The top number is a with-retrieval one whose edge over the same
+        // model without retrieval isn't established — say so right here.
+        const ev = best.retrievalEvidence;
+        if (ev && (ev.verdict === 'within_noise' || ev.verdict === 'too_few_rows')) {
+            verdict += ' Its edge over the same model without retrieval is within noise.';
+        }
     }
 
     const activeRowsModel: ComparisonModel =
@@ -372,6 +435,7 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
                     testIdPrefix="auto-rag-comparison"
                     runTestId="auto-rag-comparison-finetuned-run-btn"
                     title={fineTunedTitle}
+                    trained
                     provenance={shortModelName(data.base_model) + ' + your training'}
                     comparison={fineTunedReady ? fineTuned : null}
                     emptyText="Not run yet. Needs a completed training run."
@@ -389,6 +453,7 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
                     testIdPrefix="auto-rag-comparison-base"
                     runTestId="auto-rag-comparison-base-run-btn"
                     title={`Base model · ${baseModelName}`}
+                    trained={false}
                     provenance="No fine-tuning — what a RAG-first project serves"
                     comparison={baseReady ? base : null}
                     emptyText="Not run yet. Shows what retrieval alone does, without your fine-tune."
@@ -442,6 +507,8 @@ interface ModelComparisonCardProps {
     /** Test id of the Run button shown when this side has not been run. */
     runTestId: string;
     title: string;
+    /** A fine-tuned run (adds the "one training run" caveat to a verdict). */
+    trained: boolean;
     provenance: string;
     comparison: AutoRagModelComparison | null;
     emptyText: string;
@@ -460,6 +527,7 @@ function ModelComparisonCard({
     testIdPrefix,
     runTestId,
     title,
+    trained,
     provenance,
     comparison,
     emptyText,
@@ -496,9 +564,15 @@ function ModelComparisonCard({
     }
     const lift = summary.relative_lift_pct;
     const liftStr = lift !== null && lift !== undefined ? `${lift >= 0 ? '+' : ''}${lift.toFixed(1)}%` : '—';
-    const tone = lift !== null && lift !== undefined && lift > 0
-        ? ' is-positive'
-        : lift !== null && lift !== undefined && lift < 0 ? ' is-negative' : '';
+    const evidence = comparison.evidence ?? null;
+    // Green / red only when the change is beyond row-to-row noise. Without
+    // evidence (older payloads) fall back to the sign of the lift.
+    const tone = evidence
+        ? (evidence.verdict === 'better' ? ' is-positive' : evidence.verdict === 'worse' ? ' is-negative' : '')
+        : lift !== null && lift !== undefined && lift > 0
+            ? ' is-positive'
+            : lift !== null && lift !== undefined && lift < 0 ? ' is-negative' : '';
+    const note = evidence ? evidenceNote(evidence, trained) : null;
     return (
         <div className="auto-rag-comparison__model" data-testid={`${testIdPrefix}-card`}>
             <div className="auto-rag-comparison__model-head">
@@ -549,6 +623,17 @@ function ModelComparisonCard({
                     <div className="auto-rag-comparison__totals-sub">relative to without RAG</div>
                 </div>
             </div>
+            {evidence && note && (
+                <div
+                    className={`auto-rag-comparison__evidence auto-rag-comparison__evidence--${evidence.verdict}`}
+                    data-testid={`${testIdPrefix}-evidence`}
+                    data-verdict={evidence.verdict}
+                >
+                    <span className="auto-rag-comparison__evidence-label">{note.label}</span>
+                    <span data-testid={`${testIdPrefix}-row-counts`}>{rowCountsText(evidence)}</span>{' '}
+                    <span>{note.text}</span>
+                </div>
+            )}
         </div>
     );
 }

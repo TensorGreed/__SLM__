@@ -452,3 +452,88 @@ describe('AutoRagComparisonPanel — live refresh + stale run', () => {
         expect(screen.queryByTestId('auto-rag-comparison-stale')).not.toBeInTheDocument();
     });
 });
+
+
+describe('AutoRagComparisonPanel — row counts + "within noise"', () => {
+    const summary = { off_mean_f1: 0.2165, on_mean_f1: 0.2645, absolute_lift: 0.048, relative_lift_pct: 22.2, n_val_rows: 21, rag_k: 3 };
+    const base = {
+        cached_at: '2026-10-01T12:00:00Z',
+        experiment_id: null,
+        base_model: 'HuggingFaceTB/SmolLM2-135M-Instruct',
+        summary: { off_mean_f1: 0.1056, on_mean_f1: 0.1363, absolute_lift: 0.0307, relative_lift_pct: 29.1, n_val_rows: 21, rag_k: 3 },
+        rows: [],
+        evidence: { n: 21, better: 14, worse: 6, same: 1, mean_diff: 0.0307, ci_low: -0.0054, ci_high: 0.0668, verdict: 'within_noise' },
+    };
+    const payload = (evidence: Record<string, unknown>) => ({
+        project_id: 18, recipe_id: 'qa-sft', cached_at: '2026-10-01T19:00:00Z', experiment_id: 26,
+        latest_experiment_id: 26, stale: false, base_model: base.base_model,
+        summary, rows: [], evidence, base,
+    });
+
+    beforeEach(() => {
+        apiMock.get.mockReset();
+        jobsState.jobs = [];
+    });
+
+    it('marks a positive lift whose interval includes zero as within noise', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            status: 200,
+            data: payload({ n: 21, better: 14, worse: 7, same: 0, mean_diff: 0.048, ci_low: 0.0033, ci_high: 0.0928, verdict: 'better' }),
+        });
+        render(<AutoRagComparisonPanel projectId={18} />);
+
+        const baseEvidence = await screen.findByTestId('auto-rag-comparison-base-evidence');
+        expect(baseEvidence).toHaveAttribute('data-verdict', 'within_noise');
+        expect(baseEvidence).toHaveTextContent('Within noise');
+        expect(screen.getByTestId('auto-rag-comparison-base-row-counts')).toHaveTextContent(
+            'Retrieval helped 14 rows, hurt 6 rows, no change on 1.',
+        );
+        expect(baseEvidence).toHaveTextContent('95% range −0.005 to +0.067');
+        expect(baseEvidence).toHaveTextContent(/could be chance/);
+        // +29.1% is shown, but not painted as a win.
+        const baseLift = screen.getByTestId('auto-rag-comparison-base-lift');
+        expect(baseLift).toHaveTextContent('+29.1%');
+        expect(baseLift.className).not.toMatch(/is-positive/);
+    });
+
+    it('a gain beyond row noise on a fine-tuned run still carries the one-run caveat', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            status: 200,
+            data: payload({ n: 21, better: 14, worse: 7, same: 0, mean_diff: 0.048, ci_low: 0.0033, ci_high: 0.0928, verdict: 'better' }),
+        });
+        render(<AutoRagComparisonPanel projectId={18} />);
+
+        const evidence = await screen.findByTestId('auto-rag-comparison-evidence');
+        expect(evidence).toHaveAttribute('data-verdict', 'better');
+        expect(screen.getByTestId('auto-rag-comparison-row-counts')).toHaveTextContent('Retrieval helped 14 rows, hurt 7 rows.');
+        expect(evidence).toHaveTextContent(/one training run: another seed can move it/);
+        expect(screen.getByTestId('auto-rag-comparison-lift').className).toMatch(/is-positive/);
+        // The base model has no training seed — no such caveat there.
+        expect(screen.getByTestId('auto-rag-comparison-base-evidence')).not.toHaveTextContent(/training run/);
+    });
+
+    it('qualifies "highest of the four" when the winner\'s retrieval edge is within noise', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            status: 200,
+            data: payload({ n: 21, better: 11, worse: 9, same: 1, mean_diff: 0.048, ci_low: -0.02, ci_high: 0.116, verdict: 'within_noise' }),
+        });
+        render(<AutoRagComparisonPanel projectId={18} />);
+
+        const verdict = await screen.findByTestId('auto-rag-comparison-verdict');
+        expect(verdict).toHaveTextContent(/run #26 with retrieval \(F1 0\.265\)/);
+        expect(verdict).toHaveTextContent(/edge over the same model without retrieval is within noise/);
+        expect(screen.getByTestId('auto-rag-comparison-lift').className).not.toMatch(/is-positive/);
+    });
+
+    it('says when there are too few rows to tell', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            status: 200,
+            data: payload({ n: 2, better: 2, worse: 0, same: 0, mean_diff: 0.3, ci_low: null, ci_high: null, verdict: 'too_few_rows' }),
+        });
+        render(<AutoRagComparisonPanel projectId={18} />);
+
+        const evidence = await screen.findByTestId('auto-rag-comparison-evidence');
+        expect(evidence).toHaveTextContent('Too few rows to tell');
+        expect(evidence).toHaveTextContent(/Only 2 scored rows/);
+    });
+});

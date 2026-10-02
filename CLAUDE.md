@@ -460,6 +460,14 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   progress on that card + all Run buttons disabled; a newly succeeded Job →
   silent re-fetch (no loading flash). Tests mock the store as a callable with
   `getState`.
+  Each comparison carries `evidence` (`services/paired_comparison_stats.py`,
+  pure: rows better / worse / same + paired-t 95% interval on the mean per-row
+  change → `better` / `worse` / `within_noise` / `too_few_rows`), computed at
+  read time from the cached rows. The card shows it under the numbers; the
+  lift is only coloured when the verdict is better/worse, and a fine-tuned
+  verdict adds a one-training-run caveat (the interval covers row sampling,
+  not seed-to-seed variance). Reuse the helper for any paired before/after
+  metric — don't show a bare lift on a few rows.
 - **Reroute-to-RAG** — `rag_project_service.clone_project_for_rag()`
   creates a sibling project with `runtime_config.rag_first=True`. The
   playground uses base model + retrieval (no LoRA).

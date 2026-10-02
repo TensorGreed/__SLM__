@@ -417,6 +417,9 @@ class AutoRagComparisonApiTests(unittest.TestCase):
         self.assertEqual(body["summary"]["on_mean_f1"], 0.30)
         self.assertEqual(len(body["rows"]), 1)
         self.assertEqual(body["rows"][0]["question"], "How many PTO days?")
+        # One cached row can't support a verdict — but its count is reported.
+        self.assertEqual(body["evidence"]["verdict"], "too_few_rows")
+        self.assertEqual((body["evidence"]["n"], body["evidence"]["better"]), (1, 1))
         # Provenance of the fine-tuned side, and no base-model comparison yet.
         self.assertEqual(body["experiment_id"], 42)
         self.assertEqual(body["base_model"], "HuggingFaceTB/SmolLM2-135M-Instruct")
@@ -455,6 +458,38 @@ class AutoRagComparisonApiTests(unittest.TestCase):
         self.assertEqual(body["base"]["base_model"], "HuggingFaceTB/SmolLM2-135M-Instruct")
         self.assertIsNone(body["base"]["experiment_id"])
         self.assertEqual(len(body["base"]["rows"]), 1)
+
+    def test_lift_carries_row_counts_and_a_noise_verdict(self):
+        """A positive headline lift whose rows split both ways is reported as
+        within noise, per model."""
+        project = self._instantiate_template("policy-qa-style", "AutoRAG Comparison Evidence")
+
+        def _rows(pairs):
+            return [{"question": f"Q{i}?", "reference": "A.",
+                     "without_rag": {"generated": "x", "f1": off},
+                     "with_rag": {"generated": "y", "f1": on, "retrieved_row_count": 3}}
+                    for i, (off, on) in enumerate(pairs)]
+
+        mixed = [(0.2, 0.6), (0.2, 0.5), (0.2, 0.1), (0.2, 0.1), (0.2, 0.3), (0.2, 0.1), (0.2, 0.2)]
+        steady = [(0.1, 0.3), (0.2, 0.41), (0.15, 0.34), (0.3, 0.52), (0.25, 0.44), (0.12, 0.33)]
+        summary = {"off_mean_f1": 0.2, "on_mean_f1": 0.27, "relative_lift_pct": 35.0, "n_val_rows": 7, "rag_k": 3}
+        self._seed_cached_comparison(project["id"], {
+            "cached_at": "2026-10-02T10:00:00+00:00", "experiment_id": 3,
+            "base_model": "m", "summary": summary, "rows": _rows(mixed),
+        })
+        self._seed_cached_comparison(project["id"], {
+            "cached_at": "2026-10-02T10:05:00+00:00", "experiment_id": None, "model": "base",
+            "base_model": "m", "summary": summary, "rows": _rows(steady),
+        }, "comparison_base.json")
+        body = self.client.get(f"/api/projects/{project['id']}/auto-rag/comparison").json()
+        fine = body["evidence"]
+        self.assertEqual((fine["better"], fine["worse"], fine["same"]), (3, 3, 1))
+        self.assertGreater(fine["mean_diff"], 0)
+        self.assertEqual(fine["verdict"], "within_noise")
+        base = body["base"]["evidence"]
+        self.assertEqual((base["better"], base["worse"]), (6, 0))
+        self.assertEqual(base["verdict"], "better")
+        self.assertGreater(base["ci_low"], 0)
 
     def test_flags_a_comparison_measured_on_an_older_run(self):
         """The cache is for one run; after another run trains, the numbers
