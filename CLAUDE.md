@@ -475,7 +475,13 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   `evidence` (headline `f1` / `exact_match` / `accuracy` only);
   `EvalSummaryCard` softens its title when the lift is within noise. A cached
   baseline result without `row_scores` is not reused. Shared frontend wording
-  lives in `components/evaluation/liftEvidence.ts`.
+  lives in `components/evaluation/liftEvidence.ts`. The same verdict gates two
+  more surfaces: the `post_training_lift_eval` Job result carries a compact
+  `evidence` (bell line says "within noise" / "too few rows to tell" + row
+  counts instead of better/worse), and the Coach export stage emits
+  `export:within-noise` (warning) instead of `export:worse-than-base` /
+  `export:newer-better-run` when the evidence is `within_noise` or
+  `too_few_rows`. The summary's own `verdict` field is still the bare delta.
 - **Reroute-to-RAG** — `rag_project_service.clone_project_for_rag()`
   creates a sibling project with `runtime_config.rag_first=True`. The
   playground uses base model + retrieval (no LoRA).

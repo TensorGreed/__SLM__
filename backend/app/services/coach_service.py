@@ -3273,8 +3273,8 @@ async def _export_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
     """Export tab: nothing trained, shipping a model that lost to (or was
-    never compared with) its base model, or exporting an older run than
-    the best one."""
+    never compared with, or isn't clearly different from) its base model,
+    or exporting an older run than the best one."""
     from app.models.export import Export, ExportStatus
     from app.services.eval_summary_service import build_eval_summary
 
@@ -3300,7 +3300,42 @@ async def _export_stage_suggestions(
         return suggestions
 
     headline = summary.get("headline") or {}
-    if verdict == "worse":
+    # "Better" / "worse" come from the bare headline delta. When the row-level
+    # evidence says that change is within noise (or rests on too few rows),
+    # neither claim holds: don't call the export a downgrade, and don't
+    # recommend it as a model that "beats its base".
+    evidence = summary.get("evidence") if isinstance(summary.get("evidence"), dict) else None
+    unproven = (
+        verdict in {"better", "worse"}
+        and evidence is not None
+        and evidence.get("verdict") in {"within_noise", "too_few_rows"}
+    )
+    if unproven:
+        if evidence.get("verdict") == "too_few_rows":
+            why = (
+                f"only {evidence.get('n', 0)} test examples could be compared, "
+                "too few to tell a real change from chance"
+            )
+        else:
+            why = (
+                f"fine-tuning helped {evidence.get('better', 0)} test examples and hurt "
+                f"{evidence.get('worse', 0)}, a split that could be chance"
+            )
+        suggestions.append({
+            "id": "export:within-noise",
+            "title": f"The latest model ({run_label}) isn't clearly different from its base model",
+            "body": (
+                f"On the test examples, {headline.get('metric_id', 'the score')} "
+                f"went {headline.get('baseline_value')} → {headline.get('trained_value')}, "
+                f"but {why}. The export may add size without adding skill. "
+                "More test examples or more training data would settle it."
+            ),
+            "severity": "warning",
+            "action": _pipeline_tab_action("Open Eval", "eval"),
+            "rule_id": "export.within-noise",
+            "context": {"experiment_id": run_id, "headline": headline, "evidence": evidence},
+        })
+    elif verdict == "worse":
         suggestions.append({
             "id": "export:worse-than-base",
             "title": f"The latest model ({run_label}) scored worse than its base model",
@@ -3342,7 +3377,7 @@ async def _export_stage_suggestions(
             "context": {"experiment_id": run_id},
         })
 
-    if verdict == "better" and run_id:
+    if verdict == "better" and run_id and not unproven:
         result = await db.execute(
             select(Export)
             .where(Export.project_id == project.id, Export.status == ExportStatus.COMPLETED)

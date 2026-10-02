@@ -139,10 +139,22 @@ function jobOutcomeSummary(job: Job): string | null {
             direction?: string;
         } | null;
         if (h && typeof h.baseline_value === 'number' && typeof h.trained_value === 'number') {
-            const verb = h.direction === 'improved'
+            // Row-level evidence, when the job recorded it: a change that is
+            // within noise is not announced as better / worse than base.
+            const ev = (r.evidence || null) as {
+                verdict?: string;
+                better?: number;
+                worse?: number;
+            } | null;
+            const counts = ev && typeof ev.better === 'number' && typeof ev.worse === 'number'
+                ? ` · ${ev.better} row${ev.better === 1 ? '' : 's'} better, ${ev.worse} worse`
+                : '';
+            let verb = h.direction === 'improved'
                 ? 'better than base'
                 : h.direction === 'regressed' ? 'worse than base' : 'same as base';
-            return `${h.metric_id}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)} (${verb})`;
+            if (ev?.verdict === 'within_noise') verb = 'within noise';
+            else if (ev?.verdict === 'too_few_rows') verb = 'too few rows to tell';
+            return `${h.metric_id}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)} (${verb}${counts})`;
         }
         return typeof r.lift_status === 'string' ? `lift: ${r.lift_status}` : null;
     }

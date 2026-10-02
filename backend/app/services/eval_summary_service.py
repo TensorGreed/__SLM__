@@ -68,7 +68,7 @@ def _paired_row_scores(
     return (before, after) if before else None
 
 
-async def _lift_evidence(
+async def headline_lift_evidence(
     db: AsyncSession, lift: dict[str, Any], headline: dict[str, Any] | None
 ) -> dict[str, Any] | None:
     """Row counts + noise verdict for the headline lift (see
@@ -176,7 +176,7 @@ async def build_eval_summary(
     else:
         verdict, message = "no_comparison", lift.get("message")
 
-    evidence = await _lift_evidence(db, lift, headline) if lift.get("status") == "ok" else None
+    evidence = await headline_lift_evidence(db, lift, headline) if lift.get("status") == "ok" else None
 
     failures, failed_count = _failures_from(latest)
     details = latest.details if isinstance(latest.details, dict) else {}

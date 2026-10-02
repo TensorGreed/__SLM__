@@ -234,6 +234,43 @@ class ExportStageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("0.4 → 0.3", out[0]["body"])
         self.assertIn("run #12", out[0]["title"])
 
+    async def test_within_noise_is_neither_a_downgrade_nor_a_win(self):
+        """A "better" or "worse" headline whose row-level evidence is within
+        noise must not be called a downgrade, and must not be recommended as a
+        model that beats its base."""
+        headline = {"metric_id": "f1", "baseline_value": 0.106, "trained_value": 0.136}
+        noise = {"verdict": "within_noise", "n": 21, "better": 14, "worse": 6, "same": 1}
+        for verdict in ("better", "worse"):
+            out = await self._run(
+                {"verdict": verdict, "experiment_id": 12, "headline": headline, "evidence": noise},
+                last_export=SimpleNamespace(experiment_id=9),
+            )
+            self.assertEqual(_ids(out), ["export:within-noise"], verdict)
+            self.assertEqual(out[0]["severity"], "warning")
+            self.assertIn("isn't clearly different", out[0]["title"])
+            self.assertIn("helped 14 test examples and hurt 6", out[0]["body"])
+            self.assertIn("0.106 → 0.136", out[0]["body"])
+
+        few = await self._run({
+            "verdict": "better", "experiment_id": 12, "headline": headline,
+            "evidence": {"verdict": "too_few_rows", "n": 2, "better": 2, "worse": 0, "same": 0},
+        }, last_export=SimpleNamespace(experiment_id=9))
+        self.assertEqual(_ids(few), ["export:within-noise"])
+        self.assertIn("only 2 test examples could be compared", few[0]["body"])
+
+    async def test_evidence_beyond_noise_keeps_the_plain_verdicts(self):
+        headline = {"metric_id": "f1", "baseline_value": 0.4, "trained_value": 0.3}
+        worse = await self._run({
+            "verdict": "worse", "experiment_id": 12, "headline": headline,
+            "evidence": {"verdict": "worse", "n": 21, "better": 3, "worse": 15, "same": 3},
+        })
+        self.assertEqual((_ids(worse), worse[0]["severity"]), (["export:worse-than-base"], "critical"))
+        better = await self._run({
+            "verdict": "better", "experiment_id": 12, "headline": headline,
+            "evidence": {"verdict": "better", "n": 21, "better": 17, "worse": 4, "same": 0},
+        }, last_export=SimpleNamespace(experiment_id=9))
+        self.assertEqual(_ids(better), ["export:newer-better-run"])
+
     async def test_not_evaluated_and_same_warn(self):
         not_eval = await self._run({"verdict": "not_evaluated", "experiment_id": 12})
         same = await self._run({"verdict": "same", "experiment_id": 12, "headline": {}})

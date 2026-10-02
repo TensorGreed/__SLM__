@@ -104,7 +104,8 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
             # base and fine-tuned results row by row).
             details={} if self.legacy_results else {
                 "row_scores": {"keys": [f"k{i}" for i in range(10)],
-                               "correct": [1 if (i == 0) == is_base or (not is_base and i < 8) else 0 for i in range(10)]},
+                               # Base model: only row 0 right. Fine-tuned run: rows 0-7.
+                               "correct": [int(i == 0) if is_base else int(i < 8) for i in range(10)]},
             },
         )
         db.add(er)
@@ -180,6 +181,33 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
             async with self.sf() as db:
                 out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=third)
             self.assertTrue(out["baseline_reused"])
+
+    async def test_job_result_carries_row_evidence_for_the_bell(self):
+        """The bell line is built from the Job result: it needs the row-level
+        verdict so "better than base" isn't announced for a change that could
+        be chance. Results without per-row scores carry no evidence."""
+        pid = await self._project()
+        exp_id = await self._run(pid)
+        with mock.patch(
+            "app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout
+        ):
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=exp_id)
+        evidence = out["evidence"]
+        # Fake rows: base gets only row 0 right, the run gets rows 0-7 right.
+        self.assertEqual((evidence["n"], evidence["better"], evidence["worse"], evidence["same"]), (10, 7, 0, 3))
+        self.assertEqual(evidence["verdict"], "better")
+        self.assertEqual(set(evidence), {"verdict", "n", "better", "worse", "same"})
+
+        legacy_exp = await self._run(pid)
+        self.legacy_results = True
+        with mock.patch(
+            "app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout
+        ):
+            async with self.sf() as db:
+                legacy = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=legacy_exp)
+        self.assertEqual(legacy["lift_status"], "ok")
+        self.assertIsNone(legacy["evidence"])
 
     async def test_second_run_reuses_fresh_baseline(self):
         pid = await self._project()

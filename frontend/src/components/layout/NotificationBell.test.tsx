@@ -587,6 +587,52 @@ describe('NotificationBell', () => {
         expect(summary).toHaveTextContent('28 val rows');
     });
 
+    it('lift-check summary does not claim "better than base" when the change is within noise', async () => {
+        const headline = { metric_id: 'f1', baseline_value: 0.106, trained_value: 0.136, direction: 'improved' };
+        const jobs = [
+            jobFixture({
+                id: 51, kind: 'post_training_lift_eval', status: 'succeeded',
+                title: 'Did fine-tuning help? · run #26',
+                result: { headline, lift_status: 'ok', evidence: { verdict: 'within_noise', n: 21, better: 14, worse: 6, same: 1 } },
+            }),
+            jobFixture({
+                id: 52, kind: 'post_training_lift_eval', status: 'succeeded',
+                title: 'Did fine-tuning help? · run #27',
+                result: { headline, lift_status: 'ok', evidence: { verdict: 'better', n: 21, better: 17, worse: 4, same: 0 } },
+            }),
+            jobFixture({
+                id: 53, kind: 'post_training_lift_eval', status: 'succeeded',
+                title: 'Did fine-tuning help? · run #28',
+                result: { headline, lift_status: 'ok', evidence: { verdict: 'too_few_rows', n: 2, better: 2, worse: 0, same: 0 } },
+            }),
+            // Recorded before evidence existed: falls back to the bare direction.
+            jobFixture({
+                id: 54, kind: 'post_training_lift_eval', status: 'succeeded',
+                title: 'Did fine-tuning help? · run #20',
+                result: { headline, lift_status: 'ok' },
+            }),
+        ];
+        apiMock.get.mockResolvedValue({ data: { count: jobs.length, jobs } });
+        render(<NotificationBell />);
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+
+        const noise = screen.getByTestId('notification-bell-row-51-summary');
+        expect(noise).toHaveTextContent('f1: 0.106 → 0.136 (within noise · 14 rows better, 6 worse)');
+        expect(noise).not.toHaveTextContent('better than base');
+        expect(screen.getByTestId('notification-bell-row-52-summary')).toHaveTextContent(
+            '(better than base · 17 rows better, 4 worse)',
+        );
+        expect(screen.getByTestId('notification-bell-row-53-summary')).toHaveTextContent(
+            '(too few rows to tell · 2 rows better, 0 worse)',
+        );
+        expect(screen.getByTestId('notification-bell-row-54-summary')).toHaveTextContent(
+            'f1: 0.106 → 0.136 (better than base)',
+        );
+    });
+
     it('renders an empty-state message when no jobs are in the bell', async () => {
         apiMock.get.mockResolvedValue({ data: { count: 0, jobs: [] } });
         render(<NotificationBell />);

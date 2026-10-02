@@ -20,7 +20,7 @@ BrewSLM ships with a deliberate **beginner mode**, so a new ML engineer never se
     - **Data**, **Cleaning**, **Answer Key**, **Training** and **Eval**.
     - **Synthetic**: rows still waiting for review, a training mix that is mostly synthetic, or no task type chosen yet.
     - **Dataset Prep**: data not split yet, a split older than the data it was cut from, a test split too small to trust, or overlapping splits.
-    - **Export**: nothing trained yet, or the model you're about to ship lost to its base model or was never evaluated. It also flags a newer run that beat its base model but hasn't been exported.
+    - **Export**: nothing trained yet, or the model you're about to ship lost to its base model, was never evaluated, or isn't clearly different from the base model (the change on the test examples is within noise). It also flags a newer run that beat its base model but hasn't been exported.
 - **The full plan.** **Full plan** opens the project home: the checklist with Lab Journal stamps, one-click Quickstart actions, and the beginner-mode switch.
 - **Switching it off.** The 🧭 toggle in the top bar turns the Coach off for a project. It defaults to on for beginner projects.
 
