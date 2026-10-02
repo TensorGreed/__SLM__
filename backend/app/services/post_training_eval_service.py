@@ -263,17 +263,13 @@ async def run_post_training_lift_eval(
     )
     # How solid the headline lift is (rows better / worse, within noise?) —
     # the bell must not announce "better than base" for a change that could
-    # be chance. Best-effort: None when per-row scores aren't available.
-    evidence = None
-    if summary.get("status") == "ok":
-        try:
-            from app.services.eval_summary_service import headline_lift_evidence
-
-            full = await headline_lift_evidence(db, summary, headline)
-            if full is not None:
-                evidence = {k: full.get(k) for k in ("verdict", "n", "better", "worse", "same")}
-        except Exception:  # noqa: BLE001 — never fail the lift job over the note
-            evidence = None
+    # be chance. None when per-row scores aren't available.
+    full = (headline or {}).get("evidence") if summary.get("status") == "ok" else None
+    evidence = (
+        {k: full.get(k) for k in ("verdict", "n", "better", "worse", "same")}
+        if isinstance(full, dict)
+        else None
+    )
     return {
         "experiment_id": experiment_id,
         "base_model": exp.base_model,

@@ -510,6 +510,10 @@ async def run_auto_rag_comparison(
                 pass
 
         summary = payload.get("summary") or {}
+        # Compact row-level evidence for the bell line, so "+29% lift" on a
+        # few rows isn't announced without "within noise".
+        full_evidence = _lift_evidence(payload.get("rows") or [])
+        evidence = {k: full_evidence.get(k) for k in ("verdict", "n", "better", "worse", "same")}
         # Pointers-only result so the Job row stays cheap; the
         # comparison.json on disk is the canonical full payload.
         return {
@@ -521,6 +525,7 @@ async def run_auto_rag_comparison(
             "on_mean_f1": summary.get("on_mean_f1"),
             "absolute_lift": summary.get("absolute_lift"),
             "relative_lift_pct": summary.get("relative_lift_pct"),
+            "evidence": evidence,
             "n_val_rows": summary.get("n_val_rows"),
             "comparison_path": str(
                 settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"

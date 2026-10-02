@@ -482,6 +482,11 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   `export:within-noise` (warning) instead of `export:worse-than-base` /
   `export:newer-better-run` when the evidence is `within_noise` or
   `too_few_rows`. The summary's own `verdict` field is still the bare delta.
+  Evidence is attached per lift row in `sft_lift_summary_service`
+  (`_attach_row_evidence`; `metric_lifts[i].evidence`) — `eval_summary`, the
+  lift Job and `SftLiftPanel` all read it from there. The
+  `auto_rag_comparison` Job result carries a compact `evidence` too, and the
+  bell qualifies its lift with `shortEvidenceText`.
 - **Reroute-to-RAG** — `rag_project_service.clone_project_for_rag()`
   creates a sibling project with `runtime_config.rag_first=True`. The
   playground uses base model + retrieval (no LoRA).

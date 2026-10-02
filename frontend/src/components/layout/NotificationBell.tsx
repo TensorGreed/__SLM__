@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { cancelJob, dismissJob, type Job } from '../../api/jobs';
 import { useJobsStore } from '../../stores/jobsStore';
+import { shortEvidenceText } from '../evaluation/liftEvidence';
 import { toast } from '../../stores/toastStore';
 import TrainingKillSwitch from './TrainingKillSwitch';
 import TrainingLossSparkline from './TrainingLossSparkline';
@@ -186,7 +187,14 @@ function jobOutcomeSummary(job: Job): string | null {
         }
         if (lift !== null) {
             const sign = lift >= 0 ? '+' : '';
-            parts.push(`${sign}${lift.toFixed(2)}% lift`);
+            // Row-level evidence, when the job recorded it: a lift on a few
+            // rows is qualified right next to the number.
+            const ev = (r.evidence || null) as { verdict?: string; better?: number; worse?: number } | null;
+            const note = ev && typeof ev.better === 'number' && typeof ev.worse === 'number'
+                && (ev.verdict === 'within_noise' || ev.verdict === 'too_few_rows' || ev.verdict === 'better' || ev.verdict === 'worse')
+                ? ` (${shortEvidenceText({ verdict: ev.verdict, better: ev.better, worse: ev.worse })})`
+                : '';
+            parts.push(`${sign}${lift.toFixed(2)}% lift${note}`);
         }
         if (nVal !== null) {
             parts.push(`${nVal} val row${nVal === 1 ? '' : 's'}`);

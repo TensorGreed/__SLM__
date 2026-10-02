@@ -180,6 +180,77 @@ def _normalize_metrics(raw: Any) -> dict[str, float]:
     return out
 
 
+# Metric → which per-row score list (``EvalResult.details["row_scores"]``,
+# written by ``run_heldout_evaluation``) it is the mean of. Other metrics
+# (perplexity, macro-F1, …) aren't a mean of per-row values, so they get no
+# row-level evidence.
+_ROW_SCORE_FOR_METRIC: dict[str, str] = {
+    "f1": "f1",
+    "exact_match": "correct",
+    "accuracy": "correct",
+}
+
+
+def _paired_row_scores(
+    baseline: EvalResult | None, trained: EvalResult | None, metric_id: str
+) -> tuple[list[float], list[float]] | None:
+    """Per-row scores of the base model and the fine-tuned run on the rows
+    BOTH evaluated, in matching order. None when either result predates
+    per-row capture or the metric isn't a per-row mean."""
+    score_key = _ROW_SCORE_FOR_METRIC.get(metric_id)
+    if score_key is None or baseline is None or trained is None:
+        return None
+
+    def _scores(result: EvalResult) -> tuple[list[str], list[float]] | None:
+        details = result.details if isinstance(result.details, dict) else {}
+        row_scores = details.get("row_scores")
+        if not isinstance(row_scores, dict):
+            return None
+        keys, values = row_scores.get("keys"), row_scores.get(score_key)
+        if not isinstance(keys, list) or not isinstance(values, list) or len(keys) != len(values):
+            return None
+        return [str(k) for k in keys], [float(v) for v in values]
+
+    base, fine = _scores(baseline), _scores(trained)
+    if base is None or fine is None:
+        return None
+    if base[0] == fine[0]:
+        return base[1], fine[1]
+    # Different order / count: pair rows by key (first occurrence wins).
+    base_by_key: dict[str, float] = {}
+    for key, value in zip(*base):
+        base_by_key.setdefault(key, value)
+    before: list[float] = []
+    after: list[float] = []
+    seen: set[str] = set()
+    for key, value in zip(*fine):
+        if key in base_by_key and key not in seen:
+            seen.add(key)
+            before.append(base_by_key[key])
+            after.append(value)
+    return (before, after) if before else None
+
+
+def _attach_row_evidence(
+    metric_lifts: list[dict[str, Any]], baseline: EvalResult, trained: EvalResult
+) -> None:
+    """Give each lift row its ``evidence`` (``paired_comparison_stats``):
+    rows better / worse / same vs the base model and whether the change is
+    more than noise. None where it can't be computed — a bare delta on a
+    handful of rows must not read as a result."""
+    from app.services.paired_comparison_stats import paired_difference_evidence
+
+    for row in metric_lifts:
+        metric_id = str(row.get("metric_id") or "")
+        paired = _paired_row_scores(baseline, trained, metric_id)
+        if paired is None:
+            row["evidence"] = None
+            continue
+        evidence = paired_difference_evidence(*paired)
+        evidence["metric_id"] = metric_id
+        row["evidence"] = evidence
+
+
 def _compute_metric_lifts(
     baseline_metrics: dict[str, float],
     trained_metrics: dict[str, float],
@@ -425,6 +496,7 @@ async def compute_sft_lift_summary(
         task_profile_hint = str(selected.get("task_profile") or "").strip() or None
 
     metric_lifts = _compute_metric_lifts(baseline.metrics, trained.metrics)
+    _attach_row_evidence(metric_lifts, baseline.eval_result, trained.eval_result)
     gates, eval_pack_id = _gates_from_general_default_pack(task_profile_hint)
     gate_status: list[dict[str, Any]] = []
     for gate in gates:

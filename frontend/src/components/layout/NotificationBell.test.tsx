@@ -587,6 +587,33 @@ describe('NotificationBell', () => {
         expect(summary).toHaveTextContent('28 val rows');
     });
 
+    it('auto_rag_comparison summary qualifies the lift with its row evidence', async () => {
+        const result = { project_id: 18, off_mean_f1: 0.1056, on_mean_f1: 0.1363, relative_lift_pct: 29.08, n_val_rows: 21 };
+        const jobs = [
+            jobFixture({
+                id: 61, kind: 'auto_rag_comparison', status: 'succeeded', title: 'Auto-RAG comparison · base model · project #18',
+                result: { ...result, model: 'base', evidence: { verdict: 'within_noise', n: 21, better: 14, worse: 6, same: 1 } },
+            }),
+            jobFixture({
+                id: 62, kind: 'auto_rag_comparison', status: 'succeeded', title: 'Auto-RAG comparison · project #18',
+                result: { ...result, model: 'fine_tuned', evidence: { verdict: 'better', n: 21, better: 14, worse: 7, same: 0 } },
+            }),
+        ];
+        apiMock.get.mockResolvedValue({ data: { count: jobs.length, jobs } });
+        render(<NotificationBell />);
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+
+        expect(screen.getByTestId('notification-bell-row-61-summary')).toHaveTextContent(
+            'base model · off F1 0.11 → on F1 0.14 · +29.08% lift (within noise · 14 rows better, 6 worse) · 21 val rows',
+        );
+        expect(screen.getByTestId('notification-bell-row-62-summary')).toHaveTextContent(
+            '+29.08% lift (beyond row noise · 14 rows better, 7 worse)',
+        );
+    });
+
     it('lift-check summary does not claim "better than base" when the change is within noise', async () => {
         const headline = { metric_id: 'f1', baseline_value: 0.106, trained_value: 0.136, direction: 'improved' };
         const jobs = [

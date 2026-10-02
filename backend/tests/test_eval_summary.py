@@ -133,6 +133,30 @@ class EvalSummaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((ev["n"], ev["better"], ev["worse"], ev["same"]), (4, 3, 0, 1))
         self.assertEqual(ev["verdict"], "too_few_rows")
 
+    async def test_every_lift_row_carries_its_own_evidence(self):
+        """The "Did SFT help?" panel lists every shared metric — each row
+        that is a per-row mean gets its own evidence, the rest get None."""
+        base = await self._exp(baseline=True)
+        run = await self._exp()
+        async with self.sf() as db:
+            db.add(EvalResult(experiment_id=base, dataset_name="test", eval_type="exact_match",
+                              metrics={"exact_match": 0.5, "f1": 0.5, "macro_f1": 0.4},
+                              details={"row_scores": {"keys": list("abcdef"), "correct": [1, 0, 1, 0, 1, 0],
+                                                      "f1": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]}}))
+            db.add(EvalResult(experiment_id=run, dataset_name="test", eval_type="exact_match",
+                              metrics={"exact_match": 0.5, "f1": 0.8, "macro_f1": 0.6},
+                              details={"row_scores": {"keys": list("abcdef"), "correct": [0, 1, 1, 0, 0, 1],
+                                                      "f1": [0.8, 0.82, 0.79, 0.8, 0.81, 0.78]}}))
+            await db.commit()
+        out = await self._summary()
+        rows = {row["metric_id"]: row for row in out["metric_lifts"]}
+        self.assertEqual(rows["f1"]["evidence"]["verdict"], "better")
+        self.assertEqual(rows["f1"]["evidence"]["better"], 6)
+        em = rows["exact_match"]["evidence"]
+        self.assertEqual((em["better"], em["worse"], em["same"], em["verdict"]), (2, 2, 2, "within_noise"))
+        self.assertIsNone(rows["macro_f1"]["evidence"])  # not a per-row mean
+        self.assertEqual(out["evidence"]["metric_id"], out["headline"]["metric_id"])
+
     async def test_no_evidence_for_results_without_row_scores(self):
         base = await self._exp(baseline=True)
         await self._result(base, 0.1)

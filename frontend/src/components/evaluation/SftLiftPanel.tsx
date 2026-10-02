@@ -23,6 +23,7 @@ import {
     type SftLiftGateRow,
     type SftLiftGateStatus,
 } from '../../api/sftLift';
+import { isUnproven, shortEvidenceText } from './liftEvidence';
 
 interface SftLiftPanelProps {
     projectId: number;
@@ -78,8 +79,13 @@ function MetricLiftRow({ row }: { row: SftLiftMetricRow }) {
     // (both normalized 0..1 since most eval metrics are bounded).
     const baselinePct = Math.max(0, Math.min(1, row.baseline_value)) * 100;
     const trainedPct = Math.max(0, Math.min(1, row.trained_value)) * 100;
-    const directionColor =
-        row.direction === 'improved'
+    // A delta the rows can't back up (within noise / too few rows) is shown
+    // in the neutral colour, with the row split next to it.
+    const evidence = row.evidence ?? null;
+    const unproven = isUnproven(evidence);
+    const directionColor = unproven
+        ? 'var(--text-secondary)'
+        : row.direction === 'improved'
             ? 'var(--color-success)'
             : row.direction === 'regressed'
                 ? 'var(--color-error)'
@@ -167,6 +173,19 @@ function MetricLiftRow({ row }: { row: SftLiftMetricRow }) {
                         {formatRelativeDelta(row.relative_delta_pct)})
                     </span>
                 </div>
+                {evidence && (
+                    <div
+                        data-testid={`sft-lift-evidence-${row.metric_id}`}
+                        data-verdict={evidence.verdict}
+                        style={{
+                            fontSize: '0.75rem',
+                            color: unproven ? 'var(--color-warning-fg, #92400e)' : 'var(--text-secondary)',
+                            textAlign: 'right',
+                        }}
+                    >
+                        {shortEvidenceText(evidence)}
+                    </div>
+                )}
             </div>
         </div>
     );

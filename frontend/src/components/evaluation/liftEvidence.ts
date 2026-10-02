@@ -71,3 +71,19 @@ export function metricUnit(metricId: string | null | undefined): string {
     if (id === 'accuracy') return 'accuracy';
     return id || 'score';
 }
+
+/** One compact line for dense places (a metric row, the bell):
+ *  "within noise · 14 rows better, 6 worse". */
+export function shortEvidenceText(ev: Pick<LiftEvidence, 'verdict' | 'better' | 'worse'>): string {
+    const label = ev.verdict === 'within_noise'
+        ? 'within noise'
+        : ev.verdict === 'too_few_rows'
+            ? 'too few rows to tell'
+            : 'beyond row noise';
+    return `${label} · ${ev.better} row${ev.better === 1 ? '' : 's'} better, ${ev.worse} worse`;
+}
+
+/** True when a better / worse reading isn't backed by the rows. */
+export function isUnproven(ev: Pick<LiftEvidence, 'verdict'> | null | undefined): boolean {
+    return !!ev && (ev.verdict === 'within_noise' || ev.verdict === 'too_few_rows');
+}

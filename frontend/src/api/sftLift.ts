@@ -5,6 +5,7 @@
  */
 
 import api from './client';
+import type { LiftEvidence } from '../components/evaluation/liftEvidence';
 
 export interface SftLiftExperimentRef {
     experiment_id: number;
@@ -29,6 +30,9 @@ export interface SftLiftMetricRow {
     relative_delta_pct: number | null;
     direction: 'improved' | 'regressed' | 'unchanged';
     is_headline: boolean;
+    /** Rows better / worse / same vs the base model + noise verdict; null
+     * for metrics that aren't a per-row mean or for older results. */
+    evidence?: LiftEvidence | null;
 }
 
 export type SftLiftGateStatus =

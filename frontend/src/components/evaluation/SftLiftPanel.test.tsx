@@ -134,6 +134,37 @@ describe('SftLiftPanel', () => {
         expect(screen.getByTestId('sft-lift-row-exact_match')).toBeInTheDocument();
     });
 
+    it('qualifies each metric delta with its row evidence', async () => {
+        const [f1Row, emRow] = HAPPY_SUMMARY.metric_lifts;
+        apiMock.get.mockResolvedValue({
+            data: {
+                ...HAPPY_SUMMARY,
+                metric_lifts: [
+                    { ...f1Row, evidence: { n: 21, better: 14, worse: 6, same: 1, mean_diff: 0.03, ci_low: -0.005, ci_high: 0.067, verdict: 'within_noise', metric_id: 'f1' } },
+                    { ...emRow, evidence: { n: 21, better: 9, worse: 1, same: 11, mean_diff: 0.38, ci_low: 0.14, ci_high: 0.62, verdict: 'better', metric_id: 'exact_match' } },
+                ],
+            },
+        });
+        render(<SftLiftPanel projectId={1} />);
+
+        const noise = await screen.findByTestId('sft-lift-evidence-f1');
+        expect(noise).toHaveAttribute('data-verdict', 'within_noise');
+        expect(noise).toHaveTextContent('within noise · 14 rows better, 6 worse');
+        // A delta the rows can't back up is not painted as a win.
+        expect(screen.getByTestId('sft-lift-delta-f1').style.color).toBe('var(--text-secondary)');
+
+        const solid = screen.getByTestId('sft-lift-evidence-exact_match');
+        expect(solid).toHaveTextContent('beyond row noise · 9 rows better, 1 worse');
+        expect(screen.getByTestId('sft-lift-delta-exact_match').style.color).toBe('var(--color-success)');
+    });
+
+    it('shows no evidence line for rows without it (older results, non-row metrics)', async () => {
+        apiMock.get.mockResolvedValue({ data: HAPPY_SUMMARY });
+        render(<SftLiftPanel projectId={1} />);
+        await screen.findByTestId('sft-lift-row-f1');
+        expect(screen.queryByTestId('sft-lift-evidence-f1')).not.toBeInTheDocument();
+    });
+
     it('shows gate-cleared badges + summary counts when training cleared gates', async () => {
         apiMock.get.mockResolvedValueOnce({ data: HAPPY_SUMMARY });
         render(<SftLiftPanel projectId={1} />);
