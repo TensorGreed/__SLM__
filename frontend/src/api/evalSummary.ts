@@ -4,6 +4,7 @@
  */
 
 import api from './client';
+import type { LiftEvidence } from '../components/evaluation/liftEvidence';
 
 export type EvalVerdict =
     | 'better'
@@ -37,6 +38,9 @@ export interface EvalSummary {
     verdict: EvalVerdict;
     message?: string | null;
     headline: EvalSummaryHeadline | null;
+    /** Rows better / worse / same vs the base model + noise verdict for the
+     *  headline lift; null for older results or non-row metrics. */
+    evidence?: LiftEvidence | null;
     baseline?: { experiment_id: number; base_model: string } | null;
     trained?: { experiment_id: number; experiment_name: string } | null;
     eval_result_id?: number;

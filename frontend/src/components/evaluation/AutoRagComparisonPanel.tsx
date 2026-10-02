@@ -18,6 +18,7 @@ import api from '../../api/client';
 import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
+import { evidenceNote, rowCountsText, type LiftEvidence } from './liftEvidence';
 import './AutoRagComparisonPanel.css';
 
 interface AutoRagRow {
@@ -34,20 +35,6 @@ interface AutoRagSummary {
     relative_lift_pct: number | null;
     n_val_rows: number;
     rag_k: number;
-}
-
-/** How solid the with-RAG vs without-RAG difference is (backend
- *  ``paired_comparison_stats``): row counts + a 95% interval for the mean
- *  per-row F1 change. */
-interface LiftEvidence {
-    n: number;
-    better: number;
-    worse: number;
-    same: number;
-    mean_diff: number | null;
-    ci_low: number | null;
-    ci_high: number | null;
-    verdict: 'better' | 'worse' | 'within_noise' | 'too_few_rows';
 }
 
 interface AutoRagModelComparison {
@@ -81,46 +68,6 @@ interface AutoRagComparisonResponse {
 
 function hasSummary(summary: AutoRagSummary | null | undefined): summary is AutoRagSummary {
     return !!summary && typeof summary.off_mean_f1 === 'number' && typeof summary.on_mean_f1 === 'number';
-}
-
-function signedF1(value: number): string {
-    return `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(3)}`;
-}
-
-function rowCountsText(ev: LiftEvidence): string {
-    const rows = (count: number) => `${count} row${count === 1 ? '' : 's'}`;
-    const parts = [`helped ${rows(ev.better)}`, `hurt ${rows(ev.worse)}`];
-    if (ev.same > 0) parts.push(`no change on ${ev.same}`);
-    return `Retrieval ${parts.join(', ')}.`;
-}
-
-/** The sentence that keeps a lift on a few rows from being read as a
- *  result. ``trained`` adds the run-to-run caveat: the interval covers
- *  which rows were sampled, not what another training seed would give. */
-function evidenceNote(ev: LiftEvidence, trained: boolean): { label: string; text: string } {
-    const range = ev.mean_diff !== null && ev.ci_low !== null && ev.ci_high !== null
-        ? `average change ${signedF1(ev.mean_diff)} F1 per row, 95% range ${signedF1(ev.ci_low)} to ${signedF1(ev.ci_high)}`
-        : null;
-    if (ev.verdict === 'too_few_rows') {
-        return {
-            label: 'Too few rows to tell',
-            text: `Only ${ev.n} scored row${ev.n === 1 ? '' : 's'} — not enough to tell a gain from noise.`,
-        };
-    }
-    if (ev.verdict === 'within_noise') {
-        return {
-            label: 'Within noise',
-            text: `On ${ev.n} rows the ${range} — it includes zero, so this lift could be chance. Don't read it as a gain or a loss.`,
-        };
-    }
-    const direction = ev.verdict === 'better' ? 'gain' : 'drop';
-    const seedCaveat = trained
-        ? ' This is one training run: another seed can move it, so re-train and re-run before relying on it.'
-        : '';
-    return {
-        label: ev.verdict === 'better' ? 'Gain on these rows' : 'Drop on these rows',
-        text: `On ${ev.n} rows the ${range} — a ${direction} beyond row-to-row noise.${seedCaveat}`,
-    };
 }
 
 function shortModelName(name: string | null | undefined): string {
@@ -572,7 +519,7 @@ function ModelComparisonCard({
         : lift !== null && lift !== undefined && lift > 0
             ? ' is-positive'
             : lift !== null && lift !== undefined && lift < 0 ? ' is-negative' : '';
-    const note = evidence ? evidenceNote(evidence, trained) : null;
+    const note = evidence ? evidenceNote(evidence, { trained, unit: 'F1' }) : null;
     return (
         <div className="auto-rag-comparison__model" data-testid={`${testIdPrefix}-card`}>
             <div className="auto-rag-comparison__model-head">
@@ -630,7 +577,7 @@ function ModelComparisonCard({
                     data-verdict={evidence.verdict}
                 >
                     <span className="auto-rag-comparison__evidence-label">{note.label}</span>
-                    <span data-testid={`${testIdPrefix}-row-counts`}>{rowCountsText(evidence)}</span>{' '}
+                    <span data-testid={`${testIdPrefix}-row-counts`}>{rowCountsText(evidence, 'Retrieval')}</span>{' '}
                     <span>{note.text}</span>
                 </div>
             )}

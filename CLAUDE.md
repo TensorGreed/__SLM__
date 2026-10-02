@@ -468,6 +468,14 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   verdict adds a one-training-run caveat (the interval covers row sampling,
   not seed-to-seed variance). Reuse the helper for any paired before/after
   metric — don't show a bare lift on a few rows.
+  The **lift check** uses it too: `run_heldout_evaluation` stores
+  `details["row_scores"]` (`keys` = hash of prompt+reference, `correct`, and
+  `f1` when the handler records per-row F1) for every row;
+  `eval_summary_service` pairs base vs fine-tuned rows by key and returns
+  `evidence` (headline `f1` / `exact_match` / `accuracy` only);
+  `EvalSummaryCard` softens its title when the lift is within noise. A cached
+  baseline result without `row_scores` is not reused. Shared frontend wording
+  lives in `components/evaluation/liftEvidence.ts`.
 - **Reroute-to-RAG** — `rag_project_service.clone_project_for_rag()`
   creates a sibling project with `runtime_config.rag_first=True`. The
   playground uses base model + retrieval (no LoRA).

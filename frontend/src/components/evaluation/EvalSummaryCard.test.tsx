@@ -62,6 +62,70 @@ describe('EvalSummaryCard', () => {
         expect(apiMock.get).toHaveBeenCalledWith('/projects/7/evaluation/summary', { params: { experiment_id: 21 } });
     });
 
+    it('does not announce "better" when the lift is within noise', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                ...BETTER,
+                evidence: {
+                    n: 20, better: 9, worse: 4, same: 7, mean_diff: 0.25, ci_low: -0.04, ci_high: 0.54,
+                    verdict: 'within_noise', metric_id: 'exact_match',
+                },
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+
+        const card = await screen.findByTestId('eval-summary');
+        expect(screen.getByText('Ahead of the base model — but within noise')).toBeInTheDocument();
+        expect(screen.queryByText('Better than the base model')).not.toBeInTheDocument();
+        expect(card.className).toMatch(/eval-summary--neutral/);
+        const evidence = screen.getByTestId('eval-summary-evidence');
+        expect(evidence).toHaveAttribute('data-verdict', 'within_noise');
+        expect(screen.getByTestId('eval-summary-row-counts')).toHaveTextContent(
+            'Fine-tuning helped 9 rows, hurt 4 rows, no change on 7.',
+        );
+        expect(evidence).toHaveTextContent('average change +0.250 exact match per row, 95% range −0.040 to +0.540');
+        expect(evidence).toHaveTextContent(/could be chance/);
+        // The headline numbers are still shown as measured.
+        expect(screen.getByTestId('eval-summary-headline')).toHaveTextContent('+0.350 (+175%)');
+    });
+
+    it('keeps "better" for a gain beyond row noise, with the one-run caveat', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                ...BETTER,
+                evidence: {
+                    n: 20, better: 9, worse: 2, same: 9, mean_diff: 0.35, ci_low: 0.09, ci_high: 0.61,
+                    verdict: 'better', metric_id: 'exact_match',
+                },
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+
+        await screen.findByTestId('eval-summary');
+        expect(screen.getByText('Better than the base model')).toBeInTheDocument();
+        const evidence = screen.getByTestId('eval-summary-evidence');
+        expect(evidence).toHaveTextContent('Gain on these rows');
+        expect(evidence).toHaveTextContent(/one training run: another seed can move it/);
+    });
+
+    it('says when there are too few rows, and shows nothing extra for older results', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                ...BETTER,
+                evidence: { n: 2, better: 2, worse: 0, same: 0, mean_diff: 0.5, ci_low: null, ci_high: null, verdict: 'too_few_rows', metric_id: 'exact_match' },
+            },
+        });
+        const { unmount } = render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        expect(await screen.findByText('Better than the base model — too few rows to be sure')).toBeInTheDocument();
+        expect(screen.getByTestId('eval-summary-evidence')).toHaveTextContent(/Only 2 scored rows/);
+        unmount();
+
+        apiMock.get.mockResolvedValueOnce({ data: { ...BETTER, evidence: null } });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        expect(await screen.findByText('Better than the base model')).toBeInTheDocument();
+        expect(screen.queryByTestId('eval-summary-evidence')).not.toBeInTheDocument();
+    });
+
     it('reports the server-resolved run and offers one-click eval when not evaluated', async () => {
         apiMock.get.mockResolvedValue({
             data: { project_id: 7, experiment_id: 33, verdict: 'not_evaluated', headline: null, failures: [] },

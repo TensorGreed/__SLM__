@@ -91,6 +91,57 @@ class EvalSummaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(out["failures"]), 5)
         self.assertEqual(out["failed_count"], 8)
 
+    # ── is the lift more than noise? ───────────────────────────────
+
+    @staticmethod
+    def _rows(correct: list[int], keys: list[str] | None = None) -> dict:
+        return {"row_scores": {"keys": keys or [f"k{i}" for i in range(len(correct))], "correct": correct}}
+
+    async def test_lift_evidence_counts_rows_and_flags_noise(self):
+        base = await self._exp(baseline=True)
+        run = await self._exp()
+        # 12 rows: the run fixes 3 rows the base got wrong and breaks 2 it
+        # got right — "better" on average, but not beyond noise.
+        await self._result(base, 4 / 12, self._rows([1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]))
+        await self._result(run, 5 / 12, self._rows([1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0]))
+        out = await self._summary()
+        self.assertEqual(out["verdict"], "better")
+        ev = out["evidence"]
+        self.assertEqual((ev["n"], ev["better"], ev["worse"], ev["same"]), (12, 3, 2, 7))
+        self.assertEqual(ev["verdict"], "within_noise")
+        self.assertEqual(ev["metric_id"], "exact_match")
+
+    async def test_lift_evidence_confirms_a_consistent_gain(self):
+        base = await self._exp(baseline=True)
+        run = await self._exp()
+        await self._result(base, 0.1, self._rows([1] + [0] * 9))
+        await self._result(run, 0.9, self._rows([1] * 9 + [0]))
+        ev = (await self._summary())["evidence"]
+        self.assertEqual((ev["better"], ev["worse"]), (8, 0))
+        self.assertEqual(ev["verdict"], "better")
+        self.assertGreater(ev["ci_low"], 0)
+
+    async def test_lift_evidence_pairs_rows_by_key_not_position(self):
+        """The two evals may see rows in a different order or count; only rows
+        both evaluated are compared, each with its own counterpart."""
+        base = await self._exp(baseline=True)
+        run = await self._exp()
+        await self._result(base, 0.5, self._rows([1, 0, 1, 0, 1, 0], ["a", "b", "c", "d", "e", "f"]))
+        await self._result(run, 0.6, self._rows([1, 1, 1, 1, 1], ["f", "e", "d", "b", "zz"]))
+        ev = (await self._summary())["evidence"]
+        # Shared rows: f (0→1), e (1→1), d (0→1), b (0→1). "zz", "a", "c" drop out.
+        self.assertEqual((ev["n"], ev["better"], ev["worse"], ev["same"]), (4, 3, 0, 1))
+        self.assertEqual(ev["verdict"], "too_few_rows")
+
+    async def test_no_evidence_for_results_without_row_scores(self):
+        base = await self._exp(baseline=True)
+        await self._result(base, 0.1)
+        run = await self._exp()
+        await self._result(run, 0.8, self._rows([1] * 8 + [0] * 2))
+        out = await self._summary()
+        self.assertEqual(out["verdict"], "better")
+        self.assertIsNone(out["evidence"])
+
     async def test_worse_and_no_baseline(self):
         run = await self._exp()
         await self._result(run, 0.3)

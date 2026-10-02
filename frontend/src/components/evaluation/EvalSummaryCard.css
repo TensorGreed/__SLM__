@@ -43,3 +43,38 @@
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
+
+/* Row counts + "is the lift more than noise?" under the headline. */
+.eval-summary__evidence {
+    margin: var(--space-xs, 4px) 0 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    border-left: 3px solid var(--border-default);
+    padding: 4px 0 4px 10px;
+}
+
+.eval-summary__evidence-label {
+    display: inline-block;
+    margin-right: 8px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 11px;
+    background: var(--gray-100, #f3f4f6);
+    color: var(--text-primary);
+}
+
+.eval-summary__evidence--within_noise,
+.eval-summary__evidence--too_few_rows {
+    border-left-color: var(--color-warning-border, #f59e0b);
+}
+
+.eval-summary__evidence--within_noise .eval-summary__evidence-label,
+.eval-summary__evidence--too_few_rows .eval-summary__evidence-label {
+    background: var(--color-warning-bg, #fffbeb);
+    color: var(--color-warning-fg, #92400e);
+}
+
+.eval-summary__evidence--better { border-left-color: var(--color-success); }
+.eval-summary__evidence--worse { border-left-color: var(--color-error); }

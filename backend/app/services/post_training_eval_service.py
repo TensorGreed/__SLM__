@@ -183,6 +183,11 @@ async def _reusable_baseline_result(
         created = created.replace(tzinfo=timezone.utc)
     if split_mtime is not None and created < split_mtime:
         return None
+    # Results recorded before per-row scores were kept can't be paired row by
+    # row with the fine-tuned eval ("within noise?") — re-run the base once.
+    details = latest.details if isinstance(latest.details, dict) else {}
+    if not isinstance(details.get("row_scores"), dict):
+        return None
     return latest
 
 

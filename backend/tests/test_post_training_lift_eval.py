@@ -55,6 +55,7 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         self.eval_calls: list[dict] = []
+        self.legacy_results = False
 
     async def asyncTearDown(self):
         await self.engine.dispose()
@@ -99,7 +100,12 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
             eval_type=kwargs["eval_type"],
             metrics={"exact_match": 0.1 if is_base else 0.8},
             pass_rate=0.1 if is_base else 0.8,
-            details={},
+            # Real held-out evals record per-row scores (for pairing the
+            # base and fine-tuned results row by row).
+            details={} if self.legacy_results else {
+                "row_scores": {"keys": [f"k{i}" for i in range(10)],
+                               "correct": [1 if (i == 0) == is_base or (not is_base and i < 8) else 0 for i in range(10)]},
+            },
         )
         db.add(er)
         await db.flush()
@@ -155,6 +161,25 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
             base = await db.get(Experiment, out["baseline_experiment_id"])
             self.assertTrue(base.config["is_baseline"])
             self.assertEqual(base.base_model, BASE)
+
+    async def test_baseline_without_row_scores_is_re_evaluated_once(self):
+        """A cached base-model result from before per-row scores were kept
+        can't be paired row by row — it is recomputed, then reused."""
+        pid = await self._project()
+        first, second, third = await self._run(pid), await self._run(pid), await self._run(pid)
+        with mock.patch(
+            "app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout
+        ):
+            self.legacy_results = True
+            async with self.sf() as db:
+                await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=first)
+            self.legacy_results = False
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=second)
+            self.assertFalse(out["baseline_reused"])
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=third)
+            self.assertTrue(out["baseline_reused"])
 
     async def test_second_run_reuses_fresh_baseline(self):
         pid = await self._project()

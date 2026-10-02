@@ -2327,6 +2327,38 @@ def _prediction_failed(prediction: dict[str, Any]) -> bool:
     return _normalize_answer(str(prediction.get("prediction") or "")) != _normalize_answer(reference)
 
 
+def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Compact per-row scores for EVERY evaluated row, so two evals of the
+    same split (base model vs fine-tuned) can be compared row by row —
+    "helped 9 rows, hurt 3", and whether the lift is more than noise
+    (``paired_comparison_stats``). The previews above keep only a few rows.
+
+    ``keys`` identify a row by its prompt + reference so results pair up even
+    if the two evals saw the rows in a different order or count. ``f1`` is
+    the handler's per-row F1 where it records one; ``correct`` is 1 / 0 per
+    row (same rule as ``_prediction_failed``). None when nothing is scorable.
+    """
+    import hashlib
+
+    keys: list[str] = []
+    f1: list[float | None] = []
+    correct: list[int] = []
+    for p in predictions:
+        if not isinstance(p, dict):
+            continue
+        raw = f"{p.get('prompt', '')}\x00{p.get('reference', '')}"
+        keys.append(hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:12])
+        row_f1 = p.get("row_f1")
+        f1.append(float(row_f1) if isinstance(row_f1, (int, float)) and not isinstance(row_f1, bool) else None)
+        correct.append(0 if _prediction_failed(p) else 1)
+    if not keys:
+        return None
+    scores: dict[str, Any] = {"keys": keys, "correct": correct}
+    if all(value is not None for value in f1):
+        scores["f1"] = f1
+    return scores
+
+
 async def run_heldout_evaluation(
     db: AsyncSession,
     project_id: int,
@@ -2594,6 +2626,9 @@ async def run_heldout_evaluation(
         if _prediction_failed(p)
     ][:FAILURES_PREVIEW_LIMIT]
     details["failed_count"] = sum(1 for p in predictions if _prediction_failed(p))
+    row_scores = _row_scores_for_pairing(predictions)
+    if row_scores is not None:
+        details["row_scores"] = row_scores
     result.details = details
     await db.flush()
     await db.refresh(result)

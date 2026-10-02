@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
 import { fetchEvalSummary, type EvalSummary } from '../../api/evalSummary';
+import { evidenceNote, metricUnit, rowCountsText, type LiftEvidence } from './liftEvidence';
 import { toast } from '../../stores/toastStore';
 import { useJobsStore } from '../../stores/jobsStore';
 import './EvalSummaryCard.css';
@@ -36,6 +37,25 @@ const VERDICT_TEXT: Record<string, { title: string; tone: string }> = {
     not_evaluated: { title: 'Not evaluated yet', tone: 'neutral' },
     no_trained_run: { title: 'No trained model yet', tone: 'neutral' },
 };
+
+/** A "better" / "worse" headline whose row-level evidence can't back it up
+ *  must not be announced as a result. */
+function titleFor(verdict: string, evidence: LiftEvidence | null | undefined): { title: string; tone: string } {
+    const base = VERDICT_TEXT[verdict] ?? VERDICT_TEXT.no_comparison;
+    if (!evidence || (verdict !== 'better' && verdict !== 'worse')) return base;
+    if (evidence.verdict === 'within_noise') {
+        return {
+            title: verdict === 'better'
+                ? 'Ahead of the base model — but within noise'
+                : 'Behind the base model — but within noise',
+            tone: 'neutral',
+        };
+    }
+    if (evidence.verdict === 'too_few_rows') {
+        return { title: `${base.title} — too few rows to be sure`, tone: 'neutral' };
+    }
+    return base;
+}
 
 function fmt(value: number): string {
     if (Math.abs(value) >= 10) return value.toFixed(1);
@@ -99,7 +119,11 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
         return null;
     }
 
-    const verdict = VERDICT_TEXT[summary.verdict] ?? VERDICT_TEXT.no_comparison;
+    const evidence = summary.evidence ?? null;
+    const verdict = titleFor(summary.verdict, evidence);
+    const note = evidence
+        ? evidenceNote(evidence, { trained: true, unit: metricUnit(evidence.metric_id ?? summary.headline?.metric_id) })
+        : null;
     const head = summary.headline;
     const runId = summary.experiment_id;
 
@@ -142,6 +166,17 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         {' '}{head.absolute_delta > 0 ? '+' : ''}{fmt(head.absolute_delta)}
                         {head.relative_delta_pct != null ? ` (${head.relative_delta_pct > 0 ? '+' : ''}${head.relative_delta_pct}%)` : ''}
                     </span>
+                </p>
+            )}
+            {evidence && note && (
+                <p
+                    className={`eval-summary__evidence eval-summary__evidence--${evidence.verdict}`}
+                    data-testid="eval-summary-evidence"
+                    data-verdict={evidence.verdict}
+                >
+                    <span className="eval-summary__evidence-label">{note.label}</span>
+                    <span data-testid="eval-summary-row-counts">{rowCountsText(evidence, 'Fine-tuning')}</span>{' '}
+                    <span>{note.text}</span>
                 </p>
             )}
             {summary.message && <p className="eval-summary__message">{summary.message}</p>}

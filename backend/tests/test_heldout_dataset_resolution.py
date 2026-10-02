@@ -78,3 +78,26 @@ class DatasetAliasPriorityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RowScoresForPairingTests(unittest.TestCase):
+    """Held-out evals keep a compact per-row score for EVERY row so a base
+    and a fine-tuned eval of the same split can be compared row by row."""
+
+    def test_keys_follow_the_row_and_scores_cover_every_row(self):
+        from app.services.evaluation_service import _row_scores_for_pairing
+
+        predictions = [
+            {"prompt": "q1", "reference": "billing", "prediction": "billing", "row_f1": 1.0, "row_exact_match": 1.0},
+            {"prompt": "q2", "reference": "billing", "prediction": "shipping", "row_f1": 0.0, "row_exact_match": 0.0},
+            {"prompt": "q3", "reference": "Refund", "prediction": "refund", "row_f1": 0.5},
+        ]
+        scores = _row_scores_for_pairing(predictions)
+        self.assertEqual(scores["correct"], [1, 0, 1])
+        self.assertEqual(scores["f1"], [1.0, 0.0, 0.5])
+        self.assertEqual(len(set(scores["keys"])), 3)
+        # Same row → same key, whatever the model answered or the order.
+        again = _row_scores_for_pairing([{"prompt": "q2", "reference": "billing", "prediction": "billing"}])
+        self.assertEqual(again["keys"][0], scores["keys"][1])
+        self.assertNotIn("f1", again)  # handler recorded no per-row F1
+        self.assertIsNone(_row_scores_for_pairing([]))
