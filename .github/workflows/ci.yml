@@ -427,6 +427,31 @@ jobs:
           m.train()
           for label, fn in (("forward", lambda: m(input_ids=ids).logits.sum()), ("forward+backward", lambda: m(input_ids=ids).logits.sum().backward())):
               fn(); t = time.perf_counter(); fn(); print(f"{label} (4 x {ids.shape[1]} tokens): {time.perf_counter()-t:.2f}s")
+          # The trainer's step is far slower than forward+backward: time the
+          # loop's pieces one at a time to find the pathological one.
+          from peft import LoraConfig, get_peft_model
+          mask = torch.ones_like(ids)
+          def step(model, use_mask, opt=None):
+              out = model(input_ids=ids, attention_mask=mask if use_mask else None, labels=ids)
+              out.loss.backward()
+              if opt is not None:
+                  opt.step(); opt.zero_grad(set_to_none=True)
+              return out.loss
+          def timed(label, model, use_mask=False, opt=None, n=2):
+              step(model, use_mask, opt); t = time.perf_counter()
+              for _ in range(n): step(model, use_mask, opt)
+              print(f"{label}: {(time.perf_counter()-t)/n:.2f}s per micro-step (batch 4)", flush=True)
+          base = AutoModelForCausalLM.from_pretrained("HuggingFaceTB/SmolLM2-135M-Instruct", dtype=torch.float32); base.train()
+          timed("full model, labels", base)
+          timed("full model, labels + attention_mask", base, use_mask=True)
+          lora = get_peft_model(base, LoraConfig(task_type="CAUSAL_LM", r=16, lora_alpha=32, lora_dropout=0.05, target_modules="all-linear")); lora.train()
+          timed("LoRA all-linear", lora, use_mask=True)
+          opt = torch.optim.AdamW([p for p in lora.parameters() if p.requires_grad], lr=2e-4)
+          timed("LoRA + AdamW", lora, use_mask=True, opt=opt)
+          lora.gradient_checkpointing_enable(); lora.enable_input_require_grads()
+          timed("LoRA + AdamW + gradient checkpointing", lora, use_mask=True, opt=opt)
+          lora.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+          timed("LoRA + AdamW + gradient checkpointing (non-reentrant)", lora, use_mask=True, opt=opt)
           PY
 
       - name: Boot backend + Celery worker on the real runtime
