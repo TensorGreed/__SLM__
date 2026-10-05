@@ -80,6 +80,10 @@ def _load_bundle(model_ref: str, base_model_hint: str | None) -> _Bundle:
     classifier = _is_classifier(model_ref, adapter_cfg)
     model_cls = AutoModelForSequenceClassification if classifier else AutoModelForCausalLM
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    # On CPU load in fp32: transformers >= 5 would keep the checkpoint's saved
+    # dtype (bf16 for most small instruct models), which is emulated — and
+    # very slow — on CPUs without native bf16.
+    load_kwargs: dict[str, Any] = {} if device == "cuda" else {"dtype": torch.float32}
 
     if adapter_cfg is not None:
         from peft import PeftModel
@@ -87,10 +91,10 @@ def _load_bundle(model_ref: str, base_model_hint: str | None) -> _Bundle:
         base = adapter_base_model(model_ref, fallback=base_model_hint)
         if not base:
             raise ValueError(f"LoRA adapter at {model_ref} doesn't record its base model.")
-        model = PeftModel.from_pretrained(model_cls.from_pretrained(base), model_ref)
+        model = PeftModel.from_pretrained(model_cls.from_pretrained(base, **load_kwargs), model_ref)
         tokenizer_source = model_ref if (Path(model_ref) / "tokenizer_config.json").exists() else base
     else:
-        model = model_cls.from_pretrained(model_ref)
+        model = model_cls.from_pretrained(model_ref, **load_kwargs)
         tokenizer_source = model_ref
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:

@@ -401,89 +401,23 @@ jobs:
           print("model cached")
           PY
 
-      - name: CPU diagnostics (threads, BLAS path, matmul + backward GFLOPS)
-        # Prints what the runner's torch can actually do, so a slow training
-        # step can be read as "compute-bound at X GFLOPS" vs "pathological".
-        env:
-          HF_HUB_OFFLINE: "1"
+      - name: CPU diagnostics
+        # Runners differ (AVX2 vs AVX512, 160 vs 420 GFLOPS); print what this
+        # one can do so a slow step can be read as compute-bound or not. The
+        # one real pathology found this way — bf16 emulation on AVX2 — is
+        # fixed in the loaders (CPU loads fp32).
         run: |
           . .venv/bin/activate
           nproc; free -m | head -2
           python - <<'PY'
-          import time, torch, os
-          print("torch", torch.__version__, "threads", torch.get_num_threads(), "interop", torch.get_num_interop_threads())
-          print("mkldnn", torch.backends.mkldnn.is_available(), "mkl", torch.backends.mkl.is_available())
-          print("cpu caps:", torch.backends.cpu.get_cpu_capability())
-          print("OMP_NUM_THREADS", os.environ.get("OMP_NUM_THREADS"), "MKL_NUM_THREADS", os.environ.get("MKL_NUM_THREADS"))
+          import time, torch
+          print("torch", torch.__version__, "threads", torch.get_num_threads(), "cpu caps:", torch.backends.cpu.get_cpu_capability())
           a = torch.randn(2048, 2048); b = torch.randn(2048, 2048)
-          torch.mm(a, b); t = time.perf_counter(); n = 5
-          for _ in range(n): torch.mm(a, b)
-          dt = (time.perf_counter() - t) / n
+          torch.mm(a, b); t = time.perf_counter()
+          for _ in range(5): torch.mm(a, b)
+          dt = (time.perf_counter() - t) / 5
           print(f"fp32 matmul 2048^3: {dt*1000:.0f} ms = {2*2048**3/dt/1e9:.1f} GFLOPS")
-          from transformers import AutoModelForCausalLM, AutoTokenizer
-          tok = AutoTokenizer.from_pretrained("HuggingFaceTB/SmolLM2-135M-Instruct")
-          m = AutoModelForCausalLM.from_pretrained("HuggingFaceTB/SmolLM2-135M-Instruct", dtype=torch.float32)
-          ids = tok(["hello world " * 40] * 4, return_tensors="pt")["input_ids"]
-          m.train()
-          for label, fn in (("forward", lambda: m(input_ids=ids).logits.sum()), ("forward+backward", lambda: m(input_ids=ids).logits.sum().backward())):
-              fn(); t = time.perf_counter(); fn(); print(f"{label} (4 x {ids.shape[1]} tokens): {time.perf_counter()-t:.2f}s")
-          # The trainer's step is far slower than forward+backward: time the
-          # loop's pieces one at a time to find the pathological one.
-          from peft import LoraConfig, get_peft_model
-          mask = torch.ones_like(ids)
-          def step(model, use_mask, opt=None):
-              out = model(input_ids=ids, attention_mask=mask if use_mask else None, labels=ids)
-              out.loss.backward()
-              if opt is not None:
-                  opt.step(); opt.zero_grad(set_to_none=True)
-              return out.loss
-          def timed(label, model, use_mask=False, opt=None, n=2):
-              step(model, use_mask, opt); t = time.perf_counter()
-              for _ in range(n): step(model, use_mask, opt)
-              print(f"{label}: {(time.perf_counter()-t)/n:.2f}s per micro-step (batch 4)", flush=True)
-          base = AutoModelForCausalLM.from_pretrained("HuggingFaceTB/SmolLM2-135M-Instruct", dtype=torch.float32); base.train()
-          timed("full model, labels", base)
-          timed("full model, labels + attention_mask", base, use_mask=True)
-          lora = get_peft_model(base, LoraConfig(task_type="CAUSAL_LM", r=16, lora_alpha=32, lora_dropout=0.05, target_modules="all-linear")); lora.train()
-          timed("LoRA all-linear", lora, use_mask=True)
-          opt = torch.optim.AdamW([p for p in lora.parameters() if p.requires_grad], lr=2e-4)
-          timed("LoRA + AdamW", lora, use_mask=True, opt=opt)
-          lora.gradient_checkpointing_enable(); lora.enable_input_require_grads()
-          timed("LoRA + AdamW + gradient checkpointing", lora, use_mask=True, opt=opt)
-          lora.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-          timed("LoRA + AdamW + gradient checkpointing (non-reentrant)", lora, use_mask=True, opt=opt)
           PY
-
-      - name: Time train.py directly (same data + config, no Celery)
-        # If this is ~10 s/step while the Celery-launched run is ~230 s/step,
-        # the slowness is in how the worker runs the subprocess, not in
-        # train.py.
-        env:
-          HF_HUB_OFFLINE: "1"
-        run: |
-          . .venv/bin/activate
-          mkdir -p /tmp/direct
-          python - <<'PY'
-          import csv, json
-          rows = list(csv.DictReader(open("data/demo_samples/support-faq/tickets.csv", encoding="utf-8")))
-          with open("/tmp/direct/train.jsonl", "w") as f:
-              for r in rows[:32]:
-                  f.write(json.dumps({"question": r["question"], "answer": r["answer"], "text": r["question"]}) + "\n")
-          with open("/tmp/direct/val.jsonl", "w") as f:
-              for r in rows[32:40]:
-                  f.write(json.dumps({"question": r["question"], "answer": r["answer"], "text": r["question"]}) + "\n")
-          json.dump({"base_model": "HuggingFaceTB/SmolLM2-135M-Instruct", "num_epochs": 1, "auto_epochs": False,
-                     "training_mode": "sft", "task_type": "causal_lm", "use_lora": True, "lora_r": 16, "lora_alpha": 32,
-                     "batch_size": 4, "gradient_accumulation_steps": 4, "gradient_checkpointing": True,
-                     "max_seq_length": 2048, "chat_template": "llama3", "use_tokenizer_chat_template": True},
-                    open("/tmp/direct/cfg.json", "w"))
-          PY
-          start=$(date +%s)
-          python scripts/train.py --project 0 --experiment 1 --output /tmp/direct/out \
-            --base-model HuggingFaceTB/SmolLM2-135M-Instruct --config /tmp/direct/cfg.json \
-            --train-file /tmp/direct/train.jsonl --val-file /tmp/direct/val.jsonl 2>&1 \
-            | grep -E "it\]|SLM_EVENT|train_runtime" | tail -6
-          echo "direct train.py (32 rows, 2 optimizer steps): $(( $(date +%s) - start ))s wall"
 
       - name: Boot backend + Celery worker on the real runtime
         env:

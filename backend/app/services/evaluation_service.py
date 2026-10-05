@@ -1165,6 +1165,16 @@ def _resolve_model_reference(experiment: Experiment, override_model_path: str | 
     )
 
 
+def _inference_dtype(torch_module):  # noqa: ANN001
+    """bf16 / fp16 on a GPU; fp32 on CPU. transformers >= 5 loads a
+    checkpoint in its SAVED dtype by default (bf16 for most small instruct
+    models), and emulated bf16 on a CPU without native support is far
+    slower than fp32 — CI's AVX2 runner took ~45x longer per step."""
+    if torch_module.cuda.is_available():
+        return torch_module.bfloat16 if torch_module.cuda.is_bf16_supported() else torch_module.float16
+    return torch_module.float32
+
+
 def _run_transformers_inference(
     model_ref: str,
     pairs: list[dict],
@@ -1195,11 +1205,7 @@ def _run_transformers_inference(
             tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
 
     use_cuda = torch.cuda.is_available()
-    model_kwargs: dict = {"trust_remote_code": True}
-    if use_cuda and torch.cuda.is_bf16_supported():
-        model_kwargs["torch_dtype"] = torch.bfloat16
-    elif use_cuda:
-        model_kwargs["torch_dtype"] = torch.float16
+    model_kwargs: dict = {"trust_remote_code": True, "dtype": _inference_dtype(torch)}
 
     model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
     if len(tokenizer) > model.get_input_embeddings().num_embeddings:
@@ -1616,11 +1622,7 @@ def _run_multimodal_inference(
         tokenizer.pad_token = tokenizer.eos_token
 
     use_cuda = torch.cuda.is_available()
-    model_kwargs: dict[str, Any] = {"trust_remote_code": True}
-    if use_cuda and torch.cuda.is_bf16_supported():
-        model_kwargs["dtype"] = torch.bfloat16
-    elif use_cuda:
-        model_kwargs["dtype"] = torch.float16
+    model_kwargs: dict[str, Any] = {"trust_remote_code": True, "dtype": _inference_dtype(torch)}
 
     base = loader_cls.from_pretrained(base_model, **model_kwargs)
     try:

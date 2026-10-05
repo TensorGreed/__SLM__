@@ -226,6 +226,13 @@ cd backend && python -m pytest -k "name_pattern"        # by name
   read "within noise". Locally: boot a scratch backend + worker with the same
   env and run the file with the URL set — the dev worker must NOT be running
   on the same broker DB, or it consumes the task with the wrong DATA_DIR.
+  **CPU dtype**: transformers ≥ 5 loads a checkpoint in its *saved* dtype
+  (bf16 for most small instruct models). On a CPU without native bf16 (AVX2
+  x86 — half of GitHub's runners) bf16 is emulated: a training step took
+  ~230 s instead of ~5 s. `train.py`, the eval loaders
+  (`evaluation_service._inference_dtype`) and `local_chat_service` load
+  **fp32 on CPU**, bf16/fp16 on CUDA. Any new `from_pretrained` must pass a
+  dtype — never rely on the default.
 - **Real-training tests** (`test_training_correctness`, `test_continued_pretraining`,
   `test_export_scoping_and_merge`, `test_playground_trained_run`) fine-tune /
   load SmolLM2-135M. They run only with a GPU or `BREWSLM_REAL_TRAINING=1`

@@ -1930,6 +1930,13 @@ def _run_training_attempt(
         model_kwargs["dtype"] = torch.bfloat16
     elif use_fp16:
         model_kwargs["dtype"] = torch.float16
+    elif not use_cuda:
+        # transformers >= 5 loads a checkpoint in its SAVED dtype by default,
+        # and most small instruct models ship as bfloat16. On a CPU without
+        # native bf16 (AVX2-only x86) that is software-emulated: a training
+        # step took ~230 s instead of ~5 s on CI. CPU runs train in fp32.
+        model_kwargs["dtype"] = torch.float32
+        runtime_environment["cpu_dtype"] = "float32"
 
     if want_flash_attention and use_cuda:
         model_kwargs["attn_implementation"] = "flash_attention_2"

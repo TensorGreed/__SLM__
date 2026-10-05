@@ -101,3 +101,26 @@ class RowScoresForPairingTests(unittest.TestCase):
         self.assertEqual(again["keys"][0], scores["keys"][1])
         self.assertNotIn("f1", again)  # handler recorded no per-row F1
         self.assertIsNone(_row_scores_for_pairing([]))
+
+
+class CpuDtypeTests(unittest.TestCase):
+    """transformers >= 5 loads a checkpoint in its saved dtype (bf16 for most
+    small instruct models). On a CPU without native bf16 that is emulated —
+    CI's AVX2 runner trained ~45x slower — so CPU loads must be fp32."""
+
+    def test_cpu_inference_loads_fp32_and_gpu_keeps_half(self):
+        from app.services.evaluation_service import _inference_dtype
+
+        class _Cuda:
+            def __init__(self, available, bf16=True):
+                self._a, self._b = available, bf16
+
+            def is_available(self):
+                return self._a
+
+            def is_bf16_supported(self):
+                return self._b
+
+        self.assertEqual(_inference_dtype(SimpleNamespace(cuda=_Cuda(False), float32="f32", bfloat16="bf16", float16="f16")), "f32")
+        self.assertEqual(_inference_dtype(SimpleNamespace(cuda=_Cuda(True), float32="f32", bfloat16="bf16", float16="f16")), "bf16")
+        self.assertEqual(_inference_dtype(SimpleNamespace(cuda=_Cuda(True, bf16=False), float32="f32", bfloat16="bf16", float16="f16")), "f16")
