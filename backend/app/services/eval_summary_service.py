@@ -28,9 +28,141 @@ async def _latest_trained_experiment_id(db: AsyncSession, project_id: int) -> in
     )
     for exp in rows.scalars():
         cfg = exp.config if isinstance(exp.config, dict) else {}
-        if cfg.get("is_baseline") is not True:
-            return exp.id
+        if cfg.get("is_baseline") is True:
+            continue
+        # A seed-group child is one seed of its leader's run; the leader is
+        # the run the user launched (and the one summarised across seeds).
+        if exp.seed_group_id and exp.seed_value is not None:
+            continue
+        return exp.id
     return None
+
+
+async def _seed_group_summary(
+    db: AsyncSession, project_id: int, leader: Experiment
+) -> dict[str, Any] | None:
+    """Summary for a multi-seed run: every completed, evaluated child vs the
+    base model, rolled up to a mean headline plus ``seed_evidence`` (does the
+    lift hold across seeds?). The five failures and the row-level evidence
+    come from the median seed, named in ``representative_experiment_id``.
+    None when no child has an eval result yet (caller falls back to the
+    not-evaluated card)."""
+    from app.services.paired_comparison_stats import seed_spread_evidence
+    from app.services.post_training_eval_service import seed_group_children
+    from app.services.sft_lift_summary_service import compute_sft_lift_summary
+
+    children = await seed_group_children(db, leader)
+    per_seed: list[dict[str, Any]] = []
+    for child in children:
+        latest = (
+            await db.execute(
+                select(EvalResult)
+                .where(EvalResult.experiment_id == child.id)
+                .order_by(desc(EvalResult.id))
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if latest is None:
+            continue
+        lift = await compute_sft_lift_summary(db, project_id, experiment_id=child.id)
+        lifts = lift.get("metric_lifts") or []
+        headline = next((row for row in lifts if row.get("is_headline")), lifts[0] if lifts else None)
+        per_seed.append({
+            "experiment_id": child.id,
+            "seed_value": child.seed_value,
+            "eval_result": latest,
+            "lift": lift,
+            "headline": headline if lift.get("status") == "ok" else None,
+        })
+    if not per_seed:
+        return None
+
+    scored = [s for s in per_seed if s["headline"]]
+    first_lift = per_seed[0]["lift"]
+    if not scored or len({s["headline"]["metric_id"] for s in scored}) != 1:
+        status = first_lift.get("status")
+        verdict = "no_baseline" if status == "no_baseline" else "no_comparison"
+        representative = per_seed[0]
+        failures, failed_count = _failures_from(representative["eval_result"])
+        return {
+            "project_id": project_id,
+            "experiment_id": leader.id,
+            "verdict": verdict,
+            "message": first_lift.get("message"),
+            "headline": None,
+            "evidence": None,
+            "seed_evidence": None,
+            "seeds": [
+                {"experiment_id": s["experiment_id"], "seed_value": s["seed_value"], "headline": s["headline"]}
+                for s in per_seed
+            ],
+            "n_seeds": len(per_seed),
+            "representative_experiment_id": representative["experiment_id"],
+            "metric_lifts": [],
+            "baseline": first_lift.get("baseline"),
+            "trained": {"experiment_id": leader.id, "experiment_name": leader.name},
+            "eval_result_id": representative["eval_result"].id,
+            "eval_type": representative["eval_result"].eval_type,
+            "evaluated_samples": None,
+            "failures": failures,
+            "failed_count": failed_count,
+            "dataset_name": representative["eval_result"].dataset_name,
+        }
+
+    metric_id = scored[0]["headline"]["metric_id"]
+    baseline_value = float(scored[0]["headline"]["baseline_value"])
+    values = [float(s["headline"]["trained_value"]) for s in scored]
+    seed_evidence = seed_spread_evidence(baseline_value, values)
+    seed_evidence["metric_id"] = metric_id
+    mean = float(seed_evidence["mean"])
+    delta = mean - baseline_value
+    headline = {
+        "metric_id": metric_id,
+        "baseline_value": round(baseline_value, 4),
+        "trained_value": round(mean, 4),
+        "trained_std": round(float(seed_evidence["std"]), 4) if seed_evidence["std"] is not None else None,
+        "absolute_delta": round(delta, 4),
+        "relative_delta_pct": round(delta / baseline_value * 100.0, 1) if baseline_value > 0 else None,
+        "direction": "improved" if delta > 0.0001 else "regressed" if delta < -0.0001 else "unchanged",
+        "is_headline": True,
+        "n_seeds": len(scored),
+    }
+    verdict = {"improved": "better", "regressed": "worse"}.get(headline["direction"], "same")
+    # The median seed stands in for the group where one run is needed
+    # (failures to show, row-level evidence).
+    ordered = sorted(scored, key=lambda s: float(s["headline"]["trained_value"]))
+    representative = ordered[len(ordered) // 2]
+    failures, failed_count = _failures_from(representative["eval_result"])
+    metrics = representative["eval_result"].metrics if isinstance(representative["eval_result"].metrics, dict) else {}
+    details = representative["eval_result"].details if isinstance(representative["eval_result"].details, dict) else {}
+    return {
+        "project_id": project_id,
+        "experiment_id": leader.id,
+        "verdict": verdict,
+        "message": None,
+        "headline": headline,
+        "evidence": representative["headline"].get("evidence"),
+        "seed_evidence": seed_evidence,
+        "seeds": [
+            {
+                "experiment_id": s["experiment_id"],
+                "seed_value": s["seed_value"],
+                "headline": s["headline"],
+            }
+            for s in per_seed
+        ],
+        "n_seeds": len(scored),
+        "representative_experiment_id": representative["experiment_id"],
+        "metric_lifts": representative["lift"].get("metric_lifts") or [],
+        "baseline": representative["lift"].get("baseline"),
+        "trained": {"experiment_id": leader.id, "experiment_name": leader.name},
+        "eval_result_id": representative["eval_result"].id,
+        "eval_type": representative["eval_result"].eval_type,
+        "evaluated_samples": metrics.get("evaluated_samples") or metrics.get("eval_documents"),
+        "failures": failures,
+        "failed_count": failed_count,
+        "dataset_name": (details.get("dataset") or {}).get("name") if isinstance(details.get("dataset"), dict) else representative["eval_result"].dataset_name,
+    }
 
 
 def _failures_from(result: EvalResult) -> tuple[list[dict[str, Any]], int | None]:
@@ -71,6 +203,12 @@ async def build_eval_summary(
             "headline": None,
             "failures": [],
         }
+
+    experiment = await db.get(Experiment, experiment_id)
+    if experiment is not None and experiment.seed_group_id and experiment.seed_value is None:
+        grouped = await _seed_group_summary(db, project_id, experiment)
+        if grouped is not None:
+            return grouped
 
     latest = (
         await db.execute(
@@ -121,6 +259,10 @@ async def build_eval_summary(
         # base model and whether the change is within noise. None for results
         # recorded before per-row scores were kept, or non-row metrics.
         "evidence": evidence,
+        # Single run: no seed spread to report.
+        "seed_evidence": None,
+        "seeds": None,
+        "n_seeds": 1,
         "metric_lifts": lifts,
         "baseline": lift.get("baseline"),
         "trained": lift.get("trained"),

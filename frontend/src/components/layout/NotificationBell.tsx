@@ -155,6 +155,17 @@ function jobOutcomeSummary(job: Job): string | null {
                 : h.direction === 'regressed' ? 'worse than base' : 'same as base';
             if (ev?.verdict === 'within_noise') verb = 'within noise';
             else if (ev?.verdict === 'too_few_rows') verb = 'too few rows to tell';
+            // Multi-seed run: the headline is a mean; say whether the seeds agree.
+            const seeds = (r.seed_evidence || null) as { verdict?: string; n?: number; std?: number | null } | null;
+            if (seeds && typeof seeds.n === 'number') {
+                const spread = typeof seeds.std === 'number' ? ` ± ${seeds.std.toFixed(3)}` : '';
+                const agree = seeds.verdict === 'within_noise'
+                    ? 'seeds disagree'
+                    : seeds.verdict === 'too_few_seeds'
+                        ? 'one seed'
+                        : seeds.verdict === 'worse' ? 'drop holds across seeds' : 'holds across seeds';
+                return `${h.metric_id}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)}${spread} across ${seeds.n} seeds (${agree})`;
+            }
             return `${h.metric_id}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)} (${verb}${counts})`;
         }
         return typeof r.lift_status === 'string' ? `lift: ${r.lift_status}` : null;

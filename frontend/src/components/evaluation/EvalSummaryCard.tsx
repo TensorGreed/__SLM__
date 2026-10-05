@@ -12,8 +12,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
-import { fetchEvalSummary, type EvalSummary } from '../../api/evalSummary';
-import { evidenceNote, metricUnit, rowCountsText, type LiftEvidence } from './liftEvidence';
+import { checkLiftAcrossSeeds, fetchEvalSummary, type EvalSummary } from '../../api/evalSummary';
+import { evidenceNote, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import { toast } from '../../stores/toastStore';
 import { useJobsStore } from '../../stores/jobsStore';
 import './EvalSummaryCard.css';
@@ -40,9 +40,31 @@ const VERDICT_TEXT: Record<string, { title: string; tone: string }> = {
 
 /** A "better" / "worse" headline whose row-level evidence can't back it up
  *  must not be announced as a result. */
-function titleFor(verdict: string, evidence: LiftEvidence | null | undefined): { title: string; tone: string } {
+function titleFor(
+    verdict: string,
+    evidence: LiftEvidence | null | undefined,
+    seedEvidence: SeedEvidence | null | undefined,
+): { title: string; tone: string } {
     const base = VERDICT_TEXT[verdict] ?? VERDICT_TEXT.no_comparison;
-    if (!evidence || (verdict !== 'better' && verdict !== 'worse')) return base;
+    if (verdict !== 'better' && verdict !== 'worse') return base;
+    // Run-to-run evidence (seeds) outranks one run's row split.
+    if (seedEvidence) {
+        if (seedEvidence.verdict === 'within_noise') {
+            return {
+                title: verdict === 'better'
+                    ? 'Ahead of the base model on average — but the seeds disagree'
+                    : 'Behind the base model on average — but the seeds disagree',
+                tone: 'neutral',
+            };
+        }
+        if (seedEvidence.verdict === 'better' || seedEvidence.verdict === 'worse') {
+            return {
+                title: `${base.title} — across ${seedEvidence.n} seeds`,
+                tone: base.tone,
+            };
+        }
+    }
+    if (!evidence) return base;
     if (evidence.verdict === 'within_noise') {
         return {
             title: verdict === 'better'
@@ -120,12 +142,34 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     }
 
     const evidence = summary.evidence ?? null;
-    const verdict = titleFor(summary.verdict, evidence);
-    const note = evidence
-        ? evidenceNote(evidence, { trained: true, unit: metricUnit(evidence.metric_id ?? summary.headline?.metric_id) })
-        : null;
+    const seedEvidence = summary.seed_evidence ?? null;
+    const verdict = titleFor(summary.verdict, evidence, seedEvidence);
+    const unit = metricUnit(seedEvidence?.metric_id ?? evidence?.metric_id ?? summary.headline?.metric_id);
+    const note = evidence ? evidenceNote(evidence, { trained: !seedEvidence, unit }) : null;
+    const seedNote = seedEvidence ? seedEvidenceNote(seedEvidence, unit) : null;
     const head = summary.headline;
     const runId = summary.experiment_id;
+    const isSeedGroup = (summary.n_seeds ?? 1) > 1;
+    // The multi-seed option: a single evaluated run can be re-trained with
+    // 3 seeds so the verdict also covers run-to-run variance.
+    const canCheckSeeds = runId != null && !isSeedGroup
+        && (summary.verdict === 'better' || summary.verdict === 'worse' || summary.verdict === 'same');
+
+    const checkSeeds = async (sourceExperimentId: number) => {
+        setStarting(true);
+        try {
+            const out = await checkLiftAcrossSeeds(projectId, sourceExperimentId, 3);
+            toast.info(
+                `Training run #${sourceExperimentId}'s config with 3 seeds (run #${out.experiment_id}). The bell tells you when the lift check across seeds is in.`,
+                6000,
+            );
+            void useJobsStore.getState().refreshAfterLocalChange();
+        } catch (err) {
+            toast.error(errorText(err));
+        } finally {
+            setStarting(false);
+        }
+    };
 
     return (
         <section
@@ -156,16 +200,54 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         {starting ? 'Starting…' : 'Evaluate this run'}
                     </button>
                 )}
+                {canCheckSeeds && (
+                    <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => void checkSeeds(runId)}
+                        disabled={starting}
+                        data-testid="eval-summary-check-seeds"
+                        title="Re-trains this run's exact config with 3 different seeds, then scores every seed against the base model. Shows whether the result holds run to run, not just on these rows."
+                    >
+                        {starting ? 'Starting…' : 'Check across 3 seeds'}
+                    </button>
+                )}
             </div>
 
             {head && (
                 <p className="eval-summary__metric" data-testid="eval-summary-headline">
-                    <code>{head.metric_id}</code>: {fmt(head.baseline_value)} (base) → <strong>{fmt(head.trained_value)}</strong>{' '}
-                    (fine-tuned)
+                    <code>{head.metric_id}</code>: {fmt(head.baseline_value)} (base) → <strong>{fmt(head.trained_value)}</strong>
+                    {head.trained_std != null ? ` ± ${fmt(head.trained_std)}` : ''}{' '}
+                    ({isSeedGroup ? `fine-tuned, mean of ${head.n_seeds ?? summary.n_seeds} seeds` : 'fine-tuned'})
                     <span className={`eval-summary__delta eval-summary__delta--${head.direction}`}>
                         {' '}{head.absolute_delta > 0 ? '+' : ''}{fmt(head.absolute_delta)}
                         {head.relative_delta_pct != null ? ` (${head.relative_delta_pct > 0 ? '+' : ''}${head.relative_delta_pct}%)` : ''}
                     </span>
+                </p>
+            )}
+            {seedEvidence && seedNote && (
+                <p
+                    className={`eval-summary__evidence eval-summary__evidence--${seedEvidence.verdict}`}
+                    data-testid="eval-summary-seed-evidence"
+                    data-verdict={seedEvidence.verdict}
+                >
+                    <span className="eval-summary__evidence-label">{seedNote.label}</span>
+                    <span>{seedNote.text}</span>
+                    {summary.seeds && summary.seeds.length > 0 && (
+                        <span className="eval-summary__seed-runs" data-testid="eval-summary-seed-runs">
+                            {' '}Runs:{' '}
+                            {summary.seeds.map((seed, index) => (
+                                <span key={seed.experiment_id}>
+                                    {index > 0 ? ', ' : ''}#{seed.experiment_id}
+                                    {seed.seed_value != null ? ` (seed ${seed.seed_value})` : ''}
+                                    {seed.headline ? ` ${fmt(seed.headline.trained_value)}` : ' not evaluated'}
+                                </span>
+                            ))}
+                            {summary.representative_experiment_id != null
+                                ? `. Failures and row counts below are from run #${summary.representative_experiment_id} (the median seed).`
+                                : ''}
+                        </span>
+                    )}
                 </p>
             )}
             {evidence && note && (

@@ -258,6 +258,18 @@ class ExportStageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_ids(few), ["export:within-noise"])
         self.assertIn("only 2 test examples could be compared", few[0]["body"])
 
+    async def test_seed_spread_within_noise_beats_a_single_seeds_row_evidence(self):
+        headline = {"metric_id": "f1", "baseline_value": 0.2165, "trained_value": 0.2336}
+        out = await self._run({
+            "verdict": "better", "experiment_id": 30, "headline": headline,
+            "evidence": {"verdict": "better", "n": 21, "better": 14, "worse": 7, "same": 0},
+            "seed_evidence": {"kind": "seeds", "verdict": "within_noise", "n": 3, "baseline_value": 0.2165,
+                              "values": [0.2645, 0.2257, 0.2105], "better": 2, "worse": 1, "same": 0},
+        }, last_export=SimpleNamespace(experiment_id=9))
+        self.assertEqual(_ids(out), ["export:within-noise"])
+        self.assertIn("across 3 seeds it scored 0.265, 0.226, 0.210", out[0]["body"])
+        self.assertIn("seeds disagree", out[0]["body"])
+
     async def test_evidence_beyond_noise_keeps_the_plain_verdicts(self):
         headline = {"metric_id": "f1", "baseline_value": 0.4, "trained_value": 0.3}
         worse = await self._run({

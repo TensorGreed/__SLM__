@@ -12,6 +12,7 @@ import unittest
 from app.services.paired_comparison_stats import (
     MIN_ROWS_FOR_VERDICT,
     paired_difference_evidence,
+    seed_spread_evidence,
 )
 
 
@@ -67,3 +68,40 @@ class PairedDifferenceEvidenceTests(unittest.TestCase):
     def test_non_numeric_pairs_are_skipped(self):
         ev = paired_difference_evidence([0.1, None, 0.2, float("nan")], [0.2, 0.5, 0.1, 0.3])  # type: ignore[list-item]
         self.assertEqual((ev["n"], ev["better"], ev["worse"]), (2, 1, 1))
+
+
+class SeedSpreadEvidenceTests(unittest.TestCase):
+    """Run-to-run evidence: N seeds of one config vs the base model."""
+
+    def test_seeds_that_agree_establish_the_sign(self):
+        ev = seed_spread_evidence(0.074, [0.172, 0.189, 0.201])
+        self.assertEqual(ev["kind"], "seeds")
+        self.assertEqual(ev["verdict"], "better")
+        self.assertTrue(ev["all_better"])
+        self.assertAlmostEqual(ev["mean"], 0.1873, places=3)
+        self.assertAlmostEqual(ev["std"], 0.0146, places=3)
+        self.assertEqual((ev["min"], ev["max"], ev["n"]), (0.172, 0.201, 3))
+        self.assertGreater(ev["ci_low"], 0)
+
+    def test_seeds_that_disagree_are_within_noise(self):
+        # +22%, +4%, -3%: the case that motivated this — one seed looked
+        # like a gain, the others didn't.
+        ev = seed_spread_evidence(0.2165, [0.2645, 0.2257, 0.2105])
+        self.assertEqual(ev["verdict"], "within_noise")
+        self.assertFalse(ev["all_better"])
+        self.assertLess(ev["ci_low"], 0)
+        self.assertGreater(ev["ci_high"], 0)
+
+    def test_two_seeds_give_a_verdict_one_does_not(self):
+        two = seed_spread_evidence(0.1, [0.5, 0.52])
+        self.assertEqual(two["verdict"], "better")  # tight pair → interval still above 0
+        wide = seed_spread_evidence(0.1, [0.5, 0.11])
+        self.assertEqual(wide["verdict"], "within_noise")
+        one = seed_spread_evidence(0.1, [0.5])
+        self.assertEqual(one["verdict"], "too_few_seeds")
+        self.assertIsNone(one["std"])
+        self.assertEqual(one["mean"], 0.5)
+
+    def test_all_worse(self):
+        ev = seed_spread_evidence(0.5, [0.3, 0.31, 0.28])
+        self.assertEqual((ev["verdict"], ev["all_worse"], ev["all_better"]), ("worse", True, False))

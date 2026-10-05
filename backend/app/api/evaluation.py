@@ -1259,6 +1259,73 @@ async def get_eval_summary(
     return await build_eval_summary(db, project_id, experiment_id=experiment_id)
 
 
+class CheckSeedsRequest(BaseModel):
+    experiment_id: int
+    num_seeds: int = Field(3, ge=2, le=10)
+
+
+@router.post("/summary/check-seeds", status_code=201)
+async def check_lift_across_seeds(
+    project_id: int,
+    data: CheckSeedsRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """The multi-seed option for the lift check: re-train ``experiment_id``'s
+    exact config with ``num_seeds`` different seeds as one seed group. When
+    the group finishes, the automatic lift check scores every seed against
+    the base model and reports whether the lift holds across seeds (the
+    row-level "within noise" check only covers which rows were sampled).
+    Returns the new leader run; the bell tracks training and the check."""
+    from app.api.training import start as start_experiment
+    from app.models.experiment import Experiment
+    from app.services.training_service import create_experiment
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    original = (
+        await db.execute(
+            select(Experiment).where(
+                Experiment.id == data.experiment_id, Experiment.project_id == project_id
+            )
+        )
+    ).scalar_one_or_none()
+    if original is None:
+        raise HTTPException(404, f"Experiment {data.experiment_id} not found")
+    config = dict(original.config or {})
+    if config.get("is_baseline") is True:
+        raise HTTPException(400, "Pick a trained run, not the base-model baseline.")
+    # Same recipe, N seeds. Drop the launch-time stamps and any seed-group
+    # marker so the clone fans out fresh.
+    for key in ("_runtime", "_warm_start", "_curriculum_auto_defaulted", "_auto_rag_auto_defaulted", "_seed_group"):
+        config.pop(key, None)
+    config["num_seeds"] = int(data.num_seeds)
+    config["seeds"] = None
+    name = f"{original.name} · {data.num_seeds} seeds"[:255]
+    try:
+        leader = await create_experiment(
+            db,
+            project_id,
+            name,
+            str(original.base_model),
+            config,
+            f"Multi-seed lift check of run #{original.id}.",
+            original.training_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await db.commit()
+    start_result = await start_experiment(project_id, leader.id, db)
+    return {
+        "status": "training_started",
+        "experiment_id": leader.id,
+        "experiment_name": leader.name,
+        "source_experiment_id": original.id,
+        "num_seeds": data.num_seeds,
+        "start_result": start_result,
+    }
+
+
 @router.get("/sft-lift-summary")
 async def get_sft_lift_summary(
     project_id: int,

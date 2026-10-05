@@ -17,6 +17,54 @@ export interface LiftEvidence {
     metric_id?: string | null;
 }
 
+/** Run-to-run evidence: the same config trained with N seeds, each scored
+ *  against the base model (backend ``seed_spread_evidence``). */
+export interface SeedEvidence {
+    kind: 'seeds';
+    n: number;
+    verdict: 'better' | 'worse' | 'within_noise' | 'too_few_seeds';
+    baseline_value: number;
+    values: number[];
+    mean: number | null;
+    std: number | null;
+    min: number | null;
+    max: number | null;
+    ci_low: number | null;
+    ci_high: number | null;
+    all_better: boolean;
+    all_worse: boolean;
+    metric_id?: string | null;
+}
+
+/** The sentence under a multi-seed headline: does the lift hold across
+ *  seeds? This is the variance the row-level interval cannot see. */
+export function seedEvidenceNote(ev: SeedEvidence, unit: string): { label: string; text: string } {
+    const values = ev.values.map((v) => v.toFixed(3)).join(', ');
+    const spread = ev.mean !== null && ev.std !== null
+        ? `${ev.mean.toFixed(3)} ± ${ev.std.toFixed(3)}`
+        : ev.mean !== null ? ev.mean.toFixed(3) : '—';
+    const base = `base ${ev.baseline_value.toFixed(3)}`;
+    if (ev.verdict === 'too_few_seeds') {
+        return {
+            label: 'One seed only',
+            text: `${unit} ${values} (${base}). One training run cannot show run-to-run variance — check across seeds before relying on it.`,
+        };
+    }
+    if (ev.verdict === 'within_noise') {
+        return {
+            label: 'Seeds disagree',
+            text: `Across ${ev.n} seeds: ${unit} ${values} (mean ${spread}, ${base}). The seeds disagree too much to call this a gain or a loss — another seed could land on either side.`,
+        };
+    }
+    const every = ev.verdict === 'better'
+        ? (ev.all_better ? 'every seed beat the base model' : 'the seeds agree it is a gain')
+        : (ev.all_worse ? 'every seed fell below the base model' : 'the seeds agree it is a drop');
+    return {
+        label: ev.verdict === 'better' ? 'Holds across seeds' : 'Drop across seeds',
+        text: `Across ${ev.n} seeds: ${unit} ${values} (mean ${spread}, ${base}) — ${every}.`,
+    };
+}
+
 export function signedScore(value: number): string {
     return `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(3)}`;
 }

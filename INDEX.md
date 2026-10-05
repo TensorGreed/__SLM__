@@ -667,6 +667,7 @@ session-start guidance.
 - `backend/tests/test_behavioral_tests_endpoint_slice2.py` — Quality-Lift phase 7 slice 2 — behavioral_tests focused CRUD endpoint.
 - `backend/tests/test_bell_live_metrics.py` — Tests for the bell live-loss sparkline backend
 - `backend/tests/test_chat_template_rewrap.py` — Tests for the opt-in chat-template re-wrap pass
+- `backend/tests/test_check_seeds_endpoint.py` — ``POST /evaluation/summary/check-seeds`` — the multi-seed option for the
 - `backend/tests/test_checkpoint_registry.py` — Unit tests for the warm-start checkpoint registry (Track 1, Epic B).
 - `backend/tests/test_classification_adapter_prompt_wrap.py` — β-fix tests — classification-label adapter writes the production
 - `backend/tests/test_classification_inference_path.py` — Classification-aware inference path (fix #3).

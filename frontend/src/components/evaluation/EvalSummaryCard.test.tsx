@@ -126,6 +126,87 @@ describe('EvalSummaryCard', () => {
         expect(screen.queryByTestId('eval-summary-evidence')).not.toBeInTheDocument();
     });
 
+    it('summarises a multi-seed run: mean ± std, per-seed runs, and whether the seeds agree', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                ...BETTER,
+                experiment_id: 40,
+                trained: { experiment_id: 40, experiment_name: 'exp-21 · 3 seeds' },
+                n_seeds: 3,
+                representative_experiment_id: 43,
+                headline: { ...BETTER.headline, baseline_value: 0.074, trained_value: 0.187, trained_std: 0.015, absolute_delta: 0.113, relative_delta_pct: 153, n_seeds: 3 },
+                seeds: [
+                    { experiment_id: 41, seed_value: 1, headline: { ...BETTER.headline, trained_value: 0.172 } },
+                    { experiment_id: 42, seed_value: 2, headline: { ...BETTER.headline, trained_value: 0.201 } },
+                    { experiment_id: 43, seed_value: 3, headline: { ...BETTER.headline, trained_value: 0.189 } },
+                ],
+                seed_evidence: {
+                    kind: 'seeds', n: 3, verdict: 'better', baseline_value: 0.074, values: [0.172, 0.201, 0.189],
+                    mean: 0.1873, std: 0.0146, min: 0.172, max: 0.201, ci_low: 0.151, ci_high: 0.224,
+                    all_better: true, all_worse: false, metric_id: 'exact_match',
+                },
+                evidence: { n: 20, better: 9, worse: 2, same: 9, mean_diff: 0.35, ci_low: 0.09, ci_high: 0.61, verdict: 'better', metric_id: 'exact_match' },
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={40} />);
+
+        await screen.findByTestId('eval-summary');
+        expect(screen.getByText('Better than the base model — across 3 seeds')).toBeInTheDocument();
+        expect(screen.getByText(/Run #40 · exp-21 · 3 seeds vs base/)).toBeInTheDocument();
+        expect(screen.getByTestId('eval-summary-headline')).toHaveTextContent('0.074 (base) → 0.187 ± 0.015 (fine-tuned, mean of 3 seeds)');
+        const seedNote = screen.getByTestId('eval-summary-seed-evidence');
+        expect(seedNote).toHaveAttribute('data-verdict', 'better');
+        expect(seedNote).toHaveTextContent('Holds across seeds');
+        expect(seedNote).toHaveTextContent('exact match 0.172, 0.201, 0.189 (mean 0.187 ± 0.015, base 0.074) — every seed beat the base model.');
+        expect(screen.getByTestId('eval-summary-seed-runs')).toHaveTextContent('#41 (seed 1) 0.172, #42 (seed 2) 0.201, #43 (seed 3) 0.189');
+        expect(screen.getByTestId('eval-summary-seed-runs')).toHaveTextContent('from run #43 (the median seed)');
+        // The row-level note stays, without the one-run caveat (seeds cover that).
+        expect(screen.getByTestId('eval-summary-evidence')).not.toHaveTextContent(/one training run/);
+        // A seed group has no "check across seeds" button.
+        expect(screen.queryByTestId('eval-summary-check-seeds')).not.toBeInTheDocument();
+    });
+
+    it('does not announce better when the seeds disagree', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                ...BETTER,
+                n_seeds: 3,
+                seeds: [],
+                seed_evidence: {
+                    kind: 'seeds', n: 3, verdict: 'within_noise', baseline_value: 0.2165, values: [0.2645, 0.2257, 0.2105],
+                    mean: 0.2336, std: 0.0278, min: 0.2105, max: 0.2645, ci_low: -0.052, ci_high: 0.086,
+                    all_better: false, all_worse: false, metric_id: 'f1',
+                },
+                evidence: null,
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+
+        const card = await screen.findByTestId('eval-summary');
+        expect(screen.getByText('Ahead of the base model on average — but the seeds disagree')).toBeInTheDocument();
+        expect(card.className).toMatch(/eval-summary--neutral/);
+        const note = screen.getByTestId('eval-summary-seed-evidence');
+        expect(note).toHaveTextContent('Seeds disagree');
+        expect(note).toHaveTextContent('F1 0.265, 0.226, 0.210');
+        expect(note).toHaveTextContent(/another seed could land on either side/);
+    });
+
+    it('offers to check a single evaluated run across 3 seeds', async () => {
+        apiMock.get.mockResolvedValue({ data: BETTER });
+        apiMock.post.mockResolvedValue({ data: { status: 'training_started', experiment_id: 50, experiment_name: 'exp-21 · 3 seeds', source_experiment_id: 21, num_seeds: 3 } });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+
+        const btn = await screen.findByTestId('eval-summary-check-seeds');
+        expect(btn).toHaveTextContent('Check across 3 seeds');
+        await userEvent.setup().click(btn);
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/7/evaluation/summary/check-seeds',
+                { experiment_id: 21, num_seeds: 3 },
+            );
+        });
+    });
+
     it('reports the server-resolved run and offers one-click eval when not evaluated', async () => {
         apiMock.get.mockResolvedValue({
             data: { project_id: 7, experiment_id: 33, verdict: 'not_evaluated', headline: null, failures: [] },

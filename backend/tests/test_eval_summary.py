@@ -61,6 +61,23 @@ class EvalSummaryTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             return exp.id
 
+    async def _seed_group(self, seeds: list[int]) -> tuple[int, list[int]]:
+        group = uuid4().hex
+        async with self.sf() as db:
+            leader = Experiment(project_id=self.pid, name="run · 3 seeds", status=ExperimentStatus.COMPLETED,
+                                training_mode=TrainingMode.SFT, base_model=BASE, seed_group_id=group, config={})
+            db.add(leader)
+            await db.flush()
+            children = []
+            for seed in seeds:
+                child = Experiment(project_id=self.pid, name=f"run (seed={seed})", status=ExperimentStatus.COMPLETED,
+                                   training_mode=TrainingMode.SFT, base_model=BASE, seed_group_id=group,
+                                   seed_value=seed, config={})
+                db.add(child)
+                children.append(child)
+            await db.commit()
+            return leader.id, [c.id for c in children]
+
     async def _result(self, exp_id: int, em: float, details: dict | None = None) -> None:
         async with self.sf() as db:
             db.add(EvalResult(experiment_id=exp_id, dataset_name="test", eval_type="exact_match",
@@ -156,6 +173,45 @@ class EvalSummaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((em["better"], em["worse"], em["same"], em["verdict"]), (2, 2, 2, "within_noise"))
         self.assertIsNone(rows["macro_f1"]["evidence"])  # not a per-row mean
         self.assertEqual(out["evidence"]["metric_id"], out["headline"]["metric_id"])
+
+    # ── multi-seed ─────────────────────────────────────────────────
+
+    async def test_seed_group_is_summarised_across_seeds(self):
+        base = await self._exp(baseline=True)
+        await self._result(base, 0.1, self._rows([1] + [0] * 9))
+        leader, children = await self._seed_group([1, 2, 3])
+        # The latest trained run is the leader, not its newest child.
+        self.assertEqual((await self._summary())["experiment_id"], leader)
+        self.assertEqual((await self._summary())["verdict"], "not_evaluated")
+
+        rows_for = {0.7: [1] * 7 + [0] * 3, 0.8: [1] * 8 + [0] * 2, 0.75: [1] * 7 + [0] * 3}
+        for child, em in zip(children, (0.7, 0.8, 0.75)):
+            await self._result(child, em, {**self._rows(rows_for[em]), "failures_preview": [
+                {"prompt": f"q-{child}", "reference": "a", "prediction": "b", "row_exact_match": 0.0}
+            ], "failed_count": 3})
+        out = await self._summary()
+        self.assertEqual((out["experiment_id"], out["verdict"], out["n_seeds"]), (leader, "better", 3))
+        head = out["headline"]
+        self.assertEqual((head["metric_id"], head["baseline_value"], head["trained_value"], head["n_seeds"]),
+                         ("exact_match", 0.1, 0.75, 3))
+        self.assertAlmostEqual(head["trained_std"], 0.05, places=3)
+        self.assertEqual([s["seed_value"] for s in out["seeds"]], [1, 2, 3])
+        self.assertEqual([s["headline"]["trained_value"] for s in out["seeds"]], [0.7, 0.8, 0.75])
+        self.assertEqual(out["seed_evidence"]["verdict"], "better")
+        self.assertTrue(out["seed_evidence"]["all_better"])
+        # Failures + row evidence come from the median seed (0.75 → child 3).
+        self.assertEqual(out["representative_experiment_id"], children[2])
+        self.assertEqual(out["failures"][0]["prompt"], f"q-{children[2]}")
+        self.assertEqual(out["evidence"]["better"], 6)
+        self.assertEqual(out["trained"]["experiment_id"], leader)
+
+    async def test_single_run_reports_no_seed_spread(self):
+        base = await self._exp(baseline=True)
+        await self._result(base, 0.1)
+        run = await self._exp()
+        await self._result(run, 0.8)
+        out = await self._summary()
+        self.assertEqual((out["n_seeds"], out["seed_evidence"], out["seeds"]), (1, None, None))
 
     async def test_no_evidence_for_results_without_row_scores(self):
         base = await self._exp(baseline=True)

@@ -12,7 +12,8 @@ the ``training_start`` watcher Job sees a real run complete, it spawns a
      settings,
   3. returns the lift for that exact (base model, run) pair.
 
-Simulated runs, baseline rows, seed-group children and runs without real
+Simulated runs, baseline rows, seed-group children (their leader is checked
+as a group — every seed, plus whether the lift holds across seeds) and runs without real
 weights are skipped with a reason. Opt out per project via
 ``runtime_config["auto_lift_eval"] = False`` or globally via
 ``settings.AUTO_LIFT_EVAL_ENABLED``.
@@ -149,6 +150,11 @@ def auto_lift_skip_reason(exp: Experiment, project: Project | None) -> str | Non
     runtime_id = str(runtime.get("runtime_id") or "").lower()
     if backend == "simulate" or "simulate" in runtime_id:
         return "simulated_run"
+    # A seed-group leader never trained itself: its children hold the
+    # weights (each is resolved when evaluated; a group with no completed
+    # child fails the check with a clear reason).
+    if is_seed_group_leader(exp):
+        return None
     if not _model_dir_has_weights(exp.output_dir):
         return "no_model_weights"
     return None
@@ -218,6 +224,8 @@ async def run_post_training_lift_eval(
     reason = auto_lift_skip_reason(exp, project)
     if reason is not None:
         raise ValueError(f"Automatic lift eval skipped: {reason}")
+    if is_seed_group_leader(exp):
+        return await _run_seed_group_lift_eval(db, project=project, leader=exp, report=_report)
 
     eval_type = eval_type_for_project(project)
     common = {
@@ -283,6 +291,129 @@ async def run_post_training_lift_eval(
     }
 
 
+def is_seed_group_leader(exp: Experiment) -> bool:
+    """The marker run of a multi-seed group (it never trained itself; its
+    N children did)."""
+    return bool(exp.seed_group_id) and exp.seed_value is None
+
+
+async def seed_group_children(db: AsyncSession, leader: Experiment) -> list[Experiment]:
+    """The leader's COMPLETED children, in seed order."""
+    rows = await db.execute(
+        select(Experiment)
+        .where(Experiment.seed_group_id == leader.seed_group_id)
+        .where(Experiment.seed_value.is_not(None))
+        .where(Experiment.status == ExperimentStatus.COMPLETED)
+        .order_by(Experiment.seed_value, Experiment.id)
+    )
+    return list(rows.scalars())
+
+
+async def _run_seed_group_lift_eval(
+    db: AsyncSession, *, project: Project, leader: Experiment, report
+) -> dict[str, Any]:
+    """The multi-seed lift check: every completed child of the group is
+    scored on the test split against the one (cached) base-model result;
+    the result reports the headline per seed plus ``seed_evidence`` — whether
+    the lift holds across seeds, not just across which rows were sampled.
+
+    Before this, a seed-group leader was evaluated as if it were a single
+    run (it borrows its first child's output_dir), so "3 seeds" reported the
+    first seed only, under the leader's name.
+    """
+    from app.services.evaluation_service import run_heldout_evaluation
+    from app.services.paired_comparison_stats import seed_spread_evidence
+    from app.services.sft_lift_summary_service import compute_sft_lift_summary
+
+    children = await seed_group_children(db, leader)
+    if not children:
+        raise ValueError("Automatic lift eval skipped: seed group has no completed child runs")
+
+    eval_type = eval_type_for_project(project)
+    common = {
+        "project_id": project.id,
+        "dataset_name": AUTO_LIFT_DATASET,
+        "eval_type": eval_type,
+        "max_samples": AUTO_LIFT_MAX_SAMPLES,
+        "max_new_tokens": AUTO_LIFT_MAX_NEW_TOKENS,
+        "temperature": 0.0,
+        "judge_model": None,
+    }
+    baseline_exp = await find_or_create_baseline_experiment(
+        db, project.id, leader.base_model, source="post_training.auto_lift"
+    )
+    await db.commit()
+    baseline_result = await _reusable_baseline_result(db, baseline_exp, project.id)
+    baseline_reused = baseline_result is not None
+    if baseline_result is None:
+        await report(0.05, f"Evaluating base model {short_model_name(leader.base_model)}")
+        baseline_result = await run_heldout_evaluation(
+            db=db, experiment_id=baseline_exp.id, model_path=leader.base_model, **common
+        )
+        await db.commit()
+
+    seeds: list[dict[str, Any]] = []
+    for idx, child in enumerate(children):
+        fraction = 0.15 + 0.75 * idx / len(children)
+        await report(fraction, f"Evaluating seed {child.seed_value} (run #{child.id}, {idx + 1}/{len(children)})")
+        trained_result = await run_heldout_evaluation(
+            db=db, experiment_id=child.id, model_path=None, **common
+        )
+        await db.commit()
+        summary = await compute_sft_lift_summary(db, project.id, experiment_id=child.id)
+        headline = next(
+            (row for row in summary.get("metric_lifts") or [] if row.get("is_headline")), None
+        )
+        seeds.append({
+            "experiment_id": child.id,
+            "seed_value": child.seed_value,
+            "eval_result_id": getattr(trained_result, "id", None),
+            "lift_status": summary.get("status"),
+            "headline": headline,
+        })
+
+    await report(0.95, "Computing lift across seeds")
+    scored = [s for s in seeds if s["headline"]]
+    metric_ids = {s["headline"]["metric_id"] for s in scored}
+    seed_evidence = None
+    headline: dict[str, Any] | None = None
+    if scored and len(metric_ids) == 1:
+        metric_id = next(iter(metric_ids))
+        baseline_value = float(scored[0]["headline"]["baseline_value"])
+        trained_values = [float(s["headline"]["trained_value"]) for s in scored]
+        seed_evidence = seed_spread_evidence(baseline_value, trained_values)
+        seed_evidence["metric_id"] = metric_id
+        mean = float(seed_evidence["mean"])
+        delta = mean - baseline_value
+        headline = {
+            "metric_id": metric_id,
+            "baseline_value": round(baseline_value, 4),
+            "trained_value": round(mean, 4),
+            "trained_std": round(float(seed_evidence["std"]), 4) if seed_evidence["std"] is not None else None,
+            "absolute_delta": round(delta, 4),
+            "relative_delta_pct": round(delta / baseline_value * 100.0, 1) if baseline_value > 0 else None,
+            "direction": "improved" if delta > 0.0001 else "regressed" if delta < -0.0001 else "unchanged",
+            "is_headline": True,
+            "n_seeds": len(scored),
+        }
+    return {
+        "experiment_id": leader.id,
+        "base_model": leader.base_model,
+        "n_seeds": len(scored),
+        "seeds": seeds,
+        "seed_evidence": seed_evidence,
+        # Row-level evidence is per seed (``seeds[i].headline.evidence``);
+        # the bell leads with the seed spread.
+        "evidence": None,
+        "baseline_experiment_id": baseline_exp.id,
+        "baseline_eval_result_id": getattr(baseline_result, "id", None),
+        "baseline_reused": baseline_reused,
+        "trained_eval_result_id": None,
+        "lift_status": "ok" if headline else "no_overlap",
+        "headline": headline,
+    }
+
+
 async def start_post_training_lift_job(
     db: AsyncSession,
     *,
@@ -315,10 +446,14 @@ async def start_post_training_lift_job(
                     progress=_progress,
                 )
 
+        run_label = f"run #{experiment_id}"
+        if is_seed_group_leader(exp):
+            n_children = len(await seed_group_children(db, exp))
+            run_label = f"run #{experiment_id} ({n_children} seeds)"
         job = await start_job(
             db,
             kind="post_training_lift_eval",
-            title=f"Did fine-tuning help? · run #{experiment_id} vs {short_model_name(exp.base_model)}",
+            title=f"Did fine-tuning help? · {run_label} vs {short_model_name(exp.base_model)}",
             runner=_runner,
             project_id=project_id,
             params={"experiment_id": experiment_id, "base_model": exp.base_model},

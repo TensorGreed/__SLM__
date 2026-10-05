@@ -77,4 +77,10 @@
 }
 
 .eval-summary__evidence--better { border-left-color: var(--color-success); }
+.eval-summary__evidence--too_few_seeds { border-left-color: var(--color-warning-border, #f59e0b); }
+.eval-summary__evidence--too_few_seeds .eval-summary__evidence-label {
+    background: var(--color-warning-bg, #fffbeb);
+    color: var(--color-warning-fg, #92400e);
+}
+.eval-summary__seed-runs { color: var(--text-tertiary); }
 .eval-summary__evidence--worse { border-left-color: var(--color-error); }

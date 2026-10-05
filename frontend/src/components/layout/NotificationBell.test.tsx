@@ -614,6 +614,33 @@ describe('NotificationBell', () => {
         );
     });
 
+    it('lift-check summary for a seed group says whether the seeds agree', async () => {
+        const headline = { metric_id: 'f1', baseline_value: 0.074, trained_value: 0.187, direction: 'improved', n_seeds: 3 };
+        const jobs = [
+            jobFixture({
+                id: 71, kind: 'post_training_lift_eval', status: 'succeeded', title: 'Did fine-tuning help? · run #40 (3 seeds)',
+                result: { headline, lift_status: 'ok', n_seeds: 3, seed_evidence: { kind: 'seeds', verdict: 'better', n: 3, std: 0.0146 } },
+            }),
+            jobFixture({
+                id: 72, kind: 'post_training_lift_eval', status: 'succeeded', title: 'Did fine-tuning help? · run #44 (3 seeds)',
+                result: { headline, lift_status: 'ok', n_seeds: 3, seed_evidence: { kind: 'seeds', verdict: 'within_noise', n: 3, std: 0.0278 } },
+            }),
+        ];
+        apiMock.get.mockResolvedValue({ data: { count: jobs.length, jobs } });
+        render(<NotificationBell />);
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+
+        expect(screen.getByTestId('notification-bell-row-71-summary')).toHaveTextContent(
+            'f1: 0.074 → 0.187 ± 0.015 across 3 seeds (holds across seeds)',
+        );
+        expect(screen.getByTestId('notification-bell-row-72-summary')).toHaveTextContent(
+            'f1: 0.074 → 0.187 ± 0.028 across 3 seeds (seeds disagree)',
+        );
+    });
+
     it('lift-check summary does not claim "better than base" when the change is within noise', async () => {
         const headline = { metric_id: 'f1', baseline_value: 0.106, trained_value: 0.136, direction: 'improved' };
         const jobs = [

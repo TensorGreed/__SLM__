@@ -29,6 +29,9 @@ _Z_975 = 1.960
 
 # Fewer paired rows than this can't support any verdict.
 MIN_ROWS_FOR_VERDICT = 5
+# Seeds are expensive (a training run each): two already give an interval,
+# a very wide one — the width is the honest part.
+MIN_SEEDS_FOR_VERDICT = 2
 # Per-row changes smaller than this are "no change" (float noise in F1).
 SAME_EPSILON = 1e-9
 
@@ -45,7 +48,7 @@ def _t_critical(df: int) -> float:
 
 
 def paired_difference_evidence(
-    before: Sequence[float], after: Sequence[float]
+    before: Sequence[float], after: Sequence[float], *, min_n: int = MIN_ROWS_FOR_VERDICT
 ) -> dict[str, Any]:
     """Evidence for ``after`` vs ``before`` scored on the SAME rows.
 
@@ -55,8 +58,8 @@ def paired_difference_evidence(
     * ``"better"`` / ``"worse"`` — the 95% interval for the mean change
       excludes zero;
     * ``"within_noise"`` — it includes zero;
-    * ``"too_few_rows"`` — fewer than ``MIN_ROWS_FOR_VERDICT`` paired rows
-      (``ci_low`` / ``ci_high`` are None).
+    * ``"too_few_rows"`` — fewer than ``min_n`` paired rows (``ci_low`` /
+      ``ci_high`` are None).
     """
     pairs = [
         (float(b), float(a))
@@ -78,7 +81,7 @@ def paired_difference_evidence(
         "ci_high": None,
         "verdict": "too_few_rows",
     }
-    if n < MIN_ROWS_FOR_VERDICT:
+    if n < min_n:
         return evidence
     mean = sum(diffs) / n
     variance = sum((d - mean) ** 2 for d in diffs) / (n - 1)
@@ -92,4 +95,42 @@ def paired_difference_evidence(
         evidence["verdict"] = "worse"
     else:
         evidence["verdict"] = "within_noise"
+    return evidence
+
+
+def seed_spread_evidence(
+    baseline_value: float, trained_values: Sequence[float]
+) -> dict[str, Any]:
+    """Run-to-run evidence: the same config trained with N seeds, each scored
+    against the (deterministic) base model on the same rows.
+
+    The row-level interval says whether a lift is more than which-rows noise
+    for ONE run; it cannot see that another seed gives a different run. This
+    one can: it is the interval for the mean seed-to-base difference across
+    seeds (paired t, n = seeds). Verdicts: ``better`` / ``worse`` (every
+    plausible seed lands on that side), ``within_noise`` (seeds disagree
+    enough that the sign isn't established), ``too_few_seeds``.
+    """
+    values = [float(v) for v in trained_values if isinstance(v, (int, float)) and math.isfinite(v)]
+    evidence = paired_difference_evidence(
+        [float(baseline_value)] * len(values), values, min_n=MIN_SEEDS_FOR_VERDICT
+    )
+    if evidence["verdict"] == "too_few_rows":
+        evidence["verdict"] = "too_few_seeds"
+    n = len(values)
+    mean = (sum(values) / n) if n else None
+    std = math.sqrt(sum((v - mean) ** 2 for v in values) / (n - 1)) if n > 1 else None
+    evidence.update({
+        "kind": "seeds",
+        "baseline_value": float(baseline_value),
+        "values": values,
+        "mean": mean,
+        "std": std,
+        "min": min(values) if values else None,
+        "max": max(values) if values else None,
+        # Every seed on the same side of the base model — a plain, strong
+        # reading a beginner can check against the list of values.
+        "all_better": bool(values) and all(v > baseline_value for v in values),
+        "all_worse": bool(values) and all(v < baseline_value for v in values),
+    })
     return evidence

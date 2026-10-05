@@ -3304,14 +3304,26 @@ async def _export_stage_suggestions(
     # evidence says that change is within noise (or rests on too few rows),
     # neither claim holds: don't call the export a downgrade, and don't
     # recommend it as a model that "beats its base".
-    evidence = summary.get("evidence") if isinstance(summary.get("evidence"), dict) else None
+    # A multi-seed run reports the spread across seeds — that evidence covers
+    # run-to-run variance and takes precedence over one run's row split.
+    seed_evidence = summary.get("seed_evidence") if isinstance(summary.get("seed_evidence"), dict) else None
+    evidence = seed_evidence or (summary.get("evidence") if isinstance(summary.get("evidence"), dict) else None)
     unproven = (
         verdict in {"better", "worse"}
         and evidence is not None
-        and evidence.get("verdict") in {"within_noise", "too_few_rows"}
+        and evidence.get("verdict") in {"within_noise", "too_few_rows", "too_few_seeds"}
     )
     if unproven:
-        if evidence.get("verdict") == "too_few_rows":
+        if evidence.get("kind") == "seeds":
+            values = ", ".join(f"{v:.3f}" for v in (evidence.get("values") or []))
+            if evidence.get("verdict") == "too_few_seeds":
+                why = f"only {evidence.get('n', 0)} seed was trained, so run-to-run variance is unknown"
+            else:
+                why = (
+                    f"across {evidence.get('n', 0)} seeds it scored {values} "
+                    f"(base {evidence.get('baseline_value'):.3f}) — the seeds disagree too much to call it"
+                )
+        elif evidence.get("verdict") == "too_few_rows":
             why = (
                 f"only {evidence.get('n', 0)} test examples could be compared, "
                 "too few to tell a real change from chance"

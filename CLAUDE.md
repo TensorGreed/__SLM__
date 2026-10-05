@@ -487,6 +487,21 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   lift Job and `SftLiftPanel` all read it from there. The
   `auto_rag_comparison` Job result carries a compact `evidence` too, and the
   bell qualifies its lift with `shortEvidenceText`.
+  **Multi-seed lift check**: a seed-group *leader* (`seed_group_id` set,
+  `seed_value` None) is lift-checked as a group — `_run_seed_group_lift_eval`
+  scores every COMPLETED child against one cached baseline and returns
+  `seeds` + `seed_evidence` (`paired_comparison_stats.seed_spread_evidence`:
+  paired-t across seeds, `kind="seeds"`, verdicts better / worse /
+  within_noise / too_few_seeds, `all_better`); it used to be evaluated as a
+  single run via the borrowed first-child output_dir (or skipped as
+  `no_model_weights`). `build_eval_summary` rolls a leader up the same way
+  (`_seed_group_summary`: mean ± std headline, `seeds`, `seed_evidence`,
+  failures + row evidence from the median seed →
+  `representative_experiment_id`); `_latest_trained_experiment_id` skips
+  seed children. Seed evidence outranks row evidence in the Coach export
+  stage and the Eval card title. `POST /evaluation/summary/check-seeds`
+  clones a run's config with `num_seeds` and starts the group ("Check across
+  3 seeds" on `EvalSummaryCard`).
 - **Reroute-to-RAG** — `rag_project_service.clone_project_for_rag()`
   creates a sibling project with `runtime_config.rag_first=True`. The
   playground uses base model + retrieval (no LoRA).
