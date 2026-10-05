@@ -454,6 +454,37 @@ jobs:
           timed("LoRA + AdamW + gradient checkpointing (non-reentrant)", lora, use_mask=True, opt=opt)
           PY
 
+      - name: Time train.py directly (same data + config, no Celery)
+        # If this is ~10 s/step while the Celery-launched run is ~230 s/step,
+        # the slowness is in how the worker runs the subprocess, not in
+        # train.py.
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: |
+          . .venv/bin/activate
+          mkdir -p /tmp/direct
+          python - <<'PY'
+          import csv, json
+          rows = list(csv.DictReader(open("data/demo_samples/support-faq/tickets.csv", encoding="utf-8")))
+          with open("/tmp/direct/train.jsonl", "w") as f:
+              for r in rows[:32]:
+                  f.write(json.dumps({"question": r["question"], "answer": r["answer"], "text": r["question"]}) + "\n")
+          with open("/tmp/direct/val.jsonl", "w") as f:
+              for r in rows[32:40]:
+                  f.write(json.dumps({"question": r["question"], "answer": r["answer"], "text": r["question"]}) + "\n")
+          json.dump({"base_model": "HuggingFaceTB/SmolLM2-135M-Instruct", "num_epochs": 1, "auto_epochs": False,
+                     "training_mode": "sft", "task_type": "causal_lm", "use_lora": True, "lora_r": 16, "lora_alpha": 32,
+                     "batch_size": 4, "gradient_accumulation_steps": 4, "gradient_checkpointing": True,
+                     "max_seq_length": 2048, "chat_template": "llama3", "use_tokenizer_chat_template": True},
+                    open("/tmp/direct/cfg.json", "w"))
+          PY
+          start=$(date +%s)
+          python scripts/train.py --project 0 --experiment 1 --output /tmp/direct/out \
+            --base-model HuggingFaceTB/SmolLM2-135M-Instruct --config /tmp/direct/cfg.json \
+            --train-file /tmp/direct/train.jsonl --val-file /tmp/direct/val.jsonl 2>&1 \
+            | grep -E "it\]|SLM_EVENT|train_runtime" | tail -6
+          echo "direct train.py (32 rows, 2 optimizer steps): $(( $(date +%s) - start ))s wall"
+
       - name: Boot backend + Celery worker on the real runtime
         env:
           HF_HUB_OFFLINE: "1"
