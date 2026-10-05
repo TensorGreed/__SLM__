@@ -207,6 +207,18 @@ cd backend && python -m pytest -k "name_pattern"        # by name
   attempts. (Proper fix — isolate the runner's DB session or await/cancel the job
   in tearDown — is deferred; tracked in `/tmp/brewslm-progress.md`.)
 
+- **Real-runtime gate** (`tests/test_real_training_path.py`, CI job
+  `real-training`): drives a LIVE stack over HTTP (backend on
+  `TRAINING_BACKEND=external` + Redis + a Celery worker) — project → support-faq
+  sample → experiment → start → Celery → `python scripts/train.py` → COMPLETED →
+  watcher Job → automatic lift check → `/evaluation/summary` with row evidence.
+  Skips unless `BREWSLM_REAL_TRAINING_BASE_URL` is set, so the per-file loop
+  ignores it. CPU-only on CI (SmolLM2-135M, `num_epochs=1`,
+  `AUTO_LIFT_EVAL_MAX_SAMPLES=8`, `AUTO_LIFT_EVAL_MAX_NEW_TOKENS=48`); the HF
+  model is cached by `actions/cache`. Path-integrity, not quality: the lift may
+  read "within noise". Locally: boot a scratch backend + worker with the same
+  env and run the file with the URL set — the dev worker must NOT be running
+  on the same broker DB, or it consumes the task with the wrong DATA_DIR.
 - **Real-training tests** (`test_training_correctness`, `test_continued_pretraining`,
   `test_export_scoping_and_merge`, `test_playground_trained_run`) fine-tune /
   load SmolLM2-135M. They run only with a GPU or `BREWSLM_REAL_TRAINING=1`

@@ -38,8 +38,15 @@ from app.models.experiment import (
 from app.models.project import Project
 
 AUTO_LIFT_DATASET = "test"
-AUTO_LIFT_MAX_SAMPLES = 100
-AUTO_LIFT_MAX_NEW_TOKENS = 256
+
+
+def _lift_eval_limits() -> tuple[int, int]:
+    """(max_samples, max_new_tokens) for the lift check — settings-backed so
+    a CPU-only CI gate can shrink them."""
+    return (
+        max(1, int(settings.AUTO_LIFT_EVAL_MAX_SAMPLES)),
+        max(1, int(settings.AUTO_LIFT_EVAL_MAX_NEW_TOKENS)),
+    )
 _WEIGHT_SUFFIXES = (".safetensors", ".bin", ".gguf", ".pt")
 
 
@@ -228,12 +235,13 @@ async def run_post_training_lift_eval(
         return await _run_seed_group_lift_eval(db, project=project, leader=exp, report=_report)
 
     eval_type = eval_type_for_project(project)
+    max_samples, max_new_tokens = _lift_eval_limits()
     common = {
         "project_id": project_id,
         "dataset_name": AUTO_LIFT_DATASET,
         "eval_type": eval_type,
-        "max_samples": AUTO_LIFT_MAX_SAMPLES,
-        "max_new_tokens": AUTO_LIFT_MAX_NEW_TOKENS,
+        "max_samples": max_samples,
+        "max_new_tokens": max_new_tokens,
         "temperature": 0.0,
         "judge_model": None,
     }
@@ -330,12 +338,13 @@ async def _run_seed_group_lift_eval(
         raise ValueError("Automatic lift eval skipped: seed group has no completed child runs")
 
     eval_type = eval_type_for_project(project)
+    max_samples, max_new_tokens = _lift_eval_limits()
     common = {
         "project_id": project.id,
         "dataset_name": AUTO_LIFT_DATASET,
         "eval_type": eval_type,
-        "max_samples": AUTO_LIFT_MAX_SAMPLES,
-        "max_new_tokens": AUTO_LIFT_MAX_NEW_TOKENS,
+        "max_samples": max_samples,
+        "max_new_tokens": max_new_tokens,
         "temperature": 0.0,
         "judge_model": None,
     }

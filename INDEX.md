@@ -871,6 +871,7 @@ session-start guidance.
 - `backend/tests/test_rag_project_service.py` — Tests for the RAG-skeleton project service
 - `backend/tests/test_rag_protocol_discipline_pack.py` — Tests for the rag_protocol.discipline eval pack + the
 - `backend/tests/test_rag_protocol_recipe.py` — Tests for the rag-protocol recipe + its three playbooks (Arc R-1).
+- `backend/tests/test_real_training_path.py` — The core training loop on the REAL runtime, end to end, through the API.
 - `backend/tests/test_recipe_apply_service.py` — Tests for recipe_apply_service — applying a Theme 2 recipe pick
 - `backend/tests/test_recipe_service.py` — Tests for the task-shape recipe registry + header-based shape sniffer.
 - `backend/tests/test_remediation_tracking.py` — Tests for the remediation tracking service + API (E2).

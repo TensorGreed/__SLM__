@@ -119,6 +119,11 @@ class Settings(BaseSettings):
     # held-out split (post_training_eval_service). Per-project opt-out:
     # runtime_config["auto_lift_eval"] = False.
     AUTO_LIFT_EVAL_ENABLED: bool = True
+    # Rows of the test split + generation budget per row for the automatic
+    # lift check. The defaults are the product behaviour; CI's CPU-only
+    # real-training gate lowers both so two held-out evals fit in minutes.
+    AUTO_LIFT_EVAL_MAX_SAMPLES: int = 100
+    AUTO_LIFT_EVAL_MAX_NEW_TOKENS: int = 256
     TRAINING_EXTERNAL_CMD: str = (
         'python "{backend_dir}/scripts/train.py" '
         "--project {project_id} --experiment {experiment_id} "
