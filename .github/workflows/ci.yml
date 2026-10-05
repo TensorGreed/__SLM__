@@ -425,8 +425,10 @@ jobs:
           . .venv/bin/activate
           python -m pytest tests/test_real_training_path.py -q -s -p no:cacheprovider
 
-      - name: Upload stack logs on failure
-        if: failure()
+      - name: Upload stack logs
+        # Always: the timings inside the stack (model load, train, two
+        # evals) are only visible here.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: real-training-logs
@@ -435,7 +437,9 @@ jobs:
             /tmp/rt/worker.log
             /tmp/rt/data/projects/*/experiments/*/external_training.log
             /tmp/rt/data/projects/*/experiments/*/training_report.json
+            /tmp/rt/data/projects/*/experiments/*/metrics.jsonl
           if-no-files-found: ignore
+          retention-days: 7
 
   ci-success:
     # Single aggregate gate for branch protection. Make THIS the one required

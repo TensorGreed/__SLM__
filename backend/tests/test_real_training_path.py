@@ -88,7 +88,10 @@ class RealTrainingPathTests(unittest.TestCase):
             row = next(r for r in rows if r["id"] == exp_id)
             return row if row["status"].lower() in {"completed", "failed", "cancelled"} else None
 
+        t_start = time.monotonic()
         final = _wait(_experiment, TRAIN_TIMEOUT_S, what="training to finish")
+        t_trained = time.monotonic()
+        print(f"[real-training] training finished in {t_trained - t_start:.0f}s", flush=True)
         if final["status"].lower() != "completed":
             log = Path(str(final.get("output_dir") or "")) / "external_training.log"
             tail = ""
@@ -129,6 +132,15 @@ class RealTrainingPathTests(unittest.TestCase):
             return None
 
         jobs = _wait(_jobs, LIFT_TIMEOUT_S, what="the lift check to finish")
+        t_lifted = time.monotonic()
+        print(f"[real-training] lift check finished {t_lifted - t_trained:.0f}s after training", flush=True)
+        report_env = report.get("runtime_environment") or {}
+        metrics_path = output_dir / "metrics.jsonl"
+        if metrics_path.exists():
+            for line in metrics_path.read_text(encoding="utf-8").splitlines():
+                if '"train_runtime"' in line:
+                    print(f"[real-training] trainer: {line.strip()[:200]}", flush=True)
+        print(f"[real-training] lora targets: {(report_env.get('lora_target_modules') or {}).get('reason')}", flush=True)
         self.assertTrue((jobs["watcher"].get("result") or {}).get("auto_lift_eval", {}).get("started"))
         lift_result = jobs["lift"].get("result") or {}
         self.assertEqual(lift_result.get("lift_status"), "ok", lift_result)
