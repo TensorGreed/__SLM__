@@ -225,6 +225,71 @@ class ReconcileOrphanedJobsTests(unittest.TestCase):
         self.assertEqual(by_id[done_id], "succeeded")
 
 
+class ProgressPromotesQueuedTests(unittest.TestCase):
+    """A runner reporting progress is running: ``set_progress`` promotes a
+    Job still marked QUEUED (the wrapper's QUEUED→RUNNING update can be
+    rolled back by another session on the shared connection — the lift-check
+    Job showed "Queued" in the bell for its whole run)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._prev_auth_enabled = settings.AUTH_ENABLED
+        settings.AUTH_ENABLED = False
+        cls.client = _MODULE_CLIENT_CM
+
+    @classmethod
+    def tearDownClass(cls):
+        settings.AUTH_ENABLED = cls._prev_auth_enabled
+
+    def test_set_progress_flips_a_queued_job_to_running(self):
+        import asyncio
+        from datetime import datetime, timezone
+
+        from app.database import async_session_factory
+        from app.services.jobs_service import JobProgressHandle
+
+        async def _go() -> tuple[str, bool, str | None, float | None]:
+            async with async_session_factory() as db:
+                job = Job(kind="progress_test", title="stuck-queued", status=JobStatus.QUEUED,
+                          queued_at=datetime.now(timezone.utc))
+                db.add(job)
+                await db.commit()
+                job_id = job.id
+            await JobProgressHandle(job_id).set_progress(fraction=0.3, message="scoring row 3/21")
+            async with async_session_factory() as db:
+                row = await db.get(Job, job_id)
+                out = (row.status.value, row.started_at is not None, row.progress_message, row.progress)
+                # No runner owns this row: park it so later tests' "wait for
+                # idle Jobs" teardown doesn't sit on it.
+                row.status = JobStatus.CANCELLED
+                row.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+                return out
+
+        status, started, message, progress = asyncio.run(_go())
+        self.assertEqual((status, started, message, progress), ("running", True, "scoring row 3/21", 0.3))
+
+    def test_set_progress_leaves_terminal_status_alone(self):
+        import asyncio
+        from datetime import datetime, timezone
+
+        from app.database import async_session_factory
+        from app.services.jobs_service import JobProgressHandle
+
+        async def _go() -> str:
+            async with async_session_factory() as db:
+                job = Job(kind="progress_test", title="cancelled", status=JobStatus.CANCELLED,
+                          queued_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc))
+                db.add(job)
+                await db.commit()
+                job_id = job.id
+            await JobProgressHandle(job_id).set_progress(message="late update")
+            async with async_session_factory() as db:
+                return (await db.get(Job, job_id)).status.value
+
+        self.assertEqual(asyncio.run(_go()), "cancelled")
+
+
 class RerouteAsyncEndpointTests(unittest.TestCase):
     """End-to-end: ?async_job=true on /reroute-to-rag returns 202 +
     a Job stub; polling the job via the API produces a real clone."""

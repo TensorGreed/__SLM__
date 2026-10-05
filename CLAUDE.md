@@ -159,6 +159,13 @@ Runner caveats:
   GC will silently kill a task whose only ref was a local var.
 - Atomic transitions: `UPDATE WHERE status=QUEUED` for QUEUED→RUNNING
   so a cancel landing mid-transition isn't clobbered.
+  That UPDATE can still be lost on the shared single-connection engine
+  (another session's ROLLBACK between the UPDATE and its COMMIT — the
+  lift-check Job sat in QUEUED, `started_at` NULL, for its whole run). The
+  wrapper re-checks after committing and re-applies once, and
+  `JobProgressHandle.set_progress` promotes a still-QUEUED Job to RUNNING
+  (a runner reporting progress is running). Terminal statuses are never
+  touched by either.
 - For sync/GPU-bound work: `asyncio.to_thread(...)` + a separate
   drainer task polling shared state. See
   `api/auto_rag.py:run_auto_rag_comparison` for the pattern.

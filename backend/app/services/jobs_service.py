@@ -104,6 +104,14 @@ class JobProgressHandle:
                 job.progress = max(0.0, min(1.0, float(fraction)))
             if message is not None:
                 job.progress_message = str(message)[:1024]
+            # A runner reporting progress IS running. On the shared
+            # single-connection engine the wrapper's QUEUED→RUNNING update
+            # can be rolled back by another session closing on the same
+            # connection (seen: the lift-check Job showed "Queued" in the
+            # bell for its whole run, progress text updating). Self-heal here.
+            if job.status == JobStatus.QUEUED:
+                job.status = JobStatus.RUNNING
+                job.started_at = job.started_at or _utcnow()
             await db.commit()
 
     async def check_cancelled(self) -> bool:
@@ -181,6 +189,12 @@ async def start_job(
     return job
 
 
+async def _is_running(db: AsyncSession, job_id: int) -> bool:
+    db.expire_all()
+    row = await db.get(Job, job_id)
+    return row is not None and row.status == JobStatus.RUNNING
+
+
 async def _runner_wrapper(job_id: int, runner: JobRunner) -> None:
     """Owns the lifecycle of a single job invocation. Catches every
     exception so a buggy runner can't leave a job stuck in RUNNING."""
@@ -198,6 +212,17 @@ async def _runner_wrapper(job_id: int, runner: JobRunner) -> None:
             .values(status=JobStatus.RUNNING, started_at=_utcnow())
         )
         await db.commit()
+        if result.rowcount == 1 and not await _is_running(db, job_id):
+            # The update was reported applied but didn't persist: on the
+            # shared single-connection engine another session's ROLLBACK
+            # (e.g. a session closing) between our UPDATE and COMMIT undoes
+            # it. Re-apply once, now that the other transaction is gone.
+            await db.execute(
+                update(Job)
+                .where(Job.id == job_id, Job.status == JobStatus.QUEUED)
+                .values(status=JobStatus.RUNNING, started_at=_utcnow())
+            )
+            await db.commit()
         if result.rowcount == 0:
             # Either job vanished or status moved off QUEUED already
             # (most likely CANCELLED). Honor it.
