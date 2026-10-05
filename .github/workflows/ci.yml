@@ -202,6 +202,12 @@ jobs:
           fi
           changed=$(git diff --name-only "$base" "$head")
           printf 'Changed files:\n%s\n' "$changed"
+          # A workflow edit changes what every job does — run them all.
+          if echo "$changed" | grep -qE '^\.github/workflows/'; then
+            echo "Workflow file changed — running every gated job."
+            for n in docs frontend backend e2e; do echo "$n=true" >> "$GITHUB_OUTPUT"; done
+            exit 0
+          fi
           set_out() {
             if echo "$changed" | grep -qE "$2"; then
               echo "$1=true" >> "$GITHUB_OUTPUT"
