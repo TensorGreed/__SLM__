@@ -879,7 +879,9 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   + one different eval question (GOLD_DEV, `source="documents_qa_flow"`) →
   `apply_recipe_to_project("qa-sft")` (keeps the user's base model) →
   `split_dataset(DEFAULT_TRAINING_SOURCE_TYPES)` → `create_experiment` +
-  `api.training.start` (watcher → lift check). `train=False` stops after
+  `api.training.start` (watcher → lift check). `reuse_existing=True` skips
+  generation (same pairs/answer key, re-split + train the project's current
+  base model — card button "Train again on the current base model"). `train=False` stops after
   the split. Stops before training under `MIN_TRAINING_PAIRS` (40). Coach
   training stage: `training:documents-to-qa` with action kind
   `start_flow` (frontend `CoachSuggestion` posts the flow; it leads even

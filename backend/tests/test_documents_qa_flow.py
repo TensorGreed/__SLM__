@@ -187,6 +187,32 @@ class DocumentsQaFlowTests(unittest.TestCase):
         self.assertIn("Q&A assistant from documents", exp["name"])
         self.assertEqual(client.get(f"/api/projects/{self.pid}").json()["base_model_name"], "HuggingFaceTB/SmolLM2-360M-Instruct")
 
+    def test_reuse_existing_retrains_the_same_pairs_on_a_new_model(self):
+        self._ingest("policy.docx", POLICY)
+        with self.assertRaises(ValueError):
+            self._run(train=False, reuse_existing=True)
+        first = self._run(train=False, max_passages=20)
+        self.assertEqual(FakeBackend.calls, 20)
+        client.put(f"/api/projects/{self.pid}", json={"base_model_name": "Qwen/Qwen2.5-1.5B-Instruct"})
+        launched: dict = {}
+
+        async def _launcher(project_id, experiment_id, db):
+            launched["experiment_id"] = experiment_id
+            return {"status": "running"}
+
+        again = self._run(train=True, reuse_existing=True, start_training=_launcher)
+        self.assertEqual(FakeBackend.calls, 20)  # no new generation
+        self.assertEqual(again.training_pairs, first.training_pairs)
+        self.assertEqual(again.answer_key_rows, first.answer_key_rows)
+        self.assertEqual(again.passages_used, 0)
+        self.assertIn("reused", again.backend)
+        self.assertEqual(again.split["train"], first.split["train"])
+        self.assertEqual(len([r for r in self._rows("synthetic/synthetic.jsonl") if r.get("synth_source") == flow.FLOW_SOURCE]), 60)
+        self.assertEqual(len(self._rows("gold/gold_dev.jsonl")), 20)
+        experiments = client.get(f"/api/projects/{self.pid}/training/experiments").json()
+        exp = next(e for e in experiments if e["id"] == launched["experiment_id"])
+        self.assertEqual(exp["base_model"], "Qwen/Qwen2.5-1.5B-Instruct")
+
     def test_too_few_pairs_stops_before_training_and_keeps_the_rows(self):
         self._ingest("policy.docx", POLICY[:8])
         FakeBackend.fail_on = {3, 4}

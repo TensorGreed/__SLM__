@@ -248,6 +248,17 @@ async def preview_documents_qa_flow(db: AsyncSession, project_id: int) -> dict[s
     }
 
 
+async def _count_gold_flow_rows(db: AsyncSession, project_id: int) -> int:
+    """Answer-key rows the flow wrote (GOLD_DEV rows with the flow's source)."""
+    from app.services.gold_service import get_gold_entries
+
+    try:
+        rows = await get_gold_entries(db, project_id, DatasetType.GOLD_DEV)
+    except Exception:  # noqa: BLE001
+        return 0
+    return sum(1 for row in rows if str(row.get("source") or "") == FLOW_SOURCE)
+
+
 async def _count_flow_rows(project_id: int) -> int:
     path = settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl"
     if not path.exists():
@@ -269,11 +280,15 @@ async def run_documents_qa_flow(
     backend: str | None = None,
     backend_override: SynthBackend | None = None,
     train: bool = True,
+    reuse_existing: bool = False,
     progress: ProgressFn | None = None,
     start_training: Callable[..., Awaitable[dict[str, Any]]] | None = None,
 ) -> FlowSummary:
     """Run the flow. ``train=False`` stops after the split (tests, and users
-    who want to review the generated rows first). ``start_training`` is the
+    who want to review the generated rows first). ``reuse_existing`` skips
+    generation when the project already holds flow-generated pairs — the
+    same pairs, answer key and split, trained again (e.g. on another base
+    model), so the two lift checks are comparable. ``start_training`` is the
     launcher used for the training run (defaults to the API's start, which
     also spawns the watcher Job that runs the lift check)."""
     from app.services.auto_rag_service import load_document_passages
@@ -298,12 +313,19 @@ async def run_documents_qa_flow(
             f"Needs at least {MIN_PASSAGES} cleaned document passages (found {len(passages)}). "
             "Import documents and run cleaning first."
         )
-    llm = backend_override or pick_backend(backend)
-    backend_label = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
+    existing_pairs = await _count_flow_rows(project_id) if reuse_existing else 0
+    if reuse_existing and not existing_pairs:
+        raise ValueError("No flow-generated pairs to reuse; run the flow without reuse_existing first.")
+    if existing_pairs:
+        llm = None
+        backend_label = f"reused {existing_pairs} generated pairs"
+    else:
+        llm = backend_override or pick_backend(backend)
+        backend_label = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
     domain_hint = str(project.description or project.name or "").strip()[:200]
 
     # ── 1 + 2: generate per passage ───────────────────────────────────────
-    chosen = passages[:max_passages]
+    chosen = passages[:max_passages] if llm is not None else []
     training_pairs: list[dict[str, Any]] = []
     answer_key: list[dict[str, Any]] = []
     failed = 0
@@ -361,7 +383,12 @@ async def run_documents_qa_flow(
             )
         summary.warnings.append(note)
 
-    await report(0.62, f"Saving {len(training_pairs)} training pairs and {len(answer_key)} answer-key rows")
+    if llm is None:
+        summary.training_pairs = existing_pairs
+        summary.answer_key_rows = await _count_gold_flow_rows(db, project_id)
+        await report(0.62, f"Reusing {existing_pairs} generated pairs and {summary.answer_key_rows} answer-key rows")
+    else:
+        await report(0.62, f"Saving {len(training_pairs)} training pairs and {len(answer_key)} answer-key rows")
     if training_pairs:
         await _save_training_pairs(db, project_id, training_pairs)
     if answer_key:
@@ -375,9 +402,9 @@ async def run_documents_qa_flow(
         )
     await db.commit()
 
-    if len(training_pairs) < MIN_TRAINING_PAIRS:
+    if summary.training_pairs < MIN_TRAINING_PAIRS:
         summary.stopped_reason = (
-            f"Only {len(training_pairs)} training pairs were generated (need {MIN_TRAINING_PAIRS} for a "
+            f"Only {summary.training_pairs} training pairs were generated (need {MIN_TRAINING_PAIRS} for a "
             "split the lift check can measure). They are saved; add documents or raise max_passages and re-run."
         )
         return summary
@@ -432,7 +459,7 @@ async def run_documents_qa_flow(
     experiment = await create_experiment(
         db,
         project_id,
-        f"Q&A assistant from documents · {len(training_pairs)} pairs"[:255],
+        f"Q&A assistant from documents · {summary.training_pairs} pairs"[:255],
         base_model,
         {"base_model": base_model, "task_type": "causal_lm", "training_mode": "sft"},
         f"Started by the documents → Q&A flow ({len(chosen)} passages, {backend_label}).",

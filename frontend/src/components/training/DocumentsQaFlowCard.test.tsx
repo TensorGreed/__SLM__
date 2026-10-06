@@ -67,16 +67,24 @@ describe('DocumentsQaFlowCard', () => {
         expect(screen.queryByTestId('documents-qa-flow-start')).not.toBeInTheDocument();
     });
 
-    it('stays hidden for projects without document passages or that already generated rows', async () => {
+    it('stays hidden for projects without document passages', async () => {
         apiMock.get.mockResolvedValueOnce({ data: { ...ELIGIBLE, passages: 0, eligible: false, blockers: ['x'] } });
-        const { unmount } = render(<DocumentsQaFlowCard projectId={1} />);
+        render(<DocumentsQaFlowCard projectId={1} />);
         await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
         expect(screen.queryByTestId('documents-qa-flow')).not.toBeInTheDocument();
-        unmount();
-        apiMock.get.mockResolvedValueOnce({ data: { ...ELIGIBLE, already_generated: 120 } });
+    });
+
+    it('offers to train the already generated pairs again on the current base model', async () => {
+        apiMock.get.mockResolvedValue({ data: { ...ELIGIBLE, already_generated: 120 } });
+        apiMock.post.mockResolvedValue({ data: { id: 12 } });
         render(<DocumentsQaFlowCard projectId={1} />);
-        await waitFor(() => expect(apiMock.get).toHaveBeenCalledTimes(2));
-        expect(screen.queryByTestId('documents-qa-flow')).not.toBeInTheDocument();
+        expect(await screen.findByTestId('documents-qa-flow-generated-before')).toHaveTextContent('120 question→answer pairs were generated');
+        expect(screen.queryByTestId('documents-qa-flow-plan')).not.toBeInTheDocument();
+        await userEvent.setup().click(screen.getByTestId('documents-qa-flow-retrain'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith('/projects/1/flows/documents-to-qa', expect.objectContaining({ reuse_existing: true, train: true }));
+        });
+        expect(screen.getByTestId('documents-qa-flow-rerun')).toHaveTextContent('Run again (write new pairs)');
     });
 
     it('shows progress while the Job runs and the result when it finishes', async () => {

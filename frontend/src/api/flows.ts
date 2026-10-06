@@ -44,12 +44,13 @@ export async function fetchDocumentsQaFlowPreview(projectId: number): Promise<Do
 
 export async function startDocumentsQaFlow(
     projectId: number,
-    options: { maxPassages?: number; pairsPerPassage?: number; train?: boolean } = {},
+    options: { maxPassages?: number; pairsPerPassage?: number; train?: boolean; reuseExisting?: boolean } = {},
 ): Promise<Job> {
     const body: Record<string, unknown> = {};
     if (options.maxPassages != null) body.max_passages = options.maxPassages;
     if (options.pairsPerPassage != null) body.pairs_per_passage = options.pairsPerPassage;
     if (options.train != null) body.train = options.train;
+    if (options.reuseExisting) body.reuse_existing = true;
     const res = await api.post<Job>(`/projects/${projectId}/flows/documents-to-qa`, body);
     return res.data;
 }

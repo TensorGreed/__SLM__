@@ -112,7 +112,7 @@ Continued pretraining teaches the model your documents' language; it does not ma
 4. **Splits** the pairs into train / validation / test examples (document passages are not training rows and drop out).
 5. **Trains** with your current defaults and lets the automatic lift check score the run against the base model. The Eval tab then answers "better than the base model, and by how much?", with the usual row-count and "within noise" notes.
 
-Tick **Stop after generating so I can review the rows before training** to do steps 1–4 only. Fewer than 40 usable pairs stops the flow before training (the rows are kept). The eval questions are different questions about the *same* passages as the training pairs, since the point is a model that knows your documents; the train↔answer-key leakage check still guards against copies.
+Tick **Stop after generating so I can review the rows before training** to do steps 1–4 only. Once pairs exist, the card offers **Train again on the current base model** — the same pairs, answer key and split trained again without new generation (API `reuse_existing: true`), so a lift on another base model is measured on the same data; **Run again (write new pairs)** generates afresh. Fewer than 40 usable pairs stops the flow before training (the rows are kept). The eval questions are different questions about the *same* passages as the training pairs, since the point is a model that knows your documents; the train↔answer-key leakage check still guards against copies.
 
 API: `GET /api/projects/{id}/flows/documents-to-qa/preview` (eligibility, passages, backend, the plan) and `POST /api/projects/{id}/flows/documents-to-qa` (`max_passages`, `pairs_per_passage`, `backend`, `train`) → a `documents_qa_flow` Job.
 

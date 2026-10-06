@@ -66,7 +66,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
         lastFinishedId.current = id;
     }, [finished?.id, load, onRunStarted, result?.experiment_id]);
 
-    const start = async () => {
+    const start = async (reuseExisting = false) => {
         if (!preview) return;
         setStarting(true);
         try {
@@ -74,8 +74,14 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                 maxPassages: preview.plan.max_passages,
                 pairsPerPassage: preview.plan.pairs_per_passage,
                 train: !reviewFirst,
+                reuseExisting,
             });
-            toast.info(`Building the Q&A assistant — track it in the bell (job #${job.id}).`, 5000);
+            toast.info(
+                reuseExisting
+                    ? `Training the generated pairs again — track it in the bell (job #${job.id}).`
+                    : `Building the Q&A assistant — track it in the bell (job #${job.id}).`,
+                5000,
+            );
             void useJobsStore.getState().refreshAfterLocalChange();
         } catch (err) {
             toast.error(errorText(err));
@@ -84,13 +90,13 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
         }
     };
 
-    // Hidden: not a documents-only project (Q&A rows exist and no flow ran)
-    // or the preview failed. A finished flow keeps the card so the result
-    // stays visible.
+    // Hidden: not a documents-only project (no passages) or the preview
+    // failed. A project that already holds flow-generated pairs keeps the
+    // card so the same pairs can be trained again (another base model).
     if (hidden || !preview) return null;
     const notThisCase = preview.passages === 0 && !finished && !inFlight;
     if (notThisCase) return null;
-    if (preview.already_generated > 0 && !finished && !inFlight) return null;
+    const generatedBefore = preview.already_generated > 0 && !finished && !inFlight && !result;
 
     const plan = preview.plan;
     return (
@@ -139,7 +145,14 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                 <p className="documents-qa-flow__blockers" data-testid="documents-qa-flow-blockers">{preview.blockers.join(' ')}</p>
             )}
 
-            {!inFlight && preview.eligible && !result && (
+            {generatedBefore && (
+                <p className="documents-qa-flow__result" data-testid="documents-qa-flow-generated-before">
+                    {preview.already_generated} question→answer pairs were generated from these documents earlier. Train them
+                    again on the current base model to compare models on the same data, or run the flow again to write new ones.
+                </p>
+            )}
+
+            {!inFlight && preview.eligible && !result && !generatedBefore && (
                 <>
                     <ul className="documents-qa-flow__plan" data-testid="documents-qa-flow-plan">
                         <li>About {plan.estimated_training_pairs} training pairs from {plan.max_passages} passages ({plan.pairs_per_passage} per passage), written by {preview.backend}.</li>
@@ -165,10 +178,19 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                     </p>
                 </>
             )}
-            {!inFlight && preview.eligible && result && (
-                <button type="button" className="btn btn-secondary" onClick={() => void start()} disabled={starting} data-testid="documents-qa-flow-rerun">
-                    {starting ? 'Starting…' : 'Run again'}
-                </button>
+            {!inFlight && (result || generatedBefore) && (
+                <div className="documents-qa-flow__actions">
+                    {(result?.training_pairs ?? preview.already_generated) > 0 && (
+                        <button type="button" className="btn btn-primary" onClick={() => void start(true)} disabled={starting} data-testid="documents-qa-flow-retrain">
+                            {starting ? 'Starting…' : 'Train again on the current base model'}
+                        </button>
+                    )}
+                    {preview.eligible && (
+                        <button type="button" className="btn btn-secondary" onClick={() => void start()} disabled={starting} data-testid="documents-qa-flow-rerun">
+                            {starting ? 'Starting…' : 'Run again (write new pairs)'}
+                        </button>
+                    )}
+                </div>
             )}
         </section>
     );

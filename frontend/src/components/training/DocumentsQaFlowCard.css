@@ -49,3 +49,9 @@
     border: 1px solid var(--border-default);
     background: var(--bg-primary);
 }
+
+.documents-qa-flow__actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
