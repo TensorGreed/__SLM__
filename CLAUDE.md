@@ -550,6 +550,14 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   SmolLM2-135M and Qwen2.5-1.5B), classic `q_proj`/`v_proj` otherwise; an
   explicit list or `"all-linear"` is never overridden. `target_modules` can be
   a string — don't `.join()` it blindly in the UI.
+  **`gradient_checkpointing` defaults to `"auto"`**
+  (`services/gradient_checkpointing_policy.py`): off ≤ 2B params (30 s → 19 s
+  per default run on the GB10, same loss), on above; explicit bool honoured.
+  The report's `runtime_environment` now also records `model_dtype`,
+  `attn_implementation` (flash_attention_2 → `sdpa` fallback) and
+  `optimizer_effective` (`paged_adamw_8bit` → `adamw_torch` without
+  bitsandbytes) — the config's wishes silently fall back, the report is the
+  truth.
   `scripts/train.py` runs as a standalone script (`python scripts/train.py`
   from the Celery worker), so it adds `backend/` to `sys.path` itself — its
   lazy `from app...` imports otherwise fail with "No module named 'app'"

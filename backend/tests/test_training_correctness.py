@@ -465,3 +465,32 @@ class RealTrainingLiftTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GradientCheckpointingPolicyTests(unittest.TestCase):
+    """``gradient_checkpointing="auto"``: off for small models (recompute
+    buys no memory and cost 30 s vs 19 s on the GB10 for the same loss), on
+    for large ones; an explicit value is honoured."""
+
+    def test_schema_default_is_auto(self):
+        self.assertEqual(TrainingConfig(base_model="x").gradient_checkpointing, "auto")
+        self.assertFalse(TrainingConfig(base_model="x", gradient_checkpointing=False).gradient_checkpointing)
+
+    def test_auto_by_model_size(self):
+        from app.services.gradient_checkpointing_policy import (
+            AUTO_CHECKPOINT_MAX_PARAMS,
+            resolve_gradient_checkpointing,
+        )
+
+        small = resolve_gradient_checkpointing("auto", model_params=135_000_000)
+        self.assertFalse(small["enabled"])
+        self.assertTrue(small["auto"])
+        self.assertTrue(resolve_gradient_checkpointing("auto", model_params=AUTO_CHECKPOINT_MAX_PARAMS + 1)["enabled"])
+        self.assertTrue(resolve_gradient_checkpointing("auto", model_params=None)["enabled"])
+
+    def test_explicit_setting_wins(self):
+        from app.services.gradient_checkpointing_policy import resolve_gradient_checkpointing
+
+        self.assertTrue(resolve_gradient_checkpointing(True, model_params=135_000_000)["enabled"])
+        self.assertFalse(resolve_gradient_checkpointing(False, model_params=7_000_000_000)["enabled"])
+        self.assertFalse(resolve_gradient_checkpointing(True, model_params=1)["auto"])

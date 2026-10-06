@@ -178,6 +178,7 @@ session-start guidance.
 - `backend/app/services/gold_service.py` — Gold evaluation dataset service — create, import, and manage gold Q&A sets.
 - `backend/app/services/gold_set_diagnostics_service.py` — Gold-set diagnostics for V4 of the ML-native visualisations arc.
 - `backend/app/services/gold_workbench_service.py` — Gold-set annotation workbench service (priority.md P10).
+- `backend/app/services/gradient_checkpointing_policy.py` — Whether to recompute activations in the backward pass
 - `backend/app/services/hardware_service.py` — Hardware recommender service mapping target devices to model and compression profiles.
 - `backend/app/services/hyperparameter_sweep_service.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/app/services/ingestion_service.py` — Data Ingestion service — handles file uploads, parsing, and storage.

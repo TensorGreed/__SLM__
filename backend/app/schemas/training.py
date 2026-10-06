@@ -96,7 +96,10 @@ class TrainingConfig(BaseModel):
     # Compute / System
     fp16: bool = False
     bf16: bool = True
-    gradient_checkpointing: bool = True
+    # "auto" (default): off for models up to 2B parameters (recompute buys no
+    # memory there and costs ~1.6x per step), on for larger ones — resolved by
+    # ``gradient_checkpointing_policy`` in train.py from the loaded model.
+    gradient_checkpointing: bool | Literal["auto"] = "auto"
     flash_attention: bool = True
 
     # Runtime planner / retry

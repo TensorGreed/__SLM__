@@ -1514,7 +1514,12 @@ def _run_training_attempt(
     lora_alpha = _coerce_int(config.get("lora_alpha"), 32, minimum=1)
     lora_dropout = _coerce_float(config.get("lora_dropout"), 0.05, minimum=0.0)
     target_modules = config.get("target_modules", "auto")
-    gradient_checkpointing = _coerce_bool(config.get("gradient_checkpointing"), True)
+    # "auto" is resolved after the model is loaded (needs its parameter count).
+    gradient_checkpointing_requested = config.get("gradient_checkpointing", "auto")
+    gradient_checkpointing = (
+        True if gradient_checkpointing_requested == "auto"
+        else _coerce_bool(gradient_checkpointing_requested, True)
+    )
     want_flash_attention = _coerce_bool(config.get("flash_attention"), True)
     want_fp16 = _coerce_bool(config.get("fp16"), False)
     want_bf16 = _coerce_bool(config.get("bf16"), True)
@@ -2025,6 +2030,27 @@ def _run_training_attempt(
     input_embeddings = model.get_input_embeddings()
     if input_embeddings is not None and len(tokenizer) > input_embeddings.num_embeddings:
         model.resize_token_embeddings(len(tokenizer))
+    if gradient_checkpointing_requested == "auto":
+        from app.services.gradient_checkpointing_policy import resolve_gradient_checkpointing
+
+        checkpoint_plan = resolve_gradient_checkpointing(
+            gradient_checkpointing_requested,
+            model_params=sum(p.numel() for p in model.parameters()),
+        )
+        gradient_checkpointing = bool(checkpoint_plan["enabled"])
+        runtime_environment["gradient_checkpointing"] = checkpoint_plan
+        warnings.append(f"Gradient checkpointing: {checkpoint_plan['reason']}")
+    else:
+        runtime_environment["gradient_checkpointing"] = {
+            "enabled": bool(gradient_checkpointing), "requested": gradient_checkpointing_requested,
+            "auto": False, "reason": "explicit setting",
+        }
+    # What the model is actually running with — the config's wishes
+    # (flash_attention, paged_adamw_8bit, bf16) silently fall back.
+    runtime_environment["model_dtype"] = str(getattr(model, "dtype", "unknown"))
+    runtime_environment["attn_implementation"] = str(
+        getattr(getattr(model, "config", None), "_attn_implementation", None) or "default"
+    )
     if gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
         model.gradient_checkpointing_enable()
         if hasattr(model.config, "use_cache"):
@@ -2128,6 +2154,7 @@ def _run_training_attempt(
             runtime_environment["bitsandbytes"] = False
             warnings.append("bitsandbytes not installed; using adamw_torch instead of paged_adamw_8bit.")
             optimizer = "adamw_torch"
+    runtime_environment["optimizer_effective"] = optimizer
 
     args_kwargs: dict[str, Any] = {
         "output_dir": str(output_dir),
