@@ -1549,11 +1549,21 @@ async def _training_stage_suggestions(
 
     suggestions: list[dict[str, Any]] = []
 
+    # Documents-only project with nothing to train on yet: the one-click
+    # flow (documents → generated Q&A → answer key → split → train → lift
+    # check) is the next step, before any forecast.
+    flow_nudge = await _documents_qa_flow_nudge(db, project)
+    if flow_nudge is not None:
+        suggestions.append(flow_nudge)
+
     recipe_id = _recipe_id_for(project)
     if not recipe_id:
         # No recipe yet → can't forecast. Same fallback shape used by
         # the data + gold_set stages keeps the navigate-to-picker
-        # affordance consistent across surfaces.
+        # affordance consistent across surfaces. A documents-only project
+        # keeps the flow nudge first: the flow sets the task type itself.
+        if flow_nudge is not None:
+            return suggestions
         return [{
             "id": "training:no-recipe",
             "title": "Choose a task type before training",
@@ -3080,6 +3090,61 @@ SYNTHETIC_SHARE_MIN_ROWS: int = 20
 # A held-out test split this small makes every eval number noisy: one
 # row flipping moves exact-match by 5+ points.
 TEST_SPLIT_MIN_ROWS: int = 20
+
+
+async def _documents_qa_flow_nudge(db: AsyncSession, project: Project) -> dict[str, Any] | None:
+    """A project made of documents (no Q&A rows, no labels) can't be
+    trained as a Q&A assistant until someone turns the documents into
+    question→answer pairs and an answer key. Offer the flow that does all of
+    it; stay quiet once it has produced rows."""
+    try:
+        from app.services.documents_qa_flow_service import (
+            MIN_PASSAGES,
+            preview_documents_qa_flow,
+        )
+
+        preview = await preview_documents_qa_flow(db, project.id)
+    except Exception:  # noqa: BLE001 — a preview failure never blanks the strip
+        return None
+    recipe_id = _recipe_id_for(project) or ""
+    if preview["passages"] < MIN_PASSAGES or preview["already_generated"] > 0:
+        return None
+    if recipe_id and recipe_id != "qa-sft":
+        return None  # a classification / extraction project isn't this case
+    # Labelled rows already present (CSV Q&A, synthetic) → not documents-only.
+    for dataset_type in (DatasetType.SYNTHETIC, DatasetType.GOLD_DEV):
+        ds = await _dataset_of_type(db, project.id, dataset_type)
+        if ds is not None and (ds.record_count or 0) > 0:
+            return None
+    plan = preview["plan"]
+    if preview["eligible"]:
+        body = (
+            f"Your {preview['passages']} document passages aren't training data yet. This flow writes "
+            f"about {plan['estimated_training_pairs']} question→answer pairs from them (using "
+            f"{preview['backend']}), keeps {plan['estimated_answer_key_rows']} different questions as the "
+            "answer key, splits the pairs, trains with your defaults and runs the lift check — one click, "
+            "a few minutes. The generated rows stay reviewable in the Synthetic tab's review queue."
+        )
+        action = {
+            "kind": "start_flow",
+            "label": "Build a Q&A assistant from these documents",
+            "params": {"flow": "documents-to-qa", "max_passages": plan["max_passages"],
+                       "pairs_per_passage": plan["pairs_per_passage"]},
+        }
+        severity = "info"
+    else:
+        body = " ".join(preview["blockers"]) + " Then this flow can build the Q&A assistant in one click."
+        action = _pipeline_tab_action("Open Data", "data")
+        severity = "warning"
+    return {
+        "id": "training:documents-to-qa",
+        "title": "Turn your documents into a Q&A assistant",
+        "body": body,
+        "severity": severity,
+        "action": action,
+        "rule_id": "training.documents-to-qa",
+        "context": {"passages": preview["passages"], "backend": preview["backend"], "plan": plan},
+    }
 
 
 def _pipeline_tab_action(label: str, tab: str) -> dict[str, Any]:

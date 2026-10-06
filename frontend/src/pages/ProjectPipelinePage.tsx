@@ -13,6 +13,7 @@ import SyntheticPanel from '../components/data/SyntheticPanel';
 import DatasetPrepPanel from '../components/data/DatasetPrepPanel';
 import TokenizationPanel from '../components/training/TokenizationPanel';
 import TrainingPanel from '../components/training/TrainingPanel';
+import DocumentsQaFlowCard from '../components/training/DocumentsQaFlowCard';
 import EvalPanel from '../components/evaluation/EvalPanel';
 import CompressionPanel from '../components/compression/CompressionPanel';
 import ExportPanel from '../components/export/ExportPanel';
@@ -184,6 +185,7 @@ export default function ProjectPipelinePage() {
                                 Open Training Config →
                             </button>
                         </div>
+                        <DocumentsQaFlowCard projectId={projectId} />
                         <TrainingPanel
                             projectId={projectId}
                             onNextStep={goToNextTab}

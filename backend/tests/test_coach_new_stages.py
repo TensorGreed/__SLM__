@@ -301,3 +301,59 @@ class ExportStageTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DocumentsQaFlowNudgeTests(unittest.IsolatedAsyncioTestCase):
+    """Training stage: a documents-only project is offered the one-click
+    documents → Q&A → answer key → train flow; a project that already has
+    Q&A rows, or already ran the flow, is not."""
+
+    def _preview(self, **over):
+        base = {
+            "project_id": 7, "eligible": True, "blockers": [], "passages": 560, "backend": "ollama",
+            "current_recipe_id": None, "already_generated": 0,
+            "plan": {"max_passages": 60, "pairs_per_passage": 3, "estimated_training_pairs": 180,
+                     "estimated_answer_key_rows": 60, "llm_calls": 60},
+        }
+        base.update(over)
+        return base
+
+    async def _nudge(self, preview: dict, *, synthetic_rows: int = 0, gold_rows: int = 0, recipe_id: str | None = None):
+        from app.services.coach_service import _documents_qa_flow_nudge
+
+        async def _fake_preview(db, project_id):
+            return preview
+
+        async def _fake_dataset(db, project_id, dataset_type):
+            count = synthetic_rows if dataset_type.value == "synthetic" else gold_rows
+            return SimpleNamespace(record_count=count) if count else None
+
+        project = _project()
+        project.selected_recipe = {"recipe_id": recipe_id} if recipe_id else None
+        with patch("app.services.documents_qa_flow_service.preview_documents_qa_flow", _fake_preview), \
+             patch("app.services.coach_service._dataset_of_type", _fake_dataset):
+            return await _documents_qa_flow_nudge(None, project)  # type: ignore[arg-type]
+
+    async def test_documents_only_project_gets_the_one_click_flow(self):
+        out = await self._nudge(self._preview())
+        self.assertEqual(out["id"], "training:documents-to-qa")
+        self.assertEqual(out["action"]["kind"], "start_flow")
+        self.assertEqual(out["action"]["params"]["flow"], "documents-to-qa")
+        self.assertEqual(out["action"]["params"]["max_passages"], 60)
+        self.assertIn("about 180 question→answer pairs", out["body"])
+        self.assertIn("60 different questions", out["body"])
+        self.assertEqual(out["severity"], "info")
+
+    async def test_blocked_flow_explains_and_points_at_data(self):
+        out = await self._nudge(self._preview(eligible=False, backend=None, blockers=["No generation model is reachable."]))
+        self.assertEqual(out["severity"], "warning")
+        self.assertEqual(out["action"]["kind"], "navigate")
+        self.assertIn("No generation model is reachable.", out["body"])
+
+    async def test_quiet_when_not_a_documents_only_case(self):
+        self.assertIsNone(await self._nudge(self._preview(), synthetic_rows=40))
+        self.assertIsNone(await self._nudge(self._preview(), gold_rows=12))
+        self.assertIsNone(await self._nudge(self._preview(already_generated=171)))
+        self.assertIsNone(await self._nudge(self._preview(passages=3)))
+        self.assertIsNone(await self._nudge(self._preview(), recipe_id="classification"))
+        self.assertIsNotNone(await self._nudge(self._preview(), recipe_id="qa-sft"))

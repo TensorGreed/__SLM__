@@ -102,6 +102,22 @@ If your data is plain documents with no question or answer columns (PDF, Word or
 
 Continued pretraining teaches the model your domain's language. To make it *answer questions* from your documents, turn on document grounding in the Playground (see [Chat with a run](#after-training-did-it-help-and-chat-with-it)).
 
+## Only have documents, but want a Q&A assistant?
+
+Continued pretraining teaches the model your documents' language; it does not make it *answer questions*, and there is nothing to score it against. For that you need question→answer pairs to train on and an answer key to measure with. The **Turn your documents into a Q&A assistant** card on the Training tab (the Coach suggests it on a documents-only project) does the whole chain as one background job:
+
+1. **Generates question→answer pairs** from your cleaned document passages with the synthetic-data model (a local Ollama model, a configured teacher endpoint, or a cloud model): three pairs per passage by default, each answerable from that passage alone, for up to 60 passages. They land in the Synthetic tab's review queue as accepted rows (source `documents_qa_flow`), so you can still reject or purge any.
+2. **Keeps an answer key**: for every passage, one *different* question the training pairs don't ask, saved to the practice answer key (source `documents_qa_flow`).
+3. **Sets the task type** to Q&A (your chosen base model is kept).
+4. **Splits** the pairs into train / validation / test examples (document passages are not training rows and drop out).
+5. **Trains** with your current defaults and lets the automatic lift check score the run against the base model. The Eval tab then answers "better than the base model, and by how much?", with the usual row-count and "within noise" notes.
+
+Tick **Stop after generating so I can review the rows before training** to do steps 1–4 only. Fewer than 40 usable pairs stops the flow before training (the rows are kept). The eval questions are different questions about the *same* passages as the training pairs, since the point is a model that knows your documents; the train↔answer-key leakage check still guards against copies.
+
+API: `GET /api/projects/{id}/flows/documents-to-qa/preview` (eligibility, passages, backend, the plan) and `POST /api/projects/{id}/flows/documents-to-qa` (`max_passages`, `pairs_per_passage`, `backend`, `train`) → a `documents_qa_flow` Job.
+
+Honest limits: the pairs are only as good as the generation model, and a very small student (135M) learns the answer *style* long before the facts — expect modest lifts, and compare against the base model with retrieval (Auto-RAG comparison, base model) before deciding fine-tuning is the right tool.
+
 ## Imbalanced classes
 
 For classification with a classifier head, when the largest class has at least 3× the rows of the smallest, the loss is **weighted by inverse class frequency** (weights average to 1 and are capped at 10×). Rare classes then count as much as common ones, instead of the model learning "always predict the majority". The chosen weights are recorded in `training_report.json` under `runtime_environment.class_weights`. Set `class_weighting: "none"` to turn this off.

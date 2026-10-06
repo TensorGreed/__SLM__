@@ -57,6 +57,9 @@ function jobDeepLink(job: Job): string | null {
     if (job.kind === 'post_training_lift_eval' && job.project_id) {
         return `/project/${job.project_id}/pipeline/eval`;
     }
+    if (job.kind === 'documents_qa_flow' && job.project_id) {
+        return `/project/${job.project_id}/pipeline/training#documents-qa-flow`;
+    }
     if (job.project_id) {
         return `/project/${job.project_id}`;
     }
@@ -130,6 +133,19 @@ function jobOutcomeSummary(job: Job): string | null {
                 : `Created project #${newId}`;
         }
         return null;
+    }
+
+    if (job.kind === 'documents_qa_flow') {
+        const pairs = typeof r.training_pairs === 'number' ? r.training_pairs : null;
+        const keyRows = typeof r.answer_key_rows === 'number' ? r.answer_key_rows : null;
+        const exp = typeof r.experiment_id === 'number' ? r.experiment_id : null;
+        const stopped = typeof r.stopped_reason === 'string' ? r.stopped_reason : null;
+        const parts: string[] = [];
+        if (pairs !== null) parts.push(`${pairs} Q&A pairs`);
+        if (keyRows !== null) parts.push(`${keyRows} answer-key rows`);
+        if (exp !== null) parts.push(`training run #${exp} started`);
+        else if (stopped) parts.push(stopped);
+        return parts.length ? parts.join(' · ') : null;
     }
 
     if (job.kind === 'post_training_lift_eval') {

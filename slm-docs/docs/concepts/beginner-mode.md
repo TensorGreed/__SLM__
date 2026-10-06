@@ -18,6 +18,7 @@ BrewSLM ships with a deliberate **beginner mode**, so a new ML engineer never se
   - a short tip and a walkthrough video for the tab you're on;
   - rule-based suggestions for that stage, with one-click fixes. Every tab a beginner walks through has them:
     - **Data**, **Cleaning**, **Answer Key**, **Training** and **Eval**.
+    - **Training** on a documents-only project: one click turns the documents into a Q&A assistant (generated question→answer pairs, an answer key, a split, a training run and the lift check).
     - **Synthetic**: rows still waiting for review, a training mix that is mostly synthetic, or no task type chosen yet.
     - **Dataset Prep**: data not split yet, a split older than the data it was cut from, a test split too small to trust, or overlapping splits.
     - **Export**: nothing trained yet, or the model you're about to ship lost to its base model, was never evaluated, or isn't clearly different from the base model (the change on the test examples is within noise). It also flags a newer run that beat its base model but hasn't been exported.

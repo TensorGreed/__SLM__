@@ -18,7 +18,8 @@ export type CoachSeverity = 'info' | 'warning' | 'critical';
 export type CoachActionKind =
     | 'run_playbook'
     | 'navigate'
-    | 'augment_from_cluster';
+    | 'augment_from_cluster'
+    | 'start_flow';
 
 export interface CoachAction {
     kind: CoachActionKind;

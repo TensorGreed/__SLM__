@@ -41,6 +41,7 @@ from app.api.curriculum import router as curriculum_router
 from app.api.jobs import router as jobs_router
 from app.api.archetypes import router as archetypes_router
 from app.api.auto_rag import router as auto_rag_router
+from app.api.flows import router as flows_router
 from app.api.active_learning import router as active_learning_router
 from app.api.label_noise import router as label_noise_router
 from app.api.behavioral_tests import router as behavioral_tests_router
@@ -387,6 +388,7 @@ app.include_router(curriculum_router, prefix="/api", dependencies=API_DEPENDENCI
 app.include_router(jobs_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(archetypes_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(auto_rag_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(flows_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(active_learning_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(label_noise_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(behavioral_tests_router, prefix="/api", dependencies=API_DEPENDENCIES)

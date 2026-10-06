@@ -15,6 +15,7 @@ import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import type { CoachSuggestion } from '../../api/coach';
+import { startDocumentsQaFlow } from '../../api/flows';
 import CoachSuggestionTrace from './CoachSuggestionTrace';
 import './CoachSuggestionTrace.css';
 import {
@@ -421,6 +422,37 @@ export default function CoachSuggestionCard({
                 toast.error(
                     detail ?? 'Coach cluster-augment failed. Check the synth panel for details.',
                 );
+            } finally {
+                setIsExecuting(false);
+            }
+            return;
+        }
+        if (suggestion.action.kind === 'start_flow') {
+            // A guided flow (several steps as one Job). The bell takes over
+            // progress; the flow's card on the Training tab shows the result.
+            const flow = suggestion.action.params['flow'];
+            if (flow !== 'documents-to-qa') {
+                toast.error(`Unknown flow: ${String(flow)}`);
+                return;
+            }
+            setIsExecuting(true);
+            try {
+                const maxPassages = Number(suggestion.action.params['max_passages']);
+                const pairsPerPassage = Number(suggestion.action.params['pairs_per_passage']);
+                const job = await startDocumentsQaFlow(projectId, {
+                    maxPassages: Number.isFinite(maxPassages) && maxPassages > 0 ? maxPassages : undefined,
+                    pairsPerPassage: Number.isFinite(pairsPerPassage) && pairsPerPassage > 0 ? pairsPerPassage : undefined,
+                });
+                toast.info(
+                    `Building the Q&A assistant — track it in the bell (job #${job.id}). Training and the lift check follow automatically.`,
+                    6000,
+                );
+                void useJobsStore.getState().refreshAfterLocalChange();
+                onActionCompleted?.();
+            } catch (err) {
+                const data = (err as { response?: { data?: { detail?: unknown; message?: string } } })?.response?.data;
+                const detail = data?.message ?? (typeof data?.detail === 'string' ? data.detail : undefined);
+                toast.error(detail ?? 'Could not start the flow.');
             } finally {
                 setIsExecuting(false);
             }

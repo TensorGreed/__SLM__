@@ -872,6 +872,20 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   `_apply_playground_auto_rag` / `_resolve_playground_run` in `api/training.py`
   (the stream route previously skipped auto-RAG and rag_first). The UI opens
   on the latest run (or `?run=<id>`).
+- **Documents → Q&A flow** (`services/documents_qa_flow_service.py`,
+  `api/flows.py`, Job kind `documents_qa_flow`): cleaned document passages →
+  per-passage prompt to a `synth_backends` backend → `pairs_per_passage`
+  training pairs (synthetic, **accepted**, `synth_source="documents_qa_flow"`)
+  + one different eval question (GOLD_DEV, `source="documents_qa_flow"`) →
+  `apply_recipe_to_project("qa-sft")` (keeps the user's base model) →
+  `split_dataset(DEFAULT_TRAINING_SOURCE_TYPES)` → `create_experiment` +
+  `api.training.start` (watcher → lift check). `train=False` stops after
+  the split. Stops before training under `MIN_TRAINING_PAIRS` (40). Coach
+  training stage: `training:documents-to-qa` with action kind
+  `start_flow` (frontend `CoachSuggestion` posts the flow; it leads even
+  when no task type is set); card `DocumentsQaFlowCard` above the Training
+  tab's panel; bell deep-links `#documents-qa-flow`. Tests use
+  `backend_override` with a fake backend.
 - **Distillation (offline KD)** — `services/distillation/`: slice 1
   captures a teacher's top-k logprobs (`teacher_capture.py`, `POST
   .../distillation/capture` → bg task) to
