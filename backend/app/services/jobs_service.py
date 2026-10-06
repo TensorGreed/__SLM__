@@ -248,12 +248,7 @@ async def _runner_wrapper(job_id: int, runner: JobRunner) -> None:
     except asyncio.CancelledError:
         # Honor task cancellation explicitly so we don't mis-record
         # it as a generic failure.
-        async with async_session_factory() as db:
-            job = await db.get(Job, job_id)
-            if job is not None:
-                job.status = JobStatus.CANCELLED
-                job.completed_at = _utcnow()
-                await db.commit()
+        await _finish_job(job_id, status=JobStatus.CANCELLED)
         raise
     except Exception as exc:  # noqa: BLE001 — boundary
         error_text = f"{type(exc).__name__}: {exc}"
@@ -261,30 +256,63 @@ async def _runner_wrapper(job_id: int, runner: JobRunner) -> None:
         # Keep the traceback in the progress_message slot so the UI
         # has something to surface to a power user. Truncated.
         tb = traceback.format_exc()[-1000:]
-        async with async_session_factory() as db:
-            job = await db.get(Job, job_id)
-            if job is not None:
-                job.status = JobStatus.FAILED
-                job.error = error_text
-                job.progress_message = tb
-                job.completed_at = _utcnow()
-                await db.commit()
+        await _finish_job(job_id, status=JobStatus.FAILED, error=error_text, progress_message=tb)
         return
 
     # Success path — write the result + final status. If the runner
     # honored a cancellation it may have already been marked CANCELLED;
     # don't overwrite that.
-    async with async_session_factory() as db:
-        job = await db.get(Job, job_id)
-        if job is None:
-            return
-        if job.status == JobStatus.CANCELLED:
-            return
-        job.status = JobStatus.SUCCEEDED
-        job.result = dict(result_payload or {})
-        job.progress = 1.0
-        job.completed_at = _utcnow()
-        await db.commit()
+    await _finish_job(job_id, status=JobStatus.SUCCEEDED, result=dict(result_payload or {}), progress=1.0)
+
+
+_TERMINAL = (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED)
+
+
+async def _finish_job(
+    job_id: int,
+    *,
+    status: JobStatus,
+    result: dict[str, Any] | None = None,
+    error: str | None = None,
+    progress_message: str | None = None,
+    progress: float | None = None,
+    attempts: int = 3,
+) -> None:
+    """Write a Job's terminal status and VERIFY it landed.
+
+    On the shared single-connection engine, the runner's own session
+    closing (a ROLLBACK) can land between this UPDATE and its COMMIT and
+    undo it — the documents→Q&A flow finished its last step and sat in
+    RUNNING at progress 0.98 forever, its result lost. Re-read after the
+    commit and re-apply until the row is terminal. A CANCELLED row is never
+    overwritten with SUCCEEDED.
+    """
+    for attempt in range(attempts):
+        async with async_session_factory() as db:
+            job = await db.get(Job, job_id)
+            if job is None:
+                return
+            if job.status == JobStatus.CANCELLED and status == JobStatus.SUCCEEDED:
+                return
+            job.status = status
+            job.completed_at = _utcnow()
+            if result is not None:
+                job.result = result
+            if error is not None:
+                job.error = error
+            if progress_message is not None:
+                job.progress_message = progress_message
+            if progress is not None:
+                job.progress = progress
+            await db.commit()
+        async with async_session_factory() as db:
+            db.expire_all()
+            row = await db.get(Job, job_id)
+            if row is None or row.status in _TERMINAL:
+                return
+        _LOG.warning("Job %s terminal status %s did not persist (attempt %s); retrying", job_id, status.value, attempt + 1)
+        await asyncio.sleep(0.05 * (attempt + 1))
+    _LOG.error("Job %s: could not persist terminal status %s after %s attempts", job_id, status.value, attempts)
 
 
 # ─────────────────────────────────────────────────────────────────────
