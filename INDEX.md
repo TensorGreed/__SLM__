@@ -49,6 +49,7 @@ session-start guidance.
 - `backend/app/api/evaluation.py` — Evaluation API routes.
 - `backend/app/api/export.py` — Export API routes.
 - `backend/app/api/extensions.py` — Extensions API — plugin contract validators + scaffold generator
+- `backend/app/api/flows.py` — Guided flows — several pipeline steps chained as one background Job.
 - `backend/app/api/gamification.py` — Lab Journal API — per-project progression state + achievement catalog.
 - `backend/app/api/gold.py` — Gold evaluation dataset API routes.
 - `backend/app/api/gold_workbench.py` — Gold-set annotation workbench API routes (priority.md P10).
@@ -150,6 +151,7 @@ session-start guidance.
 - `backend/app/services/distillation/kd_loss.py` — Knowledge-distillation loss math (Track 1, Epic A, slice 2).
 - `backend/app/services/distillation/kd_trainer.py` — Offline-KD HF Trainer + collator (Track 1, Epic A, slice 2).
 - `backend/app/services/distillation/teacher_capture.py` — Teacher logit capture for knowledge distillation (Track 1, Epic A, slice 1).
+- `backend/app/services/documents_qa_flow_service.py` — Documents → generated Q&A → answer key → split → train → lift check, as
 - `backend/app/services/domain_blueprint_service.py` — Domain blueprint analysis, validation, versioning, and project-apply service.
 - `backend/app/services/domain_hook_service.py` — Domain hook registry, plugin loading, and safe execution helpers.
 - `backend/app/services/domain_pack_service.py` — Domain pack service for pack persistence and project assignment.
@@ -419,6 +421,7 @@ session-start guidance.
 - `frontend/src/api/evalPackScaffold.ts` — Typed client for the recipe-aware eval-pack scaffolder (E5).
 - `frontend/src/api/evalSummary.ts` — The Eval tab's default card (Wave 3b).
 - `frontend/src/api/experimentCompare.ts` — Typed client for the eval-aware experiment comparison endpoint (E3).
+- `frontend/src/api/flows.ts` — Guided flows — several pipeline steps chained as one background Job.
 - `frontend/src/api/frontierComparison.ts` — Typed wrapper for the Track 1 Epic D SLM-vs-frontier benchmark report.
 - `frontend/src/api/gamification.ts` — Typed wrappers for the Lab Journal (gamification) API.
 - `frontend/src/api/goal.ts` — Arc H — Project end-goal contract + progress ledger client.
@@ -604,6 +607,7 @@ session-start guidance.
 - `frontend/src/components/training/CheckpointsPanel.tsx` — CheckpointsPanel — P20 Checkpoints side panel.
 - `frontend/src/components/training/CloudBurstPlanningSection.tsx` — Cloud Burst planning (Power tools): quote a remote GPU lease, build a
 - `frontend/src/components/training/DatasetFitCard.tsx` — DatasetFitCard — "Why this dataset isn't ready for SFT" explainer
+- `frontend/src/components/training/DocumentsQaFlowCard.tsx` — DocumentsQaFlowCard — the one-click path from a pile of documents to a
 - `frontend/src/components/training/ExperimentClassifierHeadBadge.tsx` — Surfaces the "classifier head detected" signal on the experiment
 - `frontend/src/components/training/ExperimentCompare.tsx` — Multi-experiment loss-trajectory visualizer with synchronized step alignment.
 - `frontend/src/components/training/ExperimentLiveSignals.tsx` — Inline live signals for an in-flight experiment row on the
@@ -704,6 +708,7 @@ session-start guidance.
 - `backend/tests/test_distillation_teacher_capture.py` — Teacher logit capture — Track 1, Epic A, slice 1.
 - `backend/tests/test_document_retrieval.py` — Document-level retrieval (Wave 2c-2).
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
+- `backend/tests/test_documents_qa_flow.py` — Documents → generated Q&A → answer key → split → train, as one Job.
 - `backend/tests/test_domain_hook_builtins.py` — Unit tests for the Gap-#1/#2 slice 1 built-in domain hooks.
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).
 - `backend/tests/test_eval_gap_patch.py` — Eval Gap patch engine — Coach-stage-2 phase 5.
@@ -1018,6 +1023,7 @@ session-start guidance.
 - `frontend/src/components/training/ChatPlaygroundPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/CheckpointsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/DatasetFitCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/DocumentsQaFlowCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ExperimentClassifierHeadBadge.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ExperimentLiveSignals.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/HyperparameterSweepPanel.test.tsx` — _(no docstring)_

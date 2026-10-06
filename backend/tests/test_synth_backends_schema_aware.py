@@ -2,7 +2,7 @@
 
 Covers:
 - Each registered backend declares ``schema_aware`` at the class level.
-- The truth table is correct: NeMo + vLLM = True, Ollama + Teacher = False.
+- The truth table is correct: NeMo + vLLM + Ollama (native ``format``) = True, Teacher = False.
 - The ``GET /api/projects/{id}/synthetic/backends`` endpoint surfaces
   ``schema_aware`` for every entry (so the frontend picker can badge
   the schema-honoring options).
@@ -43,9 +43,9 @@ class BackendSchemaAwareFlagTests(unittest.TestCase):
     """The class-level ``schema_aware`` attribute is the source of truth
     for both the picker badge and the audit trail in the API response."""
 
-    def test_ollama_is_not_schema_aware(self):
-        # Ollama's /v1 shim ignores response_format=json_schema.
-        self.assertFalse(OllamaBackend.schema_aware)
+    def test_ollama_is_schema_aware(self):
+        # Ollama's native /api/chat takes a JSON schema in ``format``.
+        self.assertTrue(OllamaBackend.schema_aware)
 
     def test_teacher_is_not_schema_aware(self):
         # The legacy dispatcher has no structured-output hook.
@@ -131,7 +131,7 @@ class BackendsApiSurfaceSchemaAwareTests(unittest.TestCase):
         by_name = {entry["name"]: entry for entry in resp.json()["backends"]}
         self.assertTrue(by_name["nemo"]["schema_aware"])
         self.assertTrue(by_name["vllm"]["schema_aware"])
-        self.assertFalse(by_name["ollama"]["schema_aware"])
+        self.assertTrue(by_name["ollama"]["schema_aware"])
         self.assertFalse(by_name["teacher"]["schema_aware"])
 
 
@@ -178,8 +178,9 @@ class PickSchemaAwareBackendHelperTests(unittest.TestCase):
         self.assertEqual(pin, "nemo:meta/llama-3.1-70b-instruct")
 
     def test_ignores_ollama_and_teacher_even_if_reachable(self):
-        # Non-schema-aware backends must never be returned by this
-        # helper, even if they're the only thing reachable.
+        # The Coach pin prefers the server-grade constrained decoders
+        # (vllm, nemo); local Ollama is the orchestrator's auto-pick and
+        # the teacher has no structured-output hook.
         with (
             patch.object(OllamaBackend, "is_available", return_value=True),
             patch.object(TeacherModelBackend, "is_available", return_value=True),

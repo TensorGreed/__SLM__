@@ -63,12 +63,12 @@ def _strip_thinking_blocks(text: str) -> str:
 
 
 class OllamaBackend:
-    """Ollama OpenAI-compatible chat completion backend."""
+    """Ollama chat backend (native /api/chat: thinking off, JSON-schema ``format``)."""
 
     name: str = "ollama"
-    # Ollama's /v1 shim ignores OpenAI's response_format=json_schema —
-    # the playbook parser does all structure enforcement.
-    schema_aware: bool = False
+    # The native API's ``format`` takes a JSON schema and constrains
+    # decoding to it; the playbook parser still validates.
+    schema_aware: bool = True
 
     def __init__(
         self,
@@ -139,7 +139,7 @@ class OllamaBackend:
         system_prompt: str | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
-        response_schema: dict | None = None,  # noqa: ARG002 — Ollama's /v1/chat/completions ignores OpenAI's response_format=json_schema; the playbook parser handles structure.
+        response_schema: dict | None = None,
     ) -> str:
         if httpx is None:
             raise SynthBackendError("httpx is not installed; install httpx to use OllamaBackend.")
@@ -148,17 +148,25 @@ class OllamaBackend:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
+        # Ollama's native chat API, not the OpenAI shim: it lets us turn
+        # thinking OFF (``think``), and it honours a JSON schema in
+        # ``format``. Through the shim, a thinking model (Gemma 4, Qwen 3)
+        # spent the whole token budget on hidden reasoning and returned
+        # EMPTY content — 46 of 60 passages in the documents→Q&A flow — and
+        # ``max_tokens`` capped the reasoning, not the answer.
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
             "stream": False,
+            "think": False,
+            "options": {"temperature": temperature, "num_predict": max_tokens},
         }
+        if response_schema:
+            payload["format"] = response_schema
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(
-                    f"{self._host}/v1/chat/completions",
+                    f"{self._host}/api/chat",
                     json=payload,
                 )
                 resp.raise_for_status()
@@ -182,9 +190,9 @@ class OllamaBackend:
             raise SynthBackendError(
                 f"Ollama returned a non-JSON response for model {model!r}: {e}"
             ) from e
-        # OpenAI-compatible response shape.
+        # Native response shape: {"message": {"role", "content", ...}}.
         try:
-            content = data["choices"][0]["message"]["content"]
+            content = data["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
             raise SynthBackendError(
                 f"Ollama returned an unexpected response shape: {str(data)[:200]!r}"

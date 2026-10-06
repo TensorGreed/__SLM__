@@ -6,7 +6,7 @@ Coverage:
     on the chat-completion payload.
   * NemoBackend.complete omits ``response_format`` when no schema
     is passed (no regression on Phase 5a behavior).
-  * OllamaBackend.complete silently accepts + ignores the schema
+  * OllamaBackend.complete sends the schema as native ``format`` and turns thinking off
     kwarg (no exception, payload doesn't grow a ``response_format``).
   * TeacherModelBackend.complete silently accepts the schema kwarg.
   * class_balance_fill playbook builds a JSON Schema from the gold
@@ -156,33 +156,48 @@ class NemoBackendSchemaForwardingTests(unittest.IsolatedAsyncioTestCase):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class OllamaBackendIgnoresSchemaTests(unittest.IsolatedAsyncioTestCase):
-    async def test_complete_accepts_schema_kwarg_without_error(self):
-        """Ollama's OpenAI-compatible endpoint ignores
-        ``response_format=json_schema`` — the backend mirrors that
-        by accepting the kwarg and not threading it into the payload.
-        Existing callers (and the auto-pick path) see zero change."""
+class OllamaBackendNativeChatTests(unittest.IsolatedAsyncioTestCase):
+    async def test_complete_uses_native_chat_with_thinking_off_and_schema(self):
+        """Through the OpenAI shim a thinking model (Gemma 4, Qwen 3) spent
+        the whole token budget on hidden reasoning and returned empty
+        content. The native /api/chat lets the backend turn thinking off,
+        budget the answer itself (``num_predict``) and constrain decoding
+        to the schema (``format``)."""
+        captured: dict = {}
+
+        def handler(url, **kwargs):
+            captured["url"] = url
+            captured["json"] = kwargs.get("json")
+            return _FakeResponse(
+                status_code=200,
+                json_data={"message": {"role": "assistant", "content": "ok", "thinking": ""}, "done_reason": "stop"},
+            )
+
+        backend = OllamaBackend(host="http://ollama", model="gemma4:12b")
+        schema = {"type": "object", "properties": {}}
+        with _patch_async_client(handler):
+            out = await backend.complete("Generate.", max_tokens=777, temperature=0.3, response_schema=schema)
+
+        self.assertEqual(out, "ok")
+        self.assertEqual(captured["url"], "http://ollama/api/chat")
+        payload = captured["json"]
+        self.assertIs(payload["think"], False)
+        self.assertEqual(payload["format"], schema)
+        self.assertEqual(payload["options"], {"temperature": 0.3, "num_predict": 777})
+        self.assertFalse(payload["stream"])
+
+    async def test_complete_without_schema_sends_no_format(self):
         captured: dict = {}
 
         def handler(url, **kwargs):
             captured["json"] = kwargs.get("json")
-            return _FakeResponse(
-                status_code=200,
-                json_data={"choices": [{"message": {"content": "ok"}}]},
-            )
+            return _FakeResponse(status_code=200, json_data={"message": {"content": "<think>hmm</think>plain"}})
 
         backend = OllamaBackend(host="http://ollama", model="llama3.1:8b")
         with _patch_async_client(handler):
-            out = await backend.complete(
-                "Generate.",
-                response_schema={"type": "object", "properties": {}},
-            )
-
-        self.assertEqual(out, "ok")
-        # Ollama backend must NOT have leaked the schema into the
-        # payload (it would just be ignored, but we want the request
-        # shape to stay identical to Phase 5a).
-        self.assertNotIn("response_format", captured["json"])
+            out = await backend.complete("Generate.")
+        self.assertEqual(out, "plain")
+        self.assertNotIn("format", captured["json"])
 
     async def test_teacher_backend_accepts_schema_kwarg_without_error(self):
         """The legacy teacher dispatcher (``call_teacher_model``) has
