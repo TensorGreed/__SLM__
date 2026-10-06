@@ -480,6 +480,15 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   /auto-rag/comparison/run?model=base` runs the base one (same Job kind, same
   one-in-flight guard). `AutoRagComparisonPanel` shows the two as side-by-side
   cards with run id / base model provenance + a "highest of the four" line.
+  `--corpus documents` (CLI) / `?corpus=documents` (run endpoint) retrieves
+  the project's document passages (`ensure_document_index`, cite preamble)
+  instead of Q&A pairs → `comparison[_base]_documents.json`
+  (`comparison_file_name`); the GET returns `base_documents` /
+  `fine_tuned_documents`, the panel renders a third card ("Base model +
+  document passages"). Both arms are judged by `answer_judge_service` when
+  it applies (`_judge_comparison_rows`): `summary.judge` (label + per-arm
+  score/counts), per-row `without_rag.judge` / `with_rag.judge`, and the
+  GET's `judge_evidence` (`_lift_evidence(score_key="judge")`).
   The GET also returns `latest_experiment_id` + `stale` (fine-tuned cache is
   for an older run → warning on the card). The panel reads its project's
   `auto_rag_comparison` Jobs from `useJobsStore((s) => s.jobs)`: in flight →

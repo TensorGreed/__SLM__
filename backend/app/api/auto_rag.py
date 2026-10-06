@@ -229,7 +229,12 @@ async def get_auto_rag_comparison(
     # the RAG-first question). Either may be missing.
     fine_tuned = _read_cached_comparison(auto_rag_dir / "comparison.json")
     base = _read_cached_comparison(auto_rag_dir / "comparison_base.json")
-    if fine_tuned is None and base is None:
+    # The same two models with retrieval over the project's DOCUMENT
+    # PASSAGES (``--corpus documents``) instead of its Q&A pairs — what a
+    # documents-only project actually serves.
+    base_documents = _read_cached_comparison(auto_rag_dir / "comparison_base_documents.json")
+    fine_tuned_documents = _read_cached_comparison(auto_rag_dir / "comparison_documents.json")
+    if fine_tuned is None and base is None and base_documents is None and fine_tuned_documents is None:
         raise HTTPException(
             status_code=404,
             detail=(
@@ -264,7 +269,11 @@ async def get_auto_rag_comparison(
         "experiment_id": (fine_tuned or {}).get("experiment_id"),
         "base_model": (fine_tuned or base or {}).get("base_model"),
         "evidence": (fine_tuned or {}).get("evidence"),
+        "judge": (fine_tuned or {}).get("judge"),
+        "judge_evidence": (fine_tuned or {}).get("judge_evidence"),
         "base": base,
+        "base_documents": base_documents,
+        "fine_tuned_documents": fine_tuned_documents,
     }
 
 
@@ -282,33 +291,55 @@ def _read_cached_comparison(cache_path: Path) -> dict[str, Any] | None:
             detail=f"Cached comparison at {cache_path} is unreadable: {e}",
         ) from e
     rows = payload.get("rows") or []
+    summary = payload.get("summary") or {}
+    judge = summary.get("judge") if isinstance(summary.get("judge"), dict) else None
     return {
         "cached_at": payload.get("cached_at"),
-        "summary": payload.get("summary") or {},
+        "summary": summary,
         "rows": rows,
         "experiment_id": payload.get("experiment_id"),
         "base_model": payload.get("base_model"),
+        "corpus": payload.get("corpus") or "qa",
         "evidence": _lift_evidence(rows),
+        # The answer judge's view (long-answer tasks): who judged, each arm's
+        # correct / partial / wrong, and the paired row evidence on the
+        # judge scores — the number to read when F1 is a weak ruler.
+        "judge": judge,
+        "judge_evidence": _lift_evidence(rows, score_key="judge") if judge else None,
     }
 
 
-def _lift_evidence(rows: list[Any]) -> dict[str, Any]:
+def _lift_evidence(rows: list[Any], *, score_key: str = "f1") -> dict[str, Any]:
     """How solid the with-RAG vs without-RAG difference is: rows better /
     worse / same and whether the mean per-row change is within noise.
-    Computed from the cached per-row F1 pairs, so older caches get it too."""
+    Computed from the cached per-row pairs, so older caches get it too.
+    ``score_key="judge"`` pairs the answer judge's per-row scores instead
+    (rows one arm couldn't judge drop out of the pairing)."""
     from app.services.paired_comparison_stats import paired_difference_evidence
+
+    def _score(arm: Any) -> float | None:
+        if not isinstance(arm, dict):
+            return None
+        if score_key == "judge":
+            judge = arm.get("judge")
+            value = judge.get("score") if isinstance(judge, dict) else None
+        else:
+            value = arm.get(score_key)
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
     without: list[float] = []
     with_rag: list[float] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
-        off = (row.get("without_rag") or {}).get("f1") if isinstance(row.get("without_rag"), dict) else None
-        on = (row.get("with_rag") or {}).get("f1") if isinstance(row.get("with_rag"), dict) else None
-        if isinstance(off, (int, float)) and isinstance(on, (int, float)):
-            without.append(float(off))
-            with_rag.append(float(on))
-    return paired_difference_evidence(without, with_rag)
+        off = _score(row.get("without_rag"))
+        on = _score(row.get("with_rag"))
+        if off is not None and on is not None:
+            without.append(off)
+            with_rag.append(on)
+    evidence = paired_difference_evidence(without, with_rag)
+    evidence["metric_id"] = "judge_correct" if score_key == "judge" else score_key
+    return evidence
 
 
 def _index_row_count(index_path: Path) -> int:
@@ -336,6 +367,14 @@ async def run_auto_rag_comparison(
             "Which model to score with and without retrieval: the latest "
             "fine-tuned run (default), or the project's untouched base model "
             "(\"does retrieval alone help?\" — written to comparison_base.json)."
+        ),
+    ),
+    corpus: Literal["qa", "documents"] = Query(
+        "qa",
+        description=(
+            "What the with-retrieval arm retrieves: the project's training Q&A "
+            "pairs (default) or its cleaned document passages with the "
+            "cite-or-say-you-don't-know preamble (written to *_documents.json)."
         ),
     ),
     db: AsyncSession = Depends(get_db),
@@ -491,7 +530,7 @@ async def run_auto_rag_comparison(
         backend_root = str(Path(__file__).resolve().parents[2])
         if backend_root not in _sys.path:
             _sys.path.insert(0, backend_root)
-        from scripts.auto_rag_ab import run_project_comparison
+        from scripts.auto_rag_ab import comparison_file_name, run_project_comparison
 
         stop_event = asyncio.Event()
         drain_task = asyncio.create_task(_drainer(stop_event))
@@ -501,6 +540,7 @@ async def run_auto_rag_comparison(
                 project_id,
                 progress_callback=_sync_callback,
                 base_only=base_only,
+                corpus=corpus,
             )
         finally:
             stop_event.set()
@@ -514,13 +554,29 @@ async def run_auto_rag_comparison(
         # few rows isn't announced without "within noise".
         full_evidence = _lift_evidence(payload.get("rows") or [])
         evidence = {k: full_evidence.get(k) for k in ("verdict", "n", "better", "worse", "same")}
+        judge = summary.get("judge") if isinstance(summary.get("judge"), dict) else None
+        judge_evidence = None
+        if judge:
+            full_judge = _lift_evidence(payload.get("rows") or [], score_key="judge")
+            judge_evidence = {k: full_judge.get(k) for k in ("verdict", "n", "better", "worse", "same")}
         # Pointers-only result so the Job row stays cheap; the
         # comparison.json on disk is the canonical full payload.
         return {
             "project_id": project_id,
             "model": "base" if base_only else "fine_tuned",
+            "corpus": corpus,
             "base_model": payload.get("base_model"),
             "experiment_id": payload.get("experiment_id"),
+            "judge": (
+                {
+                    "judge": judge.get("judge"),
+                    "off_score": (judge.get("without_rag") or {}).get("score"),
+                    "on_score": (judge.get("with_rag") or {}).get("score"),
+                }
+                if judge
+                else None
+            ),
+            "judge_evidence": judge_evidence,
             "off_mean_f1": summary.get("off_mean_f1"),
             "on_mean_f1": summary.get("on_mean_f1"),
             "absolute_lift": summary.get("absolute_lift"),
@@ -529,7 +585,7 @@ async def run_auto_rag_comparison(
             "n_val_rows": summary.get("n_val_rows"),
             "comparison_path": str(
                 settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
-                / ("comparison_base.json" if base_only else "comparison.json")
+                / comparison_file_name(base_only=base_only, corpus=corpus)
             ),
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -538,9 +594,8 @@ async def run_auto_rag_comparison(
         db,
         kind="auto_rag_comparison",
         title=(
-            f"Auto-RAG comparison · base model · project #{project_id}"
-            if base_only
-            else f"Auto-RAG comparison · project #{project_id}"
+            f"Auto-RAG comparison · {'base model' if base_only else 'fine-tuned'}"
+            f"{' · document passages' if corpus == 'documents' else ''} · project #{project_id}"
         ),
         runner=_runner,
         project_id=project_id,
@@ -548,6 +603,7 @@ async def run_auto_rag_comparison(
             "project_id": project_id,
             "recipe_id": recipe_id,
             "model": "base" if base_only else "fine_tuned",
+            "corpus": corpus,
         },
     )
     return serialize_job(job)

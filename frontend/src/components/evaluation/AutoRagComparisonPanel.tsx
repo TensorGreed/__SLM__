@@ -21,11 +21,36 @@ import { toast } from '../../stores/toastStore';
 import { evidenceNote, rowCountsText, type LiftEvidence } from './liftEvidence';
 import './AutoRagComparisonPanel.css';
 
+/** The answer judge's verdict on one generated answer (long-answer tasks). */
+interface AutoRagJudgeVerdict {
+    score: number;
+    verdict: 'correct' | 'partial' | 'wrong';
+    reason: string;
+}
+
 interface AutoRagRow {
     question: string;
     reference: string;
-    without_rag: { generated: string; f1: number };
-    with_rag: { generated: string; f1: number; retrieved_row_count: number };
+    without_rag: { generated: string; f1: number; judge?: AutoRagJudgeVerdict | null };
+    with_rag: {
+        generated: string;
+        f1: number;
+        retrieved_row_count: number;
+        judge?: AutoRagJudgeVerdict | null;
+        retrieved_sources?: string[];
+    };
+}
+
+interface AutoRagJudgeArm {
+    score: number | null;
+    counts?: { correct?: number; partial?: number; wrong?: number } | null;
+}
+
+/** Judge summary for one comparison: who judged + each arm's mean. */
+interface AutoRagJudgeSummary {
+    judge: string;
+    without_rag: AutoRagJudgeArm;
+    with_rag: AutoRagJudgeArm;
 }
 
 interface AutoRagSummary {
@@ -35,6 +60,7 @@ interface AutoRagSummary {
     relative_lift_pct: number | null;
     n_val_rows: number;
     rag_k: number;
+    judge?: AutoRagJudgeSummary | null;
 }
 
 interface AutoRagModelComparison {
@@ -43,10 +69,15 @@ interface AutoRagModelComparison {
     rows: AutoRagRow[];
     experiment_id?: number | null;
     base_model?: string | null;
+    corpus?: 'qa' | 'documents' | null;
     evidence?: LiftEvidence | null;
+    /** Paired row evidence on the judge scores (null when not judged). */
+    judge_evidence?: LiftEvidence | null;
 }
 
-type ComparisonModel = 'fine_tuned' | 'base';
+/** 'base_documents' = the base model retrieving the project's document
+ *  passages (what a documents-only project serves). */
+type ComparisonModel = 'fine_tuned' | 'base' | 'base_documents';
 
 interface AutoRagComparisonResponse {
     project_id: number;
@@ -59,7 +90,9 @@ interface AutoRagComparisonResponse {
     experiment_id?: number | null;
     base_model?: string | null;
     evidence?: LiftEvidence | null;
+    judge_evidence?: LiftEvidence | null;
     base?: AutoRagModelComparison | null;
+    base_documents?: AutoRagModelComparison | null;
     /** The project's latest trained run, and whether the fine-tuned
      *  comparison was measured on an older one. */
     latest_experiment_id?: number | null;
@@ -105,7 +138,9 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
         (job) => job.status === 'queued' || job.status === 'running',
     ) ?? null;
     const runningModel: ComparisonModel | null = inFlightJob
-        ? (inFlightJob.params?.model === 'base' ? 'base' : 'fine_tuned')
+        ? (inFlightJob.params?.model === 'base'
+            ? (inFlightJob.params?.corpus === 'documents' ? 'base_documents' : 'base')
+            : 'fine_tuned')
         : null;
     const runningMessage = inFlightJob?.progress_message || null;
     const finishedKey = comparisonJobs
@@ -128,9 +163,15 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
             const url = `/projects/${projectId}/auto-rag/comparison/run`;
             const resp = model === 'base'
                 ? await api.post(url, null, { params: { model: 'base' } })
-                : await api.post(url);
+                : model === 'base_documents'
+                    ? await api.post(url, null, { params: { model: 'base', corpus: 'documents' } })
+                    : await api.post(url);
             const jobId = (resp.data as { id?: number })?.id;
-            const label = model === 'base' ? 'Base-model auto-RAG comparison' : 'Auto-RAG comparison';
+            const label = model === 'base'
+                ? 'Base-model auto-RAG comparison'
+                : model === 'base_documents'
+                    ? 'Base model + document passages comparison'
+                    : 'Auto-RAG comparison';
             toast.info(
                 jobId
                     ? `${label} queued — track in the bell (job #${jobId})`
@@ -318,17 +359,20 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
         experiment_id: data.experiment_id,
         base_model: data.base_model,
         evidence: data.evidence ?? null,
+        judge_evidence: data.judge_evidence ?? null,
     };
     const base: AutoRagModelComparison | null = data.base ?? null;
+    const baseDocuments: AutoRagModelComparison | null = data.base_documents ?? null;
     const fineTunedReady = hasSummary(fineTuned.summary);
     const baseReady = hasSummary(base?.summary);
+    const baseDocumentsReady = hasSummary(baseDocuments?.summary);
     // Defensive: tests / partial responses can hand back a `data` without
-    // either summary; treat that as "comparison unavailable" rather than
+    // any summary; treat that as "comparison unavailable" rather than
     // crashing on the reads below.
-    if (!fineTunedReady && !baseReady) {
+    if (!fineTunedReady && !baseReady && !baseDocumentsReady) {
         return null;
     }
-    const baseModelName = shortModelName(base?.base_model || data.base_model);
+    const baseModelName = shortModelName(base?.base_model || baseDocuments?.base_model || data.base_model);
     const fineTunedTitle = fineTuned.experiment_id != null
         ? `Fine-tuned · run #${fineTuned.experiment_id}`
         : 'Fine-tuned · latest run';
@@ -353,9 +397,23 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
         }
     }
 
-    const activeRowsModel: ComparisonModel =
-        rowsModel === 'base' ? (baseReady ? 'base' : 'fine_tuned') : (fineTunedReady ? 'fine_tuned' : 'base');
-    const activeRows = activeRowsModel === 'base' ? (base?.rows || []) : fineTuned.rows;
+    const readyModels: ComparisonModel[] = [
+        ...(fineTunedReady ? ['fine_tuned' as const] : []),
+        ...(baseReady ? ['base' as const] : []),
+        ...(baseDocumentsReady ? ['base_documents' as const] : []),
+    ];
+    const activeRowsModel: ComparisonModel = readyModels.includes(rowsModel) ? rowsModel : readyModels[0];
+    const activeRows = activeRowsModel === 'base'
+        ? (base?.rows || [])
+        : activeRowsModel === 'base_documents'
+            ? (baseDocuments?.rows || [])
+            : fineTuned.rows;
+    const rowsModelLabel = (model: ComparisonModel): string =>
+        model === 'base'
+            ? `the base model (${baseModelName})`
+            : model === 'base_documents'
+                ? `the base model (${baseModelName}) with document passages`
+                : fineTunedTitle.toLowerCase();
 
     return (
         <section
@@ -410,33 +468,60 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
                     staleNote={null}
                     onRun={() => void handleRunComparison('base')}
                 />
+                <ModelComparisonCard
+                    testIdPrefix="auto-rag-comparison-base-documents"
+                    runTestId="auto-rag-comparison-base-documents-run-btn"
+                    title={`Base model + document passages · ${baseModelName}`}
+                    trained={false}
+                    provenance="No fine-tuning — retrieves your cleaned document passages, cites them or says it doesn't know"
+                    comparison={baseDocumentsReady ? baseDocuments : null}
+                    emptyText="Not run yet. Shows what retrieval over your documents does, without your fine-tune and without the Q&A pairs."
+                    submitting={submitting}
+                    disabled={busy}
+                    runningMessage={runningModel === 'base_documents' ? (runningMessage || 'starting…') : null}
+                    staleNote={null}
+                    onRun={() => void handleRunComparison('base_documents')}
+                />
             </div>
             <div className="auto-rag-comparison__rows-head">
                 <h4 className="auto-rag-comparison__section-title">Per-row comparison</h4>
-                {fineTunedReady && baseReady && (
+                {readyModels.length > 1 && (
                     <div className="auto-rag-comparison__rows-toggle" role="group" aria-label="Model for per-row comparison">
-                        <button
-                            type="button"
-                            className={'btn btn-secondary' + (activeRowsModel === 'fine_tuned' ? ' is-active' : '')}
-                            onClick={() => setRowsModel('fine_tuned')}
-                            data-testid="auto-rag-comparison-rows-finetuned"
-                        >
-                            Fine-tuned
-                        </button>
-                        <button
-                            type="button"
-                            className={'btn btn-secondary' + (activeRowsModel === 'base' ? ' is-active' : '')}
-                            onClick={() => setRowsModel('base')}
-                            data-testid="auto-rag-comparison-rows-base"
-                        >
-                            Base model
-                        </button>
+                        {fineTunedReady && (
+                            <button
+                                type="button"
+                                className={'btn btn-secondary' + (activeRowsModel === 'fine_tuned' ? ' is-active' : '')}
+                                onClick={() => setRowsModel('fine_tuned')}
+                                data-testid="auto-rag-comparison-rows-finetuned"
+                            >
+                                Fine-tuned
+                            </button>
+                        )}
+                        {baseReady && (
+                            <button
+                                type="button"
+                                className={'btn btn-secondary' + (activeRowsModel === 'base' ? ' is-active' : '')}
+                                onClick={() => setRowsModel('base')}
+                                data-testid="auto-rag-comparison-rows-base"
+                            >
+                                Base model
+                            </button>
+                        )}
+                        {baseDocumentsReady && (
+                            <button
+                                type="button"
+                                className={'btn btn-secondary' + (activeRowsModel === 'base_documents' ? ' is-active' : '')}
+                                onClick={() => setRowsModel('base_documents')}
+                                data-testid="auto-rag-comparison-rows-base-documents"
+                            >
+                                Base + documents
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
             <p className="auto-rag-comparison__rows-caption" data-testid="auto-rag-comparison-rows-caption">
-                Showing {activeRows.length} row{activeRows.length === 1 ? '' : 's'} for{' '}
-                {activeRowsModel === 'base' ? `the base model (${baseModelName})` : fineTunedTitle.toLowerCase()}.
+                Showing {activeRows.length} row{activeRows.length === 1 ? '' : 's'} for {rowsModelLabel(activeRowsModel)}.
             </p>
             <ul className="auto-rag-comparison__rows">
                 {activeRows.map((row, idx) => (
@@ -520,6 +605,13 @@ function ModelComparisonCard({
             ? ' is-positive'
             : lift !== null && lift !== undefined && lift < 0 ? ' is-negative' : '';
     const note = evidence ? evidenceNote(evidence, { trained, unit: 'F1' }) : null;
+    const judge = summary.judge ?? null;
+    const judgeEvidence = comparison.judge_evidence ?? null;
+    const judgeNote = judgeEvidence ? evidenceNote(judgeEvidence, { trained, unit: 'judge score' }) : null;
+    const armText = (arm: AutoRagJudgeArm): string => {
+        const c = arm.counts || {};
+        return `${arm.score != null ? arm.score.toFixed(3) : '—'} (${c.correct ?? 0} correct, ${c.partial ?? 0} partial, ${c.wrong ?? 0} wrong)`;
+    };
     return (
         <div className="auto-rag-comparison__model" data-testid={`${testIdPrefix}-card`}>
             <div className="auto-rag-comparison__model-head">
@@ -581,6 +673,21 @@ function ModelComparisonCard({
                     <span>{note.text}</span>
                 </div>
             )}
+            {judge && (
+                <div className="auto-rag-comparison__judge" data-testid={`${testIdPrefix}-judge`}>
+                    <strong>Judge: answer correct</strong> (by <code>{judge.judge}</code>, facts not wording):{' '}
+                    without retrieval {armText(judge.without_rag)} → with retrieval {armText(judge.with_rag)}.
+                    {judgeEvidence && judgeNote && (
+                        <span
+                            className={`auto-rag-comparison__evidence auto-rag-comparison__evidence--${judgeEvidence.verdict}`}
+                            data-testid={`${testIdPrefix}-judge-evidence`}
+                            data-verdict={judgeEvidence.verdict}
+                        >
+                            {' '}{rowCountsText(judgeEvidence, 'Retrieval')} {judgeNote.text}
+                        </span>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
@@ -624,12 +731,27 @@ function AutoRagRowCard({ idx, row }: RowCardProps) {
                     <div className="auto-rag-comparison__row-block">
                         <strong>Without RAG (F1={row.without_rag.f1.toFixed(3)}):</strong>
                         <div className="auto-rag-comparison__row-text">{row.without_rag.generated}</div>
+                        {row.without_rag.judge && (
+                            <div className={`auto-rag-comparison__row-judge auto-rag-comparison__row-judge--${row.without_rag.judge.verdict}`}>
+                                Judge: {row.without_rag.judge.verdict} — {row.without_rag.judge.reason}
+                            </div>
+                        )}
                     </div>
                     <div className="auto-rag-comparison__row-block">
                         <strong>
                             With auto-RAG (F1={row.with_rag.f1.toFixed(3)}, {row.with_rag.retrieved_row_count} chunks):
                         </strong>
                         <div className="auto-rag-comparison__row-text">{row.with_rag.generated}</div>
+                        {row.with_rag.judge && (
+                            <div className={`auto-rag-comparison__row-judge auto-rag-comparison__row-judge--${row.with_rag.judge.verdict}`}>
+                                Judge: {row.with_rag.judge.verdict} — {row.with_rag.judge.reason}
+                            </div>
+                        )}
+                        {row.with_rag.retrieved_sources && row.with_rag.retrieved_sources.length > 0 && (
+                            <div className="auto-rag-comparison__row-sources">
+                                Sources: {row.with_rag.retrieved_sources.join(' · ')}
+                            </div>
+                        )}
                     </div>
                 </div>
             </details>

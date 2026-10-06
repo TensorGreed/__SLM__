@@ -398,5 +398,56 @@ class MarkdownFormatterTests(unittest.TestCase):
         self.assertIn("power-user", md)
 
 
+from scripts import auto_rag_ab as harness  # noqa: E402
+
+
+class DocumentsCorpusAndJudgeTests(unittest.TestCase):
+    def test_comparison_file_names_never_collide(self):
+        names = {
+            harness.comparison_file_name(base_only=b, corpus=c)
+            for b in (False, True) for c in ("qa", "documents")
+        }
+        self.assertEqual(names, {"comparison.json", "comparison_base.json",
+                                 "comparison_documents.json", "comparison_base_documents.json"})
+
+    def test_document_preamble_becomes_the_system_message(self):
+        class Tok:
+            chat_template = "x"
+
+            def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+                return "|".join(f"{m['role']}:{m['content']}" for m in messages)
+
+        prompt, used = harness._build_inference_prompt(Tok(), "Q?", None, preamble="Passages: [1] text")
+        self.assertTrue(used)
+        self.assertEqual(prompt, "system:Passages: [1] text|user:Q?")
+
+    def test_judge_annotates_both_arms_and_is_skipped_for_short_answers(self):
+        from unittest import mock
+
+        from app.services import answer_judge_service as judge_svc
+
+        long = "The head of a government institution shall retain a record of any use of personal information."
+        off = [{"question": "Q1?", "reference": long, "generated": "no idea"},
+               {"question": "Q2?", "reference": long, "generated": "x"}]
+        on = [{"question": "Q1?", "reference": long, "generated": "the head retains a record"},
+              {"question": "Q2?", "reference": long, "generated": "y"}]
+
+        async def judge(q, r, p):
+            return (1.0, "correct", "ok", 0) if "retains" in p else (0.0, "wrong", "no", 0)
+
+        async def resolve(db, pid, project):
+            return judge_svc.ResolvedJudge(label="fake:judge", judge=judge)
+
+        with mock.patch.object(judge_svc, "resolve_answer_judge", resolve), \
+                mock.patch.object(judge_svc, "project_cache", lambda pid: None):
+            summary = harness._judge_comparison_rows(999, off, on)
+        self.assertEqual(summary["judge"], "fake:judge")
+        self.assertEqual(summary["without_rag"]["score"], 0.0)
+        self.assertEqual(summary["with_rag"]["score"], 0.5)
+        self.assertEqual(on[0]["judge"]["verdict"], "correct")
+        self.assertEqual(off[0]["judge"]["verdict"], "wrong")
+        short = [{"question": "Q?", "reference": "Section 8", "generated": "x"}]
+        self.assertIsNone(harness._judge_comparison_rows(999, short, short))
+
 if __name__ == "__main__":
     unittest.main()

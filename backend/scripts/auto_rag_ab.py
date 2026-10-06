@@ -353,6 +353,7 @@ def _build_inference_prompt(
     tokenizer: Any,
     question: str,
     retrieved_pairs: list[dict[str, Any]] | None = None,
+    preamble: str | None = None,
 ) -> tuple[str, bool]:
     """Prompt for one eval row, in the format the model was trained on.
 
@@ -369,7 +370,11 @@ def _build_inference_prompt(
     the playground.
     """
     messages: list[dict[str, str]] = []
-    if retrieved_pairs is not None:
+    if preamble is not None:
+        # Document passages (``--corpus documents``): the playground's
+        # cite-or-say-you-don't-know preamble.
+        messages.append({"role": "system", "content": preamble})
+    elif retrieved_pairs is not None:
         messages.append({"role": "system", "content": _build_rag_preamble(retrieved_pairs)})
     messages.append({"role": "user", "content": question.strip()})
     if getattr(tokenizer, "chat_template", None) and hasattr(tokenizer, "apply_chat_template"):
@@ -381,9 +386,71 @@ def _build_inference_prompt(
             rendered = None
         if isinstance(rendered, str) and rendered.strip():
             return rendered, True
+    if preamble is not None:
+        return _format_llama3_rag_prompt(question, [{"question": "", "answer": preamble}]), False
     if retrieved_pairs is not None:
         return _format_llama3_rag_prompt(question, retrieved_pairs), False
     return _format_llama3_inference_prompt(question), False
+
+
+def _project_id_from_index_dir(index_dir: Path | None) -> int:
+    """``data/projects/<id>/auto_rag`` → ``<id>`` (documents mode needs the
+    project's passage index, which lives next to the Q&A one)."""
+    if index_dir is None:
+        raise RuntimeError("documents corpus needs the project's auto_rag index dir")
+    try:
+        return int(index_dir.parent.name)
+    except ValueError as exc:
+        raise RuntimeError(f"cannot derive a project id from {index_dir}") from exc
+
+
+def _judge_comparison_rows(
+    project_id: int, off_records: list[dict[str, Any]], on_records: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Score both arms with the answer judge (``answer_judge_service``) when
+    the task is long-answer and a judge is reachable. Annotates each record
+    with ``judge`` = {score, verdict, reason}; returns the judge summary
+    (label + per-arm means) or None when it doesn't apply."""
+    import asyncio
+
+    from app.services.answer_judge_service import (
+        judge_predictions,
+        project_cache,
+        resolve_answer_judge,
+        should_judge,
+    )
+
+    references = [r["reference"] for r in off_records]
+    if not should_judge("qa", references):
+        return None
+
+    async def _run() -> dict[str, Any] | None:
+        resolved = await resolve_answer_judge(None, project_id, None)
+        if resolved is None:
+            return None
+        cache = project_cache(project_id)
+        out: dict[str, Any] = {"judge": resolved.label}
+        for arm, records in (("without_rag", off_records), ("with_rag", on_records)):
+            preds = [
+                {"prompt": r["question"], "reference": r["reference"], "prediction": r["generated"]}
+                for r in records
+            ]
+            snap = await judge_predictions(preds, resolved.judge, label=resolved.label, cache=cache)
+            for rec, pred in zip(records, preds):
+                if "row_judge_score" in pred:
+                    rec["judge"] = {
+                        "score": pred["row_judge_score"],
+                        "verdict": pred["row_judge_verdict"],
+                        "reason": pred["row_judge_reason"],
+                    }
+            out[arm] = {k: snap.get(k) for k in ("score", "counts", "judged", "unjudged", "judge_calls", "judge_cached")}
+        return out
+
+    try:
+        return asyncio.run(_run())
+    except Exception as exc:  # noqa: BLE001 — the judge never breaks the comparison
+        print(f"[harness] judge skipped: {exc}")
+        return None
 
 
 def _generation_cap(tokenizer: Any, train_rows: list[dict[str, Any]]) -> int:
@@ -455,6 +522,7 @@ def evaluate_with_inference(
     rag_k: int = RAG_K,
     index_dir_override: Path | None = None,
     progress_callback: "Callable[[int, int, str], None] | None" = None,
+    corpus: str = "qa",
 ) -> tuple[list[float], list[dict[str, Any]]]:
     """Load the trained model (base + LoRA adapter, or the full fine-tuned
     model when the run saved one), generate an answer for
@@ -475,6 +543,12 @@ def evaluate_with_inference(
       playground will do (the playground reads
       ``data/projects/{id}/auto_rag/bm25_index.json``, built over the
       project's training rows — never the answer key or val/test).
+
+    ``corpus="documents"`` retrieves the project's cleaned document
+    *passages* (``auto_rag_service.ensure_document_index``) instead of Q&A
+    pairs and prepends the playground's cite-or-say-you-don't-know preamble
+    — the retrieval a documents-only project actually serves.
+    ``index_dir_override`` is ignored in that mode.
     """
     import torch
     from peft import PeftModel
@@ -487,7 +561,17 @@ def evaluate_with_inference(
     )
     from app.services.evaluation_service import f1_score
 
-    if index_dir_override is not None:
+    use_documents = corpus == "documents"
+    if use_documents:
+        from app.services.auto_rag_service import document_index_dir
+
+        index_dir = document_index_dir(_project_id_from_index_dir(index_dir_override))
+        if with_rag and not (index_dir / "bm25_index.json").exists():
+            raise RuntimeError(
+                f"{index_dir} has no document index — the project has no cleaned "
+                "document passages (ensure_document_index builds it)."
+            )
+    elif index_dir_override is not None:
         # Phase 9d path — use the existing project-deployed index.
         # Refuse to silently fall back to building a transient one;
         # if the override points at a missing index we want a loud
@@ -563,19 +647,44 @@ def evaluate_with_inference(
         if not question or not reference:
             continue
         retrieved_pairs: list[dict[str, Any]] = []
+        preamble: str | None = None
+        retrieved_sources: list[str] = []
         if with_rag:
             try:
                 hits = retrieve(question, index_dir=index_dir, k=rag_k)
             except AutoRagUnavailable:
                 hits = []
-            for hit in hits:
-                payload = hit.get("payload") or {}
-                retrieved_pairs.append({
-                    "question": payload.get("question", ""),
-                    "answer": payload.get("answer", ""),
-                })
+            if use_documents:
+                from app.services.auto_rag_service import (
+                    _DOCUMENT_PREAMBLE_TEMPLATE,
+                    _format_passage,
+                )
+
+                if hits:
+                    passages_text = "\n\n".join(
+                        _format_passage(idx, hit) for idx, hit in enumerate(hits, start=1)
+                    )
+                    preamble = _DOCUMENT_PREAMBLE_TEMPLATE.format(passages=passages_text)
+                    for hit in hits:
+                        payload = hit.get("payload") or {}
+                        chunk = payload.get("chunk_id")
+                        where = f"{payload.get('source_doc') or 'document'}"
+                        if isinstance(chunk, int):
+                            where += f" · passage {chunk + 1}"
+                        retrieved_sources.append(where)
+                        retrieved_pairs.append({"question": "", "answer": str(payload.get("text") or "")})
+            else:
+                for hit in hits:
+                    payload = hit.get("payload") or {}
+                    retrieved_pairs.append({
+                        "question": payload.get("question", ""),
+                        "answer": payload.get("answer", ""),
+                    })
         prompt, used_template = _build_inference_prompt(
-            tokenizer, question, retrieved_pairs if with_rag else None
+            tokenizer,
+            question,
+            (retrieved_pairs if with_rag and not use_documents else None),
+            preamble=preamble,
         )
         # A rendered chat template already carries its special tokens.
         inputs = tokenizer(
@@ -604,6 +713,7 @@ def evaluate_with_inference(
             "generated": generated[:400],
             "f1": score,
             "retrieved_row_count": len(retrieved_pairs),
+            "retrieved_sources": retrieved_sources,
         })
         scored += 1
         # Per-row progress hook — used by the API Job runner to
@@ -886,6 +996,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--corpus", choices=("qa", "documents"), default="qa",
+        help=(
+            "With --project: what the with-retrieval arm retrieves. 'qa' = the "
+            "project's training Q&A pairs (default, the playground's Q&A index); "
+            "'documents' = the project's cleaned document passages with the "
+            "cite-or-say-you-don't-know preamble (what a documents-only project serves)."
+        ),
+    )
+    parser.add_argument(
         "--base-only", action="store_true",
         help=(
             "With --project: score the project's BASE model with and without "
@@ -903,6 +1022,7 @@ def run_project_comparison(
     seed: int = 0,
     progress_callback: "Callable[[int, int, str], None] | None" = None,
     base_only: bool = False,
+    corpus: str = "qa",
 ) -> dict[str, Any]:
     """Phase 9d — generate the per-project comparison the Eval-tab
     panel reads. Reuses the per-row eval inference loop with the
@@ -916,6 +1036,13 @@ def run_project_comparison(
     preamble, so its with-RAG arm understates what retrieval can do. The
     result goes to ``comparison_base.json`` (``"model": "base"``) and never
     overwrites the fine-tuned comparison the panel reads.
+
+    ``corpus="documents"`` retrieves document passages instead of Q&A pairs
+    (``evaluate_with_inference``); the result is stamped ``corpus`` and goes
+    to ``comparison_base_documents.json`` / ``comparison_documents.json``.
+    Both arms are also scored by the answer judge when one applies
+    (``_judge_comparison_rows``) — on long answers the judge's
+    correct / partial / wrong is the number to read, not F1.
 
     This function is invoked from the CLI's ``--project`` mode (and
     can be called programmatically by a future API trigger if we
@@ -1005,7 +1132,16 @@ def run_project_comparison(
         qa_index_is_current,
     )
     project_index_path = project_index_dir / "bm25_index.json"
-    if not qa_index_is_current(project_index_path):
+    if corpus == "documents":
+        from app.services.auto_rag_service import ensure_document_index
+
+        doc_index = ensure_document_index(project_id)
+        if not doc_index.get("available"):
+            raise RuntimeError(
+                f"Project {project_id} has no cleaned document passages to retrieve from."
+            )
+        print(f"[harness] document index: {doc_index.get('passages')} passages")
+    elif not qa_index_is_current(project_index_path):
         recipe_id = "qa-sft"
         if project_index_path.exists():
             try:
@@ -1027,13 +1163,21 @@ def run_project_comparison(
         val_rows=val_rows, train_rows=train_rows, with_rag=False,
         index_dir_override=project_index_dir,
         progress_callback=progress_callback,
+        corpus=corpus,
     )
     on_f1s, on_records = evaluate_with_inference(
         base_model=base_model, model_dir=model_dir,
         val_rows=val_rows, train_rows=train_rows, with_rag=True,
         index_dir_override=project_index_dir,
         progress_callback=progress_callback,
+        corpus=corpus,
     )
+    if progress_callback is not None:
+        try:
+            progress_callback(0, 0, "judging")
+        except Exception:  # noqa: BLE001
+            pass
+    judge_summary = _judge_comparison_rows(project_id, off_records, on_records)
 
     off_mean = statistics.mean(off_f1s) if off_f1s else 0.0
     on_mean = statistics.mean(on_f1s) if on_f1s else 0.0
@@ -1050,11 +1194,14 @@ def run_project_comparison(
             "without_rag": {
                 "generated": off_r["generated"],
                 "f1": off_r["f1"],
+                "judge": off_r.get("judge"),
             },
             "with_rag": {
                 "generated": on_r["generated"],
                 "f1": on_r["f1"],
+                "judge": on_r.get("judge"),
                 "retrieved_row_count": on_r["retrieved_row_count"],
+                "retrieved_sources": on_r.get("retrieved_sources") or [],
             },
         })
 
@@ -1063,6 +1210,7 @@ def run_project_comparison(
         "cached_at": datetime.now(timezone.utc).isoformat(),
         "experiment_id": None if base_only else int(exp_row["id"]),
         "model": "base" if base_only else "fine_tuned",
+        "corpus": corpus,
         "base_model": base_model,
         "model_dir": None if base_only else str(model_dir),
         "summary": {
@@ -1073,18 +1221,32 @@ def run_project_comparison(
             "n_val_rows": len(off_records),
             "rag_k": RAG_K,
             "phase_9c_reference_lift_pct": 146.49,
+            "judge": judge_summary,
         },
         "rows": combined_rows,
     }
-    cache_path = (
-        settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
-        / ("comparison_base.json" if base_only else "comparison.json")
+    cache_path = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / comparison_file_name(
+        base_only=base_only, corpus=corpus
     )
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"[harness] wrote comparison to {cache_path}")
     print(f"[harness] off_mean={off_mean:.4f}  on_mean={on_mean:.4f}  lift={lift:.2f}%")
+    if judge_summary:
+        print(
+            f"[harness] judge={judge_summary['judge']}  "
+            f"off={judge_summary['without_rag'].get('score')}  on={judge_summary['with_rag'].get('score')}"
+        )
     return payload
+
+
+def comparison_file_name(*, base_only: bool, corpus: str = "qa") -> str:
+    """``comparison[_base][_documents].json`` — the four cached comparisons
+    never overwrite each other."""
+    name = "comparison_base" if base_only else "comparison"
+    if corpus == "documents":
+        name += "_documents"
+    return name + ".json"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1092,7 +1254,7 @@ def main(argv: list[str] | None = None) -> int:
     # Phase 9d per-project mode — short-circuits the template gate
     # flow and writes the cached comparison for the Eval-tab panel.
     if args.project is not None:
-        run_project_comparison(args.project, base_only=bool(args.base_only))
+        run_project_comparison(args.project, base_only=bool(args.base_only), corpus=str(args.corpus))
         return 0
 
     templates = tuple(args.templates) if args.templates else QA_SFT_TEMPLATES

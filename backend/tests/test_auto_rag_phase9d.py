@@ -547,6 +547,54 @@ class AutoRagComparisonApiTests(unittest.TestCase):
         self.assertEqual(body["base"]["summary"]["n_val_rows"], 21)
         self.assertFalse(body["stale"])
 
+    def test_document_corpus_comparison_and_judge_evidence(self):
+        """``--corpus documents`` caches land beside the Q&A ones, and a
+        judged comparison carries the judge summary plus row evidence on the
+        judge scores (rows one arm couldn't judge drop out of the pairing)."""
+        project = self._instantiate_template("policy-qa-style", "AutoRAG Documents Judge")
+
+        def _row(i, off, on, off_j, on_j):
+            return {
+                "question": f"Q{i}?", "reference": "A long enough reference answer for the judge to read.",
+                "without_rag": {"generated": "x", "f1": off, "judge": off_j},
+                "with_rag": {"generated": "y", "f1": on, "judge": on_j, "retrieved_row_count": 3,
+                             "retrieved_sources": ["P-21.html · passage 4"]},
+            }
+
+        rows = [
+            _row(0, 0.1, 0.3, {"score": 0.0, "verdict": "wrong", "reason": "r"}, {"score": 1.0, "verdict": "correct", "reason": "r"}),
+            _row(1, 0.1, 0.3, {"score": 0.0, "verdict": "wrong", "reason": "r"}, {"score": 1.0, "verdict": "correct", "reason": "r"}),
+            _row(2, 0.1, 0.3, {"score": 0.5, "verdict": "partial", "reason": "r"}, {"score": 1.0, "verdict": "correct", "reason": "r"}),
+            _row(3, 0.1, 0.3, {"score": 0.0, "verdict": "wrong", "reason": "r"}, {"score": 0.5, "verdict": "partial", "reason": "r"}),
+            _row(4, 0.1, 0.3, None, {"score": 1.0, "verdict": "correct", "reason": "r"}),
+            _row(5, 0.1, 0.3, {"score": 0.0, "verdict": "wrong", "reason": "r"}, {"score": 1.0, "verdict": "correct", "reason": "r"}),
+        ]
+        summary = {
+            "off_mean_f1": 0.1, "on_mean_f1": 0.3, "relative_lift_pct": 200.0, "n_val_rows": 6, "rag_k": 3,
+            "judge": {"judge": "ollama:gemma4:12b",
+                      "without_rag": {"score": 0.1, "counts": {"correct": 0, "partial": 1, "wrong": 4}},
+                      "with_rag": {"score": 0.9167, "counts": {"correct": 5, "partial": 1, "wrong": 0}}},
+        }
+        self._seed_cached_comparison(project["id"], {
+            "cached_at": "2026-10-06T10:00:00+00:00", "experiment_id": None, "model": "base",
+            "corpus": "documents", "base_model": "m", "summary": summary, "rows": rows,
+        }, "comparison_base_documents.json")
+        resp = self.client.get(f"/api/projects/{project['id']}/auto-rag/comparison")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertIsNone(body["base"])
+        docs = body["base_documents"]
+        self.assertEqual(docs["corpus"], "documents")
+        self.assertEqual(docs["judge"]["judge"], "ollama:gemma4:12b")
+        self.assertEqual(docs["judge"]["with_rag"]["counts"]["correct"], 5)
+        ev = docs["judge_evidence"]
+        self.assertEqual(ev["metric_id"], "judge_correct")
+        self.assertEqual(ev["n"], 5, "the row without a without-RAG verdict is not paired")
+        self.assertEqual((ev["better"], ev["worse"]), (5, 0))
+        self.assertEqual(ev["verdict"], "better")
+        self.assertEqual(docs["evidence"]["metric_id"], "f1")
+        self.assertEqual(docs["evidence"]["n"], 6)
+
 
 if __name__ == "__main__":
     unittest.main()
