@@ -39,6 +39,9 @@ from app.services.evaluation_pack_service import (
 # the "the model went from X to Y" headline (used by the UI summary
 # line). Everything else still renders, just below the anchor.
 _PREFERRED_HEADLINE_METRICS: tuple[str, ...] = (
+    # "Is the answer right" (LLM judge, long-answer tasks) outranks token
+    # overlap when both evals have it — see answer_judge_service.
+    "judge_correct",
     "f1",
     "exact_match",
     "accuracy",
@@ -185,6 +188,7 @@ def _normalize_metrics(raw: Any) -> dict[str, float]:
 # (perplexity, macro-F1, …) aren't a mean of per-row values, so they get no
 # row-level evidence.
 _ROW_SCORE_FOR_METRIC: dict[str, str] = {
+    "judge_correct": "judge_correct",
     "f1": "f1",
     "exact_match": "correct",
     "accuracy": "correct",
@@ -209,7 +213,10 @@ def _paired_row_scores(
         keys, values = row_scores.get("keys"), row_scores.get(score_key)
         if not isinstance(keys, list) or not isinstance(values, list) or len(keys) != len(values):
             return None
-        return [str(k) for k in keys], [float(v) for v in values]
+        # A None score (the judge couldn't score that row) drops the row
+        # from the pairing rather than the whole comparison.
+        kept = [(str(k), float(v)) for k, v in zip(keys, values) if v is not None]
+        return [k for k, _ in kept], [v for _, v in kept]
 
     base, fine = _scores(baseline), _scores(trained)
     if base is None or fine is None:

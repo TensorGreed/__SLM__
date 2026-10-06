@@ -23,7 +23,7 @@ import {
     type SftLiftGateRow,
     type SftLiftGateStatus,
 } from '../../api/sftLift';
-import { isUnproven, shortEvidenceText } from './liftEvidence';
+import { isUnproven, metricDisplayName, shortEvidenceText } from './liftEvidence';
 
 interface SftLiftPanelProps {
     projectId: number;
@@ -108,7 +108,7 @@ function MetricLiftRow({ row }: { row: SftLiftMetricRow }) {
                     fontWeight: 600,
                 }}
             >
-                {row.metric_id}
+                {metricDisplayName(row.metric_id)}
             </div>
             <div>
                 <div
@@ -205,7 +205,7 @@ function GateRow({ row }: { row: SftLiftGateRow }) {
         >
             <GateBadge status={row.status} />
             <code style={{ fontFamily: 'var(--font-mono)' }}>
-                {row.metric_id}
+                {metricDisplayName(row.metric_id)}
             </code>
             <span style={{ color: 'var(--text-secondary)' }}>
                 {row.operator === 'lte' ? '≤' : '≥'} {row.threshold.toFixed(2)}
@@ -376,7 +376,7 @@ export default function SftLiftPanel({
                     {headline && (
                         <>
                             {' '}— headline{' '}
-                            <code>{headline.metric_id}</code>{' '}
+                            <code>{metricDisplayName(headline.metric_id)}</code>{' '}
                             <code>{formatValue(headline.baseline_value)}</code> →{' '}
                             <code>{formatValue(headline.trained_value)}</code>{' '}
                             <strong

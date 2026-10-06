@@ -513,6 +513,32 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   lift Job and `SftLiftPanel` all read it from there. The
   `auto_rag_comparison` Job result carries a compact `evidence` too, and the
   bell qualifies its lift with `shortEvidenceText`.
+  **LLM-judge correctness (long answers)** — `services/answer_judge_service.py`:
+  for generative profiles (`JUDGE_PROFILES`: qa / rag_qa / instruction_sft /
+  summarization) with median reference ≥ `MIN_REFERENCE_WORDS` (8),
+  `run_heldout_evaluation` (eval_type exact_match / f1) also judges every row
+  correct / partial / wrong (1 / 0.5 / 0) via `_safe_judge_answers` →
+  `metrics["judge_correct"]` + `metrics["judge"]` snapshot (judge label,
+  counts, calls / cached / tokens; `{"skipped": "not_long_answer_task" |
+  "no_judge_available"}` otherwise) and `row_scores["judge_correct"]` (None
+  for unjudged rows — `_paired_row_scores` drops those rows, not the
+  comparison). Judged rows decide `_prediction_failed` (a correct paraphrase
+  is not a failure). `judge_correct` heads `_PREFERRED_HEADLINE_METRICS`.
+  Resolution `resolve_answer_judge`: `EVAL_JUDGE_BACKEND` env (`none` /
+  `ollama[:model]` / `anthropic|openai|deepseek[:model]`) → project
+  `runtime_config["eval_judge"]` → first available local synth backend →
+  probe-judge cloud config; never cloud over a reachable local model.
+  File cache `data/projects/<id>/eval_judge_cache.json` keyed by judge label +
+  question + reference + prediction. The lift runner resolves ONE judge for
+  both evals (`_resolve_lift_judge`, passed as `answer_judge=`) and
+  `_reusable_baseline_result(judge_label=)` re-runs a cached base result
+  judged by another judge (`_baseline_judge_matches`). `POST
+  /evaluation/summary/lift-check` (`start_post_training_lift_job(manual=True)`
+  — bypasses the auto opt-outs) = "Evaluate this run" / "Re-run lift check" on
+  `EvalSummaryCard`; summary payload `judge` block + per-failure
+  `row_judge_verdict` / `row_judge_reason`. Tests inject `answer_judge=` /
+  patch `_resolve_lift_judge` — a dev box with Ollama would otherwise judge
+  for real (`tests/test_answer_judge.py`).
   **Multi-seed lift check**: a seed-group *leader* (`seed_group_id` set,
   `seed_value` None) is lift-checked as a group — `_run_seed_group_lift_eval`
   scores every COMPLETED child against one cached baseline and returns

@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
 import { checkLiftAcrossSeeds, fetchEvalSummary, type EvalSummary } from '../../api/evalSummary';
-import { evidenceNote, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
+import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import { toast } from '../../stores/toastStore';
 import { useJobsStore } from '../../stores/jobsStore';
 import './EvalSummaryCard.css';
@@ -117,15 +117,13 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     const runEval = async (targetExperimentId: number) => {
         setStarting(true);
         try {
-            await api.post(`/projects/${projectId}/evaluation/run-heldout?async_job=true`, {
+            // The lift check: base model + this run on the test examples,
+            // paired row by row (what this card compares). Re-running picks
+            // up a judge model configured since the first check.
+            await api.post(`/projects/${projectId}/evaluation/summary/lift-check`, {
                 experiment_id: targetExperimentId,
-                dataset_name: 'test',
-                eval_type: 'exact_match',
-                max_samples: 100,
-                max_new_tokens: 128,
-                temperature: 0,
             });
-            toast.info('Evaluation queued — the bell will tell you when it is ready.', 4000);
+            toast.info('Lift check queued — the bell will tell you when it is ready.', 4000);
             void useJobsStore.getState().refreshAfterLocalChange();
         } catch (err) {
             toast.error(errorText(err));
@@ -200,6 +198,18 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         {starting ? 'Starting…' : 'Evaluate this run'}
                     </button>
                 )}
+                {runId != null && summary.verdict !== 'not_evaluated' && summary.headline && !isSeedGroup && (
+                    <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => void runEval(runId)}
+                        disabled={starting}
+                        data-testid="eval-summary-rerun"
+                        title="Scores the base model and this run again on the current test examples. Picks up a judge model configured since the last check."
+                    >
+                        {starting ? 'Starting…' : 'Re-run lift check'}
+                    </button>
+                )}
                 {canCheckSeeds && (
                     <button
                         type="button"
@@ -216,7 +226,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
 
             {head && (
                 <p className="eval-summary__metric" data-testid="eval-summary-headline">
-                    <code>{head.metric_id}</code>: {fmt(head.baseline_value)} (base) → <strong>{fmt(head.trained_value)}</strong>
+                    <code>{metricDisplayName(head.metric_id)}</code>: {fmt(head.baseline_value)} (base) → <strong>{fmt(head.trained_value)}</strong>
                     {head.trained_std != null ? ` ± ${fmt(head.trained_std)}` : ''}{' '}
                     ({isSeedGroup ? `fine-tuned, mean of ${head.n_seeds ?? summary.n_seeds} seeds` : 'fine-tuned'})
                     <span className={`eval-summary__delta eval-summary__delta--${head.direction}`}>
@@ -261,6 +271,14 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     <span>{note.text}</span>
                 </p>
             )}
+            {summary.judge && (
+                <p className="eval-summary__judge" data-testid="eval-summary-judge">
+                    Judged by <code>{summary.judge.judge || 'a judge model'}</code>: {summary.judge.correct} correct, {summary.judge.partial} partial,{' '}
+                    {summary.judge.wrong} wrong of {summary.judge.judged} answers
+                    {summary.judge.unjudged ? ` (${summary.judge.unjudged} unjudged)` : ''}. The judge reads the question, the
+                    answer key and the model's answer and grades the facts, not the wording — token F1 is still shown below.
+                </p>
+            )}
             {summary.message && <p className="eval-summary__message">{summary.message}</p>}
 
             {summary.failures.length > 0 && (
@@ -277,6 +295,11 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                                     <span>Expected: <strong>{failure.reference || '—'}</strong></span>
                                     <span>Got: <strong>{failure.prediction || '(empty)'}</strong></span>
                                 </div>
+                                {failure.row_judge_verdict && (
+                                    <div className={`eval-summary__judge-verdict eval-summary__judge-verdict--${failure.row_judge_verdict}`}>
+                                        Judge: {failure.row_judge_verdict}{failure.row_judge_reason ? ` — ${failure.row_judge_reason}` : ''}
+                                    </div>
+                                )}
                             </li>
                         ))}
                     </ol>

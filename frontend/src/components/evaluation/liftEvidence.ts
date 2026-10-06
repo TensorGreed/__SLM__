@@ -115,9 +115,18 @@ export function evidenceNote(
 export function metricUnit(metricId: string | null | undefined): string {
     const id = String(metricId || '').toLowerCase();
     if (id === 'f1') return 'F1';
+    if (id === 'judge_correct') return 'judge score';
     if (id === 'exact_match') return 'exact match';
     if (id === 'accuracy') return 'accuracy';
     return id || 'score';
+}
+
+/** Display name for a metric id in headlines ("judge_correct" is the
+ *  LLM-judge correctness score: correct 1 / partial 0.5 / wrong 0 per row). */
+export function metricDisplayName(metricId: string | null | undefined): string {
+    const id = String(metricId || '');
+    if (id === 'judge_correct') return 'judge: answer correct';
+    return id;
 }
 
 /** One compact line for dense places (a metric row, the bell):

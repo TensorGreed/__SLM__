@@ -33,6 +33,24 @@ export interface EvalSummaryFailure {
     prediction: string;
     row_exact_match?: number | null;
     row_f1?: number | null;
+    /** LLM-judge verdict for long-answer tasks (answer_judge_service). */
+    row_judge_verdict?: 'correct' | 'partial' | 'wrong' | null;
+    row_judge_reason?: string | null;
+}
+
+/** The LLM judge's snapshot for the fine-tuned eval: who judged, how many
+ *  answers were correct / partial / wrong. Null when the task isn't a
+ *  long-answer one or no judge was reachable (F1 stays the headline). */
+export interface EvalSummaryJudge {
+    judge: string | null;
+    score: number;
+    judged: number;
+    unjudged: number;
+    correct: number;
+    partial: number;
+    wrong: number;
+    judge_calls?: number | null;
+    judge_cached?: number | null;
 }
 
 export interface EvalSummary {
@@ -56,6 +74,7 @@ export interface EvalSummary {
     evaluated_samples?: number | null;
     failures: EvalSummaryFailure[];
     failed_count?: number | null;
+    judge?: EvalSummaryJudge | null;
 }
 
 export async function fetchEvalSummary(

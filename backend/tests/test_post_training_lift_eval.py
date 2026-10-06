@@ -57,8 +57,19 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
         self.eval_calls: list[dict] = []
         self.legacy_results = False
         self.seed_scores: dict[int, float] = {}
+        # The LLM answer judge is resolved per lift check (a local Ollama
+        # would be picked up on a dev box); tests set it explicitly.
+        self.judge = None
+        self.result_judge_block: dict | None = None
+
+        async def _resolve(db, project):
+            return self.judge
+
+        self._judge_patch = mock.patch.object(svc, "_resolve_lift_judge", _resolve)
+        self._judge_patch.start()
 
     async def asyncTearDown(self):
+        self._judge_patch.stop()
         await self.engine.dispose()
         self._tmp.cleanup()
 
@@ -97,11 +108,16 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
         is_base = model_path is not None
         # Per-seed scores for seed-group tests (keyed by child id).
         score = self.seed_scores.get(experiment_id, 0.8) if not is_base else 0.1
+        metrics = {"exact_match": score}
+        if self.result_judge_block is not None:
+            metrics["judge"] = dict(self.result_judge_block)
+            if "score" in self.result_judge_block:
+                metrics["judge_correct"] = self.result_judge_block["score"]
         er = EvalResult(
             experiment_id=experiment_id,
             dataset_name=kwargs["dataset_name"],
             eval_type=kwargs["eval_type"],
-            metrics={"exact_match": score},
+            metrics=metrics,
             pass_rate=score,
             # Real held-out evals record per-row scores (for pairing the
             # base and fine-tuned results row by row).
@@ -184,6 +200,58 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
             async with self.sf() as db:
                 out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=third)
             self.assertTrue(out["baseline_reused"])
+
+    async def test_baseline_judged_by_another_judge_is_re_evaluated(self):
+        """Both evals of one lift check must share a judge: a cached base
+        result judged by a different model (or not judged at all) is re-run;
+        one marked "not a long-answer task" is reused."""
+        from app.services.answer_judge_service import ResolvedJudge
+
+        async def _noop(q, r, p):
+            return None
+
+        pid = await self._project()
+        first, second, third, fourth = [await self._run(pid) for _ in range(4)]
+        with mock.patch("app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout):
+            # No judge configured yet: a plain result.
+            async with self.sf() as db:
+                await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=first)
+            # A judge appears: the unjudged base result can't pair → re-run.
+            self.judge = ResolvedJudge(label="ollama:judge-a", judge=_noop)
+            self.result_judge_block = {"judge": "ollama:judge-a", "score": 0.5}
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=second)
+            self.assertFalse(out["baseline_reused"])
+            self.assertIs(self.eval_calls[-1]["answer_judge"], self.judge)
+            self.assertEqual(out["headline"]["metric_id"], "judge_correct")
+            # Same judge: reused.
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=third)
+            self.assertTrue(out["baseline_reused"])
+            # Different judge: re-run.
+            self.judge = ResolvedJudge(label="anthropic:judge-b", judge=_noop)
+            self.result_judge_block = {"judge": "anthropic:judge-b", "score": 0.6}
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=fourth)
+            self.assertFalse(out["baseline_reused"])
+
+    async def test_short_answer_task_reuses_the_baseline_with_a_judge_configured(self):
+        from app.services.answer_judge_service import ResolvedJudge
+
+        async def _noop(q, r, p):
+            return None
+
+        pid = await self._project()
+        first, second = await self._run(pid), await self._run(pid)
+        self.judge = ResolvedJudge(label="ollama:judge-a", judge=_noop)
+        self.result_judge_block = {"skipped": "not_long_answer_task"}
+        with mock.patch("app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout):
+            async with self.sf() as db:
+                await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=first)
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=second)
+        self.assertTrue(out["baseline_reused"])
+        self.assertEqual(out["headline"]["metric_id"], "exact_match")
 
     async def test_job_result_carries_row_evidence_for_the_bell(self):
         """The bell line is built from the Job result: it needs the row-level

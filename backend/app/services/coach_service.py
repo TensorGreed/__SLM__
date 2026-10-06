@@ -3334,6 +3334,15 @@ async def _dataprep_stage_suggestions(
     return suggestions
 
 
+def _metric_display_name(metric_id: object) -> str:
+    """Headline metric as the user sees it (``judge_correct`` is the LLM
+    judge's "is the answer right" score, not a token-overlap number)."""
+    name = str(metric_id or "").strip()
+    if name == "judge_correct":
+        return "the judge's answer-correct score"
+    return name or "the score"
+
+
 async def _export_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -3402,7 +3411,7 @@ async def _export_stage_suggestions(
             "id": "export:within-noise",
             "title": f"The latest model ({run_label}) isn't clearly different from its base model",
             "body": (
-                f"On the test examples, {headline.get('metric_id', 'the score')} "
+                f"On the test examples, {_metric_display_name(headline.get('metric_id'))} "
                 f"went {headline.get('baseline_value')} → {headline.get('trained_value')}, "
                 f"but {why}. The export may add size without adding skill. "
                 "More test examples or more training data would settle it."
@@ -3417,7 +3426,7 @@ async def _export_stage_suggestions(
             "id": "export:worse-than-base",
             "title": f"The latest model ({run_label}) scored worse than its base model",
             "body": (
-                f"On the test examples, {headline.get('metric_id', 'the score')} "
+                f"On the test examples, {_metric_display_name(headline.get('metric_id'))} "
                 f"went {headline.get('baseline_value')} → {headline.get('trained_value')}. "
                 "Shipping it would be a downgrade from the model you started with. "
                 "Check the failures on the Eval tab first."

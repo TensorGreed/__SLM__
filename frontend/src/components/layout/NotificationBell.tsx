@@ -16,7 +16,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { cancelJob, dismissJob, type Job } from '../../api/jobs';
 import { useJobsStore } from '../../stores/jobsStore';
-import { shortEvidenceText } from '../evaluation/liftEvidence';
+import { metricDisplayName, shortEvidenceText } from '../evaluation/liftEvidence';
 import { toast } from '../../stores/toastStore';
 import TrainingKillSwitch from './TrainingKillSwitch';
 import TrainingLossSparkline from './TrainingLossSparkline';
@@ -180,9 +180,9 @@ function jobOutcomeSummary(job: Job): string | null {
                     : seeds.verdict === 'too_few_seeds'
                         ? 'one seed'
                         : seeds.verdict === 'worse' ? 'drop holds across seeds' : 'holds across seeds';
-                return `${h.metric_id}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)}${spread} across ${seeds.n} seeds (${agree})`;
+                return `${metricDisplayName(h.metric_id)}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)}${spread} across ${seeds.n} seeds (${agree})`;
             }
-            return `${h.metric_id}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)} (${verb}${counts})`;
+            return `${metricDisplayName(h.metric_id)}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)} (${verb}${counts})`;
         }
         return typeof r.lift_status === 'string' ? `lift: ${r.lift_status}` : null;
     }

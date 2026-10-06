@@ -161,6 +161,7 @@ async def _seed_group_summary(
         "evaluated_samples": metrics.get("evaluated_samples") or metrics.get("eval_documents"),
         "failures": failures,
         "failed_count": failed_count,
+        "judge": _judge_block(metrics),
         "dataset_name": (details.get("dataset") or {}).get("name") if isinstance(details.get("dataset"), dict) else representative["eval_result"].dataset_name,
     }
 
@@ -179,7 +180,7 @@ def _failures_from(result: EvalResult) -> tuple[list[dict[str, Any]], int | None
     if isinstance(preview, list):
         failed = [p for p in preview if isinstance(p, dict) and _prediction_failed(p)]
         return [
-            {k: p.get(k) for k in ("prompt", "reference", "prediction", "row_exact_match", "row_f1")}
+            {k: p.get(k) for k in ("prompt", "reference", "prediction", "row_exact_match", "row_f1", "row_judge_verdict", "row_judge_reason")}
             for p in failed[:SUMMARY_FAILURES]
         ], None
     return [], None
@@ -271,5 +272,27 @@ async def build_eval_summary(
         "evaluated_samples": metrics.get("evaluated_samples") or metrics.get("eval_documents"),
         "failures": failures,
         "failed_count": failed_count,
+        # The LLM judge's snapshot for the fine-tuned eval (answer_judge_service):
+        # who judged, correct / partial / wrong counts, calls + cache hits.
+        # None when the task isn't long-answer or no judge was reachable.
+        "judge": _judge_block(metrics),
         "dataset_name": (details.get("dataset") or {}).get("name") if isinstance(details.get("dataset"), dict) else latest.dataset_name,
+    }
+
+
+def _judge_block(metrics: dict[str, Any]) -> dict[str, Any] | None:
+    judge = metrics.get("judge")
+    if not isinstance(judge, dict) or judge.get("score") is None:
+        return None
+    counts = judge.get("counts") if isinstance(judge.get("counts"), dict) else {}
+    return {
+        "judge": judge.get("judge"),
+        "score": judge.get("score"),
+        "judged": judge.get("judged"),
+        "unjudged": judge.get("unjudged"),
+        "correct": counts.get("correct", 0),
+        "partial": counts.get("partial", 0),
+        "wrong": counts.get("wrong", 0),
+        "judge_calls": judge.get("judge_calls"),
+        "judge_cached": judge.get("judge_cached"),
     }

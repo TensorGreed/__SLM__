@@ -7,7 +7,8 @@ import string
 from collections import Counter
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+import logging
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs
 
 import httpx
@@ -27,6 +28,10 @@ from app.services.eval_task_handler_service import (
     build_eval_context,
 )
 from app.services.record_normalization import canonicalize_record
+from app.services.answer_judge_service import JUDGE_METRIC
+
+if TYPE_CHECKING:
+    from app.services.answer_judge_service import ResolvedJudge
 
 
 async def _get_experiment_for_project(
@@ -2320,6 +2325,11 @@ def _prediction_failed(prediction: dict[str, Any]) -> bool:
     """A held-out row the model got wrong: the handler's per-row exact
     match when it recorded one, otherwise a normalized exact comparison
     of prediction vs reference (classification labels, short answers)."""
+    judge_score = prediction.get("row_judge_score")
+    if isinstance(judge_score, (int, float)) and not isinstance(judge_score, bool):
+        # A judged long answer: wrong or partial is a failure; exact match
+        # would call every paraphrase a failure.
+        return judge_score < 1
     em = prediction.get("row_exact_match")
     if isinstance(em, (int, float)) and not isinstance(em, bool):
         return em < 1
@@ -2344,6 +2354,7 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
 
     keys: list[str] = []
     f1: list[float | None] = []
+    judge: list[float | None] = []
     correct: list[int] = []
     for p in predictions:
         if not isinstance(p, dict):
@@ -2352,13 +2363,54 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         keys.append(hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:12])
         row_f1 = p.get("row_f1")
         f1.append(float(row_f1) if isinstance(row_f1, (int, float)) and not isinstance(row_f1, bool) else None)
+        row_judge = p.get("row_judge_score")
+        judge.append(float(row_judge) if isinstance(row_judge, (int, float)) and not isinstance(row_judge, bool) else None)
         correct.append(0 if _prediction_failed(p) else 1)
     if not keys:
         return None
     scores: dict[str, Any] = {"keys": keys, "correct": correct}
     if all(value is not None for value in f1):
         scores["f1"] = f1
+    # Rows the judge couldn't score stay None; the pairing skips them.
+    if any(value is not None for value in judge):
+        scores[JUDGE_METRIC] = judge
     return scores
+
+
+async def _safe_judge_answers(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    task_profile: str | None,
+    predictions: list[dict[str, Any]],
+    judge: "ResolvedJudge | None",
+) -> dict[str, Any]:
+    """LLM-judge the held-out answers when the task is long-answer
+    generative and a judge is reachable. Empty dict otherwise or on any
+    failure — the judge adds a metric, it never blocks the eval."""
+    from app.services.answer_judge_service import (
+        judge_predictions,
+        project_cache,
+        resolve_answer_judge,
+        should_judge,
+    )
+
+    try:
+        references = [str(p.get("reference") or "") for p in predictions if isinstance(p, dict)]
+        if not should_judge(task_profile, references):
+            return {"skipped": "not_long_answer_task"}
+        resolved = judge
+        if resolved is None:
+            project = await db.get(Project, project_id)
+            resolved = await resolve_answer_judge(db, project_id, project)
+        if resolved is None:
+            return {"skipped": "no_judge_available"}
+        return await judge_predictions(
+            predictions, resolved.judge, label=resolved.label, cache=project_cache(project_id),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("answer judge skipped: %s", exc)
+        return {"skipped": f"error: {exc}"[:200]}
 
 
 async def run_heldout_evaluation(
@@ -2372,8 +2424,18 @@ async def run_heldout_evaluation(
     temperature: float = 0.0,
     model_path: str | None = None,
     judge_model: str = "meta-llama/Meta-Llama-3-70B-Instruct",
+    answer_judge: "ResolvedJudge | None" = None,
+    answer_judge_enabled: bool = True,
 ) -> EvalResult:
-    """Run end-to-end evaluation by generating predictions on held-out data."""
+    """Run end-to-end evaluation by generating predictions on held-out data.
+
+    For long-answer generative tasks (``answer_judge_service.should_judge``)
+    an LLM judge also scores every row correct / partial / wrong →
+    ``metrics["judge_correct"]`` + per-row ``row_scores["judge_correct"]``,
+    beside F1. ``answer_judge`` injects one (tests); otherwise it is
+    resolved per project (local model first) and skipped when none is
+    reachable. ``answer_judge_enabled=False`` turns it off for a call.
+    """
     supported = {"exact_match", "f1", "llm_judge", PERPLEXITY_EVAL_TYPE}
     if eval_type not in supported:
         raise ValueError(f"Unsupported eval_type '{eval_type}'. Use one of: {', '.join(sorted(supported))}")
@@ -2530,6 +2592,15 @@ async def run_heldout_evaluation(
     schema_mismatch = detect_schema_mismatch(predictions)
     if schema_mismatch is not None:
         metrics["schema_mismatch"] = schema_mismatch
+    if eval_type in ("exact_match", "f1") and answer_judge_enabled:
+        judge_snapshot = await _safe_judge_answers(
+            db, project_id=project_id, task_profile=eval_ctx.task_profile,
+            predictions=predictions, judge=answer_judge,
+        )
+        if judge_snapshot:
+            metrics["judge"] = judge_snapshot
+            if judge_snapshot.get("score") is not None:
+                metrics[JUDGE_METRIC] = judge_snapshot["score"]
     result.metrics = metrics
 
     details = dict(result.details or {})
@@ -2567,6 +2638,8 @@ async def run_heldout_evaluation(
             "span_marker": p.get("span_marker"),
             "row_exact_match": p.get("row_exact_match"),
             "row_f1": p.get("row_f1"),
+            "row_judge_verdict": p.get("row_judge_verdict"),
+            "row_judge_reason": p.get("row_judge_reason"),
             # Phase 5.3.4: StructuredExtractionHandler writes these so the
             # UI can show "JSON: valid · X/Y fields" + a per-field
             # comparison disclosure. Other handlers don't write them and
@@ -2623,6 +2696,8 @@ async def run_heldout_evaluation(
             "prediction": str(p.get("prediction", ""))[:300],
             "row_exact_match": p.get("row_exact_match"),
             "row_f1": p.get("row_f1"),
+            "row_judge_verdict": p.get("row_judge_verdict"),
+            "row_judge_reason": p.get("row_judge_reason"),
         }
         for p in predictions
         if _prediction_failed(p)

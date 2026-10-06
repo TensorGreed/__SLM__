@@ -62,6 +62,32 @@ describe('EvalSummaryCard', () => {
         expect(apiMock.get).toHaveBeenCalledWith('/projects/7/evaluation/summary', { params: { experiment_id: 21 } });
     });
 
+    it('offers to re-run the lift check on an evaluated run', async () => {
+        apiMock.get.mockResolvedValue({ data: BETTER });
+        apiMock.post.mockResolvedValue({ data: { started: true, job_id: 5 } });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        await userEvent.setup().click(await screen.findByTestId('eval-summary-rerun'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/7/evaluation/summary/lift-check', { experiment_id: 21 }));
+    });
+
+    it('names the LLM-judge headline and shows each failure\'s verdict', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                ...BETTER,
+                headline: { ...BETTER.headline, metric_id: 'judge_correct', baseline_value: 0.1, trained_value: 0.45, absolute_delta: 0.35 },
+                judge: { judge: 'ollama:gemma4:12b', score: 0.45, judged: 19, unjudged: 1, correct: 6, partial: 5, wrong: 8 },
+                failures: [
+                    { prompt: 'What does section 8 allow?', reference: 'Disclosure with consent…', prediction: 'Anything the head decides.', row_judge_verdict: 'wrong', row_judge_reason: 'Contradicts the consent requirement.' },
+                ],
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        await screen.findByTestId('eval-summary');
+        expect(screen.getByTestId('eval-summary-headline')).toHaveTextContent('judge: answer correct: 0.100 (base) → 0.450');
+        expect(screen.getByTestId('eval-summary-judge')).toHaveTextContent('Judged by ollama:gemma4:12b: 6 correct, 5 partial, 8 wrong of 19 answers (1 unjudged)');
+        expect(screen.getByTestId('eval-summary-failures')).toHaveTextContent('Judge: wrong — Contradicts the consent requirement.');
+    });
+
     it('does not announce "better" when the lift is within noise', async () => {
         apiMock.get.mockResolvedValue({
             data: {
@@ -220,8 +246,8 @@ describe('EvalSummaryCard', () => {
         await userEvent.setup().click(btn);
         await waitFor(() =>
             expect(apiMock.post).toHaveBeenCalledWith(
-                '/projects/7/evaluation/run-heldout?async_job=true',
-                expect.objectContaining({ experiment_id: 33, dataset_name: 'test', eval_type: 'exact_match' }),
+                '/projects/7/evaluation/summary/lift-check',
+                { experiment_id: 33 },
             ),
         );
     });

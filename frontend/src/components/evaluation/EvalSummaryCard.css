@@ -84,3 +84,18 @@
 }
 .eval-summary__seed-runs { color: var(--text-tertiary); }
 .eval-summary__evidence--worse { border-left-color: var(--color-error); }
+
+.eval-summary__judge {
+    margin: 0.5rem 0 0;
+    font-size: 0.9rem;
+    color: var(--text-muted, #555);
+}
+
+.eval-summary__judge-verdict {
+    margin-top: 0.25rem;
+    font-size: 0.85rem;
+}
+
+.eval-summary__judge-verdict--correct { color: var(--success, #2e7d32); }
+.eval-summary__judge-verdict--partial { color: var(--warning, #b26a00); }
+.eval-summary__judge-verdict--wrong { color: var(--danger, #c62828); }

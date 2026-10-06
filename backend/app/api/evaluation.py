@@ -1264,6 +1264,34 @@ class CheckSeedsRequest(BaseModel):
     num_seeds: int = Field(3, ge=2, le=10)
 
 
+class LiftCheckRequest(BaseModel):
+    experiment_id: int
+
+
+@router.post("/summary/lift-check", status_code=202)
+async def rerun_lift_check(
+    project_id: int,
+    data: LiftCheckRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run (or re-run) the lift check for a trained run as a background Job:
+    base model + fine-tuned run on the test examples, paired row by row —
+    the same Job the training watcher spawns. Re-running picks up a judge
+    model configured since (``answer_judge_service``) and re-evaluates the
+    base model when its cached result was not judged by the same judge."""
+    from app.services.post_training_eval_service import start_post_training_lift_job
+
+    result = await start_post_training_lift_job(
+        db, project_id=project_id, experiment_id=data.experiment_id, manual=True
+    )
+    await db.commit()
+    if not result.get("started"):
+        reason = str(result.get("skipped_reason") or "unknown")
+        status = 404 if reason == "experiment_missing" else 400
+        raise HTTPException(status, f"Lift check not started: {reason}")
+    return result
+
+
 @router.post("/summary/check-seeds", status_code=201)
 async def check_lift_across_seeds(
     project_id: int,

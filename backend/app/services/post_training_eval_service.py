@@ -137,14 +137,18 @@ def _model_dir_has_weights(output_dir: str | None) -> bool:
     return has_config and has_weights
 
 
-def auto_lift_skip_reason(exp: Experiment, project: Project | None) -> str | None:
+def auto_lift_skip_reason(
+    exp: Experiment, project: Project | None, *, manual: bool = False
+) -> str | None:
     """``None`` when the run should get an automatic lift eval, else a
-    short machine-readable reason."""
-    if not settings.AUTO_LIFT_EVAL_ENABLED:
-        return "disabled_globally"
-    runtime_config = (project.runtime_config or {}) if project is not None else {}
-    if isinstance(runtime_config, dict) and runtime_config.get("auto_lift_eval") is False:
-        return "disabled_for_project"
+    short machine-readable reason. ``manual`` (the user asked for the
+    check) ignores the automatic-run opt-outs."""
+    if not manual:
+        if not settings.AUTO_LIFT_EVAL_ENABLED:
+            return "disabled_globally"
+        runtime_config = (project.runtime_config or {}) if project is not None else {}
+        if isinstance(runtime_config, dict) and runtime_config.get("auto_lift_eval") is False:
+            return "disabled_for_project"
     cfg = exp.config if isinstance(exp.config, dict) else {}
     if cfg.get("is_baseline") is True:
         return "baseline_experiment"
@@ -174,8 +178,23 @@ async def _test_split_mtime(project_id: int) -> datetime | None:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
 
 
+def _baseline_judge_matches(result: EvalResult, judge_label: str | None) -> bool:
+    """A cached base-model result pairs with the fine-tuned eval only if it
+    was judged by the same judge (or the task isn't a long-answer one, so
+    neither eval is judged). A pre-judge result is re-run once."""
+    if judge_label is None:
+        return True
+    metrics = result.metrics if isinstance(result.metrics, dict) else {}
+    judge = metrics.get("judge")
+    if not isinstance(judge, dict):
+        return False
+    if judge.get("skipped") == "not_long_answer_task":
+        return True
+    return str(judge.get("judge") or "") == judge_label
+
+
 async def _reusable_baseline_result(
-    db: AsyncSession, baseline_exp: Experiment, project_id: int
+    db: AsyncSession, baseline_exp: Experiment, project_id: int, *, judge_label: str | None = None
 ) -> EvalResult | None:
     """Latest baseline result on the test split, if newer than the split
     file (base models are deterministic under greedy decoding, so a
@@ -201,7 +220,19 @@ async def _reusable_baseline_result(
     details = latest.details if isinstance(latest.details, dict) else {}
     if not isinstance(details.get("row_scores"), dict):
         return None
+    if not _baseline_judge_matches(latest, judge_label):
+        return None
     return latest
+
+
+async def _resolve_lift_judge(db: AsyncSession, project: Project):
+    """The answer judge both evals of one lift check share (None → F1 only)."""
+    from app.services.answer_judge_service import resolve_answer_judge
+
+    try:
+        return await resolve_answer_judge(db, project.id, project)
+    except Exception:  # noqa: BLE001 — best-effort metric
+        return None
 
 
 # ── Runner ─────────────────────────────────────────────────────────────
@@ -213,6 +244,7 @@ async def run_post_training_lift_eval(
     project_id: int,
     experiment_id: int,
     progress=None,
+    manual: bool = False,
 ) -> dict[str, Any]:
     """Baseline + fine-tuned held-out eval, then the paired lift summary.
     Commits after each eval so a failure in the second keeps the first.
@@ -228,7 +260,7 @@ async def run_post_training_lift_eval(
     project = await db.get(Project, project_id)
     if exp is None or project is None:
         raise ValueError(f"Experiment {experiment_id} / project {project_id} not found")
-    reason = auto_lift_skip_reason(exp, project)
+    reason = auto_lift_skip_reason(exp, project, manual=manual)
     if reason is not None:
         raise ValueError(f"Automatic lift eval skipped: {reason}")
     if is_seed_group_leader(exp):
@@ -245,12 +277,16 @@ async def run_post_training_lift_eval(
         "temperature": 0.0,
         "judge_model": None,
     }
+    answer_judge = await _resolve_lift_judge(db, project)
+    common["answer_judge"] = answer_judge
 
     baseline_exp = await find_or_create_baseline_experiment(
         db, project_id, exp.base_model, source="post_training.auto_lift"
     )
     await db.commit()
-    baseline_result = await _reusable_baseline_result(db, baseline_exp, project_id)
+    baseline_result = await _reusable_baseline_result(
+        db, baseline_exp, project_id, judge_label=answer_judge.label if answer_judge else None
+    )
     baseline_reused = baseline_result is not None
     if baseline_result is None:
         await _report(0.1, f"Evaluating base model {short_model_name(exp.base_model)}")
@@ -348,11 +384,15 @@ async def _run_seed_group_lift_eval(
         "temperature": 0.0,
         "judge_model": None,
     }
+    answer_judge = await _resolve_lift_judge(db, project)
+    common["answer_judge"] = answer_judge
     baseline_exp = await find_or_create_baseline_experiment(
         db, project.id, leader.base_model, source="post_training.auto_lift"
     )
     await db.commit()
-    baseline_result = await _reusable_baseline_result(db, baseline_exp, project.id)
+    baseline_result = await _reusable_baseline_result(
+        db, baseline_exp, project.id, judge_label=answer_judge.label if answer_judge else None
+    )
     baseline_reused = baseline_result is not None
     if baseline_result is None:
         await report(0.05, f"Evaluating base model {short_model_name(leader.base_model)}")
@@ -428,15 +468,18 @@ async def start_post_training_lift_job(
     *,
     project_id: int,
     experiment_id: int,
+    manual: bool = False,
 ) -> dict[str, Any]:
     """Spawn the lift-eval Job for a just-completed run, or return why not.
-    Never raises — a failure here must not fail the training watcher."""
+    Never raises — a failure here must not fail the training watcher.
+    ``manual``: the user asked (re-run from the Eval tab) — the automatic
+    opt-outs don't apply."""
     try:
         exp = await db.get(Experiment, experiment_id)
         project = await db.get(Project, project_id)
         if exp is None:
             return {"started": False, "skipped_reason": "experiment_missing"}
-        reason = auto_lift_skip_reason(exp, project)
+        reason = auto_lift_skip_reason(exp, project, manual=manual)
         if reason is not None:
             return {"started": False, "skipped_reason": reason}
 
@@ -453,6 +496,7 @@ async def start_post_training_lift_job(
                     project_id=project_id,
                     experiment_id=experiment_id,
                     progress=_progress,
+                    manual=manual,
                 )
 
         run_label = f"run #{experiment_id}"

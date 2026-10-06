@@ -90,6 +90,7 @@ session-start guidance.
 - `backend/app/services/annotation/active_learning.py` — Active-learning row ranker for label-job queues (Epic F).
 - `backend/app/services/annotation/promotion.py` — Annotation → training dataset bridge (Story 1.6).
 - `backend/app/services/annotation_service.py` — Annotation foundation service (Story 1.1).
+- `backend/app/services/answer_judge_service.py` — LLM-judge correctness for long-answer held-out evals.
 - `backend/app/services/archetype_seeds.py` — Template-derived seed contributions for the archetype cohort
 - `backend/app/services/archetype_service.py` — Cross-project gold-set archetypes (USER-SUCCESS Epic 8 Phase 8a).
 - `backend/app/services/artifact_registry_service.py` — Typed artifact registry service.
@@ -653,6 +654,7 @@ session-start guidance.
 - `backend/tests/test_annotation_active_learning.py` — Epic F Phase 1 — active-learning row ranker for label-jobs.
 - `backend/tests/test_annotation_active_learning_phase2.py` — Epic F Phase 2 — span / preference-pair active strategy + Cohen's κ stats.
 - `backend/tests/test_annotation_promotion.py` — Story 1.6 — promote labeled rows → training dataset.
+- `backend/tests/test_answer_judge.py` — LLM-judge correctness for long-answer held-out evals (answer_judge_service).
 - `backend/tests/test_answer_key_not_in_training_corpus.py` — The answer key is eval-only: auto-RAG and the curriculum preview read the
 - `backend/tests/test_archetype_drift_nudge.py` — Tests for the Phase 8c Coach Mode archetype-drift nudge
 - `backend/tests/test_archetype_service.py` — Tests for the archetype-extraction service + endpoint
