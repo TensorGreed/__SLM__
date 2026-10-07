@@ -25,6 +25,7 @@ const SLIDES = [
     'v11',
     'v12',
     'v14',
+    'v20',
 ];
 
 test('Render YouTube thumbnails', async ({ page }) => {

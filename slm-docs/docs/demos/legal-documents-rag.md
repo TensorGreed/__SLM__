@@ -11,9 +11,29 @@ cleaned passages, no questions or answers. The goal is a small model that
 answers questions about the acts **correctly** — and a platform that can
 tell whether it does.
 
-This page is the written form of walkthrough video 20. Every number below
-is a live measurement from the project it was recorded on; nothing was
-tuned for the demo.
+This page is the written form of **walkthrough video 20 — "Fine-tuning
+learned the words. Retrieval got the facts."** (6:41, captioned). Every
+number below is a live measurement from the project it was recorded on;
+nothing was tuned for the demo.
+
+## Watch the walkthrough
+
+<!-- Replace with the YouTube embed once published (docs-demo/videos/20-legal-rag-vs-sft/PUBLISH.md has the kit). -->
+*YouTube link: pending publication.* Until then the video ships with the
+repo's demo assets as `docs-demo/videos/20-legal-rag-vs-sft/final_captioned.mp4`
+(rebuild: `build.py`, then `captions.py --burn`).
+
+| time | scene |
+|---|---|
+| 0:00 | Two statutes, 467 passages, no Q&A |
+| 0:32 | One job: documents → Q&A pairs → answer key → train → lift check |
+| 1:34 | The gate that passed — F1 +150%, every seed |
+| 2:12 | The gate that failed — the judge: 1 of 19 correct |
+| 3:20 | Base model + retrieved passages: 8 of 19 |
+| 4:14 | The Coach: retrieval beats the fine-tune → reroute to RAG |
+| 4:42 | The RAG sibling and the retrieval sweep (12 of 19) |
+| 5:16 | Live: a cited answer in the playground |
+| 6:10 | What is still open |
 
 ## 1. Documents → Q&A → trained model, as one job
 

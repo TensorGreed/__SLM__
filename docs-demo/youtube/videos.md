@@ -497,3 +497,16 @@ AI architecture, LLM platform architecture, local AI stack, FastAPI Celery Redis
 ```
 
 **Thumbnail**: `thumbnails/v14.png`
+
+---
+
+## Video 20 — Legal assistant: the gate that failed, and what worked (EP 13)
+
+Local: `docs-demo/videos/20-legal-rag-vs-sft/final_captioned.mp4` (6:41).
+Full kit (titles, description with chapters, tags, LinkedIn post):
+`docs-demo/videos/20-legal-rag-vs-sft/PUBLISH.md`. Docs page:
+`slm-docs/docs/demos/legal-documents-rag.md` (add the YouTube embed there
+once published).
+
+**Thumbnail**: `thumbnails/v20.png`
+
