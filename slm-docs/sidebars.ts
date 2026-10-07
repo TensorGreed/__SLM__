@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
       label: 'Demo projects',
       items: [
         'demos/pii-detector',
+        'demos/legal-documents-rag',
       ],
     },
     {

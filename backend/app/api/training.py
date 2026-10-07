@@ -3543,11 +3543,14 @@ async def _resolve_playground_run(
     if _normalize_provider(req.provider) != "experiment":
         return None
     if rag_first_active:
-        raise HTTPException(
-            400,
-            "This is a RAG-first project: it answers from the base model plus "
-            "retrieval, not a fine-tuned run. Use the base model provider.",
-        )
+        # A RAG-first project has no run to chat with: serve its base model
+        # in-process (local_chat_service loads a plain checkpoint the same
+        # way it loads a full fine-tune) — retrieval does the rest.
+        project = await db.get(Project, project_id)
+        base_model = str(getattr(project, "base_model_name", "") or "").strip()
+        if not base_model:
+            raise HTTPException(400, "This RAG-first project has no base model to serve.")
+        return base_model, f"{base_model.split('/')[-1]} (base model + retrieval)", base_model
     if not req.experiment_id:
         raise HTTPException(400, "Pick a training run to chat with (experiment_id).")
     exp = (

@@ -194,6 +194,25 @@ class SiblingPassagesCheckTests(unittest.TestCase):
         self.assertEqual(asyncio.run(start_sibling_passages_check(None, Plain()))["skipped_reason"], "not_a_passages_project")
 
 
+class RagFirstPlaygroundTests(unittest.TestCase):
+    def test_rag_first_project_chats_with_its_base_model_in_process(self):
+        from app.api.training import PlaygroundChatRequest, _resolve_playground_run
+        from app.database import async_session_factory
+
+        pid = PlaygroundCorpusAndCloneTests._project(self)  # type: ignore[arg-type]
+        client.put(f"/api/projects/{pid}", json={"base_model_name": "Qwen/Qwen2.5-1.5B-Instruct"})
+        req = PlaygroundChatRequest(provider="experiment", messages=[{"role": "user", "content": "hi"}])
+
+        async def _go():
+            async with async_session_factory() as db:
+                return await _resolve_playground_run(db, pid, req, rag_first_active=True)
+
+        model_ref, label, base = asyncio.run(_go())
+        self.assertEqual(model_ref, "Qwen/Qwen2.5-1.5B-Instruct")
+        self.assertEqual(base, "Qwen/Qwen2.5-1.5B-Instruct")
+        self.assertIn("base model + retrieval", label)
+
+
 class LatestJudgedLiftTests(unittest.TestCase):
     """Which fine-tuned run the verdict compares against, read from real rows."""
 

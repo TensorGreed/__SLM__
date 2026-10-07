@@ -530,6 +530,13 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   `sweep_retrieval=True` → `apply_retrieval_choice` writes the winner to
   the project; the sibling auto-check sweeps. Summary card line
   "Retrieval served: …". Tests patch `retrieval_reranker.score_pairs`.
+  A rag_first project's playground with `provider="experiment"` serves the
+  base model in-process (`_resolve_playground_run` returns the base model
+  id; `local_chat_service` loads a plain checkpoint) — the frontend
+  defaults a rag_first project to that provider. Docs demo video 20
+  (`docs-demo/videos/20-legal-rag-vs-sft/`, gitignored like all videos)
+  reuses video 13's builder via importlib + a retrying per-sentence TTS
+  (`synthesize_checked`); page `slm-docs/docs/demos/legal-documents-rag.md`.
   The GET also returns `latest_experiment_id` + `stale` (fine-tuned cache is
   for an older run → warning on the card). The panel reads its project's
   `auto_rag_comparison` Jobs from `useJobsStore((s) => s.jobs)`: in flight →

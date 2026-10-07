@@ -61,6 +61,8 @@ interface AutoRagSummary {
     n_val_rows: number;
     rag_k: number;
     judge?: AutoRagJudgeSummary | null;
+    /** The retrieval scored (top-k + reranker). */
+    retrieval?: { k: number; reranker: string | null } | null;
 }
 
 interface AutoRagModelComparison {
@@ -618,7 +620,7 @@ function ModelComparisonCard({
                 <div>
                     <div className="auto-rag-comparison__model-title">{title}</div>
                     <div className="auto-rag-comparison__model-sub">
-                        {provenance} · {summary.n_val_rows} val rows · top-{summary.rag_k} retrieval
+                        {provenance} · {summary.n_val_rows} {comparison.split === 'test' ? 'test examples' : 'val rows'} · top-{summary.rag_k} retrieval{summary.retrieval?.reranker ? ' + reranker' : ''}
                         {comparison.cached_at ? ` · measured ${new Date(comparison.cached_at).toLocaleString()}` : ''}
                     </div>
                 </div>

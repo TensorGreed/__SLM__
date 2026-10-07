@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import api from '../../api/client';
+import { useProjectStore } from '../../stores/projectStore';
 import './ChatPlaygroundPanel.css';
 
 type PlaygroundProvider = 'openai_compatible' | 'llama_cpp' | 'mock' | 'experiment';
@@ -343,6 +344,11 @@ function authHeaders(): HeadersInit {
 
 export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelProps) {
   const [provider, setProvider] = useState<PlaygroundProvider>('mock');
+  // A RAG-first project (reroute-to-RAG sibling) has no trained run: its
+  // playground serves the base model in-process + retrieval.
+  const ragFirstProject = Boolean(
+    (useProjectStore((s) => s.activeProject?.runtime_config) as Record<string, unknown> | null | undefined)?.rag_first,
+  );
   const [runs, setRuns] = useState<PlaygroundRunOption[]>([]);
   // Document grounding: retrieve passages from the project's cleaned
   // documents and cite them. On by default once an index exists.
@@ -450,6 +456,8 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
       if (initial) {
         setSelectedRunId(String(initial.id));
         setProvider((current) => (current === 'mock' || requested ? 'experiment' : current));
+      } else if (ragFirstProject) {
+        setProvider((current) => (current === 'mock' ? 'experiment' : current));
       }
     } catch {
       setRuns([]);
@@ -989,7 +997,11 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
               value={selectedRunId}
               onChange={(e) => setSelectedRunId(e.target.value)}
             >
-              {runs.length === 0 && <option value="">No completed runs yet — train one first</option>}
+              {runs.length === 0 && (
+                <option value="">
+                  {ragFirstProject ? 'Base model + retrieval (RAG-first project, no training run)' : 'No completed runs yet — train one first'}
+                </option>
+              )}
               {runs.map((run) => (
                 <option key={run.id} value={String(run.id)}>
                   Run #{run.id} · {run.name} · {run.base_model}
