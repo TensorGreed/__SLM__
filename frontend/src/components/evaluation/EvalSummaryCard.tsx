@@ -114,6 +114,21 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
         void load();
     }, [load, refreshToken]);
 
+    const rerunPassagesCheck = async () => {
+        setStarting(true);
+        try {
+            await api.post(`/projects/${projectId}/auto-rag/comparison/run`, null, {
+                params: { model: 'base', corpus: 'documents', split: 'test' },
+            });
+            toast.info('Passages check queued — the bell will tell you when it is ready.', 4000);
+            void useJobsStore.getState().refreshAfterLocalChange();
+        } catch (err) {
+            toast.error(errorText(err));
+        } finally {
+            setStarting(false);
+        }
+    };
+
     const runEval = async (targetExperimentId: number) => {
         setStarting(true);
         try {
@@ -143,7 +158,9 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     const seedEvidence = summary.seed_evidence ?? null;
     const verdict = titleFor(summary.verdict, evidence, seedEvidence);
     const unit = metricUnit(seedEvidence?.metric_id ?? evidence?.metric_id ?? summary.headline?.metric_id);
-    const note = evidence ? evidenceNote(evidence, { trained: !seedEvidence, unit }) : null;
+    const isPassages = summary.kind === 'rag_passages';
+    const note = evidence ? evidenceNote(evidence, { trained: !seedEvidence && !isPassages, unit }) : null;
+    const subject = isPassages ? 'Retrieval' : 'Fine-tuning';
     const seedNote = seedEvidence ? seedEvidenceNote(seedEvidence, unit) : null;
     const head = summary.headline;
     const runId = summary.experiment_id;
@@ -178,6 +195,14 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
             <div className="eval-summary__top">
                 <div>
                     <h3 className="eval-summary__title">{verdict.title}</h3>
+                    {isPassages && (
+                        <p className="eval-summary__run" data-testid="eval-summary-passages-run">
+                            Base model + your document passages vs the base model alone
+                            {summary.baseline?.base_model ? ` (${summary.baseline.base_model})` : ''}
+                            {summary.evaluated_samples ? ` · ${summary.evaluated_samples} ${summary.split === 'test' ? 'test examples' : 'validation rows'}` : ''}
+                            {' '}· no training run — retrieval does the work
+                        </p>
+                    )}
                     {runId != null && (
                         <p className="eval-summary__run">
                             Run #{runId}
@@ -196,6 +221,18 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         data-testid="eval-summary-run"
                     >
                         {starting ? 'Starting…' : 'Evaluate this run'}
+                    </button>
+                )}
+                {isPassages && (
+                    <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => void rerunPassagesCheck()}
+                        disabled={starting}
+                        data-testid="eval-summary-rerun-passages"
+                        title="Scores the base model with and without passage retrieval again on the test examples, judged."
+                    >
+                        {starting ? 'Starting…' : 'Re-run passages check'}
                     </button>
                 )}
                 {runId != null && summary.verdict !== 'not_evaluated' && summary.headline && !isSeedGroup && (
@@ -228,7 +265,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                 <p className="eval-summary__metric" data-testid="eval-summary-headline">
                     <code>{metricDisplayName(head.metric_id)}</code>: {fmt(head.baseline_value)} (base) → <strong>{fmt(head.trained_value)}</strong>
                     {head.trained_std != null ? ` ± ${fmt(head.trained_std)}` : ''}{' '}
-                    ({isSeedGroup ? `fine-tuned, mean of ${head.n_seeds ?? summary.n_seeds} seeds` : 'fine-tuned'})
+                    ({isPassages ? 'base + your passages' : isSeedGroup ? `fine-tuned, mean of ${head.n_seeds ?? summary.n_seeds} seeds` : 'fine-tuned'})
                     <span className={`eval-summary__delta eval-summary__delta--${head.direction}`}>
                         {' '}{head.absolute_delta > 0 ? '+' : ''}{fmt(head.absolute_delta)}
                         {head.relative_delta_pct != null ? ` (${head.relative_delta_pct > 0 ? '+' : ''}${head.relative_delta_pct}%)` : ''}
@@ -267,7 +304,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     data-verdict={evidence.verdict}
                 >
                     <span className="eval-summary__evidence-label">{note.label}</span>
-                    <span data-testid="eval-summary-row-counts">{rowCountsText(evidence, 'Fine-tuning')}</span>{' '}
+                    <span data-testid="eval-summary-row-counts">{rowCountsText(evidence, subject)}</span>{' '}
                     <span>{note.text}</span>
                 </p>
             )}

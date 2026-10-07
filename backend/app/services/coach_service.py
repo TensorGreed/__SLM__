@@ -2217,10 +2217,12 @@ def _passages_beat_finetune_nudge(
 
     p_score = float(passages.get("with_passages") or 0.0)
     f_score = float(finetune.get("score") or 0.0)
+    same_rows = bool(verdict.get("same_rows"))
+    rows_word = "test examples" if same_rows else "validation rows"
     body = (
         f"Judged by {passages.get('judge') or 'the judge model'} on the facts, not the wording: the base model "
         f"answering from your retrieved document passages scored {p_score:.2f} "
-        f"({_counts(p_counts)} of {passages.get('n_rows', 0)} validation rows; "
+        f"({_counts(p_counts)} of {passages.get('n_rows', 0)} {rows_word}; "
         f"{evidence.get('better', 0)} rows better than without retrieval, {evidence.get('worse', 0)} worse). "
         f"Your fine-tuned run #{finetune.get('experiment_id')} scored {f_score:.2f} "
         f"({_counts(f_counts)} of {finetune.get('n_rows', 0)} test examples).\n\n"
@@ -2228,8 +2230,12 @@ def _passages_beat_finetune_nudge(
         "facts at answer time. Reroute to RAG: a sibling project that serves the base model + passage "
         "retrieval, no training run needed — your SFT project stays for comparison. The playground already "
         "answers from passages here.\n\n"
-        "Measured on different rows (validation for retrieval, test examples for the run), so compare the "
-        "verdicts, not the decimals."
+        + (
+            "Both were measured on the same test examples."
+            if same_rows
+            else "Measured on different rows (validation for retrieval, test examples for the run), so compare "
+            "the verdicts, not the decimals."
+        )
     )
     if finetune.get("finetune_is_latest") is False:
         body += (

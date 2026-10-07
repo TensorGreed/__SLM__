@@ -457,6 +457,7 @@ async def reroute_to_rag(
     from app.services.rag_project_service import (
         RagCloneError,
         clone_project_for_rag,
+        start_sibling_passages_check,
     )
 
     # Idempotency check — find any existing clone (parent_project_id
@@ -533,6 +534,10 @@ async def reroute_to_rag(
                 await runner_db.commit()
                 # Re-read to get persisted state for the result.
                 await runner_db.refresh(new_project)
+                # A passages sibling gets its base + passages check on the
+                # test examples right away (its lift check).
+                passages_check = await start_sibling_passages_check(runner_db, new_project)
+                await runner_db.commit()
                 return {
                     "new_project_id": new_project.id,
                     "new_project_name": new_project.name,
@@ -540,6 +545,7 @@ async def reroute_to_rag(
                     "clone_report": (new_project.runtime_config or {}).get(
                         "clone_report"
                     ),
+                    "passages_check": passages_check,
                 }
 
         job = await start_job(
@@ -572,6 +578,8 @@ async def reroute_to_rag(
 
     await db.commit()
     await db.refresh(new_project)
+    await start_sibling_passages_check(db, new_project)
+    await db.commit()
 
     return ProjectRerouteToRagResponse(
         new_project_id=new_project.id,

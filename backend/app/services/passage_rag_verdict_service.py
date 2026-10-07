@@ -68,6 +68,9 @@ def summarize_documents_comparison(payload: dict[str, Any] | None) -> dict[str, 
         "with_passages_counts": on.get("counts") or {},
         "without_retrieval": float(off["score"]) if isinstance(off.get("score"), (int, float)) else None,
         "n_rows": int(summary.get("n_val_rows") or len(rows)),
+        # Which rows: "test" pairs with the lift check; "val" (older caches)
+        # does not, and the verdict says so.
+        "split": str(payload.get("split") or "val"),
         "retrieval_evidence": {k: evidence.get(k) for k in ("verdict", "n", "better", "worse", "same")},
         "cached_at": payload.get("cached_at"),
     }
@@ -179,6 +182,9 @@ def compare_passages_to_finetune(
         "comparable": False,
         "passages_win": False,
         "reason": None,
+        # Same rows as the lift check (test examples)? False for a passages
+        # comparison scored on the validation split.
+        "same_rows": str(passages.get("split") or "val") == "test",
     }
     retrieval_verdict = (passages.get("retrieval_evidence") or {}).get("verdict")
     if retrieval_verdict != "better":

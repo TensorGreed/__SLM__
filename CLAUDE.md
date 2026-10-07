@@ -503,6 +503,19 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   (request `auto_rag_corpus` overrides; audit block `corpus_reason`).
   `clone_project_for_rag` stamps `auto_rag_corpus="documents"` on the
   sibling when the source resolves to passages.
+  Harness `--split val|test` (`run_project_comparison(split=)`; documents
+  corpus defaults to **test** so the verdict's `same_rows` is True; payload
+  + GET carry `split`). The comparison Job start lives in
+  `services/auto_rag_comparison_job_service.start_auto_rag_comparison_job`
+  (raises `AutoRagComparisonInFlight`; the endpoint maps it to 409) so
+  `rag_project_service.start_sibling_passages_check` can spawn it from the
+  reroute clone (async + sync paths; result `passages_check`) for a sibling
+  with `auto_rag_corpus=documents`. `eval_summary_service.passages_summary`
+  (`kind="rag_passages"`, headline `judge_correct` without → with passages,
+  judge-row evidence, failures = rows retrieval got wrong) is what
+  `build_eval_summary` returns for a project with no trained run but a
+  judged documents comparison; `EvalSummaryCard` labels it "base + your
+  passages" and offers "Re-run passages check".
   The GET also returns `latest_experiment_id` + `stale` (fine-tuned cache is
   for an older run → warning on the card). The panel reads its project's
   `auto_rag_comparison` Jobs from `useJobsStore((s) => s.jobs)`: in flight →

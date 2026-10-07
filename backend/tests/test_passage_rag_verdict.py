@@ -114,6 +114,83 @@ class NudgeTests(unittest.TestCase):
         self.assertIsNone(_passages_beat_finetune_nudge(20, svc.compare_passages_to_finetune(PASSAGES, {**FINETUNE, "score": 0.9})))
 
 
+class PassagesSummaryTests(unittest.TestCase):
+    """A RAG sibling's Eval summary comes from its judged passages comparison."""
+
+    def _write(self, pid: int, payload: dict) -> None:
+        path = settings.DATA_DIR / "projects" / str(pid) / "auto_rag" / "comparison_base_documents.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_summary_from_the_judged_comparison(self):
+        from app.services.eval_summary_service import build_eval_summary, passages_summary
+
+        pid = PlaygroundCorpusAndCloneTests._project(self)  # type: ignore[arg-type]
+        self.assertIsNone(passages_summary(pid))
+        rows = [
+            {"question": f"Q{i}?", "reference": "A long reference answer with enough words to be judged.",
+             "without_rag": {"generated": "x", "f1": 0.1, "judge": {"score": 0.0, "verdict": "wrong", "reason": "r"}},
+             "with_rag": {"generated": f"y{i}", "f1": 0.4, "judge": {"score": 1.0 if i < 5 else 0.0, "verdict": "correct" if i < 5 else "wrong", "reason": "missed"},
+                          "retrieved_row_count": 3}}
+            for i in range(6)
+        ]
+        self._write(pid, {
+            "model": "base", "corpus": "documents", "split": "test", "base_model": "Qwen", "cached_at": "t",
+            "summary": {"n_val_rows": 6, "judge": {"judge": "ollama:gemma4:12b",
+                                                   "without_rag": {"score": 0.0, "counts": {"correct": 0, "partial": 0, "wrong": 6}},
+                                                   "with_rag": {"score": 0.8333, "judged": 6, "counts": {"correct": 5, "partial": 0, "wrong": 1}}}},
+            "rows": rows,
+        })
+        summary = passages_summary(pid)
+        self.assertEqual(summary["kind"], "rag_passages")
+        self.assertEqual(summary["verdict"], "better")
+        self.assertEqual(summary["headline"]["metric_id"], "judge_correct")
+        self.assertEqual((summary["headline"]["baseline_value"], summary["headline"]["trained_value"]), (0.0, 0.8333))
+        self.assertEqual(summary["evidence"]["verdict"], "better")
+        self.assertEqual((summary["evidence"]["better"], summary["evidence"]["worse"]), (5, 0))
+        self.assertEqual(summary["failed_count"], 1)
+        self.assertEqual(summary["failures"][0]["row_judge_verdict"], "wrong")
+        self.assertEqual(summary["judge"]["correct"], 5)
+        self.assertEqual(summary["split"], "test")
+        # build_eval_summary uses it when the project has no trained run.
+        from app.database import async_session_factory
+
+        async def _go():
+            async with async_session_factory() as db:
+                return await build_eval_summary(db, pid)
+
+        self.assertEqual(asyncio.run(_go())["kind"], "rag_passages")
+
+
+class SiblingPassagesCheckTests(unittest.TestCase):
+    def test_passages_sibling_gets_its_check_on_the_test_split(self):
+        from app.services import auto_rag_comparison_job_service as jobs
+        from app.services.rag_project_service import start_sibling_passages_check
+
+        class P:
+            id = 99
+            runtime_config = {"rag_first": True, "auto_rag_corpus": "documents"}
+            selected_recipe = {"recipe_id": "qa-sft"}
+
+        seen: dict = {}
+
+        async def _start(db, project_id, *, recipe_id, base_only, corpus, split):
+            seen.update(project_id=project_id, recipe_id=recipe_id, base_only=base_only, corpus=corpus, split=split)
+            return type("J", (), {"id": 7})()
+
+        with mock.patch.object(jobs, "start_auto_rag_comparison_job", _start):
+            out = asyncio.run(start_sibling_passages_check(None, P()))
+        self.assertEqual(out, {"started": True, "job_id": 7})
+        self.assertEqual(seen, {"project_id": 99, "recipe_id": "qa-sft", "base_only": True, "corpus": "documents", "split": "test"})
+
+        class Plain:
+            id = 100
+            runtime_config = {"rag_first": True}
+            selected_recipe = {"recipe_id": "qa-sft"}
+
+        self.assertEqual(asyncio.run(start_sibling_passages_check(None, Plain()))["skipped_reason"], "not_a_passages_project")
+
+
 class LatestJudgedLiftTests(unittest.TestCase):
     """Which fine-tuned run the verdict compares against, read from real rows."""
 

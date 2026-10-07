@@ -70,6 +70,31 @@ describe('EvalSummaryCard', () => {
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/7/evaluation/summary/lift-check', { experiment_id: 21 }));
     });
 
+    it('summarises a RAG-first project from its judged passages check', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 21, experiment_id: null, kind: 'rag_passages', verdict: 'better', message: null,
+                headline: { metric_id: 'judge_correct', baseline_value: 0.03, trained_value: 0.62, absolute_delta: 0.59, relative_delta_pct: 1966.7, direction: 'improved' },
+                evidence: { n: 19, better: 12, worse: 0, same: 7, mean_diff: 0.59, ci_low: 0.36, ci_high: 0.82, verdict: 'better', metric_id: 'judge_correct' },
+                baseline: { experiment_id: null, base_model: 'Qwen/Qwen2.5-1.5B-Instruct' }, trained: null,
+                eval_type: 'rag_passages', evaluated_samples: 19, split: 'test',
+                judge: { judge: 'ollama:gemma4:12b', score: 0.62, judged: 19, unjudged: 0, correct: 10, partial: 3, wrong: 6 },
+                failures: [{ prompt: 'Q?', reference: 'R', prediction: 'P', row_judge_verdict: 'wrong', row_judge_reason: 'wrong passage' }],
+                failed_count: 9,
+            },
+        });
+        apiMock.post.mockResolvedValue({ data: { id: 70 } });
+        render(<EvalSummaryCard projectId={21} experimentId={null} />);
+        const card = await screen.findByTestId('eval-summary');
+        expect(card).toHaveAttribute('data-verdict', 'better');
+        expect(screen.getByTestId('eval-summary-passages-run')).toHaveTextContent('Base model + your document passages vs the base model alone (Qwen/Qwen2.5-1.5B-Instruct) · 19 test examples');
+        expect(screen.getByTestId('eval-summary-headline')).toHaveTextContent('0.030 (base) → 0.620 (base + your passages)');
+        expect(screen.getByTestId('eval-summary-row-counts')).toHaveTextContent('Retrieval helped 12 rows, hurt 0 rows, no change on 7.');
+        expect(screen.queryByTestId('eval-summary-check-seeds')).not.toBeInTheDocument();
+        await userEvent.setup().click(screen.getByTestId('eval-summary-rerun-passages'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/21/auto-rag/comparison/run', null, { params: { model: 'base', corpus: 'documents', split: 'test' } }));
+    });
+
     it('names the LLM-judge headline and shows each failure\'s verdict', async () => {
         apiMock.get.mockResolvedValue({
             data: {

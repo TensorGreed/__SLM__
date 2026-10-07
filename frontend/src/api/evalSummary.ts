@@ -56,6 +56,11 @@ export interface EvalSummaryJudge {
 export interface EvalSummary {
     project_id: number;
     experiment_id: number | null;
+    /** 'rag_passages': a RAG-first project — the "run" is the base model +
+     *  document-passage retrieval, scored by the judge against the base
+     *  model alone (no training). Absent for trained runs. */
+    kind?: 'rag_passages';
+    split?: string | null;
     verdict: EvalVerdict;
     message?: string | null;
     headline: EvalSummaryHeadline | null;

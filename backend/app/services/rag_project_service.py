@@ -292,3 +292,37 @@ def is_rag_first(project: Project | None) -> bool:
     if isinstance(flag, bool):
         return flag
     return False
+
+
+async def start_sibling_passages_check(db, new_project: Project) -> dict[str, Any]:
+    """A RAG sibling created because document passages beat the fine-tune
+    gets its own "did it help?" number automatically: the base model with
+    and without passage retrieval on the test examples, judged
+    (``auto_rag_comparison`` Job, ``model=base corpus=documents split=test``)
+    — the counterpart of the lift check a trained run gets. Never raises;
+    returns ``{started, job_id | skipped_reason}``."""
+    from app.services.passage_rag_verdict_service import explicit_corpus
+
+    if explicit_corpus(new_project) != "documents":
+        return {"started": False, "skipped_reason": "not_a_passages_project"}
+    try:
+        from app.services.auto_rag_comparison_job_service import (
+            AutoRagComparisonInFlight,
+            start_auto_rag_comparison_job,
+        )
+
+        recipe_id = str((new_project.selected_recipe or {}).get("recipe_id") or "") or None
+        job = await start_auto_rag_comparison_job(
+            db,
+            new_project.id,
+            recipe_id=recipe_id,
+            base_only=True,
+            corpus="documents",
+            split="test",
+        )
+        return {"started": True, "job_id": getattr(job, "id", None)}
+    except AutoRagComparisonInFlight as exc:
+        return {"started": False, "skipped_reason": "already_running", "job_id": exc.job.id}
+    except Exception as exc:  # noqa: BLE001 — the clone must not fail over its follow-up
+        return {"started": False, "skipped_reason": f"error:{exc.__class__.__name__}: {exc}"}
+

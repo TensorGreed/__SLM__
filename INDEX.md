@@ -94,6 +94,7 @@ session-start guidance.
 - `backend/app/services/archetype_seeds.py` — Template-derived seed contributions for the archetype cohort
 - `backend/app/services/archetype_service.py` — Cross-project gold-set archetypes (USER-SUCCESS Epic 8 Phase 8a).
 - `backend/app/services/artifact_registry_service.py` — Typed artifact registry service.
+- `backend/app/services/auto_rag_comparison_job_service.py` — Spawn the auto-RAG comparison as a background Job.
 - `backend/app/services/auto_rag_service.py` — Auto-RAG retrieval index + lookup (USER-SUCCESS Epic 9 Phase 9a).
 - `backend/app/services/autopilot_decision_service.py` — Autopilot decision-log persistence and query service.
 - `backend/app/services/autopilot_repair_preview_service.py` — Autopilot repair-preview + apply separation.

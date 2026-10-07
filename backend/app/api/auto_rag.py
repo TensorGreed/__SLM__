@@ -312,6 +312,7 @@ def _read_cached_comparison(cache_path: Path) -> dict[str, Any] | None:
         "experiment_id": payload.get("experiment_id"),
         "base_model": payload.get("base_model"),
         "corpus": payload.get("corpus") or "qa",
+        "split": payload.get("split") or "val",
         "evidence": _lift_evidence(rows),
         # The answer judge's view (long-answer tasks): who judged, each arm's
         # correct / partial / wrong, and the paired row evidence on the
@@ -389,6 +390,14 @@ async def run_auto_rag_comparison(
             "cite-or-say-you-don't-know preamble (written to *_documents.json)."
         ),
     ),
+    split: Literal["val", "test"] | None = Query(
+        None,
+        description=(
+            "Rows to score: the validation split (default for Q&A-pair "
+            "retrieval) or the test examples (default for document passages, "
+            "so the verdict pairs the same rows as the lift check)."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Hardening — spawn the auto-RAG comparison as a background Job
@@ -412,16 +421,7 @@ async def run_auto_rag_comparison(
             (idempotency: refuse rather than spawn a duplicate that
             would race the output file).
     """
-    from datetime import datetime, timezone
-
-    from sqlalchemy import select
-
-    from app.models.job import Job, JobStatus
-    from app.services.jobs_service import (
-        JobProgressHandle,
-        serialize_job,
-        start_job,
-    )
+    from app.services.jobs_service import serialize_job
 
     project = await db.get(Project, project_id)
     if project is None:
@@ -442,21 +442,22 @@ async def run_auto_rag_comparison(
             ),
         )
 
-    # Idempotency — refuse if there's already a comparison Job for
-    # this project in QUEUED or RUNNING. Two simultaneous runs would
-    # race the comparison.json write + double the GPU load.
-    in_flight_result = await db.execute(
-        select(Job)
-        .where(
-            Job.kind == "auto_rag_comparison",
-            Job.project_id == project_id,
-            Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
-        )
-        .order_by(Job.queued_at.desc())
-        .limit(1)
+    from app.services.auto_rag_comparison_job_service import (
+        AutoRagComparisonInFlight,
+        start_auto_rag_comparison_job,
     )
-    in_flight = in_flight_result.scalar_one_or_none()
-    if in_flight is not None:
+
+    try:
+        job = await start_auto_rag_comparison_job(
+            db,
+            project_id,
+            recipe_id=recipe_id,
+            base_only=model == "base",
+            corpus=corpus,
+            split=split or ("test" if corpus == "documents" else "val"),
+        )
+    except AutoRagComparisonInFlight as exc:
+        in_flight = exc.job
         raise HTTPException(
             status_code=409,
             detail={
@@ -474,148 +475,5 @@ async def run_auto_rag_comparison(
                     ),
                 },
             },
-        )
-
-    base_only = model == "base"
-
-    async def _runner(handle: JobProgressHandle) -> dict[str, Any]:
-        import asyncio
-        import time
-
-        # The comparison work is GPU-heavy + uses sync code paths
-        # (torch model load, sqlite3 read inside the script). Run it
-        # on a worker thread; bridge the script's sync
-        # progress_callback into JobProgressHandle.set_progress via
-        # a shared mutable state + a polling drainer running on the
-        # event loop.
-        progress_state: dict[str, Any] = {
-            "scored": 0,
-            "total": 0,
-            "condition": "without-RAG",
-            "passes_done": 0,
-        }
-
-        def _sync_callback(scored: int, total: int, condition: str) -> None:
-            progress_state["scored"] = scored
-            progress_state["total"] = total
-            # The without-RAG pass finishes first; once we see scored
-            # reset back to 1 on the with-RAG pass, increment
-            # passes_done so the overall fraction reflects 2 passes.
-            if (
-                progress_state["condition"] != condition
-                and progress_state["condition"] == "without-RAG"
-                and condition == "with-RAG"
-            ):
-                progress_state["passes_done"] = 1
-            progress_state["condition"] = condition
-
-        async def _drainer(stop: asyncio.Event) -> None:
-            started = time.monotonic()
-            while not stop.is_set():
-                state = dict(progress_state)
-                total = state["total"]
-                scored = state["scored"]
-                passes_done = state["passes_done"]
-                condition = state["condition"]
-                elapsed = int(time.monotonic() - started)
-                if total > 0:
-                    completed = passes_done * total + scored
-                    overall_total = 2 * total
-                    fraction = max(0.0, min(1.0, completed / overall_total))
-                    msg = (
-                        f"scoring row {scored}/{total} ({condition}) · "
-                        f"pass {passes_done + 1}/2 · {elapsed}s elapsed"
-                    )
-                else:
-                    fraction = None
-                    msg = f"loading model · {elapsed}s elapsed"
-                await handle.set_progress(fraction=fraction, message=msg)
-                try:
-                    await asyncio.wait_for(stop.wait(), timeout=2.0)
-                except asyncio.TimeoutError:
-                    pass
-
-        # Import inside the runner so a missing torch / peft install
-        # (CPU-only dev box) fails inside the Job not at app boot.
-        import sys as _sys
-
-        backend_root = str(Path(__file__).resolve().parents[2])
-        if backend_root not in _sys.path:
-            _sys.path.insert(0, backend_root)
-        from scripts.auto_rag_ab import comparison_file_name, run_project_comparison
-
-        stop_event = asyncio.Event()
-        drain_task = asyncio.create_task(_drainer(stop_event))
-        try:
-            payload = await asyncio.to_thread(
-                run_project_comparison,
-                project_id,
-                progress_callback=_sync_callback,
-                base_only=base_only,
-                corpus=corpus,
-            )
-        finally:
-            stop_event.set()
-            try:
-                await drain_task
-            except Exception:  # noqa: BLE001 — drainer is best-effort
-                pass
-
-        summary = payload.get("summary") or {}
-        # Compact row-level evidence for the bell line, so "+29% lift" on a
-        # few rows isn't announced without "within noise".
-        full_evidence = _lift_evidence(payload.get("rows") or [])
-        evidence = {k: full_evidence.get(k) for k in ("verdict", "n", "better", "worse", "same")}
-        judge = summary.get("judge") if isinstance(summary.get("judge"), dict) else None
-        judge_evidence = None
-        if judge:
-            full_judge = _lift_evidence(payload.get("rows") or [], score_key="judge")
-            judge_evidence = {k: full_judge.get(k) for k in ("verdict", "n", "better", "worse", "same")}
-        # Pointers-only result so the Job row stays cheap; the
-        # comparison.json on disk is the canonical full payload.
-        return {
-            "project_id": project_id,
-            "model": "base" if base_only else "fine_tuned",
-            "corpus": corpus,
-            "base_model": payload.get("base_model"),
-            "experiment_id": payload.get("experiment_id"),
-            "judge": (
-                {
-                    "judge": judge.get("judge"),
-                    "off_score": (judge.get("without_rag") or {}).get("score"),
-                    "on_score": (judge.get("with_rag") or {}).get("score"),
-                }
-                if judge
-                else None
-            ),
-            "judge_evidence": judge_evidence,
-            "off_mean_f1": summary.get("off_mean_f1"),
-            "on_mean_f1": summary.get("on_mean_f1"),
-            "absolute_lift": summary.get("absolute_lift"),
-            "relative_lift_pct": summary.get("relative_lift_pct"),
-            "evidence": evidence,
-            "n_val_rows": summary.get("n_val_rows"),
-            "comparison_path": str(
-                settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
-                / comparison_file_name(base_only=base_only, corpus=corpus)
-            ),
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-        }
-
-    job = await start_job(
-        db,
-        kind="auto_rag_comparison",
-        title=(
-            f"Auto-RAG comparison · {'base model' if base_only else 'fine-tuned'}"
-            f"{' · document passages' if corpus == 'documents' else ''} · project #{project_id}"
-        ),
-        runner=_runner,
-        project_id=project_id,
-        params={
-            "project_id": project_id,
-            "recipe_id": recipe_id,
-            "model": "base" if base_only else "fine_tuned",
-            "corpus": corpus,
-        },
-    )
+        ) from exc
     return serialize_job(job)

@@ -196,6 +196,11 @@ async def build_eval_summary(
     if experiment_id is None:
         experiment_id = await _latest_trained_experiment_id(db, project_id)
     if experiment_id is None:
+        # A RAG-first project never trains: its "did it help?" is the base
+        # model with vs without passage retrieval (judged, test examples).
+        passages = passages_summary(project_id)
+        if passages is not None:
+            return passages
         return {
             "project_id": project_id,
             "experiment_id": None,
@@ -296,3 +301,98 @@ def _judge_block(metrics: dict[str, Any]) -> dict[str, Any] | None:
         "judge_calls": judge.get("judge_calls"),
         "judge_cached": judge.get("judge_cached"),
     }
+
+
+def passages_summary(project_id: int) -> dict[str, Any] | None:
+    """Eval summary for a project whose assistant is the base model +
+    document-passage retrieval (a RAG sibling): built from the judged
+    base-only documents comparison (``passage_rag_verdict_service``).
+    ``kind="rag_passages"``; the headline is the judge score without →
+    with retrieval, the evidence is the paired judge rows, the failures are
+    the rows retrieval still got wrong. None when no judged comparison
+    exists."""
+    from app.services.passage_rag_verdict_service import (
+        read_documents_comparison,
+        summarize_documents_comparison,
+    )
+
+    payload = read_documents_comparison(project_id)
+    passages = summarize_documents_comparison(payload)
+    if passages is None or payload is None:
+        return None
+    rows = payload.get("rows") if isinstance(payload.get("rows"), list) else []
+    from app.api.auto_rag import _lift_evidence
+
+    evidence = _lift_evidence(rows, score_key="judge")
+    baseline = passages.get("without_retrieval")
+    trained = float(passages["with_passages"])
+    if not isinstance(baseline, (int, float)):
+        return None
+    delta = trained - float(baseline)
+    direction = "improved" if delta > 0.0001 else "regressed" if delta < -0.0001 else "unchanged"
+    verdict = {"improved": "better", "regressed": "worse"}.get(direction, "same")
+    failures = []
+    wrong = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        on = row.get("with_rag") if isinstance(row.get("with_rag"), dict) else {}
+        judge = on.get("judge") if isinstance(on.get("judge"), dict) else None
+        if not judge or judge.get("verdict") == "correct":
+            continue
+        wrong += 1
+        if len(failures) < SUMMARY_FAILURES:
+            failures.append({
+                "prompt": str(row.get("question") or "")[:300],
+                "reference": str(row.get("reference") or "")[:300],
+                "prediction": str(on.get("generated") or "")[:300],
+                "row_judge_verdict": judge.get("verdict"),
+                "row_judge_reason": judge.get("reason"),
+            })
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    judge_block = summary.get("judge") if isinstance(summary.get("judge"), dict) else {}
+    on_arm = judge_block.get("with_rag") if isinstance(judge_block.get("with_rag"), dict) else {}
+    counts = on_arm.get("counts") if isinstance(on_arm.get("counts"), dict) else {}
+    return {
+        "project_id": project_id,
+        "experiment_id": None,
+        "kind": "rag_passages",
+        "verdict": verdict,
+        "message": None,
+        "headline": {
+            "metric_id": "judge_correct",
+            "baseline_value": round(float(baseline), 4),
+            "trained_value": round(trained, 4),
+            "absolute_delta": round(delta, 4),
+            "relative_delta_pct": round(delta / float(baseline) * 100.0, 1) if baseline else None,
+            "direction": direction,
+            "is_headline": True,
+        },
+        "evidence": evidence,
+        "seed_evidence": None,
+        "seeds": None,
+        "n_seeds": 1,
+        "metric_lifts": [],
+        "baseline": {"experiment_id": None, "base_model": passages.get("base_model")},
+        "trained": None,
+        "eval_result_id": None,
+        "eval_type": "rag_passages",
+        "evaluated_samples": passages.get("n_rows"),
+        "split": passages.get("split"),
+        "failures": failures,
+        "failed_count": wrong,
+        "judge": {
+            "judge": passages.get("judge"),
+            "score": trained,
+            "judged": int(on_arm.get("judged") or passages.get("n_rows") or 0),
+            "unjudged": int(on_arm.get("unjudged") or 0),
+            "correct": counts.get("correct", 0),
+            "partial": counts.get("partial", 0),
+            "wrong": counts.get("wrong", 0),
+            "judge_calls": on_arm.get("judge_calls"),
+            "judge_cached": on_arm.get("judge_cached"),
+        },
+        "dataset_name": passages.get("split"),
+        "cached_at": passages.get("cached_at"),
+    }
+

@@ -1005,6 +1005,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--split", choices=("val", "test"), default=None,
+        help=(
+            "With --project: rows to score. Default: val for Q&A-pair retrieval, "
+            "test for --corpus documents (same rows as the lift check)."
+        ),
+    )
+    parser.add_argument(
         "--base-only", action="store_true",
         help=(
             "With --project: score the project's BASE model with and without "
@@ -1023,6 +1030,7 @@ def run_project_comparison(
     progress_callback: "Callable[[int, int, str], None] | None" = None,
     base_only: bool = False,
     corpus: str = "qa",
+    split: str | None = None,
 ) -> dict[str, Any]:
     """Phase 9d — generate the per-project comparison the Eval-tab
     panel reads. Reuses the per-row eval inference loop with the
@@ -1043,6 +1051,10 @@ def run_project_comparison(
     Both arms are also scored by the answer judge when one applies
     (``_judge_comparison_rows``) — on long answers the judge's
     correct / partial / wrong is the number to read, not F1.
+
+    ``split``: the rows scored — ``"val"`` (default for Q&A-pair retrieval)
+    or ``"test"`` (default for document passages, so the passages verdict
+    pairs the same rows as the lift check, which scores the test split).
 
     This function is invoked from the CLI's ``--project`` mode (and
     can be called programmatically by a future API trigger if we
@@ -1095,13 +1107,17 @@ def run_project_comparison(
         if not model_dir.exists():
             raise RuntimeError(f"Trained model dir missing at {model_dir}.")
 
-    # Use the project's prepared train + val files as the eval set.
+    # The project's prepared train split sizes generation + (Q&A mode)
+    # feeds the index; the scored rows come from val or test.
+    split = split or ("test" if corpus == "documents" else "val")
+    if split not in {"val", "test"}:
+        raise ValueError("split must be 'val' or 'test'")
     prepared_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
     train_file = prepared_dir / "train.jsonl"
-    val_file = prepared_dir / "val.jsonl"
+    val_file = prepared_dir / f"{split}.jsonl"
     if not train_file.exists() or not val_file.exists():
         raise RuntimeError(
-            f"Prepared train/val missing at {prepared_dir}. "
+            f"Prepared train/{split} missing at {prepared_dir}. "
             f"Run dataset prep first."
         )
     with train_file.open(encoding="utf-8") as f:
@@ -1110,7 +1126,7 @@ def run_project_comparison(
         val_rows = [json.loads(line) for line in f if line.strip()]
 
     print(f"[harness] project={project_id} model={model_dir or base_model + ' (base model)'}")
-    print(f"[harness] train_rows={len(train_rows)} val_rows={len(val_rows)}")
+    print(f"[harness] train_rows={len(train_rows)} {split}_rows={len(val_rows)}")
 
     # Use the project's DEPLOYED BM25 index (built at training-
     # completion by Phase 9b's hook over the training rows). This is what the playground
@@ -1211,6 +1227,7 @@ def run_project_comparison(
         "experiment_id": None if base_only else int(exp_row["id"]),
         "model": "base" if base_only else "fine_tuned",
         "corpus": corpus,
+        "split": split,
         "base_model": base_model,
         "model_dir": None if base_only else str(model_dir),
         "summary": {
@@ -1254,7 +1271,9 @@ def main(argv: list[str] | None = None) -> int:
     # Phase 9d per-project mode — short-circuits the template gate
     # flow and writes the cached comparison for the Eval-tab panel.
     if args.project is not None:
-        run_project_comparison(args.project, base_only=bool(args.base_only), corpus=str(args.corpus))
+        run_project_comparison(
+            args.project, base_only=bool(args.base_only), corpus=str(args.corpus), split=args.split
+        )
         return 0
 
     templates = tuple(args.templates) if args.templates else QA_SFT_TEMPLATES
