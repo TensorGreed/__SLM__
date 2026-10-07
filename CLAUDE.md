@@ -257,7 +257,9 @@ cd backend && python -m pytest -k "name_pattern"        # by name
 ```bash
 cd frontend && npx vitest run                           # all
 cd frontend && npx vitest run src/path/to/X.test.tsx    # one file
-cd frontend && npx tsc --noEmit                         # type check
+cd frontend && npx tsc -b                               # type check (what CI's `npm run build` runs;
+                                                        #  plain `tsc --noEmit` skips the app project — it
+                                                        #  passed locally while CI failed on 2026-10-07)
 cd frontend && npx vite build                           # production build
 ```
 

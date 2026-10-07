@@ -72,6 +72,8 @@ interface AutoRagModelComparison {
     experiment_id?: number | null;
     base_model?: string | null;
     corpus?: 'qa' | 'documents' | null;
+    /** Rows scored: 'val' or 'test' (document passages default to test). */
+    split?: 'val' | 'test' | null;
     evidence?: LiftEvidence | null;
     /** Paired row evidence on the judge scores (null when not judged). */
     judge_evidence?: LiftEvidence | null;
