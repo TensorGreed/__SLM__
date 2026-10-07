@@ -104,4 +104,32 @@ describe('DocumentsQaFlowCard', () => {
         expect(result).toHaveTextContent('Training run #31 started');
         expect(result).toHaveTextContent('2 of 60 passages produced no usable questions.');
     });
+
+    it('shows the pre-training gate when retrieval already answers, with reroute and train-anyway', async () => {
+        apiMock.get.mockResolvedValue({ data: ELIGIBLE });
+        apiMock.post.mockResolvedValue({ data: { id: 61 } });
+        jobsState.jobs = [{
+            id: 12, kind: 'documents_qa_flow', project_id: 1, status: 'succeeded',
+            result: {
+                training_pairs: 180, answer_key_rows: 60, passages_used: 60, backend: 'ollama:gemma4:12b',
+                split: { train: 142, val: 17, test: 19, dedup_dropped: 0 }, experiment_id: null,
+                stopped_reason: 'Retrieval already answers: …', warnings: [],
+                passages_gate: { status: 'retrieval_ready', score: 0.6053, correct: 8, partial: 7, wrong: 4, judged: 19, judge: 'ollama:gemma4:12b', split: 'test' },
+            },
+        }];
+        const user = userEvent.setup();
+        render(<DocumentsQaFlowCard projectId={1} />);
+        const gate = await screen.findByTestId('documents-qa-flow-gate');
+        expect(gate).toHaveAttribute('data-status', 'retrieval_ready');
+        expect(gate).toHaveTextContent('already got 8 of 19 test examples fully right (7 partly, 4 wrong; judge score 0.61, by ollama:gemma4:12b)');
+        expect(screen.getByTestId('documents-qa-flow-result')).not.toHaveTextContent('Stopped before training');
+        await user.click(screen.getByTestId('documents-qa-flow-train-anyway'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith('/projects/1/flows/documents-to-qa', expect.objectContaining({ reuse_existing: true, train_if_retrieval_ready: true, train: true }));
+        });
+        await user.click(screen.getByTestId('documents-qa-flow-reroute'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(expect.stringMatching(/reroute-to-rag\?async_job=true/), expect.anything());
+        });
+    });
 });

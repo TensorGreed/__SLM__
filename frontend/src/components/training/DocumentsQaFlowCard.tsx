@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { fetchDocumentsQaFlowPreview, startDocumentsQaFlow, type DocumentsQaFlowPreview, type DocumentsQaFlowResult } from '../../api/flows';
+import { rerouteToRagAsync } from '../../api/rerouteAnalysis';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import './DocumentsQaFlowCard.css';
@@ -66,7 +67,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
         lastFinishedId.current = id;
     }, [finished?.id, load, onRunStarted, result?.experiment_id]);
 
-    const start = async (reuseExisting = false) => {
+    const start = async (reuseExisting = false, trainIfRetrievalReady = false) => {
         if (!preview) return;
         setStarting(true);
         try {
@@ -75,6 +76,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                 pairsPerPassage: preview.plan.pairs_per_passage,
                 train: !reviewFirst,
                 reuseExisting,
+                trainIfRetrievalReady,
             });
             toast.info(
                 reuseExisting
@@ -82,6 +84,19 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                     : `Building the Q&A assistant — track it in the bell (job #${job.id}).`,
                 5000,
             );
+            void useJobsStore.getState().refreshAfterLocalChange();
+        } catch (err) {
+            toast.error(errorText(err));
+        } finally {
+            setStarting(false);
+        }
+    };
+
+    const reroute = async () => {
+        setStarting(true);
+        try {
+            const job = await rerouteToRagAsync(projectId);
+            toast.info(`Cloning into a RAG-first project — the bell will link to it when ready (job #${job.id}).`, 6000);
             void useJobsStore.getState().refreshAfterLocalChange();
         } catch (err) {
             toast.error(errorText(err));
@@ -129,15 +144,60 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                         : ''}
                     {result.experiment_id != null
                         ? `. Training run #${result.experiment_id} started — the lift check follows on the Eval tab.`
-                        : result.stopped_reason
-                            ? `. Stopped before training: ${result.stopped_reason}`
-                            : '.'}
+                        : result.passages_gate?.status === 'retrieval_ready'
+                            ? '.'
+                            : result.stopped_reason
+                                ? `. Stopped before training: ${result.stopped_reason}`
+                                : '.'}
                     {result.warnings.length > 0 && (
                         <span className="documents-qa-flow__warnings"> {result.warnings.join(' ')}</span>
                     )}
                     <span className="documents-qa-flow__review">
                         {' '}The generated rows are in the Synthetic tab's review queue (source "documents_qa_flow") if you want to reject any.
                     </span>
+                </div>
+            )}
+
+            {result?.passages_gate && result.passages_gate.status !== 'not_run' && (
+                <div
+                    className={`documents-qa-flow__gate documents-qa-flow__gate--${result.passages_gate.status}`}
+                    data-testid="documents-qa-flow-gate"
+                    data-status={result.passages_gate.status}
+                >
+                    <strong>Before training</strong>
+                    {result.passages_gate.status === 'retrieval_ready' && (
+                        <>
+                            {' '}— the untouched base model answering from your passages already got{' '}
+                            <strong>{result.passages_gate.correct} of {result.passages_gate.judged}</strong>{' '}
+                            {result.passages_gate.split === 'test' ? 'test examples' : 'rows'} fully right
+                            {' '}({result.passages_gate.partial} partly, {result.passages_gate.wrong} wrong; judge score{' '}
+                            {result.passages_gate.score != null ? result.passages_gate.score.toFixed(2) : '—'}, by {result.passages_gate.judge || 'the judge model'}).
+                            {' '}Training on generated pairs is unlikely to beat that, so the flow stopped here. Reroute to RAG to serve
+                            the base model + your passages, or train anyway to compare on the same rows.
+                            {result.experiment_id == null && (
+                                <div className="documents-qa-flow__actions">
+                                    <button type="button" className="btn btn-primary" onClick={() => void reroute()} disabled={starting} data-testid="documents-qa-flow-reroute">
+                                        {starting ? 'Starting…' : 'Reroute to RAG (base model + your passages)'}
+                                    </button>
+                                    <button type="button" className="btn btn-secondary" onClick={() => void start(true, true)} disabled={starting} data-testid="documents-qa-flow-train-anyway">
+                                        {starting ? 'Starting…' : 'Train anyway'}
+                                    </button>
+                                </div>
+                            )}
+                        </>
+                    )}
+                    {result.passages_gate.status === 'retrieval_weak' && (
+                        <>
+                            {' '}— retrieval alone got {result.passages_gate.correct} of {result.passages_gate.judged} fully right
+                            {' '}(judge score {result.passages_gate.score != null ? result.passages_gate.score.toFixed(2) : '—'}), not enough on its own — training went ahead.
+                        </>
+                    )}
+                    {result.passages_gate.status === 'not_judged' && (
+                        <> — the retrieval check ran without a judge model, so it could not call whether retrieval already answers; training went ahead.</>
+                    )}
+                    {result.passages_gate.status === 'error' && (
+                        <> — the retrieval check could not run ({result.passages_gate.reason}); training went ahead.</>
+                    )}
                 </div>
             )}
 
@@ -157,7 +217,9 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                     <ul className="documents-qa-flow__plan" data-testid="documents-qa-flow-plan">
                         <li>About {plan.estimated_training_pairs} training pairs from {plan.max_passages} passages ({plan.pairs_per_passage} per passage), written by {preview.backend}.</li>
                         <li>{plan.estimated_answer_key_rows} different questions kept as the answer key.</li>
-                        <li>Split into train / validation / test examples, then a training run with your current defaults.</li>
+                        <li>Split into train / validation / test examples.</li>
+                        <li>Before training: the base model with and without your passages on the test examples, judged — if retrieval already answers well, the flow stops there and offers reroute to RAG instead.</li>
+                        <li>Otherwise a training run with your current defaults.</li>
                         <li>The automatic lift check scores it against the base model.</li>
                     </ul>
                     <label className="documents-qa-flow__option">

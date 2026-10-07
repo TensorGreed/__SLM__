@@ -33,6 +33,11 @@ class DocumentsQaFlowRequest(BaseModel):
     # True: skip generation and re-split + train the pairs already generated
     # (e.g. the same data on another base model).
     reuse_existing: bool = False
+    # Before training, score the base model with and without the document
+    # passages (judged). When retrieval alone already answers well the flow
+    # stops there unless train_if_retrieval_ready.
+    passages_check: bool = True
+    train_if_retrieval_ready: bool = False
 
 
 @router.get("/documents-to-qa/preview")
@@ -97,6 +102,8 @@ async def start_documents_to_qa(
                     backend=req.backend,
                     train=req.train,
                     reuse_existing=req.reuse_existing,
+                    passages_check=req.passages_check,
+                    train_if_retrieval_ready=req.train_if_retrieval_ready,
                     progress=_progress,
                 )
             except SynthBackendError as exc:

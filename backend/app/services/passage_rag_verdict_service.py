@@ -212,6 +212,74 @@ async def passages_vs_finetune(db: AsyncSession, project_id: int) -> dict[str, A
     return compare_passages_to_finetune(passages, finetune)
 
 
+# ── Pre-training gate ────────────────────────────────────────────────────
+#
+# A documents project can measure "the base model + my passages" BEFORE it
+# trains anything (the same judged comparison, on the test examples). When
+# retrieval alone already answers well, training on generated pairs is the
+# long way round — the gate says so up front instead of after a run.
+PASSAGES_GATE_MIN_SCORE = 0.5          # mean judge score with passages
+PASSAGES_GATE_MIN_CORRECT_SHARE = 0.4  # fully-correct answers / judged rows
+
+
+def passages_gate(passages: dict[str, Any] | None) -> dict[str, Any]:
+    """Pure: ``status`` is ``retrieval_ready`` (reroute now, training is
+    optional), ``retrieval_weak`` (retrieval alone is not enough — train, or
+    fix retrieval), ``not_judged`` (no judge was reachable; F1 can't call
+    it) or ``not_run``. Never looks at F1."""
+    if passages is None:
+        return {"status": "not_run", "reason": "no judged base + passages comparison yet"}
+    score = float(passages.get("with_passages") or 0.0)
+    counts = passages.get("with_passages_counts") or {}
+    judged = sum(int(counts.get(k, 0) or 0) for k in ("correct", "partial", "wrong"))
+    correct_share = (int(counts.get("correct", 0) or 0) / judged) if judged else 0.0
+    evidence = passages.get("retrieval_evidence") or {}
+    ready = (
+        evidence.get("verdict") == "better"
+        and score >= PASSAGES_GATE_MIN_SCORE
+        and correct_share >= PASSAGES_GATE_MIN_CORRECT_SHARE
+    )
+    out = {
+        "status": "retrieval_ready" if ready else "retrieval_weak",
+        "score": round(score, 4),
+        "correct": int(counts.get("correct", 0) or 0),
+        "partial": int(counts.get("partial", 0) or 0),
+        "wrong": int(counts.get("wrong", 0) or 0),
+        "judged": judged,
+        "judge": passages.get("judge"),
+        "split": passages.get("split"),
+        "retrieval_evidence": evidence,
+        "thresholds": {"min_score": PASSAGES_GATE_MIN_SCORE, "min_correct_share": PASSAGES_GATE_MIN_CORRECT_SHARE},
+    }
+    if ready:
+        out["reason"] = (
+            f"the base model answering from your passages already gets {out['correct']} of {judged} "
+            f"right (judge score {score:.2f}, beyond noise)"
+        )
+    elif evidence.get("verdict") != "better":
+        out["reason"] = "retrieval's gain over the bare base model is within noise"
+    else:
+        out["reason"] = f"only {out['correct']} of {judged} fully right with passages (judge score {score:.2f})"
+    return out
+
+
+def read_passages_gate(project_id: int) -> dict[str, Any]:
+    """The gate for a project from its cached documents comparison. A
+    comparison that ran without a judge is ``not_judged`` — token F1 cannot
+    call this gate."""
+    payload = read_documents_comparison(project_id)
+    passages = summarize_documents_comparison(payload)
+    if payload is not None and passages is None:
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        return {
+            "status": "not_judged",
+            "reason": "the comparison ran without a judge model, so only token F1 is available",
+            "on_mean_f1": summary.get("on_mean_f1"),
+            "off_mean_f1": summary.get("off_mean_f1"),
+        }
+    return passages_gate(passages)
+
+
 def explicit_corpus(project: Project | None) -> str | None:
     cfg = getattr(project, "runtime_config", None)
     if not isinstance(cfg, dict):

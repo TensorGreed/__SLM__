@@ -115,6 +115,15 @@ In the playground, *"Who must retain a record of the use of personal
 information, and what does that record form part of?"* gets the section 9
 answer, cited from the passage it came from, with no fine-tuning.
 
+## Since the recording: the gate moved up front
+
+The flow now runs the base + passages judged check **before** training (the
+pre-training gate). On this data it stops the flow at 8 of 19 right with
+plain top-3 retrieval — the Coach says "Retrieval already answers 8 of 19 —
+reroute to RAG before training?" — so a new user never has to train the
+model that gets 1 of 19 to learn the lesson the video shows. "Train anyway"
+still runs the comparison on the same rows.
+
 ## What is still open (said on camera)
 
 - 3 of 19 answers are still wrong after the sweep — mostly a neighbouring

@@ -55,3 +55,20 @@
     gap: 8px;
     flex-wrap: wrap;
 }
+
+.documents-qa-flow__gate {
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 8px;
+    border: 1px solid var(--border, #ddd);
+    font-size: 0.92rem;
+}
+
+.documents-qa-flow__gate--retrieval_ready {
+    border-color: var(--warning, #b26a00);
+    background: rgba(178, 106, 0, 0.06);
+}
+
+.documents-qa-flow__gate .documents-qa-flow__actions {
+    margin-top: 0.6rem;
+}

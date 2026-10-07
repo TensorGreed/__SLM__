@@ -15,6 +15,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.experiment import EvalResult, Experiment, ExperimentStatus
+from app.models.project import Project
 
 SUMMARY_FAILURES = 5
 
@@ -197,9 +198,25 @@ async def build_eval_summary(
         experiment_id = await _latest_trained_experiment_id(db, project_id)
     if experiment_id is None:
         # A RAG-first project never trains: its "did it help?" is the base
-        # model with vs without passage retrieval (judged, test examples).
+        # model with vs without passage retrieval (judged, test examples). A
+        # not-yet-trained documents project with the pre-training check done
+        # reads the same way, with a note that nothing has been trained.
         passages = passages_summary(project_id)
         if passages is not None:
+            project = await db.get(Project, project_id)
+            from app.services.rag_project_service import is_rag_first
+
+            if not is_rag_first(project):
+                from app.services.passage_rag_verdict_service import passages_gate, summarize_documents_comparison, read_documents_comparison
+
+                gate = passages_gate(summarize_documents_comparison(read_documents_comparison(project_id)))
+                passages["pretraining_gate"] = gate
+                passages["message"] = (
+                    "Nothing has been trained yet — this is the base model answering from your passages. "
+                    + ("Retrieval already answers well: reroute to RAG, or train anyway to compare."
+                       if gate.get("status") == "retrieval_ready"
+                       else "Retrieval alone is not enough here; training may help, or improve retrieval first.")
+                )
             return passages
         return {
             "project_id": project_id,

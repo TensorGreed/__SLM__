@@ -213,6 +213,64 @@ class RagFirstPlaygroundTests(unittest.TestCase):
         self.assertIn("base model + retrieval", label)
 
 
+class PretrainingGateTests(unittest.TestCase):
+    def test_gate_policy(self):
+        ready = svc.passages_gate(PASSAGES)
+        self.assertEqual(ready["status"], "retrieval_ready")
+        self.assertIn("9 of 17 right", ready["reason"])
+        weak = svc.passages_gate({**PASSAGES, "with_passages": 0.3, "with_passages_counts": {"correct": 3, "partial": 4, "wrong": 10}})
+        self.assertEqual(weak["status"], "retrieval_weak")
+        noisy = svc.passages_gate({**PASSAGES, "retrieval_evidence": {"verdict": "within_noise"}})
+        self.assertEqual(noisy["status"], "retrieval_weak")
+        self.assertIn("within noise", noisy["reason"])
+        self.assertEqual(svc.passages_gate(None)["status"], "not_run")
+
+    def test_read_gate_distinguishes_unjudged(self):
+        pid = PlaygroundCorpusAndCloneTests._project(self)  # type: ignore[arg-type]
+        self.assertEqual(svc.read_passages_gate(pid)["status"], "not_run")
+        path = settings.DATA_DIR / "projects" / str(pid) / "auto_rag" / "comparison_base_documents.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"summary": {"off_mean_f1": 0.1, "on_mean_f1": 0.4}, "rows": []}), encoding="utf-8")
+        gate = svc.read_passages_gate(pid)
+        self.assertEqual(gate["status"], "not_judged")
+        self.assertEqual(gate["on_mean_f1"], 0.4)
+        path.unlink()
+
+    def test_coach_nudge_fires_before_any_run_only(self):
+        from app.services.coach_service import _retrieval_ready_nudge, _retrieval_ready_nudge_from_gate
+        from app.database import async_session_factory
+        from app.models.project import Project
+
+        gate = svc.passages_gate({**PASSAGES, "split": "test", "n_rows": 19,
+                                  "with_passages_counts": {"correct": 12, "partial": 4, "wrong": 3}, "with_passages": 0.74})
+        nudge = _retrieval_ready_nudge_from_gate(5, gate)
+        self.assertEqual(nudge["id"], "training:retrieval-ready")
+        self.assertEqual(nudge["action"]["kind"], "reroute_to_rag")
+        self.assertIn("Retrieval already answers 12 of 19", nudge["title"])
+        self.assertIn("12 of 19 test examples fully right", nudge["body"])
+
+        pid = PlaygroundCorpusAndCloneTests._project(self)  # type: ignore[arg-type]
+
+        async def _nudge():
+            async with async_session_factory() as db:
+                return await _retrieval_ready_nudge(db, await db.get(Project, pid))
+
+        self.assertIsNone(asyncio.run(_nudge()), "no comparison yet → quiet")
+        with mock.patch.object(svc, "read_passages_gate", lambda project_id: gate):
+            self.assertIsNotNone(asyncio.run(_nudge()))
+            # Once a run exists the Eval-stage nudge takes over.
+            from app.models.experiment import Experiment, ExperimentStatus, TrainingMode
+
+            async def _train():
+                async with async_session_factory() as db:
+                    db.add(Experiment(project_id=pid, name="r", status=ExperimentStatus.COMPLETED,
+                                      training_mode=TrainingMode.SFT, base_model="m", output_dir="/tmp/x", config={}))
+                    await db.commit()
+
+            asyncio.run(_train())
+            self.assertIsNone(asyncio.run(_nudge()))
+
+
 class LatestJudgedLiftTests(unittest.TestCase):
     """Which fine-tuned run the verdict compares against, read from real rows."""
 

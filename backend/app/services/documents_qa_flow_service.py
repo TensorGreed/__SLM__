@@ -180,6 +180,8 @@ class FlowSummary:
     training: dict[str, Any] | None = None
     stopped_reason: str | None = None
     warnings: list[str] = field(default_factory=list)
+    # The pre-training gate: what the base model + passages gets right.
+    passages_gate: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -196,6 +198,7 @@ class FlowSummary:
             "training": self.training,
             "stopped_reason": self.stopped_reason,
             "warnings": list(self.warnings),
+            "passages_gate": self.passages_gate,
         }
 
 
@@ -281,8 +284,11 @@ async def run_documents_qa_flow(
     backend_override: SynthBackend | None = None,
     train: bool = True,
     reuse_existing: bool = False,
+    passages_check: bool = True,
+    train_if_retrieval_ready: bool = False,
     progress: ProgressFn | None = None,
     start_training: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+    passages_check_fn: Callable[..., dict[str, Any]] | None = None,
 ) -> FlowSummary:
     """Run the flow. ``train=False`` stops after the split (tests, and users
     who want to review the generated rows first). ``reuse_existing`` skips
@@ -290,7 +296,15 @@ async def run_documents_qa_flow(
     same pairs, answer key and split, trained again (e.g. on another base
     model), so the two lift checks are comparable. ``start_training`` is the
     launcher used for the training run (defaults to the API's start, which
-    also spawns the watcher Job that runs the lift check)."""
+    also spawns the watcher Job that runs the lift check).
+
+    ``passages_check`` (default on): after the split and BEFORE training, score
+    the base model with and without the document passages on the test
+    examples, judged (``passage_rag_verdict_service.passages_gate``). When
+    retrieval alone already answers well the flow stops there — training is
+    the long way round — unless ``train_if_retrieval_ready``. The gate lands
+    in ``summary.passages_gate`` either way. ``passages_check_fn`` injects
+    the comparison (tests); the default runs the auto-RAG harness."""
     from app.services.auto_rag_service import load_document_passages
     from app.services.synth_backends import pick_backend
 
@@ -447,6 +461,19 @@ async def run_documents_qa_flow(
         summary.stopped_reason = "training skipped (train=False)"
         return summary
 
+    # ── 4b: the pre-training gate — what retrieval alone gets right ───────
+    if passages_check:
+        await report(0.78, "Before training: scoring the base model with and without your passages (judged)")
+        summary.passages_gate = await _run_passages_gate(project_id, report, passages_check_fn)
+        gate = summary.passages_gate or {}
+        if gate.get("status") == "retrieval_ready" and not train_if_retrieval_ready:
+            summary.stopped_reason = (
+                f"Retrieval already answers: {gate.get('reason')}. Training on generated pairs is "
+                "unlikely to beat that — reroute to RAG, or train anyway to compare."
+            )
+            await report(1.0, "Retrieval already answers — stopped before training")
+            return summary
+
     # ── 5: train (the watcher Job runs the lift check afterwards) ─────────
     await report(0.85, "Starting the training run")
     from app.services.training_service import create_experiment
@@ -474,6 +501,63 @@ async def run_documents_qa_flow(
     summary.training = await launcher(project_id, experiment.id, db)
     await report(0.98, f"Training run #{experiment.id} started — the lift check follows automatically")
     return summary
+
+
+async def _run_passages_gate(
+    project_id: int,
+    report: Callable[[float, str], Awaitable[None]],
+    check_fn: Callable[..., dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Run the judged base + document-passages comparison on the test split
+    (the auto-RAG harness, on a worker thread) and read the gate. Best-effort:
+    a failure yields ``status="error"`` and the flow trains as before."""
+    import asyncio
+
+    from app.services.passage_rag_verdict_service import read_passages_gate
+
+    def _default_check(**kwargs):
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        backend_root = str(_Path(__file__).resolve().parents[2])
+        if backend_root not in _sys.path:
+            _sys.path.insert(0, backend_root)
+        from scripts.auto_rag_ab import run_project_comparison
+
+        return run_project_comparison(project_id, base_only=True, corpus="documents", split="test", **kwargs)
+
+    loop = asyncio.get_running_loop()
+    state: dict[str, Any] = {"scored": 0, "total": 0, "label": ""}
+
+    def _cb(scored: int, total: int, label: str) -> None:
+        state.update(scored=scored, total=total, label=label)
+
+    async def _drain(stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            if state["total"]:
+                frac = 0.78 + 0.12 * min(1.0, state["scored"] / max(1, 2 * state["total"]))
+                await report(frac, f"Pre-training check: scoring row {state['scored']}/{state['total']} ({state['label']})")
+            elif state["label"]:
+                await report(0.88, f"Pre-training check: {state['label']}")
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=3.0)
+            except asyncio.TimeoutError:
+                pass
+
+    stop = asyncio.Event()
+    drainer = loop.create_task(_drain(stop))
+    try:
+        await asyncio.to_thread(check_fn or _default_check, progress_callback=_cb)
+    except Exception as exc:  # noqa: BLE001 — the gate never blocks the flow
+        _LOG.warning("documents_qa_flow passages check failed: %s", exc)
+        return {"status": "error", "reason": f"{exc.__class__.__name__}: {exc}"[:300]}
+    finally:
+        stop.set()
+        try:
+            await drainer
+        except Exception:  # noqa: BLE001
+            pass
+    return read_passages_gate(project_id)
 
 
 async def _save_training_pairs(db: AsyncSession, project_id: int, pairs: list[dict[str, Any]]) -> None:

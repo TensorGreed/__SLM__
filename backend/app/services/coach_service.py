@@ -1556,6 +1556,17 @@ async def _training_stage_suggestions(
     if flow_nudge is not None:
         suggestions.append(flow_nudge)
 
+    # The pre-training gate: before any run, the base model + the document
+    # passages already answer well → say so up front (reroute to RAG, or
+    # train anyway to compare). Quiet once a run exists (the Eval stage's
+    # passages-vs-fine-tune nudge takes over).
+    try:
+        gate_nudge = await _retrieval_ready_nudge(db, project)
+    except Exception:  # noqa: BLE001 — best-effort
+        gate_nudge = None
+    if gate_nudge is not None:
+        suggestions.append(gate_nudge)
+
     recipe_id = _recipe_id_for(project)
     if not recipe_id:
         # No recipe yet → can't forecast. Same fallback shape used by
@@ -2192,6 +2203,61 @@ def _reroute_recommendation_nudge(
             "fired_signal_ids": fired_ids,
             "recommendation_confidence": recommendation.get("confidence"),
             "eval_result_id": reroute_analysis.get("eval_result_id"),
+        },
+    }
+
+
+async def _retrieval_ready_nudge(db: AsyncSession, project: Project) -> dict[str, Any] | None:
+    """Training-stage nudge from the pre-training passages gate
+    (``passage_rag_verdict_service.read_passages_gate``): fires only when the
+    gate says ``retrieval_ready`` and the project has no trained run yet, and
+    never on a RAG-first project."""
+    from app.services.eval_summary_service import _latest_trained_experiment_id
+    from app.services.passage_rag_verdict_service import read_passages_gate
+    from app.services.rag_project_service import is_rag_first
+
+    if is_rag_first(project):
+        return None
+    gate = read_passages_gate(project.id)
+    if gate.get("status") != "retrieval_ready":
+        return None
+    if await _latest_trained_experiment_id(db, project.id) is not None:
+        return None
+    return _retrieval_ready_nudge_from_gate(project.id, gate)
+
+
+def _retrieval_ready_nudge_from_gate(project_id: int, gate: dict[str, Any]) -> dict[str, Any]:
+    """Pure body for the nudge above."""
+    judged = int(gate.get("judged") or 0)
+    rows_word = "test examples" if gate.get("split") == "test" else "validation rows"
+    evidence = gate.get("retrieval_evidence") or {}
+    body = (
+        f"Before you train anything: the untouched base model, answering from your retrieved document "
+        f"passages, already gets {gate.get('correct', 0)} of {judged} {rows_word} fully right "
+        f"({gate.get('partial', 0)} partly, {gate.get('wrong', 0)} wrong; judge score {float(gate.get('score') or 0):.2f}, "
+        f"judged by {gate.get('judge') or 'the judge model'} on the facts). Retrieval helped "
+        f"{evidence.get('better', 0)} rows and hurt {evidence.get('worse', 0)} compared with no retrieval.\n\n"
+        "Fine-tuning a small model on a few hundred generated pairs teaches it your documents' wording, not "
+        "their facts — on this kind of data it has scored far below retrieval. Reroute to RAG now: a sibling "
+        "project that serves the base model + passage retrieval, no training run. Or train anyway on the "
+        "Training tab to compare — the lift check will judge both on the same rows."
+    )
+    return {
+        "id": "training:retrieval-ready",
+        "title": (
+            f"Retrieval already answers {gate.get('correct', 0)} of {judged} — reroute to RAG before training?"
+        ),
+        "body": body,
+        "severity": "warning",
+        "action": {
+            "kind": "reroute_to_rag",
+            "label": "Reroute to RAG (base model + your passages)",
+            "params": {"corpus": "documents"},
+        },
+        "context": {
+            "project_id": project_id,
+            "gate": {k: gate.get(k) for k in ("status", "score", "correct", "partial", "wrong", "judged", "judge", "split")},
+            "recommended_corpus": "documents",
         },
     }
 

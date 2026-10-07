@@ -973,6 +973,23 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   when no task type is set); card `DocumentsQaFlowCard` above the Training
   tab's panel; bell deep-links `#documents-qa-flow`. Tests use
   `backend_override` with a fake backend.
+  **Pre-training gate** (`passages_check=True` default,
+  `train_if_retrieval_ready`): after the split the flow runs the judged
+  base + documents comparison on the test split (`_run_passages_gate` →
+  harness `run_project_comparison(base_only, corpus="documents",
+  split="test")` on a thread; `passages_check_fn` injects it — tests MUST
+  inject or pass `passages_check=False`, the default loads a model) and
+  reads `passage_rag_verdict_service.read_passages_gate` →
+  `passages_gate(...)` (pure: `retrieval_ready` needs retrieval evidence
+  `better`, score ≥ `PASSAGES_GATE_MIN_SCORE` 0.5, correct share ≥
+  `PASSAGES_GATE_MIN_CORRECT_SHARE` 0.4; else `retrieval_weak`;
+  `not_judged` when the comparison has no judge; `not_run`; `error`).
+  `retrieval_ready` stops the flow (`stopped_reason` "Retrieval already
+  answers…", `summary.passages_gate`); the card offers Reroute to RAG /
+  Train anyway. Coach training stage `training:retrieval-ready`
+  (`_retrieval_ready_nudge`, quiet once a run exists / rag_first);
+  `build_eval_summary` for an untrained non-RAG project returns the
+  passages summary with `pretraining_gate` + a "nothing trained yet" message.
 - **Distillation (offline KD)** — `services/distillation/`: slice 1
   captures a teacher's top-k logprobs (`teacher_capture.py`, `POST
   .../distillation/capture` → bg task) to

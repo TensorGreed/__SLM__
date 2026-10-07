@@ -124,6 +124,9 @@ class DocumentsQaFlowTests(unittest.TestCase):
 
         async def _go():
             async with async_session_factory() as db:
+                # The pre-training passages check runs the real harness (loads
+                # a model) unless a test injects it or turns it off.
+                kwargs.setdefault("passages_check", False)
                 return await flow.run_documents_qa_flow(db, self.pid, backend_override=FakeBackend(), **kwargs)
 
         return asyncio.run(_go())
@@ -213,6 +216,85 @@ class DocumentsQaFlowTests(unittest.TestCase):
         exp = next(e for e in experiments if e["id"] == launched["experiment_id"])
         self.assertEqual(exp["base_model"], "Qwen/Qwen2.5-1.5B-Instruct")
 
+    def _fake_passages_check(self, *, with_score: float, correct: int, partial: int, wrong: int):
+        """Writes the cached comparison the gate reads, like the harness would."""
+        def _check(progress_callback=None):
+            n = correct + partial + wrong
+            verdicts = ["correct"] * correct + ["partial"] * partial + ["wrong"] * wrong
+            score = {"correct": 1.0, "partial": 0.5, "wrong": 0.0}
+            rows = [
+                {"question": f"Q{i}?", "reference": "A long enough reference answer for the judge to read here.",
+                 "without_rag": {"generated": "x", "f1": 0.1, "judge": {"score": 0.0, "verdict": "wrong", "reason": "r"}},
+                 "with_rag": {"generated": "y", "f1": 0.4, "judge": {"score": score[v], "verdict": v, "reason": "r"},
+                              "retrieved_row_count": 3}}
+                for i, v in enumerate(verdicts)
+            ]
+            if progress_callback:
+                progress_callback(n, n, "with-RAG")
+            path = self.root / "auto_rag" / "comparison_base_documents.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({
+                "model": "base", "corpus": "documents", "split": "test", "base_model": "m", "cached_at": "t",
+                "summary": {"n_val_rows": n, "judge": {"judge": "fake:judge",
+                                                       "without_rag": {"score": 0.0, "counts": {"correct": 0, "partial": 0, "wrong": n}},
+                                                       "with_rag": {"score": with_score, "judged": n,
+                                                                    "counts": {"correct": correct, "partial": partial, "wrong": wrong}}}},
+                "rows": rows,
+            }), encoding="utf-8")
+            return {}
+
+        return _check
+
+    def test_pretraining_gate_stops_when_retrieval_already_answers(self):
+        self._ingest("policy.docx", POLICY)
+        launched: list = []
+
+        async def _launcher(project_id, experiment_id, db):
+            launched.append(experiment_id)
+            return {"status": "running"}
+
+        summary = self._run(
+            train=True, max_passages=20, start_training=_launcher, passages_check=True,
+            passages_check_fn=self._fake_passages_check(with_score=0.74, correct=12, partial=4, wrong=3),
+        )
+        self.assertEqual(summary.passages_gate["status"], "retrieval_ready")
+        self.assertEqual(summary.passages_gate["correct"], 12)
+        self.assertIn("Retrieval already answers", summary.stopped_reason)
+        self.assertIn("12 of 19 right", summary.stopped_reason)
+        self.assertIsNone(summary.experiment_id)
+        self.assertEqual(launched, [])
+        self.assertEqual(summary.as_dict()["passages_gate"]["judge"], "fake:judge")
+
+        # Train anyway: the gate is recorded but training proceeds.
+        again = self._run(
+            train=True, reuse_existing=True, start_training=_launcher, passages_check=True,
+            train_if_retrieval_ready=True,
+            passages_check_fn=self._fake_passages_check(with_score=0.74, correct=12, partial=4, wrong=3),
+        )
+        self.assertEqual(again.passages_gate["status"], "retrieval_ready")
+        self.assertIsNotNone(again.experiment_id)
+        self.assertEqual(launched, [again.experiment_id])
+
+    def test_pretraining_gate_lets_training_run_when_retrieval_is_weak_or_unjudged(self):
+        self._ingest("policy.docx", POLICY)
+
+        async def _launcher(project_id, experiment_id, db):
+            return {"status": "running"}
+
+        weak = self._run(
+            train=True, max_passages=20, start_training=_launcher, passages_check=True,
+            passages_check_fn=self._fake_passages_check(with_score=0.3, correct=3, partial=4, wrong=12),
+        )
+        self.assertEqual(weak.passages_gate["status"], "retrieval_weak")
+        self.assertIsNotNone(weak.experiment_id)
+
+        def _broken(progress_callback=None):
+            raise RuntimeError("no GPU")
+
+        errored = self._run(train=True, reuse_existing=True, start_training=_launcher, passages_check=True, passages_check_fn=_broken)
+        self.assertEqual(errored.passages_gate["status"], "error")
+        self.assertIsNotNone(errored.experiment_id, "a failed check never blocks training")
+
     def test_too_few_pairs_stops_before_training_and_keeps_the_rows(self):
         self._ingest("policy.docx", POLICY[:8])
         FakeBackend.fail_on = {3, 4}
@@ -244,7 +326,7 @@ class DocumentsQaFlowTests(unittest.TestCase):
     def test_endpoint_runs_the_flow_as_a_job(self):
         self._ingest("policy.docx", POLICY)
         with patch("app.services.synth_backends.BACKEND_REGISTRY", [FakeBackend]):
-            resp = client.post(f"/api/projects/{self.pid}/flows/documents-to-qa", json={"train": False, "max_passages": 20})
+            resp = client.post(f"/api/projects/{self.pid}/flows/documents-to-qa", json={"train": False, "max_passages": 20, "passages_check": False})
             self.assertEqual(resp.status_code, 202, resp.text)
             job_id = resp.json()["id"]
             dup = client.post(f"/api/projects/{self.pid}/flows/documents-to-qa", json={"train": False})
