@@ -516,6 +516,20 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   `build_eval_summary` returns for a project with no trained run but a
   judged documents comparison; `EvalSummaryCard` labels it "base + your
   passages" and offers "Re-run passages check".
+  **Retrieval quality** — `services/retrieval_reranker.py` (cross-encoder
+  via plain transformers, `DEFAULT_RERANKER` MiniLM, `rerank(query, hits,
+  top_k, model_name)` over `candidate_pool(k)` BM25 hits, best-effort →
+  BM25 order on failure). `auto_rag_service.retrieval_settings(project)`
+  reads `runtime_config["auto_rag_retrieval"] = {k, reranker}`;
+  `retrieve_ranked` applies it; `build_preamble_from_query(k=None)` uses
+  it (playground `auto_rag_k` None → project setting; audit block carries
+  `k` + `reranker`). Harness `--k / --reranker / --sweep-retrieval`
+  (`RETRIEVAL_SWEEP`: top-3, top-5, ± reranker; shared without-RAG arm;
+  `pick_best_retrieval` by judge, ties → cheaper; `summary.retrieval` +
+  `summary.retrieval_sweep`, `auto_rag/retrieval_sweep.json`). Job
+  `sweep_retrieval=True` → `apply_retrieval_choice` writes the winner to
+  the project; the sibling auto-check sweeps. Summary card line
+  "Retrieval served: …". Tests patch `retrieval_reranker.score_pairs`.
   The GET also returns `latest_experiment_id` + `stale` (fine-tuned cache is
   for an older run → warning on the card). The panel reads its project's
   `auto_rag_comparison` Jobs from `useJobsStore((s) => s.jobs)`: in flight →

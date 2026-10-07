@@ -549,12 +549,49 @@ def _qa_index_usable(project: Any, project_id: int) -> bool:
     return (settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / "bm25_index.json").exists()
 
 
+RETRIEVAL_SETTINGS_KEY = "auto_rag_retrieval"
+DEFAULT_RETRIEVAL_K = 3
+
+
+def retrieval_settings(project: Any) -> dict[str, Any]:
+    """The project's retrieval settings ``{"k", "reranker"}`` from
+    ``runtime_config["auto_rag_retrieval"]`` (set by the retrieval sweep or
+    by hand), with defaults: top-3, no reranker."""
+    from app.services.retrieval_reranker import normalize_reranker
+
+    cfg = getattr(project, "runtime_config", None)
+    raw = cfg.get(RETRIEVAL_SETTINGS_KEY) if isinstance(cfg, dict) else None
+    raw = raw if isinstance(raw, dict) else {}
+    try:
+        k = int(raw.get("k") or DEFAULT_RETRIEVAL_K)
+    except (TypeError, ValueError):
+        k = DEFAULT_RETRIEVAL_K
+    return {"k": max(1, min(10, k)), "reranker": normalize_reranker(raw.get("reranker"))}
+
+
+def retrieve_ranked(
+    query: str,
+    *,
+    index_dir: Path,
+    k: int = DEFAULT_RETRIEVAL_K,
+    reranker: str | None = None,
+) -> list[RetrievedChunk]:
+    """BM25 top-k, or — with a reranker — BM25 candidates reranked by the
+    cross-encoder and cut to k (``retrieval_reranker``)."""
+    from app.services.retrieval_reranker import candidate_pool, rerank
+
+    if not reranker:
+        return retrieve(query, index_dir=index_dir, k=k)
+    hits = retrieve(query, index_dir=index_dir, k=candidate_pool(k))
+    return rerank(query, hits, top_k=k, model_name=reranker)
+
+
 async def build_preamble_from_query(
     db,
     project_id: int,
     query: str,
     *,
-    k: int = 3,
+    k: int | None = None,
     corpus: str = "auto",
 ) -> dict[str, Any] | None:
     """Phase 9b inference-time helper. Returns
@@ -574,6 +611,12 @@ async def build_preamble_from_query(
     project = await db.get(Project, project_id)
     if project is None:
         return None
+    # ``k`` unset → the project's retrieval settings (top-k + reranker,
+    # chosen by the retrieval sweep); an explicit k keeps the reranker.
+    settings_used = retrieval_settings(project)
+    if k is None:
+        k = settings_used["k"]
+    reranker = settings_used["reranker"]
     # ``corpus``: "qa" (Q&A-pair index, recipe-gated), "documents" (the
     # project's document passages) or "auto" — Q&A pairs when the recipe
     # has them, otherwise document passages.
@@ -586,7 +629,7 @@ async def build_preamble_from_query(
             use_qa = bool((await build_index_for_project(db, project_id)).get("built"))
     if use_qa:
         try:
-            hits = retrieve(query, index_dir=index_dir, k=k)
+            hits = retrieve_ranked(query, index_dir=index_dir, k=k, reranker=reranker)
         except AutoRagUnavailable:
             hits = []
         if hits:
@@ -595,13 +638,14 @@ async def build_preamble_from_query(
                 "preamble_text": _AUTO_RAG_PREAMBLE_TEMPLATE.format(pairs=pairs_text),
                 "retrieved": hits,
                 "corpus": "qa",
+                "retrieval": {"k": k, "reranker": reranker},
             }
     if corpus not in {"documents", "auto"}:
         return None
     if not ensure_document_index(project_id).get("available"):
         return None
     try:
-        hits = retrieve(query, index_dir=document_index_dir(project_id), k=k)
+        hits = retrieve_ranked(query, index_dir=document_index_dir(project_id), k=k, reranker=reranker)
     except AutoRagUnavailable:
         return None
     if not hits:
@@ -611,6 +655,7 @@ async def build_preamble_from_query(
         "preamble_text": _DOCUMENT_PREAMBLE_TEMPLATE.format(passages=passages_text),
         "retrieved": hits,
         "corpus": DOCUMENTS_CORPUS,
+        "retrieval": {"k": k, "reranker": reranker},
     }
 
 

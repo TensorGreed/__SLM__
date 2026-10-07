@@ -299,7 +299,9 @@ async def start_sibling_passages_check(db, new_project: Project) -> dict[str, An
     gets its own "did it help?" number automatically: the base model with
     and without passage retrieval on the test examples, judged
     (``auto_rag_comparison`` Job, ``model=base corpus=documents split=test``)
-    — the counterpart of the lift check a trained run gets. Never raises;
+    — the counterpart of the lift check a trained run gets, run as a
+    retrieval sweep so the sibling serves the top-k / reranker the judge
+    scores highest. Never raises;
     returns ``{started, job_id | skipped_reason}``."""
     from app.services.passage_rag_verdict_service import explicit_corpus
 
@@ -319,6 +321,8 @@ async def start_sibling_passages_check(db, new_project: Project) -> dict[str, An
             base_only=True,
             corpus="documents",
             split="test",
+            # Pick the retrieval the judge scores highest and serve it.
+            sweep_retrieval=True,
         )
         return {"started": True, "job_id": getattr(job, "id", None)}
     except AutoRagComparisonInFlight as exc:

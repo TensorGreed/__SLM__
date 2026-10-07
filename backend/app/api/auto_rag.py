@@ -390,6 +390,14 @@ async def run_auto_rag_comparison(
             "cite-or-say-you-don't-know preamble (written to *_documents.json)."
         ),
     ),
+    sweep_retrieval: bool = Query(
+        False,
+        description=(
+            "Try top-3 / top-5, each with and without the cross-encoder reranker; "
+            "keep the judge's best as the comparison and make it the project's "
+            "retrieval setting."
+        ),
+    ),
     split: Literal["val", "test"] | None = Query(
         None,
         description=(
@@ -455,6 +463,7 @@ async def run_auto_rag_comparison(
             base_only=model == "base",
             corpus=corpus,
             split=split or ("test" if corpus == "documents" else "val"),
+            sweep_retrieval=sweep_retrieval,
         )
     except AutoRagComparisonInFlight as exc:
         in_flight = exc.job

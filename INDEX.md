@@ -223,6 +223,7 @@ session-start guidance.
 - `backend/app/services/registry_service.py` — Model registry and promotion governance service.
 - `backend/app/services/remediation_tracking_service.py` — Remediation tracking service (E2).
 - `backend/app/services/rerun_service.py` — P15 — Rerun-from-manifest + clone-from-run services.
+- `backend/app/services/retrieval_reranker.py` — Cross-encoder reranking for auto-RAG retrieval.
 - `backend/app/services/run_event_clustering_service.py` — Failure clustering over RunEvents (priority.md P33, Wave G).
 - `backend/app/services/run_event_service.py` — Canonical RunEvent emission + read service (priority.md P31, Wave G).
 - `backend/app/services/runtime_settings_service.py` — Runtime-manageable system settings service.
@@ -886,6 +887,7 @@ session-start guidance.
 - `backend/tests/test_recipe_apply_service.py` — Tests for recipe_apply_service — applying a Theme 2 recipe pick
 - `backend/tests/test_recipe_service.py` — Tests for the task-shape recipe registry + header-based shape sniffer.
 - `backend/tests/test_remediation_tracking.py` — Tests for the remediation tracking service + API (E2).
+- `backend/tests/test_retrieval_reranker.py` — Cross-encoder reranking + per-project retrieval settings.
 - `backend/tests/test_seed_group_drilldown_endpoint.py` — Quality-Lift phase 8 slice 1 — seed-group drill-down endpoint.
 - `backend/tests/test_seq2seq_adapter_prompt_wrap.py` — θ-fix tests — seq2seq-pair adapter writes the production
 - `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).

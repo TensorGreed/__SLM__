@@ -301,7 +301,9 @@ class PlaygroundChatRequest(BaseModel):
     # when the project's recipe + index are eligible; for Phase 9b
     # power users can flip it per-request to A/B inline.
     auto_rag: bool = False
-    auto_rag_k: int = Field(default=3, ge=1, le=10)
+    # Unset → the project's retrieval settings (top-k + reranker from the
+    # retrieval sweep); set → that many hits (the reranker still applies).
+    auto_rag_k: int | None = Field(default=None, ge=1, le=10)
     # What auto-RAG retrieves: "qa" (the Q&A index), "documents" (cleaned
     # document passages) or "auto". Unset → the project's resolved default
     # (``passage_rag_verdict_service.resolve_playground_corpus``): an explicit
@@ -3512,7 +3514,8 @@ async def _apply_playground_auto_rag(
                 )
                 auto_rag_block = {
                     "applied": True,
-                    "k": req.auto_rag_k,
+                    "k": (preamble.get("retrieval") or {}).get("k", req.auto_rag_k),
+                    "reranker": (preamble.get("retrieval") or {}).get("reranker"),
                     "query": query_text,
                     "retrieved": preamble["retrieved"],
                     "preamble_inserted_at": insert_at,

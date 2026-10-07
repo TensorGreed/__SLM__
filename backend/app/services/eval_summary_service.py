@@ -394,5 +394,9 @@ def passages_summary(project_id: int) -> dict[str, Any] | None:
         },
         "dataset_name": passages.get("split"),
         "cached_at": passages.get("cached_at"),
+        # The retrieval scored (top-k + reranker) and, after a sweep, every
+        # config tried with the judge's score — why this one is served.
+        "retrieval": summary.get("retrieval"),
+        "retrieval_sweep": summary.get("retrieval_sweep"),
     }
 

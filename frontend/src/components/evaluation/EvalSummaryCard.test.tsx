@@ -81,6 +81,13 @@ describe('EvalSummaryCard', () => {
                 judge: { judge: 'ollama:gemma4:12b', score: 0.62, judged: 19, unjudged: 0, correct: 10, partial: 3, wrong: 6 },
                 failures: [{ prompt: 'Q?', reference: 'R', prediction: 'P', row_judge_verdict: 'wrong', row_judge_reason: 'wrong passage' }],
                 failed_count: 9,
+                retrieval: { k: 5, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2' },
+                retrieval_sweep: [
+                    { label: 'top-3', judge_score: 0.61, on_mean_f1: 0.4, chosen: false },
+                    { label: 'top-5', judge_score: 0.58, on_mean_f1: 0.41, chosen: false },
+                    { label: 'top-3 + reranker ms-marco-MiniLM-L-6-v2', judge_score: 0.66, on_mean_f1: 0.42, chosen: false },
+                    { label: 'top-5 + reranker ms-marco-MiniLM-L-6-v2', judge_score: 0.71, on_mean_f1: 0.44, chosen: true },
+                ],
             },
         });
         apiMock.post.mockResolvedValue({ data: { id: 70 } });
@@ -90,6 +97,7 @@ describe('EvalSummaryCard', () => {
         expect(screen.getByTestId('eval-summary-passages-run')).toHaveTextContent('Base model + your document passages vs the base model alone (Qwen/Qwen2.5-1.5B-Instruct) · 19 test examples');
         expect(screen.getByTestId('eval-summary-headline')).toHaveTextContent('0.030 (base) → 0.620 (base + your passages)');
         expect(screen.getByTestId('eval-summary-row-counts')).toHaveTextContent('Retrieval helped 12 rows, hurt 0 rows, no change on 7.');
+        expect(screen.getByTestId('eval-summary-retrieval')).toHaveTextContent('Retrieval served: top-5 + reranker ms-marco-MiniLM-L-6-v2 — chosen by the judge over top-3 (0.61), top-5 (0.58), top-3 + reranker ms-marco-MiniLM-L-6-v2 (0.66).');
         expect(screen.queryByTestId('eval-summary-check-seeds')).not.toBeInTheDocument();
         await userEvent.setup().click(screen.getByTestId('eval-summary-rerun-passages'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/21/auto-rag/comparison/run', null, { params: { model: 'base', corpus: 'documents', split: 'test' } }));

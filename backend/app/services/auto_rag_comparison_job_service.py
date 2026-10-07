@@ -42,9 +42,13 @@ async def start_auto_rag_comparison_job(
     base_only: bool,
     corpus: str = "qa",
     split: str = "val",
+    sweep_retrieval: bool = False,
 ) -> Job:
     """Queue the comparison Job (``kind="auto_rag_comparison"``). Raises
-    ``AutoRagComparisonInFlight`` instead of racing an existing one."""
+    ``AutoRagComparisonInFlight`` instead of racing an existing one.
+    ``sweep_retrieval``: try top-3 / top-5 ± reranker, keep the judge's best
+    and write it to the project's ``runtime_config.auto_rag_retrieval`` so
+    the playground serves it (``apply_retrieval_choice``)."""
     from datetime import datetime, timezone
 
     from app.services.jobs_service import JobProgressHandle, start_job
@@ -144,6 +148,7 @@ async def start_auto_rag_comparison_job(
                 base_only=base_only,
                 corpus=corpus,
                 split=split,
+                sweep_retrieval=sweep_retrieval,
             )
         finally:
             stop_event.set()
@@ -153,6 +158,9 @@ async def start_auto_rag_comparison_job(
                 pass
 
         summary = payload.get("summary") or {}
+        retrieval_applied = None
+        if sweep_retrieval and isinstance(summary.get("retrieval"), dict):
+            retrieval_applied = await apply_retrieval_choice(project_id, summary["retrieval"])
         # Compact row-level evidence for the bell line, so "+29% lift" on a
         # few rows isn't announced without "within noise".
         full_evidence = _lift_evidence(payload.get("rows") or [])
@@ -169,6 +177,9 @@ async def start_auto_rag_comparison_job(
             "model": "base" if base_only else "fine_tuned",
             "corpus": corpus,
             "split": split,
+            "retrieval": summary.get("retrieval"),
+            "retrieval_sweep": summary.get("retrieval_sweep"),
+            "retrieval_applied": retrieval_applied,
             "base_model": payload.get("base_model"),
             "experiment_id": payload.get("experiment_id"),
             "judge": (
@@ -209,6 +220,31 @@ async def start_auto_rag_comparison_job(
             "model": "base" if base_only else "fine_tuned",
             "corpus": corpus,
             "split": split,
+            "sweep_retrieval": sweep_retrieval,
         },
     )
     return job
+
+
+async def apply_retrieval_choice(project_id: int, retrieval: dict[str, Any]) -> dict[str, Any] | None:
+    """Write the sweep's chosen ``{"k", "reranker"}`` to the project's
+    ``runtime_config.auto_rag_retrieval`` (own session — the Job runner's
+    thread work is over). Returns what was written, None on failure."""
+    from app.database import async_session_factory
+    from app.models.project import Project
+    from app.services.auto_rag_service import RETRIEVAL_SETTINGS_KEY
+    from app.services.retrieval_reranker import normalize_reranker
+
+    chosen = {"k": int(retrieval.get("k") or 3), "reranker": normalize_reranker(retrieval.get("reranker"))}
+    try:
+        async with async_session_factory() as db:
+            project = await db.get(Project, project_id)
+            if project is None:
+                return None
+            cfg = dict(project.runtime_config or {})
+            cfg[RETRIEVAL_SETTINGS_KEY] = {**chosen, "source": "retrieval_sweep"}
+            project.runtime_config = cfg
+            await db.commit()
+        return chosen
+    except Exception:  # noqa: BLE001 — the comparison result stands either way
+        return None

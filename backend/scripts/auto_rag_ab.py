@@ -523,6 +523,7 @@ def evaluate_with_inference(
     index_dir_override: Path | None = None,
     progress_callback: "Callable[[int, int, str], None] | None" = None,
     corpus: str = "qa",
+    reranker: str | None = None,
 ) -> tuple[list[float], list[dict[str, Any]]]:
     """Load the trained model (base + LoRA adapter, or the full fine-tuned
     model when the run saved one), generate an answer for
@@ -557,7 +558,7 @@ def evaluate_with_inference(
     from app.services.auto_rag_service import (
         AutoRagUnavailable,
         build_bm25_index,
-        retrieve,
+        retrieve_ranked,
     )
     from app.services.evaluation_service import f1_score
 
@@ -651,7 +652,7 @@ def evaluate_with_inference(
         retrieved_sources: list[str] = []
         if with_rag:
             try:
-                hits = retrieve(question, index_dir=index_dir, k=rag_k)
+                hits = retrieve_ranked(question, index_dir=index_dir, k=rag_k, reranker=reranker)
             except AutoRagUnavailable:
                 hits = []
             if use_documents:
@@ -1004,6 +1005,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "cite-or-say-you-don't-know preamble (what a documents-only project serves)."
         ),
     )
+    parser.add_argument("--k", type=int, default=RAG_K, help="With --project: BM25 top-k for the with-retrieval arm.")
+    parser.add_argument(
+        "--reranker", type=str, default=None,
+        help="With --project: cross-encoder model id to rerank BM25 candidates ('default' = cross-encoder/ms-marco-MiniLM-L-6-v2).",
+    )
+    parser.add_argument(
+        "--sweep-retrieval", action="store_true",
+        help="With --project: try top-3 / top-5, each with and without the reranker; keep the judge's best as the comparison and write auto_rag/retrieval_sweep.json.",
+    )
     parser.add_argument(
         "--split", choices=("val", "test"), default=None,
         help=(
@@ -1031,6 +1041,9 @@ def run_project_comparison(
     base_only: bool = False,
     corpus: str = "qa",
     split: str | None = None,
+    rag_k: int = RAG_K,
+    reranker: str | None = None,
+    sweep_retrieval: bool = False,
 ) -> dict[str, Any]:
     """Phase 9d — generate the per-project comparison the Eval-tab
     panel reads. Reuses the per-row eval inference loop with the
@@ -1055,6 +1068,15 @@ def run_project_comparison(
     ``split``: the rows scored — ``"val"`` (default for Q&A-pair retrieval)
     or ``"test"`` (default for document passages, so the passages verdict
     pairs the same rows as the lift check, which scores the test split).
+
+    ``rag_k`` / ``reranker``: the retrieval the with-RAG arm uses (BM25 top-k,
+    optionally cross-encoder reranked — ``retrieval_reranker``).
+    ``sweep_retrieval=True`` scores the with-RAG arm under every
+    ``RETRIEVAL_SWEEP`` config (the without-RAG arm is shared), judges each,
+    keeps the config the judge scores highest (ties → the cheaper one) as
+    the comparison, and records all of them in ``summary["retrieval_sweep"]``
+    + ``auto_rag/retrieval_sweep.json``. The chosen config is what the
+    project should serve (``runtime_config.auto_rag_retrieval``).
 
     This function is invoked from the CLI's ``--project`` mode (and
     can be called programmatically by a future API trigger if we
@@ -1181,19 +1203,64 @@ def run_project_comparison(
         progress_callback=progress_callback,
         corpus=corpus,
     )
-    on_f1s, on_records = evaluate_with_inference(
-        base_model=base_model, model_dir=model_dir,
-        val_rows=val_rows, train_rows=train_rows, with_rag=True,
-        index_dir_override=project_index_dir,
-        progress_callback=progress_callback,
-        corpus=corpus,
+    configs = list(RETRIEVAL_SWEEP) if sweep_retrieval else [{"k": int(rag_k), "reranker": reranker}]
+    arms: list[dict[str, Any]] = []
+    for index, config in enumerate(configs):
+        label = retrieval_label(config)
+        if progress_callback is not None and sweep_retrieval:
+            try:
+                progress_callback(0, 0, f"retrieval {index + 1}/{len(configs)}: {label}")
+            except Exception:  # noqa: BLE001
+                pass
+        arm_f1s, arm_records = evaluate_with_inference(
+            base_model=base_model, model_dir=model_dir,
+            val_rows=val_rows, train_rows=train_rows, with_rag=True,
+            index_dir_override=project_index_dir,
+            progress_callback=progress_callback,
+            corpus=corpus,
+            rag_k=int(config["k"]),
+            reranker=config.get("reranker"),
+        )
+        if progress_callback is not None:
+            try:
+                progress_callback(0, 0, f"judging ({label})")
+            except Exception:  # noqa: BLE001
+                pass
+        # The judge sees the shared without-RAG answers each time; its cache
+        # makes the repeats free.
+        arm_judge = _judge_comparison_rows(project_id, off_records, arm_records)
+        from app.services.retrieval_reranker import normalize_reranker
+
+        arms.append({
+            "retrieval": {"k": int(config["k"]), "reranker": normalize_reranker(config.get("reranker"))},
+            "label": label,
+            "f1s": arm_f1s,
+            "records": arm_records,
+            "judge": arm_judge,
+            "on_mean_f1": statistics.mean(arm_f1s) if arm_f1s else 0.0,
+            "judge_score": ((arm_judge or {}).get("with_rag") or {}).get("score"),
+        })
+    best = pick_best_retrieval(arms)
+    on_f1s, on_records, judge_summary = best["f1s"], best["records"], best["judge"]
+    retrieval_used = best["retrieval"]
+    retrieval_sweep = (
+        [
+            {
+                "retrieval": arm["retrieval"],
+                "label": arm["label"],
+                "on_mean_f1": round(arm["on_mean_f1"], 4),
+                "judge_score": arm["judge_score"],
+                "judge_counts": ((arm["judge"] or {}).get("with_rag") or {}).get("counts"),
+                "chosen": arm is best,
+            }
+            for arm in arms
+        ]
+        if sweep_retrieval
+        else None
     )
-    if progress_callback is not None:
-        try:
-            progress_callback(0, 0, "judging")
-        except Exception:  # noqa: BLE001
-            pass
-    judge_summary = _judge_comparison_rows(project_id, off_records, on_records)
+    if sweep_retrieval:
+        for arm in retrieval_sweep or []:
+            print(f"[harness] sweep {arm['label']}: judge={arm['judge_score']} f1={arm['on_mean_f1']}{'  <- chosen' if arm['chosen'] else ''}")
 
     off_mean = statistics.mean(off_f1s) if off_f1s else 0.0
     on_mean = statistics.mean(on_f1s) if on_f1s else 0.0
@@ -1236,12 +1303,22 @@ def run_project_comparison(
             "absolute_lift": on_mean - off_mean,
             "relative_lift_pct": lift,
             "n_val_rows": len(off_records),
-            "rag_k": RAG_K,
+            "rag_k": retrieval_used["k"],
+            "retrieval": retrieval_used,
+            "retrieval_sweep": retrieval_sweep,
             "phase_9c_reference_lift_pct": 146.49,
             "judge": judge_summary,
         },
         "rows": combined_rows,
     }
+    if retrieval_sweep:
+        sweep_path = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / "retrieval_sweep.json"
+        sweep_path.parent.mkdir(parents=True, exist_ok=True)
+        sweep_path.write_text(json.dumps({
+            "project_id": project_id, "corpus": corpus, "split": split, "base_model": base_model,
+            "model": "base" if base_only else "fine_tuned",
+            "cached_at": datetime.now(timezone.utc).isoformat(), "arms": retrieval_sweep,
+        }, indent=2), encoding="utf-8")
     cache_path = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / comparison_file_name(
         base_only=base_only, corpus=corpus
     )
@@ -1255,6 +1332,38 @@ def run_project_comparison(
             f"off={judge_summary['without_rag'].get('score')}  on={judge_summary['with_rag'].get('score')}"
         )
     return payload
+
+
+# The retrieval configs a sweep tries, cheapest first (ties go to the
+# earlier one): BM25 top-3 / top-5, each with and without the cross-encoder.
+RETRIEVAL_SWEEP: tuple[dict[str, Any], ...] = (
+    {"k": 3, "reranker": None},
+    {"k": 5, "reranker": None},
+    {"k": 3, "reranker": "default"},
+    {"k": 5, "reranker": "default"},
+)
+
+
+def retrieval_label(config: dict[str, Any]) -> str:
+    from app.services.retrieval_reranker import normalize_reranker
+
+    name = normalize_reranker(config.get("reranker"))
+    return f"top-{int(config['k'])}" + (f" + reranker {name.split('/')[-1]}" if name else "")
+
+
+def pick_best_retrieval(arms: list[dict[str, Any]]) -> dict[str, Any]:
+    """The arm the judge scores highest; without a judge, the highest mean
+    F1. Ties keep the earlier (cheaper) arm — strict ``>`` only."""
+    best = arms[0]
+    for arm in arms[1:]:
+        if best.get("judge_score") is not None and arm.get("judge_score") is not None:
+            if arm["judge_score"] > best["judge_score"]:
+                best = arm
+        elif arm.get("judge_score") is not None and best.get("judge_score") is None:
+            best = arm
+        elif best.get("judge_score") is None and arm["on_mean_f1"] > best["on_mean_f1"]:
+            best = arm
+    return best
 
 
 def comparison_file_name(*, base_only: bool, corpus: str = "qa") -> str:
@@ -1271,9 +1380,13 @@ def main(argv: list[str] | None = None) -> int:
     # Phase 9d per-project mode — short-circuits the template gate
     # flow and writes the cached comparison for the Eval-tab panel.
     if args.project is not None:
-        run_project_comparison(
-            args.project, base_only=bool(args.base_only), corpus=str(args.corpus), split=args.split
+        payload = run_project_comparison(
+            args.project, base_only=bool(args.base_only), corpus=str(args.corpus), split=args.split,
+            rag_k=int(args.k), reranker=args.reranker, sweep_retrieval=bool(args.sweep_retrieval),
         )
+        if args.sweep_retrieval:
+            chosen = (payload.get("summary") or {}).get("retrieval")
+            print(f"[harness] chosen retrieval: {chosen} — apply with runtime_config.auto_rag_retrieval")
         return 0
 
     templates = tuple(args.templates) if args.templates else QA_SFT_TEMPLATES

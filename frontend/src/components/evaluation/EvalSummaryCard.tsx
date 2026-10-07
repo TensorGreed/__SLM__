@@ -308,6 +308,18 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     <span>{note.text}</span>
                 </p>
             )}
+            {isPassages && summary.retrieval && (
+                <p className="eval-summary__judge" data-testid="eval-summary-retrieval">
+                    Retrieval served: top-{summary.retrieval.k}
+                    {summary.retrieval.reranker ? ` + reranker ${summary.retrieval.reranker.split('/').pop()}` : ' (BM25 only)'}
+                    {summary.retrieval_sweep && summary.retrieval_sweep.length > 1
+                        ? ` — chosen by the judge over ${summary.retrieval_sweep
+                            .filter((arm) => !arm.chosen)
+                            .map((arm) => `${arm.label} (${arm.judge_score != null ? arm.judge_score.toFixed(2) : '—'})`)
+                            .join(', ')}.`
+                        : '.'}
+                </p>
+            )}
             {summary.judge && (
                 <p className="eval-summary__judge" data-testid="eval-summary-judge">
                     Judged by <code>{summary.judge.judge || 'a judge model'}</code>: {summary.judge.correct} correct, {summary.judge.partial} partial,{' '}

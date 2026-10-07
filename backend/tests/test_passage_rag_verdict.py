@@ -160,6 +160,9 @@ class PassagesSummaryTests(unittest.TestCase):
                 return await build_eval_summary(db, pid)
 
         self.assertEqual(asyncio.run(_go())["kind"], "rag_passages")
+        # Projects are numbered per DB, DATA_DIR is shared: leave no cache a
+        # later test file's same-numbered project could pick up.
+        (settings.DATA_DIR / "projects" / str(pid) / "auto_rag" / "comparison_base_documents.json").unlink()
 
 
 class SiblingPassagesCheckTests(unittest.TestCase):
@@ -174,14 +177,14 @@ class SiblingPassagesCheckTests(unittest.TestCase):
 
         seen: dict = {}
 
-        async def _start(db, project_id, *, recipe_id, base_only, corpus, split):
-            seen.update(project_id=project_id, recipe_id=recipe_id, base_only=base_only, corpus=corpus, split=split)
+        async def _start(db, project_id, *, recipe_id, base_only, corpus, split, sweep_retrieval):
+            seen.update(project_id=project_id, recipe_id=recipe_id, base_only=base_only, corpus=corpus, split=split, sweep_retrieval=sweep_retrieval)
             return type("J", (), {"id": 7})()
 
         with mock.patch.object(jobs, "start_auto_rag_comparison_job", _start):
             out = asyncio.run(start_sibling_passages_check(None, P()))
         self.assertEqual(out, {"started": True, "job_id": 7})
-        self.assertEqual(seen, {"project_id": 99, "recipe_id": "qa-sft", "base_only": True, "corpus": "documents", "split": "test"})
+        self.assertEqual(seen, {"project_id": 99, "recipe_id": "qa-sft", "base_only": True, "corpus": "documents", "split": "test", "sweep_retrieval": True})
 
         class Plain:
             id = 100
