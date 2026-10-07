@@ -19,7 +19,8 @@ export type CoachActionKind =
     | 'run_playbook'
     | 'navigate'
     | 'augment_from_cluster'
-    | 'start_flow';
+    | 'start_flow'
+    | 'reroute_to_rag';
 
 export interface CoachAction {
     kind: CoachActionKind;

@@ -2196,6 +2196,70 @@ def _reroute_recommendation_nudge(
     }
 
 
+def _passages_beat_finetune_nudge(
+    project_id: int, verdict: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """Warning-severity Eval nudge: the untouched base model answering from
+    the retrieved document passages got more answers right (per the judge)
+    than the fine-tuned run. Pure; ``verdict`` is
+    ``passage_rag_verdict_service.passages_vs_finetune``'s output. Fires only
+    on ``passages_win`` — same judge, retrieval gain beyond row noise."""
+    if not isinstance(verdict, dict) or not verdict.get("passages_win"):
+        return None
+    passages = verdict.get("passages") or {}
+    finetune = verdict.get("finetune") or {}
+    p_counts = passages.get("with_passages_counts") or {}
+    f_counts = finetune.get("counts") or {}
+    evidence = passages.get("retrieval_evidence") or {}
+
+    def _counts(c: dict[str, Any]) -> str:
+        return f"{c.get('correct', 0)} correct, {c.get('partial', 0)} partial, {c.get('wrong', 0)} wrong"
+
+    p_score = float(passages.get("with_passages") or 0.0)
+    f_score = float(finetune.get("score") or 0.0)
+    body = (
+        f"Judged by {passages.get('judge') or 'the judge model'} on the facts, not the wording: the base model "
+        f"answering from your retrieved document passages scored {p_score:.2f} "
+        f"({_counts(p_counts)} of {passages.get('n_rows', 0)} validation rows; "
+        f"{evidence.get('better', 0)} rows better than without retrieval, {evidence.get('worse', 0)} worse). "
+        f"Your fine-tuned run #{finetune.get('experiment_id')} scored {f_score:.2f} "
+        f"({_counts(f_counts)} of {finetune.get('n_rows', 0)} test examples).\n\n"
+        "Fine-tuning taught the model your documents' wording, not their facts. Retrieval gives it the "
+        "facts at answer time. Reroute to RAG: a sibling project that serves the base model + passage "
+        "retrieval, no training run needed — your SFT project stays for comparison. The playground already "
+        "answers from passages here.\n\n"
+        "Measured on different rows (validation for retrieval, test examples for the run), so compare the "
+        "verdicts, not the decimals."
+    )
+    if finetune.get("finetune_is_latest") is False:
+        body += (
+            f"\n\nYour latest run #{finetune.get('latest_experiment_id')} has not been judged yet — "
+            "re-run its lift check on the Eval tab to compare it too."
+        )
+    if finetune.get("n_seeds"):
+        body += f" (Run #{finetune.get('experiment_id')} is the mean of {finetune.get('n_seeds')} seeds.)"
+    return {
+        "id": "eval:passages-beat-finetune",
+        "title": f"Retrieval over your documents beats the fine-tune ({p_score:.2f} vs {f_score:.2f} judged)",
+        "body": body,
+        "severity": "warning",
+        "action": {
+            "kind": "reroute_to_rag",
+            "label": "Reroute to RAG (base model + your passages)",
+            "params": {"corpus": "documents"},
+        },
+        "context": {
+            "project_id": project_id,
+            "passages_score": round(p_score, 4),
+            "finetune_score": round(f_score, 4),
+            "judge": passages.get("judge"),
+            "experiment_id": finetune.get("experiment_id"),
+            "retrieval_evidence": evidence,
+            "recommended_corpus": "documents",
+        },
+    }
+
+
 def _auto_rag_eval_nudge(
     project_id: int,
     recipe_id: str | None,
@@ -2942,6 +3006,22 @@ async def _eval_stage_suggestions(
     )
     if reroute_nudge:
         suggestions.append(reroute_nudge)
+
+    # Documents project: the judged base-model + document-passages
+    # comparison beat the fine-tuned run's judged lift → reroute to RAG,
+    # with passage retrieval. Independent of the pass-rate analyzer above
+    # (which reads token metrics); this one reads the judge.
+    if not is_rag_first_project:
+        try:
+            from app.services.passage_rag_verdict_service import passages_vs_finetune
+
+            passages_nudge = _passages_beat_finetune_nudge(
+                project.id, await passages_vs_finetune(db, project.id)
+            )
+        except Exception:  # noqa: BLE001 — best-effort nudge
+            passages_nudge = None
+        if passages_nudge:
+            suggestions.append(passages_nudge)
 
     # Gap-#6 slice 3 — nudge classification projects whose eval pack
     # has zero per-class gates to add one. Fires independently of the

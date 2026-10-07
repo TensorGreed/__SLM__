@@ -782,4 +782,30 @@ describe('CoachStrip', () => {
             expect(screen.getByTestId('coach-strip-data').textContent).toMatch(/unavailable/i);
         });
     });
+
+    it('clicking the reroute_to_rag action clones the project into a RAG-first sibling', async () => {
+        installGetRouter({
+            data: {
+                project_id: 20,
+                stage: 'eval',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'eval:passages-beat-finetune',
+                        title: 'Retrieval over your documents beats the fine-tune (0.62 vs 0.05 judged)',
+                        body: 'Fine-tuning taught the model your documents\' wording, not their facts.',
+                        severity: 'warning',
+                        action: { kind: 'reroute_to_rag', label: 'Reroute to RAG (base model + your passages)', params: { corpus: 'documents' } },
+                    },
+                ],
+            },
+        });
+        apiMock.post.mockResolvedValue({ data: { id: 61, kind: 'reroute_to_rag', status: 'queued' } });
+
+        render(<CoachStrip projectId={20} stage="eval" />);
+        await userEvent.click(await screen.findByTestId('coach-suggestion-action-eval:passages-beat-finetune'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(expect.stringMatching(/\/projects\/20\/.*reroute.*async_job=true/), expect.anything());
+        });
+    });
 });

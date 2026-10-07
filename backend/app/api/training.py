@@ -5,7 +5,7 @@ import json
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -302,6 +302,12 @@ class PlaygroundChatRequest(BaseModel):
     # power users can flip it per-request to A/B inline.
     auto_rag: bool = False
     auto_rag_k: int = Field(default=3, ge=1, le=10)
+    # What auto-RAG retrieves: "qa" (the Q&A index), "documents" (cleaned
+    # document passages) or "auto". Unset → the project's resolved default
+    # (``passage_rag_verdict_service.resolve_playground_corpus``): an explicit
+    # runtime_config.auto_rag_corpus, else passages when they beat the
+    # fine-tuned run, else "auto".
+    auto_rag_corpus: Literal["qa", "documents", "auto"] | None = None
     # provider="experiment": chat with this completed run's checkpoint,
     # loaded in-process (local_chat_service).
     experiment_id: int | None = Field(default=None, ge=1)
@@ -3468,11 +3474,20 @@ async def _apply_playground_auto_rag(
             auto_rag_block["skip_reason"] = "no_user_message_to_query"
         else:
             from app.services.auto_rag_service import build_preamble_from_query
+            from app.services.passage_rag_verdict_service import resolve_playground_corpus
+
+            corpus, corpus_reason = req.auto_rag_corpus or "auto", "request"
+            if req.auto_rag_corpus is None:
+                project = await db.get(Project, project_id)
+                if project is not None:
+                    corpus, corpus_reason = await resolve_playground_corpus(db, project)
             preamble = await build_preamble_from_query(
-                db, project_id, query_text, k=req.auto_rag_k
+                db, project_id, query_text, k=req.auto_rag_k, corpus=corpus
             )
             if preamble is None:
                 auto_rag_block["skip_reason"] = "recipe_or_index_ineligible"
+                auto_rag_block["corpus_requested"] = corpus
+                auto_rag_block["corpus_reason"] = corpus_reason
             else:
                 # Prepend the preamble as a system message at the
                 # front. We don't merge with an existing system
@@ -3503,6 +3518,9 @@ async def _apply_playground_auto_rag(
                     "preamble_inserted_at": insert_at,
                     # "qa" (Q&A pairs) or "documents" (document passages).
                     "corpus": preamble.get("corpus", "qa"),
+                    # Why that corpus: "request" / "project_setting" /
+                    # "passages_beat_finetune" / "default".
+                    "corpus_reason": corpus_reason,
                 }
     return normalized_messages, auto_rag_block
 

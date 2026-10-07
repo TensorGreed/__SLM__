@@ -274,7 +274,19 @@ async def get_auto_rag_comparison(
         "base": base,
         "base_documents": base_documents,
         "fine_tuned_documents": fine_tuned_documents,
+        # Judged verdict: did the base model + document passages beat the
+        # fine-tuned run's judged lift? (passage_rag_verdict_service)
+        "passages_vs_finetune": await _passages_verdict(db, project_id),
     }
+
+
+async def _passages_verdict(db: AsyncSession, project_id: int) -> dict[str, Any] | None:
+    from app.services.passage_rag_verdict_service import passages_vs_finetune
+
+    try:
+        return await passages_vs_finetune(db, project_id)
+    except Exception:  # noqa: BLE001 — advisory
+        return None
 
 
 def _read_cached_comparison(cache_path: Path) -> dict[str, Any] | None:

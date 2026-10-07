@@ -16,6 +16,7 @@ import { useNavigate } from 'react-router-dom';
 
 import type { CoachSuggestion } from '../../api/coach';
 import { startDocumentsQaFlow } from '../../api/flows';
+import { rerouteToRagAsync } from '../../api/rerouteAnalysis';
 import CoachSuggestionTrace from './CoachSuggestionTrace';
 import './CoachSuggestionTrace.css';
 import {
@@ -453,6 +454,25 @@ export default function CoachSuggestionCard({
                 const data = (err as { response?: { data?: { detail?: unknown; message?: string } } })?.response?.data;
                 const detail = data?.message ?? (typeof data?.detail === 'string' ? data.detail : undefined);
                 toast.error(detail ?? 'Could not start the flow.');
+            } finally {
+                setIsExecuting(false);
+            }
+            return;
+        }
+        if (suggestion.action.kind === 'reroute_to_rag') {
+            // Clone this project into a RAG-first sibling (base model +
+            // retrieval, no training). The bell tracks the clone and links
+            // to the new project when it is ready.
+            setIsExecuting(true);
+            try {
+                const job = await rerouteToRagAsync(projectId);
+                toast.info(`Cloning into a RAG-first project — the bell will link to it when ready (job #${job.id}).`, 6000);
+                void useJobsStore.getState().refreshAfterLocalChange();
+                onActionCompleted?.();
+            } catch (err) {
+                const data = (err as { response?: { data?: { detail?: unknown; message?: string } } })?.response?.data;
+                const detail = data?.message ?? (typeof data?.detail === 'string' ? data.detail : undefined);
+                toast.error(detail ?? 'Could not start the reroute.');
             } finally {
                 setIsExecuting(false);
             }

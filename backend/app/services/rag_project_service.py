@@ -185,6 +185,18 @@ async def clone_project_for_rag(
         "rag_first": True,
         "auto_rag": {"enabled": True},
     }
+    # A documents project rerouted because the base model answering from
+    # its passages beat the fine-tune: the sibling's playground retrieves
+    # passages, not the Q&A pairs the source trained on.
+    from app.services.passage_rag_verdict_service import (
+        AUTO_RAG_CORPUS_KEY,
+        resolve_playground_corpus,
+    )
+
+    source_corpus, source_corpus_reason = await resolve_playground_corpus(db, source)
+    if source_corpus == "documents" and AUTO_RAG_CORPUS_KEY not in new_runtime_config:
+        new_runtime_config[AUTO_RAG_CORPUS_KEY] = "documents"
+        new_runtime_config["auto_rag_corpus_reason"] = source_corpus_reason
 
     new_project = Project(
         name=new_name,

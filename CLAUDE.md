@@ -489,6 +489,20 @@ quality gate** (simulate runtime). The eval→export tail is deferred
   it applies (`_judge_comparison_rows`): `summary.judge` (label + per-arm
   score/counts), per-row `without_rag.judge` / `with_rag.judge`, and the
   GET's `judge_evidence` (`_lift_evidence(score_key="judge")`).
+  **Passages vs fine-tune verdict** — `services/passage_rag_verdict_service.py`:
+  `passages_vs_finetune(db, pid)` compares the judged base+documents
+  comparison (val rows) with the latest trained run's judged lift (test
+  rows; a seed leader = mean of its judged children; an unjudged latest run
+  falls back to the newest judged one with `finetune_is_latest=False`).
+  `passages_win` needs the same judge, retrieval evidence `better`, and a
+  higher passages score. Read by: the GET (`passages_vs_finetune`), the
+  Coach eval nudge `eval:passages-beat-finetune` (action kind
+  `reroute_to_rag` → frontend `rerouteToRagAsync`), and
+  `resolve_playground_corpus` (explicit `runtime_config.auto_rag_corpus` >
+  passages-win → `documents` > `auto`), used by `_apply_playground_auto_rag`
+  (request `auto_rag_corpus` overrides; audit block `corpus_reason`).
+  `clone_project_for_rag` stamps `auto_rag_corpus="documents"` on the
+  sibling when the source resolves to passages.
   The GET also returns `latest_experiment_id` + `stale` (fine-tuned cache is
   for an older run → warning on the card). The panel reads its project's
   `auto_rag_comparison` Jobs from `useJobsStore((s) => s.jobs)`: in flight →

@@ -198,6 +198,7 @@ session-start guidance.
 - `backend/app/services/nl2pipeline_service.py` — Natural Language to Pipeline (Magic Create) service.
 - `backend/app/services/pack_generation_service.py` — Auto-generate a starter evaluation pack from blueprint + dataset + adapter.
 - `backend/app/services/paired_comparison_stats.py` — Is a before/after difference on the same rows more than noise?
+- `backend/app/services/passage_rag_verdict_service.py` — Did retrieval over the documents beat fine-tuning? (documents projects)
 - `backend/app/services/pipeline_recipe_service.py` — End-to-end pipeline recipe (blueprint) service.
 - `backend/app/services/pipeline_refinement_service.py` — Pipeline plan refinement — Phase 1 (deterministic, no cloud LLM).
 - `backend/app/services/playbook_gap_service.py` — Gap-tied synthetic-playbook recommendations (Epic E).
@@ -744,6 +745,7 @@ session-start guidance.
 - `backend/tests/test_nl2pipeline.py` — Tests for natural language to pipeline recipe creation.
 - `backend/tests/test_paired_comparison_stats.py` — Paired before/after evidence: row counts + "is it more than noise?".
 - `backend/tests/test_pareto_frontier.py` — Unit tests for the model-sweep Pareto frontier annotation (Epic C).
+- `backend/tests/test_passage_rag_verdict.py` — Did retrieval over the documents beat fine-tuning? (passage_rag_verdict_service)
 - `backend/tests/test_phase100_handler_stop_sequences.py` — Phase 100 — handler stop sequences.
 - `backend/tests/test_phase101_dataset_import_cli.py` — Phase A — CLI surface for the dataset import pipeline.
 - `backend/tests/test_phase101_dataset_import_foundation.py` — Phase A of DATASET_IMPORT_PLAN.md — foundation.
