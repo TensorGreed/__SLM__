@@ -243,6 +243,7 @@ session-start guidance.
 - `backend/app/services/synth_backends/nemo.py` — NVIDIA NeMo Data Designer / NIM synth backend (USER-SUCCESS Epic 5 Phase 5a + 5b).
 - `backend/app/services/synth_backends/ollama.py` — Ollama-based synthetic-data backend (USER-SUCCESS Epic 2).
 - `backend/app/services/synth_backends/teacher.py` — Teacher-model backend — fallback that talks to whatever
+- `backend/app/services/synth_backends/template.py` — Template backend — a deterministic stand-in for a generation / judge
 - `backend/app/services/synth_backends/vllm.py` — vLLM synth backend (USER-SUCCESS Epic 5 Phase 5c).
 - `backend/app/services/synth_playbook_service.py` — Orchestrator for the synthetic-data playbook framework
 - `backend/app/services/synth_playbooks/_cluster_targeted_common.py` — Helpers shared by the 6 CLUSTER_TARGETED playbooks.
@@ -910,6 +911,7 @@ session-start guidance.
 - `backend/tests/test_synthetic_qa_conversation_async.py` — Batched synthetic QA + conversation generation (USER-SUCCESS Epic 2c).
 - `backend/tests/test_synthetic_span_async.py` — Batched synthetic-span generation (long-running) — Story PII-async.
 - `backend/tests/test_task_shape.py` — Unified task-shape detector + confirm (Wave 2b).
+- `backend/tests/test_template_synth_backend.py` — The template backend — a deterministic stand-in for a generation / judge
 - `backend/tests/test_theme5_epic1_video_flow_cli.py` — Theme 5 Epic 1 — brewslm CLI gap-fill commands for the 11-video flow.
 - `backend/tests/test_tokenization_analyze_splits.py` — V3 of the ML-native visualisations arc — POST /tokenization/analyze-splits.
 - `backend/tests/test_train_script_standalone.py` — ``scripts/train.py`` is launched as a standalone script by the training

@@ -27,6 +27,7 @@ from .cloud_llm import CloudLlmBackend
 from .nemo import NemoBackend
 from .ollama import OllamaBackend
 from .teacher import TeacherModelBackend
+from .template import TemplateBackend
 from .vllm import VllmBackend
 
 # Order matters: pick_backend() walks this list in order when no
@@ -45,6 +46,8 @@ BACKEND_REGISTRY: list[type[SynthBackend]] = [
     TeacherModelBackend,
     NemoBackend,
     VllmBackend,
+    # Deterministic smoke backend; available only with BREWSLM_TEMPLATE_SYNTH=1.
+    TemplateBackend,
 ]
 
 
@@ -56,6 +59,7 @@ __all__ = [
     "SynthBackend",
     "SynthBackendError",
     "TeacherModelBackend",
+    "TemplateBackend",
     "VllmBackend",
     "pick_backend",
     "pick_schema_aware_backend_describe",

@@ -223,7 +223,20 @@ cd backend && python -m pytest -k "name_pattern"        # by name
   ignores it. CPU-only on CI (SmolLM2-135M, `num_epochs=1`,
   `AUTO_LIFT_EVAL_MAX_SAMPLES=8`, `AUTO_LIFT_EVAL_MAX_NEW_TOKENS=48`); the HF
   model is cached by `actions/cache`. Path-integrity, not quality: the lift may
-  read "within noise". Locally: boot a scratch backend + worker with the same
+  read "within noise". **Documents-project gate** (same file,
+  `DocumentsProjectGateTests`): synthetic statute → upload → clean → the
+  documents → Q&A flow with `backend="template"` → the pre-training passages
+  gate (real base-model inference on CPU, judged by the template judge) →
+  stop + Coach/summary assertions, "train anyway" → COMPLETED → judged lift
+  → `passages_vs_finetune` readable. The job env sets
+  `BREWSLM_TEMPLATE_SYNTH=1 EVAL_JUDGE_BACKEND=template`, so the support-faq
+  test's headline is `judge_correct` there (it accepts f1 or judge_correct).
+  **Template backend** (`synth_backends/template.py`): deterministic stand-in
+  for a generation / judge model — pairs lifted from passage sentences,
+  verdicts by token overlap; registered LAST and available only with
+  `BREWSLM_TEMPLATE_SYNTH=1` (never auto-picked on a dev box); refuses any
+  other prompt. The synthetic statute lives in both the pytest file and
+  `tests/golden-path/golden-path-documents.spec.ts` — keep them in sync. Locally: boot a scratch backend + worker with the same
   env and run the file with the URL set — the dev worker must NOT be running
   on the same broker DB, or it consumes the task with the wrong DATA_DIR.
   **CPU dtype**: transformers ≥ 5 loads a checkpoint in its *saved* dtype
@@ -313,6 +326,13 @@ the API (`page.request` with the login token) for robustness; the UI drives
 login + sample launch + pipeline render. **Path-integrity gate, not a
 quality gate** (simulate runtime). The eval→export tail is deferred
 (G1-tail — eval on a simulated checkpoint needs real inference).
+**G2 — documents project** (`golden-path-documents.spec.ts`, same config):
+upload + clean via `page.request`, the Training tab's flow card, one click,
+poll the `documents_qa_flow` Job, assert the card shows the pre-training
+gate's verdict (reroute/train-anyway when `retrieval_ready`, "training went
+ahead" otherwise). The E2E stack also boots with `BREWSLM_TEMPLATE_SYNTH=1
+EVAL_JUDGE_BACKEND=template HF_HUB_OFFLINE=1` and caches SmolLM2 (the gate
+runs real CPU inference). ~4 min locally.
 
 ---
 

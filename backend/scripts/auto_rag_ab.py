@@ -622,13 +622,18 @@ def evaluate_with_inference(
     # ``model_dir=None`` scores the untouched base model (what a RAG-first
     # project serves: base + retrieval, no fine-tune).
     is_adapter_run = model_dir is not None and (model_dir / "adapter_config.json").exists()
+    # CUDA in fp16; CPU in fp32 (bf16/fp16 are emulated — very slow — on
+    # CPUs without native support, and the CI gate runs on CPU).
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    load_kwargs: dict[str, Any] = (
+        {"dtype": torch.float16, "device_map": "cuda"} if device == "cuda" else {"dtype": torch.float32}
+    )
     base = AutoModelForCausalLM.from_pretrained(
         base_model if (is_adapter_run or model_dir is None) else str(model_dir),
-        dtype=torch.float16,
-        device_map="cuda",
+        **load_kwargs,
     )
     model = PeftModel.from_pretrained(base, str(model_dir)) if is_adapter_run else base
-    model.eval()
+    model = model.to(device).eval()
 
     f1s: list[float] = []
     records: list[dict[str, Any]] = []
@@ -690,7 +695,7 @@ def evaluate_with_inference(
         # A rendered chat template already carries its special tokens.
         inputs = tokenizer(
             prompt, return_tensors="pt", add_special_tokens=not used_template
-        ).to("cuda")
+        ).to(device)
         with torch.no_grad():
             output_ids = model.generate(
                 **inputs,
@@ -728,7 +733,8 @@ def evaluate_with_inference(
 
     # Free GPU memory so the next seed can fresh-load.
     del model, base
-    torch.cuda.empty_cache()
+    if device == "cuda":
+        torch.cuda.empty_cache()
     return f1s, records
 
 
