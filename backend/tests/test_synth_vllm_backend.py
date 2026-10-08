@@ -372,11 +372,14 @@ class VllmRegistryTests(unittest.TestCase):
         """vLLM must land AFTER Ollama, Teacher, AND NeMo. Auto-pick
         for existing installs (Ollama users) is unchanged; same goes
         for power users who already configured NeMo."""
-        names = [c.name for c in BACKEND_REGISTRY]
+        # The template smoke backend (CI stand-in, env-gated, never
+        # auto-picked on a dev box) trails every real backend.
+        names = [c.name for c in BACKEND_REGISTRY if c.name != "template"]
         self.assertIn("vllm", names)
         self.assertEqual(names[-1], "vllm")
         # NeMo is still second-to-last (Phase 5a ordering preserved).
         self.assertEqual(names[-2], "nemo")
+        self.assertEqual([c.name for c in BACKEND_REGISTRY][-1], "template")
 
     def test_pick_backend_routes_explicit_vllm_pin(self):
         with _settings_overrides(VLLM_API_URL="http://vllm"):
