@@ -263,7 +263,8 @@ class DocumentsProjectGateTests(unittest.TestCase):
         gate = result.get("passages_gate") or {}
         # The gate must have RUN and been judged (template judge): a decision
         # either way, never not_run / not_judged / error on this stack.
-        self.assertIn(gate.get("status"), {"retrieval_ready", "retrieval_weak"}, gate)
+        self.assertIn(gate.get("status"), {"retrieval_ready", "retrieval_promising", "retrieval_weak"}, gate)
+        self.assertIsNotNone(gate.get("retrieval"), "the gate must judge the sweep's chosen retrieval")
         self.assertEqual(gate.get("split"), "test")
         self.assertGreaterEqual(gate.get("judged", 0), 5)
         self.assertTrue(str(gate.get("judge") or "").startswith("template"), gate)

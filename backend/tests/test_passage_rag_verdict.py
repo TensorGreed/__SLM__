@@ -215,9 +215,20 @@ class RagFirstPlaygroundTests(unittest.TestCase):
 
 class PretrainingGateTests(unittest.TestCase):
     def test_gate_policy(self):
-        ready = svc.passages_gate(PASSAGES)
+        # 9 / 3 / 5 of 17 (0.62): a fair share right but 5 wrong → promising, train and compare.
+        promising = svc.passages_gate(PASSAGES)
+        self.assertEqual(promising["status"], "retrieval_promising")
+        self.assertIn("9 of 17 right but 5 wrong", promising["reason"])
+        # 12 / 4 / 3 of 19 (0.74, 16% wrong): ready → stop.
+        ready = svc.passages_gate({**PASSAGES, "with_passages": 0.7368, "with_passages_counts": {"correct": 12, "partial": 4, "wrong": 3}})
         self.assertEqual(ready["status"], "retrieval_ready")
-        self.assertIn("9 of 17 right", ready["reason"])
+        self.assertIn("12 of 19 right and only 3 wrong", ready["reason"])
+        # 8 / 5 / 6 of 19 (0.55, 32% wrong): the legal case's plain top-3 → promising, not a stop.
+        legal = svc.passages_gate({**PASSAGES, "with_passages": 0.5526, "with_passages_counts": {"correct": 8, "partial": 5, "wrong": 6}})
+        self.assertEqual(legal["status"], "retrieval_promising")
+        # A high mean with too many wrong answers is not "ready" either.
+        wrong_heavy = svc.passages_gate({**PASSAGES, "with_passages": 0.66, "with_passages_counts": {"correct": 12, "partial": 1, "wrong": 6}})
+        self.assertEqual(wrong_heavy["status"], "retrieval_promising")
         weak = svc.passages_gate({**PASSAGES, "with_passages": 0.3, "with_passages_counts": {"correct": 3, "partial": 4, "wrong": 10}})
         self.assertEqual(weak["status"], "retrieval_weak")
         noisy = svc.passages_gate({**PASSAGES, "retrieval_evidence": {"verdict": "within_noise"}})
@@ -245,6 +256,12 @@ class PretrainingGateTests(unittest.TestCase):
                                   "with_passages_counts": {"correct": 12, "partial": 4, "wrong": 3}, "with_passages": 0.74})
         nudge = _retrieval_ready_nudge_from_gate(5, gate)
         self.assertEqual(nudge["id"], "training:retrieval-ready")
+        promising_gate = svc.passages_gate({**PASSAGES, "split": "test", "with_passages": 0.5526,
+                                            "with_passages_counts": {"correct": 8, "partial": 5, "wrong": 6}})
+        promising_nudge = _retrieval_ready_nudge_from_gate(5, promising_gate)
+        self.assertEqual(promising_nudge["id"], "training:retrieval-promising")
+        self.assertEqual(promising_nudge["severity"], "info")
+        self.assertIn("train, then compare", promising_nudge["title"])
         self.assertEqual(nudge["action"]["kind"], "reroute_to_rag")
         self.assertIn("Retrieval already answers 12 of 19", nudge["title"])
         self.assertIn("12 of 19 test examples fully right", nudge["body"])

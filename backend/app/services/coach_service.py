@@ -2219,7 +2219,7 @@ async def _retrieval_ready_nudge(db: AsyncSession, project: Project) -> dict[str
     if is_rag_first(project):
         return None
     gate = read_passages_gate(project.id)
-    if gate.get("status") != "retrieval_ready":
+    if gate.get("status") not in {"retrieval_ready", "retrieval_promising"}:
         return None
     if await _latest_trained_experiment_id(db, project.id) is not None:
         return None
@@ -2231,9 +2231,40 @@ def _retrieval_ready_nudge_from_gate(project_id: int, gate: dict[str, Any]) -> d
     judged = int(gate.get("judged") or 0)
     rows_word = "test examples" if gate.get("split") == "test" else "validation rows"
     evidence = gate.get("retrieval_evidence") or {}
+    retrieval = gate.get("retrieval") or {}
+    served = (
+        f" (top-{retrieval.get('k')}" + (" + reranker" if retrieval.get("reranker") else "") + ", the best of the retrieval sweep)"
+        if retrieval.get("k")
+        else ""
+    )
+    if gate.get("status") == "retrieval_promising":
+        body = (
+            f"Before you train: the untouched base model answering from your retrieved document passages{served} "
+            f"already gets {gate.get('correct', 0)} of {judged} {rows_word} fully right, but {gate.get('wrong', 0)} wrong "
+            f"({gate.get('partial', 0)} partly; judge score {float(gate.get('score') or 0):.2f}, judged by "
+            f"{gate.get('judge') or 'the judge model'} on the facts). Not an assistant on its own yet — so train, and "
+            "the lift check will judge the fine-tune against this retrieval on the same rows. If the fine-tune loses, "
+            "the Eval tab offers the reroute. Either way, a RAG sibling can serve this retrieval now."
+        )
+        return {
+            "id": "training:retrieval-promising",
+            "title": f"Retrieval already gets {gate.get('correct', 0)} of {judged} right — train, then compare",
+            "body": body,
+            "severity": "info",
+            "action": {
+                "kind": "reroute_to_rag",
+                "label": "Reroute to RAG (serve retrieval now)",
+                "params": {"corpus": "documents"},
+            },
+            "context": {
+                "project_id": project_id,
+                "gate": {k: gate.get(k) for k in ("status", "score", "correct", "partial", "wrong", "judged", "judge", "split")},
+                "recommended_corpus": "documents",
+            },
+        }
     body = (
         f"Before you train anything: the untouched base model, answering from your retrieved document "
-        f"passages, already gets {gate.get('correct', 0)} of {judged} {rows_word} fully right "
+        f"passages{served}, already gets {gate.get('correct', 0)} of {judged} {rows_word} fully right "
         f"({gate.get('partial', 0)} partly, {gate.get('wrong', 0)} wrong; judge score {float(gate.get('score') or 0):.2f}, "
         f"judged by {gate.get('judge') or 'the judge model'} on the facts). Retrieval helped "
         f"{evidence.get('better', 0)} rows and hurt {evidence.get('worse', 0)} compared with no retrieval.\n\n"

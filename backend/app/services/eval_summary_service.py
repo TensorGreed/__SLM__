@@ -211,11 +211,17 @@ async def build_eval_summary(
 
                 gate = passages_gate(summarize_documents_comparison(read_documents_comparison(project_id)))
                 passages["pretraining_gate"] = gate
+                status = gate.get("status")
                 passages["message"] = (
                     "Nothing has been trained yet — this is the base model answering from your passages. "
-                    + ("Retrieval already answers well: reroute to RAG, or train anyway to compare."
-                       if gate.get("status") == "retrieval_ready"
-                       else "Retrieval alone is not enough here; training may help, or improve retrieval first.")
+                    + (
+                        "Retrieval already answers well: reroute to RAG, or train anyway to compare."
+                        if status == "retrieval_ready"
+                        else "Retrieval already answers a fair share but misses too much to ship on its own — "
+                        "train, and the lift check will compare the two on these rows."
+                        if status == "retrieval_promising"
+                        else "Retrieval alone is not enough here; training may help, or improve retrieval first."
+                    )
                 )
             return passages
         return {

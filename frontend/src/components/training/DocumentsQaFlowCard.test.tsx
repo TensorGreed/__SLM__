@@ -105,6 +105,25 @@ describe('DocumentsQaFlowCard', () => {
         expect(result).toHaveTextContent('2 of 60 passages produced no usable questions.');
     });
 
+    it('says when retrieval was promising and training went ahead', async () => {
+        apiMock.get.mockResolvedValue({ data: ELIGIBLE });
+        jobsState.jobs = [{
+            id: 13, kind: 'documents_qa_flow', project_id: 1, status: 'succeeded',
+            result: {
+                training_pairs: 180, answer_key_rows: 60, passages_used: 60, backend: 'ollama:gemma4:12b',
+                split: { train: 142, val: 17, test: 19, dedup_dropped: 0 }, experiment_id: 41, stopped_reason: null, warnings: [],
+                passages_gate: { status: 'retrieval_promising', score: 0.5526, correct: 8, partial: 5, wrong: 6, judged: 19, judge: 'ollama:gemma4:12b', split: 'test',
+                    retrieval: { k: 3, reranker: null } },
+            },
+        }];
+        render(<DocumentsQaFlowCard projectId={1} />);
+        const gate = await screen.findByTestId('documents-qa-flow-gate');
+        expect(gate).toHaveAttribute('data-status', 'retrieval_promising');
+        expect(gate).toHaveTextContent("(top-3, the sweep's best) already got 8 of 19 fully right but 6 wrong (5 partly; judge score 0.55). Not an assistant on its own yet, so training went ahead");
+        expect(screen.queryByTestId('documents-qa-flow-reroute')).not.toBeInTheDocument();
+        expect(screen.getByTestId('documents-qa-flow-result')).toHaveTextContent('Training run #41 started');
+    });
+
     it('shows the pre-training gate when retrieval already answers, with reroute and train-anyway', async () => {
         apiMock.get.mockResolvedValue({ data: ELIGIBLE });
         apiMock.post.mockResolvedValue({ data: { id: 61 } });

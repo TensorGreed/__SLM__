@@ -995,19 +995,31 @@ runs real CPU inference). ~4 min locally.
   `backend_override` with a fake backend.
   **Pre-training gate** (`passages_check=True` default,
   `train_if_retrieval_ready`): after the split the flow runs the judged
-  base + documents comparison on the test split (`_run_passages_gate` →
-  harness `run_project_comparison(base_only, corpus="documents",
-  split="test")` on a thread; `passages_check_fn` injects it — tests MUST
-  inject or pass `passages_check=False`, the default loads a model) and
-  reads `passage_rag_verdict_service.read_passages_gate` →
-  `passages_gate(...)` (pure: `retrieval_ready` needs retrieval evidence
-  `better`, score ≥ `PASSAGES_GATE_MIN_SCORE` 0.5, correct share ≥
-  `PASSAGES_GATE_MIN_CORRECT_SHARE` 0.4; else `retrieval_weak`;
-  `not_judged` when the comparison has no judge; `not_run`; `error`).
-  `retrieval_ready` stops the flow (`stopped_reason` "Retrieval already
-  answers…", `summary.passages_gate`); the card offers Reroute to RAG /
-  Train anyway. Coach training stage `training:retrieval-ready`
-  (`_retrieval_ready_nudge`, quiet once a run exists / rag_first);
+  base + documents comparison on the test split AS A RETRIEVAL SWEEP
+  (`_run_passages_gate` → harness `run_project_comparison(base_only,
+  corpus="documents", split="test", sweep_retrieval=True)` on a thread;
+  the winner is written to `runtime_config.auto_rag_retrieval` via
+  `apply_retrieval_choice`, so the gate judges the best retrieval the
+  project can serve and a RAG sibling inherits it; `passages_check_fn`
+  injects it — tests MUST inject or pass `passages_check=False`, the
+  default loads a model; the gate dict carries `retrieval` +
+  `retrieval_sweep`). `read_passages_gate` → `passages_gate(...)` (pure,
+  three tiers, never F1): `retrieval_ready` = evidence `better` AND score ≥
+  `PASSAGES_GATE_READY_MIN_SCORE` 0.65 AND correct share ≥ 0.5 AND wrong
+  share ≤ 0.25 (a system wrong a third of the time is not "already
+  answering"); `retrieval_promising` = evidence better AND score ≥ 0.4;
+  else `retrieval_weak`; `not_judged` (no judge) / `not_run` / `error`.
+  Calibration (gemma4:12b judge): legal plain top-3 8/5/6 (0.55) →
+  promising; legal top-3+reranker 12/4/3 (0.74) on project 21's split →
+  ready — but on project 22's split the sweep kept top-3 (0.55 vs 0.53),
+  so sweep wins on 19 rows are noise-level; support-faq best retrieval
+  0/9/12 (0.21) → weak. Fine-tunes on both scored 0–1 correct, so "ready"
+  stops the flow
+  (`stopped_reason` "Retrieval already answers…"), "promising" trains with
+  a warning and lets the judged lift compare. Coach training stage
+  `training:retrieval-ready` (warning, reroute action) /
+  `training:retrieval-promising` (info, "train, then compare"; same
+  action) via `_retrieval_ready_nudge` (quiet once a run exists / rag_first);
   `build_eval_summary` for an untrained non-RAG project returns the
   passages summary with `pretraining_gate` + a "nothing trained yet" message.
 - **Distillation (offline KD)** — `services/distillation/`: slice 1

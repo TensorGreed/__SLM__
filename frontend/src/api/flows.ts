@@ -38,7 +38,10 @@ export interface DocumentsQaFlowResult {
     /** The pre-training gate: what the base model + document passages got
      *  right on the test examples, judged, before any training. */
     passages_gate?: {
-        status: 'retrieval_ready' | 'retrieval_weak' | 'not_judged' | 'not_run' | 'error';
+        status: 'retrieval_ready' | 'retrieval_promising' | 'retrieval_weak' | 'not_judged' | 'not_run' | 'error';
+        /** The retrieval the gate judged (the sweep's winner, now the project's setting). */
+        retrieval?: { k: number; reranker: string | null } | null;
+        retrieval_sweep?: Array<{ label: string; judge_score: number | null; chosen: boolean }> | null;
         reason?: string | null;
         score?: number | null;
         correct?: number;

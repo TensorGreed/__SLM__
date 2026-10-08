@@ -105,7 +105,7 @@ test('golden path (documents): upload → flow card → gate verdict on the card
   expect(job!.status, `flow failed: ${job!.error}`).toBe('succeeded');
   const result = job!.result as { training_pairs: number; passages_gate?: { status: string; judge?: string } ; experiment_id: number | null };
   expect(result.training_pairs).toBeGreaterThanOrEqual(40);
-  expect(['retrieval_ready', 'retrieval_weak']).toContain(result.passages_gate?.status);
+  expect(['retrieval_ready', 'retrieval_promising', 'retrieval_weak']).toContain(result.passages_gate?.status);
 
   // ── 5. The card says what the gate decided ───────────────────────────
   const gate = page.getByTestId('documents-qa-flow-gate');
@@ -117,7 +117,7 @@ test('golden path (documents): upload → flow card → gate verdict on the card
     await expect(page.getByTestId('documents-qa-flow-train-anyway')).toBeVisible();
     expect(result.experiment_id).toBeNull();
   } else {
-    await expect(gate).toContainText('training went ahead');
+    await expect(gate).toContainText('training went ahead');  // promising or weak
     expect(result.experiment_id).not.toBeNull();
     await expect(page.getByTestId('documents-qa-flow-result')).toContainText(`Training run #${result.experiment_id} started`);
   }

@@ -473,6 +473,10 @@ async def run_documents_qa_flow(
             )
             await report(1.0, "Retrieval already answers — stopped before training")
             return summary
+        if gate.get("status") == "retrieval_promising":
+            summary.warnings.append(
+                f"Before training, retrieval alone was promising: {gate.get('reason')}."
+            )
 
     # ── 5: train (the watcher Job runs the lift check afterwards) ─────────
     await report(0.85, "Starting the training run")
@@ -509,8 +513,11 @@ async def _run_passages_gate(
     check_fn: Callable[..., dict[str, Any]] | None,
 ) -> dict[str, Any]:
     """Run the judged base + document-passages comparison on the test split
-    (the auto-RAG harness, on a worker thread) and read the gate. Best-effort:
-    a failure yields ``status="error"`` and the flow trains as before."""
+    as a RETRIEVAL SWEEP (top-3 / top-5, each ± the cross-encoder reranker;
+    the auto-RAG harness on a worker thread), keep the retrieval the judge
+    scores highest as the project's setting, and read the gate from it — the
+    gate judges the best retrieval the project can serve, not plain top-3.
+    Best-effort: a failure yields ``status="error"`` and the flow trains."""
     import asyncio
 
     from app.services.passage_rag_verdict_service import read_passages_gate
@@ -524,7 +531,9 @@ async def _run_passages_gate(
             _sys.path.insert(0, backend_root)
         from scripts.auto_rag_ab import run_project_comparison
 
-        return run_project_comparison(project_id, base_only=True, corpus="documents", split="test", **kwargs)
+        return run_project_comparison(
+            project_id, base_only=True, corpus="documents", split="test", sweep_retrieval=True, **kwargs
+        )
 
     loop = asyncio.get_running_loop()
     state: dict[str, Any] = {"scored": 0, "total": 0, "label": ""}
@@ -547,7 +556,7 @@ async def _run_passages_gate(
     stop = asyncio.Event()
     drainer = loop.create_task(_drain(stop))
     try:
-        await asyncio.to_thread(check_fn or _default_check, progress_callback=_cb)
+        payload = await asyncio.to_thread(check_fn or _default_check, progress_callback=_cb)
     except Exception as exc:  # noqa: BLE001 — the gate never blocks the flow
         _LOG.warning("documents_qa_flow passages check failed: %s", exc)
         return {"status": "error", "reason": f"{exc.__class__.__name__}: {exc}"[:300]}
@@ -557,7 +566,21 @@ async def _run_passages_gate(
             await drainer
         except Exception:  # noqa: BLE001
             pass
-    return read_passages_gate(project_id)
+    gate = read_passages_gate(project_id)
+    # The sweep's winner becomes what the project (and a RAG sibling cloned
+    # from it) serves; the gate says which retrieval it judged.
+    summary = (payload or {}).get("summary") if isinstance(payload, dict) else None
+    retrieval = (summary or {}).get("retrieval") if isinstance(summary, dict) else None
+    if isinstance(retrieval, dict):
+        from app.services.auto_rag_comparison_job_service import apply_retrieval_choice
+
+        gate["retrieval"] = await apply_retrieval_choice(project_id, retrieval) or retrieval
+        sweep = (summary or {}).get("retrieval_sweep")
+        if isinstance(sweep, list):
+            gate["retrieval_sweep"] = [
+                {k: arm.get(k) for k in ("label", "judge_score", "chosen")} for arm in sweep if isinstance(arm, dict)
+            ]
+    return gate
 
 
 async def _save_training_pairs(db: AsyncSession, project_id: int, pairs: list[dict[str, Any]]) -> None:

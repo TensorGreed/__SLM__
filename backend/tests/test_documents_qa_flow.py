@@ -241,7 +241,15 @@ class DocumentsQaFlowTests(unittest.TestCase):
                                                                     "counts": {"correct": correct, "partial": partial, "wrong": wrong}}}},
                 "rows": rows,
             }), encoding="utf-8")
-            return {}
+            # What the harness returns after a sweep: the chosen retrieval
+            # and every arm tried.
+            return {"summary": {
+                "retrieval": {"k": 3, "reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2"},
+                "retrieval_sweep": [
+                    {"label": "top-3", "judge_score": 0.55, "chosen": False},
+                    {"label": "top-3 + reranker ms-marco-MiniLM-L-6-v2", "judge_score": with_score, "chosen": True},
+                ],
+            }}
 
         return _check
 
@@ -259,6 +267,13 @@ class DocumentsQaFlowTests(unittest.TestCase):
         )
         self.assertEqual(summary.passages_gate["status"], "retrieval_ready")
         self.assertEqual(summary.passages_gate["correct"], 12)
+        # The gate judged the sweep's winner, and the project now serves it.
+        self.assertEqual(summary.passages_gate["retrieval"]["k"], 3)
+        self.assertEqual(summary.passages_gate["retrieval"]["reranker"], "cross-encoder/ms-marco-MiniLM-L-6-v2")
+        self.assertTrue(any(arm["chosen"] for arm in summary.passages_gate["retrieval_sweep"]))
+        project = client.get(f"/api/projects/{self.pid}").json()
+        self.assertEqual((project.get("runtime_config") or {}).get("auto_rag_retrieval", {}).get("reranker"),
+                         "cross-encoder/ms-marco-MiniLM-L-6-v2")
         self.assertIn("Retrieval already answers", summary.stopped_reason)
         self.assertIn("12 of 19 right", summary.stopped_reason)
         self.assertIsNone(summary.experiment_id)
@@ -287,6 +302,15 @@ class DocumentsQaFlowTests(unittest.TestCase):
         )
         self.assertEqual(weak.passages_gate["status"], "retrieval_weak")
         self.assertIsNotNone(weak.experiment_id)
+
+        # Promising (a fair share right, too many wrong): trains, and says so.
+        promising = self._run(
+            train=True, reuse_existing=True, start_training=_launcher, passages_check=True,
+            passages_check_fn=self._fake_passages_check(with_score=0.55, correct=8, partial=5, wrong=6),
+        )
+        self.assertEqual(promising.passages_gate["status"], "retrieval_promising")
+        self.assertIsNotNone(promising.experiment_id)
+        self.assertTrue(any("retrieval alone was promising" in w for w in promising.warnings))
 
         def _broken(progress_callback=None):
             raise RuntimeError("no GPU")

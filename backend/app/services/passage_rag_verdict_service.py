@@ -215,51 +215,87 @@ async def passages_vs_finetune(db: AsyncSession, project_id: int) -> dict[str, A
 # ── Pre-training gate ────────────────────────────────────────────────────
 #
 # A documents project can measure "the base model + my passages" BEFORE it
-# trains anything (the same judged comparison, on the test examples). When
-# retrieval alone already answers well, training on generated pairs is the
-# long way round — the gate says so up front instead of after a run.
-PASSAGES_GATE_MIN_SCORE = 0.5          # mean judge score with passages
-PASSAGES_GATE_MIN_CORRECT_SHARE = 0.4  # fully-correct answers / judged rows
+# trains anything (the same judged comparison, on the test examples, run as
+# a retrieval sweep so it judges the best retrieval the project can serve).
+# Three tiers, calibrated on the legal case and the support-faq sample
+# (see slm-docs/docs/workflows/training.md, "the pre-training gate"):
+#
+#   retrieval_ready      retrieval alone is a working assistant: stop, reroute
+#                        (training on generated pairs is the long way round).
+#   retrieval_promising  retrieval already answers a fair share but misses too
+#                        much to ship: train, and let the judged lift compare
+#                        the two on the same rows.
+#   retrieval_weak       retrieval alone is not it: train (or fix retrieval).
+#
+# "Ready" needs ALL of: retrieval's gain over the bare base model beyond row
+# noise, a mean judge score ≥ READY_MIN_SCORE, at least READY_MIN_CORRECT_SHARE
+# fully-correct answers and at most READY_MAX_WRONG_SHARE wrong ones — a
+# system that is wrong a third of the time is not "already answering",
+# however good its mean looks. "Promising" needs the gain beyond noise and a
+# score ≥ PROMISING_MIN_SCORE.
+PASSAGES_GATE_READY_MIN_SCORE = 0.65
+PASSAGES_GATE_READY_MIN_CORRECT_SHARE = 0.5
+PASSAGES_GATE_READY_MAX_WRONG_SHARE = 0.25
+PASSAGES_GATE_PROMISING_MIN_SCORE = 0.4
+# Kept for callers that read the old names.
+PASSAGES_GATE_MIN_SCORE = PASSAGES_GATE_READY_MIN_SCORE
+PASSAGES_GATE_MIN_CORRECT_SHARE = PASSAGES_GATE_READY_MIN_CORRECT_SHARE
 
 
 def passages_gate(passages: dict[str, Any] | None) -> dict[str, Any]:
-    """Pure: ``status`` is ``retrieval_ready`` (reroute now, training is
-    optional), ``retrieval_weak`` (retrieval alone is not enough — train, or
-    fix retrieval), ``not_judged`` (no judge was reachable; F1 can't call
-    it) or ``not_run``. Never looks at F1."""
+    """Pure: ``status`` is ``retrieval_ready``, ``retrieval_promising``,
+    ``retrieval_weak``, ``not_judged`` (no judge was reachable; F1 can't
+    call it) or ``not_run``. Never looks at F1."""
     if passages is None:
         return {"status": "not_run", "reason": "no judged base + passages comparison yet"}
     score = float(passages.get("with_passages") or 0.0)
     counts = passages.get("with_passages_counts") or {}
     judged = sum(int(counts.get(k, 0) or 0) for k in ("correct", "partial", "wrong"))
-    correct_share = (int(counts.get("correct", 0) or 0) / judged) if judged else 0.0
+    correct = int(counts.get("correct", 0) or 0)
+    wrong = int(counts.get("wrong", 0) or 0)
+    correct_share = correct / judged if judged else 0.0
+    wrong_share = wrong / judged if judged else 1.0
     evidence = passages.get("retrieval_evidence") or {}
+    beyond_noise = evidence.get("verdict") == "better"
     ready = (
-        evidence.get("verdict") == "better"
-        and score >= PASSAGES_GATE_MIN_SCORE
-        and correct_share >= PASSAGES_GATE_MIN_CORRECT_SHARE
+        beyond_noise
+        and score >= PASSAGES_GATE_READY_MIN_SCORE
+        and correct_share >= PASSAGES_GATE_READY_MIN_CORRECT_SHARE
+        and wrong_share <= PASSAGES_GATE_READY_MAX_WRONG_SHARE
     )
+    promising = not ready and beyond_noise and score >= PASSAGES_GATE_PROMISING_MIN_SCORE
+    status = "retrieval_ready" if ready else "retrieval_promising" if promising else "retrieval_weak"
     out = {
-        "status": "retrieval_ready" if ready else "retrieval_weak",
+        "status": status,
         "score": round(score, 4),
-        "correct": int(counts.get("correct", 0) or 0),
+        "correct": correct,
         "partial": int(counts.get("partial", 0) or 0),
-        "wrong": int(counts.get("wrong", 0) or 0),
+        "wrong": wrong,
         "judged": judged,
         "judge": passages.get("judge"),
         "split": passages.get("split"),
         "retrieval_evidence": evidence,
-        "thresholds": {"min_score": PASSAGES_GATE_MIN_SCORE, "min_correct_share": PASSAGES_GATE_MIN_CORRECT_SHARE},
+        "thresholds": {
+            "ready_min_score": PASSAGES_GATE_READY_MIN_SCORE,
+            "ready_min_correct_share": PASSAGES_GATE_READY_MIN_CORRECT_SHARE,
+            "ready_max_wrong_share": PASSAGES_GATE_READY_MAX_WRONG_SHARE,
+            "promising_min_score": PASSAGES_GATE_PROMISING_MIN_SCORE,
+        },
     }
     if ready:
         out["reason"] = (
-            f"the base model answering from your passages already gets {out['correct']} of {judged} "
-            f"right (judge score {score:.2f}, beyond noise)"
+            f"the base model answering from your passages already gets {correct} of {judged} right "
+            f"and only {wrong} wrong (judge score {score:.2f}, beyond noise)"
         )
-    elif evidence.get("verdict") != "better":
+    elif not beyond_noise:
         out["reason"] = "retrieval's gain over the bare base model is within noise"
+    elif promising:
+        out["reason"] = (
+            f"retrieval already gets {correct} of {judged} right but {wrong} wrong (judge score {score:.2f}) — "
+            "not yet an assistant on its own; training will be compared against it on the same rows"
+        )
     else:
-        out["reason"] = f"only {out['correct']} of {judged} fully right with passages (judge score {score:.2f})"
+        out["reason"] = f"only {correct} of {judged} fully right with passages (judge score {score:.2f})"
     return out
 
 
