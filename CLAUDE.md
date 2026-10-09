@@ -547,8 +547,17 @@ runs real CPU inference). ~4 min locally.
   it (playground `auto_rag_k` None → project setting; audit block carries
   `k` + `reranker`). Harness `--k / --reranker / --sweep-retrieval`
   (`RETRIEVAL_SWEEP`: top-3, top-5, ± reranker; shared without-RAG arm;
-  `pick_best_retrieval` by judge, ties → cheaper; `summary.retrieval` +
-  `summary.retrieval_sweep`, `auto_rag/retrieval_sweep.json`). Job
+  `pick_best_retrieval(arms, current_retrieval=)` — the incumbent is the
+  project's `runtime_config.auto_rag_retrieval` (read from sqlite in
+  `run_project_comparison`, inserted into the configs if missing) else the
+  first arm; a candidate replaces it only when `paired_difference_evidence`
+  on the per-row judge (or F1) scores says `better`, then highest mean,
+  ties → earlier; arms without records fall back to highest mean. Each
+  sweep arm carries `current` + `vs_current`; `sweep_decision` →
+  `summary.retrieval_decision` {current, chosen, switched, reason}, also
+  on the Job result, the flow gate and the rag_passages summary;
+  `summary.retrieval` + `summary.retrieval_sweep`,
+  `auto_rag/retrieval_sweep.json`). Job
   `sweep_retrieval=True` → `apply_retrieval_choice` writes the winner to
   the project; the sibling auto-check sweeps. Summary card line
   "Retrieval served: …". Tests patch `retrieval_reranker.score_pairs`.

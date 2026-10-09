@@ -421,6 +421,62 @@ class DocumentsCorpusAndJudgeTests(unittest.TestCase):
         self.assertTrue(used)
         self.assertEqual(prompt, "system:Passages: [1] text|user:Q?")
 
+    def _arm(self, label, k, reranker, scores, *, judged=True):
+        """An arm with per-row records scored ``scores`` (judge or f1)."""
+        records = []
+        for i, sc in enumerate(scores):
+            rec = {"question": f"Q{i}?", "reference": "ref", "generated": "g", "f1": sc if not judged else 0.0}
+            if judged:
+                rec["judge"] = {"score": sc, "verdict": "correct" if sc == 1 else "partial" if sc else "wrong", "reason": ""}
+            records.append(rec)
+        mean = sum(scores) / len(scores)
+        return {"label": label, "retrieval": {"k": k, "reranker": reranker}, "records": records,
+                "judge": {"judge": "j"} if judged else None, "judge_score": mean if judged else None,
+                "on_mean_f1": mean, "f1s": scores}
+
+    def test_sweep_keeps_the_incumbent_unless_beaten_beyond_noise(self):
+        base = [1, 0, 1, 0.5, 0, 1, 0, 0.5, 1, 0, 0.5, 1, 0, 0, 1, 0.5, 0, 1, 0]
+        # A couple of rows better, a couple worse: higher mean, within noise.
+        noisy = list(base); noisy[1] = 1; noisy[4] = 0.5; noisy[0] = 0.5; noisy[2] = 0
+        # Many rows better, none worse: beyond noise.
+        clear = [min(1.0, v + 0.5) for v in base]
+        arms = [self._arm("top-3", 3, None, base), self._arm("top-5", 5, None, noisy),
+                self._arm("top-3 + reranker", 3, "default", clear)]
+        best = harness.pick_best_retrieval(arms, current_retrieval={"k": 3, "reranker": None})
+        self.assertEqual(best["label"], "top-3 + reranker")
+        self.assertTrue(arms[0]["is_current"])
+        self.assertEqual(arms[1]["vs_current"]["verdict"], "within_noise")
+        self.assertEqual(arms[2]["vs_current"]["verdict"], "better")
+        decision = harness.sweep_decision(arms, best)
+        self.assertTrue(decision["switched"])
+        self.assertIn("beats top-3 beyond row noise", decision["reason"])
+
+        # Only the noisy candidate: the incumbent stays even with a lower mean.
+        arms = [self._arm("top-3", 3, None, base), self._arm("top-5", 5, None, noisy)]
+        best = harness.pick_best_retrieval(arms, current_retrieval={"k": 3, "reranker": None})
+        self.assertEqual(best["label"], "top-3")
+        decision = harness.sweep_decision(arms, best)
+        self.assertFalse(decision["switched"])
+        self.assertIn("no arm beat it beyond row noise", decision["reason"])
+
+        # The incumbent is the project's setting even when listed later.
+        arms = [self._arm("top-3", 3, None, base), self._arm("top-3 + reranker", 3, "default", clear)]
+        best = harness.pick_best_retrieval(arms, current_retrieval={"k": 3, "reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2"})
+        self.assertTrue(arms[1]["is_current"])
+        self.assertEqual(best["label"], "top-3 + reranker", "a worse candidate never displaces the incumbent")
+
+        # Unjudged arms pair on F1 the same way.
+        arms = [self._arm("top-3", 3, None, base, judged=False), self._arm("top-5", 5, None, clear, judged=False)]
+        self.assertEqual(harness.pick_best_retrieval(arms, current_retrieval=None)["label"], "top-5")
+
+    def test_current_retrieval_is_read_from_runtime_config(self):
+        self.assertIsNone(harness._current_retrieval(None))
+        self.assertIsNone(harness._current_retrieval('{"rag_first": true}'))
+        self.assertEqual(harness._current_retrieval('{"auto_rag_retrieval": {"k": 5, "reranker": "default"}}'),
+                         {"k": 5, "reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2"})
+        self.assertTrue(harness._same_retrieval({"k": 3, "reranker": "default"}, {"k": 3, "reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2"}))
+        self.assertFalse(harness._same_retrieval({"k": 3, "reranker": None}, {"k": 5, "reranker": None}))
+
     def test_judge_annotates_both_arms_and_is_skipped_for_short_answers(self):
         from unittest import mock
 

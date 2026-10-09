@@ -578,8 +578,11 @@ async def _run_passages_gate(
         sweep = (summary or {}).get("retrieval_sweep")
         if isinstance(sweep, list):
             gate["retrieval_sweep"] = [
-                {k: arm.get(k) for k in ("label", "judge_score", "chosen")} for arm in sweep if isinstance(arm, dict)
+                {k: arm.get(k) for k in ("label", "judge_score", "chosen", "current", "vs_current")}
+                for arm in sweep if isinstance(arm, dict)
             ]
+        if isinstance((summary or {}).get("retrieval_decision"), dict):
+            gate["retrieval_decision"] = summary["retrieval_decision"]
     return gate
 
 

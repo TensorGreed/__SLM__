@@ -1110,8 +1110,11 @@ def run_project_comparison(
         )
         exp_row = cur.fetchone()
         project_row = con.execute(
-            "SELECT base_model_name FROM projects WHERE id = ?", (project_id,)
+            "SELECT base_model_name, runtime_config FROM projects WHERE id = ?", (project_id,)
         ).fetchone()
+    # What the project serves today (the sweep's incumbent): a candidate
+    # replaces it only when it wins beyond row noise.
+    current_retrieval = _current_retrieval(project_row["runtime_config"] if project_row else None)
 
     model_dir: Path | None
     if base_only:
@@ -1210,6 +1213,8 @@ def run_project_comparison(
         corpus=corpus,
     )
     configs = list(RETRIEVAL_SWEEP) if sweep_retrieval else [{"k": int(rag_k), "reranker": reranker}]
+    if sweep_retrieval and current_retrieval and not any(_same_retrieval(c, current_retrieval) for c in configs):
+        configs.insert(0, dict(current_retrieval))
     arms: list[dict[str, Any]] = []
     for index, config in enumerate(configs):
         label = retrieval_label(config)
@@ -1246,9 +1251,10 @@ def run_project_comparison(
             "on_mean_f1": statistics.mean(arm_f1s) if arm_f1s else 0.0,
             "judge_score": ((arm_judge or {}).get("with_rag") or {}).get("score"),
         })
-    best = pick_best_retrieval(arms)
+    best = pick_best_retrieval(arms, current_retrieval=current_retrieval if sweep_retrieval else None)
     on_f1s, on_records, judge_summary = best["f1s"], best["records"], best["judge"]
     retrieval_used = best["retrieval"]
+    retrieval_decision = sweep_decision(arms, best) if sweep_retrieval else None
     retrieval_sweep = (
         [
             {
@@ -1258,6 +1264,9 @@ def run_project_comparison(
                 "judge_score": arm["judge_score"],
                 "judge_counts": ((arm["judge"] or {}).get("with_rag") or {}).get("counts"),
                 "chosen": arm is best,
+                "current": bool(arm.get("is_current")),
+                # Paired row evidence vs the incumbent (None for the incumbent).
+                "vs_current": arm.get("vs_current"),
             }
             for arm in arms
         ]
@@ -1266,7 +1275,15 @@ def run_project_comparison(
     )
     if sweep_retrieval:
         for arm in retrieval_sweep or []:
-            print(f"[harness] sweep {arm['label']}: judge={arm['judge_score']} f1={arm['on_mean_f1']}{'  <- chosen' if arm['chosen'] else ''}")
+            vs = arm.get("vs_current") or {}
+            tag = "  <- chosen" if arm["chosen"] else ""
+            if arm.get("current"):
+                tag += "  (current)"
+            elif vs:
+                tag += f"  vs current: {vs.get('verdict')} ({vs.get('better')} better, {vs.get('worse')} worse)"
+            print(f"[harness] sweep {arm['label']}: judge={arm['judge_score']} f1={arm['on_mean_f1']}{tag}")
+        if retrieval_decision:
+            print(f"[harness] retrieval decision: {retrieval_decision['reason']}")
 
     off_mean = statistics.mean(off_f1s) if off_f1s else 0.0
     on_mean = statistics.mean(on_f1s) if on_f1s else 0.0
@@ -1312,6 +1329,7 @@ def run_project_comparison(
             "rag_k": retrieval_used["k"],
             "retrieval": retrieval_used,
             "retrieval_sweep": retrieval_sweep,
+            "retrieval_decision": retrieval_decision,
             "phase_9c_reference_lift_pct": 146.49,
             "judge": judge_summary,
         },
@@ -1357,19 +1375,125 @@ def retrieval_label(config: dict[str, Any]) -> str:
     return f"top-{int(config['k'])}" + (f" + reranker {name.split('/')[-1]}" if name else "")
 
 
-def pick_best_retrieval(arms: list[dict[str, Any]]) -> dict[str, Any]:
-    """The arm the judge scores highest; without a judge, the highest mean
-    F1. Ties keep the earlier (cheaper) arm — strict ``>`` only."""
-    best = arms[0]
-    for arm in arms[1:]:
-        if best.get("judge_score") is not None and arm.get("judge_score") is not None:
-            if arm["judge_score"] > best["judge_score"]:
+def _current_retrieval(runtime_config_raw: Any) -> dict[str, Any] | None:
+    """``{"k", "reranker"}`` from a project's stored ``runtime_config`` JSON
+    (``auto_rag_retrieval``), None when unset."""
+    from app.services.retrieval_reranker import normalize_reranker
+
+    try:
+        cfg = json.loads(runtime_config_raw) if isinstance(runtime_config_raw, str) else (runtime_config_raw or {})
+    except json.JSONDecodeError:
+        return None
+    raw = cfg.get("auto_rag_retrieval") if isinstance(cfg, dict) else None
+    if not isinstance(raw, dict) or not raw.get("k"):
+        return None
+    try:
+        return {"k": max(1, min(10, int(raw["k"]))), "reranker": normalize_reranker(raw.get("reranker"))}
+    except (TypeError, ValueError):
+        return None
+
+
+def _same_retrieval(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
+    from app.services.retrieval_reranker import normalize_reranker
+
+    if not a or not b:
+        return False
+    return int(a.get("k") or 0) == int(b.get("k") or 0) and normalize_reranker(a.get("reranker")) == normalize_reranker(b.get("reranker"))
+
+
+def _arm_row_scores(arm: dict[str, Any]) -> dict[str, float]:
+    """Per-row score keyed by question+reference: the judge's score when the
+    arm was judged, else token F1. Rows the judge couldn't score are left out."""
+    scores: dict[str, float] = {}
+    judged = bool(arm.get("judge"))
+    for rec in arm.get("records") or []:
+        key = f"{rec.get('question', '')}\x00{rec.get('reference', '')}"
+        if judged:
+            judge = rec.get("judge") if isinstance(rec.get("judge"), dict) else None
+            if judge is None or not isinstance(judge.get("score"), (int, float)):
+                continue
+            scores[key] = float(judge["score"])
+        elif isinstance(rec.get("f1"), (int, float)):
+            scores[key] = float(rec["f1"])
+    return scores
+
+
+def _arm_mean(arm: dict[str, Any]) -> float:
+    return float(arm["judge_score"]) if arm.get("judge_score") is not None else float(arm.get("on_mean_f1") or 0.0)
+
+
+def pick_best_retrieval(
+    arms: list[dict[str, Any]], *, current_retrieval: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The sweep's winner, with a noise check.
+
+    The incumbent is the arm matching ``current_retrieval`` (the project's
+    setting), else the first (cheapest) arm. A candidate can replace it only
+    when it beats it BEYOND ROW NOISE on the same rows
+    (``paired_comparison_stats.paired_difference_evidence`` → ``better``);
+    among such candidates the highest mean wins, ties to the earlier one.
+    Every arm gets ``vs_current`` (its paired evidence against the incumbent)
+    and the incumbent ``is_current``. Arms without per-row records (unit
+    tests, older callers) fall back to the plain highest-mean rule.
+    """
+    from app.services.paired_comparison_stats import paired_difference_evidence
+
+    if not arms:
+        raise ValueError("no retrieval arms")
+    incumbent = next((a for a in arms if _same_retrieval(a.get("retrieval"), current_retrieval)), arms[0])
+    for arm in arms:
+        arm["is_current"] = arm is incumbent
+        arm["vs_current"] = None
+    base_scores = _arm_row_scores(incumbent)
+    if not base_scores:
+        best = arms[0]
+        for arm in arms[1:]:
+            if best.get("judge_score") is not None and arm.get("judge_score") is not None:
+                if arm["judge_score"] > best["judge_score"]:
+                    best = arm
+            elif arm.get("judge_score") is not None and best.get("judge_score") is None:
                 best = arm
-        elif arm.get("judge_score") is not None and best.get("judge_score") is None:
-            best = arm
-        elif best.get("judge_score") is None and arm["on_mean_f1"] > best["on_mean_f1"]:
+            elif best.get("judge_score") is None and arm["on_mean_f1"] > best["on_mean_f1"]:
+                best = arm
+        return best
+
+    best = incumbent
+    for arm in arms:
+        if arm is incumbent:
+            continue
+        scores = _arm_row_scores(arm)
+        keys = [k for k in base_scores if k in scores]
+        evidence = paired_difference_evidence([base_scores[k] for k in keys], [scores[k] for k in keys])
+        arm["vs_current"] = {k: evidence.get(k) for k in ("verdict", "n", "better", "worse", "same", "mean_diff", "ci_low", "ci_high")}
+        if evidence.get("verdict") == "better" and _arm_mean(arm) > _arm_mean(best):
             best = arm
     return best
+
+
+def sweep_decision(arms: list[dict[str, Any]], best: dict[str, Any]) -> dict[str, Any]:
+    """Why the sweep kept or switched the retrieval, for the cache + UI."""
+    incumbent = next((a for a in arms if a.get("is_current")), arms[0])
+    switched = best is not incumbent
+    if switched:
+        vs = best.get("vs_current") or {}
+        reason = (
+            f"switched to {best['label']}: beats {incumbent['label']} beyond row noise "
+            f"({vs.get('better')} rows better, {vs.get('worse')} worse)"
+        )
+    else:
+        contenders = [a for a in arms if a is not incumbent]
+        if not contenders:
+            reason = f"kept {incumbent['label']}: nothing else tried"
+        elif any((a.get("vs_current") or {}).get("verdict") == "better" for a in contenders):
+            reason = f"kept {incumbent['label']}: no arm beat it beyond row noise with a higher mean"
+        else:
+            reason = f"kept {incumbent['label']}: no arm beat it beyond row noise"
+    return {
+        "current": incumbent["retrieval"],
+        "chosen": best["retrieval"],
+        "switched": switched,
+        "reason": reason,
+    }
 
 
 def comparison_file_name(*, base_only: bool, corpus: str = "qa") -> str:

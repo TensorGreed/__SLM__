@@ -179,6 +179,7 @@ async def start_auto_rag_comparison_job(
             "split": split,
             "retrieval": summary.get("retrieval"),
             "retrieval_sweep": summary.get("retrieval_sweep"),
+            "retrieval_decision": summary.get("retrieval_decision"),
             "retrieval_applied": retrieval_applied,
             "base_model": payload.get("base_model"),
             "experiment_id": payload.get("experiment_id"),

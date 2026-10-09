@@ -312,12 +312,24 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                 <p className="eval-summary__judge" data-testid="eval-summary-retrieval">
                     Retrieval served: top-{summary.retrieval.k}
                     {summary.retrieval.reranker ? ` + reranker ${summary.retrieval.reranker.split('/').pop()}` : ' (BM25 only)'}
-                    {summary.retrieval_sweep && summary.retrieval_sweep.length > 1
-                        ? ` — chosen by the judge over ${summary.retrieval_sweep
-                            .filter((arm) => !arm.chosen)
-                            .map((arm) => `${arm.label} (${arm.judge_score != null ? arm.judge_score.toFixed(2) : '—'})`)
-                            .join(', ')}.`
-                        : '.'}
+                    {summary.retrieval_decision
+                        ? ` — ${summary.retrieval_decision.reason}.`
+                        : summary.retrieval_sweep && summary.retrieval_sweep.length > 1
+                            ? ` — chosen by the judge over ${summary.retrieval_sweep
+                                .filter((arm) => !arm.chosen)
+                                .map((arm) => `${arm.label} (${arm.judge_score != null ? arm.judge_score.toFixed(2) : '—'})`)
+                                .join(', ')}.`
+                            : '.'}
+                    {summary.retrieval_sweep && summary.retrieval_sweep.some((arm) => arm.vs_current) && (
+                        <span className="eval-summary__sweep-arms" data-testid="eval-summary-sweep-arms">
+                            {' '}Tried: {summary.retrieval_sweep.map((arm) => {
+                                const score = arm.judge_score != null ? arm.judge_score.toFixed(2) : '—';
+                                if (arm.current) return `${arm.label} ${score} (current)`;
+                                const vs = arm.vs_current;
+                                return `${arm.label} ${score}${vs ? ` (${vs.verdict === 'better' ? 'beats current' : vs.verdict === 'worse' ? 'loses to current' : vs.verdict === 'too_few_rows' ? 'too few rows' : 'within noise'}: ${vs.better} better, ${vs.worse} worse)` : ''}`;
+                            }).join(' · ')}.
+                        </span>
+                    )}
                 </p>
             )}
             {summary.judge && (

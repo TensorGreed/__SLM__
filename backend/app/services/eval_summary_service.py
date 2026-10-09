@@ -421,5 +421,6 @@ def passages_summary(project_id: int) -> dict[str, Any] | None:
         # config tried with the judge's score — why this one is served.
         "retrieval": summary.get("retrieval"),
         "retrieval_sweep": summary.get("retrieval_sweep"),
+        "retrieval_decision": summary.get("retrieval_decision"),
     }
 

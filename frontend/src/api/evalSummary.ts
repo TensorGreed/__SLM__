@@ -65,7 +65,17 @@ export interface EvalSummary {
     retrieval?: { k: number; reranker: string | null } | null;
     /** rag_passages after a retrieval sweep: every config tried with the
      *  judge's score; `chosen` is the one served. */
-    retrieval_sweep?: Array<{ label: string; judge_score: number | null; on_mean_f1: number; chosen: boolean }> | null;
+    retrieval_sweep?: Array<{
+        label: string;
+        judge_score: number | null;
+        on_mean_f1: number;
+        chosen: boolean;
+        current?: boolean;
+        /** Paired row evidence vs the incumbent retrieval (null for the incumbent). */
+        vs_current?: { verdict: string; n: number; better: number; worse: number; same: number } | null;
+    }> | null;
+    /** Why the sweep kept or switched the served retrieval. */
+    retrieval_decision?: { current: { k: number; reranker: string | null }; chosen: { k: number; reranker: string | null }; switched: boolean; reason: string } | null;
     verdict: EvalVerdict;
     message?: string | null;
     headline: EvalSummaryHeadline | null;
