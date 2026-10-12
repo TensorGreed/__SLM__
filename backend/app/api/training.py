@@ -310,6 +310,10 @@ class PlaygroundChatRequest(BaseModel):
     # runtime_config.auto_rag_corpus, else passages when they beat the
     # fine-tuned run, else "auto".
     auto_rag_corpus: Literal["qa", "documents", "auto"] | None = None
+    # Per-request reranker override: "none" = BM25 only, "default" = the
+    # built-in cross-encoder, or a model id. Unset → the project's setting.
+    # Lets the playground try "the other retrieval" without changing it.
+    auto_rag_reranker: str | None = None
     # provider="experiment": chat with this completed run's checkpoint,
     # loaded in-process (local_chat_service).
     experiment_id: int | None = Field(default=None, ge=1)
@@ -3457,6 +3461,16 @@ async def playground_provider_catalog(
     }
 
 
+def _retrieval_source(project: Any) -> str:
+    from app.services.auto_rag_service import RETRIEVAL_SETTINGS_KEY
+
+    cfg = getattr(project, "runtime_config", None)
+    raw = cfg.get(RETRIEVAL_SETTINGS_KEY) if isinstance(cfg, dict) else None
+    if isinstance(raw, dict) and raw:
+        return str(raw.get("source") or "manual")
+    return "default"
+
+
 async def _apply_playground_auto_rag(
     db: AsyncSession,
     project_id: int,
@@ -3478,13 +3492,18 @@ async def _apply_playground_auto_rag(
             from app.services.auto_rag_service import build_preamble_from_query
             from app.services.passage_rag_verdict_service import resolve_playground_corpus
 
+            project = await db.get(Project, project_id)
             corpus, corpus_reason = req.auto_rag_corpus or "auto", "request"
-            if req.auto_rag_corpus is None:
-                project = await db.get(Project, project_id)
-                if project is not None:
-                    corpus, corpus_reason = await resolve_playground_corpus(db, project)
+            if req.auto_rag_corpus is None and project is not None:
+                corpus, corpus_reason = await resolve_playground_corpus(db, project)
+            reranker_override = None
+            if req.auto_rag_reranker is not None:
+                from app.services.retrieval_reranker import normalize_reranker
+
+                reranker_override = {"reranker": normalize_reranker(req.auto_rag_reranker)}
             preamble = await build_preamble_from_query(
-                db, project_id, query_text, k=req.auto_rag_k, corpus=corpus
+                db, project_id, query_text, k=req.auto_rag_k, corpus=corpus,
+                reranker_override=reranker_override,
             )
             if preamble is None:
                 auto_rag_block["skip_reason"] = "recipe_or_index_ineligible"
@@ -3516,6 +3535,13 @@ async def _apply_playground_auto_rag(
                     "applied": True,
                     "k": (preamble.get("retrieval") or {}).get("k", req.auto_rag_k),
                     "reranker": (preamble.get("retrieval") or {}).get("reranker"),
+                    # Where that retrieval came from: "request" (an override
+                    # on this call), "pinned", "retrieval_sweep" or "default".
+                    "retrieval_source": (
+                        "request"
+                        if req.auto_rag_reranker is not None or req.auto_rag_k is not None
+                        else _retrieval_source(project)
+                    ),
                     "query": query_text,
                     "retrieved": preamble["retrieved"],
                     "preamble_inserted_at": insert_at,

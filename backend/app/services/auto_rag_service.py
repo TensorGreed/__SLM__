@@ -593,6 +593,7 @@ async def build_preamble_from_query(
     *,
     k: int | None = None,
     corpus: str = "auto",
+    reranker_override: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Phase 9b inference-time helper. Returns
     ``{preamble_text, retrieved}`` or ``None`` when auto-RAG should
@@ -617,6 +618,10 @@ async def build_preamble_from_query(
     if k is None:
         k = settings_used["k"]
     reranker = settings_used["reranker"]
+    # ``reranker_override={"reranker": ...}`` (the playground's "try the
+    # other retrieval") replaces the project's reranker for this call only.
+    if reranker_override is not None and "reranker" in reranker_override:
+        reranker = reranker_override["reranker"]
     # ``corpus``: "qa" (Q&A-pair index, recipe-gated), "documents" (the
     # project's document passages) or "auto" — Q&A pairs when the recipe
     # has them, otherwise document passages.

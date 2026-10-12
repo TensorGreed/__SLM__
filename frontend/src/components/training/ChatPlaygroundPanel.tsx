@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import api from '../../api/client';
 import { useProjectStore } from '../../stores/projectStore';
+import { toast } from '../../stores/toastStore';
 import './ChatPlaygroundPanel.css';
 
 type PlaygroundProvider = 'openai_compatible' | 'llama_cpp' | 'mock' | 'experiment';
@@ -55,6 +56,21 @@ interface PlaygroundMessageProvenance {
   ragFirstActive: boolean;
   /** "documents" when grounded in document passages, "qa" for Q&A pairs. */
   ragCorpus?: string | null;
+  /** The retrieval that answered: top-k, reranker (null = BM25 only) and
+   *  where the setting came from — "pinned", "retrieval_sweep", "default"
+   *  or "request" (an override on this call). */
+  retrievalK?: number | null;
+  retrievalReranker?: string | null;
+  retrievalSource?: string | null;
+}
+
+/** "Compare retrievals": the same prompt answered with the other retrieval
+ *  (reranker on ↔ off), shown beside the main reply before pinning. */
+interface PlaygroundRetrievalComparison {
+  status: 'loading' | 'ready' | 'error';
+  content?: string;
+  provenance?: PlaygroundMessageProvenance;
+  error?: string;
 }
 
 interface PlaygroundMessage {
@@ -62,6 +78,7 @@ interface PlaygroundMessage {
   content: string;
   createdAt: number;
   provenance?: PlaygroundMessageProvenance;
+  comparison?: PlaygroundRetrievalComparison;
 }
 
 interface PlaygroundModelOption {
@@ -134,6 +151,8 @@ interface PlaygroundChatAutoRagBlock {
   skip_reason?: string | null;
   preamble_inserted_at?: number;
   corpus?: string;
+  reranker?: string | null;
+  retrieval_source?: string;
 }
 
 interface PlaygroundChatResponse {
@@ -287,7 +306,26 @@ function _buildProvenance(
     ragSkipReason: autoRag.skip_reason ? String(autoRag.skip_reason) : null,
     ragFirstActive,
     ragCorpus: autoRag.corpus ? String(autoRag.corpus) : null,
+    retrievalK: Number.isFinite(Number(autoRag.k)) && autoRag.k != null ? Number(autoRag.k) : null,
+    retrievalReranker: typeof autoRag.reranker === 'string' && autoRag.reranker ? autoRag.reranker : null,
+    retrievalSource: typeof autoRag.retrieval_source === 'string' ? autoRag.retrieval_source : null,
   };
+}
+
+/** "top-3 + reranker ms-marco-MiniLM-L-6-v2 · pinned" */
+function retrievalChipText(p: Pick<PlaygroundMessageProvenance, 'retrievalK' | 'retrievalReranker' | 'retrievalSource'>): string | null {
+  if (p.retrievalK == null) return null;
+  const base = `top-${p.retrievalK}${p.retrievalReranker ? ` + reranker ${p.retrievalReranker.split('/').pop()}` : ' (BM25 only)'}`;
+  const source = p.retrievalSource === 'pinned'
+    ? 'pinned'
+    : p.retrievalSource === 'retrieval_sweep'
+      ? 'chosen by the sweep'
+      : p.retrievalSource === 'request'
+        ? 'this reply only'
+        : p.retrievalSource === 'default'
+          ? 'default'
+          : null;
+  return source ? `${base} · ${source}` : base;
 }
 
 const DEFAULT_API_URL = 'http://localhost:11434/v1/chat/completions';
@@ -354,6 +392,9 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
   // documents and cite them. On by default once an index exists.
   const [docIndex, setDocIndex] = useState<{ available: boolean; passages: number | null } | null>(null);
   const [groundInDocs, setGroundInDocs] = useState(false);
+  // "Compare retrievals": after each reply, ask the same prompt again with
+  // the other retrieval (reranker on ↔ off) and show both before pinning.
+  const [compareRetrievals, setCompareRetrievals] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState('');
   const selectedRun = runs.find((run) => String(run.id) === selectedRunId) || null;
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
@@ -699,6 +740,48 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     await saveFeedback(rating);
   };
 
+  /** Ask the same prompt with the other retrieval and attach the answer to
+   *  the assistant message created at ``createdAt``. Non-streaming, not
+   *  saved to the session; never throws into the main send path. */
+  const fetchRetrievalComparison = async (
+    payload: Record<string, unknown>,
+    createdAt: number,
+    provenance: PlaygroundMessageProvenance,
+  ) => {
+    const otherReranker = provenance.retrievalReranker ? 'none' : 'default';
+    setMessages((prev) => prev.map((m) => (m.createdAt === createdAt && m.role === 'assistant'
+      ? { ...m, comparison: { status: 'loading' } }
+      : m)));
+    try {
+      const res = await api.post<PlaygroundChatResponse>(`/projects/${projectId}/training/playground/chat`, {
+        ...payload,
+        session_id: undefined,
+        save_history: false,
+        auto_rag: true,
+        auto_rag_reranker: otherReranker,
+      });
+      const content = String(res.data?.reply || '').trim();
+      const altProvenance = _buildProvenance(res.data || {});
+      setMessages((prev) => prev.map((m) => (m.createdAt === createdAt && m.role === 'assistant'
+        ? { ...m, comparison: { status: 'ready', content, provenance: altProvenance } }
+        : m)));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'The comparison request failed.';
+      setMessages((prev) => prev.map((m) => (m.createdAt === createdAt && m.role === 'assistant'
+        ? { ...m, comparison: { status: 'error', error: message } }
+        : m)));
+    }
+  };
+
+  const pinRetrieval = async (k: number, reranker: string | null) => {
+    try {
+      await api.put(`/projects/${projectId}/auto-rag/retrieval`, { k, reranker });
+      toast.info(`Pinned top-${k}${reranker ? ' + reranker' : ' (BM25 only)'} — every reply and comparison uses it from now on.`, 4000);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not pin the retrieval.', 4000);
+    }
+  };
+
   const sendMessageNonStreaming = async (
     payload: Record<string, unknown>,
     fallbackModel: string,
@@ -711,15 +794,19 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
       return;
     }
     const provenance = _buildProvenance(res.data || {});
+    const createdAt = Date.now();
     setMessages((prev) => [
       ...prev,
       {
         role: 'assistant',
         content: reply,
-        createdAt: Date.now(),
+        createdAt,
         provenance,
       },
     ]);
+    if (compareRetrievals && provenance.ragApplied && provenance.retrievalK != null) {
+      void fetchRetrievalComparison(payload, createdAt, provenance);
+    }
     setLastMeta({
       provider: String(res.data?.resolved_provider || res.data?.provider || fallbackProvider),
       modelName: String(res.data?.requested_model_name || res.data?.model_name || fallbackModel),
@@ -789,15 +876,19 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
             setStreamingReply('');
             if (reply) {
               const provenance = _buildProvenance(parsed);
+              const createdAt = Date.now();
               setMessages((prev) => [
                 ...prev,
                 {
                   role: 'assistant',
                   content: reply,
-                  createdAt: Date.now(),
+                  createdAt,
                   provenance,
                 },
               ]);
+              if (compareRetrievals && provenance.ragApplied && provenance.retrievalK != null) {
+                void fetchRetrievalComparison(payload, createdAt, provenance);
+              }
             } else {
               setError('Playground returned an empty assistant reply.');
             }
@@ -1075,6 +1166,16 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
             {docIndex.passages ? ` (${docIndex.passages} passages)` : ''} — cites sources
           </label>
         )}
+        {groundInDocs && (
+          <label className="playground-toggle" data-testid="playground-compare-retrievals" title="After each reply, ask the same question again with the other retrieval (reranker on ↔ off) and show both answers side by side, with a Pin on each.">
+            <input
+              type="checkbox"
+              checked={compareRetrievals}
+              onChange={(e) => setCompareRetrievals(e.target.checked)}
+            />
+            Compare retrievals (reranker on vs off) before pinning
+          </label>
+        )}
       </div>
 
       {provider === 'openai_compatible' && (
@@ -1178,6 +1279,14 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
                     provenance={message.provenance}
                     sessionAvgLatencyMs={sessionAvgLatencyMs}
                     messageKey={`${message.role}-${message.createdAt}`}
+                  />
+                ) : null}
+                {message.role === 'assistant' && message.comparison && message.provenance ? (
+                  <RetrievalComparisonBlock
+                    main={{ content: message.content, provenance: message.provenance }}
+                    comparison={message.comparison}
+                    messageKey={`${message.role}-${message.createdAt}`}
+                    onPin={(k, reranker) => void pinRetrieval(k, reranker)}
                   />
                 ) : null}
               </div>
@@ -1364,6 +1473,15 @@ function MessageProvenanceFooter({
             {latencyDelta ? <small> ({latencyDelta.label})</small> : null}
           </span>
         ) : null}
+        {retrievalChipText(provenance) ? (
+          <span
+            className="playground-message__provenance-chip playground-message__provenance-chip--retrieval"
+            data-testid={`playground-provenance-${messageKey}-retrieval`}
+            title="The retrieval setting that answered this reply"
+          >
+            retrieval: {retrievalChipText(provenance)}
+          </span>
+        ) : null}
         {hasRagBlock ? (
           <button
             type="button"
@@ -1410,3 +1528,57 @@ function MessageProvenanceFooter({
     </div>
   );
 }
+
+
+interface RetrievalComparisonBlockProps {
+  main: { content: string; provenance: PlaygroundMessageProvenance };
+  comparison: PlaygroundRetrievalComparison;
+  messageKey: string;
+  onPin: (k: number, reranker: string | null) => void;
+}
+
+/** Two answers to the same prompt, one per retrieval, with a Pin on each. */
+function RetrievalComparisonBlock({ main, comparison, messageKey, onPin }: RetrievalComparisonBlockProps) {
+  const column = (
+    label: string,
+    content: string | undefined,
+    provenance: PlaygroundMessageProvenance | undefined,
+    testId: string,
+  ) => (
+    <div className="playground-compare__column" data-testid={testId}>
+      <div className="playground-compare__head">
+        <strong>{label}</strong>
+        {provenance ? <span className="playground-compare__setting"> {retrievalChipText(provenance)}</span> : null}
+        {provenance?.latencyMs != null ? <small> · {provenance.latencyMs.toFixed(0)} ms</small> : null}
+        {provenance && provenance.ragHits.length > 0 ? <small> · {provenance.ragHits.length} passage{provenance.ragHits.length === 1 ? '' : 's'}</small> : null}
+      </div>
+      <div className="playground-compare__content">{content ?? ''}</div>
+      {provenance && provenance.retrievalK != null ? (
+        <button
+          type="button"
+          className="btn btn-secondary playground-compare__pin"
+          onClick={() => onPin(provenance.retrievalK as number, provenance.retrievalReranker ?? null)}
+          data-testid={`${testId}-pin`}
+        >
+          Pin this retrieval
+        </button>
+      ) : null}
+    </div>
+  );
+  return (
+    <div className="playground-compare" data-testid={`playground-compare-${messageKey}`}>
+      <div className="playground-compare__title">
+        Same question, two retrievals — which answer is right? Pin the one you trust.
+        {comparison.status === 'loading' ? <small> (asking with the other retrieval…)</small> : null}
+        {comparison.status === 'error' ? <small className="playground-compare__error"> comparison failed: {comparison.error}</small> : null}
+      </div>
+      <div className="playground-compare__columns">
+        {column('A · this reply', main.content, main.provenance, `playground-compare-${messageKey}-a`)}
+        {comparison.status === 'ready'
+          ? column('B · the other retrieval', comparison.content, comparison.provenance, `playground-compare-${messageKey}-b`)
+          : null}
+      </div>
+    </div>
+  );
+}
+

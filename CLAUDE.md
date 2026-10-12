@@ -562,7 +562,15 @@ runs real CPU inference). ~4 min locally.
   returns `kept_pinned` and never overwrites a pin), `DELETE` unpins; the
   comparison GET carries `retrieval_setting` {k, reranker, source, pinned};
   the panel's documents card renders the sweep table with Pin / Unpin
-  (`onPin` / `onUnpin` props on `ModelComparisonCard`). Job
+  (`onPin` / `onUnpin` props on `ModelComparisonCard`).
+  Playground: the audit block carries `retrieval_source` (`request` when
+  `auto_rag_k`/`auto_rag_reranker` were sent, else the setting's source);
+  request `auto_rag_reranker` (`none`/`default`/model id) overrides the
+  reranker for one call (`build_preamble_from_query(reranker_override=)`).
+  `ChatPlaygroundPanel`: retrieval chip per reply (`retrievalChipText`),
+  "Compare retrievals" toggle → `fetchRetrievalComparison` re-asks with the
+  other reranker (unsaved) and `RetrievalComparisonBlock` shows A/B with
+  "Pin this retrieval" (PUT /auto-rag/retrieval). Job
   `sweep_retrieval=True` → `apply_retrieval_choice` writes the winner to
   the project; the sibling auto-check sweeps. Summary card line
   "Retrieval served: …". Tests patch `retrieval_reranker.score_pairs`.

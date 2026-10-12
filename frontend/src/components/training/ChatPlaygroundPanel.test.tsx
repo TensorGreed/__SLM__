@@ -340,4 +340,59 @@ describe('ChatPlaygroundPanel', () => {
     await userEvent.setup().click(chip);
     expect(screen.getByTestId(/playground-provenance-assistant-\d+-cite-1/).textContent).toContain('[1] manual.pdf · passage 3');
   });
+
+  it('names the retrieval that answered, and compares against the other retrieval before pinning', async () => {
+    const baseGet = apiMock.get.getMockImplementation();
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/auto-rag/documents')) {
+        return { data: { available: true, passages: 467 } };
+      }
+      return baseGet ? baseGet(url) : { data: {} };
+    });
+    const user = userEvent.setup();
+    const calls: Array<Record<string, unknown>> = [];
+    apiMock.post.mockImplementation(async (url: string, body?: Record<string, unknown>) => {
+      if (url.includes('/training/playground/chat') && !url.includes('/stream')) {
+        calls.push(body || {});
+        const other = body?.auto_rag_reranker != null;
+        return {
+          data: {
+            reply: other ? 'B: the head of a government institution retains the record.' : 'A: the applicant keeps a copy.',
+            provider: 'experiment',
+            latency_ms: other ? 2400 : 2100,
+            auto_rag: {
+              applied: true, corpus: 'documents', k: 3,
+              reranker: other ? 'cross-encoder/ms-marco-MiniLM-L-6-v2' : null,
+              retrieval_source: other ? 'request' : 'retrieval_sweep',
+              retrieved: [{ row_id: '1:4', score: 8.0, payload: { text: 'passage', source_doc: 'P-21.html', chunk_id: 4 } }],
+            },
+          },
+        };
+      }
+      return { data: {} };
+    });
+    apiMock.put.mockResolvedValue({ data: { k: 3, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2', source: 'pinned', pinned: true } });
+    render(<ChatPlaygroundPanel projectId={21} />);
+    await user.click(screen.getByRole('checkbox', { name: /Stream responses/i }));
+    await screen.findByTestId('playground-ground-docs');
+    await user.click(within(screen.getByTestId('playground-compare-retrievals')).getByRole('checkbox'));
+    const textarea = await screen.findByPlaceholderText(/Write your prompt/i);
+    await user.type(textarea, 'Who must retain a record?');
+    await user.click(screen.getByRole('button', { name: /^Send$/i }));
+
+    // The reply names its retrieval and where the setting came from.
+    const chip = await screen.findByTestId(/playground-provenance-assistant-\d+-retrieval/);
+    expect(chip.textContent).toBe('retrieval: top-3 (BM25 only) · chosen by the sweep');
+    // The comparison asked again with the other retrieval, unsaved.
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1]).toEqual(expect.objectContaining({ auto_rag_reranker: 'default', save_history: false, auto_rag: true }));
+    expect(calls[1].session_id).toBeUndefined();
+    const columnB = await screen.findByTestId(/playground-compare-assistant-\d+-b$/);
+    expect(columnB.textContent).toContain('B: the head of a government institution retains the record.');
+    expect(columnB.textContent).toContain('top-3 + reranker ms-marco-MiniLM-L-6-v2 · this reply only');
+    expect(screen.getByTestId(/playground-compare-assistant-\d+-a$/).textContent).toContain('A: the applicant keeps a copy.');
+    // Pin B's retrieval.
+    await user.click(within(columnB).getByRole('button', { name: /Pin this retrieval/ }));
+    await waitFor(() => expect(apiMock.put).toHaveBeenCalledWith('/projects/21/auto-rag/retrieval', { k: 3, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2' }));
+  });
 });
