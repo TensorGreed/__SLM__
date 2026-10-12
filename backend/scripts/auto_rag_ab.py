@@ -1251,7 +1251,15 @@ def run_project_comparison(
             "on_mean_f1": statistics.mean(arm_f1s) if arm_f1s else 0.0,
             "judge_score": ((arm_judge or {}).get("with_rag") or {}).get("score"),
         })
-    best = pick_best_retrieval(arms, current_retrieval=current_retrieval if sweep_retrieval else None)
+    # What users chose head-to-head in the playground: the sweep's tie-break.
+    user_preference = None
+    if sweep_retrieval:
+        from app.services.retrieval_decisions_service import project_preference
+
+        user_preference = project_preference(project_id)
+    best = pick_best_retrieval(
+        arms, current_retrieval=current_retrieval if sweep_retrieval else None, user_preference=user_preference
+    )
     on_f1s, on_records, judge_summary = best["f1s"], best["records"], best["judge"]
     retrieval_used = best["retrieval"]
     retrieval_decision = sweep_decision(arms, best) if sweep_retrieval else None
@@ -1267,6 +1275,9 @@ def run_project_comparison(
                 "current": bool(arm.get("is_current")),
                 # Paired row evidence vs the incumbent (None for the incumbent).
                 "vs_current": arm.get("vs_current"),
+                # Head-to-head pins by users ({offered, chosen, share}), if any.
+                "user_choices": arm.get("user_choices"),
+                "user_preferred": bool(arm.get("user_preferred")),
             }
             for arm in arms
         ]
@@ -1423,7 +1434,10 @@ def _arm_mean(arm: dict[str, Any]) -> float:
 
 
 def pick_best_retrieval(
-    arms: list[dict[str, Any]], *, current_retrieval: dict[str, Any] | None = None
+    arms: list[dict[str, Any]],
+    *,
+    current_retrieval: dict[str, Any] | None = None,
+    user_preference: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The sweep's winner, with a noise check.
 
@@ -1435,15 +1449,25 @@ def pick_best_retrieval(
     Every arm gets ``vs_current`` (its paired evidence against the incumbent)
     and the incumbent ``is_current``. Arms without per-row records (unit
     tests, older callers) fall back to the plain highest-mean rule.
+
+    ``user_preference`` (``retrieval_decisions_service.preference_tally``)
+    breaks ties the judge can't: an arm WITHIN NOISE of the incumbent that
+    users chose over it head-to-head (≥ ``MIN_CHOICES_FOR_PREFERENCE`` pins,
+    a higher share) replaces it; the judge still decides anything beyond
+    noise, and a worse-beyond-noise arm never wins on clicks.
     """
     from app.services.paired_comparison_stats import paired_difference_evidence
+    from app.services.retrieval_decisions_service import preferred_over, retrieval_key
 
     if not arms:
         raise ValueError("no retrieval arms")
     incumbent = next((a for a in arms if _same_retrieval(a.get("retrieval"), current_retrieval)), arms[0])
+    tally = user_preference or {}
     for arm in arms:
         arm["is_current"] = arm is incumbent
         arm["vs_current"] = None
+        arm["user_choices"] = tally.get(retrieval_key(arm.get("retrieval"))) or None
+        arm["user_preferred"] = False
     base_scores = _arm_row_scores(incumbent)
     if not base_scores:
         best = arms[0]
@@ -1467,6 +1491,17 @@ def pick_best_retrieval(
         arm["vs_current"] = {k: evidence.get(k) for k in ("verdict", "n", "better", "worse", "same", "mean_diff", "ci_low", "ci_high")}
         if evidence.get("verdict") == "better" and _arm_mean(arm) > _arm_mean(best):
             best = arm
+    if best is incumbent and tally:
+        # Nothing beat the incumbent on the judge; let users' head-to-head
+        # pins break a within-noise tie.
+        for arm in arms:
+            if arm is incumbent or (arm.get("vs_current") or {}).get("verdict") != "within_noise":
+                continue
+            if preferred_over(tally, arm["retrieval"], incumbent["retrieval"]) and (
+                best is incumbent or float((arm.get("user_choices") or {}).get("share") or 0) > float((best.get("user_choices") or {}).get("share") or 0)
+            ):
+                best = arm
+                arm["user_preferred"] = True
     return best
 
 
@@ -1474,7 +1509,13 @@ def sweep_decision(arms: list[dict[str, Any]], best: dict[str, Any]) -> dict[str
     """Why the sweep kept or switched the retrieval, for the cache + UI."""
     incumbent = next((a for a in arms if a.get("is_current")), arms[0])
     switched = best is not incumbent
-    if switched:
+    if switched and best.get("user_preferred"):
+        choices = best.get("user_choices") or {}
+        reason = (
+            f"switched to {best['label']}: within noise of {incumbent['label']} on the judge, but users "
+            f"chose it {choices.get('chosen')} of {choices.get('offered')} times head-to-head"
+        )
+    elif switched:
         vs = best.get("vs_current") or {}
         reason = (
             f"switched to {best['label']}: beats {incumbent['label']} beyond row noise "

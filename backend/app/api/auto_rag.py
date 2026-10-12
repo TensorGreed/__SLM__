@@ -281,7 +281,17 @@ async def get_auto_rag_comparison(
         # What the project serves now (top-k + reranker) and where it came
         # from: "pinned" by the user, "retrieval_sweep", or the defaults.
         "retrieval_setting": _retrieval_setting(project),
+        # What users chose when they compared retrievals head-to-head in the
+        # playground (retrieval_decisions_service): a tie-break for the sweep.
+        "user_preference": _user_preference(project_id),
     }
+
+
+def _user_preference(project_id: int) -> dict[str, Any]:
+    from app.services.retrieval_decisions_service import list_decisions, preference_tally
+
+    decisions = list_decisions(project_id)
+    return {"decisions": len(decisions), "tally": list(preference_tally(decisions).values())}
 
 
 def _retrieval_setting(project: Project) -> dict[str, Any]:
@@ -320,6 +330,59 @@ async def pin_retrieval_setting(
     await db.commit()
     await db.refresh(project)
     return _retrieval_setting(project)
+
+
+class RetrievalCandidate(BaseModel):
+    retrieval: RetrievalSettingRequest
+    reply_excerpt: str | None = Field(None, max_length=2000)
+    latency_ms: float | None = None
+    passages: int | None = None
+
+
+class RetrievalDecisionRequest(BaseModel):
+    question: str = Field(..., max_length=2000)
+    candidates: list[RetrievalCandidate] = Field(..., min_length=2, max_length=6)
+    pinned: RetrievalSettingRequest
+    source: str = Field("playground_compare", max_length=64)
+
+
+@router.post("/retrieval/decisions", status_code=201)
+async def record_retrieval_decision(
+    project_id: int,
+    data: RetrievalDecisionRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Record which retrieval the user pinned after comparing answers to one
+    question (the playground's A/B). Appended to the project's
+    pin_decisions.jsonl; the sweep uses the tally as a tie-break."""
+    from app.services.retrieval_decisions_service import record_decision
+
+    if await db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    try:
+        entry = record_decision(
+            project_id,
+            question=data.question,
+            candidates=[c.model_dump() for c in data.candidates],
+            pinned=data.pinned.model_dump(),
+            source=data.source,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"recorded": entry, "user_preference": _user_preference(project_id)}
+
+
+@router.get("/retrieval/decisions")
+async def list_retrieval_decisions(
+    project_id: int,
+    limit: int = Query(50, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    from app.services.retrieval_decisions_service import list_decisions
+
+    if await db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    return {"decisions": list_decisions(project_id, limit=limit), "user_preference": _user_preference(project_id)}
 
 
 @router.delete("/retrieval")

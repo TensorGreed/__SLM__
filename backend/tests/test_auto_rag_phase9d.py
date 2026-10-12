@@ -633,5 +633,35 @@ class AutoRagComparisonApiTests(unittest.TestCase):
         self.assertEqual(self.client.put("/api/projects/999999/auto-rag/retrieval", json={"k": 3}).status_code, 404)
 
 
+
+    def test_record_and_list_retrieval_decisions(self):
+        project = self._instantiate_template("policy-qa-style", "AutoRAG Pin Decisions")
+        pid = project["id"]
+        self._seed_cached_comparison(pid, self._base_payload(), "comparison_base.json")
+        body = {
+            "question": "Who must retain a record?",
+            "candidates": [
+                {"retrieval": {"k": 3, "reranker": None}, "reply_excerpt": "A…", "latency_ms": 2100, "passages": 3},
+                {"retrieval": {"k": 3, "reranker": "default"}, "reply_excerpt": "B…", "latency_ms": 2400, "passages": 3},
+            ],
+            "pinned": {"k": 3, "reranker": "default"},
+        }
+        resp = self.client.post(f"/api/projects/{pid}/auto-rag/retrieval/decisions", json=body)
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertEqual(resp.json()["recorded"]["pinned"]["reranker"], "cross-encoder/ms-marco-MiniLM-L-6-v2")
+        self.assertEqual(resp.json()["user_preference"]["decisions"], 1)
+        self.client.post(f"/api/projects/{pid}/auto-rag/retrieval/decisions", json=body)
+        listed = self.client.get(f"/api/projects/{pid}/auto-rag/retrieval/decisions").json()
+        self.assertEqual(len(listed["decisions"]), 2)
+        tally = {f"{t['retrieval']['k']}|{t['retrieval']['reranker'] or ''}": t for t in listed["user_preference"]["tally"]}
+        self.assertEqual(tally["3|cross-encoder/ms-marco-MiniLM-L-6-v2"]["chosen"], 2)
+        self.assertEqual(tally["3|"]["chosen"], 0)
+        comparison = self.client.get(f"/api/projects/{pid}/auto-rag/comparison").json()
+        self.assertEqual(comparison["user_preference"]["decisions"], 2)
+        bad = dict(body, pinned={"k": 5, "reranker": None})
+        self.assertEqual(self.client.post(f"/api/projects/{pid}/auto-rag/retrieval/decisions", json=bad).status_code, 422)
+        self.assertEqual(self.client.post("/api/projects/999999/auto-rag/retrieval/decisions", json=body).status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -469,6 +469,33 @@ class DocumentsCorpusAndJudgeTests(unittest.TestCase):
         arms = [self._arm("top-3", 3, None, base, judged=False), self._arm("top-5", 5, None, clear, judged=False)]
         self.assertEqual(harness.pick_best_retrieval(arms, current_retrieval=None)["label"], "top-5")
 
+    def test_users_head_to_head_pins_break_a_within_noise_tie(self):
+        base = [1, 0, 1, 0.5, 0, 1, 0, 0.5, 1, 0, 0.5, 1, 0, 0, 1, 0.5, 0, 1, 0]
+        noisy = list(base); noisy[1] = 1; noisy[4] = 0.5; noisy[0] = 0.5; noisy[2] = 0
+        worse = [max(0.0, v - 0.5) for v in base]
+        key = lambda k, r: f"{k}|{r or ''}"
+        rerank_id = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        prefer_rerank = {
+            key(3, None): {"offered": 3, "chosen": 1, "share": 0.333},
+            key(3, rerank_id): {"offered": 3, "chosen": 2, "share": 0.667},
+        }
+        # Within noise on the judge + users chose it 2 of 3 times → switch.
+        arms = [self._arm("top-3", 3, None, base), self._arm("top-3 + reranker", 3, "default", noisy)]
+        best = harness.pick_best_retrieval(arms, current_retrieval={"k": 3, "reranker": None}, user_preference=prefer_rerank)
+        self.assertEqual(best["label"], "top-3 + reranker")
+        self.assertTrue(best["user_preferred"])
+        self.assertEqual(arms[1]["user_choices"]["chosen"], 2)
+        reason = harness.sweep_decision(arms, best)["reason"]
+        self.assertIn("users chose it 2 of 3 times head-to-head", reason)
+        # Worse beyond noise: clicks don't override the judge.
+        arms = [self._arm("top-3", 3, None, base), self._arm("top-3 + reranker", 3, "default", worse)]
+        best = harness.pick_best_retrieval(arms, current_retrieval={"k": 3, "reranker": None}, user_preference=prefer_rerank)
+        self.assertEqual(best["label"], "top-3")
+        # One pin is not a preference.
+        one_pin = {key(3, rerank_id): {"offered": 1, "chosen": 1, "share": 1.0}}
+        arms = [self._arm("top-3", 3, None, base), self._arm("top-3 + reranker", 3, "default", noisy)]
+        self.assertEqual(harness.pick_best_retrieval(arms, current_retrieval={"k": 3, "reranker": None}, user_preference=one_pin)["label"], "top-3")
+
     def test_current_retrieval_is_read_from_runtime_config(self):
         self.assertIsNone(harness._current_retrieval(None))
         self.assertIsNone(harness._current_retrieval('{"rag_first": true}'))

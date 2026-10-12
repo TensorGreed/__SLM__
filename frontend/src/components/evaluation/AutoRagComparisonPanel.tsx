@@ -83,6 +83,9 @@ interface AutoRagSweepArm {
     chosen: boolean;
     current?: boolean;
     vs_current?: { verdict: string; n: number; better: number; worse: number; same: number } | null;
+    /** Head-to-head pins by users in the playground, if any. */
+    user_choices?: { offered: number; chosen: number; share: number } | null;
+    user_preferred?: boolean;
 }
 
 /** What the project serves now and where it came from. */
@@ -772,7 +775,7 @@ function ModelComparisonCard({
                     </div>
                     <table className="auto-rag-comparison__sweep-table">
                         <thead>
-                            <tr><th>retrieval</th><th>judge</th><th>F1</th><th>vs current</th><th></th></tr>
+                            <tr><th>retrieval</th><th>judge</th><th>F1</th><th>vs current</th><th>users chose</th><th></th></tr>
                         </thead>
                         <tbody>
                             {summary.retrieval_sweep.map((arm) => {
@@ -789,6 +792,7 @@ function ModelComparisonCard({
                                         <td>{arm.judge_score != null ? arm.judge_score.toFixed(2) : '—'}{arm.judge_counts ? ` (${arm.judge_counts.correct ?? 0}/${arm.judge_counts.partial ?? 0}/${arm.judge_counts.wrong ?? 0})` : ''}</td>
                                         <td>{arm.on_mean_f1.toFixed(3)}</td>
                                         <td>{arm.current ? '—' : arm.vs_current ? vsCurrentText(arm.vs_current) : '—'}</td>
+                                        <td>{arm.user_choices ? `${arm.user_choices.chosen} of ${arm.user_choices.offered}${arm.user_preferred ? ' · broke the tie' : ''}` : '—'}</td>
                                         <td>
                                             {onPin && !isServing && (
                                                 <button type="button" className="btn btn-secondary auto-rag-comparison__pin" onClick={() => onPin(arm.retrieval)} data-testid={`${testIdPrefix}-pin-${arm.retrieval.k}-${arm.retrieval.reranker ? 'rerank' : 'bm25'}`}>

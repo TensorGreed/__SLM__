@@ -371,3 +371,9 @@ button.playground-message__provenance-chip:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+.playground-compare__select {
+  display: inline-block;
+  width: auto;
+  margin-left: 0.3rem;
+}

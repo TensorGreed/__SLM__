@@ -312,6 +312,31 @@ function _buildProvenance(
   };
 }
 
+/** The sweep's configs (top-3 / top-5, each ± the built-in reranker). */
+const SWEEP_CONFIGS: Array<{ key: string; label: string; k: number; reranker: string | null }> = [
+  { key: '3|', label: 'top-3 (BM25 only)', k: 3, reranker: null },
+  { key: '5|', label: 'top-5 (BM25 only)', k: 5, reranker: null },
+  { key: '3|default', label: 'top-3 + reranker', k: 3, reranker: 'default' },
+  { key: '5|default', label: 'top-5 + reranker', k: 5, reranker: 'default' },
+];
+
+function configKey(k: number | null | undefined, reranker: string | null | undefined): string {
+  return `${k ?? ''}|${reranker ? 'default' : ''}`;
+}
+
+/** The retrieval to compare the reply against: the picked sweep config, or
+ *  the same top-k with the reranker flipped. */
+function otherRetrieval(
+  provenance: Pick<PlaygroundMessageProvenance, 'retrievalK' | 'retrievalReranker'>,
+  compareAgainst: string,
+): { k: number; reranker: string | null } {
+  const picked = SWEEP_CONFIGS.find((c) => c.key === compareAgainst);
+  if (picked && picked.key !== configKey(provenance.retrievalK, provenance.retrievalReranker)) {
+    return { k: picked.k, reranker: picked.reranker };
+  }
+  return { k: provenance.retrievalK ?? 3, reranker: provenance.retrievalReranker ? null : 'default' };
+}
+
 /** "top-3 + reranker ms-marco-MiniLM-L-6-v2 · pinned" */
 function retrievalChipText(p: Pick<PlaygroundMessageProvenance, 'retrievalK' | 'retrievalReranker' | 'retrievalSource'>): string | null {
   if (p.retrievalK == null) return null;
@@ -395,6 +420,9 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
   // "Compare retrievals": after each reply, ask the same prompt again with
   // the other retrieval (reranker on ↔ off) and show both before pinning.
   const [compareRetrievals, setCompareRetrievals] = useState(false);
+  // Which retrieval to compare against: 'flip-reranker' (the default), or
+  // an explicit sweep config "k|reranker" ("5|", "3|default", "5|default").
+  const [compareAgainst, setCompareAgainst] = useState<string>('flip-reranker');
   const [selectedRunId, setSelectedRunId] = useState('');
   const selectedRun = runs.find((run) => String(run.id) === selectedRunId) || null;
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
@@ -748,7 +776,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     createdAt: number,
     provenance: PlaygroundMessageProvenance,
   ) => {
-    const otherReranker = provenance.retrievalReranker ? 'none' : 'default';
+    const other = otherRetrieval(provenance, compareAgainst);
     setMessages((prev) => prev.map((m) => (m.createdAt === createdAt && m.role === 'assistant'
       ? { ...m, comparison: { status: 'loading' } }
       : m)));
@@ -758,7 +786,8 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
         session_id: undefined,
         save_history: false,
         auto_rag: true,
-        auto_rag_reranker: otherReranker,
+        auto_rag_k: other.k,
+        auto_rag_reranker: other.reranker ?? 'none',
       });
       const content = String(res.data?.reply || '').trim();
       const altProvenance = _buildProvenance(res.data || {});
@@ -773,8 +802,24 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     }
   };
 
-  const pinRetrieval = async (k: number, reranker: string | null) => {
+  const pinRetrieval = async (
+    k: number,
+    reranker: string | null,
+    decision?: { question: string; candidates: Array<{ retrieval: { k: number; reranker: string | null }; reply_excerpt: string; latency_ms: number | null; passages: number }> },
+  ) => {
     try {
+      if (decision) {
+        // Record what was compared and what won, so the sweep can use
+        // users' head-to-head choices as a tie-break. Best-effort.
+        try {
+          await api.post(`/projects/${projectId}/auto-rag/retrieval/decisions`, {
+            ...decision,
+            pinned: { k, reranker },
+          });
+        } catch {
+          // The pin still goes through.
+        }
+      }
       await api.put(`/projects/${projectId}/auto-rag/retrieval`, { k, reranker });
       toast.info(`Pinned top-${k}${reranker ? ' + reranker' : ' (BM25 only)'} — every reply and comparison uses it from now on.`, 4000);
     } catch (err) {
@@ -1173,7 +1218,18 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
               checked={compareRetrievals}
               onChange={(e) => setCompareRetrievals(e.target.checked)}
             />
-            Compare retrievals (reranker on vs off) before pinning
+            Compare retrievals before pinning
+          </label>
+        )}
+        {groundInDocs && compareRetrievals && (
+          <label className="playground-toggle" data-testid="playground-compare-against">
+            against{' '}
+            <select className="input playground-compare__select" value={compareAgainst} onChange={(e) => setCompareAgainst(e.target.value)}>
+              <option value="flip-reranker">the same top-k, reranker flipped</option>
+              {SWEEP_CONFIGS.map((c) => (
+                <option key={c.key} value={c.key}>{c.label}</option>
+              ))}
+            </select>
           </label>
         )}
       </div>
@@ -1286,7 +1342,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
                     main={{ content: message.content, provenance: message.provenance }}
                     comparison={message.comparison}
                     messageKey={`${message.role}-${message.createdAt}`}
-                    onPin={(k, reranker) => void pinRetrieval(k, reranker)}
+                    onPin={(k, reranker) => void pinRetrieval(k, reranker, comparisonDecision(messages, message))}
                   />
                 ) : null}
               </div>
@@ -1529,6 +1585,26 @@ function MessageProvenanceFooter({
   );
 }
 
+
+/** The decision context for a pin made from a comparison: the question
+ *  (the user turn before this reply) and both candidates. */
+function comparisonDecision(
+  all: PlaygroundMessage[],
+  message: PlaygroundMessage,
+): { question: string; candidates: Array<{ retrieval: { k: number; reranker: string | null }; reply_excerpt: string; latency_ms: number | null; passages: number }> } | undefined {
+  const index = all.indexOf(message);
+  const question = [...all.slice(0, index)].reverse().find((m) => m.role === 'user')?.content ?? '';
+  const main = message.provenance;
+  const alt = message.comparison?.status === 'ready' ? message.comparison.provenance : undefined;
+  if (!main || main.retrievalK == null || !alt || alt.retrievalK == null) return undefined;
+  const candidate = (p: PlaygroundMessageProvenance, content: string) => ({
+    retrieval: { k: p.retrievalK as number, reranker: p.retrievalReranker ?? null },
+    reply_excerpt: content.slice(0, 400),
+    latency_ms: p.latencyMs,
+    passages: p.ragHits.length,
+  });
+  return { question, candidates: [candidate(main, message.content), candidate(alt, message.comparison?.content ?? '')] };
+}
 
 interface RetrievalComparisonBlockProps {
   main: { content: string; provenance: PlaygroundMessageProvenance };

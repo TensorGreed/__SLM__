@@ -569,8 +569,20 @@ runs real CPU inference). ~4 min locally.
   reranker for one call (`build_preamble_from_query(reranker_override=)`).
   `ChatPlaygroundPanel`: retrieval chip per reply (`retrievalChipText`),
   "Compare retrievals" toggle → `fetchRetrievalComparison` re-asks with the
-  other reranker (unsaved) and `RetrievalComparisonBlock` shows A/B with
-  "Pin this retrieval" (PUT /auto-rag/retrieval). Job
+  chosen alternative (`otherRetrieval`: the `compareAgainst` sweep config
+  `"k|default"` or flip-reranker; sends `auto_rag_k` + `auto_rag_reranker`,
+  unsaved) and `RetrievalComparisonBlock` shows A/B with "Pin this
+  retrieval" → `comparisonDecision` POSTs `/auto-rag/retrieval/decisions`
+  {question, candidates, pinned} then PUT /auto-rag/retrieval.
+  **Pin decisions** — `services/retrieval_decisions_service.py`: append-only
+  `auto_rag/pin_decisions.jsonl`, `preference_tally` ({offered, chosen,
+  share} per `retrieval_key` "k|reranker"), `preferred_over` (≥
+  `MIN_CHOICES_FOR_PREFERENCE` 2 chosen, higher share). The harness reads
+  `project_preference` and `pick_best_retrieval(user_preference=)` uses it
+  ONLY to break a within-noise tie against the incumbent (`user_preferred`,
+  arm `user_choices`; decision reason names the head-to-head count). The
+  comparison GET carries `user_preference` {decisions, tally}; the sweep
+  table has a "users chose" column. Job
   `sweep_retrieval=True` → `apply_retrieval_choice` writes the winner to
   the project; the sibling auto-check sweeps. Summary card line
   "Retrieval served: …". Tests patch `retrieval_reranker.score_pairs`.

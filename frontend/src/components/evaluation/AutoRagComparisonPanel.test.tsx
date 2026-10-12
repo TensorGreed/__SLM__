@@ -398,7 +398,7 @@ describe('AutoRagComparisonPanel — base model next to the fine-tuned run', () 
                 retrieval_sweep: [
                     { retrieval: { k: 3, reranker: null }, label: 'top-3', on_mean_f1: 0.376, judge_score: 0.55, judge_counts: { correct: 8, partial: 5, wrong: 6 }, chosen: true, current: true, vs_current: null },
                     { retrieval: { k: 5, reranker: null }, label: 'top-5', on_mean_f1: 0.318, judge_score: 0.39, judge_counts: { correct: 5, partial: 5, wrong: 9 }, chosen: false, current: false, vs_current: { verdict: 'within_noise', n: 19, better: 2, worse: 5, same: 12 } },
-                    { retrieval: { k: 3, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2' }, label: 'top-3 + reranker ms-marco-MiniLM-L-6-v2', on_mean_f1: 0.429, judge_score: 0.53, judge_counts: { correct: 9, partial: 2, wrong: 8 }, chosen: false, current: false, vs_current: { verdict: 'within_noise', n: 19, better: 4, worse: 4, same: 11 } },
+                    { retrieval: { k: 3, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2' }, label: 'top-3 + reranker ms-marco-MiniLM-L-6-v2', on_mean_f1: 0.429, judge_score: 0.53, judge_counts: { correct: 9, partial: 2, wrong: 8 }, chosen: false, current: false, vs_current: { verdict: 'within_noise', n: 19, better: 4, worse: 4, same: 11 }, user_choices: { offered: 3, chosen: 1, share: 0.333 } },
                 ],
                 retrieval_decision: { current: { k: 3, reranker: null }, chosen: { k: 3, reranker: null }, switched: false, reason: 'kept top-3: no arm beat it beyond row noise' },
             },
@@ -417,6 +417,8 @@ describe('AutoRagComparisonPanel — base model next to the fine-tuned run', () 
         expect(arms[0]).toHaveTextContent('serving');
         expect(arms[1]).toHaveTextContent('within noise · 2 better, 5 worse');
         expect(arms[2]).toHaveTextContent('0.53 (9/2/8)');
+        expect(arms[2]).toHaveTextContent('1 of 3');
+        expect(arms[1]).toHaveTextContent('—');
         // Pin the reranker arm: PUT, then the panel re-reads (now pinned).
         apiMock.get.mockResolvedValue({ status: 200, data: { ...FINE_TUNED, base: null, base_documents: BASE_DOCUMENTS, retrieval_setting: { k: 3, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2', source: 'pinned', pinned: true } } });
         await user.click(screen.getByTestId('auto-rag-comparison-base-documents-pin-3-rerank'));

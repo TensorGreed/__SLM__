@@ -351,7 +351,12 @@ describe('ChatPlaygroundPanel', () => {
     });
     const user = userEvent.setup();
     const calls: Array<Record<string, unknown>> = [];
+    const decisions: Array<Record<string, unknown>> = [];
     apiMock.post.mockImplementation(async (url: string, body?: Record<string, unknown>) => {
+      if (url.endsWith('/auto-rag/retrieval/decisions')) {
+        decisions.push(body || {});
+        return { data: { recorded: body, user_preference: { decisions: 1, tally: [] } } };
+      }
       if (url.includes('/training/playground/chat') && !url.includes('/stream')) {
         calls.push(body || {});
         const other = body?.auto_rag_reranker != null;
@@ -385,14 +390,31 @@ describe('ChatPlaygroundPanel', () => {
     expect(chip.textContent).toBe('retrieval: top-3 (BM25 only) · chosen by the sweep');
     // The comparison asked again with the other retrieval, unsaved.
     await waitFor(() => expect(calls).toHaveLength(2));
-    expect(calls[1]).toEqual(expect.objectContaining({ auto_rag_reranker: 'default', save_history: false, auto_rag: true }));
+    expect(calls[1]).toEqual(expect.objectContaining({ auto_rag_k: 3, auto_rag_reranker: 'default', save_history: false, auto_rag: true }));
     expect(calls[1].session_id).toBeUndefined();
     const columnB = await screen.findByTestId(/playground-compare-assistant-\d+-b$/);
     expect(columnB.textContent).toContain('B: the head of a government institution retains the record.');
     expect(columnB.textContent).toContain('top-3 + reranker ms-marco-MiniLM-L-6-v2 · this reply only');
     expect(screen.getByTestId(/playground-compare-assistant-\d+-a$/).textContent).toContain('A: the applicant keeps a copy.');
-    // Pin B's retrieval.
+    // Pin B's retrieval: the decision (question + both candidates) is
+    // recorded first, then the setting is pinned.
     await user.click(within(columnB).getByRole('button', { name: /Pin this retrieval/ }));
     await waitFor(() => expect(apiMock.put).toHaveBeenCalledWith('/projects/21/auto-rag/retrieval', { k: 3, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2' }));
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toEqual(expect.objectContaining({
+      question: 'Who must retain a record?',
+      pinned: { k: 3, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2' },
+    }));
+    const candidates = decisions[0].candidates as Array<{ retrieval: { k: number; reranker: string | null }; reply_excerpt: string; passages: number }>;
+    expect(candidates.map((c) => c.retrieval)).toEqual([{ k: 3, reranker: null }, { k: 3, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2' }]);
+    expect(candidates[0].reply_excerpt).toBe('A: the applicant keeps a copy.');
+    expect(candidates[1].passages).toBe(1);
+
+    // Pick a different alternative: top-5 without the reranker.
+    await user.selectOptions(within(screen.getByTestId('playground-compare-against')).getByRole('combobox'), '5|');
+    await user.type(await screen.findByPlaceholderText(/Write your prompt/i), 'And for how long?');
+    await user.click(screen.getByRole('button', { name: /^Send$/i }));
+    await waitFor(() => expect(calls).toHaveLength(4));
+    expect(calls[3]).toEqual(expect.objectContaining({ auto_rag_k: 5, auto_rag_reranker: 'none', save_history: false }));
   });
 });
