@@ -582,7 +582,10 @@ runs real CPU inference). ~4 min locally.
   ONLY to break a within-noise tie against the incumbent (`user_preferred`,
   arm `user_choices`; decision reason names the head-to-head count). The
   comparison GET carries `user_preference` {decisions, tally}; the sweep
-  table has a "users chose" column. Job
+  table has a "users chose" column. `PinDecisionLog` under the sweep table
+  lazy-loads `GET /auto-rag/retrieval/decisions` (newest first, winner
+  starred; toggle says "that broke this tie" when `retrieval_decision`
+  switched on users' choices). Job
   `sweep_retrieval=True` → `apply_retrieval_choice` writes the winner to
   the project; the sibling auto-check sweeps. Summary card line
   "Retrieval served: …". Tests patch `retrieval_reranker.score_pairs`.

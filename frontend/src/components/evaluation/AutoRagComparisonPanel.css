@@ -419,3 +419,26 @@
     color: var(--text-muted, #666);
     font-size: 0.8rem;
 }
+
+.auto-rag-comparison__decisions {
+    margin-top: 0.5rem;
+}
+
+.auto-rag-comparison__decisions-table td {
+    vertical-align: top;
+    font-size: 0.84rem;
+}
+
+.auto-rag-comparison__decisions-excerpt {
+    white-space: pre-wrap;
+    color: var(--text-muted, #555);
+    max-width: 28rem;
+}
+
+.auto-rag-comparison__decisions-winner {
+    background: rgba(46, 125, 50, 0.07);
+}
+
+.auto-rag-comparison__decisions-error {
+    color: var(--danger, #c62828);
+}

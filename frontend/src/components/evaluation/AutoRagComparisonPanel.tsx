@@ -94,6 +94,20 @@ interface AutoRagRetrievalSetting extends AutoRagRetrieval {
     pinned: boolean;
 }
 
+/** One recorded pin: the question, what was compared, which won. */
+interface AutoRagPinDecision {
+    recorded_at: string;
+    source?: string;
+    question: string;
+    candidates: Array<{ retrieval: AutoRagRetrieval; reply_excerpt?: string; latency_ms?: number | null; passages?: number | null }>;
+    pinned: AutoRagRetrieval;
+}
+
+interface AutoRagUserPreference {
+    decisions: number;
+    tally: Array<{ retrieval: AutoRagRetrieval; offered: number; chosen: number; share: number }>;
+}
+
 interface AutoRagModelComparison {
     cached_at: string | null;
     summary: AutoRagSummary | null;
@@ -127,6 +141,7 @@ interface AutoRagComparisonResponse {
     base?: AutoRagModelComparison | null;
     base_documents?: AutoRagModelComparison | null;
     retrieval_setting?: AutoRagRetrievalSetting | null;
+    user_preference?: AutoRagUserPreference | null;
     /** The project's latest trained run, and whether the fine-tuned
      *  comparison was measured on an older one. */
     latest_experiment_id?: number | null;
@@ -538,6 +553,11 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
                     retrievalSetting={data.retrieval_setting ?? null}
                     onPin={(retrieval) => void handlePin(retrieval)}
                     onUnpin={() => void handleUnpin()}
+                    userPreference={data.user_preference ?? null}
+                    loadDecisions={async () => {
+                        const res = await api.get<{ decisions: AutoRagPinDecision[] }>(`/projects/${projectId}/auto-rag/retrieval/decisions`, { params: { limit: 100 } });
+                        return Array.isArray(res.data?.decisions) ? res.data.decisions : [];
+                    }}
                 />
             </div>
             <div className="auto-rag-comparison__rows-head">
@@ -614,6 +634,9 @@ interface ModelComparisonCardProps {
     retrievalSetting?: AutoRagRetrievalSetting | null;
     onPin?: (retrieval: AutoRagRetrieval) => void;
     onUnpin?: () => void;
+    /** Users' head-to-head pins (count + tally) and how to load the log. */
+    userPreference?: AutoRagUserPreference | null;
+    loadDecisions?: () => Promise<AutoRagPinDecision[]>;
 }
 
 function ModelComparisonCard({
@@ -632,6 +655,8 @@ function ModelComparisonCard({
     retrievalSetting,
     onPin,
     onUnpin,
+    userPreference,
+    loadDecisions,
 }: ModelComparisonCardProps) {
     const summary = comparison?.summary ?? null;
     const running = runningMessage !== null && (
@@ -806,7 +831,87 @@ function ModelComparisonCard({
                             })}
                         </tbody>
                     </table>
+                    {userPreference && userPreference.decisions > 0 && loadDecisions && (
+                        <PinDecisionLog
+                            count={userPreference.decisions}
+                            decision={summary.retrieval_decision ?? null}
+                            load={loadDecisions}
+                            testIdPrefix={testIdPrefix}
+                        />
+                    )}
                 </div>
+            )}
+        </div>
+    );
+}
+
+
+interface PinDecisionLogProps {
+    count: number;
+    decision: { reason: string; switched: boolean } | null;
+    load: () => Promise<AutoRagPinDecision[]>;
+    testIdPrefix: string;
+}
+
+/** The audit trail behind a tie the sweep broke on users' pins: each
+ *  recorded comparison with the question, both answers and which won. */
+function PinDecisionLog({ count, decision, load, testIdPrefix }: PinDecisionLogProps) {
+    const [open, setOpen] = useState(false);
+    const [rows, setRows] = useState<AutoRagPinDecision[] | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const toggle = async () => {
+        const next = !open;
+        setOpen(next);
+        if (next && rows === null) {
+            try {
+                setRows(await load());
+            } catch (err) {
+                setError((err as { message?: string })?.message || 'Could not load the pin decisions');
+            }
+        }
+    };
+    const brokeTie = decision?.switched && /users chose it/.test(decision.reason);
+    return (
+        <div className="auto-rag-comparison__decisions" data-testid={`${testIdPrefix}-decisions`}>
+            <button type="button" className="btn btn-secondary auto-rag-comparison__pin" onClick={() => void toggle()} data-testid={`${testIdPrefix}-decisions-toggle`}>
+                {open ? 'Hide' : 'Show'} the {count} pin decision{count === 1 ? '' : 's'}
+                {brokeTie ? ' that broke this tie' : ''}
+            </button>
+            {open && error && <p className="auto-rag-comparison__decisions-error">{error}</p>}
+            {open && rows && (
+                <table className="auto-rag-comparison__sweep-table auto-rag-comparison__decisions-table" data-testid={`${testIdPrefix}-decisions-table`}>
+                    <thead>
+                        <tr><th>when</th><th>question</th><th>A</th><th>B</th><th>pinned</th></tr>
+                    </thead>
+                    <tbody>
+                        {[...rows].reverse().map((row, index) => {
+                            const pinnedKey = `${row.pinned.k}|${row.pinned.reranker || ''}`;
+                            const cell = (c: AutoRagPinDecision['candidates'][number]) => {
+                                const key = `${c.retrieval.k}|${c.retrieval.reranker || ''}`;
+                                return (
+                                    <td className={key === pinnedKey ? 'auto-rag-comparison__decisions-winner' : undefined}>
+                                        <div><strong>{retrievalLabel(c.retrieval)}</strong>{key === pinnedKey ? ' ★' : ''}</div>
+                                        <div className="auto-rag-comparison__decisions-excerpt">{c.reply_excerpt || '—'}</div>
+                                        <small>
+                                            {c.latency_ms != null ? `${Math.round(c.latency_ms)} ms` : ''}
+                                            {c.passages != null ? ` · ${c.passages} passage${c.passages === 1 ? '' : 's'}` : ''}
+                                        </small>
+                                    </td>
+                                );
+                            };
+                            const [a, b] = row.candidates;
+                            return (
+                                <tr key={`${row.recorded_at}-${index}`} data-testid={`${testIdPrefix}-decision`}>
+                                    <td>{new Date(row.recorded_at).toLocaleString()}</td>
+                                    <td>{row.question}</td>
+                                    {a ? cell(a) : <td>—</td>}
+                                    {b ? cell(b) : <td>—</td>}
+                                    <td>{retrievalLabel(row.pinned)}</td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
             )}
         </div>
     );

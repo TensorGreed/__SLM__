@@ -434,6 +434,57 @@ describe('AutoRagComparisonPanel — base model next to the fine-tuned run', () 
         await waitFor(() => expect(apiMock.delete).toHaveBeenCalledWith('/projects/22/auto-rag/retrieval'));
     });
 
+    it('shows the pin-decision log behind a tie the sweep broke on users\' choices', async () => {
+        const RERANK = 'cross-encoder/ms-marco-MiniLM-L-6-v2';
+        const BASE_DOCUMENTS = {
+            ...BASE,
+            corpus: 'documents',
+            split: 'test',
+            summary: {
+                ...BASE.summary,
+                retrieval: { k: 3, reranker: RERANK },
+                retrieval_sweep: [
+                    { retrieval: { k: 3, reranker: null }, label: 'top-3', on_mean_f1: 0.38, judge_score: 0.55, chosen: false, current: true, vs_current: null, user_choices: { offered: 3, chosen: 1, share: 0.333 } },
+                    { retrieval: { k: 3, reranker: RERANK }, label: 'top-3 + reranker ms-marco-MiniLM-L-6-v2', on_mean_f1: 0.43, judge_score: 0.53, chosen: true, current: false, vs_current: { verdict: 'within_noise', n: 19, better: 4, worse: 4, same: 11 }, user_choices: { offered: 3, chosen: 2, share: 0.667 }, user_preferred: true },
+                ],
+                retrieval_decision: { current: { k: 3, reranker: null }, chosen: { k: 3, reranker: RERANK }, switched: true, reason: 'switched to top-3 + reranker ms-marco-MiniLM-L-6-v2: within noise of top-3 on the judge, but users chose it 2 of 3 times head-to-head' },
+            },
+        };
+        const decisions = [
+            { recorded_at: '2026-10-12T19:00:00Z', question: 'Who must retain a record?', pinned: { k: 3, reranker: RERANK },
+              candidates: [{ retrieval: { k: 3, reranker: null }, reply_excerpt: 'A: the applicant keeps a copy.', latency_ms: 2100, passages: 3 },
+                           { retrieval: { k: 3, reranker: RERANK }, reply_excerpt: 'B: the head retains the record.', latency_ms: 2400, passages: 3 }] },
+            { recorded_at: '2026-10-12T19:05:00Z', question: 'What may be refused?', pinned: { k: 3, reranker: null },
+              candidates: [{ retrieval: { k: 3, reranker: null }, reply_excerpt: 'A2', latency_ms: 1900, passages: 3 },
+                           { retrieval: { k: 3, reranker: RERANK }, reply_excerpt: 'B2', latency_ms: 2500, passages: 3 }] },
+        ];
+        const baseGet = apiMock.get;
+        baseGet.mockImplementation(async (url: string) => {
+            if (url.endsWith('/auto-rag/retrieval/decisions')) return { status: 200, data: { decisions, user_preference: { decisions: 2, tally: [] } } };
+            return { status: 200, data: { ...FINE_TUNED, base: null, base_documents: BASE_DOCUMENTS, retrieval_setting: { k: 3, reranker: RERANK, source: 'retrieval_sweep', pinned: false }, user_preference: { decisions: 3, tally: [] } } };
+        });
+        const user = userEvent.setup();
+        render(<AutoRagComparisonPanel projectId={22} />);
+        const arms = await screen.findAllByTestId('auto-rag-comparison-base-documents-sweep-arm');
+        expect(arms[1]).toHaveTextContent('2 of 3 · broke the tie');
+        const toggle = screen.getByTestId('auto-rag-comparison-base-documents-decisions-toggle');
+        expect(toggle).toHaveTextContent('Show the 3 pin decisions that broke this tie');
+        await user.click(toggle);
+        const table = await screen.findByTestId('auto-rag-comparison-base-documents-decisions-table');
+        const rows = screen.getAllByTestId('auto-rag-comparison-base-documents-decision');
+        expect(rows).toHaveLength(2);
+        // Newest first; the winner is starred with its excerpt.
+        expect(rows[0]).toHaveTextContent('What may be refused?');
+        expect(rows[1]).toHaveTextContent('Who must retain a record?');
+        expect(rows[1]).toHaveTextContent('top-3 + reranker ms-marco-MiniLM-L-6-v2 ★');
+        expect(rows[1]).toHaveTextContent('B: the head retains the record.');
+        expect(rows[1]).toHaveTextContent('2400 ms · 3 passages');
+        expect(table).toBeInTheDocument();
+        expect(apiMock.get).toHaveBeenCalledWith('/projects/22/auto-rag/retrieval/decisions', { params: { limit: 100 } });
+        await user.click(toggle);
+        expect(screen.queryByTestId('auto-rag-comparison-base-documents-decisions-table')).not.toBeInTheDocument();
+    });
+
     it('renders a base-only comparison (no trained run yet)', async () => {
         apiMock.get.mockResolvedValueOnce({
             status: 200,
