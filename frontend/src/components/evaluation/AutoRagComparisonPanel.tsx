@@ -63,6 +63,32 @@ interface AutoRagSummary {
     judge?: AutoRagJudgeSummary | null;
     /** The retrieval scored (top-k + reranker). */
     retrieval?: { k: number; reranker: string | null } | null;
+    /** After a retrieval sweep: every arm tried, each with its paired
+     *  evidence against the retrieval the project serves (the incumbent). */
+    retrieval_sweep?: AutoRagSweepArm[] | null;
+    retrieval_decision?: { current: AutoRagRetrieval; chosen: AutoRagRetrieval; switched: boolean; reason: string } | null;
+}
+
+interface AutoRagRetrieval {
+    k: number;
+    reranker: string | null;
+}
+
+interface AutoRagSweepArm {
+    retrieval: AutoRagRetrieval;
+    label: string;
+    on_mean_f1: number;
+    judge_score: number | null;
+    judge_counts?: { correct?: number; partial?: number; wrong?: number } | null;
+    chosen: boolean;
+    current?: boolean;
+    vs_current?: { verdict: string; n: number; better: number; worse: number; same: number } | null;
+}
+
+/** What the project serves now and where it came from. */
+interface AutoRagRetrievalSetting extends AutoRagRetrieval {
+    source: string;
+    pinned: boolean;
 }
 
 interface AutoRagModelComparison {
@@ -97,6 +123,7 @@ interface AutoRagComparisonResponse {
     judge_evidence?: LiftEvidence | null;
     base?: AutoRagModelComparison | null;
     base_documents?: AutoRagModelComparison | null;
+    retrieval_setting?: AutoRagRetrievalSetting | null;
     /** The project's latest trained run, and whether the fine-tuned
      *  comparison was measured on an older one. */
     latest_experiment_id?: number | null;
@@ -159,6 +186,26 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
         }
         lastFinishedKey.current = finishedKey;
     }, [finishedKey]);
+
+    const handlePin = async (retrieval: AutoRagRetrieval) => {
+        try {
+            await api.put(`/projects/${projectId}/auto-rag/retrieval`, { k: retrieval.k, reranker: retrieval.reranker });
+            toast.info(`Pinned ${retrievalLabel(retrieval)} — the playground and every comparison use it from now on.`, 4000);
+            setReloadToken((token) => token + 1);
+        } catch (err) {
+            toast.error((err as { message?: string })?.message || 'Could not pin the retrieval setting', 4000);
+        }
+    };
+
+    const handleUnpin = async () => {
+        try {
+            await api.delete(`/projects/${projectId}/auto-rag/retrieval`);
+            toast.info('Unpinned — back to the default until the next sweep picks a retrieval.', 4000);
+            setReloadToken((token) => token + 1);
+        } catch (err) {
+            toast.error((err as { message?: string })?.message || 'Could not unpin the retrieval setting', 4000);
+        }
+    };
 
     const handleRunComparison = async (model: ComparisonModel = 'fine_tuned') => {
         if (submitting) return;
@@ -485,6 +532,9 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
                     runningMessage={runningModel === 'base_documents' ? (runningMessage || 'starting…') : null}
                     staleNote={null}
                     onRun={() => void handleRunComparison('base_documents')}
+                    retrievalSetting={data.retrieval_setting ?? null}
+                    onPin={(retrieval) => void handlePin(retrieval)}
+                    onUnpin={() => void handleUnpin()}
                 />
             </div>
             <div className="auto-rag-comparison__rows-head">
@@ -557,6 +607,10 @@ interface ModelComparisonCardProps {
     /** Shown when the numbers are for an older run than the latest. */
     staleNote: string | null;
     onRun: () => void;
+    /** The retrieval the project serves (for the sweep table's Pin / Unpin). */
+    retrievalSetting?: AutoRagRetrievalSetting | null;
+    onPin?: (retrieval: AutoRagRetrieval) => void;
+    onUnpin?: () => void;
 }
 
 function ModelComparisonCard({
@@ -572,6 +626,9 @@ function ModelComparisonCard({
     runningMessage,
     staleNote,
     onRun,
+    retrievalSetting,
+    onPin,
+    onUnpin,
 }: ModelComparisonCardProps) {
     const summary = comparison?.summary ?? null;
     const running = runningMessage !== null && (
@@ -692,8 +749,79 @@ function ModelComparisonCard({
                     )}
                 </div>
             )}
+            {summary.retrieval_sweep && summary.retrieval_sweep.length > 0 && (
+                <div className="auto-rag-comparison__sweep" data-testid={`${testIdPrefix}-sweep`}>
+                    <div className="auto-rag-comparison__sweep-head">
+                        <strong>Retrieval sweep</strong>
+                        {summary.retrieval_decision ? ` — ${summary.retrieval_decision.reason}.` : ''}
+                        {retrievalSetting && (
+                            <span className="auto-rag-comparison__sweep-setting" data-testid={`${testIdPrefix}-sweep-setting`}>
+                                {' '}Serving: {retrievalLabel(retrievalSetting)}
+                                {retrievalSetting.pinned
+                                    ? ' (pinned by you — the sweep reports but never overrides it)'
+                                    : retrievalSetting.source === 'retrieval_sweep'
+                                        ? ' (chosen by the sweep)'
+                                        : ' (default)'}
+                                {retrievalSetting.pinned && onUnpin && (
+                                    <button type="button" className="btn btn-secondary auto-rag-comparison__pin" onClick={onUnpin} data-testid={`${testIdPrefix}-unpin`}>
+                                        Unpin
+                                    </button>
+                                )}
+                            </span>
+                        )}
+                    </div>
+                    <table className="auto-rag-comparison__sweep-table">
+                        <thead>
+                            <tr><th>retrieval</th><th>judge</th><th>F1</th><th>vs current</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            {summary.retrieval_sweep.map((arm) => {
+                                const isServing = retrievalSetting != null
+                                    && retrievalSetting.k === arm.retrieval.k
+                                    && (retrievalSetting.reranker || null) === (arm.retrieval.reranker || null);
+                                return (
+                                    <tr key={arm.label} data-testid={`${testIdPrefix}-sweep-arm`} data-chosen={arm.chosen ? 'true' : 'false'}>
+                                        <td>
+                                            {arm.label}
+                                            {arm.current ? ' · current' : ''}
+                                            {arm.chosen ? ' · chosen' : ''}
+                                        </td>
+                                        <td>{arm.judge_score != null ? arm.judge_score.toFixed(2) : '—'}{arm.judge_counts ? ` (${arm.judge_counts.correct ?? 0}/${arm.judge_counts.partial ?? 0}/${arm.judge_counts.wrong ?? 0})` : ''}</td>
+                                        <td>{arm.on_mean_f1.toFixed(3)}</td>
+                                        <td>{arm.current ? '—' : arm.vs_current ? vsCurrentText(arm.vs_current) : '—'}</td>
+                                        <td>
+                                            {onPin && !isServing && (
+                                                <button type="button" className="btn btn-secondary auto-rag-comparison__pin" onClick={() => onPin(arm.retrieval)} data-testid={`${testIdPrefix}-pin-${arm.retrieval.k}-${arm.retrieval.reranker ? 'rerank' : 'bm25'}`}>
+                                                    Pin
+                                                </button>
+                                            )}
+                                            {isServing && <span className="auto-rag-comparison__serving">serving</span>}
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            )}
         </div>
     );
+}
+
+
+function retrievalLabel(r: AutoRagRetrieval): string {
+    return `top-${r.k}` + (r.reranker ? ` + reranker ${r.reranker.split('/').pop()}` : ' (BM25 only)');
+}
+
+function vsCurrentText(vs: { verdict: string; better: number; worse: number }): string {
+    const label = vs.verdict === 'better'
+        ? 'beats current'
+        : vs.verdict === 'worse'
+            ? 'loses to current'
+            : vs.verdict === 'too_few_rows'
+                ? 'too few rows'
+                : 'within noise';
+    return `${label} · ${vs.better} better, ${vs.worse} worse`;
 }
 
 

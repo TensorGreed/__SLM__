@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -277,7 +278,68 @@ async def get_auto_rag_comparison(
         # Judged verdict: did the base model + document passages beat the
         # fine-tuned run's judged lift? (passage_rag_verdict_service)
         "passages_vs_finetune": await _passages_verdict(db, project_id),
+        # What the project serves now (top-k + reranker) and where it came
+        # from: "pinned" by the user, "retrieval_sweep", or the defaults.
+        "retrieval_setting": _retrieval_setting(project),
     }
+
+
+def _retrieval_setting(project: Project) -> dict[str, Any]:
+    from app.services.auto_rag_service import RETRIEVAL_SETTINGS_KEY, retrieval_settings
+
+    setting = retrieval_settings(project)
+    raw = (project.runtime_config or {}).get(RETRIEVAL_SETTINGS_KEY) if isinstance(project.runtime_config, dict) else None
+    source = str(raw.get("source") or "manual") if isinstance(raw, dict) and raw else "default"
+    return {**setting, "source": source, "pinned": source == "pinned"}
+
+
+class RetrievalSettingRequest(BaseModel):
+    k: int = Field(..., ge=1, le=10)
+    reranker: str | None = None
+
+
+@router.put("/retrieval")
+async def pin_retrieval_setting(
+    project_id: int,
+    data: RetrievalSettingRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Pin the retrieval the project serves (top-k + reranker). A pinned
+    setting is what the playground and every comparison use, and the
+    retrieval sweep reports but never overrides it. ``reranker``: a model
+    id, ``"default"`` for the built-in cross-encoder, or null for BM25 only."""
+    from app.services.auto_rag_service import RETRIEVAL_SETTINGS_KEY
+    from app.services.retrieval_reranker import normalize_reranker
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    cfg = dict(project.runtime_config or {})
+    cfg[RETRIEVAL_SETTINGS_KEY] = {"k": data.k, "reranker": normalize_reranker(data.reranker), "source": "pinned"}
+    project.runtime_config = cfg
+    await db.commit()
+    await db.refresh(project)
+    return _retrieval_setting(project)
+
+
+@router.delete("/retrieval")
+async def unpin_retrieval_setting(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Drop the project's retrieval setting: back to the defaults (top-3,
+    BM25 only) until the next sweep picks one."""
+    from app.services.auto_rag_service import RETRIEVAL_SETTINGS_KEY
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    cfg = dict(project.runtime_config or {})
+    cfg.pop(RETRIEVAL_SETTINGS_KEY, None)
+    project.runtime_config = cfg
+    await db.commit()
+    await db.refresh(project)
+    return _retrieval_setting(project)
 
 
 async def _passages_verdict(db: AsyncSession, project_id: int) -> dict[str, Any] | None:

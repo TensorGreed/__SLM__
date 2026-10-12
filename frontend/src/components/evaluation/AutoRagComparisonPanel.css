@@ -390,3 +390,32 @@
     font-size: 0.8rem;
     color: var(--text-muted, #666);
 }
+
+.auto-rag-comparison__sweep {
+    margin-top: 0.6rem;
+    font-size: 0.88rem;
+}
+
+.auto-rag-comparison__sweep-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.4rem;
+}
+
+.auto-rag-comparison__sweep-table th,
+.auto-rag-comparison__sweep-table td {
+    text-align: left;
+    padding: 0.25rem 0.5rem;
+    border-bottom: 1px solid var(--border, #e5e5e5);
+}
+
+.auto-rag-comparison__pin {
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.8rem;
+}
+
+.auto-rag-comparison__serving {
+    color: var(--text-muted, #666);
+    font-size: 0.8rem;
+}

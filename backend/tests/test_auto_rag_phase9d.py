@@ -596,5 +596,42 @@ class AutoRagComparisonApiTests(unittest.TestCase):
         self.assertEqual(docs["evidence"]["n"], 6)
 
 
+
+    def test_pin_and_unpin_the_retrieval_setting(self):
+        """PUT /auto-rag/retrieval pins top-k + reranker; the GET reports it as
+        pinned; the sweep's apply never overrides a pin; DELETE unpins."""
+        import asyncio
+
+        from app.services.auto_rag_comparison_job_service import apply_retrieval_choice
+
+        project = self._instantiate_template("policy-qa-style", "AutoRAG Pin Retrieval")
+        pid = project["id"]
+        self._seed_cached_comparison(pid, self._base_payload(), "comparison_base.json")
+        before = self.client.get(f"/api/projects/{pid}/auto-rag/comparison").json()["retrieval_setting"]
+        self.assertEqual((before["k"], before["reranker"], before["source"], before["pinned"]), (3, None, "default", False))
+
+        resp = self.client.put(f"/api/projects/{pid}/auto-rag/retrieval", json={"k": 5, "reranker": "default"})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        pinned = resp.json()
+        self.assertEqual((pinned["k"], pinned["reranker"], pinned["pinned"]), (5, "cross-encoder/ms-marco-MiniLM-L-6-v2", True))
+        self.assertTrue(self.client.get(f"/api/projects/{pid}/auto-rag/comparison").json()["retrieval_setting"]["pinned"])
+
+        # A later sweep reports its winner but leaves the pin alone.
+        applied = asyncio.run(apply_retrieval_choice(pid, {"k": 3, "reranker": None}))
+        self.assertEqual((applied["k"], applied["kept_pinned"]), (5, True))
+        self.assertEqual(self.client.get(f"/api/projects/{pid}/auto-rag/comparison").json()["retrieval_setting"]["k"], 5)
+
+        resp = self.client.delete(f"/api/projects/{pid}/auto-rag/retrieval")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual((resp.json()["k"], resp.json()["source"]), (3, "default"))
+        # Now the sweep may set it.
+        applied = asyncio.run(apply_retrieval_choice(pid, {"k": 3, "reranker": "default"}))
+        self.assertNotIn("kept_pinned", applied)
+        setting = self.client.get(f"/api/projects/{pid}/auto-rag/comparison").json()["retrieval_setting"]
+        self.assertEqual((setting["reranker"], setting["source"]), ("cross-encoder/ms-marco-MiniLM-L-6-v2", "retrieval_sweep"))
+        self.assertEqual(self.client.put(f"/api/projects/{pid}/auto-rag/retrieval", json={"k": 99}).status_code, 422)
+        self.assertEqual(self.client.put("/api/projects/999999/auto-rag/retrieval", json={"k": 3}).status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

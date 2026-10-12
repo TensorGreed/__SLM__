@@ -557,7 +557,12 @@ runs real CPU inference). ~4 min locally.
   `summary.retrieval_decision` {current, chosen, switched, reason}, also
   on the Job result, the flow gate and the rag_passages summary;
   `summary.retrieval` + `summary.retrieval_sweep`,
-  `auto_rag/retrieval_sweep.json`). Job
+  `auto_rag/retrieval_sweep.json`). `PUT /auto-rag/retrieval` {k, reranker} pins
+  (`runtime_config.auto_rag_retrieval.source="pinned"`; `apply_retrieval_choice`
+  returns `kept_pinned` and never overwrites a pin), `DELETE` unpins; the
+  comparison GET carries `retrieval_setting` {k, reranker, source, pinned};
+  the panel's documents card renders the sweep table with Pin / Unpin
+  (`onPin` / `onUnpin` props on `ModelComparisonCard`). Job
   `sweep_retrieval=True` → `apply_retrieval_choice` writes the winner to
   the project; the sibling auto-check sweeps. Summary card line
   "Retrieval served: …". Tests patch `retrieval_reranker.score_pairs`.

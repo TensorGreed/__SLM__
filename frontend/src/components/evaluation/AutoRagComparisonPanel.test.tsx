@@ -387,6 +387,51 @@ describe('AutoRagComparisonPanel — base model next to the fine-tuned run', () 
         });
     });
 
+    it('shows the sweep arms with evidence vs the current retrieval, and pins / unpins from the documents card', async () => {
+        const BASE_DOCUMENTS = {
+            ...BASE,
+            corpus: 'documents',
+            split: 'test',
+            summary: {
+                ...BASE.summary,
+                retrieval: { k: 3, reranker: null },
+                retrieval_sweep: [
+                    { retrieval: { k: 3, reranker: null }, label: 'top-3', on_mean_f1: 0.376, judge_score: 0.55, judge_counts: { correct: 8, partial: 5, wrong: 6 }, chosen: true, current: true, vs_current: null },
+                    { retrieval: { k: 5, reranker: null }, label: 'top-5', on_mean_f1: 0.318, judge_score: 0.39, judge_counts: { correct: 5, partial: 5, wrong: 9 }, chosen: false, current: false, vs_current: { verdict: 'within_noise', n: 19, better: 2, worse: 5, same: 12 } },
+                    { retrieval: { k: 3, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2' }, label: 'top-3 + reranker ms-marco-MiniLM-L-6-v2', on_mean_f1: 0.429, judge_score: 0.53, judge_counts: { correct: 9, partial: 2, wrong: 8 }, chosen: false, current: false, vs_current: { verdict: 'within_noise', n: 19, better: 4, worse: 4, same: 11 } },
+                ],
+                retrieval_decision: { current: { k: 3, reranker: null }, chosen: { k: 3, reranker: null }, switched: false, reason: 'kept top-3: no arm beat it beyond row noise' },
+            },
+        };
+        apiMock.get.mockResolvedValue({ status: 200, data: { ...FINE_TUNED, base: null, base_documents: BASE_DOCUMENTS, retrieval_setting: { k: 3, reranker: null, source: 'retrieval_sweep', pinned: false } } });
+        apiMock.put.mockResolvedValueOnce({ status: 200, data: { k: 3, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2', source: 'pinned', pinned: true } });
+        const user = userEvent.setup();
+        render(<AutoRagComparisonPanel projectId={22} />);
+
+        const sweep = await screen.findByTestId('auto-rag-comparison-base-documents-sweep');
+        expect(sweep).toHaveTextContent('Retrieval sweep — kept top-3: no arm beat it beyond row noise.');
+        expect(screen.getByTestId('auto-rag-comparison-base-documents-sweep-setting')).toHaveTextContent('Serving: top-3 (BM25 only) (chosen by the sweep)');
+        const arms = screen.getAllByTestId('auto-rag-comparison-base-documents-sweep-arm');
+        expect(arms).toHaveLength(3);
+        expect(arms[0]).toHaveTextContent('top-3 · current · chosen');
+        expect(arms[0]).toHaveTextContent('serving');
+        expect(arms[1]).toHaveTextContent('within noise · 2 better, 5 worse');
+        expect(arms[2]).toHaveTextContent('0.53 (9/2/8)');
+        // Pin the reranker arm: PUT, then the panel re-reads (now pinned).
+        apiMock.get.mockResolvedValue({ status: 200, data: { ...FINE_TUNED, base: null, base_documents: BASE_DOCUMENTS, retrieval_setting: { k: 3, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2', source: 'pinned', pinned: true } } });
+        await user.click(screen.getByTestId('auto-rag-comparison-base-documents-pin-3-rerank'));
+        await waitFor(() => {
+            expect(apiMock.put).toHaveBeenCalledWith('/projects/22/auto-rag/retrieval', { k: 3, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2' });
+        });
+        expect(toastMock.info).toHaveBeenCalledWith(expect.stringMatching(/Pinned top-3 \+ reranker/), 4000);
+
+        // A pinned setting shows as pinned with an Unpin control.
+        apiMock.delete.mockResolvedValueOnce({ status: 200, data: { k: 3, reranker: null, source: 'default', pinned: false } });
+        await waitFor(() => expect(screen.getByTestId('auto-rag-comparison-base-documents-sweep-setting')).toHaveTextContent('pinned by you'));
+        await user.click(screen.getByTestId('auto-rag-comparison-base-documents-unpin'));
+        await waitFor(() => expect(apiMock.delete).toHaveBeenCalledWith('/projects/22/auto-rag/retrieval'));
+    });
+
     it('renders a base-only comparison (no trained run yet)', async () => {
         apiMock.get.mockResolvedValueOnce({
             status: 200,

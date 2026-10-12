@@ -243,6 +243,10 @@ async def apply_retrieval_choice(project_id: int, retrieval: dict[str, Any]) -> 
             if project is None:
                 return None
             cfg = dict(project.runtime_config or {})
+            current = cfg.get(RETRIEVAL_SETTINGS_KEY) if isinstance(cfg.get(RETRIEVAL_SETTINGS_KEY), dict) else {}
+            if current.get("source") == "pinned":
+                # The user chose this retrieval; the sweep reports, never overrides.
+                return {"k": current.get("k"), "reranker": normalize_reranker(current.get("reranker")), "kept_pinned": True}
             cfg[RETRIEVAL_SETTINGS_KEY] = {**chosen, "source": "retrieval_sweep"}
             project.runtime_config = cfg
             await db.commit()
