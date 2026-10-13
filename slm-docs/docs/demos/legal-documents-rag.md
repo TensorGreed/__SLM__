@@ -118,35 +118,33 @@ answer, cited from the passage it came from, with no fine-tuning.
 ## What a new user sees today (clean run, 2026-10-13)
 
 The tables above are the recording's numbers. This is the same case run
-again from an empty project with today's defaults — one click on the flow
-card, the auto-picked local generation model (`ollama` → gemma4:latest on
-this box), the judge from the backend env (`gemma4:12b`), base model
-Qwen2.5-1.5B-Instruct. Today the flow **sizes itself to the decision**: it
-generated from 150 passages so the test split has 46 rows, enough for a
-0.15 judge-score gap to clear noise. Every step happened without choosing
-anything:
+again from an empty project with **today's** defaults — one click on the
+flow card, the auto-picked local generation model (gemma4:latest), the
+judge from the backend env (gemma4:12b), base model Qwen2.5-1.5B-Instruct,
+passages cut on sentence boundaries, the answer key held to the quotable
+standard, generation sized to the decision — so the questions, the split
+and the numbers differ from the recording. Every step happened without
+choosing anything:
 
 | step | result |
 |---|---|
-| documents → Q&A flow (sized) | 467 passages, 150 used, 450 pairs + 150 answer-key rows, split 358 / 44 / 46, 26 min |
-| pre-training gate (retrieval sweep, judged, 46 test examples) | the sweep could finally call a difference: **top-5 + reranker beat top-3 beyond noise** (0.53 vs 0.38; 14 rows better, 4 worse, +0.15, CI +0.02 to +0.29) and became the setting. Gate on it: **20 / 9 / 17**, 0.53 → *promising* (too many wrong to stop) → training went ahead with the note |
-| fine-tune (run #45, judged on the same 46 rows) | **4 / 3 / 39**, 0.05 → 0.12, within noise (token F1 said 0.11 → 0.31) |
-| Coach, Eval tab | "Retrieval over your documents beats the fine-tune (0.53 vs 0.12 judged)" → one-click reroute |
-| RAG sibling (#26), its automatic sweep | kept top-5 + reranker (top-3 now *worse* beyond noise: 4 better / 14 worse); base alone 0.04 → with passages 0.53, 27 rows better, 2 worse |
-| playground, sibling | the section 9 answer, cited "[1]", 17.9 s on first load |
+| cleaning | 437 passages (sentence boundaries; was 467 cut by character count) |
+| documents → Q&A flow (sized) | 150 passages → 450 pairs + **145 answer-key rows** (5 dropped as not quotable: 4 unsupported, 1 pointed at the passage), split 356 / 44 / 46, 28 min |
+| pre-training gate (staged sweep, judged, 46 test examples) | the sweep switched to **top-3 over 600-char passages** (0.58 vs 0.48 for the cleaning's own; 10 rows better, 3 worse) and read **promising**: 21 / 11 / 14 → training went ahead. Retrieval found the answer in 40 of 46 rows; of the 14 wrong, 6 missed / 8 misread |
+| fine-tune (run #49, judged on the same 46 rows) | **1 / 6 / 39**, 0.03 → 0.09, within noise (token F1 says 0.12 → 0.34) |
+| Coach, Eval tab | "Retrieval over your documents beats the fine-tune (**0.58 vs 0.09** judged)" → one-click reroute |
+| RAG sibling (#30), its automatic sweep | kept top-3 · 600-char passages at 0.58; base alone 0.03 → 0.58, 31 rows better, 1 worse; plain top-3 and 1200-char passages now *worse* beyond noise |
+| playground, sibling | "The head of a government institution must retain a record of the use of personal information, and that record forms part of the personal information to which it is attached." — 30 s on first load |
 
-*Before the sizing* (same day, 60 passages, 19 test rows): the gate read
-5 / 3 / 11 (0.34) with plain top-3, every reranked arm was within noise, the
-fine-tune judged 1 / 4 / 14, and the sweep kept BM25. The sizing didn't
-change what is true — retrieval beats the fine-tune either way — it changed
-what the platform could *prove*: on 19 rows the reranker's +0.15 was a
-coin toss; on 46 it is a finding, and the project serves it.
-
-What this run says plainly: the gate did **not** stop training (20 right of
-46 with 17 wrong is not an assistant), so the flow trained and let the
-judged comparison settle it, which it did on the same rows; and the
-fine-tune on 358 generated pairs still learned the wording, not the facts
-(4 of 46 right).
+Three things this run says plainly. The gate did **not** stop training
+(21 right of 46 with 14 wrong is not an assistant), so the flow trained
+and let the judged comparison settle it, which it did on the same rows.
+The retrieval that won was a *passage size*, not a reranker — on
+sentence-boundary passages the 600-char re-cut beat every reranked arm —
+so the staged sweep earned its third stage. And the fine-tune on 356
+generated pairs still learned the wording, not the facts (1 of 46
+right): the Coach's reroute is the right call, and the sibling serves
+the answer the fine-tune never learned.
 
 ## What is still open (said on camera)
 
