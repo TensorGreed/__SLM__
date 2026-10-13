@@ -15,6 +15,7 @@ import api from '../../api/client';
 import { checkLiftAcrossSeeds, fetchEvalSummary, type EvalSummary } from '../../api/evalSummary';
 import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import { retrievalLabel } from './retrievalLabel';
+import { retrievalRowText, retrievalSplitText } from './retrievalSplit';
 import { toast } from '../../stores/toastStore';
 import { useJobsStore } from '../../stores/jobsStore';
 import './EvalSummaryCard.css';
@@ -340,6 +341,16 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     answer key and the model's answer and grades the facts, not the wording — token F1 is still shown below.
                 </p>
             )}
+            {summary.judge?.retrieval && (
+                <p className="eval-summary__judge eval-summary__retrieval-split" data-testid="eval-summary-retrieval-split">
+                    {retrievalSplitText(summary.judge.retrieval)}
+                    {summary.judge.retrieval.wrong_missed > summary.judge.retrieval.wrong_misread
+                        ? ' Retrieval is the bigger lever here.'
+                        : summary.judge.retrieval.wrong_misread > 0
+                            ? ' The reader is the bigger lever here — a stronger base model, not a different retrieval.'
+                            : ''}
+                </p>
+            )}
             {summary.message && <p className="eval-summary__message">{summary.message}</p>}
 
             {summary.failures.length > 0 && (
@@ -359,6 +370,12 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                                 {failure.row_judge_verdict && (
                                     <div className={`eval-summary__judge-verdict eval-summary__judge-verdict--${failure.row_judge_verdict}`}>
                                         Judge: {failure.row_judge_verdict}{failure.row_judge_reason ? ` — ${failure.row_judge_reason}` : ''}
+                                    </div>
+                                )}
+                                {failure.row_retrieval_verdict && (
+                                    <div className={`eval-summary__retrieval-verdict eval-summary__retrieval-verdict--${failure.row_retrieval_verdict}`} data-testid="eval-summary-failure-retrieval">
+                                        Retrieval: {retrievalRowText(failure.row_retrieval_verdict, failure.row_retrieval_passage, failure.row_judge_verdict)}
+                                        {failure.row_retrieval_reason ? ` — ${failure.row_retrieval_reason}` : ''}
                                     </div>
                                 )}
                             </li>

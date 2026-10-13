@@ -1007,6 +1007,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/SlicesSection.test.tsx` — Quality-Lift phase 7 slice 1 — SlicesSection tests.
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalLabel.test.ts` — _(no docstring)_
+- `frontend/src/components/evaluation/retrievalSplit.test.ts` — _(no docstring)_
 - `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/gamification/AchievementToast.test.tsx` — CRT achievement toast contract.
 - `frontend/src/components/gamification/ProgressChip.test.tsx` — ProgressChip + LabJournalDrawer contract.

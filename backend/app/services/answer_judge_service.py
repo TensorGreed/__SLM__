@@ -68,6 +68,78 @@ _RESPONSE_SCHEMA: dict[str, Any] = {
     "required": ["verdict", "reason"],
 }
 
+# ── Retrieval judge: did the retrieved passages contain the answer? ──
+#
+# Splits a wrong answer into "retrieval missed it" and "retrieval found it,
+# the model misread it" — the two need different fixes (retrieval shape /
+# reranker vs a stronger reader). Same judge model, a second question.
+RETRIEVAL_VERDICTS: frozenset[str] = frozenset({"found", "missed"})
+# Passages are joined into one "prediction" string for the cache key.
+_PASSAGE_SEPARATOR = "\n\n=====\n\n"
+
+_RETRIEVAL_SYSTEM_PROMPT = (
+    "You check whether retrieved passages contain the information needed to answer a "
+    "question. Judge content only. Respond ONLY with JSON: "
+    '{"verdict": "found" | "missed", "passage": <1-based number of the passage that contains it, or 0>, '
+    '"reason": "<one short sentence>"}.'
+)
+
+_RETRIEVAL_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string", "enum": ["found", "missed"]},
+        "passage": {"type": "integer"},
+        "reason": {"type": "string"},
+    },
+    "required": ["verdict", "passage", "reason"],
+}
+
+
+def build_retrieval_judge_prompt(question: str, reference: str, passages: list[str]) -> str:
+    numbered = "\n\n".join(f"[{i}] {p.strip()}" for i, p in enumerate(passages, start=1)) or "(no passages)"
+    return (
+        "QUESTION:\n"
+        f"{question.strip()}\n\n"
+        "REFERENCE ANSWER (the facts a correct answer must state):\n"
+        f"{reference.strip()}\n\n"
+        "RETRIEVED PASSAGES:\n"
+        f"{numbered}\n\n"
+        "Verdict rules:\n"
+        "- found: at least one passage states the reference's key facts (a model reading it "
+        "could give the reference answer). Name that passage.\n"
+        "- missed: no passage states them — they are about something else, a neighbouring "
+        "section, or only share words with the question."
+    )
+
+
+def parse_retrieval_verdict(raw: str | None) -> tuple[str, int | None, str] | None:
+    """``(verdict, passage, reason)`` from the retrieval judge's reply, or None."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+    payload: Any = None
+    try:
+        payload = json.loads(text)
+    except Exception:  # noqa: BLE001
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if match:
+            try:
+                payload = json.loads(match.group(0))
+            except Exception:  # noqa: BLE001
+                payload = None
+    if not isinstance(payload, dict):
+        return None
+    verdict = str(payload.get("verdict") or "").strip().lower()
+    if verdict not in RETRIEVAL_VERDICTS:
+        return None
+    try:
+        passage = int(payload.get("passage") or 0)
+    except (TypeError, ValueError):
+        passage = 0
+    reason = str(payload.get("reason") or "").strip()[:300]
+    return verdict, (passage if verdict == "found" and passage > 0 else None), reason
+
 
 def should_judge(task_profile: str | None, references: list[str]) -> bool:
     """Long-answer generative task? (profile in ``JUDGE_PROFILES`` and the
@@ -154,8 +226,19 @@ class AnswerJudgeCache:
             return None
         return float(VERDICT_SCORES[entry["verdict"]]), str(entry["verdict"]), str(entry.get("reason") or "")
 
-    def set(self, key: str, verdict: str, reason: str) -> None:
-        self._data[key] = {"score": VERDICT_SCORES.get(verdict, 0.0), "verdict": verdict, "reason": reason}
+    def get_retrieval(self, key: str) -> tuple[str, int | None, str] | None:
+        """A cached retrieval verdict ``(verdict, passage, reason)``."""
+        entry = self._data.get(key)
+        if not isinstance(entry, dict) or entry.get("verdict") not in RETRIEVAL_VERDICTS:
+            return None
+        passage = entry.get("passage")
+        return str(entry["verdict"]), (int(passage) if isinstance(passage, int) and passage > 0 else None), str(entry.get("reason") or "")
+
+    def set(self, key: str, verdict: str, reason: str, *, passage: int | None = None) -> None:
+        entry: dict[str, Any] = {"score": VERDICT_SCORES.get(verdict, 0.0), "verdict": verdict, "reason": reason}
+        if passage is not None:
+            entry["passage"] = int(passage)
+        self._data[key] = entry
         self._dirty = True
         while len(self._data) > CACHE_MAX_ENTRIES:
             self._data.pop(next(iter(self._data)), None)
@@ -175,10 +258,17 @@ def project_cache(project_id: int) -> AnswerJudgeCache:
     return AnswerJudgeCache(settings.DATA_DIR / "projects" / str(project_id) / "eval_judge_cache.json")
 
 
+# retrieval_judge(question, reference, passages) -> (verdict, passage, reason, tokens) | None
+RetrievalJudgeFn = Callable[[str, str, list[str]], Awaitable["tuple[str, int | None, str, int] | None"]]
+
+
 @dataclass
 class ResolvedJudge:
     label: str  # e.g. "ollama:gemma4:12b" / "anthropic:claude-…" — stamped on results
     judge: JudgeFn
+    # The same model asked whether the retrieved passages held the answer
+    # (None for judges built without one, e.g. tests' fakes).
+    retrieval_judge: RetrievalJudgeFn | None = None
 
 
 def _judge_from_synth_backend(backend: Any, label: str) -> JudgeFn:
@@ -195,6 +285,51 @@ def _judge_from_synth_backend(backend: Any, label: str) -> JudgeFn:
             return None
         score, verdict, reason = parsed
         return score, verdict, reason, 0
+
+    return _judge
+
+
+def _retrieval_judge_from_synth_backend(backend: Any) -> RetrievalJudgeFn:
+    async def _judge(question: str, reference: str, passages: list[str]):
+        raw = await backend.complete(
+            build_retrieval_judge_prompt(question, reference, passages),
+            system_prompt=_RETRIEVAL_SYSTEM_PROMPT,
+            max_tokens=MAX_JUDGE_TOKENS,
+            temperature=0.0,
+            response_schema=_RETRIEVAL_RESPONSE_SCHEMA,
+        )
+        parsed = parse_retrieval_verdict(raw)
+        if parsed is None:
+            return None
+        verdict, passage, reason = parsed
+        return verdict, passage, reason, 0
+
+    return _judge
+
+
+def _retrieval_judge_from_cloud(provider: str, model: str, api_key: str) -> RetrievalJudgeFn:
+    async def _judge(question: str, reference: str, passages: list[str]):
+        from app.services.cloud_llm_service import call_anthropic_chat, call_openai_chat
+
+        user = build_retrieval_judge_prompt(question, reference, passages)
+        if provider == "anthropic":
+            resp = await call_anthropic_chat(
+                api_key=api_key, model=model, system_prompt=_RETRIEVAL_SYSTEM_PROMPT,
+                user_prompt=user, max_tokens=MAX_JUDGE_TOKENS, temperature=0.0,
+            )
+        else:
+            api_url = "https://api.deepseek.com/v1/chat/completions" if provider == "deepseek" else None
+            resp = await call_openai_chat(
+                api_key=api_key, model=model, system_prompt=_RETRIEVAL_SYSTEM_PROMPT,
+                user_prompt=user, max_tokens=MAX_JUDGE_TOKENS, temperature=0.0,
+                api_url=api_url, force_json=True,
+            )
+        parsed = parse_retrieval_verdict(getattr(resp, "content", None))
+        if parsed is None:
+            return None
+        verdict, passage, reason = parsed
+        tokens = int(getattr(resp, "prompt_tokens", 0) or 0) + int(getattr(resp, "completion_tokens", 0) or 0)
+        return verdict, passage, reason, tokens
 
     return _judge
 
@@ -254,6 +389,7 @@ async def resolve_answer_judge(db: Any, project_id: int, project: Any = None) ->
         return ResolvedJudge(
             label=f"{cloud['provider']}:{cloud['model']}",
             judge=_judge_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
+            retrieval_judge=_retrieval_judge_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
         )
     if requested:
         try:
@@ -261,7 +397,8 @@ async def resolve_answer_judge(db: Any, project_id: int, project: Any = None) ->
         except Exception as exc:  # noqa: BLE001
             _LOG.warning("eval judge %r unavailable: %s", requested, exc)
             return None
-        return ResolvedJudge(label=await _backend_label(backend), judge=_judge_from_synth_backend(backend, requested))
+        return ResolvedJudge(label=await _backend_label(backend), judge=_judge_from_synth_backend(backend, requested),
+                             retrieval_judge=_retrieval_judge_from_synth_backend(backend))
 
     # Nothing requested: a local model first, then a configured cloud judge.
     for cls in BACKEND_REGISTRY:
@@ -270,7 +407,8 @@ async def resolve_answer_judge(db: Any, project_id: int, project: Any = None) ->
         try:
             if cls.is_available():
                 backend = cls()
-                return ResolvedJudge(label=await _backend_label(backend), judge=_judge_from_synth_backend(backend, cls.name))
+                return ResolvedJudge(label=await _backend_label(backend), judge=_judge_from_synth_backend(backend, cls.name),
+                                     retrieval_judge=_retrieval_judge_from_synth_backend(backend))
         except Exception:  # noqa: BLE001
             continue
     cloud = await _cloud_config(db, project_id, None)
@@ -278,6 +416,7 @@ async def resolve_answer_judge(db: Any, project_id: int, project: Any = None) ->
         return ResolvedJudge(
             label=f"{cloud['provider']}:{cloud['model']}",
             judge=_judge_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
+            retrieval_judge=_retrieval_judge_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
         )
     return None
 
@@ -375,6 +514,89 @@ async def judge_predictions(
         "counts": counts,
         "score": round(sum(scores) / judged, 4) if judged else None,
         "strict_correct_rate": round(counts["correct"] / judged, 4) if judged else None,
+        "judge_calls": calls,
+        "judge_cached": cached,
+        "judge_tokens": tokens,
+    }
+
+
+async def judge_retrieval(
+    rows: list[dict[str, Any]],
+    judge: RetrievalJudgeFn,
+    *,
+    label: str,
+    cache: AnswerJudgeCache | None = None,
+) -> dict[str, Any]:
+    """For each row ``{prompt, reference, passages: [str], row_judge_verdict?}``
+    ask whether the retrieved passages contained the answer; annotate in
+    place with ``row_retrieval_verdict`` (found / missed),
+    ``row_retrieval_passage`` (1-based, found only) and
+    ``row_retrieval_reason``. Returns a snapshot: found / missed / judged
+    counts, the found rate, and — for rows that also carry an answer
+    verdict — the split of the wrong answers into ``wrong_missed``
+    (retrieval missed it) and ``wrong_misread`` (retrieval found it, the
+    model misread it), plus ``correct_missed`` (answered right without the
+    passage: the model knew it, or the judge was lenient)."""
+    found = missed = unjudged = calls = cached = tokens = 0
+    wrong_missed = wrong_misread = correct_missed = 0
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            unjudged += 1
+            continue
+        question = str(row.get("prompt") or "")
+        reference = str(row.get("reference") or "")
+        passages = [str(p) for p in (row.get("passages") or []) if str(p).strip()]
+        if not passages:
+            # Nothing retrieved: missed by definition, no call.
+            verdict, passage, reason = "missed", None, "no passages were retrieved"
+        else:
+            key = cache_key(f"{label}:retrieval", question, reference, _PASSAGE_SEPARATOR.join(passages))
+            hit = cache.get_retrieval(key) if cache is not None else None
+            if hit is not None:
+                verdict, passage, reason = hit
+                cached += 1
+            else:
+                result = None
+                try:
+                    result = await judge(question, reference, passages)
+                except Exception as exc:  # noqa: BLE001 — never breaks the comparison
+                    _LOG.warning("retrieval judge failed on row %s: %s", index, exc)
+                calls += 1
+                if result is None:
+                    unjudged += 1
+                    continue
+                verdict, passage, reason, row_tokens = result
+                tokens += int(row_tokens or 0)
+                if cache is not None:
+                    cache.set(key, verdict, reason, passage=passage)
+        row["row_retrieval_verdict"] = verdict
+        row["row_retrieval_passage"] = passage
+        row["row_retrieval_reason"] = reason
+        if verdict == "found":
+            found += 1
+        else:
+            missed += 1
+        answer = row.get("row_judge_verdict")
+        if answer == "wrong":
+            if verdict == "found":
+                wrong_misread += 1
+            else:
+                wrong_missed += 1
+        elif answer == "correct" and verdict == "missed":
+            correct_missed += 1
+    if cache is not None:
+        cache.flush()
+    judged = found + missed
+    return {
+        "judge": label,
+        "judged": judged,
+        "unjudged": unjudged,
+        "found": found,
+        "missed": missed,
+        "found_rate": round(found / judged, 4) if judged else None,
+        "wrong_missed": wrong_missed,
+        "wrong_misread": wrong_misread,
+        "correct_missed": correct_missed,
         "judge_calls": calls,
         "judge_cached": cached,
         "judge_tokens": tokens,

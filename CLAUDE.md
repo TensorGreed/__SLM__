@@ -681,6 +681,23 @@ runs real CPU inference). ~4 min locally.
   `row_judge_verdict` / `row_judge_reason`. Tests inject `answer_judge=` /
   patch `_resolve_lift_judge` — a dev box with Ollama would otherwise judge
   for real (`tests/test_answer_judge.py`).
+  **Retrieval judge (retrieval vs reading)** — `answer_judge_service`:
+  `build_retrieval_judge_prompt` / `parse_retrieval_verdict` (`found` /
+  `missed` + 1-based `passage`), `ResolvedJudge.retrieval_judge` (same
+  model, second prompt; None on test fakes), `judge_retrieval(rows, judge,
+  label=, cache=)` annotates `row_retrieval_verdict/passage/reason` and
+  returns found / missed / `found_rate` / `wrong_missed` / `wrong_misread` /
+  `correct_missed`; cache key `"<label>:retrieval"` + passages joined
+  (`AnswerJudgeCache.get_retrieval`, `set(passage=)`); no call for a row with
+  no passages. Harness records carry `retrieved_passages` (documents corpus,
+  not written to rows); `_judge_comparison_rows` runs it on the with-RAG arm
+  → row `with_rag.retrieval_judge`, `summary.judge.with_rag.retrieval`, arm
+  `found_rate` (sweep table "passage found" column), summary card
+  `judge.retrieval` + failure `row_retrieval_*`. Frontend helper
+  `components/evaluation/retrievalSplit.ts` (`retrievalSplitText`,
+  `retrievalRowText`). **A non-sweep comparison scores the SERVED retrieval**
+  (`run_project_comparison(rag_k=None, …)` → `current_retrieval`; it used to
+  score plain top-3); CLI `--k` default None.
   **Multi-seed lift check**: a seed-group *leader* (`seed_group_id` set,
   `seed_value` None) is lift-checked as a group — `_run_seed_group_lift_eval`
   scores every COMPLETED child against one cached baseline and returns

@@ -108,6 +108,63 @@ class JudgePredictionsTests(unittest.TestCase):
             self.assertEqual(other["judge_calls"], 2)
 
 
+class RetrievalJudgeTests(unittest.TestCase):
+    """judge_retrieval: found / missed per row with the passage number,
+    cached under a retrieval-specific key, no call when nothing was
+    retrieved, and the wrong-answer split."""
+
+    def test_prompt_numbers_passages_and_parser_accepts_found_or_missed(self):
+        from app.services.answer_judge_service import build_retrieval_judge_prompt, parse_retrieval_verdict
+
+        prompt = build_retrieval_judge_prompt("Who keeps the record?", "The head keeps it.", ["s. 9 text", "s. 10 text"])
+        self.assertIn("[1] s. 9 text", prompt)
+        self.assertIn("[2] s. 10 text", prompt)
+        self.assertEqual(parse_retrieval_verdict('{"verdict": "found", "passage": 2, "reason": "s. 10"}'), ("found", 2, "s. 10"))
+        self.assertEqual(parse_retrieval_verdict('```json\n{"verdict": "missed", "passage": 0, "reason": "fees"}\n```'), ("missed", None, "fees"))
+        self.assertEqual(parse_retrieval_verdict('{"verdict": "found", "passage": 0, "reason": ""}'), ("found", None, ""))
+        self.assertIsNone(parse_retrieval_verdict('{"verdict": "maybe"}'))
+        self.assertIsNone(parse_retrieval_verdict(""))
+
+    def test_judge_retrieval_annotates_rows_caches_and_splits_wrong_answers(self):
+        import asyncio
+        import tempfile
+        from pathlib import Path
+
+        from app.services.answer_judge_service import AnswerJudgeCache, judge_retrieval
+
+        calls: list[str] = []
+
+        async def judge(question, reference, passages):
+            calls.append(question)
+            return ("found", 1, "it is there", 7) if any("record" in p for p in passages) else ("missed", None, "fees only", 7)
+
+        rows = [
+            {"prompt": "Q0", "reference": "ref", "passages": ["the head shall retain a record"], "row_judge_verdict": "correct"},
+            {"prompt": "Q1", "reference": "ref", "passages": ["the head shall retain a record"], "row_judge_verdict": "wrong"},
+            {"prompt": "Q2", "reference": "ref", "passages": ["fees"], "row_judge_verdict": "wrong"},
+            {"prompt": "Q3", "reference": "ref", "passages": [], "row_judge_verdict": "correct"},
+            {"prompt": "Q4", "reference": "ref", "passages": ["fees"], "row_judge_verdict": "partial"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = AnswerJudgeCache(Path(tmp) / "cache.json")
+            snap = asyncio.run(judge_retrieval(rows, judge, label="fake", cache=cache))
+            self.assertEqual(calls, ["Q0", "Q1", "Q2", "Q4"], "no call for a row with no passages")
+            self.assertEqual(rows[0]["row_retrieval_verdict"], "found")
+            self.assertEqual(rows[0]["row_retrieval_passage"], 1)
+            self.assertEqual(rows[3]["row_retrieval_verdict"], "missed")
+            self.assertEqual(rows[3]["row_retrieval_reason"], "no passages were retrieved")
+            self.assertEqual((snap["found"], snap["missed"], snap["judged"], snap["found_rate"]), (2, 3, 5, 0.4))
+            self.assertEqual((snap["wrong_misread"], snap["wrong_missed"], snap["correct_missed"]), (1, 1, 1))
+            self.assertEqual((snap["judge_calls"], snap["judge_cached"], snap["judge_tokens"]), (4, 0, 28))
+            # Same passages again → served from the cache, passage number kept.
+            again = [{"prompt": "Q0", "reference": "ref", "passages": ["the head shall retain a record"]}]
+            snap2 = asyncio.run(judge_retrieval(again, judge, label="fake", cache=AnswerJudgeCache(Path(tmp) / "cache.json")))
+            self.assertEqual((snap2["judge_calls"], snap2["judge_cached"]), (0, 1))
+            self.assertEqual(again[0]["row_retrieval_passage"], 1)
+            # An answer-judge lookup never reads a retrieval entry.
+            self.assertEqual(len(calls), 4)
+
+
 class EvalServiceHooksTests(unittest.TestCase):
     def test_judged_rows_decide_failure_and_row_scores(self):
         from app.services.evaluation_service import _prediction_failed, _row_scores_for_pairing

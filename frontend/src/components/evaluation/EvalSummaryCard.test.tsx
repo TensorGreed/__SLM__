@@ -143,6 +143,32 @@ describe('EvalSummaryCard', () => {
         expect(screen.getByTestId('eval-summary-failures')).toHaveTextContent('Judge: wrong — Contradicts the consent requirement.');
     });
 
+    it('splits a passages run\'s wrong answers into retrieval missed vs the model misread', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 7, experiment_id: null, kind: 'rag_passages', verdict: 'better', message: null,
+                headline: { metric_id: 'judge_correct', baseline_value: 0.04, trained_value: 0.53, absolute_delta: 0.49, relative_delta_pct: 1125, direction: 'improved' },
+                evidence: { n: 46, better: 27, worse: 2, same: 17, mean_diff: 0.49, ci_low: 0.36, ci_high: 0.62, verdict: 'better', metric_id: 'judge_correct' },
+                baseline: { experiment_id: null, base_model: 'Qwen/Qwen2.5-1.5B-Instruct' }, trained: null,
+                eval_type: 'rag_passages', evaluated_samples: 46, split: 'test',
+                retrieval: { k: 5, reranker: 'cross-encoder/ms-marco-MiniLM-L-6-v2' },
+                judge: { judge: 'ollama:gemma4:12b', score: 0.53, judged: 46, unjudged: 0, correct: 20, partial: 9, wrong: 17, retrieval: { judged: 46, found: 29, missed: 17, found_rate: 0.63, wrong_missed: 9, wrong_misread: 8 } },
+                failures: [
+                    { prompt: 'Who retains the record?', reference: 'The head of the institution.', prediction: 'The Minister.', row_judge_verdict: 'wrong', row_judge_reason: 'Wrong actor.', row_retrieval_verdict: 'found', row_retrieval_passage: 2, row_retrieval_reason: 'Passage 2 is s. 9.' },
+                    { prompt: 'What is the fee?', reference: 'Five dollars.', prediction: 'No fee.', row_judge_verdict: 'wrong', row_judge_reason: 'Contradicts.', row_retrieval_verdict: 'missed', row_retrieval_passage: null, row_retrieval_reason: 'Only s. 12 retrieved.' },
+                ],
+                failed_count: 17,
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={null} />);
+        expect(await screen.findByTestId('eval-summary-retrieval-split')).toHaveTextContent(
+            'Retrieval found the answer in 29 of 46 rows. Of the 17 wrong answers, retrieval missed it in 9 and found it in 8 — the model misread those. Retrieval is the bigger lever here.',
+        );
+        const rows = screen.getAllByTestId('eval-summary-failure-retrieval');
+        expect(rows[0]).toHaveTextContent('Retrieval: retrieval found it (passage 2) — the model misread it — Passage 2 is s. 9.');
+        expect(rows[1]).toHaveTextContent('Retrieval: retrieval missed it — Only s. 12 retrieved.');
+    });
+
     it('does not announce "better" when the lift is within noise', async () => {
         apiMock.get.mockResolvedValue({
             data: {

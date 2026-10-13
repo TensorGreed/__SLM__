@@ -371,6 +371,10 @@ def passages_summary(project_id: int) -> dict[str, Any] | None:
                 "prediction": str(on.get("generated") or "")[:300],
                 "row_judge_verdict": judge.get("verdict"),
                 "row_judge_reason": judge.get("reason"),
+                # The retrieval judge: did the passages hold the answer?
+                "row_retrieval_verdict": (on.get("retrieval_judge") or {}).get("verdict") if isinstance(on.get("retrieval_judge"), dict) else None,
+                "row_retrieval_passage": (on.get("retrieval_judge") or {}).get("passage") if isinstance(on.get("retrieval_judge"), dict) else None,
+                "row_retrieval_reason": (on.get("retrieval_judge") or {}).get("reason") if isinstance(on.get("retrieval_judge"), dict) else None,
             })
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
     judge_block = summary.get("judge") if isinstance(summary.get("judge"), dict) else {}
@@ -414,6 +418,9 @@ def passages_summary(project_id: int) -> dict[str, Any] | None:
             "wrong": counts.get("wrong", 0),
             "judge_calls": on_arm.get("judge_calls"),
             "judge_cached": on_arm.get("judge_cached"),
+            # Retrieval vs reading: found / missed over all rows and the
+            # split of the wrong answers (None when not retrieval-judged).
+            "retrieval": on_arm.get("retrieval") if isinstance(on_arm.get("retrieval"), dict) else None,
         },
         "dataset_name": passages.get("split"),
         "cached_at": passages.get("cached_at"),

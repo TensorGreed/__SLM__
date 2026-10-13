@@ -349,7 +349,7 @@ describe('AutoRagComparisonPanel — base model next to the fine-tuned run', () 
                 judge: {
                     judge: 'ollama:gemma4:12b',
                     without_rag: { score: 0.079, counts: { correct: 0, partial: 3, wrong: 16 } },
-                    with_rag: { score: 0.684, counts: { correct: 11, partial: 4, wrong: 4 } },
+                    with_rag: { score: 0.684, counts: { correct: 11, partial: 4, wrong: 4 }, retrieval: { judged: 19, found: 16, missed: 3, found_rate: 0.842, wrong_missed: 3, wrong_misread: 1 } },
                 },
             },
             judge_evidence: { n: 19, better: 14, worse: 1, same: 4, mean_diff: 0.6, ci_low: 0.45, ci_high: 0.75, verdict: 'better', metric_id: 'judge_correct' },
@@ -357,7 +357,7 @@ describe('AutoRagComparisonPanel — base model next to the fine-tuned run', () 
                 question: 'Doc question?',
                 reference: 'ref',
                 without_rag: { generated: 'guess', f1: 0.0, judge: { score: 0, verdict: 'wrong', reason: 'contradicts' } },
-                with_rag: { generated: 'cited [1]', f1: 0.5, retrieved_row_count: 3, judge: { score: 1, verdict: 'correct', reason: 'matches' }, retrieved_sources: ['P-21.html · passage 4'] },
+                with_rag: { generated: 'cited [1]', f1: 0.5, retrieved_row_count: 3, judge: { score: 1, verdict: 'correct', reason: 'matches' }, retrieval_judge: { verdict: 'found', passage: 1, reason: 's. 9 states it' }, retrieved_sources: ['P-21.html · passage 4'] },
             }],
         };
         apiMock.get.mockResolvedValueOnce({ status: 200, data: { ...FINE_TUNED, base: null, base_documents: BASE_DOCUMENTS } });
@@ -370,12 +370,14 @@ describe('AutoRagComparisonPanel — base model next to the fine-tuned run', () 
         expect(judge).toHaveTextContent('by ollama:gemma4:12b');
         expect(judge).toHaveTextContent('without retrieval 0.079 (0 correct, 3 partial, 16 wrong) → with retrieval 0.684 (11 correct, 4 partial, 4 wrong)');
         expect(screen.getByTestId('auto-rag-comparison-base-documents-judge-evidence')).toHaveAttribute('data-verdict', 'better');
+        expect(screen.getByTestId('auto-rag-comparison-base-documents-retrieval-split')).toHaveTextContent('Retrieval found the answer in 16 of 19 rows. Of the 4 wrong answers, retrieval missed it in 3 and found it in 1 — the model misread those.');
         // The plain base card is still offered, the documents one has rows + sources.
         expect(screen.getByTestId('auto-rag-comparison-base-run-btn')).toBeInTheDocument();
         await user.click(screen.getByTestId('auto-rag-comparison-rows-base-documents'));
         expect(screen.getByText('Doc question?')).toBeInTheDocument();
         expect(screen.getByText(/Judge: correct — matches/)).toBeInTheDocument();
         expect(screen.getByText(/Sources: P-21.html · passage 4/)).toBeInTheDocument();
+        expect(screen.getByTestId('auto-rag-row-retrieval')).toHaveTextContent('Retrieval: retrieval found it (passage 1) — s. 9 states it');
         // Re-running the documents arm posts model=base + corpus=documents.
         await user.click(screen.getByTestId('auto-rag-comparison-base-documents-rerun-btn'));
         await waitFor(() => {

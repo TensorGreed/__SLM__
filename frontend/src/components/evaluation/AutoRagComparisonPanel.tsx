@@ -20,6 +20,7 @@ import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import { evidenceNote, rowCountsText, type LiftEvidence } from './liftEvidence';
 import { retrievalKey, retrievalLabel, retrievalPinBody, type RetrievalSetting } from './retrievalLabel';
+import { retrievalRowText, retrievalSplitText, type RetrievalSplit, type RetrievalVerdict } from './retrievalSplit';
 import './AutoRagComparisonPanel.css';
 
 /** The answer judge's verdict on one generated answer (long-answer tasks). */
@@ -38,6 +39,8 @@ interface AutoRagRow {
         f1: number;
         retrieved_row_count: number;
         judge?: AutoRagJudgeVerdict | null;
+        /** The retrieval judge: did the passages hold the answer? */
+        retrieval_judge?: { verdict: RetrievalVerdict; passage: number | null; reason: string } | null;
         retrieved_sources?: string[];
     };
 }
@@ -45,6 +48,8 @@ interface AutoRagRow {
 interface AutoRagJudgeArm {
     score: number | null;
     counts?: { correct?: number; partial?: number; wrong?: number } | null;
+    /** with_rag only: retrieval vs reading (retrievalSplit.ts). */
+    retrieval?: RetrievalSplit | null;
 }
 
 /** Judge summary for one comparison: who judged + each arm's mean. */
@@ -80,6 +85,8 @@ interface AutoRagSweepArm {
     on_mean_f1: number;
     judge_score: number | null;
     judge_counts?: { correct?: number; partial?: number; wrong?: number } | null;
+    /** Share of rows whose passages held the answer (the retrieval judge). */
+    found_rate?: number | null;
     chosen: boolean;
     current?: boolean;
     vs_current?: { verdict: string; n: number; better: number; worse: number; same: number } | null;
@@ -766,6 +773,11 @@ function ModelComparisonCard({
                 <div className="auto-rag-comparison__judge" data-testid={`${testIdPrefix}-judge`}>
                     <strong>Judge: answer correct</strong> (by <code>{judge.judge}</code>, facts not wording):{' '}
                     without retrieval {armText(judge.without_rag)} → with retrieval {armText(judge.with_rag)}.
+                    {judge.with_rag.retrieval && (
+                        <span className="auto-rag-comparison__retrieval-split" data-testid={`${testIdPrefix}-retrieval-split`}>
+                            {' '}{retrievalSplitText(judge.with_rag.retrieval)}
+                        </span>
+                    )}
                     {judgeEvidence && judgeNote && (
                         <span
                             className={`auto-rag-comparison__evidence auto-rag-comparison__evidence--${judgeEvidence.verdict}`}
@@ -800,7 +812,7 @@ function ModelComparisonCard({
                     </div>
                     <table className="auto-rag-comparison__sweep-table">
                         <thead>
-                            <tr><th>retrieval</th><th>judge</th><th>F1</th><th>vs current</th><th>users chose</th><th></th></tr>
+                            <tr><th>retrieval</th><th>judge</th><th>passage found</th><th>F1</th><th>vs current</th><th>users chose</th><th></th></tr>
                         </thead>
                         <tbody>
                             {summary.retrieval_sweep.map((arm) => {
@@ -818,6 +830,7 @@ function ModelComparisonCard({
                                             ) : null}
                                         </td>
                                         <td>{arm.judge_score != null ? arm.judge_score.toFixed(2) : '—'}{arm.judge_counts ? ` (${arm.judge_counts.correct ?? 0}/${arm.judge_counts.partial ?? 0}/${arm.judge_counts.wrong ?? 0})` : ''}</td>
+                                        <td>{arm.found_rate != null ? `${Math.round(arm.found_rate * 100)}%` : '—'}</td>
                                         <td>{arm.on_mean_f1.toFixed(3)}</td>
                                         <td>{arm.current ? '—' : arm.vs_current ? vsCurrentText(arm.vs_current) : '—'}</td>
                                         <td>{arm.user_choices ? `${arm.user_choices.chosen} of ${arm.user_choices.offered}${arm.user_preferred ? ' · broke the tie' : ''}` : '—'}</td>
@@ -986,6 +999,12 @@ function AutoRagRowCard({ idx, row }: RowCardProps) {
                         {row.with_rag.judge && (
                             <div className={`auto-rag-comparison__row-judge auto-rag-comparison__row-judge--${row.with_rag.judge.verdict}`}>
                                 Judge: {row.with_rag.judge.verdict} — {row.with_rag.judge.reason}
+                            </div>
+                        )}
+                        {row.with_rag.retrieval_judge && (
+                            <div className={`auto-rag-comparison__row-retrieval auto-rag-comparison__row-retrieval--${row.with_rag.retrieval_judge.verdict}`} data-testid="auto-rag-row-retrieval">
+                                Retrieval: {retrievalRowText(row.with_rag.retrieval_judge.verdict, row.with_rag.retrieval_judge.passage, row.with_rag.judge?.verdict)}
+                                {row.with_rag.retrieval_judge.reason ? ` — ${row.with_rag.retrieval_judge.reason}` : ''}
                             </div>
                         )}
                         {row.with_rag.retrieved_sources && row.with_rag.retrieved_sources.length > 0 && (

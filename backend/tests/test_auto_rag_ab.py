@@ -506,6 +506,17 @@ class DocumentsCorpusAndJudgeTests(unittest.TestCase):
         self.assertFalse(harness._same_retrieval({"k": 3, "reranker": "default"}, {"k": 3, "reranker": "default", "pool": 20}))
         self.assertFalse(harness._same_retrieval({"k": 3}, {"k": 3, "chunk_size": 600}))
 
+    def test_single_arm_defaults_to_the_served_retrieval(self):
+        """Without a sweep and without explicit retrieval args the one arm
+        is what the project serves, so the comparison predicts the playground
+        (it used to score plain top-3 whatever the project served)."""
+        import inspect
+
+        sig = inspect.signature(harness.run_project_comparison)
+        self.assertIsNone(sig.parameters["rag_k"].default)
+        src = inspect.getsource(harness.run_project_comparison)
+        self.assertIn("single = dict(current_retrieval)", src)
+
     def test_sweep_stages_follow_the_running_best(self):
         """Stage 1 is the k × reranker grid (+ an incumbent outside it, first);
         stage 2 varies the reranker pool only when the best reranks; stage 3
@@ -557,6 +568,48 @@ class DocumentsCorpusAndJudgeTests(unittest.TestCase):
         self.assertEqual(off[0]["judge"]["verdict"], "wrong")
         short = [{"question": "Q?", "reference": "Section 8", "generated": "x"}]
         self.assertIsNone(harness._judge_comparison_rows(999, short, short))
+
+    def test_retrieval_judge_splits_wrong_answers_into_missed_and_misread(self):
+        """With document passages on the records and a judge that can also
+        check retrieval, every with-RAG row gets found / missed (+ the
+        passage), and the summary splits the wrong answers."""
+        from unittest import mock
+
+        from app.services import answer_judge_service as judge_svc
+
+        long = "The head of a government institution shall retain a record of any use of personal information."
+        off = [{"question": f"Q{i}?", "reference": long, "generated": "no idea"} for i in range(3)]
+        on = [
+            # right answer, passage held it
+            {"question": "Q0?", "reference": long, "generated": "the head retains a record", "retrieved_passages": ["s. 9: the head shall retain a record"]},
+            # wrong answer although the passage held it → the model misread it
+            {"question": "Q1?", "reference": long, "generated": "nothing", "retrieved_passages": ["s. 9: the head shall retain a record", "s. 10 fees"]},
+            # wrong answer, passages about something else → retrieval missed it
+            {"question": "Q2?", "reference": long, "generated": "nothing", "retrieved_passages": ["s. 10 fees"]},
+        ]
+
+        async def judge(q, r, p):
+            return (1.0, "correct", "ok", 0) if "retains" in p else (0.0, "wrong", "no", 0)
+
+        async def retrieval_judge(q, r, passages):
+            for i, text in enumerate(passages, start=1):
+                if "retain a record" in text:
+                    return ("found", i, "s. 9 states it", 0)
+            return ("missed", None, "only fees", 0)
+
+        async def resolve(db, pid, project):
+            return judge_svc.ResolvedJudge(label="fake:judge", judge=judge, retrieval_judge=retrieval_judge)
+
+        with mock.patch.object(judge_svc, "resolve_answer_judge", resolve), \
+                mock.patch.object(judge_svc, "project_cache", lambda pid: None):
+            summary = harness._judge_comparison_rows(999, off, on)
+        self.assertEqual(on[0]["retrieval_judge"], {"verdict": "found", "passage": 1, "reason": "s. 9 states it"})
+        self.assertEqual(on[1]["retrieval_judge"]["verdict"], "found")
+        self.assertEqual(on[2]["retrieval_judge"], {"verdict": "missed", "passage": None, "reason": "only fees"})
+        split = summary["with_rag"]["retrieval"]
+        self.assertEqual((split["found"], split["missed"], split["found_rate"]), (2, 1, 0.6667))
+        self.assertEqual((split["wrong_missed"], split["wrong_misread"], split["correct_missed"]), (1, 1, 0))
+        self.assertNotIn("retrieval", summary["without_rag"])
 
 if __name__ == "__main__":
     unittest.main()

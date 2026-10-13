@@ -415,6 +415,7 @@ def _judge_comparison_rows(
 
     from app.services.answer_judge_service import (
         judge_predictions,
+        judge_retrieval,
         project_cache,
         resolve_answer_judge,
         should_judge,
@@ -444,6 +445,24 @@ def _judge_comparison_rows(
                         "reason": pred["row_judge_reason"],
                     }
             out[arm] = {k: snap.get(k) for k in ("score", "counts", "judged", "unjudged", "judge_calls", "judge_cached")}
+            # Documents corpus: did the retrieved passages hold the answer?
+            # Splits the wrong answers into "retrieval missed it" and
+            # "retrieval found it, the model misread it".
+            if arm == "with_rag" and resolved.retrieval_judge is not None and any(r.get("retrieved_passages") for r in records):
+                for pred, rec in zip(preds, records):
+                    pred["passages"] = rec.get("retrieved_passages") or []
+                retrieval_snap = await judge_retrieval(preds, resolved.retrieval_judge, label=resolved.label, cache=cache)
+                for rec, pred in zip(records, preds):
+                    if "row_retrieval_verdict" in pred:
+                        rec["retrieval_judge"] = {
+                            "verdict": pred["row_retrieval_verdict"],
+                            "passage": pred["row_retrieval_passage"],
+                            "reason": pred["row_retrieval_reason"],
+                        }
+                out[arm]["retrieval"] = {
+                    k: retrieval_snap.get(k)
+                    for k in ("judged", "unjudged", "found", "missed", "found_rate", "wrong_missed", "wrong_misread", "correct_missed", "judge_calls", "judge_cached")
+                }
         return out
 
     try:
@@ -662,6 +681,9 @@ def evaluate_with_inference(
         retrieved_pairs: list[dict[str, Any]] = []
         preamble: str | None = None
         retrieved_sources: list[str] = []
+        # Passage texts (documents corpus) for the retrieval judge; dropped
+        # from the cached rows.
+        retrieved_passages: list[str] = []
         if with_rag:
             try:
                 hits = retrieve_ranked(question, index_dir=index_dir, k=rag_k, reranker=reranker, pool=pool)
@@ -686,6 +708,7 @@ def evaluate_with_inference(
                             where += f" · passage {chunk + 1}"
                         retrieved_sources.append(where)
                         retrieved_pairs.append({"question": "", "answer": str(payload.get("text") or "")})
+                    retrieved_passages = [str((h.get("payload") or {}).get("text") or "") for h in hits]
             else:
                 for hit in hits:
                     payload = hit.get("payload") or {}
@@ -727,6 +750,7 @@ def evaluate_with_inference(
             "f1": score,
             "retrieved_row_count": len(retrieved_pairs),
             "retrieved_sources": retrieved_sources,
+            "retrieved_passages": retrieved_passages,
         })
         scored += 1
         # Per-row progress hook — used by the API Job runner to
@@ -1018,7 +1042,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "cite-or-say-you-don't-know preamble (what a documents-only project serves)."
         ),
     )
-    parser.add_argument("--k", type=int, default=RAG_K, help="With --project: BM25 top-k for the with-retrieval arm.")
+    parser.add_argument(
+        "--k", type=int, default=None,
+        help="With --project: BM25 top-k for the with-retrieval arm (default: the project's served retrieval, else 3).",
+    )
     parser.add_argument(
         "--reranker", type=str, default=None,
         help="With --project: cross-encoder model id to rerank BM25 candidates ('default' = cross-encoder/ms-marco-MiniLM-L-6-v2).",
@@ -1066,7 +1093,7 @@ def run_project_comparison(
     base_only: bool = False,
     corpus: str = "qa",
     split: str | None = None,
-    rag_k: int = RAG_K,
+    rag_k: int | None = None,
     reranker: str | None = None,
     pool: int | None = None,
     chunk_size: int | None = None,
@@ -1100,6 +1127,10 @@ def run_project_comparison(
     optionally cross-encoder reranked — ``retrieval_reranker``).
     ``pool`` / ``chunk_size``: the reranker's candidate count and a
     re-chunked passage variant (``auto_rag_service.normalize_retrieval``).
+    With none of ``rag_k`` / ``reranker`` / ``pool`` / ``chunk_size`` given
+    and no sweep, the single arm is THE RETRIEVAL THE PROJECT SERVES
+    (``runtime_config.auto_rag_retrieval``), else plain top-3 — a
+    comparison predicts the playground. An explicit value overrides.
     ``sweep_retrieval=True`` scores the with-RAG arm in STAGES (the
     without-RAG arm is shared, each arm judged): ``RETRIEVAL_SWEEP`` (top-3 /
     top-5 ± reranker), then from the running best — when it reranks — the
@@ -1285,10 +1316,17 @@ def run_project_comparison(
             "judge": arm_judge,
             "on_mean_f1": statistics.mean(arm_f1s) if arm_f1s else 0.0,
             "judge_score": ((arm_judge or {}).get("with_rag") or {}).get("score"),
+            # Share of rows whose passages held the answer (the retrieval
+            # judge) — recall, independent of the reader.
+            "found_rate": (((arm_judge or {}).get("with_rag") or {}).get("retrieval") or {}).get("found_rate"),
         })
 
     if not sweep_retrieval:
-        _run_arm({"k": int(rag_k), "reranker": reranker, "pool": pool, "chunk_size": chunk_size}, "single", "1/1")
+        if rag_k is None and reranker is None and pool is None and chunk_size is None and current_retrieval:
+            single = dict(current_retrieval)
+        else:
+            single = {"k": int(rag_k or RAG_K), "reranker": reranker, "pool": pool, "chunk_size": chunk_size}
+        _run_arm(single, "single", "1/1")
         best = pick_best_retrieval(arms)
     else:
         from app.services.auto_rag_service import current_chunk_size_estimate
@@ -1319,6 +1357,8 @@ def run_project_comparison(
                 "on_mean_f1": round(arm["on_mean_f1"], 4),
                 "judge_score": arm["judge_score"],
                 "judge_counts": ((arm["judge"] or {}).get("with_rag") or {}).get("counts"),
+                "found_rate": arm.get("found_rate"),
+                "retrieval_judge": ((arm["judge"] or {}).get("with_rag") or {}).get("retrieval"),
                 "chosen": arm is best,
                 "current": bool(arm.get("is_current")),
                 # Paired row evidence vs the incumbent (None for the incumbent).
@@ -1365,6 +1405,8 @@ def run_project_comparison(
                 "generated": on_r["generated"],
                 "f1": on_r["f1"],
                 "judge": on_r.get("judge"),
+                # found / missed (+ which passage) from the retrieval judge.
+                "retrieval_judge": on_r.get("retrieval_judge"),
                 "retrieved_row_count": on_r["retrieved_row_count"],
                 "retrieved_sources": on_r.get("retrieved_sources") or [],
             },
@@ -1653,7 +1695,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.project is not None:
         payload = run_project_comparison(
             args.project, base_only=bool(args.base_only), corpus=str(args.corpus), split=args.split,
-            rag_k=int(args.k), reranker=args.reranker, pool=args.pool, chunk_size=args.chunk_size,
+            rag_k=args.k, reranker=args.reranker, pool=args.pool, chunk_size=args.chunk_size,
             sweep_retrieval=bool(args.sweep_retrieval),
         )
         if args.sweep_retrieval:

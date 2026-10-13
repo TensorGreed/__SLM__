@@ -158,9 +158,18 @@ fine-tune on 358 generated pairs still learned the wording, not the facts
   reranker (`BAAI/bge-reranker-v2-m3`, 25× the size) scored exactly the
   same 0.53 at top-5 (19 / 11 / 16; 3 rows better, 3 worse). Nothing tried
   gets past 0.6 on these 46 rows — the ceiling is not retrieval shape or
-  reranker quality. What's left is the reader: a base model that answers
-  from the right passage more reliably, or more of the right passage in
-  context.
+  reranker quality.
+- **Retrieval or reading?** The judge now also says, per row, whether the
+  retrieved passages held the answer. With the served retrieval it found it
+  in **37 of 46** rows (80%); of the 17 wrong answers, retrieval **missed 7**
+  and **found 10** that the model then misread — so the reader, not
+  retrieval, owns most of the misses. Trying the sibling on
+  **Qwen2.5-3B-Instruct** (same retrieval) did not change that: 0.53 again
+  (19 / 11 / 16), with the wrong answers split 8 missed / 8 misread. Twice
+  the reader bought nothing on these rows; what the "misread" rows have in
+  common is a reference answer that demands a specific detail (a section
+  number, a list) the model paraphrases past. The next lever is the
+  answer-key rows themselves — or a reader prompted to quote.
 - The answer key was written by a model from the same passages. It is a
   consistent ruler, not a lawyer's.
 - One judge is one opinion. The judge's name is stamped on every result, so

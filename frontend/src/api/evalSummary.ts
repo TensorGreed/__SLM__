@@ -5,6 +5,7 @@
 
 import api from './client';
 import type { LiftEvidence, SeedEvidence } from '../components/evaluation/liftEvidence';
+import type { RetrievalSplit } from '../components/evaluation/retrievalSplit';
 
 export type EvalVerdict =
     | 'better'
@@ -36,6 +37,10 @@ export interface EvalSummaryFailure {
     /** LLM-judge verdict for long-answer tasks (answer_judge_service). */
     row_judge_verdict?: 'correct' | 'partial' | 'wrong' | null;
     row_judge_reason?: string | null;
+    /** rag_passages: the retrieval judge — did the passages hold the answer? */
+    row_retrieval_verdict?: 'found' | 'missed' | null;
+    row_retrieval_passage?: number | null;
+    row_retrieval_reason?: string | null;
 }
 
 /** The LLM judge's snapshot for the fine-tuned eval: who judged, how many
@@ -51,6 +56,8 @@ export interface EvalSummaryJudge {
     wrong: number;
     judge_calls?: number | null;
     judge_cached?: number | null;
+    /** rag_passages: retrieval vs reading (retrievalSplit.ts). */
+    retrieval?: RetrievalSplit | null;
 }
 
 export interface EvalSummary {
