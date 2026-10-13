@@ -1074,6 +1074,12 @@ runs real CPU inference). ~4 min locally.
   when no task type is set); card `DocumentsQaFlowCard` above the Training
   tab's panel; bell deep-links `#documents-qa-flow`. Tests use
   `backend_override` with a fake backend.
+  **Sentence-boundary chunking**: `cleaning_service.chunk_text` packs
+  `split_sentences` units (sentence ends before a capital / bracket, or line
+  breaks; a digit is not a sentence start so "s. 12" stays whole) up to
+  `chunk_size`; overlap = trailing whole sentences ≤ `overlap` chars; only an
+  oversized single sentence is hard-cut. Same function builds the sweep's
+  chunk-size variants. Tests: `test_phase9_cleaning`.
   **Quotable answer key**: `build_passage_prompt` holds the eval question to a
   stricter standard (self-contained, answer = the passage's own complete
   statement, never on a cut-off chunk fragment); `eval_pair_rejection(pair,

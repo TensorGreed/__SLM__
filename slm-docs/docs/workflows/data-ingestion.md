@@ -192,7 +192,7 @@ The card reads, for example, "Looks like **Question answering** (92% confident)"
 
 Normalises text, deduplicates rows, runs a PII scan, applies your domain pack's data-quality overlay. Emits a new `DatasetVersion` rather than mutating the ingested rows.
 
-Row files are cleaned row by row, so their columns are preserved. Documents are cleaned as text and split into passages (`chunk_size`, `chunk_overlap`).
+Row files are cleaned row by row, so their columns are preserved. Documents are cleaned as text and split into passages (`chunk_size`, `chunk_overlap`). Passages **start and end on sentence boundaries**: sentences (or lines) are packed into a passage until the next one would exceed `chunk_size`, and the overlap is the last whole sentence(s) of the previous passage, up to `chunk_overlap` characters, repeated at the start of the next. Only a single sentence longer than `chunk_size` is cut by length. Before this, passages were cut by character count and 403 of the legal demo's 467 passages began mid-word — a passage whose key sentence is cut in half is one retrieval can find but a reader can't use.
 
 ### UI
 

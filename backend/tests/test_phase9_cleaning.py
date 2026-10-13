@@ -90,13 +90,28 @@ class CleaningServiceTests(unittest.TestCase):
         chunks = chunk_text(text, chunk_size=500, overlap=50)
         self.assertGreater(len(chunks), 1)
 
-    def test_chunk_overlap_exists(self):
-        text = "A" * 200 + "B" * 200 + "C" * 200  # 600 chars
+    def test_chunks_start_and_end_on_sentences_and_overlap_carries_whole_sentences(self):
+        sentences = [f"Sentence number {i} says something about rule {i}." for i in range(1, 41)]
+        text = " ".join(sentences)
+        chunks = chunk_text(text, chunk_size=300, overlap=60)
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk), 300)
+            self.assertTrue(chunk.startswith("Sentence number"), chunk[:40])
+            self.assertTrue(chunk.endswith("."), chunk[-40:])
+        # The overlap is the last whole sentence(s) of the previous chunk, up to 60 chars.
+        for prev, nxt in zip(chunks, chunks[1:]):
+            last = prev.rsplit(". ", 1)[-1]
+            self.assertTrue(nxt.startswith(last), (last, nxt[:60]))
+        # Every sentence is in at least one chunk.
+        joined = " ".join(chunks)
+        for sentence in sentences:
+            self.assertIn(sentence, joined)
+
+    def test_chunk_oversized_sentence_is_hard_cut(self):
+        text = "A" * 200 + "B" * 200 + "C" * 200  # one 600-char "sentence"
         chunks = chunk_text(text, chunk_size=300, overlap=50)
-        if len(chunks) >= 2:
-            # End of chunk 0 should overlap with start of chunk 1
-            end_of_first = chunks[0][-50:]
-            self.assertIn(end_of_first, chunks[1])
+        self.assertEqual(chunks, [text[:300], text[300:]])
 
     # ── Boilerplate Removal ────────────────────────────────────────────
 
