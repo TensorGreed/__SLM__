@@ -113,12 +113,47 @@ re-train; the Eval summary compares the runs.
 from transformers import pipeline
 
 tagger = pipeline("token-classification", model="path/or/hub-id", aggregation_strategy="simple")
-for ent in tagger("Charge card 4111 1111 1111 1111 for Ada (ada@example.test) by 09/27."):
-    print(ent["entity_group"], ent["start"], ent["end"], ent["word"], round(ent["score"], 3))
+text = "Charge card 4111 1111 1111 1111 for Ada (ada@example.test) by 09/27."
+for ent in tagger(text):
+    start, end = ent["start"], ent["end"]
+    while start < end and text[start].isspace():  # DeBERTa's tokenizer counts the leading space
+        start += 1
+    print(ent["entity_group"], start, end, text[start:end], round(ent["score"], 3))
 ```
 
 `start` / `end` are character offsets into the string you passed; the
-`entity_group` is your entity type, custom ones included.
+`entity_group` is your entity type, custom ones included. DeBERTa-v3's
+tokenizer attaches the space before a word to the word, so the pipeline's
+`start` can sit one character early — the two-line trim above (which
+BrewSLM's own evaluation applies) gives the exact span.
+
+## What the first run produced (2026-10-13)
+
+Everything below ran on one machine with local Ollama (gemma4) as the
+only teacher — no cloud calls at all.
+
+| step | result |
+|---|---|
+| Write sample documents | 80 documents across 10 genres, 8.4 min → 106 passages |
+| span synthesis (23 entity types, all passages) | **295 rows, ~1,950 entities**, 42 min; the regex pass adds the obvious emails / phones / cards the teacher missed |
+| split | 228 / 28 / 29 |
+| train — token classification, `microsoft/deberta-v3-base` | 27 epochs / 405 steps, **46 s** on a GB10; validation span F1 0.91 |
+| held-out eval, 29 test examples (`span_set`, strict type + offsets) | **P 0.88 / R 0.92 / F1 0.90**, 16 of 29 rows exactly right; 1.00 on email, phone, IBAN, IP, CVV, health-plan id, ticket id; weak: passport 0 / 3 found, medication 0.60, api_key 0.67, provider_name 0.67 (6 false positives), national_id 0.76 |
+| refine — 150 more rows asked for the weak types | 87 rows kept (the teacher rarely invents API keys: 2); re-split 297 / 37 / 38; re-train 22 epochs / 418 steps, 61 s |
+| held-out eval after refine, 38 test examples | F1 **0.90** overall (0.895); the targeted types moved: passport 0.00 → **0.62**, medication 0.60 → **0.79**, provider_name 0.67 → **0.83**, national_id 0.76 → **0.87**, diagnosis 0.88 → **0.96**. (A different, larger test split — the per-type numbers are the comparison, not the overall.) |
+| export → Hugging Face | `model/` + tokenizer + `label_space.json`, 744 MB; the snippet above on a fresh UK-style message tagged email, phone, IBAN, CVV, employee id, ticket id, provider and diagnosis at the right offsets, split a Mastercard-format PAN and missed a name inside a greeting — data diversity, the next refine target |
+
+What was wrong before this run could happen — all fixed in BrewSLM, not
+worked around: cleaning redacted the "PII" in the seed documents; the
+span teacher's wrong offsets dropped the entity instead of being
+repaired from its text; an empty teacher reply fell back silently to
+regex-tagged sentence fragments; a thinking model through the
+OpenAI-compatible URL returned empty content (use the synth backend,
+which turns thinking off); 50 rows per call made the model skip the
+labels (a dozen per call now); the first training ran 45 steps (epochs
+now size to ~400 steps); and the held-out eval measured perplexity
+because the span recipe's adapter didn't declare its task profile. Each
+is a sentence here and a commit in the log.
 
 ## What it costs
 
