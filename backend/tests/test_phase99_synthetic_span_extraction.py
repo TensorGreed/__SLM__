@@ -517,3 +517,14 @@ class BackendTeacherTests(unittest.TestCase):
         self.assertIn("Source paragraph about a refund.", seen["prompt"])
         self.assertEqual(seen["schema"]["required"], ["rows"])
         self.assertGreaterEqual(seen["max_tokens"], 1200)
+
+
+class BackendBatchCapTests(unittest.TestCase):
+    def test_backend_teacher_batches_are_small(self):
+        from types import SimpleNamespace
+
+        from app.services.synthetic_service import BACKEND_BATCH_ROW_CAP, PER_BATCH_ROW_CAP, _span_batch_cap
+
+        self.assertEqual(_span_batch_cap(SimpleNamespace(backend="ollama")), BACKEND_BATCH_ROW_CAP)
+        self.assertEqual(_span_batch_cap(SimpleNamespace(backend=None)), PER_BATCH_ROW_CAP)
+        self.assertLess(BACKEND_BATCH_ROW_CAP, PER_BATCH_ROW_CAP)

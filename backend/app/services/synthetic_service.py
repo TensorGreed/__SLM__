@@ -1636,6 +1636,14 @@ async def save_synthetic_span_batch(
 # read-side polling endpoint can be a near-copy.
 
 PER_BATCH_ROW_CAP: int = 50
+# A synth-backend teacher (a local model) asked for 50 rows at once writes
+# the texts and skips the labels; a dozen per call keeps every row
+# labelled (more calls, same wall-clock on a GPU).
+BACKEND_BATCH_ROW_CAP: int = 12
+
+
+def _span_batch_cap(task: Any) -> int:
+    return BACKEND_BATCH_ROW_CAP if getattr(task, "backend", None) else PER_BATCH_ROW_CAP
 MAX_TOTAL_ROWS: int = 5000
 # Per-batch sampling target. 4–8k "tokens" using the standard ~4
 # chars/token heuristic. Per-batch target picked uniformly in this
@@ -1800,14 +1808,14 @@ async def _run_span_generation_task(task: SyntheticSpanTask) -> None:
 
     remaining = task.target_rows
     task.batches_total = (
-        (task.target_rows + PER_BATCH_ROW_CAP - 1) // PER_BATCH_ROW_CAP
+        (task.target_rows + _span_batch_cap(task) - 1) // _span_batch_cap(task)
     )
     rng = random.Random()
 
     try:
         async with async_session_factory() as db:
             while remaining > 0:
-                rows_this_batch = min(PER_BATCH_ROW_CAP, remaining)
+                rows_this_batch = min(_span_batch_cap(task), remaining)
                 if task.use_all_chunks:
                     target_chars = rng.randint(
                         SAMPLE_MIN_CHARS, SAMPLE_MAX_CHARS
