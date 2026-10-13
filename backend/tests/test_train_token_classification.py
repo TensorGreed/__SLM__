@@ -170,3 +170,14 @@ class EvaluationPathTests(unittest.TestCase):
         self.assertEqual(json.loads(preds[1]["prediction"]), {"entities": []})
         self.assertEqual(runtime["inference"]["mode"], "token_classification")
         self.assertEqual(runtime["inference"]["rows"], 2)
+
+
+class LiftCheckSkipTests(unittest.TestCase):
+    def test_lift_check_skips_a_token_classification_run(self):
+        from types import SimpleNamespace
+
+        from app.services.post_training_eval_service import auto_lift_skip_reason
+
+        exp = SimpleNamespace(config={"task_type": "token_classification", "base_model": "microsoft/deberta-v3-base"}, status="COMPLETED", output_dir="/tmp/x", seed_group_id=None, seed_value=None)
+        reason = auto_lift_skip_reason(exp, SimpleNamespace(runtime_config={}))
+        self.assertEqual(reason, "token_classification_no_baseline")

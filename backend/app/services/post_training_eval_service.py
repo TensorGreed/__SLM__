@@ -152,6 +152,11 @@ def auto_lift_skip_reason(
     cfg = exp.config if isinstance(exp.config, dict) else {}
     if cfg.get("is_baseline") is True:
         return "baseline_experiment"
+    if str(cfg.get("task_type") or "").strip().lower() == "token_classification":
+        # The "base model" of a token-classification run is an encoder with
+        # an untrained head: a lift against it is meaningless. The run's
+        # held-out span_set report is the evaluation.
+        return "token_classification_no_baseline"
     if exp.status != ExperimentStatus.COMPLETED:
         return "not_completed"
     if exp.seed_group_id and exp.seed_value is not None:
