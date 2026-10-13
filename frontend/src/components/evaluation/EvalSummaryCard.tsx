@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
 import { checkLiftAcrossSeeds, fetchEvalSummary, type EvalSummary } from '../../api/evalSummary';
 import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
+import { retrievalLabel } from './retrievalLabel';
 import { toast } from '../../stores/toastStore';
 import { useJobsStore } from '../../stores/jobsStore';
 import './EvalSummaryCard.css';
@@ -310,8 +311,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
             )}
             {isPassages && summary.retrieval && (
                 <p className="eval-summary__judge" data-testid="eval-summary-retrieval">
-                    Retrieval served: top-{summary.retrieval.k}
-                    {summary.retrieval.reranker ? ` + reranker ${summary.retrieval.reranker.split('/').pop()}` : ' (BM25 only)'}
+                    Retrieval served: {retrievalLabel(summary.retrieval)}
                     {summary.retrieval_decision
                         ? ` — ${summary.retrieval_decision.reason}.`
                         : summary.retrieval_sweep && summary.retrieval_sweep.length > 1

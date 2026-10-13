@@ -524,6 +524,8 @@ def evaluate_with_inference(
     progress_callback: "Callable[[int, int, str], None] | None" = None,
     corpus: str = "qa",
     reranker: str | None = None,
+    pool: int | None = None,
+    chunk_size: int | None = None,
 ) -> tuple[list[float], list[dict[str, Any]]]:
     """Load the trained model (base + LoRA adapter, or the full fine-tuned
     model when the run saved one), generate an answer for
@@ -549,7 +551,9 @@ def evaluate_with_inference(
     *passages* (``auto_rag_service.ensure_document_index``) instead of Q&A
     pairs and prepends the playground's cite-or-say-you-don't-know preamble
     — the retrieval a documents-only project actually serves.
-    ``index_dir_override`` is ignored in that mode.
+    ``index_dir_override`` is ignored in that mode. ``pool`` is the
+    reranker's BM25 candidate count; ``chunk_size`` retrieves from the
+    re-chunked passage variant (``ensure_document_index(chunk_size=)``).
     """
     import torch
     from peft import PeftModel
@@ -564,9 +568,12 @@ def evaluate_with_inference(
 
     use_documents = corpus == "documents"
     if use_documents:
-        from app.services.auto_rag_service import document_index_dir
+        from app.services.auto_rag_service import document_index_dir, ensure_document_index
 
-        index_dir = document_index_dir(_project_id_from_index_dir(index_dir_override))
+        doc_project_id = _project_id_from_index_dir(index_dir_override)
+        if with_rag and chunk_size:
+            ensure_document_index(doc_project_id, chunk_size)
+        index_dir = document_index_dir(doc_project_id, chunk_size if with_rag else None)
         if with_rag and not (index_dir / "bm25_index.json").exists():
             raise RuntimeError(
                 f"{index_dir} has no document index — the project has no cleaned "
@@ -657,7 +664,7 @@ def evaluate_with_inference(
         retrieved_sources: list[str] = []
         if with_rag:
             try:
-                hits = retrieve_ranked(question, index_dir=index_dir, k=rag_k, reranker=reranker)
+                hits = retrieve_ranked(question, index_dir=index_dir, k=rag_k, reranker=reranker, pool=pool)
             except AutoRagUnavailable:
                 hits = []
             if use_documents:
@@ -1017,8 +1024,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="With --project: cross-encoder model id to rerank BM25 candidates ('default' = cross-encoder/ms-marco-MiniLM-L-6-v2).",
     )
     parser.add_argument(
+        "--pool", type=int, default=None,
+        help="With --project: BM25 candidates the reranker sees (default: 4×k within 10–40).",
+    )
+    parser.add_argument(
+        "--chunk-size", type=int, default=None,
+        help="With --project --corpus documents: retrieve from passages re-cut at this many chars (built on demand).",
+    )
+    parser.add_argument(
         "--sweep-retrieval", action="store_true",
-        help="With --project: try top-3 / top-5, each with and without the reranker; keep the judge's best as the comparison and write auto_rag/retrieval_sweep.json.",
+        help=(
+            "With --project: staged sweep — top-3 / top-5 ± reranker, then the reranker's candidate pool "
+            "(20 / 50), then (documents) passage sizes 600 / 900 / 1200; keep the noise-checked best as the "
+            "comparison and write auto_rag/retrieval_sweep.json."
+        ),
     )
     parser.add_argument(
         "--split", choices=("val", "test"), default=None,
@@ -1049,6 +1068,8 @@ def run_project_comparison(
     split: str | None = None,
     rag_k: int = RAG_K,
     reranker: str | None = None,
+    pool: int | None = None,
+    chunk_size: int | None = None,
     sweep_retrieval: bool = False,
 ) -> dict[str, Any]:
     """Phase 9d — generate the per-project comparison the Eval-tab
@@ -1077,12 +1098,18 @@ def run_project_comparison(
 
     ``rag_k`` / ``reranker``: the retrieval the with-RAG arm uses (BM25 top-k,
     optionally cross-encoder reranked — ``retrieval_reranker``).
-    ``sweep_retrieval=True`` scores the with-RAG arm under every
-    ``RETRIEVAL_SWEEP`` config (the without-RAG arm is shared), judges each,
-    keeps the config the judge scores highest (ties → the cheaper one) as
-    the comparison, and records all of them in ``summary["retrieval_sweep"]``
-    + ``auto_rag/retrieval_sweep.json``. The chosen config is what the
-    project should serve (``runtime_config.auto_rag_retrieval``).
+    ``pool`` / ``chunk_size``: the reranker's candidate count and a
+    re-chunked passage variant (``auto_rag_service.normalize_retrieval``).
+    ``sweep_retrieval=True`` scores the with-RAG arm in STAGES (the
+    without-RAG arm is shared, each arm judged): ``RETRIEVAL_SWEEP`` (top-3 /
+    top-5 ± reranker), then from the running best — when it reranks — the
+    candidate pools ``RETRIEVAL_SWEEP_POOLS`` (minus the one it already uses), then (documents corpus) the
+    passage sizes ``RETRIEVAL_SWEEP_CHUNK_SIZES`` other than the cleaning's
+    own (``sweep_stages``). One ``pick_best_retrieval`` over all arms picks
+    the comparison (noise-checked against the project's incumbent), and
+    every arm is recorded in ``summary["retrieval_sweep"]`` (+ ``stage``) and
+    ``auto_rag/retrieval_sweep.json``. The chosen config is what the project
+    should serve (``runtime_config.auto_rag_retrieval``).
 
     This function is invoked from the CLI's ``--project`` mode (and
     can be called programmatically by a future API trigger if we
@@ -1212,15 +1239,22 @@ def run_project_comparison(
         progress_callback=progress_callback,
         corpus=corpus,
     )
-    configs = list(RETRIEVAL_SWEEP) if sweep_retrieval else [{"k": int(rag_k), "reranker": reranker}]
-    if sweep_retrieval and current_retrieval and not any(_same_retrieval(c, current_retrieval) for c in configs):
-        configs.insert(0, dict(current_retrieval))
+    from app.services.auto_rag_service import normalize_retrieval
+
+    # What users chose head-to-head in the playground: the sweep's tie-break.
+    user_preference = None
+    if sweep_retrieval:
+        from app.services.retrieval_decisions_service import project_preference
+
+        user_preference = project_preference(project_id)
     arms: list[dict[str, Any]] = []
-    for index, config in enumerate(configs):
-        label = retrieval_label(config)
+
+    def _run_arm(config: dict[str, Any], stage: str, position: str) -> None:
+        retrieval = normalize_retrieval(config)
+        label = retrieval_label(retrieval)
         if progress_callback is not None and sweep_retrieval:
             try:
-                progress_callback(0, 0, f"retrieval {index + 1}/{len(configs)}: {label}")
+                progress_callback(0, 0, f"retrieval {position}: {label}")
             except Exception:  # noqa: BLE001
                 pass
         arm_f1s, arm_records = evaluate_with_inference(
@@ -1229,8 +1263,10 @@ def run_project_comparison(
             index_dir_override=project_index_dir,
             progress_callback=progress_callback,
             corpus=corpus,
-            rag_k=int(config["k"]),
-            reranker=config.get("reranker"),
+            rag_k=retrieval["k"],
+            reranker=retrieval["reranker"],
+            pool=retrieval["pool"],
+            chunk_size=retrieval["chunk_size"],
         )
         if progress_callback is not None:
             try:
@@ -1240,26 +1276,36 @@ def run_project_comparison(
         # The judge sees the shared without-RAG answers each time; its cache
         # makes the repeats free.
         arm_judge = _judge_comparison_rows(project_id, off_records, arm_records)
-        from app.services.retrieval_reranker import normalize_reranker
-
         arms.append({
-            "retrieval": {"k": int(config["k"]), "reranker": normalize_reranker(config.get("reranker"))},
+            "retrieval": retrieval,
             "label": label,
+            "stage": stage,
             "f1s": arm_f1s,
             "records": arm_records,
             "judge": arm_judge,
             "on_mean_f1": statistics.mean(arm_f1s) if arm_f1s else 0.0,
             "judge_score": ((arm_judge or {}).get("with_rag") or {}).get("score"),
         })
-    # What users chose head-to-head in the playground: the sweep's tie-break.
-    user_preference = None
-    if sweep_retrieval:
-        from app.services.retrieval_decisions_service import project_preference
 
-        user_preference = project_preference(project_id)
-    best = pick_best_retrieval(
-        arms, current_retrieval=current_retrieval if sweep_retrieval else None, user_preference=user_preference
-    )
+    if not sweep_retrieval:
+        _run_arm({"k": int(rag_k), "reranker": reranker, "pool": pool, "chunk_size": chunk_size}, "single", "1/1")
+        best = pick_best_retrieval(arms)
+    else:
+        from app.services.auto_rag_service import current_chunk_size_estimate
+
+        own_chunk = current_chunk_size_estimate(project_id) if corpus == "documents" else None
+        stages = sweep_stages(
+            current_retrieval, documents=corpus == "documents", own_chunk_size=own_chunk
+        )
+        best = None
+        for stage_index, (stage, make_configs) in enumerate(stages):
+            configs = make_configs(best["retrieval"] if best else None)
+            configs = [c for c in configs if not any(_same_retrieval(c, a["retrieval"]) for a in arms)]
+            for index, config in enumerate(configs):
+                _run_arm(config, stage, f"{stage} {index + 1}/{len(configs)} (stage {stage_index + 1}/{len(stages)})")
+            if arms:
+                best = pick_best_retrieval(arms, current_retrieval=current_retrieval, user_preference=user_preference)
+        assert best is not None
     on_f1s, on_records, judge_summary = best["f1s"], best["records"], best["judge"]
     retrieval_used = best["retrieval"]
     retrieval_decision = sweep_decision(arms, best) if sweep_retrieval else None
@@ -1268,6 +1314,8 @@ def run_project_comparison(
             {
                 "retrieval": arm["retrieval"],
                 "label": arm["label"],
+                # Which sweep stage tried it: "k_reranker" / "pool" / "chunk_size".
+                "stage": arm.get("stage"),
                 "on_mean_f1": round(arm["on_mean_f1"], 4),
                 "judge_score": arm["judge_score"],
                 "judge_counts": ((arm["judge"] or {}).get("with_rag") or {}).get("counts"),
@@ -1377,19 +1425,73 @@ RETRIEVAL_SWEEP: tuple[dict[str, Any], ...] = (
     {"k": 3, "reranker": "default"},
     {"k": 5, "reranker": "default"},
 )
+# Stage 2 (only when the running best reranks): how many BM25 candidates the
+# reranker sees. Stage 3 (documents corpus): passage sizes other than the
+# cleaning's own.
+RETRIEVAL_SWEEP_POOLS: tuple[int, ...] = (20, 50)
+RETRIEVAL_SWEEP_CHUNK_SIZES: tuple[int, ...] = (600, 900, 1200)
+# A candidate size this close to the cleaning's own chunk is the same arm.
+_OWN_CHUNK_TOLERANCE = 0.15
+
+
+def sweep_stages(
+    current_retrieval: dict[str, Any] | None,
+    *,
+    documents: bool,
+    own_chunk_size: int | None = None,
+) -> list[tuple[str, "Callable[[dict[str, Any] | None], list[dict[str, Any]]]"]]:
+    """The staged sweep: ``(stage, make_configs(running_best))`` pairs.
+    Stage ``k_reranker`` tries ``RETRIEVAL_SWEEP`` (+ the incumbent, first,
+    when it isn't one of them); ``pool`` varies the running best's reranker
+    pool over ``RETRIEVAL_SWEEP_POOLS`` (nothing when it doesn't rerank);
+    ``chunk_size`` (documents only) retrieves with the running best from the
+    ``RETRIEVAL_SWEEP_CHUNK_SIZES`` variants, skipping one within
+    ``_OWN_CHUNK_TOLERANCE`` of the cleaning's own ``own_chunk_size``.
+    Coordinate descent: each stage keeps the noise-checked best so far."""
+    from app.services.auto_rag_service import normalize_retrieval
+
+    def _stage_one(_best: dict[str, Any] | None) -> list[dict[str, Any]]:
+        configs = [normalize_retrieval(c) for c in RETRIEVAL_SWEEP]
+        if current_retrieval and not any(_same_retrieval(c, current_retrieval) for c in configs):
+            configs.insert(0, normalize_retrieval(current_retrieval))
+        return configs
+
+    def _pools(best: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if not best or not best.get("reranker"):
+            return []
+        from app.services.retrieval_reranker import candidate_pool
+
+        # A pool equal to what the best already uses (the default rule for
+        # its k, or its explicit pool) is the same arm — skip it.
+        in_use = candidate_pool(int(best["k"]), best.get("pool"))
+        return [normalize_retrieval({**best, "pool": pool}) for pool in RETRIEVAL_SWEEP_POOLS if pool != in_use]
+
+    def _chunks(best: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if not best:
+            return []
+        configs = []
+        for size in RETRIEVAL_SWEEP_CHUNK_SIZES:
+            if own_chunk_size and abs(size - own_chunk_size) <= _OWN_CHUNK_TOLERANCE * own_chunk_size:
+                continue
+            configs.append(normalize_retrieval({**best, "chunk_size": size}))
+        return configs
+
+    stages: list[tuple[str, Any]] = [("k_reranker", _stage_one), ("pool", _pools)]
+    if documents:
+        stages.append(("chunk_size", _chunks))
+    return stages
 
 
 def retrieval_label(config: dict[str, Any]) -> str:
-    from app.services.retrieval_reranker import normalize_reranker
+    from app.services.auto_rag_service import retrieval_label as _label
 
-    name = normalize_reranker(config.get("reranker"))
-    return f"top-{int(config['k'])}" + (f" + reranker {name.split('/')[-1]}" if name else "")
+    return _label(config)
 
 
 def _current_retrieval(runtime_config_raw: Any) -> dict[str, Any] | None:
-    """``{"k", "reranker"}`` from a project's stored ``runtime_config`` JSON
-    (``auto_rag_retrieval``), None when unset."""
-    from app.services.retrieval_reranker import normalize_reranker
+    """The normalized retrieval from a project's stored ``runtime_config``
+    JSON (``auto_rag_retrieval``), None when unset."""
+    from app.services.auto_rag_service import normalize_retrieval
 
     try:
         cfg = json.loads(runtime_config_raw) if isinstance(runtime_config_raw, str) else (runtime_config_raw or {})
@@ -1398,18 +1500,13 @@ def _current_retrieval(runtime_config_raw: Any) -> dict[str, Any] | None:
     raw = cfg.get("auto_rag_retrieval") if isinstance(cfg, dict) else None
     if not isinstance(raw, dict) or not raw.get("k"):
         return None
-    try:
-        return {"k": max(1, min(10, int(raw["k"]))), "reranker": normalize_reranker(raw.get("reranker"))}
-    except (TypeError, ValueError):
-        return None
+    return normalize_retrieval(raw)
 
 
 def _same_retrieval(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
-    from app.services.retrieval_reranker import normalize_reranker
+    from app.services.auto_rag_service import same_retrieval
 
-    if not a or not b:
-        return False
-    return int(a.get("k") or 0) == int(b.get("k") or 0) and normalize_reranker(a.get("reranker")) == normalize_reranker(b.get("reranker"))
+    return same_retrieval(a, b)
 
 
 def _arm_row_scores(arm: dict[str, Any]) -> dict[str, float]:
@@ -1553,7 +1650,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.project is not None:
         payload = run_project_comparison(
             args.project, base_only=bool(args.base_only), corpus=str(args.corpus), split=args.split,
-            rag_k=int(args.k), reranker=args.reranker, sweep_retrieval=bool(args.sweep_retrieval),
+            rag_k=int(args.k), reranker=args.reranker, pool=args.pool, chunk_size=args.chunk_size,
+            sweep_retrieval=bool(args.sweep_retrieval),
         )
         if args.sweep_retrieval:
             chosen = (payload.get("summary") or {}).get("retrieval")

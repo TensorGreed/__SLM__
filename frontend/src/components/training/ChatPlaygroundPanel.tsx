@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import api from '../../api/client';
+import { retrievalLabel, retrievalPinBody, type RetrievalSetting } from '../evaluation/retrievalLabel';
 import { useProjectStore } from '../../stores/projectStore';
 import { toast } from '../../stores/toastStore';
 import './ChatPlaygroundPanel.css';
@@ -61,6 +62,9 @@ interface PlaygroundMessageProvenance {
    *  or "request" (an override on this call). */
   retrievalK?: number | null;
   retrievalReranker?: string | null;
+  /** The reranker's candidate pool / the passage-size variant, when set. */
+  retrievalPool?: number | null;
+  retrievalChunkSize?: number | null;
   retrievalSource?: string | null;
 }
 
@@ -152,6 +156,8 @@ interface PlaygroundChatAutoRagBlock {
   preamble_inserted_at?: number;
   corpus?: string;
   reranker?: string | null;
+  pool?: number | null;
+  chunk_size?: number | null;
   retrieval_source?: string;
 }
 
@@ -308,6 +314,8 @@ function _buildProvenance(
     ragCorpus: autoRag.corpus ? String(autoRag.corpus) : null,
     retrievalK: Number.isFinite(Number(autoRag.k)) && autoRag.k != null ? Number(autoRag.k) : null,
     retrievalReranker: typeof autoRag.reranker === 'string' && autoRag.reranker ? autoRag.reranker : null,
+    retrievalPool: Number.isFinite(Number(autoRag.pool)) && autoRag.pool != null ? Number(autoRag.pool) : null,
+    retrievalChunkSize: Number.isFinite(Number(autoRag.chunk_size)) && autoRag.chunk_size != null ? Number(autoRag.chunk_size) : null,
     retrievalSource: typeof autoRag.retrieval_source === 'string' ? autoRag.retrieval_source : null,
   };
 }
@@ -324,23 +332,35 @@ function configKey(k: number | null | undefined, reranker: string | null | undef
   return `${k ?? ''}|${reranker ? 'default' : ''}`;
 }
 
-/** The retrieval to compare the reply against: the picked sweep config, or
- *  the same top-k with the reranker flipped. */
-function otherRetrieval(
-  provenance: Pick<PlaygroundMessageProvenance, 'retrievalK' | 'retrievalReranker'>,
-  compareAgainst: string,
-): { k: number; reranker: string | null } {
-  const picked = SWEEP_CONFIGS.find((c) => c.key === compareAgainst);
-  if (picked && picked.key !== configKey(provenance.retrievalK, provenance.retrievalReranker)) {
-    return { k: picked.k, reranker: picked.reranker };
-  }
-  return { k: provenance.retrievalK ?? 3, reranker: provenance.retrievalReranker ? null : 'default' };
+/** The retrieval of a reply, as the backend normalises it. */
+function provenanceRetrieval(p: Pick<PlaygroundMessageProvenance, 'retrievalK' | 'retrievalReranker' | 'retrievalPool' | 'retrievalChunkSize'>): RetrievalSetting {
+  return {
+    k: p.retrievalK ?? 3,
+    reranker: p.retrievalReranker ?? null,
+    pool: p.retrievalReranker ? p.retrievalPool ?? null : null,
+    chunk_size: p.retrievalChunkSize ?? null,
+  };
 }
 
-/** "top-3 + reranker ms-marco-MiniLM-L-6-v2 · pinned" */
-function retrievalChipText(p: Pick<PlaygroundMessageProvenance, 'retrievalK' | 'retrievalReranker' | 'retrievalSource'>): string | null {
+/** The retrieval to compare the reply against: the picked sweep config
+ *  (on the reply's passage size), or the same top-k with the reranker
+ *  flipped. */
+function otherRetrieval(
+  provenance: Pick<PlaygroundMessageProvenance, 'retrievalK' | 'retrievalReranker' | 'retrievalPool' | 'retrievalChunkSize'>,
+  compareAgainst: string,
+): RetrievalSetting {
+  const picked = SWEEP_CONFIGS.find((c) => c.key === compareAgainst);
+  const chunk_size = provenance.retrievalChunkSize ?? null;
+  if (picked && picked.key !== configKey(provenance.retrievalK, provenance.retrievalReranker)) {
+    return { k: picked.k, reranker: picked.reranker, chunk_size };
+  }
+  return { k: provenance.retrievalK ?? 3, reranker: provenance.retrievalReranker ? null : 'default', chunk_size };
+}
+
+/** "top-3 + reranker ms-marco-MiniLM-L-6-v2 · pool 50 · pinned" */
+function retrievalChipText(p: Pick<PlaygroundMessageProvenance, 'retrievalK' | 'retrievalReranker' | 'retrievalPool' | 'retrievalChunkSize' | 'retrievalSource'>): string | null {
   if (p.retrievalK == null) return null;
-  const base = `top-${p.retrievalK}${p.retrievalReranker ? ` + reranker ${p.retrievalReranker.split('/').pop()}` : ' (BM25 only)'}`;
+  const base = retrievalLabel(provenanceRetrieval(p));
   const source = p.retrievalSource === 'pinned'
     ? 'pinned'
     : p.retrievalSource === 'retrieval_sweep'
@@ -788,6 +808,8 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
         auto_rag: true,
         auto_rag_k: other.k,
         auto_rag_reranker: other.reranker ?? 'none',
+        ...(other.reranker && other.pool ? { auto_rag_pool: other.pool } : {}),
+        ...(other.chunk_size ? { auto_rag_chunk_size: other.chunk_size } : {}),
       });
       const content = String(res.data?.reply || '').trim();
       const altProvenance = _buildProvenance(res.data || {});
@@ -803,10 +825,10 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
   };
 
   const pinRetrieval = async (
-    k: number,
-    reranker: string | null,
-    decision?: { question: string; candidates: Array<{ retrieval: { k: number; reranker: string | null }; reply_excerpt: string; latency_ms: number | null; passages: number }> },
+    retrieval: RetrievalSetting,
+    decision?: { question: string; candidates: Array<{ retrieval: RetrievalSetting; reply_excerpt: string; latency_ms: number | null; passages: number }> },
   ) => {
+    const body = retrievalPinBody(retrieval);
     try {
       if (decision) {
         // Record what was compared and what won, so the sweep can use
@@ -814,14 +836,14 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
         try {
           await api.post(`/projects/${projectId}/auto-rag/retrieval/decisions`, {
             ...decision,
-            pinned: { k, reranker },
+            pinned: body,
           });
         } catch {
           // The pin still goes through.
         }
       }
-      await api.put(`/projects/${projectId}/auto-rag/retrieval`, { k, reranker });
-      toast.info(`Pinned top-${k}${reranker ? ' + reranker' : ' (BM25 only)'} — every reply and comparison uses it from now on.`, 4000);
+      await api.put(`/projects/${projectId}/auto-rag/retrieval`, body);
+      toast.info(`Pinned ${retrievalLabel(retrieval)} — every reply and comparison uses it from now on.`, 4000);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not pin the retrieval.', 4000);
     }
@@ -1342,7 +1364,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
                     main={{ content: message.content, provenance: message.provenance }}
                     comparison={message.comparison}
                     messageKey={`${message.role}-${message.createdAt}`}
-                    onPin={(k, reranker) => void pinRetrieval(k, reranker, comparisonDecision(messages, message))}
+                    onPin={(retrieval) => void pinRetrieval(retrieval, comparisonDecision(messages, message))}
                   />
                 ) : null}
               </div>
@@ -1591,14 +1613,14 @@ function MessageProvenanceFooter({
 function comparisonDecision(
   all: PlaygroundMessage[],
   message: PlaygroundMessage,
-): { question: string; candidates: Array<{ retrieval: { k: number; reranker: string | null }; reply_excerpt: string; latency_ms: number | null; passages: number }> } | undefined {
+): { question: string; candidates: Array<{ retrieval: RetrievalSetting; reply_excerpt: string; latency_ms: number | null; passages: number }> } | undefined {
   const index = all.indexOf(message);
   const question = [...all.slice(0, index)].reverse().find((m) => m.role === 'user')?.content ?? '';
   const main = message.provenance;
   const alt = message.comparison?.status === 'ready' ? message.comparison.provenance : undefined;
   if (!main || main.retrievalK == null || !alt || alt.retrievalK == null) return undefined;
   const candidate = (p: PlaygroundMessageProvenance, content: string) => ({
-    retrieval: { k: p.retrievalK as number, reranker: p.retrievalReranker ?? null },
+    retrieval: retrievalPinBody(provenanceRetrieval(p)) as unknown as RetrievalSetting,
     reply_excerpt: content.slice(0, 400),
     latency_ms: p.latencyMs,
     passages: p.ragHits.length,
@@ -1610,7 +1632,7 @@ interface RetrievalComparisonBlockProps {
   main: { content: string; provenance: PlaygroundMessageProvenance };
   comparison: PlaygroundRetrievalComparison;
   messageKey: string;
-  onPin: (k: number, reranker: string | null) => void;
+  onPin: (retrieval: RetrievalSetting) => void;
 }
 
 /** Two answers to the same prompt, one per retrieval, with a Pin on each. */
@@ -1633,7 +1655,7 @@ function RetrievalComparisonBlock({ main, comparison, messageKey, onPin }: Retri
         <button
           type="button"
           className="btn btn-secondary playground-compare__pin"
-          onClick={() => onPin(provenance.retrievalK as number, provenance.retrievalReranker ?? null)}
+          onClick={() => onPin(provenanceRetrieval(provenance))}
           data-testid={`${testId}-pin`}
         >
           Pin this retrieval

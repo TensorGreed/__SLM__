@@ -574,6 +574,30 @@ runs real CPU inference). ~4 min locally.
   unsaved) and `RetrievalComparisonBlock` shows A/B with "Pin this
   retrieval" → `comparisonDecision` POSTs `/auto-rag/retrieval/decisions`
   {question, candidates, pinned} then PUT /auto-rag/retrieval.
+  **Retrieval setting = four fields** (`auto_rag_service.normalize_retrieval`
+  → `{k, reranker, pool, chunk_size}`; `same_retrieval`, `retrieval_label`,
+  `RETRIEVAL_FIELDS`): `pool` = the reranker's BM25 candidate count
+  (`candidate_pool(k, pool)`, clamped [k, `MAX_POOL` 100]; dropped without a
+  reranker), `chunk_size` = a re-chunked passage variant — `ensure_document_index(pid,
+  chunk_size)` cuts `raw/*.cleaned.txt` with `cleaning_service.chunk_text`
+  (overlap size/10) into `auto_rag/documents/chunk-<n>/` (`load_rechunked_passages`;
+  stale when a cleaned.txt is newer; the cleaning's own index at `.../documents`
+  is never touched); `current_chunk_size_estimate` = longest cleaned passage.
+  `build_preamble_from_query(retrieval_override={reranker|pool|chunk_size})`
+  (was `reranker_override`); chat request `auto_rag_pool` / `auto_rag_chunk_size`;
+  pin PUT accepts `pool` / `chunk_size`; `retrieval_key` appends `|pool|chunk`
+  only when set (old two-field keys still match). **Staged sweep**
+  (`sweep_stages(current, documents=, own_chunk_size=)` in the harness):
+  `k_reranker` (= `RETRIEVAL_SWEEP` + incumbent first) → `pool`
+  (`RETRIEVAL_SWEEP_POOLS` 20/50, only when the running best reranks) →
+  `chunk_size` (documents; `RETRIEVAL_SWEEP_CHUNK_SIZES` 600/900/1200 minus the
+  one within `_OWN_CHUNK_TOLERANCE` 15% of the cleaning's own). Each stage
+  re-picks with `pick_best_retrieval` over ALL arms vs the project incumbent;
+  arms carry `stage`. CLI `--pool` / `--chunk-size`. The Job drainer shows the
+  arm being scored ("scoring row 12/46 · retrieval pool 1/2 (stage 2/3): …")
+  instead of "loading model". Frontend: `components/evaluation/retrievalLabel.ts`
+  (`RetrievalSetting`, `retrievalLabel`, `retrievalKey`, `retrievalPinBody`) is
+  the one label/key/pin-body helper — don't re-derive labels in components.
   **Pin decisions** — `services/retrieval_decisions_service.py`: append-only
   `auto_rag/pin_decisions.jsonl`, `preference_tally` ({offered, chosen,
   share} per `retrieval_key` "k|reranker"), `preferred_over` (≥

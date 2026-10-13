@@ -17,6 +17,7 @@ import { rerouteToRagAsync } from '../../api/rerouteAnalysis';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import './DocumentsQaFlowCard.css';
+import { retrievalLabel } from '../evaluation/retrievalLabel';
 
 interface Props {
     projectId: number;
@@ -172,7 +173,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                             {result.passages_gate.split === 'test' ? 'test examples' : 'rows'} fully right
                             {' '}({result.passages_gate.partial} partly, {result.passages_gate.wrong} wrong; judge score{' '}
                             {result.passages_gate.score != null ? result.passages_gate.score.toFixed(2) : '—'}, by {result.passages_gate.judge || 'the judge model'}
-                            {result.passages_gate.retrieval ? `; retrieval top-${result.passages_gate.retrieval.k}${result.passages_gate.retrieval.reranker ? ' + reranker' : ''}, the sweep's best` : ''}).
+                            {result.passages_gate.retrieval ? `; retrieval ${retrievalLabel(result.passages_gate.retrieval, false)}, the sweep's best` : ''}).
                             {' '}Training on generated pairs is unlikely to beat that, so the flow stopped here. Reroute to RAG to serve
                             the base model + your passages, or train anyway to compare on the same rows.
                             {result.experiment_id == null && (
@@ -190,7 +191,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                     {result.passages_gate.status === 'retrieval_promising' && (
                         <>
                             {' '}— the base model answering from your passages
-                            {result.passages_gate.retrieval ? ` (top-${result.passages_gate.retrieval.k}${result.passages_gate.retrieval.reranker ? ' + reranker' : ''}, the sweep's best)` : ''}
+                            {result.passages_gate.retrieval ? ` (${retrievalLabel(result.passages_gate.retrieval, false)}, the sweep's best)` : ''}
                             {' '}already got <strong>{result.passages_gate.correct} of {result.passages_gate.judged}</strong> fully right but{' '}
                             {result.passages_gate.wrong} wrong ({result.passages_gate.partial} partly; judge score{' '}
                             {result.passages_gate.score != null ? result.passages_gate.score.toFixed(2) : '—'}). Not an assistant on its own yet, so

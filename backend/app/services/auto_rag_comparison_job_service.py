@@ -87,9 +87,20 @@ async def start_auto_rag_comparison_job(
             "total": 0,
             "condition": "without-RAG",
             "passes_done": 0,
+            # The sweep's phase messages ("retrieval pool 1/2 (stage 2/3): …",
+            # "judging (…)") come through with total 0; the last retrieval
+            # message names the arm being scored.
+            "phase": None,
+            "arm": None,
         }
 
         def _sync_callback(scored: int, total: int, condition: str) -> None:
+            if total <= 0 and condition.startswith(("retrieval ", "judging")):
+                progress_state["phase"] = condition
+                if condition.startswith("retrieval "):
+                    progress_state["arm"] = condition
+                progress_state["scored"], progress_state["total"] = 0, 0
+                return
             progress_state["scored"] = scored
             progress_state["total"] = total
             # The without-RAG pass finishes first; once we see scored
@@ -112,7 +123,12 @@ async def start_auto_rag_comparison_job(
                 passes_done = state["passes_done"]
                 condition = state["condition"]
                 elapsed = int(time.monotonic() - started)
-                if total > 0:
+                arm = state.get("arm")
+                if total > 0 and arm and condition == "with-RAG":
+                    # A sweep arm: "scoring row 12/46 · retrieval pool 1/2 (stage 2/3): top-5 + reranker …"
+                    fraction = None
+                    msg = f"scoring row {scored}/{total} · {arm} · {elapsed}s elapsed"
+                elif total > 0:
                     completed = passes_done * total + scored
                     overall_total = 2 * total
                     fraction = max(0.0, min(1.0, completed / overall_total))
@@ -120,6 +136,9 @@ async def start_auto_rag_comparison_job(
                         f"scoring row {scored}/{total} ({condition}) · "
                         f"pass {passes_done + 1}/2 · {elapsed}s elapsed"
                     )
+                elif state.get("phase"):
+                    fraction = None
+                    msg = f"{state['phase']} · {elapsed}s elapsed"
                 else:
                     fraction = None
                     msg = f"loading model · {elapsed}s elapsed"
@@ -233,10 +252,9 @@ async def apply_retrieval_choice(project_id: int, retrieval: dict[str, Any]) -> 
     thread work is over). Returns what was written, None on failure."""
     from app.database import async_session_factory
     from app.models.project import Project
-    from app.services.auto_rag_service import RETRIEVAL_SETTINGS_KEY
-    from app.services.retrieval_reranker import normalize_reranker
+    from app.services.auto_rag_service import RETRIEVAL_SETTINGS_KEY, normalize_retrieval
 
-    chosen = {"k": int(retrieval.get("k") or 3), "reranker": normalize_reranker(retrieval.get("reranker"))}
+    chosen = normalize_retrieval(retrieval)
     try:
         async with async_session_factory() as db:
             project = await db.get(Project, project_id)
@@ -246,7 +264,7 @@ async def apply_retrieval_choice(project_id: int, retrieval: dict[str, Any]) -> 
             current = cfg.get(RETRIEVAL_SETTINGS_KEY) if isinstance(cfg.get(RETRIEVAL_SETTINGS_KEY), dict) else {}
             if current.get("source") == "pinned":
                 # The user chose this retrieval; the sweep reports, never overrides.
-                return {"k": current.get("k"), "reranker": normalize_reranker(current.get("reranker")), "kept_pinned": True}
+                return {**normalize_retrieval(current), "kept_pinned": True}
             cfg[RETRIEVAL_SETTINGS_KEY] = {**chosen, "source": "retrieval_sweep"}
             project.runtime_config = cfg
             await db.commit()

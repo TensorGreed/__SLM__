@@ -306,6 +306,10 @@ def _retrieval_setting(project: Project) -> dict[str, Any]:
 class RetrievalSettingRequest(BaseModel):
     k: int = Field(..., ge=1, le=10)
     reranker: str | None = None
+    # Reranker candidate pool (BM25 hits reranked; None = default rule) and
+    # a re-chunked passage variant in chars (None = the cleaning's chunks).
+    pool: int | None = Field(None, ge=1, le=100)
+    chunk_size: int | None = Field(None, ge=200, le=4000)
 
 
 @router.put("/retrieval")
@@ -318,14 +322,13 @@ async def pin_retrieval_setting(
     setting is what the playground and every comparison use, and the
     retrieval sweep reports but never overrides it. ``reranker``: a model
     id, ``"default"`` for the built-in cross-encoder, or null for BM25 only."""
-    from app.services.auto_rag_service import RETRIEVAL_SETTINGS_KEY
-    from app.services.retrieval_reranker import normalize_reranker
+    from app.services.auto_rag_service import RETRIEVAL_SETTINGS_KEY, normalize_retrieval
 
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     cfg = dict(project.runtime_config or {})
-    cfg[RETRIEVAL_SETTINGS_KEY] = {"k": data.k, "reranker": normalize_reranker(data.reranker), "source": "pinned"}
+    cfg[RETRIEVAL_SETTINGS_KEY] = {**normalize_retrieval(data.model_dump()), "source": "pinned"}
     project.runtime_config = cfg
     await db.commit()
     await db.refresh(project)

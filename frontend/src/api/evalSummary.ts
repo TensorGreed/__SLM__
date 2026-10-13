@@ -61,12 +61,14 @@ export interface EvalSummary {
      *  model alone (no training). Absent for trained runs. */
     kind?: 'rag_passages';
     split?: string | null;
-    /** rag_passages: the retrieval scored and served (top-k + reranker). */
-    retrieval?: { k: number; reranker: string | null } | null;
+    /** rag_passages: the retrieval scored and served (top-k + reranker,
+     *  and after the staged sweep possibly a candidate pool / passage size). */
+    retrieval?: { k: number; reranker: string | null; pool?: number | null; chunk_size?: number | null } | null;
     /** rag_passages after a retrieval sweep: every config tried with the
      *  judge's score; `chosen` is the one served. */
     retrieval_sweep?: Array<{
         label: string;
+        stage?: string | null;
         judge_score: number | null;
         on_mean_f1: number;
         chosen: boolean;

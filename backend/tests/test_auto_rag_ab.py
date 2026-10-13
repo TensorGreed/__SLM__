@@ -500,7 +500,30 @@ class DocumentsCorpusAndJudgeTests(unittest.TestCase):
         self.assertIsNone(harness._current_retrieval(None))
         self.assertIsNone(harness._current_retrieval('{"rag_first": true}'))
         self.assertEqual(harness._current_retrieval('{"auto_rag_retrieval": {"k": 5, "reranker": "default"}}'),
-                         {"k": 5, "reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2"})
+                         {"k": 5, "reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2", "pool": None, "chunk_size": None})
+        self.assertTrue(harness._same_retrieval({"k": 3, "reranker": None}, {"k": 3, "reranker": None, "pool": 20}),
+                        "a pool without a reranker changes nothing")
+        self.assertFalse(harness._same_retrieval({"k": 3, "reranker": "default"}, {"k": 3, "reranker": "default", "pool": 20}))
+        self.assertFalse(harness._same_retrieval({"k": 3}, {"k": 3, "chunk_size": 600}))
+
+    def test_sweep_stages_follow_the_running_best(self):
+        """Stage 1 is the k × reranker grid (+ an incumbent outside it, first);
+        stage 2 varies the reranker pool only when the best reranks; stage 3
+        (documents) tries the other passage sizes, skipping the cleaning's own."""
+        stages = harness.sweep_stages({"k": 7, "reranker": None}, documents=True, own_chunk_size=880)
+        self.assertEqual([name for name, _ in stages], ["k_reranker", "pool", "chunk_size"])
+        first = stages[0][1](None)
+        self.assertEqual([harness.retrieval_label(c) for c in first][:2], ["top-7", "top-3"])
+        self.assertEqual(stages[1][1]({"k": 5, "reranker": None, "pool": None, "chunk_size": None}), [])
+        pools = stages[1][1]({"k": 3, "reranker": "default", "pool": None, "chunk_size": None})
+        self.assertEqual([c["pool"] for c in pools], list(harness.RETRIEVAL_SWEEP_POOLS))
+        # top-5's default pool is already 20 (4 × k): that arm would be a repeat.
+        pools = stages[1][1]({"k": 5, "reranker": "default", "pool": None, "chunk_size": None})
+        self.assertEqual([c["pool"] for c in pools], [50])
+        chunks = stages[2][1]({"k": 5, "reranker": "default", "pool": 50, "chunk_size": None})
+        self.assertEqual([c["chunk_size"] for c in chunks], [600, 1200], "900 is within 15% of the cleaning's 880")
+        self.assertTrue(all(c["pool"] == 50 for c in chunks), "the chunk stage keeps the best pool")
+        self.assertEqual([name for name, _ in harness.sweep_stages(None, documents=False)], ["k_reranker", "pool"])
         self.assertTrue(harness._same_retrieval({"k": 3, "reranker": "default"}, {"k": 3, "reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2"}))
         self.assertFalse(harness._same_retrieval({"k": 3, "reranker": None}, {"k": 5, "reranker": None}))
 

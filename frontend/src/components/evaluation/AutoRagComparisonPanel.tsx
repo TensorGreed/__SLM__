@@ -19,6 +19,7 @@ import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import { evidenceNote, rowCountsText, type LiftEvidence } from './liftEvidence';
+import { retrievalKey, retrievalLabel, retrievalPinBody, type RetrievalSetting } from './retrievalLabel';
 import './AutoRagComparisonPanel.css';
 
 /** The answer judge's verdict on one generated answer (long-answer tasks). */
@@ -69,14 +70,13 @@ interface AutoRagSummary {
     retrieval_decision?: { current: AutoRagRetrieval; chosen: AutoRagRetrieval; switched: boolean; reason: string } | null;
 }
 
-interface AutoRagRetrieval {
-    k: number;
-    reranker: string | null;
-}
+type AutoRagRetrieval = RetrievalSetting;
 
 interface AutoRagSweepArm {
     retrieval: AutoRagRetrieval;
     label: string;
+    /** Which sweep stage tried it: "k_reranker", "pool" or "chunk_size". */
+    stage?: string | null;
     on_mean_f1: number;
     judge_score: number | null;
     judge_counts?: { correct?: number; partial?: number; wrong?: number } | null;
@@ -207,7 +207,7 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
 
     const handlePin = async (retrieval: AutoRagRetrieval) => {
         try {
-            await api.put(`/projects/${projectId}/auto-rag/retrieval`, { k: retrieval.k, reranker: retrieval.reranker });
+            await api.put(`/projects/${projectId}/auto-rag/retrieval`, retrievalPinBody(retrieval));
             toast.info(`Pinned ${retrievalLabel(retrieval)} — the playground and every comparison use it from now on.`, 4000);
             setReloadToken((token) => token + 1);
         } catch (err) {
@@ -804,15 +804,18 @@ function ModelComparisonCard({
                         </thead>
                         <tbody>
                             {summary.retrieval_sweep.map((arm) => {
-                                const isServing = retrievalSetting != null
-                                    && retrievalSetting.k === arm.retrieval.k
-                                    && (retrievalSetting.reranker || null) === (arm.retrieval.reranker || null);
+                                const isServing = retrievalSetting != null && retrievalKey(retrievalSetting) === retrievalKey(arm.retrieval);
                                 return (
                                     <tr key={arm.label} data-testid={`${testIdPrefix}-sweep-arm`} data-chosen={arm.chosen ? 'true' : 'false'}>
                                         <td>
                                             {arm.label}
                                             {arm.current ? ' · current' : ''}
                                             {arm.chosen ? ' · chosen' : ''}
+                                            {arm.stage === 'pool' || arm.stage === 'chunk_size' ? (
+                                                <span className="auto-rag-comparison__sweep-stage" title={arm.stage === 'pool' ? 'Stage 2: the reranker\'s candidate pool, from the best of stage 1' : 'Stage 3: passages re-cut at this size, from the best so far'}>
+                                                    {arm.stage === 'pool' ? ' · pool stage' : ' · passage-size stage'}
+                                                </span>
+                                            ) : null}
                                         </td>
                                         <td>{arm.judge_score != null ? arm.judge_score.toFixed(2) : '—'}{arm.judge_counts ? ` (${arm.judge_counts.correct ?? 0}/${arm.judge_counts.partial ?? 0}/${arm.judge_counts.wrong ?? 0})` : ''}</td>
                                         <td>{arm.on_mean_f1.toFixed(3)}</td>
@@ -820,7 +823,7 @@ function ModelComparisonCard({
                                         <td>{arm.user_choices ? `${arm.user_choices.chosen} of ${arm.user_choices.offered}${arm.user_preferred ? ' · broke the tie' : ''}` : '—'}</td>
                                         <td>
                                             {onPin && !isServing && (
-                                                <button type="button" className="btn btn-secondary auto-rag-comparison__pin" onClick={() => onPin(arm.retrieval)} data-testid={`${testIdPrefix}-pin-${arm.retrieval.k}-${arm.retrieval.reranker ? 'rerank' : 'bm25'}`}>
+                                                <button type="button" className="btn btn-secondary auto-rag-comparison__pin" onClick={() => onPin(arm.retrieval)} data-testid={`${testIdPrefix}-pin-${arm.retrieval.k}-${arm.retrieval.reranker ? 'rerank' : 'bm25'}${arm.retrieval.pool ? `-pool${arm.retrieval.pool}` : ''}${arm.retrieval.chunk_size ? `-chunk${arm.retrieval.chunk_size}` : ''}`}>
                                                     Pin
                                                 </button>
                                             )}
@@ -885,9 +888,9 @@ function PinDecisionLog({ count, decision, load, testIdPrefix }: PinDecisionLogP
                     </thead>
                     <tbody>
                         {[...rows].reverse().map((row, index) => {
-                            const pinnedKey = `${row.pinned.k}|${row.pinned.reranker || ''}`;
+                            const pinnedKey = retrievalKey(row.pinned);
                             const cell = (c: AutoRagPinDecision['candidates'][number]) => {
-                                const key = `${c.retrieval.k}|${c.retrieval.reranker || ''}`;
+                                const key = retrievalKey(c.retrieval);
                                 return (
                                     <td className={key === pinnedKey ? 'auto-rag-comparison__decisions-winner' : undefined}>
                                         <div><strong>{retrievalLabel(c.retrieval)}</strong>{key === pinnedKey ? ' ★' : ''}</div>
@@ -918,9 +921,6 @@ function PinDecisionLog({ count, decision, load, testIdPrefix }: PinDecisionLogP
 }
 
 
-function retrievalLabel(r: AutoRagRetrieval): string {
-    return `top-${r.k}` + (r.reranker ? ` + reranker ${r.reranker.split('/').pop()}` : ' (BM25 only)');
-}
 
 function vsCurrentText(vs: { verdict: string; better: number; worse: number }): string {
     const label = vs.verdict === 'better'

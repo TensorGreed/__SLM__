@@ -30,10 +30,18 @@ MIN_CHOICES_FOR_PREFERENCE = 2
 
 
 def retrieval_key(retrieval: dict[str, Any] | None) -> str:
-    """``"3|cross-encoder/…"`` / ``"5|"`` — one key per (k, reranker)."""
+    """``"3|cross-encoder/…||"`` / ``"5|||"`` — one key per
+    (k, reranker, pool, chunk_size); a setting without pool / chunk keeps the
+    older two-field prefix so recorded decisions still match."""
+    from app.services.auto_rag_service import normalize_retrieval
+
     if not retrieval:
         return ""
-    return f"{int(retrieval.get('k') or 0)}|{normalize_reranker(retrieval.get('reranker')) or ''}"
+    r = normalize_retrieval(retrieval)
+    key = f"{r['k']}|{r['reranker'] or ''}"
+    if r["pool"] or r["chunk_size"]:
+        key += f"|{r['pool'] or ''}|{r['chunk_size'] or ''}"
+    return key
 
 
 def _path(project_id: int) -> Path:

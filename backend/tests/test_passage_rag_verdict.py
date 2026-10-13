@@ -419,9 +419,9 @@ class PlaygroundCorpusAndCloneTests(unittest.TestCase):
         pid = self._project()
         seen: dict = {}
 
-        async def _preamble(db, project_id, query, *, k=3, corpus="auto", reranker_override=None):
+        async def _preamble(db, project_id, query, *, k=3, corpus="auto", retrieval_override=None):
             seen["corpus"] = corpus
-            seen["reranker_override"] = reranker_override
+            seen["retrieval_override"] = retrieval_override
             return {"preamble_text": "P", "retrieved": [], "corpus": "documents" if corpus == "documents" else "qa"}
 
         async def _win(db, project_id):
@@ -444,10 +444,10 @@ class PlaygroundCorpusAndCloneTests(unittest.TestCase):
             self.assertEqual(block["retrieval_source"], "default")
             # A per-request reranker override: "try the other retrieval".
             _, block = asyncio.run(_chat(PlaygroundChatRequest(messages=[{"role": "user", "content": "hi"}], auto_rag=True, auto_rag_reranker="default")))
-            self.assertEqual(seen["reranker_override"], {"reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2"})
+            self.assertEqual(seen["retrieval_override"], {"reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2"})
             self.assertEqual(block["retrieval_source"], "request")
             _, block = asyncio.run(_chat(PlaygroundChatRequest(messages=[{"role": "user", "content": "hi"}], auto_rag=True, auto_rag_reranker="none")))
-            self.assertEqual(seen["reranker_override"], {"reranker": None})
+            self.assertEqual(seen["retrieval_override"], {"reranker": None})
 
     def test_reroute_clone_carries_passage_retrieval(self):
         pid = self._project()

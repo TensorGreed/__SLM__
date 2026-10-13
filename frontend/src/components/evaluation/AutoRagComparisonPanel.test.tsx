@@ -387,6 +387,44 @@ describe('AutoRagComparisonPanel — base model next to the fine-tuned run', () 
         });
     });
 
+    it('labels staged sweep arms (candidate pool, passage size) and pins them with their pool / chunk size', async () => {
+        const RERANK = 'cross-encoder/ms-marco-MiniLM-L-6-v2';
+        const BASE_DOCUMENTS = {
+            ...BASE,
+            corpus: 'documents',
+            split: 'test',
+            summary: {
+                ...BASE.summary,
+                retrieval: { k: 5, reranker: RERANK, pool: 50, chunk_size: null },
+                retrieval_sweep: [
+                    { retrieval: { k: 5, reranker: RERANK, pool: null, chunk_size: null }, label: 'top-5 + reranker ms-marco-MiniLM-L-6-v2', stage: 'k_reranker', on_mean_f1: 0.4, judge_score: 0.53, chosen: false, current: true, vs_current: null },
+                    { retrieval: { k: 5, reranker: RERANK, pool: 50, chunk_size: null }, label: 'top-5 + reranker ms-marco-MiniLM-L-6-v2 · pool 50', stage: 'pool', on_mean_f1: 0.42, judge_score: 0.61, chosen: true, current: false, vs_current: { verdict: 'better', n: 46, better: 9, worse: 2, same: 35 } },
+                    { retrieval: { k: 5, reranker: RERANK, pool: 50, chunk_size: 600 }, label: 'top-5 + reranker ms-marco-MiniLM-L-6-v2 · pool 50 · 600-char passages', stage: 'chunk_size', on_mean_f1: 0.41, judge_score: 0.58, chosen: false, current: false, vs_current: { verdict: 'within_noise', n: 46, better: 6, worse: 4, same: 36 } },
+                ],
+                retrieval_decision: { current: { k: 5, reranker: RERANK }, chosen: { k: 5, reranker: RERANK, pool: 50 }, switched: true, reason: 'switched to top-5 + reranker ms-marco-MiniLM-L-6-v2 · pool 50: beats top-5 + reranker ms-marco-MiniLM-L-6-v2 beyond row noise (9 rows better, 2 worse)' },
+            },
+        };
+        apiMock.get.mockResolvedValue({ status: 200, data: { ...FINE_TUNED, base: null, base_documents: BASE_DOCUMENTS, retrieval_setting: { k: 5, reranker: RERANK, pool: 50, chunk_size: null, source: 'retrieval_sweep', pinned: false } } });
+        apiMock.put.mockResolvedValueOnce({ status: 200, data: { k: 5, reranker: RERANK, pool: 50, chunk_size: 600, source: 'pinned', pinned: true } });
+        const user = userEvent.setup();
+        render(<AutoRagComparisonPanel projectId={22} />);
+
+        const arms = await screen.findAllByTestId('auto-rag-comparison-base-documents-sweep-arm');
+        expect(arms).toHaveLength(3);
+        expect(screen.getByTestId('auto-rag-comparison-base-documents-sweep-setting')).toHaveTextContent('Serving: top-5 + reranker ms-marco-MiniLM-L-6-v2 · pool 50 (chosen by the sweep)');
+        expect(arms[1]).toHaveTextContent('pool 50 · chosen · pool stage');
+        expect(arms[1]).toHaveTextContent('serving');
+        expect(arms[2]).toHaveTextContent('600-char passages · passage-size stage');
+        // The served arm is matched on all four fields: the pool-less stage-1
+        // arm is NOT "serving" and can be pinned.
+        expect(arms[0]).not.toHaveTextContent('serving');
+        await user.click(screen.getByTestId('auto-rag-comparison-base-documents-pin-5-rerank-pool50-chunk600'));
+        await waitFor(() => {
+            expect(apiMock.put).toHaveBeenCalledWith('/projects/22/auto-rag/retrieval', { k: 5, reranker: RERANK, pool: 50, chunk_size: 600 });
+        });
+        expect(toastMock.info).toHaveBeenCalledWith(expect.stringMatching(/Pinned top-5 \+ reranker ms-marco-MiniLM-L-6-v2 · pool 50 · 600-char passages/), 4000);
+    });
+
     it('shows the sweep arms with evidence vs the current retrieval, and pins / unpins from the documents card', async () => {
         const BASE_DOCUMENTS = {
             ...BASE,

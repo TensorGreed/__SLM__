@@ -314,6 +314,10 @@ class PlaygroundChatRequest(BaseModel):
     # built-in cross-encoder, or a model id. Unset → the project's setting.
     # Lets the playground try "the other retrieval" without changing it.
     auto_rag_reranker: str | None = None
+    # Per-request reranker candidate pool / re-chunked passage variant (the
+    # playground comparing a sweep arm); None = the project's setting.
+    auto_rag_pool: int | None = Field(default=None, ge=1, le=100)
+    auto_rag_chunk_size: int | None = Field(default=None, ge=200, le=4000)
     # provider="experiment": chat with this completed run's checkpoint,
     # loaded in-process (local_chat_service).
     experiment_id: int | None = Field(default=None, ge=1)
@@ -3496,14 +3500,18 @@ async def _apply_playground_auto_rag(
             corpus, corpus_reason = req.auto_rag_corpus or "auto", "request"
             if req.auto_rag_corpus is None and project is not None:
                 corpus, corpus_reason = await resolve_playground_corpus(db, project)
-            reranker_override = None
+            retrieval_override: dict[str, Any] = {}
             if req.auto_rag_reranker is not None:
                 from app.services.retrieval_reranker import normalize_reranker
 
-                reranker_override = {"reranker": normalize_reranker(req.auto_rag_reranker)}
+                retrieval_override["reranker"] = normalize_reranker(req.auto_rag_reranker)
+            if req.auto_rag_pool is not None:
+                retrieval_override["pool"] = req.auto_rag_pool
+            if req.auto_rag_chunk_size is not None:
+                retrieval_override["chunk_size"] = req.auto_rag_chunk_size
             preamble = await build_preamble_from_query(
                 db, project_id, query_text, k=req.auto_rag_k, corpus=corpus,
-                reranker_override=reranker_override,
+                retrieval_override=retrieval_override or None,
             )
             if preamble is None:
                 auto_rag_block["skip_reason"] = "recipe_or_index_ineligible"
@@ -3535,11 +3543,13 @@ async def _apply_playground_auto_rag(
                     "applied": True,
                     "k": (preamble.get("retrieval") or {}).get("k", req.auto_rag_k),
                     "reranker": (preamble.get("retrieval") or {}).get("reranker"),
+                    "pool": (preamble.get("retrieval") or {}).get("pool"),
+                    "chunk_size": (preamble.get("retrieval") or {}).get("chunk_size"),
                     # Where that retrieval came from: "request" (an override
                     # on this call), "pinned", "retrieval_sweep" or "default".
                     "retrieval_source": (
                         "request"
-                        if req.auto_rag_reranker is not None or req.auto_rag_k is not None
+                        if retrieval_override or req.auto_rag_k is not None
                         else _retrieval_source(project)
                     ),
                     "query": query_text,

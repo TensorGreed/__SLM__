@@ -151,8 +151,12 @@ fine-tune on 358 generated pairs still learned the wording, not the facts
 ## What is still open (said on camera)
 
 - 17 of 46 answers are still wrong with the best retrieval (3 of 19 in the
-  recording) — mostly a neighbouring section retrieved; chunk size, a
-  stronger reranker and a larger candidate pool are untried.
+  recording) — mostly a neighbouring section retrieved. The staged sweep has
+  since tried the reranker's candidate pool (50 → 0.50) and passages re-cut
+  at 600 / 1200 chars (0.46 / 0.45) against the served top-5 + reranker
+  (0.53): all within noise, none better, so it stayed. Nothing tried gets
+  past 0.6 on these 46 rows; a stronger reranker, or a reader that answers
+  from more than the top passages, is what's left to try.
 - The answer key was written by a model from the same passages. It is a
   consistent ruler, not a lawyer's.
 - One judge is one opinion. The judge's name is stamped on every result, so

@@ -27,11 +27,18 @@ DEFAULT_RERANKER = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 CANDIDATE_MULTIPLIER = 4
 MIN_CANDIDATES = 10
 MAX_CANDIDATES = 40
+# An explicit pool (a retrieval setting / sweep arm) may go deeper than the
+# default rule, bounded so one reranking call stays a few seconds on CPU.
+MAX_POOL = 100
 RERANK_MAX_LENGTH = 512
 
 
-def candidate_pool(k: int) -> int:
-    """How many BM25 hits to fetch before reranking down to ``k``."""
+def candidate_pool(k: int, pool: int | None = None) -> int:
+    """How many BM25 hits to fetch before reranking down to ``k``: the
+    explicit ``pool`` when given (clamped to [k, MAX_POOL]), else
+    ``CANDIDATE_MULTIPLIER × k`` within [MIN_CANDIDATES, MAX_CANDIDATES]."""
+    if pool is not None:
+        return max(int(k), min(MAX_POOL, int(pool)))
     return max(MIN_CANDIDATES, min(MAX_CANDIDATES, int(k) * CANDIDATE_MULTIPLIER))
 
 

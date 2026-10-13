@@ -443,10 +443,75 @@ _DOCUMENT_PREAMBLE_TEMPLATE = (
 )
 
 
-def document_index_dir(project_id: int) -> Path:
+def document_index_dir(project_id: int, chunk_size: int | None = None) -> Path:
+    """The passage index: the cleaning's own chunks at ``.../documents``, or
+    a re-chunked variant (``chunk_size`` chars, built by
+    ``ensure_document_index``) at ``.../documents/chunk-<n>``."""
     from app.config import settings
 
-    return settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / DOCUMENTS_CORPUS
+    base = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / DOCUMENTS_CORPUS
+    return base / f"chunk-{int(chunk_size)}" if chunk_size else base
+
+
+# Re-chunked passage variants (a retrieval sweep arm): the cleaning's
+# per-document ``<file>.cleaned.txt`` (boilerplate removed, PII redacted) cut
+# again with ``cleaning_service.chunk_text`` at a different size. Overlap
+# keeps cleaning's default ratio (1/10 of the chunk).
+MIN_CHUNK_SIZE = 200
+MAX_CHUNK_SIZE = 4000
+
+
+def _cleaned_text_files(project_id: int) -> list[Path]:
+    from app.config import settings
+
+    raw_dir = settings.DATA_DIR / "projects" / str(project_id) / "raw"
+    return sorted(raw_dir.glob("*.cleaned.txt")) if raw_dir.exists() else []
+
+
+def load_rechunked_passages(project_id: int, chunk_size: int) -> list[dict[str, Any]]:
+    """The project's documents re-cut at ``chunk_size`` chars, in the same
+    row shape as ``load_document_passages`` (document id + name from the
+    cleaned.jsonl rows, chunk ids restarting at 0 per document)."""
+    from app.services.cleaning_service import chunk_text
+
+    chunk_size = max(MIN_CHUNK_SIZE, min(MAX_CHUNK_SIZE, int(chunk_size)))
+    doc_ids: dict[str, Any] = {}
+    for row in load_document_passages(project_id):
+        name = row.get("source_doc")
+        if isinstance(name, str) and name not in doc_ids:
+            doc_ids[name] = row.get("source_document_id")
+    passages: list[dict[str, Any]] = []
+    for path in _cleaned_text_files(project_id):
+        source_doc = next(
+            (name for name in doc_ids if Path(name).stem == path.name[: -len(".cleaned.txt")]),
+            None,
+        )
+        if source_doc is None:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if not text.strip():
+            continue
+        for idx, chunk in enumerate(chunk_text(text, chunk_size, chunk_size // 10)):
+            if chunk.strip():
+                passages.append({
+                    "id": f"{doc_ids[source_doc]}:{idx}",
+                    "text": chunk.strip(),
+                    "source_doc": source_doc,
+                    "source_document_id": doc_ids[source_doc],
+                    "chunk_id": idx,
+                })
+    return passages
+
+
+def current_chunk_size_estimate(project_id: int) -> int | None:
+    """The cleaning's chunk size, estimated as the longest cleaned passage
+    (``chunk_text`` never exceeds it; most chunks reach it). None without
+    passages."""
+    lengths = [len(p["text"]) for p in load_document_passages(project_id)]
+    return max(lengths) if lengths else None
 
 
 def _cleaned_path(project_id: int) -> Path:
@@ -490,13 +555,17 @@ def load_document_passages(project_id: int) -> list[dict[str, Any]]:
     return passages
 
 
-def document_index_status(project_id: int) -> dict[str, Any]:
-    index_path = document_index_dir(project_id) / "bm25_index.json"
+def document_index_status(project_id: int, chunk_size: int | None = None) -> dict[str, Any]:
+    index_path = document_index_dir(project_id, chunk_size) / "bm25_index.json"
     cleaned = _cleaned_path(project_id)
     exists = index_path.exists()
     stale = bool(
         exists and cleaned.exists() and cleaned.stat().st_mtime > index_path.stat().st_mtime
     )
+    if exists and chunk_size:
+        # A variant is cut from the per-document cleaned text.
+        built_at = index_path.stat().st_mtime
+        stale = stale or any(f.stat().st_mtime > built_at for f in _cleaned_text_files(project_id))
     passages = None
     if exists:
         try:
@@ -506,17 +575,20 @@ def document_index_status(project_id: int) -> dict[str, Any]:
     return {"available": exists and not stale, "exists": exists, "stale": stale, "passages": passages}
 
 
-def ensure_document_index(project_id: int) -> dict[str, Any]:
-    """Build (or rebuild when cleaning ran since) the passage index. Never
-    raises; returns a status dict."""
-    status = document_index_status(project_id)
+def ensure_document_index(project_id: int, chunk_size: int | None = None) -> dict[str, Any]:
+    """Build (or rebuild when cleaning ran since) the passage index — the
+    cleaning's chunks, or the ``chunk_size`` variant
+    (``load_rechunked_passages``). Never raises; returns a status dict."""
+    status = document_index_status(project_id, chunk_size)
     if status["available"]:
         return {**status, "built": False, "reason": "up_to_date"}
-    passages = load_document_passages(project_id)
+    passages = load_rechunked_passages(project_id, chunk_size) if chunk_size else load_document_passages(project_id)
     if not passages:
         return {**status, "available": False, "built": False, "reason": "no_document_passages"}
     try:
-        manifest = build_bm25_index(passages, recipe_id=DOCUMENTS_CORPUS, output_dir=document_index_dir(project_id))
+        manifest = build_bm25_index(
+            passages, recipe_id=DOCUMENTS_CORPUS, output_dir=document_index_dir(project_id, chunk_size)
+        )
     except AutoRagUnavailable as exc:
         return {**status, "available": False, "built": False, "reason": f"build_failed:{exc}"}
     return {
@@ -551,22 +623,62 @@ def _qa_index_usable(project: Any, project_id: int) -> bool:
 
 RETRIEVAL_SETTINGS_KEY = "auto_rag_retrieval"
 DEFAULT_RETRIEVAL_K = 3
+RETRIEVAL_FIELDS = ("k", "reranker", "pool", "chunk_size")
+
+
+def _opt_int(value: Any, lo: int, hi: int) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return max(lo, min(hi, int(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_retrieval(raw: Any) -> dict[str, Any]:
+    """A retrieval setting ``{"k", "reranker", "pool", "chunk_size"}`` from
+    any dict-ish input: ``k`` 1–10 (default 3), ``reranker`` a model id or
+    None, ``pool`` the reranker's BM25 candidate count (None = the default
+    rule; meaningless without a reranker, so dropped), ``chunk_size`` a
+    re-chunked passage variant in chars (None = the cleaning's chunks)."""
+    from app.services.retrieval_reranker import MAX_POOL, normalize_reranker
+
+    raw = raw if isinstance(raw, dict) else {}
+    reranker = normalize_reranker(raw.get("reranker"))
+    return {
+        "k": _opt_int(raw.get("k"), 1, 10) or DEFAULT_RETRIEVAL_K,
+        "reranker": reranker,
+        "pool": _opt_int(raw.get("pool"), 1, MAX_POOL) if reranker else None,
+        "chunk_size": _opt_int(raw.get("chunk_size"), MIN_CHUNK_SIZE, MAX_CHUNK_SIZE),
+    }
+
+
+def same_retrieval(a: Any, b: Any) -> bool:
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return False
+    return normalize_retrieval(a) == normalize_retrieval(b)
+
+
+def retrieval_label(config: Any) -> str:
+    """``top-5 + reranker ms-marco-MiniLM-L-6-v2 · pool 50 · 600-char passages``."""
+    r = normalize_retrieval(config)
+    label = f"top-{r['k']}"
+    if r["reranker"]:
+        label += f" + reranker {r['reranker'].split('/')[-1]}"
+        if r["pool"]:
+            label += f" · pool {r['pool']}"
+    if r["chunk_size"]:
+        label += f" · {r['chunk_size']}-char passages"
+    return label
 
 
 def retrieval_settings(project: Any) -> dict[str, Any]:
-    """The project's retrieval settings ``{"k", "reranker"}`` from
-    ``runtime_config["auto_rag_retrieval"]`` (set by the retrieval sweep or
-    by hand), with defaults: top-3, no reranker."""
-    from app.services.retrieval_reranker import normalize_reranker
-
+    """The project's retrieval settings (``normalize_retrieval`` of
+    ``runtime_config["auto_rag_retrieval"]``, set by the retrieval sweep or
+    pinned by hand); defaults: top-3, no reranker, default pool, the
+    cleaning's chunks."""
     cfg = getattr(project, "runtime_config", None)
-    raw = cfg.get(RETRIEVAL_SETTINGS_KEY) if isinstance(cfg, dict) else None
-    raw = raw if isinstance(raw, dict) else {}
-    try:
-        k = int(raw.get("k") or DEFAULT_RETRIEVAL_K)
-    except (TypeError, ValueError):
-        k = DEFAULT_RETRIEVAL_K
-    return {"k": max(1, min(10, k)), "reranker": normalize_reranker(raw.get("reranker"))}
+    return normalize_retrieval(cfg.get(RETRIEVAL_SETTINGS_KEY) if isinstance(cfg, dict) else None)
 
 
 def retrieve_ranked(
@@ -575,14 +687,16 @@ def retrieve_ranked(
     index_dir: Path,
     k: int = DEFAULT_RETRIEVAL_K,
     reranker: str | None = None,
+    pool: int | None = None,
 ) -> list[RetrievedChunk]:
-    """BM25 top-k, or — with a reranker — BM25 candidates reranked by the
-    cross-encoder and cut to k (``retrieval_reranker``)."""
+    """BM25 top-k, or — with a reranker — ``pool`` BM25 candidates
+    (``candidate_pool``) reranked by the cross-encoder and cut to k
+    (``retrieval_reranker``)."""
     from app.services.retrieval_reranker import candidate_pool, rerank
 
     if not reranker:
         return retrieve(query, index_dir=index_dir, k=k)
-    hits = retrieve(query, index_dir=index_dir, k=candidate_pool(k))
+    hits = retrieve(query, index_dir=index_dir, k=candidate_pool(k, pool))
     return rerank(query, hits, top_k=k, model_name=reranker)
 
 
@@ -593,7 +707,7 @@ async def build_preamble_from_query(
     *,
     k: int | None = None,
     corpus: str = "auto",
-    reranker_override: dict[str, Any] | None = None,
+    retrieval_override: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Phase 9b inference-time helper. Returns
     ``{preamble_text, retrieved}`` or ``None`` when auto-RAG should
@@ -617,11 +731,12 @@ async def build_preamble_from_query(
     settings_used = retrieval_settings(project)
     if k is None:
         k = settings_used["k"]
-    reranker = settings_used["reranker"]
-    # ``reranker_override={"reranker": ...}`` (the playground's "try the
-    # other retrieval") replaces the project's reranker for this call only.
-    if reranker_override is not None and "reranker" in reranker_override:
-        reranker = reranker_override["reranker"]
+    # ``retrieval_override`` (the playground's "try the other retrieval")
+    # replaces the given fields — reranker / pool / chunk_size — for this
+    # call only.
+    override = {f: v for f, v in (retrieval_override or {}).items() if f in RETRIEVAL_FIELDS and f != "k"}
+    retrieval = normalize_retrieval({**settings_used, "k": k, **override})
+    reranker, pool, chunk_size = retrieval["reranker"], retrieval["pool"], retrieval["chunk_size"]
     # ``corpus``: "qa" (Q&A-pair index, recipe-gated), "documents" (the
     # project's document passages) or "auto" — Q&A pairs when the recipe
     # has them, otherwise document passages.
@@ -634,7 +749,7 @@ async def build_preamble_from_query(
             use_qa = bool((await build_index_for_project(db, project_id)).get("built"))
     if use_qa:
         try:
-            hits = retrieve_ranked(query, index_dir=index_dir, k=k, reranker=reranker)
+            hits = retrieve_ranked(query, index_dir=index_dir, k=k, reranker=reranker, pool=pool)
         except AutoRagUnavailable:
             hits = []
         if hits:
@@ -643,14 +758,22 @@ async def build_preamble_from_query(
                 "preamble_text": _AUTO_RAG_PREAMBLE_TEMPLATE.format(pairs=pairs_text),
                 "retrieved": hits,
                 "corpus": "qa",
-                "retrieval": {"k": k, "reranker": reranker},
+                # Q&A pairs are not re-chunked.
+                "retrieval": {**retrieval, "chunk_size": None},
             }
     if corpus not in {"documents", "auto"}:
         return None
-    if not ensure_document_index(project_id).get("available"):
-        return None
+    if not ensure_document_index(project_id, chunk_size).get("available"):
+        if not chunk_size or not ensure_document_index(project_id).get("available"):
+            return None
+        # The variant can't be built (no cleaned text files): serve the
+        # cleaning's chunks and say so.
+        chunk_size = None
+        retrieval = {**retrieval, "chunk_size": None}
     try:
-        hits = retrieve_ranked(query, index_dir=document_index_dir(project_id), k=k, reranker=reranker)
+        hits = retrieve_ranked(
+            query, index_dir=document_index_dir(project_id, chunk_size), k=k, reranker=reranker, pool=pool
+        )
     except AutoRagUnavailable:
         return None
     if not hits:
@@ -660,7 +783,7 @@ async def build_preamble_from_query(
         "preamble_text": _DOCUMENT_PREAMBLE_TEMPLATE.format(passages=passages_text),
         "retrieved": hits,
         "corpus": DOCUMENTS_CORPUS,
-        "retrieval": {"k": k, "reranker": reranker},
+        "retrieval": retrieval,
     }
 
 
