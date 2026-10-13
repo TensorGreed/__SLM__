@@ -286,10 +286,11 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(len(out[0]["entities"]), 1)
         self.assertEqual(out[0]["entities"][0]["text"], "foo@bar.com")
 
-    def test_drops_entities_with_mismatched_offsets(self):
-        # Teacher claimed text="foo@bar.com" but text[9:20] is "foo@bar.co"
-        # — exactly the kind of off-by-one hallucination that poisons
-        # training data.
+    def test_repairs_entities_with_mismatched_offsets(self):
+        # Teacher claimed text="foo@bar.com" but text[9:19] is "foo@bar.co"
+        # — the off-by-one the model emits constantly. The entity text is
+        # right, so the offsets are repaired from it (it used to be
+        # dropped, which left most rows with no labels at all).
         raw = [
             {
                 "text": "Email is foo@bar.com.",
@@ -299,9 +300,11 @@ class ValidatorTests(unittest.TestCase):
             }
         ]
         out = _validate_span_rows(raw, entity_types=None)
-        # Row kept (text present) but the bad entity is dropped.
         self.assertEqual(len(out), 1)
-        self.assertEqual(out[0]["entities"], [])
+        self.assertEqual(out[0]["entities"], [{"type": "email", "start": 9, "end": 20, "text": "foo@bar.com"}])
+        # Text that isn't in the snippet at all is still dropped.
+        gone = _validate_span_rows([{"text": "Email is foo@bar.com.", "entities": [{"type": "email", "start": 9, "end": 19, "text": "zed@bar.com"}]}], None)
+        self.assertEqual(gone[0]["entities"], [])
 
     def test_drops_entities_outside_text_range(self):
         raw = [
@@ -445,3 +448,39 @@ class SaveBatchShapeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OffsetRepairAndNegativesTests(unittest.TestCase):
+    """The teacher's offsets are wrong far more often than its entity text:
+    repair them by locating the exact text (first unclaimed occurrence);
+    drop only entities whose text isn't in the snippet; cap rows with no
+    entities to a small share and drop one-line fragments."""
+
+    def test_wrong_offsets_are_repaired_from_the_entity_text(self):
+        from app.services.synthetic_service import _validate_span_rows
+
+        text = "Email Jane Doe at jane@example.com; Jane Doe again at 555-0173."
+        rows = _validate_span_rows([{
+            "text": text,
+            "entities": [
+                {"type": "Person_Name", "start": 0, "end": 4, "text": "Jane Doe"},  # wrong offsets
+                {"type": "email", "start": 99, "end": 120, "text": "jane@example.com"},  # off the end
+                {"type": "person_name", "start": 0, "end": 0, "text": "Jane Doe"},  # second occurrence
+                {"type": "phone", "start": 5, "end": 9, "text": "555-9999"},  # not in text → dropped
+                {"type": "phone", "start": 54, "end": 62, "text": "555-0173"},  # already right
+            ],
+        }], None)
+        ents = rows[0]["entities"]
+        self.assertEqual([(e["type"], e["start"], e["end"]) for e in ents], [
+            ("person_name", 6, 14), ("email", 18, 34), ("person_name", 36, 44), ("phone", 54, 62),
+        ])
+        self.assertTrue(all(text[e["start"]:e["end"]] == e["text"] for e in ents))
+
+    def test_negatives_are_capped_and_fragments_dropped(self):
+        from app.services.synthetic_service import _cap_negatives
+
+        long = "x" * 80
+        rows = [{"text": long, "entities": [{"type": "email"}]}] * 10 + [{"text": long, "entities": []}] * 5 + [{"text": "Action required.", "entities": []}]
+        kept = _cap_negatives(rows)
+        self.assertEqual(len(kept), 11)
+        self.assertEqual(sum(1 for r in kept if not r["entities"]), 1)

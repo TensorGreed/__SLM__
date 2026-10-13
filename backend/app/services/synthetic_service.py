@@ -1255,19 +1255,55 @@ def _validate_span_rows(
             except (TypeError, ValueError):
                 continue
             ent_text = str(ent.get("text") or "")
-            if start < 0 or end <= start or end > len(text):
+            if not ent_text.strip():
                 continue
-            # Drop entities whose claimed text doesn't match the
-            # actual span — these are hallucinated offsets the model
-            # often emits, and they poison training data.
-            if text[start:end] != ent_text:
+            if start < 0 or end <= start or end > len(text) or text[start:end] != ent_text:
+                # The model's offsets are wrong far more often than its
+                # entity text (it has to count characters). Locate the
+                # exact text instead — the first occurrence not already
+                # claimed — and repair the offsets; drop the entity only
+                # when the text isn't in the snippet at all.
+                located = _locate_entity(text, ent_text, valid_entities)
+                if located is None:
+                    continue
+                start, end = located
+            if any(start < e["end"] and end > e["start"] for e in valid_entities):
                 continue
             valid_entities.append(
-                {"type": ent_type, "start": start, "end": end, "text": ent_text}
+                {"type": ent_type.lower(), "start": start, "end": end, "text": ent_text}
             )
         valid_entities.sort(key=lambda e: (e["start"], e["end"]))
         out.append({"text": text, "entities": valid_entities})
     return out
+
+
+def _locate_entity(text: str, ent_text: str, taken: list[dict]) -> tuple[int, int] | None:
+    """First occurrence of ``ent_text`` in ``text`` that doesn't overlap an
+    entity already kept, as ``(start, end)``; None when absent."""
+    search_from = 0
+    while True:
+        start = text.find(ent_text, search_from)
+        if start < 0:
+            return None
+        end = start + len(ent_text)
+        if not any(start < e["end"] and end > e["start"] for e in taken):
+            return start, end
+        search_from = start + 1
+
+
+# Rows the teacher returned with no entity at all are negatives: useful in
+# small doses, useless as the bulk of a span dataset. Keep at most this
+# share of them per batch, and no snippet shorter than this.
+MAX_NEGATIVE_SHARE = 0.1
+MIN_SPAN_SNIPPET_CHARS = 60
+
+
+def _cap_negatives(rows: list[dict]) -> list[dict]:
+    rows = [r for r in rows if len(str(r.get("text") or "")) >= MIN_SPAN_SNIPPET_CHARS]
+    positives = [r for r in rows if r.get("entities")]
+    negatives = [r for r in rows if not r.get("entities")]
+    keep = int(len(positives) * MAX_NEGATIVE_SHARE)
+    return positives + negatives[:keep]
 
 
 def _parse_teacher_span_rows(content: str) -> list[dict]:
@@ -1360,14 +1396,16 @@ async def generate_span_extraction_rows(
         f"{example}"
         "Output rules:\n"
         '- Return ONLY valid JSON of the form {"rows":[{"text":"…","entities":[{"type":"…","start":N,"end":M,"text":"…"}]}]}.\n'
-        "- start/end are 0-indexed CHARACTER offsets in `text` (not "
-        "  word offsets). text[start:end] in your snippet MUST equal "
-        "  entity.text exactly. Count characters carefully.\n"
-        "- If you're not sure about an entity's offsets, omit it from "
-        "  the entities array rather than guess — a downstream regex "
-        "  pass will catch the obvious ones (email/phone/SSN/credit_card/"
-        "  ip_address/api_key/date_of_birth). Focus on getting the "
-        "  TEXT right and only emit entities you're confident about.\n"
+        "- Each snippet is a full, realistic passage of 40-120 words (a "
+        "  message, a note, a record), never a one-line fragment, and "
+        "  every snippet contains SEVERAL entities.\n"
+        "- entity.text is the EXACT characters as they appear in `text` "
+        "  (copy them; this is what matters most). start/end are "
+        "  0-indexed CHARACTER offsets — do your best; they are verified "
+        "  and repaired from entity.text, so a wrong offset is fine but "
+        "  a wrong entity.text is dropped.\n"
+        "- A downstream regex pass also catches the obvious ones "
+        "  (email/phone/SSN/credit_card/ip_address/api_key/date_of_birth).\n"
         "- Use only synthetic values — never real identifiers.\n"
         "- Vary entity coverage across rows so the dataset isn't repetitive.\n\n"
         f"Source paragraph:\n{source_text[:4000]}\n\n"
@@ -1383,7 +1421,7 @@ async def generate_span_extraction_rows(
     )
     content = result.get("content") or ""
     raw_rows = _parse_teacher_span_rows(content)
-    validated = _validate_span_rows(raw_rows, entity_types)
+    validated = _cap_negatives(_validate_span_rows(raw_rows, entity_types))
     if not validated:
         # Teacher returned nothing parseable — fall back to demo
         # extraction so the user still sees the expected shape.
