@@ -1,0 +1,131 @@
+---
+title: "Sensitive-data tagging from zero"
+sidebar_label: "Sensitive-data tagging"
+description: "From no data to a Hugging Face model that finds, classifies and locates PCI / GDPR / HIPAA and custom sensitive data in text — every step in BrewSLM."
+---
+
+# Sensitive-data tagging from zero
+
+You want a model that takes a text and returns every piece of sensitive
+data in it — **what** it is (a card number, a date of birth, a medical
+record number, your own custom types) and **exactly where** it is
+(character start and end) — and you have **no labelled data**, only a
+local Ollama and, optionally, an Anthropic key. This page is the whole
+path through BrewSLM. Nothing here needs a script; every step is a card
+or a button, and each one is a step any documents-first project can use.
+
+The shape of the task in BrewSLM is **span extraction** (`span-extraction`
+recipe, `structured_extraction` task profile, `span_set` scoring): a row
+is `{text, entities: [{type, start, end, text}]}`. The two things this
+page adds to that recipe are a way to get *documents* when you have none,
+and a way to train for *exact offsets*.
+
+## 1. A project with no documents → "Write sample documents"
+
+Create a project (any name; the brief can say "detect sensitive data in
+support tickets and clinical notes"). On the **Data** tab the first card,
+*No documents yet? Write sample documents*, asks a generation model —
+your local Ollama model first; a cloud model only if you pin one under
+Synthetic → backends — to write realistic, **invented** documents:
+
+- *What the documents must contain*: the kinds of data, in your words —
+  "card numbers (Visa / Mastercard / Amex formats), expiry dates, CVV,
+  IBANs; names, emails, phone numbers, home addresses, dates of birth,
+  national ids, passport numbers, IP addresses; medical record numbers,
+  health-plan member ids, diagnoses, medications, provider names;
+  employee ids, API keys, internal ticket ids".
+- *Genres*, one per line: support tickets, billing emails, clinical
+  visit notes, insurance claims, HR onboarding emails, data-subject
+  access requests, incident reports, bank chat transcripts, travel
+  bookings, pharmacy messages — the places that data shows up.
+- *Documents* and *words each* (defaults 60 × 160).
+
+It runs as a Job the bell tracks ("Writing document 12/60: clinical visit
+note (ollama:gemma4:12b)"). The documents are ingested as **one text
+file** (`seed-documents-<time>.txt`, source `seed_documents`) and cleaned
+into passages, so everything after this is identical to a project you
+uploaded documents into. Every person, number and identifier in them is
+made up; the model is told so, and the file is marked by its source.
+
+## 2. Label them → the span synthesiser
+
+On the **Synthetic** tab, with the project's task shape set to span
+extraction (the `span-extraction` recipe — pick it from the recipe picker
+or let the task-shape card confirm it), the span generator takes your
+passages and a list of **entity types** — the canonical ones plus your
+custom ones, e.g. `credit_card, card_expiry, cvv, iban, bank_account,
+person_name, email, phone, address, date_of_birth, national_id, passport,
+ip_address, medical_record_number, health_plan_id, diagnosis, medication,
+provider_name, employee_id, api_key, ticket_id` — and asks the teacher
+model to rewrite each passage with *different* synthetic values and
+return every entity with its character offsets. Each row is validated
+before it is kept: `text[start:end]` must equal the entity's text, types
+outside your list are dropped, and the built-in regexes add any obvious
+email / phone / card / IP the teacher missed. Rows land in the review
+queue (source `span_generation`), grouped by source; accept them in bulk
+or reject the ones you don't like.
+
+The teacher is an OpenAI-compatible endpoint: Ollama's
+`http://localhost:11434/v1` with any local model is free; an Anthropic or
+OpenAI model costs per call. A reasonable split is: **local model for the
+bulk** (hundreds of rows), **a cloud model for the answer key** (the
+held-out rows the evaluation scores against — a few hundred calls with a
+small model is cents), because the key's quality bounds what the
+evaluation can tell you.
+
+## 3. Split, then train for exact offsets
+
+**Data prep → split** as usual (the default 80 / 10 / 10; the test
+examples are what the evaluation scores). Then on **Training**, set the
+*task type* to **Token classification (spans with exact offsets)** and a
+base model that is an *encoder* — `microsoft/deberta-v3-base` is the
+default choice (184M parameters, fast tokenizer, strong on NER);
+`bert-base-cased` works too.
+
+What this mode does differently from the generative span recipe: instead
+of a language model *writing* the entities as JSON (and counting
+characters wrong), it trains a token-classification head on BIO labels
+derived from each row's character spans, so at inference the offsets come
+from the tokenizer's own offset mapping — exact by construction. The run
+writes a plain Hugging Face model (`model/` with the tokenizer and a
+`label_space.json`), per-epoch **span precision / recall / F1** (strict
+match on type + start + end, the same match the `span_set` scorer uses),
+and a per-type breakdown in `training_report.json`. Epochs auto-size to
+the row count (≈1500 example-passes, 3–20 epochs) unless you set them.
+
+## 4. Evaluate → refine → re-train
+
+The held-out evaluation recognises a token-classification checkpoint and
+tags the test rows with it (no generation), so the **span_set** report is
+the usual one: precision / recall / F1 overall, **per type** (where the
+model is weak), and per row the entities *matched*, *missed* and
+*hallucinated* — with the model's output beside the key. Weak types are
+the refine loop: run the span generator again **restricted to those
+types** (the entity-type list is the lever), accept the rows, re-split,
+re-train; the Eval summary compares the runs.
+
+## 5. Export → Hugging Face
+
+**Export → Hugging Face** packages the run's `model/` directory as-is
+(there is no adapter to merge). Use it anywhere Transformers runs:
+
+```python
+from transformers import pipeline
+
+tagger = pipeline("token-classification", model="path/or/hub-id", aggregation_strategy="simple")
+for ent in tagger("Charge card 4111 1111 1111 1111 for Ada (ada@example.test) by 09/27."):
+    print(ent["entity_group"], ent["start"], ent["end"], ent["word"], round(ent["score"], 3))
+```
+
+`start` / `end` are character offsets into the string you passed; the
+`entity_group` is your entity type, custom ones included.
+
+## What it costs
+
+Local only: the seed documents (60 docs ≈ 20 min on a 12B Ollama model),
+the span rows (≈3 s per passage), training (a few minutes on a GPU; the
+encoder is small), the evaluation (seconds). Cloud: only what you choose
+to send — the answer key, or a judge pass — and the Synthetic tab's
+backend picker shows the model name on every row it wrote.
+
+<!-- numbers: filled in from the first full run (see ROADMAP) -->

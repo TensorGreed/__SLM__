@@ -1529,9 +1529,13 @@ async def start_training(
     # answer/completion/output/response. Make the gate task-aware so a
     # classification project isn't wrongly rejected for "no target field".
     _task_type = str((resolved_config or {}).get("task_type") or "").strip().lower()
+    # Span rows carry the target in ``entities`` (token_classification and
+    # the generative span recipe alike).
     _gate_target_fields = (
         ["label", *DEFAULT_TARGET_FIELDS]
         if _task_type == "classification"
+        else ["entities", "entities_json", *DEFAULT_TARGET_FIELDS]
+        if _task_type == "token_classification"
         else DEFAULT_TARGET_FIELDS
     )
     data_gate_report = verify_training_data_has_targets(

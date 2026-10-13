@@ -95,3 +95,35 @@ export async function startDocumentsQaFlow(
     const res = await api.post<Job>(`/projects/${projectId}/flows/documents-to-qa`, body);
     return res.data;
 }
+
+
+// ── Seed documents: write sample documents for a domain ──────────────────
+
+export interface SeedDocumentsDefaults {
+    genres: string[];
+    count: number;
+    words: number;
+}
+
+export async function fetchSeedDocumentsDefaults(projectId: number): Promise<SeedDocumentsDefaults> {
+    const res = await api.get<SeedDocumentsDefaults>(`/projects/${projectId}/flows/seed-documents/defaults`);
+    return res.data;
+}
+
+/** Starts the `seed_documents` Job: `count` invented documents over
+ *  `genres`, each containing `kinds`, ingested as one text document and
+ *  cleaned into passages. */
+export async function startSeedDocuments(
+    projectId: number,
+    options: { kinds?: string; genres?: string[]; count?: number; words?: number; backend?: string | null; domainHint?: string } = {},
+): Promise<Job> {
+    const body: Record<string, unknown> = {};
+    if (options.kinds != null) body.kinds = options.kinds;
+    if (options.genres && options.genres.length) body.genres = options.genres;
+    if (options.count != null) body.count = options.count;
+    if (options.words != null) body.words = options.words;
+    if (options.backend) body.backend = options.backend;
+    if (options.domainHint) body.domain_hint = options.domainHint;
+    const res = await api.post<Job>(`/projects/${projectId}/flows/seed-documents`, body);
+    return res.data;
+}

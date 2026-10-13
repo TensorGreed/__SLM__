@@ -230,6 +230,7 @@ session-start guidance.
 - `backend/app/services/runtime_settings_service.py` — Runtime-manageable system settings service.
 - `backend/app/services/scaffold_service.py` — Plugin scaffold templating service (priority.md P38, Wave H).
 - `backend/app/services/secret_service.py` — Project secret storage service with reversible at-rest encryption.
+- `backend/app/services/seed_documents_service.py` — Seed documents: write sample documents for a domain when the user has
 - `backend/app/services/serve_runtime_service.py` — Ephemeral local serve run manager (start/status/stop + live log tail).
 - `backend/app/services/serve_service.py` — Local serving plan generation for export and registry artifacts.
 - `backend/app/services/served_model_telemetry_service.py` — Post-deploy telemetry service (priority.md P26).
@@ -357,6 +358,7 @@ session-start guidance.
 - `backend/scripts/model_merge.py` — External model merge runtime (TIES/DEX model soup).
 - `backend/scripts/quantize.py` — External quantization runtime with real GGUF/ONNX support.
 - `backend/scripts/train.py` — External training runtime for real SLM finetuning.
+- `backend/scripts/train_token_classification.py` — Token classification for span extraction: exact character offsets.
 - `backend/scripts/train_warmstart_checkpoint.py` — Warm-start checkpoint trainer (Track 1, Epic B follow-up).
 
 ## Backend · Alembic migrations
@@ -533,6 +535,7 @@ session-start guidance.
 - `frontend/src/components/data/PlaybookPickerPanel.tsx` — PlaybookPickerPanel — USER-SUCCESS Epic 2.
 - `frontend/src/components/data/RecipePicker.tsx` — Recipe Picker — Theme 2 Epic 3 + 4.
 - `frontend/src/components/data/SavedMappingsPanel.tsx` — Saved dataset-import mappings panel (Phase G of DATASET_IMPORT_PLAN).
+- `frontend/src/components/data/SeedDocumentsCard.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.tsx` — SynthReviewQueue — USER-SUCCESS Epic 2b.
 - `frontend/src/components/data/SyntheticPanel.tsx` — Panel for generating synthetic training data with playbook selection, batch async support, and review queue.
 - `frontend/src/components/data/TaskShapeConfirmCard.tsx` — "What kind of task is this?" — shows the unified detector's best guess
@@ -891,6 +894,7 @@ session-start guidance.
 - `backend/tests/test_remediation_tracking.py` — Tests for the remediation tracking service + API (E2).
 - `backend/tests/test_retrieval_decisions.py` — Pin decisions (retrieval_decisions_service): append-only record of what
 - `backend/tests/test_retrieval_reranker.py` — Cross-encoder reranking + per-project retrieval settings.
+- `backend/tests/test_seed_documents.py` — Seed documents: a generation model writes sample documents for a domain
 - `backend/tests/test_seed_group_drilldown_endpoint.py` — Quality-Lift phase 8 slice 1 — seed-group drill-down endpoint.
 - `backend/tests/test_seq2seq_adapter_prompt_wrap.py` — θ-fix tests — seq2seq-pair adapter writes the production
 - `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).
@@ -917,6 +921,7 @@ session-start guidance.
 - `backend/tests/test_theme5_epic1_video_flow_cli.py` — Theme 5 Epic 1 — brewslm CLI gap-fill commands for the 11-video flow.
 - `backend/tests/test_tokenization_analyze_splits.py` — V3 of the ML-native visualisations arc — POST /tokenization/analyze-splits.
 - `backend/tests/test_train_script_standalone.py` — ``scripts/train.py`` is launched as a standalone script by the training
+- `backend/tests/test_train_token_classification.py` — Token classification for span extraction — the pure parts:
 - `backend/tests/test_trainability_forecast_service.py` — Tests for the trainability forecast service (USER-SUCCESS Epic 1).
 - `backend/tests/test_training_config_gap_patch.py` — Training Config Gap patch engine — Coach-stage-2 phase 2.
 - `backend/tests/test_training_config_gap_phase3.py` — Phase-3 additions to the training-config gap scanner.
@@ -969,6 +974,7 @@ session-start guidance.
 - `frontend/src/components/data/PlaybookPickerPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/RecipePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SavedMappingsPanel.test.tsx` — Saved-mappings panel contract.
+- `frontend/src/components/data/SeedDocumentsCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SyntheticPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/TaskShapeConfirmCard.test.tsx` — _(no docstring)_

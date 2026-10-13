@@ -60,6 +60,9 @@ function jobDeepLink(job: Job): string | null {
     if (job.kind === 'documents_qa_flow' && job.project_id) {
         return `/project/${job.project_id}/pipeline/training#documents-qa-flow`;
     }
+    if (job.kind === 'seed_documents' && job.project_id) {
+        return `/project/${job.project_id}/pipeline/data#seed-documents`;
+    }
     if (job.project_id) {
         return `/project/${job.project_id}`;
     }
@@ -135,6 +138,14 @@ function jobOutcomeSummary(job: Job): string | null {
         return null;
     }
 
+    if (job.kind === 'seed_documents') {
+        const written = typeof r.written === 'number' ? r.written : null;
+        const passages = typeof r.passages === 'number' ? r.passages : null;
+        const parts: string[] = [];
+        if (written !== null) parts.push(`${written} sample documents written`);
+        if (passages !== null) parts.push(`${passages} passages`);
+        return parts.length ? parts.join(' · ') : null;
+    }
     if (job.kind === 'documents_qa_flow') {
         const pairs = typeof r.training_pairs === 'number' ? r.training_pairs : null;
         const keyRows = typeof r.answer_key_rows === 'number' ? r.answer_key_rows : null;

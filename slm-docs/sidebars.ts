@@ -52,6 +52,7 @@ const sidebars: SidebarsConfig = {
         'workflows/distillation',
         'workflows/evaluation-and-remediation',
         'workflows/export-and-deployment',
+        'workflows/sensitive-data-tagging',
       ],
     },
     {

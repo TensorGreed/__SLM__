@@ -251,6 +251,14 @@ cd backend && python -m pytest -k "name_pattern"        # by name
   load SmolLM2-135M. They run only with a GPU or `BREWSLM_REAL_TRAINING=1`
   (and a cached model); `BREWSLM_SKIP_REAL_TRAINING=1` forces a skip. CI has
   neither, so they skip there.
+- **Never open a `TestClient(app)` outside pytest** (an ad-hoc `python -`
+  probe, a script). Without `conftest.py`'s DB pin it boots the app against
+  the DEV `data/slm_platform.db`, and the lifespan's startup sweep marks every
+  QUEUED/RUNNING job there FAILED (`lost_during_restart`) — on 2026-10-13 it
+  swept a documents→Q&A flow that was still running in the real backend
+  (the runner's own `_finish_job` later overwrote FAILED with SUCCEEDED, so
+  the result survived, but any waiter keyed on the status moved on early).
+  Probe the running backend over HTTP instead.
 - **Tests that spawn background Jobs must let them finish** (cancel runs they
   start, wait on `/api/jobs/active?include_recently_completed=false` in
   `tearDown`) and must never poll the engine via `asyncio.run` from the test
@@ -1058,6 +1066,32 @@ runs real CPU inference). ~4 min locally.
   `_apply_playground_auto_rag` / `_resolve_playground_run` in `api/training.py`
   (the stream route previously skipped auto-RAG and rag_first). The UI opens
   on the latest run (or `?run=<id>`).
+- **Seed documents** (`services/seed_documents_service.py`, Job kind
+  `seed_documents`, `POST /projects/{id}/flows/seed-documents`): a synth
+  backend (`pick_backend`, local first) writes `count` invented documents over
+  `genres` (default `DEFAULT_GENRES`) containing `kinds`; `ingest_file(...,
+  source="seed_documents")` → `process_document` → `clean_document` (one
+  `seed-documents-<stamp>.txt`). Raises when nothing usable was written.
+  `SeedDocumentsCard` is the first card on the Data tab (`IngestionPanel`);
+  bell deep-links `#seed-documents`. Tests: `tests/test_seed_documents.py`
+  (read the ingested doc back IN THE SAME LOOP — a later TestClient read can
+  lose the write on the StaticPool).
+- **Token classification** (`task_type="token_classification"`,
+  `scripts/train_token_classification.py`, dispatched from
+  `train.py::_run_training_attempt` right after `_normalize_task_type`):
+  encoder + `AutoModelForTokenClassification` on BIO labels from char spans
+  (`row_to_example` validates `text[start:end]`, drops overlaps;
+  `spans_to_token_labels` / `token_labels_to_spans`; `span_prf` strict
+  (type,start,end) = the span_set match; `predict_spans` shared with eval).
+  Saves `model/` (+ `label_space.json`), `metrics.jsonl`, returns the
+  training_report dict (`task_metrics.span_set`, `entity_types`). Eval:
+  `_resolve_token_classifier_artifacts` (config.json `*ForTokenClassification`
+  under `model_ref` or `model_ref/model`) → `_run_token_classification_inference`
+  tags the pair's `structured_input` and emits `{"entities": [...]}` JSON for
+  the span_set scorer; dispatched before the classifier-head check. Data gate
+  accepts `entities` targets for this task type; UI option in
+  `TrainingModelEssentialsSection`. Tests: `tests/test_train_token_classification.py`.
+  Docs: `workflows/sensitive-data-tagging.md` (the from-zero walkthrough).
 - **Documents → Q&A flow** (`services/documents_qa_flow_service.py`,
   `api/flows.py`, Job kind `documents_qa_flow`): cleaned document passages →
   per-passage prompt to a `synth_backends` backend → `pairs_per_passage`

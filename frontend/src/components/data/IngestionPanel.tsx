@@ -16,6 +16,7 @@ import DatasetImportWizard from './DatasetImportWizard';
 import DocumentSampleAccordion from './DocumentSampleAccordion';
 import SavedMappingsPanel from './SavedMappingsPanel';
 import './IngestionPanel.css';
+import SeedDocumentsCard from './SeedDocumentsCard';
 
 interface IngestionPanelProps {
     projectId: number;
@@ -617,6 +618,10 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     return (
         <div className="ingestion-panel animate-fade-in">
             <ReadinessPanel projectId={projectId} />
+
+            {/* No corpus yet: a generation model writes sample documents for
+                the domain; they go through parse → clean like an upload. */}
+            <SeedDocumentsCard projectId={projectId} onDone={() => { void fetchDocs(); }} />
 
             {/* Phase G: saved mappings panel — only renders when at
                 least one config exists for the project. Re-run / delete

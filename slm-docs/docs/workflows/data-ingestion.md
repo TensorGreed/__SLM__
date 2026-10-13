@@ -192,6 +192,8 @@ The card reads, for example, "Looks like **Question answering** (92% confident)"
 
 Normalises text, deduplicates rows, runs a PII scan, applies your domain pack's data-quality overlay. Emits a new `DatasetVersion` rather than mutating the ingested rows.
 
+**No documents yet?** The Data tab's first card, *Write sample documents*, has a generation model (your local Ollama model first; a cloud model only when pinned) write realistic, invented documents in the genres you name, containing what you say they must contain (one per line for genres; count and length are yours). They are ingested as one text file (`seed-documents-<time>.txt`, source `seed_documents`) and cleaned into passages, as a Job the bell tracks — everything after that is the same as for an upload. `POST /api/projects/{id}/flows/seed-documents` `{kinds, genres, count, words, backend?}`; defaults at `GET …/seed-documents/defaults`. The walkthrough that starts from nothing is [Sensitive-data tagging from zero](sensitive-data-tagging.md).
+
 Row files are cleaned row by row, so their columns are preserved. Documents are cleaned as text and split into passages (`chunk_size`, `chunk_overlap`). Passages **start and end on sentence boundaries**: sentences (or lines) are packed into a passage until the next one would exceed `chunk_size`, and the overlap is the last whole sentence(s) of the previous passage, up to `chunk_overlap` characters, repeated at the start of the next. Only a single sentence longer than `chunk_size` is cut by length. Before this, passages were cut by character count and 403 of the legal demo's 467 passages began mid-word — a passage whose key sentence is cut in half is one retrieval can find but a reader can't use.
 
 ### UI

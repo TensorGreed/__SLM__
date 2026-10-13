@@ -33,7 +33,7 @@ class TrainingConfig(BaseModel):
     )
     task_type: str = Field(
         "causal_lm",
-        description="Task adapter type (causal_lm, seq2seq, classification)",
+        description="Task adapter type (causal_lm, seq2seq, classification, token_classification)",
     )
     trainer_backend: str = Field(
         "auto",

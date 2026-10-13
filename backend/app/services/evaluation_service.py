@@ -1936,6 +1936,86 @@ def _run_seq2seq_inference(
     return predictions, runtime
 
 
+def _resolve_token_classifier_artifacts(model_ref: str) -> dict[str, Any] | None:
+    """A run trained with ``task_type=token_classification``
+    (``scripts/train_token_classification.py``): a full model whose
+    ``config.json`` names a ``*ForTokenClassification`` architecture, under
+    ``model_ref`` or ``model_ref/model``. Returns ``{model_path, id2label}``
+    or None (caller stays on the generation path)."""
+    root = Path(model_ref).expanduser()
+    for candidate in (root, root / "model"):
+        cfg_path = candidate / "config.json"
+        if not cfg_path.exists():
+            continue
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        archs = cfg.get("architectures") or []
+        if not any(str(a).endswith("ForTokenClassification") for a in archs):
+            continue
+        id2label = cfg.get("id2label") or {}
+        if not isinstance(id2label, dict) or not id2label:
+            continue
+        return {
+            "model_path": str(candidate),
+            "id2label": {int(k): str(v) for k, v in id2label.items()},
+            "max_length": int(cfg.get("max_position_embeddings") or 512),
+        }
+    return None
+
+
+def _run_token_classification_inference(
+    artifacts: dict[str, Any],
+    pairs: list[dict],
+) -> tuple[list[dict], dict]:
+    """Inference for a token-classification run: tag the raw input text
+    (the handler's ``structured_input`` extra — never the wrapped prompt)
+    and return each prediction as the ``{"entities": [...]}`` JSON the
+    ``span_set`` scorer reads, offsets straight from the tokenizer."""
+    import sys
+
+    import torch
+    from transformers import AutoModelForTokenClassification, AutoTokenizer
+
+    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from train_token_classification import predict_spans
+
+    load_started = perf_counter()
+    model_path = artifacts["model_path"]
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model = AutoModelForTokenClassification.from_pretrained(model_path, dtype=torch.float32).to(device).eval()
+    load_seconds = perf_counter() - load_started
+    texts = [str(pair.get("structured_input") or pair.get("input") or pair.get("prompt") or "") for pair in pairs]
+    infer_started = perf_counter()
+    spans = predict_spans(
+        texts, model, tokenizer, artifacts["id2label"],
+        max_length=min(512, int(artifacts.get("max_length") or 512)), device=device,
+    )
+    predictions: list[dict] = []
+    for pair, text, row_spans in zip(pairs, texts, spans):
+        predictions.append({
+            **pair,
+            "prompt": pair["prompt"],
+            "reference": pair["reference"],
+            "prediction": json.dumps({"entities": row_spans}, ensure_ascii=False),
+        })
+    runtime = {
+        "inference": {
+            "model_path": model_path,
+            "mode": "token_classification",
+            "device": device,
+            "load_seconds": round(load_seconds, 3),
+            "infer_seconds": round(perf_counter() - infer_started, 3),
+            "rows": len(pairs),
+        },
+    }
+    return predictions, runtime
+
+
 def _resolve_classifier_head_artifacts(
     model_ref: str,
 ) -> dict[str, Any] | None:
@@ -2153,6 +2233,11 @@ def _run_local_inference(
     # head's logits directly. Generation against the LM head
     # produces garbage because that head was never trained on
     # label tokens (see β's commit message for the receipts).
+    # A token-classification run (span extraction with exact offsets) tags
+    # the raw text with its head; generation would be meaningless.
+    token_artifacts = _resolve_token_classifier_artifacts(model_ref)
+    if token_artifacts is not None:
+        return _run_token_classification_inference(token_artifacts, pairs)
     classifier_artifacts = _resolve_classifier_head_artifacts(model_ref)
     if classifier_artifacts is not None:
         return _run_classifier_head_inference(classifier_artifacts, pairs)

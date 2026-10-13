@@ -621,6 +621,7 @@ export default function TrainingModelEssentialsSection({
                     disabled={isAlignmentMode}
                   >
                     <option value="causal_lm">Causal LM</option>
+                    <option value="token_classification">Token classification (spans with exact offsets)</option>
                     <option value="seq2seq">Seq2Seq</option>
                     <option value="classification">Classification</option>
                   </select>

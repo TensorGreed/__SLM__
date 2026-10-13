@@ -31,7 +31,7 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 DEFAULT_DATA_DIR = REPO_ROOT / "data"
 
-SUPPORTED_TASK_TYPES = {"causal_lm", "seq2seq", "classification"}
+SUPPORTED_TASK_TYPES = {"causal_lm", "seq2seq", "classification", "token_classification"}
 SUPPORTED_TRAINER_BACKENDS = {"auto", "hf_trainer", "trl_sft"}
 
 TRAINING_METRIC_PREFIX = "SLM_METRIC "
@@ -1582,6 +1582,32 @@ def _run_training_attempt(
         warnings.append(f"Unknown training_mode '{training_mode}', defaulting to sft.")
         training_mode = "sft"
     normalized_task_type = _normalize_task_type(task_type, warnings)
+    if normalized_task_type == "token_classification":
+        # Span extraction with exact offsets: an encoder + token-classification
+        # head on BIO labels from the rows' character spans
+        # (scripts/train_token_classification.py). None of the causal-LM
+        # machinery below applies.
+        from train_token_classification import run_token_classification
+
+        report = run_token_classification(
+            base_model=args.base_model,
+            config=config,
+            output_dir=output_dir,
+            model_dir=model_dir,
+            train_file=train_file,
+            val_file=val_file,
+            started_at=started_at,
+            config_path=config_path,
+            max_train_samples=int(getattr(args, "max_train_samples", 0) or 0),
+            max_eval_samples=int(getattr(args, "max_eval_samples", 0) or 0),
+            seed=int(getattr(args, "seed", 42) or 42),
+            emit_metric=lambda entry: print(f"{TRAINING_METRIC_PREFIX}{json.dumps(entry, ensure_ascii=False)}", flush=True),
+        )
+        report["warnings"] = [*warnings, *report.get("warnings", [])]
+        report["attempt_index"] = attempt_index + 1
+        report["retry_history"] = list(retry_history)
+        (output_dir / "training_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        return report
     normalized_backend = _normalize_trainer_backend(trainer_backend, warnings)
     resolved_backend = _normalize_requested_backend(normalized_backend, warnings)
     if training_mode in {"dpo", "orpo"} and normalized_task_type != "causal_lm":
