@@ -514,6 +514,9 @@ class DocumentsCorpusAndJudgeTests(unittest.TestCase):
         self.assertEqual([name for name, _ in stages], ["k_reranker", "pool", "chunk_size"])
         first = stages[0][1](None)
         self.assertEqual([harness.retrieval_label(c) for c in first][:2], ["top-7", "top-3"])
+        self.assertEqual(len(first), 1 + len(harness.RETRIEVAL_SWEEP))
+        self.assertEqual([harness.retrieval_label(c) for c in first][-2:],
+                         ["top-3 + reranker bge-reranker-v2-m3", "top-5 + reranker bge-reranker-v2-m3"])
         self.assertEqual(stages[1][1]({"k": 5, "reranker": None, "pool": None, "chunk_size": None}), [])
         pools = stages[1][1]({"k": 3, "reranker": "default", "pool": None, "chunk_size": None})
         self.assertEqual([c["pool"] for c in pools], list(harness.RETRIEVAL_SWEEP_POOLS))

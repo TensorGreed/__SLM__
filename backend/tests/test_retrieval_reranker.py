@@ -52,6 +52,8 @@ class RerankTests(unittest.TestCase):
         self.assertEqual(rr.normalize_reranker("default"), rr.DEFAULT_RERANKER)
         self.assertEqual(rr.normalize_reranker(True), rr.DEFAULT_RERANKER)
         self.assertEqual(rr.normalize_reranker("BAAI/bge-reranker-base"), "BAAI/bge-reranker-base")
+        self.assertEqual(rr.normalize_reranker("strong"), rr.STRONG_RERANKER)
+        self.assertEqual(rr.normalize_reranker("Strong"), "BAAI/bge-reranker-v2-m3")
         self.assertEqual(rr.candidate_pool(3), 12)
         self.assertEqual(rr.candidate_pool(1), rr.MIN_CANDIDATES)
         self.assertEqual(rr.candidate_pool(50), rr.MAX_CANDIDATES)

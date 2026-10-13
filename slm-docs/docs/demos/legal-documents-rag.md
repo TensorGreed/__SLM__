@@ -154,9 +154,13 @@ fine-tune on 358 generated pairs still learned the wording, not the facts
   recording) — mostly a neighbouring section retrieved. The staged sweep has
   since tried the reranker's candidate pool (50 → 0.50) and passages re-cut
   at 600 / 1200 chars (0.46 / 0.45) against the served top-5 + reranker
-  (0.53): all within noise, none better, so it stayed. Nothing tried gets
-  past 0.6 on these 46 rows; a stronger reranker, or a reader that answers
-  from more than the top passages, is what's left to try.
+  (0.53): all within noise, none better, so it stayed. A stronger
+  reranker (`BAAI/bge-reranker-v2-m3`, 25× the size) scored exactly the
+  same 0.53 at top-5 (19 / 11 / 16; 3 rows better, 3 worse). Nothing tried
+  gets past 0.6 on these 46 rows — the ceiling is not retrieval shape or
+  reranker quality. What's left is the reader: a base model that answers
+  from the right passage more reliably, or more of the right passage in
+  context.
 - The answer key was written by a model from the same passages. It is a
   consistent ruler, not a lawyer's.
 - One judge is one opinion. The judge's name is stamped on every result, so

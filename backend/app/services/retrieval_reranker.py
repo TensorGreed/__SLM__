@@ -22,6 +22,10 @@ from typing import Any, Callable
 _LOG = logging.getLogger(__name__)
 
 DEFAULT_RERANKER = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+# The stronger (and ~25× larger: 568M params, multilingual, 8k context)
+# cross-encoder the sweep also tries: "strong" in a retrieval setting.
+STRONG_RERANKER = "BAAI/bge-reranker-v2-m3"
+RERANKER_ALIASES = {"default": DEFAULT_RERANKER, "strong": STRONG_RERANKER}
 # BM25 candidates handed to the reranker: enough to recover a passage BM25
 # ranked below the cut, bounded so a reranking call stays cheap.
 CANDIDATE_MULTIPLIER = 4
@@ -44,7 +48,8 @@ def candidate_pool(k: int, pool: int | None = None) -> int:
 
 def normalize_reranker(value: Any) -> str | None:
     """``None`` / ``""`` / ``"none"`` / ``False`` → no reranker; ``True`` /
-    ``"default"`` → the default model; else the model id as given."""
+    ``"default"`` → the default model; ``"strong"`` → ``STRONG_RERANKER``;
+    else the model id as given."""
     if value is None or value is False:
         return None
     text = str(value).strip()
@@ -52,7 +57,7 @@ def normalize_reranker(value: Any) -> str | None:
         return None
     if text.lower() in {"default", "true", "1", "on"}:
         return DEFAULT_RERANKER
-    return text
+    return RERANKER_ALIASES.get(text.lower(), text)
 
 
 @lru_cache(maxsize=2)

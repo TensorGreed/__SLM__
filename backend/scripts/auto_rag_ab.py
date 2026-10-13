@@ -1424,6 +1424,9 @@ RETRIEVAL_SWEEP: tuple[dict[str, Any], ...] = (
     {"k": 5, "reranker": None},
     {"k": 3, "reranker": "default"},
     {"k": 5, "reranker": "default"},
+    # The stronger cross-encoder (retrieval_reranker.STRONG_RERANKER).
+    {"k": 3, "reranker": "strong"},
+    {"k": 5, "reranker": "strong"},
 )
 # Stage 2 (only when the running best reranks): how many BM25 candidates the
 # reranker sees. Stage 3 (documents corpus): passage sizes other than the

@@ -588,7 +588,9 @@ runs real CPU inference). ~4 min locally.
   pin PUT accepts `pool` / `chunk_size`; `retrieval_key` appends `|pool|chunk`
   only when set (old two-field keys still match). **Staged sweep**
   (`sweep_stages(current, documents=, own_chunk_size=)` in the harness):
-  `k_reranker` (= `RETRIEVAL_SWEEP` + incumbent first) → `pool`
+  `k_reranker` (= `RETRIEVAL_SWEEP`: top-3/5 × {none, `default`, `strong` =
+  `retrieval_reranker.STRONG_RERANKER` BAAI/bge-reranker-v2-m3, via
+  `RERANKER_ALIASES`} + incumbent first) → `pool`
   (`RETRIEVAL_SWEEP_POOLS` 20/50, only when the running best reranks) →
   `chunk_size` (documents; `RETRIEVAL_SWEEP_CHUNK_SIZES` 600/900/1200 minus the
   one within `_OWN_CHUNK_TOLERANCE` 15% of the cleaning's own). Each stage

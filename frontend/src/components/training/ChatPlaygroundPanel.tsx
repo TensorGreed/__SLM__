@@ -320,16 +320,21 @@ function _buildProvenance(
   };
 }
 
-/** The sweep's configs (top-3 / top-5, each ± the built-in reranker). */
+/** The sweep's stage-1 configs (top-3 / top-5: BM25 only, the built-in
+ *  reranker, the stronger bge reranker). */
+const STRONG_RERANKER = 'BAAI/bge-reranker-v2-m3';
 const SWEEP_CONFIGS: Array<{ key: string; label: string; k: number; reranker: string | null }> = [
   { key: '3|', label: 'top-3 (BM25 only)', k: 3, reranker: null },
   { key: '5|', label: 'top-5 (BM25 only)', k: 5, reranker: null },
   { key: '3|default', label: 'top-3 + reranker', k: 3, reranker: 'default' },
   { key: '5|default', label: 'top-5 + reranker', k: 5, reranker: 'default' },
+  { key: '3|strong', label: 'top-3 + strong reranker (bge-reranker-v2-m3)', k: 3, reranker: 'strong' },
+  { key: '5|strong', label: 'top-5 + strong reranker (bge-reranker-v2-m3)', k: 5, reranker: 'strong' },
 ];
 
 function configKey(k: number | null | undefined, reranker: string | null | undefined): string {
-  return `${k ?? ''}|${reranker ? 'default' : ''}`;
+  const alias = !reranker ? '' : reranker === STRONG_RERANKER || reranker === 'strong' ? 'strong' : 'default';
+  return `${k ?? ''}|${alias}`;
 }
 
 /** The retrieval of a reply, as the backend normalises it. */
