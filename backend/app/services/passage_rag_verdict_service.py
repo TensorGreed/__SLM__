@@ -328,7 +328,11 @@ async def resolve_playground_corpus(db: AsyncSession, project: Project) -> tuple
     """What the playground's "Answer from your documents" retrieves:
     ``(corpus, reason)``. An explicit ``runtime_config.auto_rag_corpus``
     wins; else document passages when they beat the fine-tuned run; else
-    ``auto`` (Q&A pairs when the recipe has them, otherwise passages)."""
+    ``auto`` (Q&A pairs when the recipe has them, otherwise passages).
+    A project the pre-training gate found retrieval-ready or -promising (no
+    fine-tune to beat yet — the base model + passages already answers)
+    also resolves to passages, so a reroute made from the gate stamps its
+    sibling ``documents`` and the sibling gets its own passages check."""
     explicit = explicit_corpus(project)
     if explicit:
         return explicit, "project_setting"
@@ -338,4 +342,10 @@ async def resolve_playground_corpus(db: AsyncSession, project: Project) -> tuple
         verdict = None
     if verdict and verdict.get("passages_win"):
         return "documents", "passages_beat_finetune"
+    try:
+        gate = read_passages_gate(project.id)
+    except Exception:  # noqa: BLE001
+        gate = None
+    if gate and gate.get("status") in {"retrieval_ready", "retrieval_promising"}:
+        return "documents", "pretraining_gate"
     return "auto", "default"

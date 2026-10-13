@@ -413,6 +413,56 @@ class PlaygroundCorpusAndCloneTests(unittest.TestCase):
         with mock.patch.object(svc, "passages_vs_finetune", _win):
             self.assertEqual(self._resolve(explicit), ("qa", "project_setting"))
 
+    def test_pretraining_gate_resolves_to_passages_so_a_gate_reroute_gets_its_check(self):
+        """No fine-tune yet, but the gate says retrieval already answers:
+        the playground retrieves passages and a sibling cloned from here is
+        stamped ``documents`` — which is what makes
+        ``start_sibling_passages_check`` run (it used to skip the sibling
+        of an untrained project as ``not_a_passages_project``)."""
+        from app.services.rag_project_service import clone_project_for_rag, start_sibling_passages_check
+
+        pid = self._project()
+
+        async def _no_verdict(db, project_id):
+            return None
+
+        for status, expected in (("retrieval_ready", "documents"), ("retrieval_promising", "documents"), ("retrieval_weak", "auto")):
+            with mock.patch.object(svc, "passages_vs_finetune", _no_verdict), \
+                    mock.patch.object(svc, "read_passages_gate", lambda project_id, _s=status: {"status": _s}):
+                corpus, reason = self._resolve(pid)
+                self.assertEqual(corpus, expected, status)
+                if expected == "documents":
+                    self.assertEqual(reason, "pretraining_gate")
+
+        from app.database import async_session_factory
+        from app.models.project import Project
+
+        async def _clone_and_check():
+            async with async_session_factory() as db:
+                source = await db.get(Project, pid)
+                source.selected_recipe = {"recipe_id": "qa-sft"}
+                await db.commit()
+                with mock.patch.object(svc, "passages_vs_finetune", _no_verdict), \
+                        mock.patch.object(svc, "read_passages_gate", lambda project_id: {"status": "retrieval_ready"}):
+                    sibling = await clone_project_for_rag(db, pid)
+                    started: dict = {}
+
+                    async def _start(db_, project_id, **kw):
+                        started.update(kw, project_id=project_id)
+                        return type("J", (), {"id": 123})()
+
+                    from app.services import auto_rag_comparison_job_service as jobs_mod
+
+                    with mock.patch.object(jobs_mod, "start_auto_rag_comparison_job", _start):
+                        result = await start_sibling_passages_check(db, sibling)
+                return sibling.runtime_config, result, started
+
+        cfg, result, started = asyncio.run(_clone_and_check())
+        self.assertEqual(cfg.get("auto_rag_corpus"), "documents")
+        self.assertEqual(cfg.get("auto_rag_corpus_reason"), "pretraining_gate")
+        self.assertEqual(result, {"started": True, "job_id": 123})
+        self.assertTrue(started.get("sweep_retrieval") and started.get("base_only") and started.get("corpus") == "documents")
+
     def test_playground_request_corpus_overrides_and_the_audit_block_says_why(self):
         from app.api.training import PlaygroundChatRequest, _apply_playground_auto_rag
 

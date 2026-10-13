@@ -521,7 +521,8 @@ runs real CPU inference). ~4 min locally.
   Coach eval nudge `eval:passages-beat-finetune` (action kind
   `reroute_to_rag` → frontend `rerouteToRagAsync`), and
   `resolve_playground_corpus` (explicit `runtime_config.auto_rag_corpus` >
-  passages-win → `documents` > `auto`), used by `_apply_playground_auto_rag`
+  passages-win → `documents` > pre-training gate ready/promising
+  (`read_passages_gate`) → `documents` (`pretraining_gate`) > `auto`), used by `_apply_playground_auto_rag`
   (request `auto_rag_corpus` overrides; audit block `corpus_reason`).
   `clone_project_for_rag` stamps `auto_rag_corpus="documents"` on the
   sibling when the source resolves to passages.
