@@ -183,9 +183,17 @@ fine-tune on 358 generated pairs still learned the wording, not the facts
   project (150 passages, no training): 144 answer-key rows kept, **6
   dropped** (5 pointed at the passage, 1 unsupported), and the kept answers
   are quotes ("agenda of Council or records recording deliberations or
-  decisions of Council") rather than paraphrases. The judged numbers above
-  are from the earlier key; a new run on the quotable key is the next
-  measurement.
+  decisions of Council") rather than paraphrases.
+- **The same case on the quotable key** (project 27, 45 test examples):
+  the pre-training gate read **retrieval ready** for the first time —
+  top-3 + bge-reranker-v2-m3 · pool 50 scored **0.69** (28 / 6 / 11; 34
+  rows better than the base alone, 3 worse), chosen by the staged sweep
+  beyond noise over plain top-3 (0.50; 13 rows better, 2 worse) — so the
+  flow **stopped before training** and offered the reroute. Against the
+  old key's 0.53 / 20-9-17, that is the same documents, the same reader,
+  the same retrieval family; the key changed. On the split: retrieval found the answer in **40 of 45** rows; of the 11 wrong, retrieval missed 5 and found 6 the model misread (old
+  key: 10 of 17 misread). Training was not run on this key, so the
+  fine-tune side of the comparison is open.
 - The answer key was written by a model from the same passages. It is a
   consistent ruler, not a lawyer's.
 - One judge is one opinion. The judge's name is stamped on every result, so
