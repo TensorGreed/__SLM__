@@ -64,6 +64,68 @@ MAX_PASSAGE_CHARS = 2400
 # anything; the flow stops before training and says so.
 MIN_TRAINING_PAIRS = 40
 
+# ── Sizing the test examples to the decision ──────────────────────────────
+#
+# The gate and the sweep compare retrievals (and later the fine-tune) by a
+# paired per-row judge score on the TEST split. On 19 rows nothing short of
+# a huge gap clears noise. The flow therefore sizes generation to the
+# decision it has to make: enough test rows that a DECISION_GAP judge-score
+# difference clears the 95% interval. With per-row score differences of
+# standard deviation DIFF_SD, that needs about (2 * DIFF_SD / DECISION_GAP)^2
+# paired rows; judge scores are 0 / 0.5 / 1, so differences spread with
+# SD ~0.5 (measured 0.48 on the legal case). 0.15 → 45 rows.
+DECISION_GAP = 0.15
+DIFF_SD = 0.5
+# Share of the generated pairs that becomes test examples. Raised above the
+# split's default (0.1) only when the documents can't supply enough passages.
+TEST_RATIO = 0.1
+MAX_TEST_RATIO = 0.3
+MAX_PASSAGES_CAP = 500
+MIN_TEST_ROWS = 5
+
+
+def target_test_rows(gap: float = DECISION_GAP, diff_sd: float = DIFF_SD) -> int:
+    """Paired rows for a ``gap`` in mean judge score to clear a 95% interval."""
+    import math
+
+    return max(MIN_TEST_ROWS, math.ceil((2.0 * diff_sd / gap) ** 2))
+
+
+def size_for_decision(
+    available_passages: int,
+    pairs_per_passage: int = DEFAULT_PAIRS_PER_PASSAGE,
+    *,
+    gap: float = DECISION_GAP,
+    diff_sd: float = DIFF_SD,
+) -> dict[str, Any]:
+    """How many passages to generate from, and what test share to split
+    with, so the test split reaches ``target_test_rows``. Prefers more
+    passages (coverage) and only raises the test share — up to
+    ``MAX_TEST_RATIO`` — when the documents run out of passages."""
+    import math
+
+    target = target_test_rows(gap, diff_sd)
+    pairs_needed = math.ceil(target / TEST_RATIO)
+    passages_needed = math.ceil(pairs_needed / max(1, pairs_per_passage))
+    passages = max(1, min(available_passages, passages_needed, MAX_PASSAGES_CAP))
+    expected_pairs = passages * pairs_per_passage
+    test_ratio = TEST_RATIO
+    capped = passages < passages_needed
+    if capped and expected_pairs > 0:
+        test_ratio = min(MAX_TEST_RATIO, max(TEST_RATIO, target / expected_pairs))
+    expected_test_rows = int(expected_pairs * test_ratio)
+    return {
+        "target_test_rows": target,
+        "judge_gap": gap,
+        "diff_sd": diff_sd,
+        "passages": passages,
+        "passages_needed": passages_needed,
+        "test_ratio": round(test_ratio, 3),
+        "expected_test_rows": expected_test_rows,
+        "capped_by_available": capped,
+        "reaches_target": expected_test_rows >= target,
+    }
+
 ProgressFn = Callable[[float, str], Awaitable[None]]
 
 _SYSTEM_PROMPT = (
@@ -232,7 +294,8 @@ async def preview_documents_qa_flow(db: AsyncSession, project_id: int) -> dict[s
             "No generation model is reachable. Start Ollama with a chat model, or set "
             "TEACHER_MODEL_API_URL to an OpenAI-compatible endpoint."
         )
-    max_passages = min(len(passages), DEFAULT_MAX_PASSAGES)
+    sizing = size_for_decision(len(passages), DEFAULT_PAIRS_PER_PASSAGE)
+    max_passages = sizing["passages"]
     return {
         "project_id": project_id,
         "eligible": not blockers,
@@ -247,8 +310,25 @@ async def preview_documents_qa_flow(db: AsyncSession, project_id: int) -> dict[s
             "estimated_training_pairs": max_passages * DEFAULT_PAIRS_PER_PASSAGE,
             "estimated_answer_key_rows": max_passages,
             "llm_calls": max_passages,
+            # Why that many: the test split must let a DECISION_GAP judge-score
+            # difference clear noise (sizing above).
+            "sized_for": sizing,
         },
     }
+
+
+def _active_split_ratios(project_id: int) -> float | None:
+    """The test ratio of the project's active prepared split, if any."""
+    path = settings.DATA_DIR / "projects" / str(project_id) / "prepared" / "manifest.json"
+    if not path.exists():
+        return None
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    ratios = manifest.get("ratios") if isinstance(manifest, dict) else None
+    test = (ratios or {}).get("test") if isinstance(ratios, dict) else None
+    return float(test) if isinstance(test, (int, float)) and 0 < float(test) < 1 else None
 
 
 async def _count_gold_flow_rows(db: AsyncSession, project_id: int) -> int:
@@ -278,7 +358,7 @@ async def run_documents_qa_flow(
     db: AsyncSession,
     project_id: int,
     *,
-    max_passages: int = DEFAULT_MAX_PASSAGES,
+    max_passages: int | None = None,
     pairs_per_passage: int = DEFAULT_PAIRS_PER_PASSAGE,
     backend: str | None = None,
     backend_override: SynthBackend | None = None,
@@ -312,8 +392,12 @@ async def run_documents_qa_flow(
         if progress is not None:
             await progress(fraction, message)
 
-    if max_passages < 1 or max_passages > 500:
-        raise ValueError("max_passages must be between 1 and 500")
+    sizing: dict[str, Any] | None = None
+    if max_passages is None:
+        # Size generation to the decision (see size_for_decision).
+        sizing = None  # resolved once the passages are counted
+    elif max_passages < 1 or max_passages > MAX_PASSAGES_CAP:
+        raise ValueError(f"max_passages must be between 1 and {MAX_PASSAGES_CAP}")
     if pairs_per_passage < 1 or pairs_per_passage > 10:
         raise ValueError("pairs_per_passage must be between 1 and 10")
 
@@ -327,7 +411,18 @@ async def run_documents_qa_flow(
             f"Needs at least {MIN_PASSAGES} cleaned document passages (found {len(passages)}). "
             "Import documents and run cleaning first."
         )
+    if max_passages is None:
+        sizing = size_for_decision(len(passages), pairs_per_passage)
+        max_passages = sizing["passages"]
+    test_ratio = sizing["test_ratio"] if sizing else TEST_RATIO
     existing_pairs = await _count_flow_rows(project_id) if reuse_existing else 0
+    if existing_pairs:
+        # Same pairs, same split: a re-train keeps the ratios of the active
+        # prepared split so the two lift checks score the same rows.
+        previous = _active_split_ratios(project_id)
+        if previous is not None:
+            test_ratio = previous
+            sizing = None
     if reuse_existing and not existing_pairs:
         raise ValueError("No flow-generated pairs to reuse; run the flow without reuse_existing first.")
     if existing_pairs:
@@ -448,6 +543,9 @@ async def run_documents_qa_flow(
         include_types=[t.value for t in DEFAULT_TRAINING_SOURCE_TYPES],
         adapter_id="qa-pair",
         task_profile="qa",
+        train_ratio=round(1.0 - test_ratio - 0.1, 3),
+        val_ratio=0.1,
+        test_ratio=test_ratio,
     )
     await db.commit()
     splits = manifest.get("splits") if isinstance(manifest, dict) else None
@@ -455,6 +553,8 @@ async def run_documents_qa_flow(
         "train": (splits or {}).get("train"),
         "val": (splits or {}).get("val"),
         "test": (splits or {}).get("test"),
+        "test_ratio": test_ratio,
+        "sized_for": sizing,
         "dedup_dropped": (manifest.get("dedup_report") or {}).get("dropped_count") if isinstance(manifest, dict) else None,
     }
     if not train:

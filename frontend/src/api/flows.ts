@@ -20,6 +20,18 @@ export interface DocumentsQaFlowPreview {
         estimated_training_pairs: number;
         estimated_answer_key_rows: number;
         llm_calls: number;
+        /** Why that many passages: the test split must let a judge-score
+         *  gap of `judge_gap` clear noise (`target_test_rows` paired rows). */
+        sized_for?: {
+            target_test_rows: number;
+            judge_gap: number;
+            passages: number;
+            passages_needed: number;
+            test_ratio: number;
+            expected_test_rows: number;
+            capped_by_available: boolean;
+            reaches_target: boolean;
+        } | null;
     };
 }
 

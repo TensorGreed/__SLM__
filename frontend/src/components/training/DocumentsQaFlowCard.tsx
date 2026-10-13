@@ -228,7 +228,17 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                     <ul className="documents-qa-flow__plan" data-testid="documents-qa-flow-plan">
                         <li>About {plan.estimated_training_pairs} training pairs from {plan.max_passages} passages ({plan.pairs_per_passage} per passage), written by {preview.backend}.</li>
                         <li>{plan.estimated_answer_key_rows} different questions kept as the answer key.</li>
-                        <li>Split into train / validation / test examples.</li>
+                        <li>
+                            Split into train / validation / test examples
+                            {plan.sized_for ? (
+                                <span data-testid="documents-qa-flow-sizing">
+                                    {' '}— sized so a {plan.sized_for.judge_gap} judge-score gap clears noise: {plan.sized_for.target_test_rows} test examples
+                                    {plan.sized_for.capped_by_available
+                                        ? ` (your ${plan.sized_for.passages} passages can't reach ${plan.sized_for.passages_needed}, so ${Math.round(plan.sized_for.test_ratio * 100)}% of the pairs become test examples${plan.sized_for.reaches_target ? '' : ` — still only about ${plan.sized_for.expected_test_rows}; add documents for a firmer verdict`})`
+                                        : ` from ${plan.sized_for.passages} passages`}.
+                                </span>
+                            ) : null}
+                        </li>
                         <li>Before training: the base model with and without your passages on the test examples, judged — if retrieval already answers well, the flow stops there and offers reroute to RAG instead.</li>
                         <li>Otherwise a training run with your current defaults.</li>
                         <li>The automatic lift check scores it against the base model.</li>

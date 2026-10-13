@@ -25,7 +25,9 @@ router = APIRouter(prefix="/projects/{project_id}/flows", tags=["Flows"])
 
 
 class DocumentsQaFlowRequest(BaseModel):
-    max_passages: int = Field(DEFAULT_MAX_PASSAGES, ge=1, le=500)
+    # Unset → sized to the decision: enough test examples that a 0.15
+    # judge-score gap clears noise (documents_qa_flow_service.size_for_decision).
+    max_passages: int | None = Field(None, ge=1, le=500)
     pairs_per_passage: int = Field(DEFAULT_PAIRS_PER_PASSAGE, ge=1, le=10)
     backend: str | None = None
     # False: generate + split only, so the rows can be reviewed before training.

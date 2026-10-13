@@ -366,6 +366,36 @@ class DocumentsQaFlowTests(unittest.TestCase):
         self.assertEqual(job["result"]["answer_key_rows"], 20)
         self.assertEqual(job["kind"], "documents_qa_flow")
 
+    def test_sizes_generation_to_the_decision_gap(self):
+        """45 paired rows for a 0.15 judge-score gap to clear noise (SD 0.5);
+        more passages first, a larger test share only when they run out."""
+        self.assertEqual(flow.target_test_rows(), 45)
+        full = flow.size_for_decision(467, 3)
+        self.assertEqual((full["passages"], full["test_ratio"], full["expected_test_rows"], full["capped_by_available"]), (150, 0.1, 45, False))
+        capped = flow.size_for_decision(60, 3)
+        self.assertEqual((capped["passages"], capped["test_ratio"], capped["expected_test_rows"]), (60, 0.25, 45))
+        self.assertTrue(capped["reaches_target"])
+        short = flow.size_for_decision(20, 3)
+        self.assertEqual((short["passages"], short["test_ratio"]), (20, 0.3))
+        self.assertFalse(short["reaches_target"])
+        # A smaller gap needs more rows; the floor is MIN_TEST_ROWS.
+        self.assertEqual(flow.target_test_rows(gap=0.3), 12)
+        self.assertEqual(flow.target_test_rows(gap=1.0, diff_sd=0.1), flow.MIN_TEST_ROWS)
+
+    def test_preview_plan_is_sized_and_an_unsized_run_uses_it(self):
+        self._ingest("policy.docx", POLICY)
+        preview = client.get(f"/api/projects/{self.pid}/flows/documents-to-qa/preview").json()
+        sized = preview["plan"]["sized_for"]
+        self.assertEqual(sized["target_test_rows"], 45)
+        self.assertEqual(preview["plan"]["max_passages"], sized["passages"])
+        self.assertTrue(sized["capped_by_available"], "the fixture has far fewer than 150 passages")
+        # An unsized run (max_passages omitted) takes the sizing: the test
+        # share rises so the split can still make the decision.
+        summary = self._run(train=False)
+        self.assertEqual(summary.split["sized_for"]["passages"], sized["passages"])
+        self.assertGreater(summary.split["test_ratio"], 0.1)
+        self.assertGreaterEqual(summary.split["test"], 5)
+
     def test_parse_output_tolerates_fences_and_drops_duplicates(self):
         raw = '```json\n{"pairs": [{"question": "What is the cap?", "answer": "Ten."}, {"question": "what is the cap?", "answer": "x"}], "eval": {"question": "What is the cap?", "answer": "Ten."}}\n```'
         pairs, eval_pair = flow.parse_passage_output(raw, 3)

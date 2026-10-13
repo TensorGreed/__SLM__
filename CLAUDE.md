@@ -1030,6 +1030,15 @@ runs real CPU inference). ~4 min locally.
   when no task type is set); card `DocumentsQaFlowCard` above the Training
   tab's panel; bell deep-links `#documents-qa-flow`. Tests use
   `backend_override` with a fake backend.
+  **Sizing** (`size_for_decision(available_passages, pairs_per_passage)`):
+  `target_test_rows()` = ceil((2·`DIFF_SD` 0.5 / `DECISION_GAP` 0.15)²) = 45
+  paired rows; passages = ceil(45 / `TEST_RATIO` 0.1 / pairs) = 150, capped
+  by what's available; when capped the test share rises to ≤ `MAX_TEST_RATIO`
+  0.3 (`reaches_target` False when even that is short). `max_passages=None`
+  (API default) → sized; the preview's `plan.sized_for` explains it; the
+  flow passes `test_ratio` to `split_dataset` and records `split.sized_for`;
+  a `reuse_existing` run keeps the active manifest's test ratio
+  (`_active_split_ratios`) so re-trains score the same rows.
   **Pre-training gate** (`passages_check=True` default,
   `train_if_retrieval_ready`): after the split the flow runs the judged
   base + documents comparison on the test split AS A RETRIEVAL SWEEP

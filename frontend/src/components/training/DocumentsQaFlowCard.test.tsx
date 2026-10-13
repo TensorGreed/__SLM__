@@ -21,7 +21,7 @@ import DocumentsQaFlowCard from './DocumentsQaFlowCard';
 
 const ELIGIBLE = {
     project_id: 1, eligible: true, blockers: [], passages: 560, backend: 'ollama', current_recipe_id: null, already_generated: 0,
-    plan: { max_passages: 60, pairs_per_passage: 3, estimated_training_pairs: 180, estimated_answer_key_rows: 60, llm_calls: 60 },
+    plan: { max_passages: 60, pairs_per_passage: 3, estimated_training_pairs: 180, estimated_answer_key_rows: 60, llm_calls: 60, sized_for: { target_test_rows: 45, judge_gap: 0.15, passages: 150, passages_needed: 150, test_ratio: 0.1, expected_test_rows: 45, capped_by_available: false, reaches_target: true } },
 };
 
 describe('DocumentsQaFlowCard', () => {
@@ -40,6 +40,7 @@ describe('DocumentsQaFlowCard', () => {
         const plan = await screen.findByTestId('documents-qa-flow-plan');
         expect(plan).toHaveTextContent('About 180 training pairs from 60 passages (3 per passage), written by ollama.');
         expect(plan).toHaveTextContent('60 different questions kept as the answer key.');
+        expect(screen.getByTestId('documents-qa-flow-sizing')).toHaveTextContent('sized so a 0.15 judge-score gap clears noise: 45 test examples from 150 passages.');
         await userEvent.setup().click(screen.getByTestId('documents-qa-flow-start'));
         await waitFor(() => {
             expect(apiMock.post).toHaveBeenCalledWith('/projects/1/flows/documents-to-qa', { max_passages: 60, pairs_per_passage: 3, train: true });
