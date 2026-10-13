@@ -19,6 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import async_session_factory
 from app.models.dataset import Dataset, DatasetType, RawDocument
+import logging
+
+_LOG = logging.getLogger(__name__)
 
 
 def _coerce_completion_content(raw: Any) -> str:
@@ -1423,9 +1426,16 @@ async def generate_span_extraction_rows(
     raw_rows = _parse_teacher_span_rows(content)
     validated = _cap_negatives(_validate_span_rows(raw_rows, entity_types))
     if not validated:
-        # Teacher returned nothing parseable — fall back to demo
-        # extraction so the user still sees the expected shape.
-        return _generate_demo_span_rows(source_text, num_rows, entity_types)
+        # The teacher answered but nothing survived validation (no JSON,
+        # no entities whose text is in the snippet, only fragments). This
+        # used to fall back silently to regex-tagged sentence fragments of
+        # the source — unlabelled junk that looked like data. Say so and
+        # return nothing; the batch runner counts it as a failed batch.
+        _LOG.warning(
+            "span teacher %s returned %d rows, none usable (content starts: %r)",
+            model_name, len(raw_rows), str(content)[:160],
+        )
+        return []
 
     from datetime import datetime as _dt
     from datetime import timezone as _tz

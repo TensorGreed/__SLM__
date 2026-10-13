@@ -188,7 +188,13 @@ async def run_seed_documents(
     )
     await process_document(db, project_id, doc.id)
     await report(0.95, "Cleaning into passages")
-    cleaned = await clean_document(db, project_id, doc.id, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    # The documents are invented by construction, so cleaning must NOT
+    # redact the "PII" in them — a span project needs it in the text, and a
+    # redacted seed corpus taught the span synthesiser to write
+    # "[REDACTED_EMAIL]".
+    cleaned = await clean_document(
+        db, project_id, doc.id, chunk_size=chunk_size, chunk_overlap=chunk_overlap, redact=False,
+    )
     summary.filename = filename
     summary.document_id = int(doc.id)
     chunk_count = cleaned.get("chunk_count") if isinstance(cleaned, dict) else None
