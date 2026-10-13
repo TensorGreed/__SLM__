@@ -121,32 +121,38 @@ The tables above are the recording's numbers. This is the same case run
 again from an empty project with today's defaults — one click on the flow
 card, the auto-picked local generation model (`ollama` → gemma4:latest on
 this box), the judge from the backend env (`gemma4:12b`), base model
-Qwen2.5-1.5B-Instruct — so the questions, the split and therefore the
-numbers differ from the recording. Every step below happened without
-choosing anything:
+Qwen2.5-1.5B-Instruct. Today the flow **sizes itself to the decision**: it
+generated from 150 passages so the test split has 46 rows, enough for a
+0.15 judge-score gap to clear noise. Every step happened without choosing
+anything:
 
 | step | result |
 |---|---|
-| documents → Q&A flow | 467 passages, 60 used, 180 pairs + 60 answer-key rows, split 143 / 17 / 19, 11.5 min |
-| pre-training gate (retrieval sweep, judged, 19 test examples) | top-3: **5 / 3 / 11**, score 0.34 → *retrieval weak* → training went ahead. top-5 0.34; top-3 + reranker 0.47; top-5 + reranker 0.53 (7 better / 3 worse) — all within noise of top-3 on 19 rows, so the sweep kept top-3 |
-| fine-tune (run #43, judged lift on the same rows) | **1 / 4 / 14**, 0.11 → 0.16, within noise (token F1 said 0.12 → 0.33) |
-| Coach, Eval tab | "Retrieval over your documents beats the fine-tune (0.34 vs 0.16 judged)" → one-click reroute |
-| RAG sibling (#24), its automatic sweep | kept top-3; base alone 0.03 → with passages 0.34, 8 rows better, 0 worse |
-| playground, sibling | the section 9 answer, cited, 18.8 s on first load |
+| documents → Q&A flow (sized) | 467 passages, 150 used, 450 pairs + 150 answer-key rows, split 358 / 44 / 46, 26 min |
+| pre-training gate (retrieval sweep, judged, 46 test examples) | the sweep could finally call a difference: **top-5 + reranker beat top-3 beyond noise** (0.53 vs 0.38; 14 rows better, 4 worse, +0.15, CI +0.02 to +0.29) and became the setting. Gate on it: **20 / 9 / 17**, 0.53 → *promising* (too many wrong to stop) → training went ahead with the note |
+| fine-tune (run #45, judged on the same 46 rows) | **4 / 3 / 39**, 0.05 → 0.12, within noise (token F1 said 0.11 → 0.31) |
+| Coach, Eval tab | "Retrieval over your documents beats the fine-tune (0.53 vs 0.12 judged)" → one-click reroute |
+| RAG sibling (#26), its automatic sweep | kept top-5 + reranker (top-3 now *worse* beyond noise: 4 better / 14 worse); base alone 0.04 → with passages 0.53, 27 rows better, 2 worse |
+| playground, sibling | the section 9 answer, cited "[1]", 17.9 s on first load |
 
-Two things this run says plainly. The gate did **not** stop training this
-time — 5 of 19 right with 11 wrong is not an assistant, so the flow trained
-and let the judged comparison settle it, which it did (0.34 vs 0.16, same
-rows). And the reranker's win from the recording did not replicate on this
-split (0.47–0.53 against 0.34, but within noise on 19 rows), so the sweep
-kept BM25 — the noise check is doing its job; more test rows, not a bigger
-model, is what would turn that into a finding.
+*Before the sizing* (same day, 60 passages, 19 test rows): the gate read
+5 / 3 / 11 (0.34) with plain top-3, every reranked arm was within noise, the
+fine-tune judged 1 / 4 / 14, and the sweep kept BM25. The sizing didn't
+change what is true — retrieval beats the fine-tune either way — it changed
+what the platform could *prove*: on 19 rows the reranker's +0.15 was a
+coin toss; on 46 it is a finding, and the project serves it.
+
+What this run says plainly: the gate did **not** stop training (20 right of
+46 with 17 wrong is not an assistant), so the flow trained and let the
+judged comparison settle it, which it did on the same rows; and the
+fine-tune on 358 generated pairs still learned the wording, not the facts
+(4 of 46 right).
 
 ## What is still open (said on camera)
 
-- 3 of 19 answers are still wrong after the sweep — mostly a neighbouring
-  section retrieved; chunk size, a stronger reranker and a larger candidate
-  pool are untried.
+- 17 of 46 answers are still wrong with the best retrieval (3 of 19 in the
+  recording) — mostly a neighbouring section retrieved; chunk size, a
+  stronger reranker and a larger candidate pool are untried.
 - The answer key was written by a model from the same passages. It is a
   consistent ruler, not a lawyer's.
 - One judge is one opinion. The judge's name is stamped on every result, so

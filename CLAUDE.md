@@ -1061,8 +1061,11 @@ runs real CPU inference). ~4 min locally.
   so sweep wins on 19 rows are noise-level; support-faq best retrieval
   0/9/12 (0.21) → weak; a clean re-run 2026-10-13 (questions by
   gemma4:latest, new split) gated 5/3/11 (0.34) → weak → trained → judged
-  1/4/14 (0.16) → Coach reroute (0.34 vs 0.16, same rows). Fine-tunes
-  scored 0–1 correct every time, so "ready" stops the flow
+  1/4/14 (0.16) → Coach reroute (0.34 vs 0.16, same rows); the SIZED run
+  (150 passages, 46 test rows) switched to top-5+reranker beyond noise
+  (+0.15, CI +0.02..+0.29), gated 20/9/17 (0.53) → promising → fine-tune
+  4/3/39 (0.12) → reroute. Fine-tunes scored ≤ 4 correct every time, so
+  "ready" stops the flow
   (`stopped_reason` "Retrieval already answers…"), "promising" trains with
   a warning and lets the judged lift compare. Coach training stage
   `training:retrieval-ready` (warning, reroute action) /
