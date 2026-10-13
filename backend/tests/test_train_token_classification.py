@@ -82,8 +82,12 @@ class BioRoundTripTests(unittest.TestCase):
         self.assertEqual(prf["per_type"]["email"]["f1"], 1.0)
         self.assertEqual(prf["per_type"]["phone"]["f1"], 0.0)
         self.assertEqual(prf["per_type"]["card"]["fp"], 1)
-        self.assertEqual(tc._auto_epochs(100), 15.0)
-        self.assertEqual(tc._auto_epochs(5000), 3.0)
+        # ~400 optimizer steps: 228 rows / 16 = 15 steps per epoch → 27 epochs;
+        # a big set still gets the 5-epoch floor, a tiny one the 40 cap.
+        self.assertEqual(tc._auto_epochs(228, 16), 27.0)
+        self.assertEqual(tc._auto_epochs(50000, 16), 5.0)
+        self.assertEqual(tc._auto_epochs(20, 16), 40.0)
+        self.assertTrue(tc._coerce_bool(None, True) and tc._coerce_bool("false", True) is False)
 
 
 class TrainScriptWiringTests(unittest.TestCase):
@@ -193,3 +197,43 @@ class PreflightTests(unittest.TestCase):
         from app.services.capability_contract_service import SUPPORTED_TRAINING_TASK_TYPES
 
         self.assertIn("token_classification", SUPPORTED_TRAINING_TASK_TYPES)
+
+
+class SpanEvalPlumbingTests(unittest.TestCase):
+    """What the held-out eval needs from a span-extraction project: the
+    requested task profile survives an adapter that doesn't list it, the
+    extraction handler reads `entities` as the reference, and the split
+    manifest carries the recipe's scoring mode."""
+
+    def test_explicit_task_profile_wins_over_the_adapter_list(self):
+        from app.services.data_adapter_service import resolve_task_profile_for_adapter
+
+        self.assertEqual(resolve_task_profile_for_adapter("default-canonical", requested_task_profile="structured_extraction"), "structured_extraction")
+        self.assertNotEqual(resolve_task_profile_for_adapter("default-canonical", requested_task_profile="auto"), "structured_extraction")
+
+    def test_extraction_handler_reads_entities_as_the_reference(self):
+        import json
+
+        from app.services.eval_task_handler_service import StructuredExtractionHandler
+
+        h = StructuredExtractionHandler()
+        ents = [{"type": "email", "start": 12, "end": 28, "text": "ada@example.test"}]
+        self.assertEqual(json.loads(h._reference_as_string({"text": TEXT, "entities": ents})), {"entities": ents})
+        self.assertEqual(json.loads(h._reference_as_string({"text": TEXT, "entities_json": json.dumps({"entities": ents})})), {"entities": ents})
+
+    def test_recipe_output_schema_for_span_extraction(self):
+        import asyncio
+        from types import SimpleNamespace
+
+        from app.services.dataset_service import _recipe_output_schema
+
+        class FakeDb:
+            def __init__(self, project):
+                self.project = project
+
+            async def get(self, model, pid):
+                return self.project
+
+        span = asyncio.run(_recipe_output_schema(FakeDb(SimpleNamespace(selected_recipe={"recipe_id": "span-extraction"})), 1))
+        self.assertEqual(span, {"scoring_mode": "span_set", "required": ["entities"]})
+        self.assertIsNone(asyncio.run(_recipe_output_schema(FakeDb(SimpleNamespace(selected_recipe=None)), 1)))

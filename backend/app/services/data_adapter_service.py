@@ -1890,7 +1890,13 @@ def resolve_task_profile_for_adapter(
     profiles = [str(item) for item in list(contract.get("task_profiles") or []) if str(item).strip()]
     requested = normalize_task_profile(requested_task_profile, default=AUTO_TASK_PROFILE)
 
-    if requested not in {"", AUTO_TASK_PROFILE} and requested in profiles:
+    if requested not in {"", AUTO_TASK_PROFILE}:
+        # An explicit profile is the user's (or the recipe's) call, whether or
+        # not the adapter lists it: the span-extraction recipe's rows went
+        # through "default-canonical", which doesn't list
+        # structured_extraction, and came out stamped instruction_sft — so
+        # the eval picked the wrong handler, found no answers and measured
+        # perplexity.
         return requested
     if profiles:
         return profiles[0]

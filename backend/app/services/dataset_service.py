@@ -865,6 +865,26 @@ async def resolve_training_dataset_types(
     return requested_list, report
 
 
+async def _recipe_output_schema(db: AsyncSession, project_id: int) -> dict[str, Any] | None:
+    """``{"scoring_mode", "required"}`` from the project's selected recipe
+    (``recipe_service.Recipe.scoring_mode``), None when the project has no
+    recipe or it has no scoring mode. Best-effort."""
+    try:
+        project = await db.get(Project, project_id)
+        recipe_id = str(((project.selected_recipe or {}) if project else {}).get("recipe_id") or "")
+        if not recipe_id:
+            return None
+        from app.services.recipe_service import get_recipe
+
+        recipe = get_recipe(recipe_id)
+        mode = str(getattr(recipe, "scoring_mode", "") or "")
+        if not mode:
+            return None
+        return {"scoring_mode": mode, "required": ["entities"] if mode == "span_set" else []}
+    except Exception:  # noqa: BLE001 — never block a split over the recipe
+        return None
+
+
 async def combine_datasets(
     db: AsyncSession,
     project_id: int,
@@ -1309,6 +1329,9 @@ async def split_dataset(
         # this). The requested profile is kept alongside for audit.
         "task_profile": _majority_task_profile(splits) or _normalize_task_profile_value(task_profile),
         "task_profile_requested": _normalize_task_profile_value(task_profile),
+        # The recipe's scoring mode (span_set / field_match) for the
+        # structured-extraction eval handler, which reads it from here.
+        "output_schema": await _recipe_output_schema(db, project_id),
         "stratify_by": str(stratify_by).strip() if stratify_by else None,
         "stratify_auto": auto_stratified,
         "stratification_report": stratification_report,

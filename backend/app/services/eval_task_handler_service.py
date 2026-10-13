@@ -818,10 +818,16 @@ class StructuredExtractionHandler:
             "output",
             "answer",
             "structured_output",
+            # Span rows: {text, entities: [...]} / entities_json.
+            "entities",
+            "entities_json",
         ):
             value = row.get(key)
             if value is None:
                 continue
+            if isinstance(value, list):
+                # A bare entity list is the span_set payload.
+                return {"entities": value}
             if isinstance(value, dict):
                 return value
             text = str(value).strip()

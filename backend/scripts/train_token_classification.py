@@ -361,9 +361,17 @@ def run_token_classification(
         dtype=torch.float32,
     )
 
-    num_epochs = float(config.get("num_epochs") or 0) or _auto_epochs(len(train_examples))
     batch_size = int(config.get("batch_size") or 16)
-    learning_rate = float(config.get("learning_rate") or 3e-5)
+    # ``auto_epochs`` (the platform default) sizes epochs to the row count so
+    # a freshly initialised head on dozens of BIO labels gets enough optimizer
+    # steps; an explicit num_epochs only counts when auto_epochs is off.
+    auto_epochs = _coerce_bool(config.get("auto_epochs"), True)
+    num_epochs = (
+        _auto_epochs(len(train_examples), batch_size)
+        if auto_epochs or not config.get("num_epochs")
+        else float(config.get("num_epochs"))
+    )
+    learning_rate = float(config.get("learning_rate") or 5e-5)
     warmup_ratio = float(config.get("warmup_ratio") or 0.06)
     eval_strategy = "epoch" if eval_ds is not None else "no"
     args = TrainingArguments(
@@ -485,6 +493,22 @@ def run_token_classification(
     }
 
 
-def _auto_epochs(rows: int) -> float:
-    """Few rows → more passes: ~1500 example-passes, within 3–20 epochs."""
-    return float(max(3, min(20, math.ceil(1500 / max(1, rows)))))
+# A token-classification head starts from random weights over 2·types + 1
+# labels; it needs on the order of a few hundred optimizer steps whatever
+# the row count. Target ~400 steps, within 5–40 epochs.
+TARGET_OPTIMIZER_STEPS = 400
+MIN_EPOCHS = 5
+MAX_EPOCHS = 40
+
+
+def _auto_epochs(rows: int, batch_size: int = 16) -> float:
+    steps_per_epoch = max(1, math.ceil(max(1, rows) / max(1, batch_size)))
+    return float(max(MIN_EPOCHS, min(MAX_EPOCHS, math.ceil(TARGET_OPTIMIZER_STEPS / steps_per_epoch))))
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
