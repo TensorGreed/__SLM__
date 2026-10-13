@@ -1222,6 +1222,7 @@ def _generate_demo_span_rows(
 def _validate_span_rows(
     raw: list[Any],
     entity_types: list[str] | None,
+    stats: dict[str, Any] | None = None,
 ) -> list[dict]:
     """Normalize teacher output to canonical span rows.
 
@@ -1239,11 +1240,17 @@ def _validate_span_rows(
         else None
     )
     out: list[dict] = []
+    st = stats if stats is not None else {}
+    st.setdefault("rows_in", 0); st.setdefault("rows_no_text", 0); st.setdefault("entities_in", 0)
+    st.setdefault("dropped_type", {}); st.setdefault("dropped_not_in_text", 0); st.setdefault("dropped_overlap", 0)
+    st.setdefault("repaired_offsets", 0); st.setdefault("kept_entities", 0)
     for raw_row in raw:
         if not isinstance(raw_row, dict):
             continue
+        st["rows_in"] += 1
         text = str(raw_row.get("text") or "").strip()
         if not text:
+            st["rows_no_text"] += 1
             continue
         entities_in = raw_row.get("entities")
         if not isinstance(entities_in, list):
@@ -1252,10 +1259,12 @@ def _validate_span_rows(
         for ent in entities_in:
             if not isinstance(ent, dict):
                 continue
+            st["entities_in"] += 1
             ent_type = str(ent.get("type") or "").strip()
             if not ent_type:
                 continue
             if allowed is not None and ent_type.lower() not in allowed:
+                st["dropped_type"][ent_type] = st["dropped_type"].get(ent_type, 0) + 1
                 continue
             try:
                 start = int(ent.get("start"))
@@ -1273,10 +1282,14 @@ def _validate_span_rows(
                 # when the text isn't in the snippet at all.
                 located = _locate_entity(text, ent_text, valid_entities)
                 if located is None:
+                    st["dropped_not_in_text"] += 1
                     continue
                 start, end = located
+                st["repaired_offsets"] += 1
             if any(start < e["end"] and end > e["start"] for e in valid_entities):
+                st["dropped_overlap"] += 1
                 continue
+            st["kept_entities"] += 1
             valid_entities.append(
                 {"type": ent_type.lower(), "start": start, "end": end, "text": ent_text}
             )
@@ -1491,7 +1504,8 @@ async def generate_span_extraction_rows(
         )
     content = result.get("content") or ""
     raw_rows = _parse_teacher_span_rows(content)
-    validated = _cap_negatives(_validate_span_rows(raw_rows, entity_types))
+    stats: dict[str, Any] = {}
+    validated = _cap_negatives(_validate_span_rows(raw_rows, entity_types, stats))
     if not validated:
         # The teacher answered but nothing survived validation (no JSON,
         # no entities whose text is in the snippet, only fragments). This
@@ -1499,8 +1513,8 @@ async def generate_span_extraction_rows(
         # the source — unlabelled junk that looked like data. Say so and
         # return nothing; the batch runner counts it as a failed batch.
         _LOG.warning(
-            "span teacher %s returned %d rows, none usable (content starts: %r)",
-            model_name, len(raw_rows), str(content)[:160],
+            "span teacher %s returned %d rows, none usable: %s (content starts: %r)",
+            model_name, len(raw_rows), json.dumps(stats, sort_keys=True), str(content)[:160],
         )
         return []
 
