@@ -25,7 +25,7 @@ from app.services.training_runtime_service import (
 )
 
 
-SUPPORTED_TRAINING_TASK_TYPES: tuple[str, ...] = ("causal_lm", "seq2seq", "classification")
+SUPPORTED_TRAINING_TASK_TYPES: tuple[str, ...] = ("causal_lm", "seq2seq", "classification", "token_classification")
 SUPPORTED_TRAINER_BACKENDS: tuple[str, ...] = ("auto", "hf_trainer", "trl_sft")
 SUPPORTED_DATASET_MODALITIES: tuple[str, ...] = ("text", "vision_language", "audio_text", "multimodal")
 

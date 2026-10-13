@@ -303,6 +303,10 @@ class GenerateSpanAsyncRequest(BaseModel):
     api_url: str = ""
     api_key: str = ""
     model_name: str = "llama3"
+    # A synth backend name / pin ("ollama", "cloud:anthropic:…") used as the
+    # teacher instead of api_url — the native Ollama backend turns thinking
+    # off, which a thinking model needs or it returns empty content.
+    backend: str | None = None
     use_all_chunks: bool = Field(
         default=True,
         description=(
@@ -561,6 +565,7 @@ async def generate_spans_async(
             api_url=req.api_url,
             api_key=req.api_key,
             model_name=req.model_name,
+            backend=req.backend,
             use_all_chunks=req.use_all_chunks,
             source_text=req.source_text,
         )

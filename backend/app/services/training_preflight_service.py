@@ -89,7 +89,9 @@ _MODEL_CAPABILITY_MATRIX: list[dict[str, Any]] = [
         "family": "encoder_only",
         "tokens": ("bert", "roberta", "deberta", "distilbert", "electra", "albert"),
         "architecture": "encoder",
-        "supported_task_types": ["classification"],
+        # Token classification (span extraction with exact offsets) is an
+        # encoder task too.
+        "supported_task_types": ["classification", "token_classification"],
         "supported_trainer_backends": ["auto", "hf_trainer"],
         "recommended_chat_templates": [],
         "max_seq_length_hint": 512,

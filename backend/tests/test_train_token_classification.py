@@ -181,3 +181,15 @@ class LiftCheckSkipTests(unittest.TestCase):
         exp = SimpleNamespace(config={"task_type": "token_classification", "base_model": "microsoft/deberta-v3-base"}, status="COMPLETED", output_dir="/tmp/x", seed_group_id=None, seed_value=None)
         reason = auto_lift_skip_reason(exp, SimpleNamespace(runtime_config={}))
         self.assertEqual(reason, "token_classification_no_baseline")
+
+
+class PreflightTests(unittest.TestCase):
+    def test_encoder_base_model_accepts_token_classification(self):
+        from app.services import training_preflight_service as pf
+
+        tables = [v for v in vars(pf).values() if isinstance(v, list) and v and isinstance(v[0], dict) and "family" in v[0]]
+        caps = next(c for table in tables for c in table if c.get("family") == "encoder_only")
+        self.assertIn("token_classification", caps["supported_task_types"])
+        from app.services.capability_contract_service import SUPPORTED_TRAINING_TASK_TYPES
+
+        self.assertIn("token_classification", SUPPORTED_TRAINING_TASK_TYPES)
