@@ -1073,6 +1073,15 @@ runs real CPU inference). ~4 min locally.
   when no task type is set); card `DocumentsQaFlowCard` above the Training
   tab's panel; bell deep-links `#documents-qa-flow`. Tests use
   `backend_override` with a fake backend.
+  **Quotable answer key**: `build_passage_prompt` holds the eval question to a
+  stricter standard (self-contained, answer = the passage's own complete
+  statement, never on a cut-off chunk fragment); `eval_pair_rejection(pair,
+  passage_text)` → `"deictic"` (`_DEICTIC_RE`: "this subsection", "the passage
+  mentions", "mentioned above"…) / `"unsupported"` (`answer_support` < 
+  `EVAL_ANSWER_SUPPORT_MIN` 0.7 of content words in the passage) / None;
+  dropped keys → `FlowSummary.eval_rejected` {reason: n} + a warning; the
+  passage keeps its training pairs. Test fakes must return quotable eval
+  answers (the flow suite's FakeBackend quotes the passage).
   **Sizing** (`size_for_decision(available_passages, pairs_per_passage)`):
   `target_test_rows()` = ceil((2·`DIFF_SD` 0.5 / `DECISION_GAP` 0.15)²) = 45
   paired rows; passages = ceil(45 / `TEST_RATIO` 0.1 / pairs) = 150, capped

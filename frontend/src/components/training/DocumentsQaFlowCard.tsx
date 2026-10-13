@@ -140,6 +140,11 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                     <strong>Done.</strong>{' '}
                     {result.training_pairs} question→answer pairs from {result.passages_used} passages ({result.backend}),{' '}
                     {result.answer_key_rows} answer-key rows
+                    {result.eval_rejected && Object.values(result.eval_rejected).some((n) => n > 0) ? (
+                        <span data-testid="documents-qa-flow-eval-rejected" title="Dropped before they became answer-key rows: a reader with the passage in front of it could not have been scored fairly on them.">
+                            {' '}({Object.values(result.eval_rejected).reduce((a, b) => a + b, 0)} dropped: a reader couldn't quote the answer from the passage)
+                        </span>
+                    ) : null}
                     {result.split
                         ? `, split ${result.split.train ?? '?'} / ${result.split.val ?? '?'} / ${result.split.test ?? '?'} (train / val / test)`
                         : ''}

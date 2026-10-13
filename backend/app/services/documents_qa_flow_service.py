@@ -158,7 +158,15 @@ _RESPONSE_SCHEMA = {
 
 def build_passage_prompt(passage_text: str, pairs_per_passage: int, *, domain_hint: str = "") -> str:
     """The per-passage prompt. ``pairs_per_passage`` training pairs plus one
-    evaluation question that asks something the training pairs don't."""
+    evaluation question that asks something the training pairs don't.
+
+    The evaluation question is held to a stricter standard than the training
+    pairs, because it becomes an answer-key row a *reader with the passage in
+    front of it* is scored against: it must stand on its own (no "this
+    subsection" / "the passage"), and its answer must be something that
+    reader can quote — the passage's own complete words, nothing selected
+    from or added to them. A passage is a chunk and may start or end
+    mid-sentence; a cut-off fragment is no basis for a question."""
     hint = f" The documents are about: {domain_hint.strip()}." if domain_hint.strip() else ""
     return (
         f"Read this passage.{hint}\n\n"
@@ -167,9 +175,69 @@ def build_passage_prompt(passage_text: str, pairs_per_passage: int, *, domain_hi
         "each answerable from the passage alone. Vary what they ask about (who, what, when, why, how much, "
         "which rule applies). Then write ONE more evaluation question about the same passage that none of "
         "the pairs already asks, with its answer.\n\n"
+        "The evaluation question will be put to a model that has this passage in front of it, so:\n"
+        "- it must stand on its own — never say \"this passage\", \"this subsection\", \"mentioned above\" "
+        "or \"listed\"; name the thing you are asking about (the section, the rule, the person);\n"
+        "- its answer must be quotable: the passage's own complete statement of the fact, in the passage's "
+        "words — not a selection of some items from a list, not a summary, nothing the passage does not say;\n"
+        "- the passage may begin or end in the middle of a sentence; never build the evaluation question on a "
+        "cut-off fragment.\n\n"
         'Return JSON of the form {"pairs": [{"question": "...", "answer": "..."}, ...], '
         '"eval": {"question": "...", "answer": "..."}} and nothing else.'
     )
+
+
+# ── Is the evaluation pair quotable? ─────────────────────────────────────
+#
+# A deterministic gate behind the prompt: an answer-key row a reader can't
+# satisfy from the passage measures the key, not the model. Two checks:
+# the question must not point at the passage or the prompt's framing, and
+# the answer's content words must mostly occur in the passage.
+_DEICTIC_RE = re.compile(
+    r"\b(this|the|that|the above|the given|the provided)\s+(passage|text|excerpt|extract|paragraph|subsection|"
+    r"snippet|document|quote|selection)\b|\b(mentioned|listed|described|provided|given|stated)\s+(above|here|in the "
+    r"(passage|text|excerpt|document))\b|\baccording to the (passage|text|excerpt)\b",
+    flags=re.IGNORECASE,
+)
+_WORD_RE = re.compile(r"[a-z0-9][a-z0-9'’.-]*", flags=re.IGNORECASE)
+_SUPPORT_STOPWORDS = frozenset(
+    "the a an and or of to in on for by with as at from that this these those is are was were be been being it its "
+    "their there which who whom whose what when where why how must shall may can will would should not no any all "
+    "such than then into under over between within without only also each every other more most if unless where "
+    "including include includes".split()
+)
+# Share of the answer's content words that must appear in the passage.
+EVAL_ANSWER_SUPPORT_MIN = 0.7
+
+
+def _content_words(text: str) -> list[str]:
+    words = [w.lower().strip(".'’") for w in _WORD_RE.findall(text or "")]
+    return [w for w in words if len(w) >= 3 and w not in _SUPPORT_STOPWORDS]
+
+
+def answer_support(answer: str, passage_text: str) -> float | None:
+    """Share of the answer's content words present in the passage (None
+    when the answer has no content words)."""
+    words = _content_words(answer)
+    if not words:
+        return None
+    present = set(_content_words(passage_text))
+    return round(sum(1 for w in words if w in present) / len(words), 4)
+
+
+def eval_pair_rejection(eval_pair: dict[str, str] | None, passage_text: str) -> str | None:
+    """Why an evaluation pair should NOT become an answer-key row: ``"deictic"``
+    (the question points at the passage / the prompt), ``"unsupported"``
+    (fewer than ``EVAL_ANSWER_SUPPORT_MIN`` of the answer's content words are
+    in the passage). None when it is quotable."""
+    if not eval_pair:
+        return None
+    if _DEICTIC_RE.search(eval_pair.get("question") or ""):
+        return "deictic"
+    support = answer_support(eval_pair.get("answer") or "", passage_text)
+    if support is not None and support < EVAL_ANSWER_SUPPORT_MIN:
+        return "unsupported"
+    return None
 
 
 def _extract_json(raw: str) -> Any:
@@ -242,6 +310,8 @@ class FlowSummary:
     training: dict[str, Any] | None = None
     stopped_reason: str | None = None
     warnings: list[str] = field(default_factory=list)
+    # Evaluation pairs the quotable gate dropped, by reason (deictic / unsupported).
+    eval_rejected: dict[str, int] = field(default_factory=dict)
     # The pre-training gate: what the base model + passages gets right.
     passages_gate: dict[str, Any] | None = None
 
@@ -253,6 +323,7 @@ class FlowSummary:
             "passages_failed": self.passages_failed,
             "training_pairs": self.training_pairs,
             "answer_key_rows": self.answer_key_rows,
+            "eval_rejected": dict(self.eval_rejected),
             "backend": self.backend,
             "recipe_id": self.recipe_id,
             "split": self.split,
@@ -439,6 +510,8 @@ async def run_documents_qa_flow(
     answer_key: list[dict[str, Any]] = []
     failed = 0
     empty_replies = 0
+    # Evaluation pairs the quotable gate dropped, by reason.
+    eval_rejected: dict[str, int] = {}
     for index, passage in enumerate(chosen):
         await report(
             0.05 + 0.55 * index / max(1, len(chosen)),
@@ -472,7 +545,12 @@ async def run_documents_qa_flow(
         for pair in pairs:
             training_pairs.append({**pair, **provenance})
         if eval_pair is not None:
-            answer_key.append({**eval_pair, **provenance})
+            reason = eval_pair_rejection(eval_pair, passage["text"])
+            if reason is None:
+                answer_key.append({**eval_pair, **provenance})
+            else:
+                eval_rejected[reason] = eval_rejected.get(reason, 0) + 1
+                _LOG.info("documents_qa_flow passage %s: eval question dropped (%s): %r", passage["id"], reason, eval_pair["question"][:120])
 
     summary = FlowSummary(
         project_id=project_id,
@@ -482,7 +560,18 @@ async def run_documents_qa_flow(
         training_pairs=len(training_pairs),
         answer_key_rows=len(answer_key),
         backend=backend_label,
+        eval_rejected=dict(eval_rejected),
     )
+    if eval_rejected:
+        parts = []
+        if eval_rejected.get("deictic"):
+            parts.append(f"{eval_rejected['deictic']} pointed at the passage instead of naming what they asked about")
+        if eval_rejected.get("unsupported"):
+            parts.append(f"{eval_rejected['unsupported']} had answers the passage doesn't state")
+        summary.warnings.append(
+            f"{sum(eval_rejected.values())} evaluation questions were dropped from the answer key: "
+            + "; ".join(parts) + ". A reader with the passage in front of it couldn't have been scored fairly on them."
+        )
     if failed:
         note = f"{failed} of {len(chosen)} passages produced no usable questions."
         if empty_replies:

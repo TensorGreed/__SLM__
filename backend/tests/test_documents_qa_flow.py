@@ -97,7 +97,10 @@ class FakeBackend:
                 {"question": f"Under section {section}, how many {topic} days does an employee earn each year?", "answer": "duplicate"},
                 {"question": f"What carries into January for {topic} per section {section}?", "answer": f"Up to {5 + section} unused {topic} days."},
             ],
-            "eval": {"question": f"Who qualifies for {topic} under section {section}, by years of service?", "answer": f"Staff with {section % 3 + 1} years."},
+            # Quotable: the passage's own statement (the flow drops answer-key
+            # rows the passage doesn't support).
+            "eval": {"question": f"Who qualifies for {topic} under section {section}, by years of service?",
+                     "answer": f"Employees accrue {days} vacation days per year after {section % 3 + 1} years of service."},
         })
 
 
@@ -127,7 +130,8 @@ class DocumentsQaFlowTests(unittest.TestCase):
                 # The pre-training passages check runs the real harness (loads
                 # a model) unless a test injects it or turns it off.
                 kwargs.setdefault("passages_check", False)
-                return await flow.run_documents_qa_flow(db, self.pid, backend_override=FakeBackend(), **kwargs)
+                kwargs.setdefault("backend_override", FakeBackend())
+                return await flow.run_documents_qa_flow(db, self.pid, **kwargs)
 
         return asyncio.run(_go())
 
@@ -395,6 +399,49 @@ class DocumentsQaFlowTests(unittest.TestCase):
         self.assertEqual(summary.split["sized_for"]["passages"], sized["passages"])
         self.assertGreater(summary.split["test_ratio"], 0.1)
         self.assertGreaterEqual(summary.split["test"], 5)
+
+    def test_eval_pair_gate_drops_deictic_questions_and_unsupported_answers(self):
+        """An answer-key row must be quotable from its passage: the question
+        can't point at "the passage" / "this subsection", and the answer's
+        content words must mostly be in the passage."""
+        passage = (
+            "Every individual who is given access to personal information is entitled to (a) request "
+            "correction of the personal information where the individual believes there is an error or "
+            "omission therein; (b) require that a notation be attached to the information."
+        )
+        ok = {"question": "Who may request a correction of personal information?",
+              "answer": "Every individual who is given access to personal information is entitled to request correction of the personal information where the individual believes there is an error or omission therein."}
+        self.assertIsNone(flow.eval_pair_rejection(ok, passage))
+        self.assertEqual(flow.eval_pair_rejection({"question": "What does this subsection require?", "answer": ok["answer"]}, passage), "deictic")
+        self.assertEqual(flow.eval_pair_rejection({"question": "What is required regarding access, as mentioned above?", "answer": ok["answer"]}, passage), "deictic")
+        self.assertEqual(flow.eval_pair_rejection({"question": "What does the passage say about notations?", "answer": ok["answer"]}, passage), "deictic")
+        self.assertEqual(flow.eval_pair_rejection({"question": "Who must be notified of a correction?",
+                                                   "answer": "The Privacy Commissioner must report the correction to the Minister of Justice within two years."}, passage), "unsupported")
+        self.assertLess(flow.answer_support("The Privacy Commissioner must report to the Minister of Justice", passage), flow.EVAL_ANSWER_SUPPORT_MIN)
+        self.assertIsNone(flow.eval_pair_rejection(None, passage))
+        # The prompt asks for it too.
+        prompt = flow.build_passage_prompt("text", 3)
+        self.assertIn("quotable", prompt)
+        self.assertIn("this subsection", prompt)
+
+    def test_flow_counts_dropped_eval_questions_and_keeps_the_training_pairs(self):
+        """A passage whose eval question is unusable still contributes its
+        training pairs; the summary says how many keys were dropped and why."""
+        self._ingest("policy.docx", POLICY)
+
+        class DeicticBackend(FakeBackend):
+            async def complete(self, prompt, **kwargs):
+                raw = await super().complete(prompt, **kwargs)
+                payload = json.loads(raw)
+                payload["eval"] = {"question": "What does this passage say about refunds?", "answer": payload["eval"]["answer"]}
+                return json.dumps(payload)
+
+        summary = self._run(train=False, backend_override=DeicticBackend())
+        self.assertGreater(summary.training_pairs, 0)
+        self.assertEqual(summary.answer_key_rows, 0)
+        self.assertEqual(summary.eval_rejected, {"deictic": summary.passages_used})
+        self.assertTrue(any("dropped from the answer key" in w and "pointed at the passage" in w for w in summary.warnings), summary.warnings)
+        self.assertEqual(summary.as_dict()["eval_rejected"], {"deictic": summary.passages_used})
 
     def test_parse_output_tolerates_fences_and_drops_duplicates(self):
         raw = '```json\n{"pairs": [{"question": "What is the cap?", "answer": "Ten."}, {"question": "what is the cap?", "answer": "x"}], "eval": {"question": "What is the cap?", "answer": "Ten."}}\n```'

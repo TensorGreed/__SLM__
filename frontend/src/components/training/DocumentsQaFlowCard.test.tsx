@@ -97,11 +97,12 @@ describe('DocumentsQaFlowCard', () => {
 
         jobsState.jobs = [{
             id: 11, kind: 'documents_qa_flow', project_id: 1, status: 'succeeded',
-            result: { training_pairs: 171, answer_key_rows: 58, passages_used: 58, backend: 'ollama:qwen2.5', split: { train: 136, val: 17, test: 18, dedup_dropped: 0 }, experiment_id: 31, stopped_reason: null, warnings: ['2 of 60 passages produced no usable questions.'] },
+            result: { training_pairs: 171, answer_key_rows: 58, passages_used: 58, backend: 'ollama:qwen2.5', split: { train: 136, val: 17, test: 18, dedup_dropped: 0 }, experiment_id: 31, stopped_reason: null, warnings: ['2 of 60 passages produced no usable questions.'], eval_rejected: { deictic: 1, unsupported: 2 } },
         }];
         rerender(<DocumentsQaFlowCard projectId={1} />);
         const result = await screen.findByTestId('documents-qa-flow-result');
-        expect(result).toHaveTextContent('171 question→answer pairs from 58 passages (ollama:qwen2.5), 58 answer-key rows, split 136 / 17 / 18');
+        expect(result).toHaveTextContent('171 question→answer pairs from 58 passages (ollama:qwen2.5), 58 answer-key rows (3 dropped: a reader couldn\'t quote the answer from the passage), split 136 / 17 / 18');
+        expect(screen.getByTestId('documents-qa-flow-eval-rejected')).toHaveTextContent("(3 dropped: a reader couldn't quote the answer from the passage)");
         expect(result).toHaveTextContent('Training run #31 started');
         expect(result).toHaveTextContent('2 of 60 passages produced no usable questions.');
     });

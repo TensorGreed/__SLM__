@@ -42,6 +42,10 @@ export interface DocumentsQaFlowResult {
     passages_failed: number;
     training_pairs: number;
     answer_key_rows: number;
+    /** Evaluation questions the quotable gate dropped from the answer key,
+     *  by reason: "deictic" (pointed at the passage) / "unsupported" (the
+     *  passage doesn't state the answer). */
+    eval_rejected?: Record<string, number> | null;
     backend: string;
     split: { train: number | null; val: number | null; test: number | null; dedup_dropped: number | null } | null;
     experiment_id: number | null;

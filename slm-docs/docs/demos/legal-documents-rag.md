@@ -168,8 +168,24 @@ fine-tune on 358 generated pairs still learned the wording, not the facts
   (19 / 11 / 16), with the wrong answers split 8 missed / 8 misread. Twice
   the reader bought nothing on these rows; what the "misread" rows have in
   common is a reference answer that demands a specific detail (a section
-  number, a list) the model paraphrases past. The next lever is the
-  answer-key rows themselves — or a reader prompted to quote.
+  number, a list) the model paraphrases past.
+- **Reading the ten "misread" rows** (reference beside the passage the judge
+  pointed at): four were the *key's* fault — a reference that misread its
+  passage ("the Act does not apply to persons or organizations other than
+  government institutions"), a question only answerable with the passage's
+  own framing ("what does section 21 or 22 provide an indication of"), a
+  reference that picked two duties from a list of four, a reference that
+  began "the passage mentions…"; two were built on a sentence cut at a chunk
+  boundary; four were genuine misreads. So the flow's evaluation question is
+  now held to a **quotable** standard — self-contained, the passage's own
+  complete statement as the answer, never on a cut-off fragment — with a
+  deterministic gate behind the prompt. Re-running the flow on a fresh
+  project (150 passages, no training): 144 answer-key rows kept, **6
+  dropped** (5 pointed at the passage, 1 unsupported), and the kept answers
+  are quotes ("agenda of Council or records recording deliberations or
+  decisions of Council") rather than paraphrases. The judged numbers above
+  are from the earlier key; a new run on the quotable key is the next
+  measurement.
 - The answer key was written by a model from the same passages. It is a
   consistent ruler, not a lawyer's.
 - One judge is one opinion. The judge's name is stamped on every result, so
