@@ -1050,8 +1050,10 @@ runs real CPU inference). ~4 min locally.
   promising; legal top-3+reranker 12/4/3 (0.74) on project 21's split →
   ready — but on project 22's split the sweep kept top-3 (0.55 vs 0.53),
   so sweep wins on 19 rows are noise-level; support-faq best retrieval
-  0/9/12 (0.21) → weak. Fine-tunes on both scored 0–1 correct, so "ready"
-  stops the flow
+  0/9/12 (0.21) → weak; a clean re-run 2026-10-13 (questions by
+  gemma4:latest, new split) gated 5/3/11 (0.34) → weak → trained → judged
+  1/4/14 (0.16) → Coach reroute (0.34 vs 0.16, same rows). Fine-tunes
+  scored 0–1 correct every time, so "ready" stops the flow
   (`stopped_reason` "Retrieval already answers…"), "promising" trains with
   a warning and lets the judged lift compare. Coach training stage
   `training:retrieval-ready` (warning, reroute action) /

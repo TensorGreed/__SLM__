@@ -115,16 +115,32 @@ In the playground, *"Who must retain a record of the use of personal
 information, and what does that record form part of?"* gets the section 9
 answer, cited from the passage it came from, with no fine-tuning.
 
-## Since the recording: the gate moved up front
+## What a new user sees today (clean run, 2026-10-13)
 
-The flow now runs the base + passages judged check **before** training, as a
-retrieval sweep, and reads a three-tier gate. On this data: plain top-3
-scores 8 / 5 / 6 of 19 (judge 0.55) — *promising*, so training would go
-ahead and be compared; with the reranker the sweep picks, 12 / 4 / 3 (0.74)
-— *ready*, so the flow stops and the Coach says "Retrieval already answers
-12 of 19 — reroute to RAG before training?". A new user never has to train
-the model that gets 1 of 19 to learn the lesson the video shows; "Train
-anyway" still runs the comparison on the same rows.
+The tables above are the recording's numbers. This is the same case run
+again from an empty project with today's defaults — one click on the flow
+card, the auto-picked local generation model (`ollama` → gemma4:latest on
+this box), the judge from the backend env (`gemma4:12b`), base model
+Qwen2.5-1.5B-Instruct — so the questions, the split and therefore the
+numbers differ from the recording. Every step below happened without
+choosing anything:
+
+| step | result |
+|---|---|
+| documents → Q&A flow | 467 passages, 60 used, 180 pairs + 60 answer-key rows, split 143 / 17 / 19, 11.5 min |
+| pre-training gate (retrieval sweep, judged, 19 test examples) | top-3: **5 / 3 / 11**, score 0.34 → *retrieval weak* → training went ahead. top-5 0.34; top-3 + reranker 0.47; top-5 + reranker 0.53 (7 better / 3 worse) — all within noise of top-3 on 19 rows, so the sweep kept top-3 |
+| fine-tune (run #43, judged lift on the same rows) | **1 / 4 / 14**, 0.11 → 0.16, within noise (token F1 said 0.12 → 0.33) |
+| Coach, Eval tab | "Retrieval over your documents beats the fine-tune (0.34 vs 0.16 judged)" → one-click reroute |
+| RAG sibling (#24), its automatic sweep | kept top-3; base alone 0.03 → with passages 0.34, 8 rows better, 0 worse |
+| playground, sibling | the section 9 answer, cited, 18.8 s on first load |
+
+Two things this run says plainly. The gate did **not** stop training this
+time — 5 of 19 right with 11 wrong is not an assistant, so the flow trained
+and let the judged comparison settle it, which it did (0.34 vs 0.16, same
+rows). And the reranker's win from the recording did not replicate on this
+split (0.47–0.53 against 0.34, but within noise on 19 rows), so the sweep
+kept BM25 — the noise check is doing its job; more test rows, not a bigger
+model, is what would turn that into a finding.
 
 ## What is still open (said on camera)
 
@@ -139,7 +155,9 @@ anyway" still runs the comparison on the same rows.
 ## Reproduce
 
 1. New project; upload the two statute HTML files; run cleaning
-   (chunk size 900).
+   (chunk size 900). The tables use base model Qwen2.5-1.5B-Instruct (set
+   it on the project, or keep the task type's default); the flow uses the
+   first reachable local generation model unless you pick one.
 2. Training tab → **Build a Q&A assistant from these documents** (needs a
    local generation model — Ollama with a non-thinking chat model, or
    thinking turned off; gemma4 works).
