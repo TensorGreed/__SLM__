@@ -484,3 +484,36 @@ class OffsetRepairAndNegativesTests(unittest.TestCase):
         kept = _cap_negatives(rows)
         self.assertEqual(len(kept), 11)
         self.assertEqual(sum(1 for r in kept if not r["entities"]), 1)
+
+
+class BackendTeacherTests(unittest.TestCase):
+    """A synth backend can be the span teacher (native Ollama with thinking
+    off, or a cloud pin): the generator sends the prompt with the span JSON
+    schema and stamps the backend's label on the rows."""
+
+    def test_backend_override_is_used_as_the_teacher(self):
+        import asyncio
+
+        from app.services.synthetic_service import generate_span_extraction_rows
+
+        seen: dict = {}
+
+        class Fake:
+            name = "fake"
+
+            def describe(self):
+                return "fake:teacher"
+
+            async def complete(self, prompt, *, system_prompt=None, max_tokens=1024, temperature=0.7, response_schema=None):
+                seen.update(prompt=prompt, max_tokens=max_tokens, schema=response_schema)
+                return '{"rows":[{"text":"Call Ada Lovelace at ada@example.test about card 4242 4242 4242 4242 today, she said, before the office closes for the week.","entities":[{"type":"person_name","start":0,"end":0,"text":"Ada Lovelace"},{"type":"credit_card","start":1,"end":2,"text":"4242 4242 4242 4242"}]}]}'
+
+        rows = asyncio.run(generate_span_extraction_rows(None, 1, "Source paragraph about a refund.", num_rows=2, entity_types=["person_name", "credit_card", "email"], backend_override=Fake()))
+        self.assertEqual(len(rows), 1)
+        types = sorted(e["type"] for e in rows[0]["entities"])
+        self.assertEqual(types, ["credit_card", "email", "person_name"], "offsets repaired, regex added the email")
+        self.assertTrue(all(rows[0]["text"][e["start"]:e["end"]] == e["text"] for e in rows[0]["entities"]))
+        self.assertEqual(rows[0]["model"], "fake:teacher")
+        self.assertIn("Source paragraph about a refund.", seen["prompt"])
+        self.assertEqual(seen["schema"]["required"], ["rows"])
+        self.assertGreaterEqual(seen["max_tokens"], 1200)

@@ -835,7 +835,12 @@ async def generate_conversation_dialogues(
     url = api_url or secret_url or settings.TEACHER_MODEL_API_URL
     resolved_api_key = api_key or secret_key or settings.TEACHER_MODEL_API_KEY
 
-    if not url:
+    llm = backend_override
+    if llm is None and backend:
+        from app.services.synth_backends.base import pick_backend
+
+        llm = pick_backend(backend)
+    if llm is None and not url:
         if not settings.ALLOW_SYNTHETIC_DEMO_FALLBACK:
             raise ValueError(
                 "Teacher model API URL is not configured. Set TEACHER_MODEL_API_URL "
@@ -1294,6 +1299,41 @@ def _locate_entity(text: str, ent_text: str, taken: list[dict]) -> tuple[int, in
         search_from = start + 1
 
 
+_SPAN_SYSTEM_PROMPT = (
+    "You write labelled training data for a span-detection model. Every value is "
+    "invented but realistic in format. Reply with JSON only."
+)
+_SPAN_RESPONSE_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "rows": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "entities": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "start": {"type": "integer"},
+                                "end": {"type": "integer"},
+                                "text": {"type": "string"},
+                            },
+                            "required": ["type", "text"],
+                        },
+                    },
+                },
+                "required": ["text", "entities"],
+            },
+        }
+    },
+    "required": ["rows"],
+}
+
+
 # Rows the teacher returned with no entity at all are negatives: useful in
 # small doses, useless as the bulk of a span dataset. Keep at most this
 # share of them per batch, and no snippet shorter than this.
@@ -1341,9 +1381,20 @@ async def generate_span_extraction_rows(
     api_url: str = "",
     api_key: str = "",
     model_name: str = "llama3",
+    backend: str | None = None,
+    backend_override: Any = None,
 ) -> list[dict]:
     """Generate `{text, entities: [...]}` rows for PII / NER /
-    structured-extraction span_set training, with demo fallback."""
+    structured-extraction span_set training.
+
+    Two teachers: ``backend`` names a synth backend (``"ollama"``, a pin
+    like ``"cloud:anthropic:claude-haiku-4-5-20251001"``; the same picker
+    the playbooks and the documents flow use — the native Ollama backend
+    turns thinking off, which a thinking model needs or it spends its
+    whole budget reasoning and returns empty content); otherwise the
+    OpenAI-compatible ``api_url`` / project ``teacher_model`` secret /
+    ``TEACHER_MODEL_API_URL`` path. ``backend_override`` injects an
+    instance (tests)."""
 
     secret_url = None
     secret_key = None
@@ -1359,7 +1410,12 @@ async def generate_span_extraction_rows(
     url = api_url or secret_url or settings.TEACHER_MODEL_API_URL
     resolved_api_key = api_key or secret_key or settings.TEACHER_MODEL_API_KEY
 
-    if not url:
+    llm = backend_override
+    if llm is None and backend:
+        from app.services.synth_backends.base import pick_backend
+
+        llm = pick_backend(backend)
+    if llm is None and not url:
         if not settings.ALLOW_SYNTHETIC_DEMO_FALLBACK:
             raise ValueError(
                 "Teacher model API URL is not configured. Set "
@@ -1415,13 +1471,24 @@ async def generate_span_extraction_rows(
         f"Return exactly {num_rows} rows now."
     )
 
-    result = await call_teacher_model(
-        prompt,
-        api_url=url,
-        api_key=resolved_api_key,
-        model_name=model_name,
-        force_json=True,
-    )
+    if llm is not None:
+        content = await llm.complete(
+            prompt,
+            system_prompt=_SPAN_SYSTEM_PROMPT,
+            max_tokens=max(1200, 450 * num_rows),
+            temperature=0.5,
+            response_schema=_SPAN_RESPONSE_SCHEMA,
+        )
+        model_name = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
+        result = {"content": content, "model": model_name}
+    else:
+        result = await call_teacher_model(
+            prompt,
+            api_url=url,
+            api_key=resolved_api_key,
+            model_name=model_name,
+            force_json=True,
+        )
     content = result.get("content") or ""
     raw_rows = _parse_teacher_span_rows(content)
     validated = _cap_negatives(_validate_span_rows(raw_rows, entity_types))
@@ -1575,6 +1642,7 @@ class SyntheticSpanTask:
     api_url: str
     api_key: str
     model_name: str
+    backend: str | None
     use_all_chunks: bool
     source_text: str
 
@@ -1746,6 +1814,7 @@ async def _run_span_generation_task(task: SyntheticSpanTask) -> None:
                         task.api_url,
                         task.api_key,
                         task.model_name,
+                        backend=task.backend,
                     )
                     task.rows.extend(batch_rows)
                 except Exception as exc:  # noqa: BLE001
@@ -1778,6 +1847,7 @@ def start_span_generation_task(
     model_name: str,
     use_all_chunks: bool,
     source_text: str,
+    backend: str | None = None,
 ) -> SyntheticSpanTask:
     """Register + launch a span-generation task. Returns the task
     record immediately; the actual work runs in the background.
@@ -1802,6 +1872,7 @@ def start_span_generation_task(
         api_url=api_url,
         api_key=api_key,
         model_name=model_name,
+        backend=backend,
         use_all_chunks=use_all_chunks,
         source_text=source_text,
     )
