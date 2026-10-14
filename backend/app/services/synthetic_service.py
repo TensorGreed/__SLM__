@@ -1088,6 +1088,7 @@ _DEFAULT_SPAN_PATTERNS: list[tuple[str, str]] = [
 def _extract_entities_via_regex(
     text: str,
     entity_types: list[str] | None = None,
+    custom_patterns: list[dict] | None = None,
 ) -> list[dict]:
     """Cheap regex-based entity extraction for the demo fallback.
 
@@ -1095,6 +1096,11 @@ def _extract_entities_via_regex(
     well-defined patterns (email/phone/ssn/credit_card/ip_address)
     are detected — names / addresses / DOBs need an LLM. When
     ``entity_types`` is set, restrict detection to that subset.
+
+    ``custom_patterns`` — the project's own identifier formats
+    (``span_custom_patterns_service``: ``[{type, pattern, flags}]``) — run
+    alongside the built-ins under the same vocabulary filter; they add
+    matches for their type and override nothing.
     """
 
     import re as _re
@@ -1105,10 +1111,21 @@ def _extract_entities_via_regex(
         else None
     )
     out: list[dict] = []
-    for ent_type, pattern in _DEFAULT_SPAN_PATTERNS:
+    from app.services.span_custom_patterns_service import compiled_patterns
+
+    passes: list[tuple[str, Any]] = [(t, p) for t, p in _DEFAULT_SPAN_PATTERNS]
+    passes.extend(compiled_patterns(custom_patterns))
+    seen: set[tuple[str, int, int]] = set()
+    for ent_type, pattern in passes:
         if allowed is not None and ent_type not in allowed:
             continue
         for match in _re.finditer(pattern, text):
+            if match.end() == match.start():
+                continue
+            key = (ent_type, match.start(), match.end())
+            if key in seen:
+                continue
+            seen.add(key)
             span_text = match.group(0)
             out.append(
                 {
@@ -1127,6 +1144,7 @@ def _merge_regex_entities(
     text: str,
     existing: list[dict],
     entity_types: list[str] | None,
+    custom_patterns: list[dict] | None = None,
 ) -> tuple[list[dict], bool]:
     """Augment a row's entity list with regex-detected entities the
     teacher missed.
@@ -1143,7 +1161,7 @@ def _merge_regex_entities(
     can tag the row's source for transparency).
     """
 
-    regex_hits = _extract_entities_via_regex(text, entity_types)
+    regex_hits = _extract_entities_via_regex(text, entity_types, custom_patterns)
     if not regex_hits:
         return list(existing), False
 
@@ -1178,6 +1196,7 @@ def _generate_demo_span_rows(
     source_text: str,
     num_rows: int,
     entity_types: list[str] | None,
+    custom_patterns: list[dict] | None = None,
 ) -> list[dict]:
     """Demo fallback. Splits source into sentences and emits up to
     ``num_rows`` rows; each carries the sentence plus any regex-
@@ -1202,7 +1221,7 @@ def _generate_demo_span_rows(
     # offsets are simple. If num_rows > sentence count, cycle.
     for idx in range(min(num_rows, max(len(sentences), 1))):
         text = sentences[idx % len(sentences)]
-        entities = _extract_entities_via_regex(text, entity_types)
+        entities = _extract_entities_via_regex(text, entity_types, custom_patterns)
         rows.append(
             {
                 "text": text,
@@ -1348,11 +1367,17 @@ _SPAN_RESPONSE_SCHEMA: dict = {
 }
 
 
-def augment_saved_rows_with_regex(project_id: int, entity_types: list[str] | None = None) -> dict[str, Any]:
+def augment_saved_rows_with_regex(
+    project_id: int,
+    entity_types: list[str] | None = None,
+    custom_patterns: list[dict] | None = None,
+) -> dict[str, Any]:
     """Run the regex pass over every saved synthetic span row and add the
-    well-defined entities (email / phone / card / IP / …) it finds that
-    don't overlap an existing one. Deterministic and idempotent; the fix
-    for rows labelled under a restricted type list. Returns counts."""
+    well-defined entities (email / phone / card / IP / … plus the
+    project's ``custom_patterns``) it finds that don't overlap an existing
+    one. Deterministic and idempotent; the fix for rows labelled under a
+    restricted type list, or saved before a custom pattern existed.
+    Returns counts."""
     path = settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl"
     if not path.exists():
         return {"rows": 0, "rows_changed": 0, "entities_added": 0, "added_by_type": {}}
@@ -1373,7 +1398,7 @@ def augment_saved_rows_with_regex(project_id: int, entity_types: list[str] | Non
             out.append(line)
             continue
         rows += 1
-        merged, augmented = _merge_regex_entities(text, row["entities"], entity_types)
+        merged, augmented = _merge_regex_entities(text, row["entities"], entity_types, custom_patterns)
         if augmented:
             new = [e for e in merged if e not in row["entities"]]
             for e in new:
@@ -1483,7 +1508,11 @@ async def generate_span_extraction_rows(
                 "TEACHER_MODEL_API_URL or enable "
                 "ALLOW_SYNTHETIC_DEMO_FALLBACK=true for demo-only mode."
             )
-        rows = _generate_demo_span_rows(source_text, num_rows, entity_types)
+        from app.services.span_custom_patterns_service import load_patterns
+
+        rows = _generate_demo_span_rows(
+            source_text, num_rows, entity_types, await load_patterns(db, project_id)
+        )
         return rows
 
     focus = [t.strip().lower() for t in (focus_types or []) if isinstance(t, str) and t.strip()]
@@ -1498,6 +1527,11 @@ async def generate_span_extraction_rows(
     from app.services.span_type_definitions_service import definitions_clause, load_definitions
 
     conventions = definitions_clause(entity_types, await load_definitions(db, project_id))
+    # The project's own identifier formats join the built-in regex pass.
+    from app.services.span_custom_patterns_service import load_patterns
+
+    custom_patterns = await load_patterns(db, project_id)
+    custom_regex_types = sorted({p["type"] for p in custom_patterns})
     types_clause = (
         f"Allowed entity types (use ONLY these): {', '.join(entity_types)}.\n{conventions}{focus_clause}"
         if entity_types
@@ -1537,7 +1571,8 @@ async def generate_span_extraction_rows(
         "  and repaired from entity.text, so a wrong offset is fine but "
         "  a wrong entity.text is dropped.\n"
         "- A downstream regex pass also catches the obvious ones "
-        "  (email/phone/SSN/credit_card/ip_address/api_key/date_of_birth).\n"
+        "  (email/phone/SSN/credit_card/ip_address/api_key/date_of_birth"
+        f"{'/' + '/'.join(custom_regex_types) if custom_regex_types else ''}).\n"
         "- Use only synthetic values — never real identifiers.\n"
         "- Vary entity coverage across rows so the dataset isn't repetitive.\n\n"
         f"Source paragraph:\n{source_text[:4000]}\n\n"
@@ -1593,7 +1628,7 @@ async def generate_span_extraction_rows(
         # date_of_birth) so users see entities even when the teacher
         # skipped them.
         merged_entities, regex_augmented = _merge_regex_entities(
-            row.get("text", ""), teacher_entities, entity_types
+            row.get("text", ""), teacher_entities, entity_types, custom_patterns
         )
         # Confidence reflects entity coverage AND whether annotations
         # came from the teacher only vs. teacher+regex hybrid.

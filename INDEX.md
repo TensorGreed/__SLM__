@@ -239,6 +239,7 @@ session-start guidance.
 - `backend/app/services/sft_lift_summary_service.py` — Did SFT help? — baseline vs trained eval lift summary (Theme 8 Epic 4).
 - `backend/app/services/slice_definitions_service.py` — Quality-Lift phase 2, slice 1 — Project slice-definitions validator.
 - `backend/app/services/slice_evaluator_service.py` — Quality-Lift phase 2, slice 2 — Slice predicate evaluator + handler wrapper.
+- `backend/app/services/span_custom_patterns_service.py` — Custom infotypes: a span project's own identifier formats as regexes.
 - `backend/app/services/span_refine_service.py` — Refine weak entity types: read the latest span_set evaluation and name
 - `backend/app/services/span_relabel_service.py` — Answer key from a second model: relabel a split's texts without changing
 - `backend/app/services/span_type_definitions_service.py` — Entity-type definitions: one labelling convention for every model that
@@ -543,6 +544,7 @@ session-start guidance.
 - `frontend/src/components/data/RecipePicker.tsx` — Recipe Picker — Theme 2 Epic 3 + 4.
 - `frontend/src/components/data/SavedMappingsPanel.tsx` — Saved dataset-import mappings panel (Phase G of DATASET_IMPORT_PLAN).
 - `frontend/src/components/data/SeedDocumentsCard.tsx` — _(no docstring)_
+- `frontend/src/components/data/SpanAddTypeForm.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanTypeDefinitionsEditor.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.tsx` — SynthReviewQueue — USER-SUCCESS Epic 2b.
 - `frontend/src/components/data/SyntheticPanel.tsx` — Panel for generating synthetic training data with playbook selection, batch async support, and review queue.
@@ -910,6 +912,7 @@ session-start guidance.
 - `backend/tests/test_slice_definitions_slice1.py` — Quality-Lift phase 2, slice 1 — slice_definitions schema + endpoints.
 - `backend/tests/test_slice_evaluator_slice2.py` — Quality-Lift phase 2, slice 2 — slice predicate evaluator + handler wrapper.
 - `backend/tests/test_slice_gates_slice3.py` — Quality-Lift phase 2, slice 3 — Slice gate evaluator behaviors.
+- `backend/tests/test_span_custom_patterns.py` — Custom infotypes: a span project's own identifier formats as regexes —
 - `backend/tests/test_span_eval_summary.py` — The eval summary of a token-classification run (kind="span_eval"): its
 - `backend/tests/test_span_refine.py` — Refine weak types: the latest span_set evaluation names the types under
 - `backend/tests/test_span_relabel.py` — Answer key from a second model: relabel a split's texts (unchanged),
@@ -990,6 +993,7 @@ session-start guidance.
 - `frontend/src/components/data/RecipePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SavedMappingsPanel.test.tsx` — Saved-mappings panel contract.
 - `frontend/src/components/data/SeedDocumentsCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/SpanAddTypeForm.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanTypeDefinitionsEditor.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SyntheticPanel.test.tsx` — _(no docstring)_

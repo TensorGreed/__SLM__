@@ -11,6 +11,7 @@ import SynthReviewQueue from './SynthReviewQueue';
 import StepFooter from '../shared/StepFooter';
 import { toast } from '../../stores/toastStore';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
+import SpanAddTypeForm from './SpanAddTypeForm';
 import SpanTypeDefinitionsEditor from './SpanTypeDefinitionsEditor';
 import ComplianceBundlePicker from './ComplianceBundlePicker';
 
@@ -568,6 +569,18 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
             .split(',')
             .map((token) => token.trim())
             .filter((token) => token.length > 0);
+    };
+
+    // "Add a type": append the new type to the entity-type list (once) and
+    // remount the conventions editor so it shows the new definition.
+    const [definitionsVersion, setDefinitionsVersion] = useState(0);
+    const handleTypeAdded = (type: string) => {
+        setEntityTypesInput((prev) => {
+            const current = parseEntityTypes(prev);
+            if (current.map((t) => t.toLowerCase()).includes(type)) return prev;
+            return [...current, type].join(', ');
+        });
+        setDefinitionsVersion((v) => v + 1);
     };
 
     // Generous per-request timeout for the generate endpoints — local
@@ -1270,7 +1283,8 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                     entityTypes={parseEntityTypes(entityTypesInput)}
                                     onEntityTypesChange={(types) => setEntityTypesInput(types.join(', '))}
                                 />
-                                <SpanTypeDefinitionsEditor projectId={projectId} />
+                                <SpanTypeDefinitionsEditor key={definitionsVersion} projectId={projectId} />
+                                <SpanAddTypeForm projectId={projectId} onTypeAdded={handleTypeAdded} />
                                 {refineInfo && refineInfo.types.length > 0 && (
                                     <div className="form-hint" data-testid="synthetic-refine-info">
                                         Weak on run #{refineInfo.experiment_id}: {refineInfo.types.map((t) => `${t.type} (${t.f1.toFixed(2)})`).join(', ')} — generating {refineInfo.suggested_rows} rows that must contain them; every other type in the list is still labelled.

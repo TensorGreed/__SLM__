@@ -422,6 +422,9 @@ async def relabel_training_rows(
 
     definitions = await load_definitions(db, project_id)
     conventions = definitions_clause(types, definitions)
+    from app.services.span_custom_patterns_service import load_patterns
+
+    custom_patterns = await load_patterns(db, project_id)
     llm = backend_override or pick_backend(backend)
     backend_label = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
     texts = [rows[i]["text"] for i in span_idx]
@@ -434,7 +437,7 @@ async def relabel_training_rows(
         spans = new_labels[j]
         if spans is None:
             continue
-        merged, _ = _merge_regex_entities(texts[j], spans, types)
+        merged, _ = _merge_regex_entities(texts[j], spans, types, custom_patterns)
         rows[i]["entities"] = merged
         rows[i]["relabelled_by"] = backend_label
         rows[i]["relabelled_at"] = stamp
@@ -684,6 +687,9 @@ async def _label_and_append(
 
     definitions = await load_definitions(db, project_id)
     conventions = definitions_clause(types, definitions)
+    from app.services.span_custom_patterns_service import load_patterns
+
+    custom_patterns = await load_patterns(db, project_id)
     llm = backend_override or pick_backend(backend)
     backend_label = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
     texts = [text for text, _ in todo]
@@ -698,7 +704,7 @@ async def _label_and_append(
     for (text, meta), spans in zip(todo, labels):
         if spans is None:
             continue
-        merged, _ = _merge_regex_entities(text, spans, types)
+        merged, _ = _merge_regex_entities(text, spans, types, custom_patterns)
         counts.update(e["type"] for e in merged)
         doc = meta.get("doc")
         new_rows.append({

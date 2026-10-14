@@ -829,15 +829,128 @@ async def relabel_answer_key(
 
 
 @router.post("/spans/regex-augment")
-async def regex_augment_saved_spans(project_id: int, data: dict | None = None) -> dict[str, Any]:
-    """Add regex-detected entities (email / phone / card / IP / …) to every
-    saved synthetic span row where they're missing. Deterministic and
-    idempotent — the fix for rows generated under a restricted type list.
-    Body: ``{"entity_types": [...]}`` optional (defaults to every pattern)."""
+async def regex_augment_saved_spans(
+    project_id: int, data: dict | None = None, db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Add regex-detected entities (email / phone / card / IP / … and the
+    project's custom patterns) to every saved synthetic span row where
+    they're missing. Deterministic and idempotent — the fix for rows
+    generated under a restricted type list, or saved before a custom
+    pattern existed. Body: ``{"entity_types": [...]}`` optional (defaults
+    to every pattern)."""
+    from app.services.span_custom_patterns_service import load_patterns
     from app.services.synthetic_service import augment_saved_rows_with_regex
 
     types = (data or {}).get("entity_types") if isinstance(data, dict) else None
-    return augment_saved_rows_with_regex(project_id, types if isinstance(types, list) else None)
+    return augment_saved_rows_with_regex(
+        project_id, types if isinstance(types, list) else None, await load_patterns(db, project_id)
+    )
+
+
+class TypePatternItem(BaseModel):
+    type: str
+    pattern: str
+    description: str = ""
+    flags: str = ""
+
+
+class TypePatternsRequest(BaseModel):
+    """The project's custom identifier patterns. Replaces the stored list;
+    send ``[]`` to clear. Every entry must validate or nothing is saved."""
+
+    patterns: list[TypePatternItem] = Field(default_factory=list)
+
+
+class TypePatternTestRequest(BaseModel):
+    pattern: str
+    type: str = ""
+    flags: str = ""
+
+
+def _builtin_regex_types() -> list[str]:
+    from app.services.synthetic_service import _DEFAULT_SPAN_PATTERNS
+
+    return sorted({t for t, _ in _DEFAULT_SPAN_PATTERNS})
+
+
+@router.get("/type-patterns")
+async def get_type_patterns(project_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """The project's custom regex patterns (custom infotypes), any stored
+    entries that no longer validate, the built-in regex types they run
+    beside, and the validation limits."""
+    from app.models.project import Project
+    from app.services import span_custom_patterns_service as cps
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    cfg = project.runtime_config if isinstance(project.runtime_config, dict) else {}
+    patterns, errors = cps.normalise_patterns(cfg.get(cps.PATTERNS_KEY))
+    return {
+        "patterns": patterns,
+        "errors": errors,
+        "builtin_types": _builtin_regex_types(),
+        "limits": {
+            "max_patterns": cps.MAX_PATTERNS,
+            "max_pattern_chars": cps.MAX_PATTERN_CHARS,
+            "flags": "ims",
+        },
+    }
+
+
+@router.put("/type-patterns")
+async def put_type_patterns(
+    project_id: int, data: TypePatternsRequest, db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Validate (compile, length, no empty match, backtracking guard) and
+    store the project's custom patterns. 422 ``INVALID_TYPE_PATTERN`` with
+    per-entry ``metadata.errors`` when any entry fails — nothing is saved."""
+    import asyncio
+
+    from app.models.project import Project
+    from app.services import span_custom_patterns_service as cps
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    if len(data.patterns) > cps.MAX_PATTERNS:
+        raise HTTPException(422, {"error_code": "INVALID_TYPE_PATTERN", "message": f"At most {cps.MAX_PATTERNS} patterns per project.", "metadata": {"errors": []}})
+    raw = [p.model_dump() for p in data.patterns]
+    valid, errors = await asyncio.to_thread(cps.normalise_patterns, raw, check_speed=True)
+    if errors:
+        first = errors[0]
+        raise HTTPException(422, {
+            "error_code": "INVALID_TYPE_PATTERN",
+            "message": f"Pattern for '{first['type'] or '?'}' rejected: {first['error']}",
+            "metadata": {"errors": errors},
+        })
+    cfg = dict(project.runtime_config or {})
+    cfg[cps.PATTERNS_KEY] = valid
+    project.runtime_config = cfg
+    await db.commit()
+    return {"patterns": valid}
+
+
+@router.post("/type-patterns/test")
+async def try_type_pattern(
+    project_id: int, data: TypePatternTestRequest, db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Try a pattern before saving it: validation result plus the matches
+    in a sample of the project's saved span rows and cleaned passages
+    (count, and the first matches with offsets and surrounding text)."""
+    import asyncio
+
+    from app.models.project import Project
+    from app.services import span_custom_patterns_service as cps
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    sample = cps.sample_project_texts(project_id)
+    return await asyncio.to_thread(
+        cps.preview_pattern_matches, data.pattern, data.type, [t for _, t in sample], data.flags,
+        sources=[s for s, _ in sample],
+    )
 
 
 class TypeDefinitionsRequest(BaseModel):
