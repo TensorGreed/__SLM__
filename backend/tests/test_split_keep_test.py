@@ -70,3 +70,20 @@ class ReviewQueueRowIdTests(unittest.TestCase):
             self.assertEqual([r["id"] for r in rq._read_all_rows(path)], [4, 5, 6], "saved")
             again = rq._ensure_row_ids(path, rq._read_all_rows(path))
             self.assertEqual([r["id"] for r in again], [4, 5, 6], "idempotent")
+
+
+class ReviewGateTests(unittest.TestCase):
+    def test_pending_and_rejected_rows_never_reach_training_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "synthetic.jsonl"
+            rows = [
+                {"id": 1, "text": "accepted row", "review_status": "accepted"},
+                {"id": 2, "text": "legacy row without a status"},
+                {"id": 3, "text": "pending row", "review_status": "pending"},
+                {"id": 4, "text": "rejected row", "review_status": "rejected", "reject_reason": "evaluation only"},
+            ]
+            path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+            kept = [r["text"] for r in ds._load_records_from_file(path)]
+            self.assertEqual(kept, ["accepted row", "legacy row without a status"])
+            everything = ds._load_records_from_file(path, include_pending_synth=True)
+            self.assertEqual(len(everything), 4, "the review queue still sees every row")

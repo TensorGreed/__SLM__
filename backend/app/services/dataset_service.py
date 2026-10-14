@@ -269,8 +269,8 @@ def _load_records_from_file(
     """Load structured rows from JSON/JSONL/CSV/text into a list of dict records.
 
     USER-SUCCESS Epic 2b note: synthetic rows now carry a
-    ``review_status`` field. Rows with ``review_status == "pending"``
-    are excluded from training-bound reads by default — the review
+    ``review_status`` field. Rows with ``review_status`` "pending" or
+    "rejected" are excluded from training-bound reads by default — the review
     queue (Synthetic tab) is the gate. Callers that *want* the
     pending rows (the review-queue list endpoint) pass
     ``include_pending_synth=True``.
@@ -282,11 +282,14 @@ def _load_records_from_file(
     records: list[dict[str, Any]] = []
 
     def _keep(row: Any) -> bool:
-        # Pending synth rows are gated by the review queue; don't leak
-        # them into training prep.
-        return include_pending_synth or not (
-            isinstance(row, dict) and row.get("review_status") == "pending"
-        )
+        # The review queue is the gate into training: pending rows wait for
+        # review, and REJECTED rows (soft-rejected, kept on disk with a
+        # reason) must never train — they used to, because only "pending"
+        # was filtered (a rejected evaluation-only answer key reached the
+        # training split on 2026-10-14).
+        if include_pending_synth or not isinstance(row, dict):
+            return True
+        return row.get("review_status") not in ("pending", "rejected")
 
     if is_tabular(file_path):
         # CSV/TSV/JSON(L)/XLSX/Parquet in any encoding (tabular_io) — a
