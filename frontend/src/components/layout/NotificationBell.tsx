@@ -63,6 +63,9 @@ function jobDeepLink(job: Job): string | null {
     if (job.kind === 'seed_documents' && job.project_id) {
         return `/project/${job.project_id}/pipeline/data#seed-documents`;
     }
+    if (job.kind === 'span_relabel' && job.project_id) {
+        return `/project/${job.project_id}/pipeline/eval`;
+    }
     if (job.project_id) {
         return `/project/${job.project_id}`;
     }
@@ -138,6 +141,16 @@ function jobOutcomeSummary(job: Job): string | null {
         return null;
     }
 
+    if (job.kind === 'span_relabel') {
+        const rows = typeof r.labelled_rows === 'number' ? r.labelled_rows : null;
+        const entities = typeof r.entities === 'number' ? r.entities : null;
+        const agreement = r.agreement && typeof (r.agreement as { f1?: unknown }).f1 === 'number' ? (r.agreement as { f1: number }).f1 : null;
+        const parts: string[] = [];
+        if (rows !== null) parts.push(`answer key: ${rows} rows`);
+        if (entities !== null) parts.push(`${entities} entities`);
+        if (agreement !== null) parts.push(`agreement with the old labels F1 ${agreement.toFixed(2)}`);
+        return parts.length ? parts.join(' · ') : null;
+    }
     if (job.kind === 'seed_documents') {
         const written = typeof r.written === 'number' ? r.written : null;
         const passages = typeof r.passages === 'number' ? r.passages : null;

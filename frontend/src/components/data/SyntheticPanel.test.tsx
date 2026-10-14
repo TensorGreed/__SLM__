@@ -196,6 +196,22 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
         expect(screen.getByTestId('synthetic-refine-info')).toHaveTextContent('Weak on run #55: passport (0.00), medication (0.60), provider_name (0.67), national_id (0.76) — generating 100 rows for them.');
     });
 
+    it('"Write answer key with this model" starts the span_relabel Job with the provider pin', async () => {
+        installGetRouter({
+            'prepared-manifest': { task_profile: 'structured_extraction', output_schema: { scoring_mode: 'span_set' }, entity_types: ['email', 'passport'] },
+        });
+        apiMock.post.mockResolvedValueOnce({ data: { id: 120, kind: 'span_relabel', status: 'queued' } });
+        render(<SyntheticPanel projectId={1} />);
+        const button = await screen.findByTestId('synthetic-write-answer-key');
+        expect(button).toHaveTextContent('Write answer key with ollama');
+        await userEvent.click(button);
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith('/projects/1/synthetic/relabel-answer-key', {
+                split: 'test', backend: 'ollama', entity_types: ['email', 'passport'],
+            });
+        });
+    });
+
     it('uses the QA async endpoint when num_pairs > 50', async () => {
         installGetRouter({
             tasks: {

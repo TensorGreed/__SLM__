@@ -577,7 +577,10 @@ async def generate_spans_async(
         project_id=project_id,
         task_id=task.task_id,
         kind="synth_legacy_spans",
-        title=f"Synth (legacy spans) · {req.target_rows} rows",
+        title=(
+            f"Span rows for {', '.join(req.entity_types[:6])}{'…' if len(req.entity_types) > 6 else ''} · {req.target_rows} rows"
+            if req.entity_types else f"Span rows · {req.target_rows} rows"
+        ),
         params={"target_rows": req.target_rows, "task_id": task.task_id},
     )
     return {
@@ -712,6 +715,68 @@ class RunPlaybookRequest(BaseModel):
     target_count: int = Field(30, ge=1, le=500)
     target_class: str | None = Field(default=None)
     backend: str | None = Field(default=None, description="Optional backend pin, e.g. 'ollama:llama3.1:8b'.")
+
+
+class RelabelAnswerKeyRequest(BaseModel):
+    """Relabel a split's texts with another model and keep them as the
+    project's GOLD_TEST answer key. ``backend``: a synth backend name or a
+    cloud pin (``cloud:anthropic:claude-haiku-4-5-20251001`` — its API key
+    is the project's saved secret); unset → the first reachable local
+    model. ``entity_types`` default to the split's own."""
+
+    split: str = Field("test", pattern="^(train|val|test|gold_dev|gold_test)$")
+    backend: str | None = None
+    entity_types: list[str] = Field(default_factory=list)
+
+
+@router.post("/relabel-answer-key", status_code=202)
+async def relabel_answer_key(
+    project_id: int,
+    data: RelabelAnswerKeyRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Start the ``span_relabel`` Job: label the split's texts with the
+    chosen model (texts unchanged, offsets verified), write
+    ``gold/gold_test.jsonl`` + the GOLD_TEST dataset the evaluation's
+    ``gold_test`` alias resolves, and report the agreement between the
+    old labels and the new key."""
+    from sqlalchemy import select
+
+    from app.models.job import Job, JobStatus
+    from app.services.jobs_service import JobProgressHandle, serialize_job, start_job
+    from app.services.span_relabel_service import relabel_split_as_answer_key
+
+    req = data or RelabelAnswerKeyRequest()
+    cloud_override = await _resolve_cloud_backend_override(db, project_id, req.backend)
+    in_flight = (
+        await db.execute(
+            select(Job).where(Job.kind == "span_relabel", Job.project_id == project_id)
+            .where(Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING])).limit(1)
+        )
+    ).scalar_one_or_none()
+    if in_flight is not None:
+        raise HTTPException(409, {"error_code": "RELABEL_ALREADY_RUNNING", "message": "An answer key is already being written for this project. Watch the bell.", "metadata": {"existing_job_id": in_flight.id}})
+
+    async def _runner(handle: JobProgressHandle) -> dict[str, Any]:
+        from app.database import async_session_factory
+
+        async def _progress(fraction: float, message: str) -> None:
+            await handle.set_progress(fraction=fraction, message=message)
+
+        async with async_session_factory() as runner_db:
+            summary = await relabel_split_as_answer_key(
+                runner_db, project_id, split=req.split,
+                backend=req.backend if cloud_override is None else None,
+                entity_types=req.entity_types, progress=_progress, backend_override=cloud_override,
+            )
+            return summary.as_dict()
+
+    job = await start_job(
+        db, kind="span_relabel", title=f"Answer key by {req.backend or 'local model'} · {req.split} split · project #{project_id}",
+        runner=_runner, project_id=project_id,
+        params={"project_id": project_id, "split": req.split, "backend": req.backend, "entity_types": req.entity_types},
+    )
+    return serialize_job(job)
 
 
 @router.get("/weak-types")

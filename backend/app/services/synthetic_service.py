@@ -1266,14 +1266,15 @@ def _validate_span_rows(
             if allowed is not None and ent_type.lower() not in allowed:
                 st["dropped_type"][ent_type] = st["dropped_type"].get(ent_type, 0) + 1
                 continue
+            ent_text = str(ent.get("text") or "")
+            if not ent_text.strip():
+                continue
             try:
                 start = int(ent.get("start"))
                 end = int(ent.get("end"))
             except (TypeError, ValueError):
-                continue
-            ent_text = str(ent.get("text") or "")
-            if not ent_text.strip():
-                continue
+                # No usable offsets: locate the entity text instead.
+                start, end = -1, -1
             if start < 0 or end <= start or end > len(text) or text[start:end] != ent_text:
                 # The model's offsets are wrong far more often than its
                 # entity text (it has to count characters). Locate the

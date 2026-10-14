@@ -338,19 +338,19 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["text"], "real text")
 
-    def test_drops_entities_without_type_or_offsets(self):
+    def test_drops_entities_without_type_or_text_and_locates_ones_without_offsets(self):
         raw = [
             {
                 "text": "Some text",
                 "entities": [
-                    {"type": "", "start": 0, "end": 4, "text": "Some"},
-                    {"type": "email", "text": "Some"},  # no offsets
-                    {"start": 0, "end": 4},  # no type
+                    {"type": "", "start": 0, "end": 4, "text": "Some"},  # no type → dropped
+                    {"type": "email", "text": "Some"},  # no offsets → located from the text
+                    {"start": 0, "end": 4},  # no type, no text → dropped
                 ],
             }
         ]
         out = _validate_span_rows(raw, entity_types=None)
-        self.assertEqual(out[0]["entities"], [])
+        self.assertEqual(out[0]["entities"], [{"type": "email", "start": 0, "end": 4, "text": "Some"}])
 
     def test_handles_non_dict_payloads_gracefully(self):
         out = _validate_span_rows(["not a dict", None, 42], entity_types=None)

@@ -1087,6 +1087,22 @@ runs real CPU inference). ~4 min locally.
   sends `backend: "ollama"` for the local provider. Seed prompt asks for
   varied surface forms (separators, locale id formats, names in greetings).
   Tests: `tests/test_span_refine.py`, `SyntheticPanel.test.tsx`.
+- **Answer key from a second model** (`services/span_relabel_service.py`,
+  Job `span_relabel`, `POST /synthetic/relabel-answer-key` {split, backend,
+  entity_types}): `relabel_split_as_answer_key` prompts the backend (synth
+  name or cloud pin via `_resolve_cloud_backend_override` → `backend_override`)
+  with `TEXTS_PER_CALL` 6 texts, parses `{rows:[{index, entities}]}`,
+  validates through `_validate_span_rows` (an entity with NO offsets is now
+  located from its text — `start,end=-1`), writes `gold/gold_test.jsonl`
+  (`source: "answer_key:<backend>"`) + the GOLD_TEST Dataset (file_path,
+  record_count, metadata source=span_relabel) that `_resolve_dataset_alias
+  ("gold_test")` reads, and returns `agreement` = `span_prf(new, old)`.
+  Synthetic-tab button "Write answer key with <pin>" (pin = `ollama` or
+  `cloud:<provider>:<model>` from the panel's provider/model); bell outcome
+  "answer key: N rows · M entities · agreement … F1". The async span task's
+  shadow Job title names the entity types (refine runs read as such in the
+  bell); the shadow Job AUTO-SAVES rows — never call /save-spans after it.
+  Tests: `tests/test_span_relabel.py`.
 - **Token classification** (`task_type="token_classification"`,
   `scripts/train_token_classification.py`, dispatched from
   `train.py::_run_training_attempt` right after `_normalize_task_type`):

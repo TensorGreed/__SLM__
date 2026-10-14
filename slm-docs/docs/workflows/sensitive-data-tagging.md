@@ -108,6 +108,23 @@ those types, sampling from all passages, with a row count sized to how
 many types are weak (`GET /synthetic/weak-types?threshold=`). Accept the
 rows, re-split, re-train; the Eval summary compares the runs.
 
+### An answer key the teacher didn't write
+
+Every number above scores the model against labels the *same* local
+teacher wrote. **Write answer key with this model** (Synthetic tab, span
+mode) hands the test split's texts — unchanged — to the provider and
+model selected in the panel (a cloud pin such as
+`cloud:anthropic:claude-haiku-4-5-20251001` with the project's saved key,
+or another local model), asks only for the entities, verifies every
+offset from the entity text, and keeps the result as the project's
+**gold_test** set (`POST /synthetic/relabel-answer-key`, Job
+`span_relabel`). The bell reports rows, entities and the **agreement
+between the old labels and the new key** (strict span F1, per type) —
+the share of "error" that was ever the student's. Then evaluate the run
+against `gold_test` on the Eval tab: the per-type scores are now judged
+by a second opinion. Cost: one call per six texts; a 44-row test split
+is eight Haiku calls.
+
 ## 5. Export → Hugging Face
 
 **Export → Hugging Face** packages the run's `model/` directory as-is

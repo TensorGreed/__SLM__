@@ -639,6 +639,32 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [entityTypesInput, useAllChunks, numSpans]);
 
+    /** "Write answer key with this model": relabel the test split's texts
+     *  with the selected provider/model (unchanged texts, verified offsets)
+     *  as the project's GOLD_TEST set — a key the training teacher didn't
+     *  write. Runs as the `span_relabel` Job the bell tracks. */
+    const [relabelStarting, setRelabelStarting] = useState(false);
+    const relabelPin = provider === 'ollama' ? 'ollama' : provider === 'custom' ? null : `cloud:${provider}:${modelName}`;
+    const handleWriteAnswerKey = async () => {
+        if (!relabelPin) {
+            toast.info('Pick Ollama or a cloud provider — the answer key is written through a synth backend.', 5000);
+            return;
+        }
+        setRelabelStarting(true);
+        try {
+            const res = await api.post(`/projects/${projectId}/synthetic/relabel-answer-key`, {
+                split: 'test',
+                backend: relabelPin,
+                entity_types: parseEntityTypes(entityTypesInput),
+            });
+            toast.info(`Writing the answer key with ${relabelPin} — the bell tracks it (job #${res.data?.id}). Evaluate against "gold_test" when it finishes.`, 6000);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Could not start the answer key.', 5000);
+        } finally {
+            setRelabelStarting(false);
+        }
+    };
+
     const handleGenerate = async () => {
         // useAllChunks doesn't need source_text — the server samples
         // from the cleaned-chunk pool per batch.
@@ -1127,6 +1153,16 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                     title="Read the last span evaluation and generate rows for the entity types it scored under F1 0.8, sampling from all passages."
                                 >
                                     {refineLoading ? 'Reading last evaluation…' : 'Refine weak types'}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => void handleWriteAnswerKey()}
+                                    disabled={relabelStarting || isGenerating}
+                                    data-testid="synthetic-write-answer-key"
+                                    title="Label the test split's texts with the selected model (texts unchanged, offsets verified) and keep them as the project's answer key (gold_test) — a key the training teacher didn't write."
+                                >
+                                    {relabelStarting ? 'Starting…' : `Write answer key with ${relabelPin ?? 'this model'}`}
                                 </button>
                                 {refineInfo && refineInfo.types.length > 0 && (
                                     <div className="form-hint" data-testid="synthetic-refine-info">
