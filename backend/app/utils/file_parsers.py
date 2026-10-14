@@ -45,8 +45,54 @@ def parse_csv(file_path: Path) -> str:
     return parse_tabular(file_path)
 
 
+# ── OCR for scanned pages ────────────────────────────────────────────────
+#
+# A scanned PDF has no text layer. When the system has poppler's pdftoppm
+# and tesseract (apt: poppler-utils tesseract-ocr), pages without text are
+# rendered and OCR'd; otherwise the parse error says what to install.
+# BREWSLM_OCR=0 turns it off; BREWSLM_OCR_LANG (default "eng", tesseract
+# language codes joined by "+") and BREWSLM_OCR_DPI (default 300) tune it.
+
+OCR_TIMEOUT_SECONDS = 180
+
+
+def ocr_available() -> bool:
+    import os
+    import shutil
+
+    if os.environ.get("BREWSLM_OCR", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return False
+    return bool(shutil.which("pdftoppm") and shutil.which("tesseract"))
+
+
+def ocr_pdf_pages(file_path: Path, pages: list[int]) -> dict[int, str]:
+    """OCR the given 1-based ``pages`` of a PDF: pdftoppm renders each page
+    to PNG, tesseract reads it. Returns ``{page: text}``."""
+    import os
+    import subprocess
+    import tempfile
+
+    dpi = str(int(os.environ.get("BREWSLM_OCR_DPI") or 300))
+    lang = os.environ.get("BREWSLM_OCR_LANG") or "eng"
+    out: dict[int, str] = {}
+    with tempfile.TemporaryDirectory(prefix="brewslm-ocr-") as tmp:
+        for page in pages:
+            prefix = os.path.join(tmp, f"p{page}")
+            subprocess.run(
+                ["pdftoppm", "-r", dpi, "-f", str(page), "-l", str(page), "-png", "-singlefile", str(file_path), prefix],
+                check=True, capture_output=True, timeout=OCR_TIMEOUT_SECONDS,
+            )
+            result = subprocess.run(
+                ["tesseract", f"{prefix}.png", "stdout", "-l", lang, "--psm", "3"],
+                check=True, capture_output=True, timeout=OCR_TIMEOUT_SECONDS,
+            )
+            out[page] = result.stdout.decode("utf-8", errors="replace").strip()
+    return out
+
+
 def parse_pdf(file_path: Path) -> str:
-    """Extract text from PDF using PyPDF2."""
+    """Extract text from a PDF with PyPDF2; pages without a text layer
+    (scanned) are OCR'd when tesseract + pdftoppm are installed."""
     try:
         from PyPDF2 import PdfReader
     except ImportError as exc:
@@ -56,11 +102,26 @@ def parse_pdf(file_path: Path) -> str:
         pages = [(page.extract_text() or "").strip() for page in reader.pages]
     except Exception as exc:  # noqa: BLE001
         raise DocumentParseError(f"Couldn't read this PDF ({exc}). Is it password-protected or damaged?") from exc
+    empty = [index + 1 for index, text in enumerate(pages) if not text]
+    if empty and ocr_available():
+        try:
+            ocr = ocr_pdf_pages(file_path, empty)
+        except Exception as exc:  # noqa: BLE001
+            if len(empty) == len(pages):
+                raise DocumentParseError(f"This PDF looks scanned and OCR failed ({exc}).") from exc
+            ocr = {}
+        for page, text in ocr.items():
+            pages[page - 1] = text
     text = "\n\n".join(p for p in pages if p)
     if not text.strip():
         raise DocumentParseError(
             "This PDF has no extractable text — it looks like a scanned/image PDF. "
-            "OCR isn't supported yet; export it as text or DOCX and upload that."
+            + (
+                "OCR found no text on its pages either."
+                if empty and ocr_available()
+                else "Install OCR on the server (apt install tesseract-ocr poppler-utils) to read scans, "
+                "or export it as text or DOCX and upload that."
+            )
         )
     return text
 

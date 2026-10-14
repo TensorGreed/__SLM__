@@ -361,6 +361,37 @@ other kinds of OCR damage — broken words and lines aren't simulated.
 Turn it on (Medium) when your documents come from scans; leave it off
 for born-digital text.
 
+### A scanned PDF, OCR'd by BrewSLM
+
+Scanned PDFs are now read: pages without a text layer are rendered
+(`pdftoppm`) and OCR'd (`tesseract`) during ingestion when those tools
+are installed (`apt install tesseract-ocr poppler-utils`); without them
+the upload says what to install. `BREWSLM_OCR=0` turns it off;
+`BREWSLM_OCR_LANG` (e.g. `eng+deu`) and `BREWSLM_OCR_DPI` tune it.
+
+Project 31 (2026-10-14): the 44 answer-key texts typeset on six A4 pages
+with a letterhead and page footers, then degraded like a scan (skew,
+blur, speckle, JPEG) into an image-only PDF → upload → BrewSLM OCR'd it
+in 24 s (real OCR errors: `securehealth net`, `HPL- 112233`, stray `‘ ~ _`
+at line starts, lines broken mid-sentence) → cleaned into 18 passages →
+Haiku 4.5 labelled them as they are (279 spans, 50 s; rows rejected from
+training with a reason — evaluation only). F1 against that key:
+
+| run | precision | recall | F1 | on the clean texts (Haiku key) |
+|---|---|---|---|---|
+| #62 (passages) | 0.59 | 0.73 | 0.65 | 0.85 |
+| #64 (whole documents) | 0.65 | 0.72 | 0.68 | 0.83 |
+| #65 (+ OCR-noise copies) | 0.70 | 0.72 | **0.71** | 0.83 |
+
+Real OCR costs ~0.15 F1 against clean text — more than the
+character-swap simulation predicted, because OCR also breaks lines,
+splits tokens and adds stray marks. The noise copies help a little,
+mostly precision (+0.05 over #64); recall doesn't move. Weakest on the
+scan: passport (0 of 6), bank account, person name (0.47 on 36 — names
+broken across lines). 18 passages is a small test: treat ±0.03 as
+noise. Next: train on OCR'd text itself (paged sample documents through
+the same scan → OCR path) rather than simulated swaps.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the

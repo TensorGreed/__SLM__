@@ -436,7 +436,13 @@ runs real CPU inference). ~4 min locally.
   used to become ACCEPTED training text); scanned PDFs error out; HTML/DOCX
   tables supported. Cleaning a row file is row-preserving
   (`cleaning_service._clean_structured_document`: per-field PII redaction,
-  dup/empty drop, columns kept) — only documents are chunked. Import wizard
+  dup/empty drop, columns kept) — only documents are chunked. **Scanned
+  PDFs are OCR'd** (`file_parsers.parse_pdf`: pages with no text layer →
+  `ocr_pdf_pages` = `pdftoppm -r 300` + `tesseract … stdout`, subprocess,
+  no Python dep) when `ocr_available()` (both binaries on PATH and
+  `BREWSLM_OCR` not off; `BREWSLM_OCR_LANG` / `_DPI`); otherwise the
+  DocumentParseError says "apt install tesseract-ocr poppler-utils". CI has
+  no tesseract — the OCR test skips there. Import wizard
   takes browser uploads: `POST /projects/{id}/dataset-import/upload` stages
   under `projects/{id}/imports/` → `file:` locator (`sources/file.py`).
 - **Task shape (Wave 2b)** — `task_shape_service` is the single detector +

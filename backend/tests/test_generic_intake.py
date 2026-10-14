@@ -266,3 +266,41 @@ class ImportWizardUploadTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OcrTests(unittest.TestCase):
+    """Scanned PDFs: pages without a text layer are OCR'd when tesseract +
+    pdftoppm are installed; otherwise the error says what to install."""
+
+    def test_image_only_pdf_is_ocrd(self):
+        from app.utils.file_parsers import ocr_available, parse_pdf
+
+        if not ocr_available():
+            self.skipTest("tesseract / pdftoppm not installed")
+        from PIL import Image, ImageDraw, ImageFont
+
+        try:
+            font = ImageFont.truetype("DejaVuSans.ttf", 40)
+        except OSError:
+            self.skipTest("no TrueType font to render with")
+        img = Image.new("L", (1700, 600), 255)
+        draw = ImageDraw.Draw(img)
+        draw.text((80, 120), "Invoice for Ada Lovelace", fill=0, font=font)
+        draw.text((80, 220), "Call 555-0100 about card ending 4242.", fill=0, font=font)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scan.pdf"
+            img.save(path, "PDF", resolution=200)
+            text = parse_pdf(path)
+        self.assertIn("Ada Lovelace", text)
+        self.assertIn("555-0100", text)
+
+    def test_without_ocr_tools_the_error_says_what_to_install(self):
+        from unittest import mock
+
+        from app.utils import file_parsers
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(file_parsers, "ocr_available", lambda: False):
+            path = Path(tmp) / "scan.pdf"
+            path.write_bytes(_blank_pdf())
+            with self.assertRaisesRegex(DocumentParseError, "tesseract-ocr poppler-utils"):
+                file_parsers.parse_pdf(path)
