@@ -138,9 +138,29 @@ against the local key): recall falls on exactly the types the local
 teacher under-labelled (phone R 0.44, email R 0.59, person_name R
 0.72), and the types both labellers agree on stay perfect (IBAN, IP
 address, MRN, ticket id; CVV 0.95, card expiry 0.93). About a third of
-the "error" the first key measured was the key, not the model — and the
-next refine target is the local teacher's recall on phones, emails and
-names, which the regex pass should be catching.
+the "error" the first key measured was the key, not the model.
+
+**Why the local labels lacked them — and the fix.** Every one of the 26
+phones and emails the Haiku key had and the local labels didn't matches
+BrewSLM's own regex. They were missed because the *refine* passes
+restricted the entity-type list to the weak types, and both the teacher
+("use ONLY these") and the regex merge honoured it — so refine rows
+carried unlabelled phones, emails and names, and after the re-split those
+rows taught the model that such spans are nothing. Two changes: a refine
+now passes **focus types** (what each snippet must contain) separately
+from the **entity-type list** (the project's whole vocabulary, every type
+of which is labelled — the Refine button does this for you), and
+**Regex pass over saved rows** (`POST /synthetic/spans/regex-augment`,
+idempotent) repairs rows already generated under a restricted list: on
+project 31 it added 438 entities (210 phones, 208 emails) to 254 of 874
+rows. Retrained on the repaired labels (run #57, same 44 test texts), the
+run reads **P 0.79 / R 0.79 / F1 0.79** against the Haiku key (was 0.74):
+phone 0.61 → **0.96**, email 0.71 → **1.00**. What remains against the
+second opinion is labelling *convention*, not missing labels —
+`date_of_birth` 0.60 (Haiku reads the local teacher's DOBs as other
+dates), `bank_account` 0.32, `national_id` 0.59, `provider_name` 0.52
+(the two labellers disagree on those too), and names inside greetings
+(person_name recall 0.72).
 
 ## 5. Export → Hugging Face
 

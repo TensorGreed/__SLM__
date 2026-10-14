@@ -1087,6 +1087,15 @@ runs real CPU inference). ~4 min locally.
   sends `backend: "ollama"` for the local provider. Seed prompt asks for
   varied surface forms (separators, locale id formats, names in greetings).
   Tests: `tests/test_span_refine.py`, `SyntheticPanel.test.tsx`.
+- **Focus types ≠ vocabulary** (span synthesis): `generate_span_extraction_rows(
+  entity_types=<vocabulary>, focus_types=<must contain>)`; the task / API carry
+  `focus_types`; the prompt says "MUST contain several of: … Still label EVERY
+  other entity of the allowed types"; the regex merge always runs over the
+  full vocabulary. `augment_saved_rows_with_regex(project_id, entity_types)` →
+  `POST /synthetic/spans/regex-augment` (idempotent; `added_by_type`) repairs
+  rows generated under a restricted list (project 31: +438 entities; run #57
+  vs the Haiku key 0.74 → 0.79, phone 0.61 → 0.96, email 0.71 → 1.00). The
+  Refine button sends `all_types` as the list and the weak ones as focus.
 - **Answer key from a second model** (`services/span_relabel_service.py`,
   Job `span_relabel`, `POST /synthetic/relabel-answer-key` {split, backend,
   entity_types}): `relabel_split_as_answer_key` prompts the backend (synth
