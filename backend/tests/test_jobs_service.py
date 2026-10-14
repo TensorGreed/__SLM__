@@ -38,6 +38,7 @@ from app.config import settings  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.job import Job, JobStatus  # noqa: E402
 from app.services.jobs_service import serialize_job  # noqa: E402
+from _job_wait import wait_for_jobs_idle  # noqa: E402
 
 
 # Module-level TestClient boots the FastAPI lifespan once
@@ -420,14 +421,7 @@ class SynthPlaybookAsyncEndpointTests(unittest.TestCase):
 
     def tearDown(self):
         # Don't let this test's Job outlive it (see setUpClass).
-        import time
-
-        deadline = time.monotonic() + 15.0
-        while time.monotonic() < deadline:
-            resp = self.client.get("/api/jobs/active", params={"include_recently_completed": "false"})
-            if resp.status_code == 200 and not resp.json().get("jobs"):
-                return
-            time.sleep(0.1)
+        wait_for_jobs_idle(self.client)
 
     def test_async_synth_returns_202_with_job_stub(self):
         resp = self.client.post(
@@ -501,18 +495,12 @@ class HeldoutEvalAsyncEndpointTests(unittest.TestCase):
         settings.AUTH_ENABLED = cls._prev_auth_enabled
 
     def tearDown(self):
-        # Let this test's background Job finish before the next test
-        # writes: on the shared StaticPool connection a runner session's
-        # rollback can wipe the next test's uncommitted project insert
-        # ("Project N not found" — the long-standing flake here).
-        import time
-
-        deadline = time.monotonic() + 15.0
-        while time.monotonic() < deadline:
-            resp = self.client.get("/api/jobs/active", params={"include_recently_completed": "false"})
-            if resp.status_code == 200 and not resp.json().get("jobs"):
-                return
-            time.sleep(0.1)
+        # Let this test's background Job finish before the next test runs.
+        # "Project N not found" (the long-standing flake here) was a runner
+        # session's ROLLBACK wiping the next test's uncommitted project
+        # insert on the shared StaticPool connection — fixed at the root by
+        # app.database's rollback guard; this keeps Jobs from outliving tests.
+        wait_for_jobs_idle(self.client)
 
     def _instantiate_project(self, name: str) -> int:
         resp = self.client.post(

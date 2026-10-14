@@ -669,6 +669,7 @@ session-start guidance.
 
 ## Backend · Tests
 
+- `backend/tests/_job_wait.py` — Shared test helper: let background Jobs finish before the next test.
 - `backend/tests/conftest.py` — Pytest session-scoped safety pin — force every test to write to /tmp.
 - `backend/tests/test_active_learning_service.py` — Tests for the active-learning recommender (Theme 8 Epic 2).
 - `backend/tests/test_active_learning_slice2.py` — Quality-Lift phase 3 slice 2 — Active-learning snapshot read endpoint
@@ -914,6 +915,7 @@ session-start guidance.
 - `backend/tests/test_seed_group_drilldown_endpoint.py` — Quality-Lift phase 8 slice 1 — seed-group drill-down endpoint.
 - `backend/tests/test_seq2seq_adapter_prompt_wrap.py` — θ-fix tests — seq2seq-pair adapter writes the production
 - `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).
+- `backend/tests/test_shared_connection_rollback_guard.py` — The SQLite StaticPool rollback guard (``app.database``).
 - `backend/tests/test_slice_definitions_slice1.py` — Quality-Lift phase 2, slice 1 — slice_definitions schema + endpoints.
 - `backend/tests/test_slice_evaluator_slice2.py` — Quality-Lift phase 2, slice 2 — slice predicate evaluator + handler wrapper.
 - `backend/tests/test_slice_gates_slice3.py` — Quality-Lift phase 2, slice 3 — Slice gate evaluator behaviors.
