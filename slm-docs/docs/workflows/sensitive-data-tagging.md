@@ -205,6 +205,47 @@ where those edges are (a person's name without the title; each account
 or routing number its own span, digits only) — a definition has to fix
 the boundaries, not just the category. Run #58 is export 7.
 
+### Compliance bundles: start from a regime, score per regime
+
+A compliance bundle is a starting set of entity types for one regime,
+each with a one-line labelling definition. Four ship built in —
+**PCI-DSS** (credit_card, card_expiry, cvv, bank_account, iban),
+**GDPR personal data** (person_name, email, phone, address,
+date_of_birth, national_id, passport, ip_address, device_id,
+geolocation), **HIPAA PHI** (medical_record_number, health_plan_id,
+diagnosis, medication, provider_name, visit_date plus the identifiers
+HIPAA counts) and **CCPA personal information**. They are plain data
+(`compliance_bundles_service.BUILTIN_BUNDLES`), not special handlers:
+any type can carry any tag.
+
+**Compliance bundles** (Synthetic tab, span mode, next to *Labelling
+conventions*) — tick bundles, **Apply bundles**:
+
+- the bundle's types are added to the *Entity types* list;
+- each type you haven't defined yet gets the bundle's wording as its
+  labelling convention — a definition you wrote is **never**
+  overwritten (the toast says how many it kept);
+- each type is tagged with the regime. A type in two bundles
+  (person_name is GDPR, HIPAA and CCPA) carries all their tags.
+  Unticking a bundle removes its tag; the definitions stay.
+
+Below the bundles, the *regime tags* box is one line per type —
+`credit_card: pci_dss, ccpa` — and accepts your own tags
+(`employee_id: internal_tier_1`), so you can group types your own way.
+State lives in `runtime_config["compliance"]`
+(`{bundles, custom, type_regimes}`). API: `GET
+/projects/{id}/compliance/bundles`, `POST .../compliance/apply`
+`{bundle_ids, remove_bundle_ids}`, `PUT .../compliance/type-regimes`
+`{type_regimes}`.
+
+**By regime** — once types are tagged, the span evaluation (Eval tab,
+and the Job result after training) adds a table: per regime, micro
+precision / **recall** / F1 summed from each type's true positives,
+false positives and misses, weakest recall first, with "*N* of *M*
+missed". Recall is the column to read for redaction: every missed span
+is data that leaked. A regime type the evaluation never saw is listed
+as "not in this eval" rather than counted as perfect.
+
 ## 5. Export → Hugging Face
 
 **Export → Hugging Face** packages the run's `model/` directory as-is

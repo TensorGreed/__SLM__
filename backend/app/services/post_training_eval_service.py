@@ -256,9 +256,13 @@ def is_token_classification(exp: Experiment) -> bool:
     return str(cfg.get("task_type") or "").strip().lower() == "token_classification"
 
 
-def span_block(result: Any) -> dict[str, Any]:
-    """The compact span report of one EvalResult: P / R / F1, rows, and
-    the weakest types (lowest F1 first, ties → more gold spans first)."""
+def span_block(result: Any, type_regimes: dict[str, list[str]] | None = None) -> dict[str, Any]:
+    """The compact span report of one EvalResult: P / R / F1, rows, the
+    weakest types (lowest F1 first, ties → more gold spans first) and,
+    when the project tags its types with compliance regimes, micro
+    P / R / F1 per regime (``by_regime``, weakest recall first)."""
+    from app.services.compliance_bundles_service import regime_scores
+
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
     per_class = metrics.get("per_class") if isinstance(metrics.get("per_class"), dict) else {}
     weakest = sorted(
@@ -277,7 +281,16 @@ def span_block(result: Any) -> dict[str, Any]:
         "f1": metrics.get("f1"),
         "rows": metrics.get("total") or metrics.get("evaluated_samples"),
         "weakest_types": weakest,
+        "by_regime": regime_scores(per_class, type_regimes) if type_regimes else [],
     }
+
+
+async def project_type_regimes(db: AsyncSession, project_id: int) -> dict[str, list[str]]:
+    """The project's compliance type→regimes map (``{}`` when none)."""
+    from app.services.compliance_bundles_service import compliance_state
+
+    project = await db.get(Project, project_id)
+    return compliance_state(project.runtime_config if project is not None else None)["type_regimes"]
 
 
 async def project_has_answer_key(db: AsyncSession, project_id: int) -> bool:
@@ -309,6 +322,7 @@ async def run_span_evaluation(
     if await project_has_answer_key(db, project_id):
         targets.append(("answer_key", "gold_test"))
     blocks: dict[str, Any] = {}
+    type_regimes = await project_type_regimes(db, project_id)
     for index, (label, dataset_name) in enumerate(targets):
         await _report(0.1 + 0.8 * index / len(targets), f"Scoring run #{experiment.id} on the {'answer key' if label == 'answer_key' else 'test examples'}")
         result = await run_heldout_evaluation(
@@ -325,7 +339,7 @@ async def run_span_evaluation(
             answer_judge_enabled=False,
         )
         await db.commit()
-        blocks[label] = span_block(result)
+        blocks[label] = span_block(result, type_regimes)
     return {
         "kind": "span_eval",
         "experiment_id": experiment.id,

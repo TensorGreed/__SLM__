@@ -342,7 +342,7 @@ async def span_eval_summary(db: AsyncSession, project_id: int, experiment: Exper
     answer key written by a second model when there is one (the headline:
     the test examples were labelled by the training-data teacher) and on
     the test examples. None when the run has no span evaluation yet."""
-    from app.services.post_training_eval_service import span_block
+    from app.services.post_training_eval_service import project_type_regimes, span_block
 
     latest: dict[str, EvalResult] = {}
     rows = (
@@ -364,10 +364,11 @@ async def span_eval_summary(db: AsyncSession, project_id: int, experiment: Exper
     test_result = latest.get("test")
     primary = key_result or test_result
     failures, failed_count = _failures_from(primary)
-    answer_key = span_block(key_result) if key_result is not None else None
+    type_regimes = await project_type_regimes(db, project_id)
+    answer_key = span_block(key_result, type_regimes) if key_result is not None else None
     if answer_key is not None:
         answer_key["written_by"] = _answer_key_source(project_id)
-    test = span_block(test_result) if test_result is not None else None
+    test = span_block(test_result, type_regimes) if test_result is not None else None
     return {
         "kind": "span_eval",
         "project_id": project_id,
