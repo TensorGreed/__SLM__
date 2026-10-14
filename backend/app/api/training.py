@@ -5486,7 +5486,11 @@ async def cancel(
     experiment_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """Cancel a running training experiment."""
+    """Cancel a running training experiment and stop its process.
+
+    External runs: SIGTERM → SIGKILL the recorded process group; the
+    response's ``cancel_status`` says what happened (see
+    ``training_service.cancel_training``)."""
     try:
         return await cancel_training(db, project_id, experiment_id)
     except ValueError as e:

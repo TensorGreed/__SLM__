@@ -380,13 +380,42 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
 
             publisher_task = asyncio.create_task(_publisher_loop())
 
+            from app.services import training_process_service as tps
+
+            if tps.cancel_requested(output_dir):
+                # Cancelled while the task sat in the queue: never spawn.
+                publisher_stop.set()
+                publisher_task.cancel()
+                await asyncio.gather(publisher_task, return_exceptions=True)
+                await redis_client.aclose()
+                return {"returncode": None, "cancelled": True, "payload": {}}
+
+            # Own session/process group so a cancel can signal train.py and
+            # everything it spawns (dataloader workers, the shell wrapper).
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(BACKEND_DIR),
+                start_new_session=True,
             )
             started_at = datetime.now(timezone.utc)
+            process_record: dict | None = None
+            try:
+                process_record = tps.record_training_process(
+                    output_dir,
+                    pid=process.pid,
+                    command=command,
+                    experiment_id=experiment_id,
+                    task_id=getattr(self.request, "id", None),
+                )
+            except Exception as record_error:  # noqa: BLE001
+                logger.warning(
+                    "could not record training process for experiment %s: %s",
+                    experiment_id,
+                    record_error,
+                )
+            cancelled_by_worker = False
 
             try:
                 _queue_log(
@@ -487,12 +516,36 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
 
                 timeout_seconds = int(settings.EXTERNAL_COMMAND_TIMEOUT_SECONDS)
                 timed_out = False
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=timeout_seconds)
-                except TimeoutError:
-                    timed_out = True
-                    process.kill()
-                    await process.wait()
+                fallback_record = {
+                    "pid": process.pid,
+                    "pgid": process.pid,
+                    "start_time": None,
+                    "command": command,
+                }
+                wait_task = asyncio.ensure_future(process.wait())
+                wait_started = time.monotonic()
+                while True:
+                    done, _ = await asyncio.wait({wait_task}, timeout=2.0)
+                    if done:
+                        break
+                    if tps.cancel_requested(output_dir) and not cancelled_by_worker:
+                        # Worker-side path: the API also signals the group,
+                        # but this one works even when it could not.
+                        cancelled_by_worker = True
+                        _queue_log("[worker] cancel requested — stopping training process")
+                        await tps.terminate_process_record(
+                            process_record or fallback_record,
+                            grace_seconds=float(settings.TRAINING_CANCEL_GRACE_SECONDS),
+                        )
+                        continue
+                    if time.monotonic() - wait_started > timeout_seconds:
+                        timed_out = True
+                        await tps.terminate_process_record(
+                            process_record or fallback_record,
+                            grace_seconds=5.0,
+                        )
+                        await wait_task
+                        break
 
                 await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
 
@@ -509,7 +562,10 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                     finished_at=finished_at,
                 )
 
-                if timed_out:
+                if monitor_status == "cancelled":
+                    _queue_log("[worker] training process stopped by cancel request")
+                    await _publish_status("cancelled", {"returncode": process.returncode})
+                elif timed_out:
                     _queue_log(
                         (
                             "[worker] external training command timed out after "
@@ -542,9 +598,11 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                         payload = {}
                 return {
                     "returncode": process.returncode,
+                    "cancelled": monitor_status == "cancelled",
                     "payload": payload,
                 }
             finally:
+                tps.clear_training_process(output_dir, pid=process.pid)
                 publisher_stop.set()
                 try:
                     await asyncio.wait_for(publish_queue.join(), timeout=5.0)
@@ -555,6 +613,8 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                 await redis_client.aclose()
             
         execution = loop.run_until_complete(_run())
+        if isinstance(execution, dict) and execution.get("cancelled"):
+            return {"status": "cancelled", "experiment_id": experiment_id}
         returncode = int(execution.get("returncode", -1))
         
         if returncode == 0:

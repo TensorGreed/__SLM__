@@ -285,6 +285,7 @@ session-start guidance.
 - `backend/app/services/training_epoch_policy.py` — Dataset-size-aware epoch policy (``auto_epochs``).
 - `backend/app/services/training_manifest_service.py` — P14 — Capture + read immutable training-run manifests.
 - `backend/app/services/training_preflight_service.py` — Training capability matrix and preflight checks.
+- `backend/app/services/training_process_service.py` — Track + stop the OS process behind an external training run.
 - `backend/app/services/training_recipe_service.py` — Training recipe catalog and resolution helpers.
 - `backend/app/services/training_runtime_service.py` — Training runtime plugin SDK and registry.
 - `backend/app/services/training_service.py` — Training pipeline service — SFT, LoRA, checkpoint management.
@@ -932,6 +933,7 @@ session-start guidance.
 - `backend/tests/test_train_script_standalone.py` — ``scripts/train.py`` is launched as a standalone script by the training
 - `backend/tests/test_train_token_classification.py` — Token classification for span extraction — the pure parts:
 - `backend/tests/test_trainability_forecast_service.py` — Tests for the trainability forecast service (USER-SUCCESS Epic 1).
+- `backend/tests/test_training_cancel_external.py` — Cancelling an external training run stops its process.
 - `backend/tests/test_training_config_gap_patch.py` — Training Config Gap patch engine — Coach-stage-2 phase 2.
 - `backend/tests/test_training_config_gap_phase3.py` — Phase-3 additions to the training-config gap scanner.
 - `backend/tests/test_training_config_gap_service.py` — Training Config Gap scanner — Coach-stage-2 phase 1.
