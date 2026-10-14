@@ -43,14 +43,14 @@ describe('SeedDocumentsCard', () => {
         expect(onDone).toHaveBeenCalled();
     });
 
-    it('asks for multi-page documents with headers and footers when ticked', async () => {
+    it('asks for the chosen layout (multi-page or scanned)', async () => {
         apiMock.post.mockResolvedValue({ data: { id: 92, kind: 'seed_documents', status: 'queued', project_id: 5 } });
         const user = userEvent.setup();
         render(<SeedDocumentsCard projectId={5} />);
         await user.click(screen.getByTestId('seed-documents-toggle'));
         await waitFor(() => expect(screen.getByTestId('seed-documents-genres')).toHaveValue('customer support ticket\nclinical visit note'));
-        await user.click(screen.getByTestId('seed-documents-paged'));
+        await user.selectOptions(screen.getByTestId('seed-documents-layout'), 'scanned');
         await user.click(screen.getByTestId('seed-documents-start'));
-        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/5/flows/seed-documents', expect.objectContaining({ layout: 'paged' })));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/5/flows/seed-documents', expect.objectContaining({ layout: 'scanned' })));
     });
 });

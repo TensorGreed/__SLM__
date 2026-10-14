@@ -152,7 +152,7 @@ class SeedDocumentsRequest(BaseModel):
     words: int = Field(160, ge=MIN_WORDS, le=MAX_WORDS)
     backend: str | None = None
     domain_hint: str = Field("", max_length=500)
-    layout: str = Field("plain", pattern="^(plain|paged)$")
+    layout: str = Field("plain", pattern="^(plain|paged|scanned)$")
     words_per_page: int = Field(110, ge=40, le=600)
     chunk_size: int = Field(900, ge=200, le=4000)
     chunk_overlap: int = Field(60, ge=0, le=1000)

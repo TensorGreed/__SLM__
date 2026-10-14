@@ -118,7 +118,7 @@ export async function startSeedDocuments(
     options: {
         kinds?: string; genres?: string[]; count?: number; words?: number; backend?: string | null; domainHint?: string;
         /** "paged": pages with header / footer lines (letterheads, "Page 2 of 5"…). */
-        layout?: 'plain' | 'paged';
+        layout?: 'plain' | 'paged' | 'scanned';
     } = {},
 ): Promise<Job> {
     const body: Record<string, unknown> = {};

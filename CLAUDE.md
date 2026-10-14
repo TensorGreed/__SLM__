@@ -418,7 +418,12 @@ runs real CPU inference). ~4 min locally.
   review-queue panel** (`DataStudioReviewQueuePanel`) is actionable: its
   synthetic-pending `by_source` groups carry the raw `synth_source` and
   render inline "Accept all / Reject all" (Epic E). Reject is soft (rows
-  stay on disk, grouped by `reject_reason`, bulk-purgeable).
+  stay on disk, grouped by `reject_reason`, bulk-purgeable). Training-bound reads
+  (`dataset_service._load_records_from_file`) drop BOTH "pending" and
+  "rejected" rows (rejected rows used to train — a rejected eval-only answer
+  key reached project 31's split on 2026-10-14); the review queue reads all
+  (`include_pending_synth=True`) and gives rows missing an integer id the next
+  free one (`_ensure_row_ids`).
 - **Versioned prepared splits** (Epic E) — `split_dataset` writes the active
   `prepared/{train,val,test}.jsonl` + `manifest.json` (the single source the
   trainer/export/coverage read) AND snapshots each run to
@@ -442,7 +447,8 @@ runs real CPU inference). ~4 min locally.
   no Python dep) when `ocr_available()` (both binaries on PATH and
   `BREWSLM_OCR` not off; `BREWSLM_OCR_LANG` / `_DPI`); otherwise the
   DocumentParseError says "apt install tesseract-ocr poppler-utils". CI has
-  no tesseract — the OCR test skips there. Import wizard
+  no tesseract — the OCR test skips there. `process_document` runs `parse_file` in
+  `asyncio.to_thread` — OCR inline froze the whole backend for minutes. Import wizard
   takes browser uploads: `POST /projects/{id}/dataset-import/upload` stages
   under `projects/{id}/imports/` → `file:` locator (`sources/file.py`).
 - **Task shape (Wave 2b)** — `task_shape_service` is the single detector +
@@ -1086,7 +1092,12 @@ runs real CPU inference). ~4 min locally.
   letterheads, CONFIDENTIAL, "Page i of n", "- i -", print dates…). The
   bracketed "[i/n]" footer is deliberately never generated — it is the
   held-out style for measuring. Cleaning flattens the line breaks, so a
-  footer reads inline in the passage. Tests: `tests/test_seed_documents.py`
+  footer reads inline in the passage. **`layout="scanned"`** (P1f): `render_scanned_pdf`
+  typesets the paged documents on A4 pages (a footer line ends a page),
+  degrades them (`_degrade_page`: skew, blur, speckle, contrast, JPEG) and
+  ingests an image-only PDF that `parse_pdf` OCRs — raises when OCR isn't
+  available. Project 31 run #67 (+125 OCR'd passages) = run #65 on the real
+  scan (0.72 vs 0.71). Tests: `tests/test_seed_documents.py`
   (read the ingested doc back IN THE SAME LOOP — a later TestClient read can
   lose the write on the StaticPool).
 - **Refine weak types** (`services/span_refine_service.py`): `latest_span_eval`
@@ -1109,6 +1120,22 @@ runs real CPU inference). ~4 min locally.
   rows generated under a restricted list (project 31: +438 entities; run #57
   vs the Haiku key 0.74 → 0.79, phone 0.61 → 0.96, email 0.71 → 1.00). The
   Refine button sends `all_types` as the list and the weak ones as focus.
+- **Custom infotypes** (`services/span_custom_patterns_service.py`):
+  `runtime_config["span_custom_patterns"]` = `[{type, pattern, description,
+  flags}]` (flags i/m/s). Validated on write (`validate_pattern`): type
+  normalised like the definitions, compiles, ≤ 300 chars, no empty match,
+  nested unbounded repeat (`(a+)+`) refused, then a timed scan of ~2k-char
+  adversarial strings in a killable child process (`_speed_check`, 3 s — `re`
+  holds the GIL, a thread can't time it out). The regex pass
+  (`_extract_entities_via_regex` / `_merge_regex_entities` /
+  `augment_saved_rows_with_regex(custom_patterns=)`) runs built-ins + custom
+  under the vocabulary filter (custom adds, never overrides); loaded via
+  `load_patterns(db, pid)` in span generation, `relabel_training_rows`,
+  `_label_and_append` and regex-augment — not the second-model answer key.
+  `GET/PUT /synthetic/type-patterns` (PUT all-or-nothing, 422
+  `INVALID_TYPE_PATTERN`), `POST /synthetic/type-patterns/test` (count + first
+  10 matches over saved rows + passages). UI: `SpanAddTypeForm` (name +
+  definition + pattern with Test). Tests: `tests/test_span_custom_patterns.py`.
 - **Labelling conventions** (`services/span_type_definitions_service.py`):
   `runtime_config["span_type_definitions"]` = `{type: definition}`
   (`normalise_definitions`, `project_definitions`, `load_definitions(db, pid)`);
@@ -1178,6 +1205,32 @@ runs real CPU inference). ~4 min locally.
   (`cloud_llm_<provider>` / `api_key`) and flips the "✓ saved on project"
   badge; the span tools' cloud pins resolve it server-side. (Before this the
   only UI that saved one was the Answer Key tab's LLM-gold panel checkbox.)
+- **Compliance bundles** (`services/compliance_bundles_service.py`,
+  `api/compliance.py`): a bundle = regime tag + entity types with one-line
+  definitions, stored as DATA (`BUILTIN_BUNDLES`: pci_dss / gdpr / hipaa /
+  ccpa). `apply_bundles(cfg, ids, remove_ids)` (pure) adds types to
+  `runtime_config["compliance"] = {bundles, custom, type_regimes}`, fills
+  `span_type_definitions` ONLY for undefined types; removal drops the tag but
+  keeps definitions; `set_type_regimes` replaces the map (tags outside the
+  built-ins = custom). `GET /projects/{id}/compliance/bundles`, `POST
+  .../apply`, `PUT .../type-regimes`. `regime_scores(per_class, type_regimes)`
+  = micro P/R/F1 per regime (weakest recall first; unseen types →
+  `unscored_types`) → `span_block(result, type_regimes)["by_regime"]` in
+  `span_eval_summary` and the `run_span_evaluation` Job result. UI:
+  `ComplianceBundlePicker` (Synthetic span mode; fires
+  `brewslm:span-definitions-changed` so `SpanTypeDefinitionsEditor` reloads)
+  + `SpanRegimeTable` on the span `EvalSummaryCard`. Tests:
+  `tests/test_compliance_bundles.py`, `ComplianceBundlePicker.test.tsx`.
+- **LLM answer key** (`gold_llm_service`, `POST /gold/generate-via-llm`):
+  count drift is a 200 with `warnings`, never a 400 (the call is already
+  paid); only no usable row → 400 `LLM_RESPONSE_UNPARSEABLE`. Span rows:
+  wrong offsets are re-located from the entity text (`_locate_entity`), a row
+  is dropped only when an entity isn't in it, and the prompt carries
+  `span_type_definitions` as vocabulary + conventions. Frontend
+  `parseApiErrorDetail` reads the envelope's top-level `error_code` /
+  `message` (it used to show every 400 as UPSTREAM_ERROR) — tests should mock
+  the real envelope. (Project 31's three 400s on 2026-10-14 were
+  LLM_RESPONSE_COUNT_MISMATCH.)
 - **Answer key from a second model** (`services/span_relabel_service.py`,
   Job `span_relabel`, `POST /synthetic/relabel-answer-key` {split, backend,
   entity_types}): `relabel_split_as_answer_key` prompts the backend (synth
@@ -1207,6 +1260,21 @@ runs real CPU inference). ~4 min locally.
   under `model_ref` or `model_ref/model`) → `_run_token_classification_inference`
   tags the pair's `structured_input` and emits `{"entities": [...]}` JSON for
   the span_set scorer; dispatched before the classifier-head check.
+  **Packaging (Epic P5)**: HF/Docker export of a span run →
+  `span_model_package_service.package_token_classifier` writes
+  `model/README.md` (pure `build_span_model_card`: evidence-only — label
+  space, row sources only when the train file's row count still matches,
+  per-type P/R/F1 from the latest span EvalResults, answer key first, usage
+  with `stride` = ¼ window + the leading-space trim, limitations) +
+  `model/thresholds.json` (all 0 = argmax); manifest `span_package`.
+  `predict_spans(with_scores=, thresholds=, min_score=, recall_bias=)` →
+  `decode_scored_spans` (score = mean P(B-t)+P(I-t); bias subtracted from P(O)
+  before argmax); all defaults → the old argmax path. `POST
+  /projects/{id}/redact` {text, experiment_id?, mode mask|tag|spans,
+  min_score?, recall_bias?} (`redaction_service`, one cached model via
+  `load_tagger` — tests patch it). `RedactionTryBox` in the span
+  EvalSummaryCard. Tests: `tests/test_span_packaging.py`. No ONNX
+  (optimum/onnx not installed).
   **"Evaluate this run"** works for these runs: the lift job
   (`run_post_training_lift_eval`, auto after training too) routes
   `is_token_classification` runs to `run_span_evaluation` — no base model

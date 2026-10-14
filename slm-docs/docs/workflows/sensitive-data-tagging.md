@@ -544,8 +544,29 @@ splits tokens and adds stray marks. The noise copies help a little,
 mostly precision (+0.05 over #64); recall doesn't move. Weakest on the
 scan: passport (0 of 6), bank account, person name (0.47 on 36 — names
 broken across lines). 18 passages is a small test: treat ±0.03 as
-noise. Next: train on OCR'd text itself (paged sample documents through
-the same scan → OCR path) rather than simulated swaps.
+noise.
+
+**Training on OCR'd text.** *Write sample documents* has a third layout,
+**Scanned (OCR'd) multi-page**: BrewSLM typesets the paged documents,
+degrades the pages like a scan, saves an image-only PDF and OCRs it on
+ingestion, so the passages carry real OCR errors (needs tesseract on the
+server). Project 31: 40 scanned documents (13 min incl. ~150 pages of
+OCR) → 127 passages → 125 labelled locally (630 entities) → accepted →
+run #67 (+ OCR-noise copies, like #65):
+
+| | run #65 | run #67 (+ OCR'd passages) |
+|---|---|---|
+| the real scan (Haiku key) | 0.71 | 0.72 |
+| footer documents, clean / 10% noise | 0.84 / 0.79 | 0.84 / 0.80 |
+| the 44 answer-key texts | 0.83 | 0.85 |
+
+OCR'd training text didn't move the scan score. The weak types on the
+scan are digit strings OCR mangles (passport, bank account, card
+number) — and the local labeller, labelling the same mangled text, may
+skip them, so the training labels are thinnest exactly where the model
+needs help. Next: label the OCR'd passages with a stronger model, and
+grow the scan test past 18 passages before trusting differences of a
+few points.
 
 ## What the first run produced (2026-10-13)
 

@@ -184,4 +184,27 @@ class PagedLayoutTests(unittest.TestCase):
     def test_plain_layout_is_unchanged(self):
         from app.services.seed_documents_service import LAYOUTS
 
-        self.assertEqual(LAYOUTS, ("plain", "paged"))
+        self.assertEqual(LAYOUTS, ("plain", "paged", "scanned"))
+
+
+class ScannedLayoutTests(unittest.TestCase):
+    def test_scanned_layout_is_accepted_and_renders_an_ocr_readable_pdf(self):
+        import random
+
+        from app.services.seed_documents_service import LAYOUTS, paginate_document, render_scanned_pdf
+        from app.utils.file_parsers import ocr_available, parse_pdf
+
+        self.assertIn("scanned", LAYOUTS)
+        text = " ".join(f"Sentence {i} mentions Ada Lovelace." for i in range(40))
+        pdf = render_scanned_pdf([paginate_document(text, random.Random(1), genre="note")], random.Random(2))
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        if not ocr_available():
+            self.skipTest("tesseract / pdftoppm not installed")
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scan.pdf"
+            path.write_bytes(pdf)
+            read = parse_pdf(path)
+        self.assertGreater(read.count("Lovelace"), 10, "OCR reads most of it back")

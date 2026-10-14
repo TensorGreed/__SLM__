@@ -92,7 +92,7 @@ def build_document_prompt(
 # "[3/11]" footer is deliberately absent: it is the held-out style the
 # re-measurement uses.
 
-LAYOUTS = ("plain", "paged")
+LAYOUTS = ("plain", "paged", "scanned")
 DEFAULT_WORDS_PER_PAGE = 110
 _ORGS = (
     "Northwind Health Partners", "Bluebell Mutual", "Harbor & Finch LLP", "Crestline Payments",
@@ -150,6 +150,92 @@ def paginate_document(
         out.append(page)
         out.append(footer_tpl.format(**fields))
     return "\n".join(out)
+
+
+# ── layout="scanned": paged documents typeset as degraded page images ────
+#
+# For a model that must read OCR'd text: each paged document is typeset on
+# A4 pages, the pages are degraded like a scan (skew, blur, speckle, uneven
+# contrast, JPEG) and saved as an image-only PDF, which ingestion then OCRs
+# (file_parsers: tesseract + pdftoppm) — so the training text carries real
+# OCR errors (broken lines, split tokens, stray marks), not simulated swaps.
+
+SCAN_DPI = 200
+_PAGE_W, _PAGE_H, _MARGIN, _LINE_H, _CHARS_PER_LINE = 1654, 2339, 150, 44, 78
+
+
+def _scan_fonts() -> tuple[Any, Any]:
+    from PIL import ImageFont
+
+    try:
+        return ImageFont.truetype("DejaVuSerif.ttf", 30), ImageFont.truetype("DejaVuSans.ttf", 24)
+    except OSError:
+        return ImageFont.load_default(size=30), ImageFont.load_default(size=24)
+
+
+def _degrade_page(img: Any, rng: random.Random) -> Any:
+    import io
+
+    from PIL import Image, ImageFilter
+
+    img = img.rotate(rng.uniform(-0.8, 0.8), resample=Image.BICUBIC, fillcolor=245)
+    img = img.filter(ImageFilter.GaussianBlur(rng.uniform(0.5, 0.9)))
+    px = img.load()
+    w, h = img.size
+    for _ in range(9000):
+        px[rng.randrange(w), rng.randrange(h)] = rng.choice((0, 60, 200, 255))
+    img = img.point(lambda v: int(30 + v * 0.82))
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=55)
+    buf.seek(0)
+    return Image.open(buf).convert("L")
+
+
+def render_scanned_pdf(paged_texts: list[str], rng: random.Random) -> bytes:
+    """Typeset each paged document (its lines: header / body / footer, as
+    ``paginate_document`` writes them) on A4 pages — a new document starts a
+    new page, a footer line ends one — degrade every page, and return an
+    image-only PDF."""
+    import io
+    import textwrap
+
+    from PIL import Image, ImageDraw
+
+    body, small = _scan_fonts()
+    per_page = (_PAGE_H - 2 * _MARGIN) // _LINE_H
+    pages: list[list[tuple[str, bool]]] = []
+    for doc in paged_texts:
+        current: list[tuple[str, bool]] = []
+        for raw_line in doc.split("\n"):
+            wrapped = textwrap.wrap(raw_line, _CHARS_PER_LINE) or [""]
+            short = len(raw_line) < 60  # furniture lines are short
+            for line in wrapped:
+                current.append((line, short))
+                if len(current) >= per_page:
+                    pages.append(current)
+                    current = []
+            if short and _FOOTER_HINT.search(raw_line) and current:
+                pages.append(current)
+                current = []
+        if current:
+            pages.append(current)
+    images = []
+    for lines in pages:
+        img = Image.new("L", (_PAGE_W, _PAGE_H), 255)
+        draw = ImageDraw.Draw(img)
+        y = _MARGIN
+        for line, short in lines:
+            draw.text((_MARGIN, y), line, fill=rng.randint(0, 35), font=small if short else body)
+            y += _LINE_H
+        images.append(_degrade_page(img, rng))
+    if not images:
+        raise RuntimeError("Nothing to typeset.")
+    out = io.BytesIO()
+    images[0].save(out, "PDF", resolution=SCAN_DPI, save_all=True, append_images=images[1:])
+    return out.getvalue()
+
+
+_FOOTER_HINT = re.compile(r"(?i)\bpage\b|^-\s*\d+\s*-$|^\d+\s*/\s*\d+$|^p\.\s*\d+$|continued|generated|printed")
 
 
 def normalise_document(text: str) -> str:
@@ -246,7 +332,7 @@ async def run_seed_documents(
         if len(text) < MIN_ACCEPTED_CHARS:
             failed += 1
             continue
-        if layout == "paged":
+        if layout in ("paged", "scanned"):
             text = paginate_document(text, rng, genre=genre, words_per_page=words_per_page)
         texts.append(text)
 
@@ -264,10 +350,24 @@ async def run_seed_documents(
 
     await report(0.9, f"Ingesting {len(texts)} documents")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    filename = f"seed-documents-{stamp}.txt"
-    doc = await ingest_file(
-        db, project_id, filename, ("\n\n".join(texts) + "\n").encode("utf-8"), source="seed_documents",
-    )
+    if layout == "scanned":
+        from app.utils.file_parsers import ocr_available
+
+        if not ocr_available():
+            raise RuntimeError(
+                "Scanned sample documents need OCR on the server: apt install tesseract-ocr poppler-utils."
+            )
+        await report(0.9, f"Typesetting {len(texts)} documents as scanned pages")
+        import asyncio as _asyncio
+
+        content = await _asyncio.to_thread(render_scanned_pdf, texts, rng)
+        filename = f"seed-documents-{stamp}.pdf"
+    else:
+        content = ("\n\n".join(texts) + "\n").encode("utf-8")
+        filename = f"seed-documents-{stamp}.txt"
+    doc = await ingest_file(db, project_id, filename, content, source="seed_documents")
+    if layout == "scanned":
+        await report(0.92, "Reading the scans (OCR)")
     await process_document(db, project_id, doc.id)
     await report(0.95, "Cleaning into passages")
     # The documents are invented by construction, so cleaning must NOT

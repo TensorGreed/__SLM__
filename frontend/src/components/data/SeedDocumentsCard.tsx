@@ -23,7 +23,7 @@ export default function SeedDocumentsCard({ projectId, onDone }: SeedDocumentsCa
     const [genres, setGenres] = useState('');
     const [count, setCount] = useState(60);
     const [words, setWords] = useState(160);
-    const [paged, setPaged] = useState(false);
+    const [layout, setLayout] = useState<'plain' | 'paged' | 'scanned'>('plain');
     const [starting, setStarting] = useState(false);
     const [startedJobId, setStartedJobId] = useState<number | null>(null);
 
@@ -59,7 +59,7 @@ export default function SeedDocumentsCard({ projectId, onDone }: SeedDocumentsCa
                 genres: genres.split('\n').map((g) => g.trim()).filter(Boolean),
                 count: Math.max(1, count),
                 words: Math.max(60, words),
-                layout: paged ? 'paged' : 'plain',
+                layout,
             });
             setStartedJobId(started.id);
             toast.info(`Writing ${count} sample documents — the bell tracks it.`, 4000);
@@ -108,9 +108,13 @@ export default function SeedDocumentsCard({ projectId, onDone }: SeedDocumentsCa
                             Words each
                             <input type="number" min={60} max={400} value={words} onChange={(e) => setWords(e.target.value === '' ? 0 : Number(e.target.value))} data-testid="seed-documents-words" />
                         </label>
-                        <label title="Splits each document into pages and adds header and footer lines (a letterhead, 'Page 2 of 5', a confidentiality line, a print date) — so a model trained on them learns that page furniture is not data.">
-                            <input type="checkbox" checked={paged} onChange={(e) => setPaged(e.target.checked)} data-testid="seed-documents-paged" />
-                            {' '}Multi-page, with headers and footers
+                        <label title="Multi-page splits each document into pages with header and footer lines (a letterhead, 'Page 2 of 5', a confidentiality line). Scanned also typesets those pages, degrades them like a scan and has the server OCR them — so the text carries real OCR errors (needs tesseract on the server).">
+                            Layout
+                            <select value={layout} onChange={(e) => setLayout(e.target.value as 'plain' | 'paged' | 'scanned')} data-testid="seed-documents-layout">
+                                <option value="plain">Plain text</option>
+                                <option value="paged">Multi-page, with headers and footers</option>
+                                <option value="scanned">Scanned (OCR'd) multi-page</option>
+                            </select>
                         </label>
                         <button type="button" className="btn btn-primary" onClick={() => void start()} disabled={starting || count < 1} data-testid="seed-documents-start">
                             {starting ? 'Starting…' : `Write ${count} documents`}
