@@ -109,6 +109,10 @@ export default function TrainingModelEssentialsSection({
     setTrainingRuntimeId,
     taskType,
     setTaskType,
+    ocrNoiseRate,
+    setOcrNoiseRate,
+    ocrNoiseCopies,
+    setOcrNoiseCopies,
     trainerBackend,
     setTrainerBackend,
     chatTemplate,
@@ -631,6 +635,39 @@ export default function TrainingModelEssentialsSection({
                     </div>
                   )}
                 </div>
+                {taskType === 'token_classification' && (
+                  <div className="form-group" data-testid="ocr-noise-augment">
+                    <label className="form-label">OCR-noise copies</label>
+                    <div className="training-grid-2">
+                      <select
+                        className="input"
+                        value={String(ocrNoiseRate)}
+                        onChange={(e) => setOcrNoiseRate(Number(e.target.value))}
+                        data-testid="ocr-noise-rate"
+                        aria-label="OCR noise rate"
+                      >
+                        <option value="0">Off</option>
+                        <option value="0.05">Light (up to 5%)</option>
+                        <option value="0.1">Medium (up to 10%)</option>
+                        <option value="0.2">Heavy (up to 20%)</option>
+                      </select>
+                      <select
+                        className="input"
+                        value={String(ocrNoiseCopies)}
+                        onChange={(e) => setOcrNoiseCopies(Number(e.target.value))}
+                        disabled={ocrNoiseRate <= 0}
+                        data-testid="ocr-noise-copies"
+                        aria-label="Noisy copies per row"
+                      >
+                        {[1, 2, 3].map((n) => <option key={n} value={n}>{n} cop{n === 1 ? 'y' : 'ies'} per row</option>)}
+                      </select>
+                    </div>
+                    <div className="form-hint">
+                      For scanned / OCR'd text: adds copies of each training row with look-alike characters swapped
+                      (O→0, l→1, S→5…) at up to that share of them. Offsets stay exact; validation and test rows stay clean.
+                    </div>
+                  </div>
+                )}
                 <div className="form-group">
                   <label className="form-label">Trainer Backend</label>
                   <select

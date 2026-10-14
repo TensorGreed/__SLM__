@@ -332,6 +332,35 @@ characters, so a noisy entity is still the right span: the scores hold
 at 2% (−0.01), lose ~0.07 at 5%, ~0.15 at 10% and ~0.30 at 20%. Noise
 wasn't in the training data; that is the next lever.
 
+### Training for OCR'd text: noisy copies
+
+**OCR-noise copies** (Training config → Advanced → Power Tools, shown for
+token classification; `ocr_noise_augment_rate` 0.05 / 0.1 / 0.2 and
+`ocr_noise_augment_copies` 1–3) adds copies of every training row with
+look-alike characters swapped at a rate drawn up to that level. The swaps
+keep the text's length, so every span keeps its offsets; validation and
+test rows are never noised, and auto-epochs counts the copies so the
+optimizer budget stays the same. Training uses a subset of the
+look-alikes (`TRAIN_CONFUSIONS`); `h g u Z 9 2 @ -` are kept out so the
+measurement can include noise the model never saw.
+
+Project 31 (2026-10-14), run #65 = run #64's data + one noisy copy per row
+at up to 10% (455 vs 429 optimizer steps), on the multi-page documents
+(average of the three layouts), F1 vs the Haiku key:
+
+| noise | clean | 2% | 5% | 10% | 20% |
+|---|---|---|---|---|---|
+| run #64 | 0.85 | 0.83 | 0.76 | 0.69 | 0.51 |
+| **run #65 (+ noisy copies)** | 0.83 | 0.82 | **0.81** | **0.79** | **0.75** |
+
+At 10–20% noise the copies recover 0.10–0.25 F1, for 0.01–0.02 on clean
+text (within noise; the 44 answer-key texts read 0.83 for both runs).
+The look-alikes kept out of training barely hurt either run (0.82–0.85
+at every level), so this doesn't show whether the robustness carries to
+other kinds of OCR damage — broken words and lines aren't simulated.
+Turn it on (Medium) when your documents come from scans; leave it off
+for born-digital text.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the

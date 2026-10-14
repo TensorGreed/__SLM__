@@ -1144,6 +1144,17 @@ runs real CPU inference). ~4 min locally.
   source=)` / API `source` relabels one synth_source group. Every labeller
   warns when texts come back with no labels. `_label_and_append` is the
   shared append core (passages + documents).
+- **OCR-noise augmentation** (token classification; `TrainingConfig.
+  ocr_noise_augment_rate` 0–0.3 + `ocr_noise_augment_copies` 1–5; Power
+  Tools "OCR-noise copies", shown for token_classification; form hook
+  `ocrNoiseRate` / `ocrNoiseCopies`, sent only when > 0):
+  `train_token_classification.augment_with_ocr_noise` adds copies with
+  `ocr_noise` (length-preserving `TRAIN_CONFUSIONS` swaps, per-copy rate in
+  [rate/4, rate], seeded) — spans keep offsets, `text` follows; val/test
+  untouched; auto-epochs counts the copies; report `augmentation`
+  {ocr_noise_rate, copies, rows_added}. `h g u Z 9 2 @ -` are deliberately
+  NOT in TRAIN_CONFUSIONS (held-out noise for measuring). Project 31 run
+  #65: 10% noise 0.69 → 0.79, 20% 0.51 → 0.75, clean 0.85 → 0.83.
 - **Ollama context**: `synth_backends/ollama.context_window_for` sets
   `num_ctx` per request (prompt chars / 3 + max_tokens + 256, buckets
   4096 / 8192 / 16384 / 32768) — without it Ollama runs at its server

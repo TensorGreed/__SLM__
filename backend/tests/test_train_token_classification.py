@@ -514,3 +514,54 @@ class ExportWindowTests(unittest.TestCase):
             (d / "config.json").write_text(json.dumps({"architectures": ["LlamaForCausalLM"]}))
             (d / "tokenizer_config.json").write_text(json.dumps({"model_max_length": 1e30}))
             self.assertIsNone(cap_token_classifier_window(d, 512), "only token classifiers")
+
+
+class OcrNoiseAugmentTests(unittest.TestCase):
+    def test_noisy_copies_keep_every_span_offset(self):
+        examples = [(TEXT, [
+            {"type": "email", "start": TEXT.index("ada@"), "end": TEXT.index("ada@") + len("ada@example.test")},
+            {"type": "phone", "start": TEXT.index("555-0101"), "end": TEXT.index("555-0101") + 8},
+        ])]
+        out = tc.augment_with_ocr_noise(examples, rate=0.3, copies=3, seed=1)
+        self.assertEqual(len(out), 3)
+        for noisy, spans in out:
+            self.assertEqual(len(noisy), len(TEXT), "length-preserving")
+            self.assertNotEqual(noisy, TEXT)
+            for sp in spans:
+                self.assertEqual(noisy[sp["start"]:sp["end"]], sp["text"], "span text follows the noised characters")
+        changed = sum(a != b for noisy, _ in out for a, b in zip(noisy, TEXT))
+        self.assertGreater(changed, 3)
+        self.assertEqual(tc.augment_with_ocr_noise(examples, rate=0.3, copies=3, seed=1), out, "deterministic per seed")
+        self.assertTrue(set(tc.TRAIN_CONFUSIONS) < set(tc.TRAIN_CONFUSIONS) | {"h", "g", "Z", "@", "-"})
+        for held_out in ("h", "g", "Z", "@", "-"):
+            self.assertNotIn(held_out, tc.TRAIN_CONFUSIONS, "kept out of training so measured noise is partly unseen")
+
+    def test_training_reports_the_augmentation(self):
+        try:
+            from transformers import BertConfig, BertModel
+        except Exception as exc:  # noqa: BLE001
+            self.skipTest(f"transformers unavailable: {exc}")
+        import json
+        import tempfile
+
+        text = "please call 555-0123 or mail ada@example.test today ."
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            tok = _tiny_tokenizer(text.split())
+            base = tmp / "tiny-bert"
+            tok.save_pretrained(base)
+            BertModel(BertConfig(vocab_size=len(tok), hidden_size=32, num_hidden_layers=1, num_attention_heads=2,
+                                 intermediate_size=64, max_position_embeddings=128)).save_pretrained(base)
+            rows = [{"text": text, "entities": [{"type": "phone", "start": 12, "end": 20}]}] * 4
+            train = tmp / "train.jsonl"
+            train.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+            report = tc.run_token_classification(
+                base_model=str(base),
+                config={"max_seq_length": 64, "num_epochs": 1, "auto_epochs": False, "batch_size": 4,
+                        "ocr_noise_augment_rate": 0.3, "ocr_noise_augment_copies": 2},
+                output_dir=tmp / "out", model_dir=tmp / "out" / "model",
+                train_file=train, val_file=train, started_at="now",
+            )
+            self.assertEqual(report["augmentation"]["copies"], 2)
+            self.assertEqual(report["augmentation"]["rows_added"], 8)
+            self.assertEqual(report["windowing"]["train_windows"], 12, "4 rows + 8 noisy copies")

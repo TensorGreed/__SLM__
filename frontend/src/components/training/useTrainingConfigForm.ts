@@ -14,6 +14,10 @@ export function useTrainingConfigForm() {
   const [trainingMode, setTrainingMode] = useState('sft');
   const [trainingRuntimeId, setTrainingRuntimeId] = useState('auto');
   const [taskType, setTaskType] = useState('causal_lm');
+  // Token classification: noisy (OCR-style) copies of the training rows.
+  // 0 = off; the share of swappable characters a copy may change.
+  const [ocrNoiseRate, setOcrNoiseRate] = useState(0);
+  const [ocrNoiseCopies, setOcrNoiseCopies] = useState(1);
   const [trainerBackend, setTrainerBackend] = useState('auto');
   const [chatTemplate, setChatTemplate] = useState('llama3');
   const [lr, setLr] = useState('2e-4');
@@ -89,6 +93,10 @@ export function useTrainingConfigForm() {
     setTrainingRuntimeId,
     taskType,
     setTaskType,
+    ocrNoiseRate,
+    setOcrNoiseRate,
+    ocrNoiseCopies,
+    setOcrNoiseCopies,
     trainerBackend,
     setTrainerBackend,
     chatTemplate,

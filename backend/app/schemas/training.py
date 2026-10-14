@@ -59,6 +59,21 @@ class TrainingConfig(BaseModel):
     optimizer: str = Field("paged_adamw_8bit", description="Optimizer type")
     lr_scheduler: str = Field("cosine", description="Learning rate scheduler")
     num_epochs: int = Field(3, ge=1, le=100)
+    ocr_noise_augment_rate: float = Field(
+        0.0,
+        ge=0.0,
+        le=0.3,
+        description=(
+            "Token classification only: add noisy copies of the training rows "
+            "with OCR-style look-alike character swaps (O→0, l→1, S→5…) at up "
+            "to this share of the swappable characters. Length-preserving, so "
+            "every span keeps its offsets. 0 = off. Validation / test rows are "
+            "never noised."
+        ),
+    )
+    ocr_noise_augment_copies: int = Field(
+        1, ge=1, le=5, description="Noisy copies per training row when ocr_noise_augment_rate > 0.",
+    )
     class_weighting: Literal["auto", "none"] = Field(
         "auto",
         description=(

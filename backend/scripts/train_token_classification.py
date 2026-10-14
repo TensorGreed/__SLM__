@@ -47,6 +47,47 @@ OUTSIDE = "O"
 DEFAULT_STRIDE_FRACTION = 0.25
 
 
+# ── OCR-style noise (augmentation) ───────────────────────────────────────
+#
+# Scanned / OCR'd text swaps characters for look-alikes. Each swap keeps
+# the text's length, so a noisy copy of a row keeps every span's offsets
+# (and a noisy entity is still the same entity). TRAIN_CONFUSIONS is a
+# deliberate subset of the look-alikes the measurement uses, so part of
+# the evaluated noise is never seen in training.
+
+TRAIN_CONFUSIONS: dict[str, str] = {
+    "O": "0", "0": "O", "o": "0", "l": "1", "1": "l", "I": "l", "i": "l",
+    "S": "5", "5": "S", "B": "8", "8": "B", "e": "c", "c": "e", "a": "o",
+    "n": "m", "m": "n", ".": ",", ",": ".",
+}
+
+
+def ocr_noise(text: str, rate: float, rng: Any, confusions: dict[str, str] | None = None) -> str:
+    """``text`` with each swappable character replaced by its look-alike
+    with probability ``rate``. Same length, so offsets are unchanged."""
+    table = confusions or TRAIN_CONFUSIONS
+    return "".join(table[ch] if ch in table and rng.random() < rate else ch for ch in text)
+
+
+def augment_with_ocr_noise(
+    examples: list[tuple[str, list[dict[str, Any]]]], rate: float, copies: int = 1, seed: int = 42,
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """``copies`` noisy copies of every example, each at a rate drawn from
+    [rate/4, rate] (a spread, not one fixed level); spans unchanged except
+    their ``text``, which follows the noised characters."""
+    import random as _random
+
+    rng = _random.Random(seed)
+    out: list[tuple[str, list[dict[str, Any]]]] = []
+    for _ in range(max(0, int(copies))):
+        for text, spans in examples:
+            noisy = ocr_noise(text, rng.uniform(rate / 4, rate), rng)
+            if noisy == text:
+                continue
+            out.append((noisy, [{**sp, "text": noisy[sp["start"]:sp["end"]]} for sp in spans]))
+    return out
+
+
 # ── Rows → (text, spans) ─────────────────────────────────────────────────
 
 
@@ -423,6 +464,12 @@ def run_token_classification(
             f"none of the {len(train_rows)} training rows had text."
         )
     labelled = sum(1 for _, spans in train_examples if spans)
+    noise_rate = float(config.get("ocr_noise_augment_rate") or 0.0)
+    noise_copies = int(config.get("ocr_noise_augment_copies") or 1)
+    noisy_examples = (
+        augment_with_ocr_noise(train_examples, min(noise_rate, 0.3), noise_copies, seed=int(seed))
+        if noise_rate > 0 else []
+    )
     if labelled == 0:
         raise RuntimeError("token_classification: no training row carries an entity span — nothing to learn.")
     label_space = build_label_space(train_examples + eval_examples)
@@ -454,7 +501,7 @@ def run_token_classification(
         data["labels"] = labels
         return Dataset.from_dict(data), offsets, sample_map
 
-    train_ds, _train_offsets, train_map = _encode(train_examples)
+    train_ds, _train_offsets, train_map = _encode(train_examples + noisy_examples)
     # Rows that needed more than one window (not the number of extra windows).
     train_long_rows = sum(1 for n in Counter(train_map).values() if n > 1)
     if eval_examples:
@@ -475,7 +522,7 @@ def run_token_classification(
     # steps; an explicit num_epochs only counts when auto_epochs is off.
     auto_epochs = _coerce_bool(config.get("auto_epochs"), True)
     num_epochs = (
-        _auto_epochs(len(train_examples), batch_size)
+        _auto_epochs(len(train_examples) + len(noisy_examples), batch_size)
         if auto_epochs or not config.get("num_epochs")
         else float(config.get("num_epochs"))
     )
@@ -583,6 +630,10 @@ def run_token_classification(
         "eval_records": len(eval_examples),
         "train_records_labelled": labelled,
         # Long texts are trained / scored in overlapping windows.
+        "augmentation": (
+            {"ocr_noise_rate": noise_rate, "copies": noise_copies, "rows_added": len(noisy_examples)}
+            if noise_rate > 0 else None
+        ),
         "windowing": {
             "max_length": max_seq_length,
             "stride": stride,

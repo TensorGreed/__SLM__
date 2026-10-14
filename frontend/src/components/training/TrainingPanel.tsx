@@ -130,6 +130,10 @@ export default function TrainingPanel({
     setTrainingRuntimeId,
     taskType,
     setTaskType,
+    ocrNoiseRate,
+    setOcrNoiseRate,
+    ocrNoiseCopies,
+    setOcrNoiseCopies,
     trainerBackend,
     setTrainerBackend,
     chatTemplate,
@@ -394,6 +398,10 @@ export default function TrainingPanel({
     if (includeField('training_mode')) config.training_mode = trainingMode;
     if (includeField('training_runtime_id')) config.training_runtime_id = trainingRuntimeId;
     if (includeField('task_type')) config.task_type = taskType;
+    if (taskType === 'token_classification' && ocrNoiseRate > 0) {
+      config.ocr_noise_augment_rate = ocrNoiseRate;
+      config.ocr_noise_augment_copies = ocrNoiseCopies;
+    }
     if (includeField('trainer_backend')) config.trainer_backend = trainerBackend;
     if (includeField('chat_template')) config.chat_template = chatTemplate;
     if (includeField('learning_rate')) config.learning_rate = learningRate;
@@ -515,6 +523,8 @@ export default function TrainingPanel({
     setTrainingMode(parseString(config.training_mode, trainingMode));
     setTrainingRuntimeId(parseString(config.training_runtime_id, trainingRuntimeId));
     setTaskType(parseString(config.task_type, taskType));
+    if (typeof config.ocr_noise_augment_rate === 'number') setOcrNoiseRate(config.ocr_noise_augment_rate);
+    if (typeof config.ocr_noise_augment_copies === 'number') setOcrNoiseCopies(config.ocr_noise_augment_copies);
     setTrainerBackend(parseString(config.trainer_backend, trainerBackend));
     setChatTemplate(parseString(config.chat_template, chatTemplate));
     setLr(String(config.learning_rate ?? lr));
