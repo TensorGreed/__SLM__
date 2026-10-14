@@ -125,18 +125,20 @@ against `gold_test` on the Eval tab: the per-type scores are now judged
 by a second opinion. Cost: one call per six texts; a 44-row test split
 is eight Haiku calls.
 
-What it said on project 31 (run #56, 2026-10-14): Haiku 4.5 labelled 38
-of the 44 texts (one call failed) with 231 entities, and the two
-labellers **agree at F1 0.76** — 162 spans in common, 35 only in the
-local teacher's labels, 69 only in Haiku's. Haiku's key is denser: 12
-phones, 10 emails and 11 names the local labels don't have, and 8 of
-the local `date_of_birth` spans it reads as another kind of date. Scored
-against it the run reads **P 0.77 / R 0.71 / F1 0.74** (was 0.85 / 0.92
-/ 0.88 against the local key): recall falls on exactly the types the
-local teacher under-labelled (phone R 0.45, email R 0.59, person_name R
-0.79), and the types both labellers agree on stay perfect (IBAN, IP
-address, MRN, ticket id, CVV, card expiry). About a third of the
-"error" the first key measured was the key, not the model — and the
+What it said on project 31 (run #56, 2026-10-14): Haiku 4.5 labelled
+all 44 test texts in 45 s (283 entities; the first attempt lost two
+batches to replies cut mid-JSON — the generator now asks for compact
+type + text only and splits a failed batch), and the two labellers
+**agree at F1 0.74** — 193 spans in common, 48 only in the local
+teacher's labels, 90 only in Haiku's. Haiku's key is denser: 14 phones,
+12 emails and 13 names the local labels don't have, and 11 of the local
+`date_of_birth` spans it reads as another kind of date. Scored against
+it the run reads **P 0.77 / R 0.71 / F1 0.74** (was 0.85 / 0.92 / 0.88
+against the local key): recall falls on exactly the types the local
+teacher under-labelled (phone R 0.44, email R 0.59, person_name R
+0.72), and the types both labellers agree on stay perfect (IBAN, IP
+address, MRN, ticket id; CVV 0.95, card expiry 0.93). About a third of
+the "error" the first key measured was the key, not the model — and the
 next refine target is the local teacher's recall on phones, emails and
 names, which the regex pass should be catching.
 
