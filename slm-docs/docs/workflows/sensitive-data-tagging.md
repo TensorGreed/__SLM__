@@ -206,7 +206,7 @@ the boundaries, not just the category. Run #58 is export 7.
 ```python
 from transformers import pipeline
 
-tagger = pipeline("token-classification", model="path/or/hub-id", aggregation_strategy="simple")
+tagger = pipeline("token-classification", model="path/or/hub-id", aggregation_strategy="simple", stride=128)
 text = "Charge card 4111 1111 1111 1111 for Ada (ada@example.test) by 09/27."
 for ent in tagger(text):
     start, end = ent["start"], ent["end"]
@@ -220,6 +220,37 @@ for ent in tagger(text):
 tokenizer attaches the space before a word to the word, so the pipeline's
 `start` can sit one character early — the two-line trim above (which
 BrewSLM's own evaluation applies) gives the exact span.
+
+### Long documents: pass `stride`
+
+The encoder reads 512 tokens at a time. BrewSLM trains, validates,
+predicts and evaluates a longer text in **overlapping windows** (128
+tokens shared between neighbours; each token's label comes from the
+window where it sits furthest from an edge), so a document of any length
+is tagged end to end. The exported tokenizer's `model_max_length` is the
+training window, so `stride=128` in the pipeline windows the model the
+same way. **Without `stride` the pipeline cuts the text at 512 tokens.**
+Exports of runs trained before windowing landed get the window written
+into `tokenizer_config.json` at export time (the release notes say so) —
+re-export an older run rather than reusing its old export.
+
+Measured on project 31 (2026-10-14): the 44 test texts joined into four
+multi-page documents of 780–915 tokens, run #58's weights, scored
+against the Haiku answer key:
+
+| read through | F1 | entities past token 512 found |
+|---|---|---|
+| each text alone (the reference) | 0.84 | — |
+| BrewSLM before windowing (cut at 512) | 0.59 | 0 / 126 |
+| old export, HF pipeline (whole document at once) | 0.59 (precision 0.51) | 110 / 126 |
+| **BrewSLM, windowed** | **0.82** | 108 / 126 |
+| **re-export, HF pipeline with `stride=128`** | **0.83** | 108 / 126 |
+
+The windows cost almost nothing against reading each text alone (0.82
+vs 0.84). What they don't fix: with a "Page n of 11" footer between the
+texts, precision falls to 0.65 (F1 0.74) — the model tags page
+furniture it never saw in training. That's a data gap, not a windowing
+one: train on documents that carry headers and footers.
 
 ## What the first run produced (2026-10-13)
 

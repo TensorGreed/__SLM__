@@ -19,6 +19,15 @@ Writes the same artifacts the platform expects from a run: ``model/``
 (per-epoch span P/R/F1, the same strict (type, start, end) match the
 ``span_set`` evaluation scorer uses) and a ``training_report.json``-shaped
 dict returned to the caller.
+
+Long texts: an encoder sees ``max_length`` tokens (512 for DeBERTa-v3)
+at a time. Training, validation, prediction and evaluation all cut a
+longer text into overlapping windows (``encode_windows``: ``stride``
+tokens shared between neighbours, default a quarter of the window); each
+token's label comes from the window where it sits furthest from an edge
+(``merge_window_scores``), so a document of any length is tagged end to
+end. The saved tokenizer's ``model_max_length`` is the window size, so
+``pipeline(..., stride=N)`` windows the exported model the same way.
 """
 
 from __future__ import annotations
@@ -34,6 +43,8 @@ from typing import Any
 TEXT_KEYS = ("text", "input", "source_text", "content", "document", "passage")
 ENTITY_KEYS = ("entities", "entities_json", "expected", "structured_output", "target", "target_text", "labels", "output")
 OUTSIDE = "O"
+# Overlap between neighbouring windows, as a fraction of the window.
+DEFAULT_STRIDE_FRACTION = 0.25
 
 
 # ── Rows → (text, spans) ─────────────────────────────────────────────────
@@ -143,17 +154,17 @@ def spans_to_token_labels(
 ) -> list[int]:
     """BIO label id per token from its character offsets. Special tokens
     (offset (0, 0)) get -100 (ignored by the loss). A token is inside a
-    span when its characters overlap it; the first such token is B-."""
+    span when its characters overlap it; the token holding the span's
+    first character is B-, the rest I- — so in a window that starts in the
+    middle of a span, the span continues (I-) rather than restarting."""
     labels = [-100] * len(offsets)
     for span in spans:
-        first = True
         for index, (start, end) in enumerate(offsets):
             if end <= start:
                 continue
             if start < span["end"] and end > span["start"]:
-                prefix = "B-" if first else "I-"
+                prefix = "B-" if start <= span["start"] else "I-"
                 labels[index] = label_to_id.get(f"{prefix}{span['type']}", 0)
-                first = False
     for index, (start, end) in enumerate(offsets):
         if end > start and labels[index] == -100:
             labels[index] = label_to_id[OUTSIDE]
@@ -243,6 +254,88 @@ def span_prf(gold: list[list[dict[str, Any]]], pred: list[list[dict[str, Any]]])
 # ── Inference helper (shared with the evaluation service) ───────────────
 
 
+def window_stride(max_length: int, stride: int | None = None) -> int:
+    """Tokens shared by neighbouring windows: ``stride`` when given, else a
+    quarter of the window; always below half the window."""
+    value = int(stride) if stride is not None else int(max_length * DEFAULT_STRIDE_FRACTION)
+    return max(0, min(value, max_length // 2 - 2))
+
+
+def encode_windows(
+    tokenizer: Any,
+    texts: list[str],
+    *,
+    max_length: int,
+    stride: int | None = None,
+    padding: bool = False,
+    return_tensors: str | None = None,
+) -> Any:
+    """Tokenize ``texts`` into windows of at most ``max_length`` tokens that
+    overlap by ``window_stride`` tokens. A text that fits is one window.
+    The result carries ``offset_mapping`` (character offsets into the
+    ORIGINAL text, so labels and predictions stay in text coordinates) and
+    ``overflow_to_sample_mapping`` (window → text index)."""
+    return tokenizer(
+        texts,
+        truncation=True,
+        max_length=max_length,
+        stride=window_stride(max_length, stride),
+        return_overflowing_tokens=True,
+        return_offsets_mapping=True,
+        padding=padding,
+        return_tensors=return_tensors,
+    )
+
+
+def merge_window_scores(
+    num_texts: int,
+    window_offsets: list[list[tuple[int, int]]],
+    sample_map: list[int],
+    window_scores: list[Any],
+) -> list[tuple[list[tuple[int, int]], list[Any]]]:
+    """Per text: its tokens (character offsets, in order) and one score
+    vector per token. A token seen by several windows takes the scores
+    from the window where it sits furthest from either edge — the one
+    that saw the most context on both sides. Special and padding tokens
+    (empty offsets) are dropped."""
+    best: list[dict[tuple[int, int], tuple[int, Any]]] = [{} for _ in range(num_texts)]
+    for offsets, sample, scores in zip(window_offsets, sample_map, window_scores):
+        real = [i for i, (a, b) in enumerate(offsets) if b > a]
+        if not real:
+            continue
+        first, last = real[0], real[-1]
+        for i in real:
+            key = (int(offsets[i][0]), int(offsets[i][1]))
+            margin = min(i - first, last - i)
+            held = best[sample].get(key)
+            if held is None or margin > held[0]:
+                best[sample][key] = (margin, scores[i])
+    merged: list[tuple[list[tuple[int, int]], list[Any]]] = []
+    for per_text in best:
+        keys = sorted(per_text)
+        merged.append((keys, [per_text[k][1] for k in keys]))
+    return merged
+
+
+def decode_window_predictions(
+    texts: list[str],
+    window_offsets: list[list[tuple[int, int]]],
+    sample_map: list[int],
+    window_logits: list[Any],
+    id_to_label: dict[int, str],
+) -> list[list[dict[str, Any]]]:
+    """Merge per-window logits into whole-text spans (argmax per token
+    after the merge, then BIO decode)."""
+    import numpy as np
+
+    merged = merge_window_scores(len(texts), window_offsets, sample_map, window_logits)
+    out: list[list[dict[str, Any]]] = []
+    for text, (offsets, scores) in zip(texts, merged):
+        ids = [int(np.argmax(np.asarray(v))) for v in scores]
+        out.append(token_labels_to_spans(offsets, ids, id_to_label, text))
+    return out
+
+
 def predict_spans(
     texts: list[str],
     model: Any,
@@ -250,31 +343,36 @@ def predict_spans(
     id_to_label: dict[int, str],
     *,
     max_length: int = 512,
+    stride: int | None = None,
     batch_size: int = 16,
     device: str | None = None,
 ) -> list[list[dict[str, Any]]]:
     """Character spans for each text with a loaded token-classification
-    model: tokenize with offsets (long texts in overlapping windows are a
-    later refinement — this truncates at ``max_length`` tokens), argmax,
-    decode BIO → spans."""
+    model. A text longer than ``max_length`` tokens is read in overlapping
+    windows (``encode_windows``) and merged (``merge_window_scores``), so
+    nothing past the first window is dropped. ``batch_size`` counts
+    windows."""
     import torch
 
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
-    results: list[list[dict[str, Any]]] = []
-    for start in range(0, len(texts), batch_size):
-        batch = texts[start:start + batch_size]
-        encoded = tokenizer(
-            batch, truncation=True, max_length=max_length, padding=True,
-            return_offsets_mapping=True, return_tensors="pt",
-        )
-        offsets = encoded.pop("offset_mapping").tolist()
+    if not texts:
+        return []
+    encoded = encode_windows(tokenizer, texts, max_length=max_length, stride=stride)
+    window_offsets = [[tuple(o) for o in offs] for offs in encoded["offset_mapping"]]
+    sample_map = list(encoded["overflow_to_sample_mapping"])
+    window_logits: list[Any] = []
+    for start in range(0, len(window_offsets), batch_size):
+        features = [
+            {"input_ids": encoded["input_ids"][i], "attention_mask": encoded["attention_mask"][i]}
+            for i in range(start, min(start + batch_size, len(window_offsets)))
+        ]
+        batch = tokenizer.pad(features, return_tensors="pt")
         with torch.no_grad():
-            logits = model(**{k: v.to(device) for k, v in encoded.items()}).logits
-        pred_ids = logits.argmax(dim=-1).cpu().tolist()
-        for text, offs, ids in zip(batch, offsets, pred_ids):
-            results.append(token_labels_to_spans([tuple(o) for o in offs], ids, id_to_label, text))
-    return results
+            logits = model(**{k: v.to(device) for k, v in batch.items()}).logits.float().cpu().numpy()
+        for row, feature in zip(logits, features):
+            window_logits.append(row[: len(feature["input_ids"])])
+    return decode_window_predictions(texts, window_offsets, sample_map, window_logits, id_to_label)
 
 
 # ── Training ─────────────────────────────────────────────────────────────
@@ -339,20 +437,30 @@ def run_token_classification(
     max_seq_length = int(config.get("max_seq_length") or 512)
     max_seq_length = max(64, min(max_seq_length, int(getattr(tokenizer, "model_max_length", 512) or 512), 4096))
 
-    def _encode(examples: list[tuple[str, list[dict[str, Any]]]]) -> Dataset:
-        texts = [t for t, _ in examples]
-        encoded = tokenizer(texts, truncation=True, max_length=max_seq_length, return_offsets_mapping=True)
-        labels = [
-            spans_to_token_labels([tuple(o) for o in offs], spans, label_to_id)
-            for offs, (_, spans) in zip(encoded["offset_mapping"], examples)
-        ]
-        encoded.pop("offset_mapping")
-        data = {k: encoded[k] for k in encoded.keys()}
-        data["labels"] = labels
-        return Dataset.from_dict(data)
+    stride = window_stride(max_seq_length, config.get("window_stride"))
 
-    train_ds = _encode(train_examples)
-    eval_ds = _encode(eval_examples) if eval_examples else None
+    def _encode(examples: list[tuple[str, list[dict[str, Any]]]]) -> tuple[Dataset, list[list[tuple[int, int]]], list[int]]:
+        """One training example per window: a text longer than the window
+        contributes every window, each labelled from its own offsets."""
+        texts = [t for t, _ in examples]
+        encoded = encode_windows(tokenizer, texts, max_length=max_seq_length, stride=stride)
+        offsets = [[tuple(o) for o in offs] for offs in encoded["offset_mapping"]]
+        sample_map = list(encoded["overflow_to_sample_mapping"])
+        labels = [
+            spans_to_token_labels(offs, examples[sample][1], label_to_id)
+            for offs, sample in zip(offsets, sample_map)
+        ]
+        data = {k: encoded[k] for k in ("input_ids", "attention_mask", "token_type_ids") if k in encoded}
+        data["labels"] = labels
+        return Dataset.from_dict(data), offsets, sample_map
+
+    train_ds, _train_offsets, train_map = _encode(train_examples)
+    # Rows that needed more than one window (not the number of extra windows).
+    train_long_rows = sum(1 for n in Counter(train_map).values() if n > 1)
+    if eval_examples:
+        eval_ds, eval_offsets, eval_map = _encode(eval_examples)
+    else:
+        eval_ds, eval_offsets, eval_map = None, [], []
 
     use_cuda = torch.cuda.is_available()
     dtype_note = "bf16" if use_cuda and torch.cuda.is_bf16_supported() else ("fp16" if use_cuda else "fp32")
@@ -394,18 +502,13 @@ def run_token_classification(
 
     eval_texts = [t for t, _ in eval_examples]
     eval_gold = [spans for _, spans in eval_examples]
-    eval_offsets = (
-        [[tuple(o) for o in offs] for offs in tokenizer(eval_texts, truncation=True, max_length=max_seq_length, return_offsets_mapping=True)["offset_mapping"]]
-        if eval_examples else []
-    )
 
     def compute_metrics(eval_pred: Any) -> dict[str, float]:
+        # Rows of ``logits`` are the eval windows, in order; merge them back
+        # into whole texts before scoring, like predict_spans.
         logits, _labels = eval_pred
-        pred_ids = np.argmax(logits, axis=-1)
-        pred_spans = [
-            token_labels_to_spans(offs, ids[: len(offs)].tolist(), id_to_label, text)
-            for offs, ids, text in zip(eval_offsets, pred_ids, eval_texts)
-        ]
+        window_logits = [np.asarray(row)[: len(offs)] for row, offs in zip(logits, eval_offsets)]
+        pred_spans = decode_window_predictions(eval_texts, eval_offsets, eval_map, window_logits, id_to_label)
         prf = span_prf(eval_gold, pred_spans)
         return {"span_precision": prf["precision"], "span_recall": prf["recall"], "span_f1": prf["f1"]}
 
@@ -433,11 +536,15 @@ def run_token_classification(
     if eval_ds is not None:
         device = "cuda" if use_cuda else "cpu"
         model.to(device)
-        pred_spans = predict_spans(eval_texts, model, tokenizer, id_to_label, max_length=max_seq_length, device=device)
+        pred_spans = predict_spans(eval_texts, model, tokenizer, id_to_label, max_length=max_seq_length, stride=stride, device=device)
         final_eval = span_prf(eval_gold, pred_spans)
 
     model_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(model_dir)
+    # The window size, not the tokenizer's "unlimited" default (DeBERTa-v3
+    # ships ~1e30): with it, pipeline(..., stride=N) windows a long text
+    # instead of feeding the whole document to an encoder trained on 512.
+    tokenizer.model_max_length = max_seq_length
     tokenizer.save_pretrained(model_dir)
     (model_dir / "label_space.json").write_text(
         json.dumps({"labels": label_space, "entity_types": sorted({l[2:] for l in label_space if l != OUTSIDE})}, indent=2),
@@ -462,6 +569,7 @@ def run_token_classification(
             "batch_size": batch_size,
             "learning_rate": learning_rate,
             "max_seq_length": max_seq_length,
+            "window_stride": stride,
         },
         "train_file": str(train_file),
         "val_file": str(val_file) if val_file is not None else None,
@@ -472,6 +580,14 @@ def run_token_classification(
         "train_records": len(train_examples),
         "eval_records": len(eval_examples),
         "train_records_labelled": labelled,
+        # Long texts are trained / scored in overlapping windows.
+        "windowing": {
+            "max_length": max_seq_length,
+            "stride": stride,
+            "train_windows": len(train_map),
+            "train_long_rows": train_long_rows,
+            "eval_windows": len(eval_map),
+        },
         "final_train_loss": final_train_loss,
         "final_eval_loss": final_eval_loss,
         "final_eval_accuracy": None,

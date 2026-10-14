@@ -102,6 +102,27 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class _swap_module:
+    """Replace one ``sys.modules`` entry for a block and restore just that
+    entry afterwards (unlike ``mock.patch.dict``, which also removes every
+    module imported inside the block)."""
+
+    def __init__(self, name, module):
+        self.name, self.module = name, module
+
+    def __enter__(self):
+        self.saved = sys.modules.get(self.name)
+        sys.modules[self.name] = self.module
+        return self.module
+
+    def __exit__(self, *exc):
+        if self.saved is None:
+            sys.modules.pop(self.name, None)
+        else:
+            sys.modules[self.name] = self.saved
+        return False
+
+
 class EvaluationPathTests(unittest.TestCase):
     """The held-out eval routes a token-classification checkpoint to its own
     inference (tag the raw input, emit span_set JSON) instead of generation."""
@@ -159,7 +180,10 @@ class EvaluationPathTests(unittest.TestCase):
         import types
 
         fake_mod = types.SimpleNamespace(predict_spans=fake_predict)
-        with mock.patch.dict(sys.modules, {"train_token_classification": fake_mod}), \
+        # Swap only this one module: patch.dict(sys.modules) would also drop
+        # every module first imported inside the block (numpy, tokenizers),
+        # and those refuse a second import in the same process.
+        with _swap_module("train_token_classification", fake_mod), \
                 mock.patch("transformers.AutoTokenizer", FakeTok), \
                 mock.patch("transformers.AutoModelForTokenClassification", FakeModel):
             preds, runtime = ev._run_token_classification_inference(
@@ -237,3 +261,205 @@ class SpanEvalPlumbingTests(unittest.TestCase):
         span = asyncio.run(_recipe_output_schema(FakeDb(SimpleNamespace(selected_recipe={"recipe_id": "span-extraction"})), 1))
         self.assertEqual(span, {"scoring_mode": "span_set", "required": ["entities"]})
         self.assertIsNone(asyncio.run(_recipe_output_schema(FakeDb(SimpleNamespace(selected_recipe=None)), 1)))
+
+
+# ── Long texts: overlapping windows (Epic P1) ────────────────────────────
+#
+# A tiny word-level fast tokenizer and a rule-based "model" make the
+# windowing testable offline: every word is one token, so window edges are
+# easy to place, and the "model" labels a token by its word.
+
+LABELS = ["O", "B-phone", "I-phone", "B-person_name", "I-person_name"]
+ID2LABEL = dict(enumerate(LABELS))
+
+
+def _tiny_tokenizer(words):
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import WhitespaceSplit
+    from tokenizers.processors import TemplateProcessing
+    from transformers import PreTrainedTokenizerFast
+
+    vocab = {"[PAD]": 0, "[UNK]": 1, "[CLS]": 2, "[SEP]": 3}
+    for w in words:
+        vocab.setdefault(w, len(vocab))
+    tok = Tokenizer(WordLevel(vocab, unk_token="[UNK]"))
+    tok.pre_tokenizer = WhitespaceSplit()
+    tok.post_processor = TemplateProcessing(single="[CLS] $A [SEP]", special_tokens=[("[CLS]", 2), ("[SEP]", 3)])
+    return PreTrainedTokenizerFast(
+        tokenizer_object=tok, pad_token="[PAD]", unk_token="[UNK]", cls_token="[CLS]", sep_token="[SEP]",
+    )
+
+
+class _RuleModel:
+    """Labels a token by its word: phone-shaped words → B-phone, "Ada" →
+    B-person_name, "Lovelace" → I-person_name, everything else O. Counts
+    the windows it was shown and their longest length."""
+
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+        self.windows = 0
+        self.longest = 0
+
+    def eval(self):
+        return self
+
+    def __call__(self, input_ids, attention_mask=None, **_):
+        import re
+        from types import SimpleNamespace
+
+        import torch
+
+        rows = []
+        for ids in input_ids.tolist():
+            self.windows += 1
+            self.longest = max(self.longest, len(ids))
+            row = []
+            for word in self.tokenizer.convert_ids_to_tokens(ids):
+                label = 0
+                if re.fullmatch(r"555-\d{4}", word or ""):
+                    label = 1
+                elif word == "Ada":
+                    label = 3
+                elif word == "Lovelace":
+                    label = 4
+                row.append([5.0 if i == label else 0.0 for i in range(len(LABELS))])
+            rows.append(row)
+        return SimpleNamespace(logits=torch.tensor(rows))
+
+
+def _multi_page_document(pages: int = 4, filler_words: int = 40):
+    """A document of ``pages`` pages: filler, then a phone and a name near
+    the end of each page — most of them far past the first window."""
+    parts, spans, cursor = [], [], 0
+    for page in range(pages):
+        filler = " ".join(f"w{page}x{i}" for i in range(filler_words))
+        phone = f"555-01{page:02d}"
+        chunk = f"{filler} call {phone} or Ada Lovelace ."
+        if page:
+            chunk = "\n\n" + chunk
+        p_start = cursor + chunk.index(phone)
+        n_start = cursor + chunk.index("Ada Lovelace")
+        spans.append({"type": "phone", "start": p_start, "end": p_start + len(phone)})
+        spans.append({"type": "person_name", "start": n_start, "end": n_start + len("Ada Lovelace")})
+        parts.append(chunk)
+        cursor += len(chunk)
+    return "".join(parts), spans
+
+
+class LongTextWindowTests(unittest.TestCase):
+    def test_a_multi_page_document_is_tagged_end_to_end(self):
+        text, gold = _multi_page_document(pages=4, filler_words=40)
+        tok = _tiny_tokenizer((text + " short call 555-0999 .").split())
+        model = _RuleModel(tok)
+        self.assertGreater(len(tok(text)["input_ids"]), 150, "the document is ~10 windows long")
+        pred = tc.predict_spans([text, "short call 555-0999 ."], model, tok, ID2LABEL, max_length=16, stride=4, device="cpu")
+        got = [(s["type"], s["start"], s["end"]) for s in pred[0]]
+        self.assertEqual(got, [(s["type"], s["start"], s["end"]) for s in gold], "every page's entities, exact offsets")
+        self.assertEqual([s["text"] for s in pred[1]], ["555-0999"], "a short text in the same batch still works")
+        self.assertGreater(model.windows, 10)
+        self.assertLessEqual(model.longest, 16, "no window is longer than max_length")
+
+    def test_a_name_cut_by_a_window_edge_is_one_span(self):
+        # Place "Ada Lovelace" so a window boundary falls between the two words
+        # for several strides; the merged prediction must be one span.
+        for lead in range(10, 18):
+            text = " ".join(f"f{i}" for i in range(lead)) + " Ada Lovelace " + " ".join(f"g{i}" for i in range(20))
+            tok = _tiny_tokenizer(text.split())
+            pred = tc.predict_spans([text], _RuleModel(tok), tok, ID2LABEL, max_length=12, stride=3, device="cpu")
+            self.assertEqual([s["text"] for s in pred[0]], ["Ada Lovelace"], f"lead={lead}")
+
+    def test_merge_takes_the_window_where_a_token_is_most_central(self):
+        offsets_a = [(0, 0), (0, 2), (3, 5), (6, 8), (0, 0)]   # token (6,8) at A's edge
+        offsets_b = [(0, 0), (3, 5), (6, 8), (9, 11), (0, 0)]  # token (6,8) central in B
+        merged = tc.merge_window_scores(1, [offsets_a, offsets_b], [0, 0], [
+            ["-", "a1", "a2", "edge", "-"],
+            ["-", "b1", "centre", "b3", "-"],
+        ])
+        offsets, scores = merged[0]
+        self.assertEqual(offsets, [(0, 2), (3, 5), (6, 8), (9, 11)])
+        self.assertEqual(scores[2], "centre")
+
+    def test_a_window_starting_inside_a_span_continues_it(self):
+        label_to_id = {label: i for i, label in enumerate(LABELS)}
+        span = [{"type": "person_name", "start": 10, "end": 22}]
+        # Window 1 holds the span's first word; window 2 starts at its second.
+        first = tc.spans_to_token_labels([(0, 0), (10, 13), (14, 22)], span, label_to_id)
+        second = tc.spans_to_token_labels([(0, 0), (14, 22), (23, 25)], span, label_to_id)
+        self.assertEqual([LABELS[i] if i >= 0 else None for i in first], [None, "B-person_name", "I-person_name"])
+        self.assertEqual([LABELS[i] if i >= 0 else None for i in second], [None, "I-person_name", "O"])
+
+    def test_window_stride_defaults_and_bounds(self):
+        self.assertEqual(tc.window_stride(512), 128)
+        self.assertEqual(tc.window_stride(512, 64), 64)
+        self.assertEqual(tc.window_stride(16, 100), 6, "always below half the window")
+
+
+class LongTextTrainingTests(unittest.TestCase):
+    """The real training path on a tiny random BERT (built here, no
+    download): long rows become several windows, the report says so, and
+    the saved tokenizer's max length is the window, so the HF pipeline
+    windows the exported model."""
+
+    def test_long_rows_train_in_windows(self):
+        try:
+            import torch  # noqa: F401
+            from transformers import BertConfig, BertModel
+        except Exception as exc:  # noqa: BLE001
+            self.skipTest(f"torch/transformers unavailable: {exc}")
+        import json
+        import tempfile
+
+        text, gold = _multi_page_document(pages=3, filler_words=60)
+        short = "please call 555-0123 today ."
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            tok = _tiny_tokenizer((text + " " + short).split())
+            base = tmp / "tiny-bert"
+            tok.save_pretrained(base)
+            cfg = BertConfig(
+                vocab_size=len(tok), hidden_size=32, num_hidden_layers=1, num_attention_heads=2,
+                intermediate_size=64, max_position_embeddings=128,
+            )
+            # An encoder without a head, like a hub base model.
+            BertModel(cfg).save_pretrained(base)
+            rows = [{"text": text, "entities": gold}] * 3 + [
+                {"text": short, "entities": [{"type": "phone", "start": 12, "end": 20}]}
+            ] * 3
+            train = tmp / "train.jsonl"
+            train.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+            report = tc.run_token_classification(
+                base_model=str(base),
+                config={"max_seq_length": 64, "num_epochs": 1, "auto_epochs": False, "batch_size": 4},
+                output_dir=tmp / "out", model_dir=tmp / "out" / "model",
+                train_file=train, val_file=train, started_at="now",
+            )
+            windowing = report["windowing"]
+            self.assertEqual(windowing["max_length"], 64)
+            self.assertEqual(windowing["stride"], 16)
+            self.assertEqual(windowing["train_long_rows"], 3, "each long row became several windows")
+            self.assertGreater(windowing["train_windows"], 6)
+            self.assertIn("span_set", report["task_metrics"], "validation merged the windows back into texts")
+            saved = json.loads((tmp / "out" / "model" / "tokenizer_config.json").read_text())
+            self.assertEqual(saved["model_max_length"], 64)
+
+
+class ExportWindowTests(unittest.TestCase):
+    def test_export_caps_an_unlimited_tokenizer_length_for_token_classifiers(self):
+        import json
+        import tempfile
+
+        from app.services.export_service import cap_token_classifier_window
+
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "config.json").write_text(json.dumps({"architectures": ["DebertaV2ForTokenClassification"]}))
+            (d / "tokenizer_config.json").write_text(json.dumps({"model_max_length": 1e30, "do_lower_case": False}))
+            note = cap_token_classifier_window(d, 512)
+            self.assertEqual(note["model_max_length"], 512)
+            saved = json.loads((d / "tokenizer_config.json").read_text())
+            self.assertEqual((saved["model_max_length"], saved["do_lower_case"]), (512, False))
+            self.assertIsNone(cap_token_classifier_window(d, 256), "a real window is left alone")
+            (d / "config.json").write_text(json.dumps({"architectures": ["LlamaForCausalLM"]}))
+            (d / "tokenizer_config.json").write_text(json.dumps({"model_max_length": 1e30}))
+            self.assertIsNone(cap_token_classifier_window(d, 512), "only token classifiers")

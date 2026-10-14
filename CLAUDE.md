@@ -1142,6 +1142,25 @@ runs real CPU inference). ~4 min locally.
   the span_set scorer; dispatched before the classifier-head check. Data gate
   accepts `entities` targets for this task type; UI option in
   `TrainingModelEssentialsSection`. Tests: `tests/test_train_token_classification.py`.
+  **Long texts (Epic P1)**: `encode_windows` (fast tokenizer overflow,
+  `window_stride` = config `window_stride` or ¼ window, < ½ window) is used
+  by training (one example per window, labels from each window's offsets;
+  B- only on the token holding a span's first char, so a window starting
+  mid-span continues it), validation (`decode_window_predictions` merges the
+  eval windows back into texts), `predict_spans` and therefore eval
+  (`merge_window_scores`: a token's scores come from the window where it is
+  most central). Report `windowing` {max_length, stride, train_windows,
+  train_long_rows, eval_windows}. The saved tokenizer gets
+  `model_max_length = max_seq_length` (DeBERTa-v3 ships ~1e30, so the HF
+  pipeline never windowed and fed whole documents to a 512-trained
+  encoder); `export_service.cap_token_classifier_window` writes it at export
+  for older runs (manifest `token_window`, release-notes line). The HF
+  pipeline needs `stride=128` to window. Measured on project 31's test
+  texts as 4 multi-page docs: cut-at-512 0.59 → windowed 0.82 (per-text
+  0.84); page-footer lines drop precision to 0.65 (data gap). The test
+  file builds a tiny word-level tokenizer + random BERT offline — and swaps
+  `sys.modules` entries with `_swap_module`, never `mock.patch.dict` (it
+  drops numpy/tokenizers imported inside, which can't be re-imported).
   Docs: `workflows/sensitive-data-tagging.md` (the from-zero walkthrough).
 - **Documents → Q&A flow** (`services/documents_qa_flow_service.py`,
   `api/flows.py`, Job kind `documents_qa_flow`): cleaned document passages →

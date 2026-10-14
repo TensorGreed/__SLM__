@@ -667,6 +667,52 @@ async def create_export(
     return export
 
 
+# A tokenizer "max length" above this is the library's unlimited sentinel
+# (DeBERTa-v3 ships ~1e30), not a real window.
+_UNLIMITED_TOKENIZER_LENGTH = 1_000_000
+
+
+def _experiment_max_seq_length(experiment: Any) -> int:
+    cfg = experiment.config if isinstance(getattr(experiment, "config", None), dict) else {}
+    try:
+        return max(16, int(cfg.get("max_seq_length") or 512))
+    except (TypeError, ValueError):
+        return 512
+
+
+def cap_token_classifier_window(model_dir: Path, max_length: int) -> dict[str, Any] | None:
+    """For an exported token-classification model (config.json architecture
+    ``*ForTokenClassification``) whose ``tokenizer_config.json`` claims an
+    unlimited ``model_max_length``, write the run's training window instead.
+    Without it the HF pipeline never windows a long text — ``stride`` is
+    ignored and the whole document goes to an encoder trained on 512
+    tokens (measured on run #58: F1 0.59 on ~800-token documents vs 0.82
+    windowed). Runs trained after windowing landed already save the right
+    value. Returns what changed, or None."""
+    try:
+        config = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    archs = config.get("architectures") or []
+    if not any(str(a).endswith("ForTokenClassification") for a in archs):
+        return None
+    tok_path = model_dir / "tokenizer_config.json"
+    try:
+        tok_cfg = json.loads(tok_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    current = tok_cfg.get("model_max_length")
+    try:
+        current_value = float(current) if current is not None else None
+    except (TypeError, ValueError):
+        current_value = None
+    if current_value is not None and current_value <= _UNLIMITED_TOKENIZER_LENGTH:
+        return None
+    tok_cfg["model_max_length"] = int(max_length)
+    tok_path.write_text(json.dumps(tok_cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"model_max_length": int(max_length), "was": current}
+
+
 async def run_export(
     db: AsyncSession,
     project_id: int,
@@ -811,6 +857,9 @@ async def run_export(
             copied_model_files = _copy_files_preserve_structure(source_files, model_dir, source_root)
         else:
             copied_model_files = _copy_files(source_files, model_dir)
+        window_note = cap_token_classifier_window(
+            model_dir, _experiment_max_seq_length(experiment),
+        )
         for copied in copied_model_files:
             artifacts.append(_artifact_manifest_entry(copied, run_dir))
         model_size_bytes = sum(p.stat().st_size for p in copied_model_files)
@@ -866,6 +915,11 @@ async def run_export(
                 f"- Model bytes: {model_size_bytes}\n"
                 f"- Generated at: {now.isoformat()}\n"
                 f"- Platform version: {settings.APP_VERSION}\n"
+                + (
+                    f"- Token window: tokenizer model_max_length set to {window_note['model_max_length']} "
+                    "(the training window; long texts: pipeline(..., stride=128))\n"
+                    if window_note else ""
+                )
             ),
             encoding="utf-8",
         )
@@ -873,6 +927,7 @@ async def run_export(
 
         # Generate version manifest
         manifest = {
+            "token_window": window_note,
             "run_id": run_id,
             "export_id": export.id,
             "project_id": export.project_id,
