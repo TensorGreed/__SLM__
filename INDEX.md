@@ -1067,6 +1067,7 @@ session-start guidance.
 - `frontend/src/components/training/TrainingConfigPatchPreviewModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingPanel.back.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingPanel.multiSeed.test.tsx` — Quality-Lift phase 7 slice 3 — MultiSeedConfigSection tests.
+- `frontend/src/components/training/TrainingPanel.ocrNoise.test.tsx` — Token classification: the "OCR-noise copies" control (Power Tools tab)
 - `frontend/src/components/training/TrainingPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WarmStartDeltaChart.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WhyThisPlanPanel.test.tsx` — _(no docstring)_

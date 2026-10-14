@@ -183,7 +183,9 @@ class OllamaBackendNativeChatTests(unittest.IsolatedAsyncioTestCase):
         payload = captured["json"]
         self.assertIs(payload["think"], False)
         self.assertEqual(payload["format"], schema)
-        self.assertEqual(payload["options"], {"temperature": 0.3, "num_predict": 777})
+        # num_ctx is sized to the request (context_window_for) so a long prompt
+        # isn't silently truncated by Ollama's server-default context.
+        self.assertEqual(payload["options"], {"temperature": 0.3, "num_predict": 777, "num_ctx": 4096})
         self.assertFalse(payload["stream"])
 
     async def test_complete_without_schema_sends_no_format(self):
