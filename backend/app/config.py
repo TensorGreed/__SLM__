@@ -168,6 +168,9 @@ class Settings(BaseSettings):
     # ── Process Runtime Controls ────────────────────────────────────────
     STRICT_EXECUTION_MODE: bool = False
     EXTERNAL_COMMAND_TIMEOUT_SECONDS: int = 21600
+    # Cancelling an external training run SIGTERMs its process group, then
+    # SIGKILLs it if it is still alive after this many seconds.
+    TRAINING_CANCEL_GRACE_SECONDS: float = 10.0
 
     # ── Domain Hook Plugins ─────────────────────────────────────────────
     # Example:

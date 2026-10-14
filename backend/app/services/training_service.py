@@ -1,5 +1,6 @@
 """Training pipeline service — SFT, LoRA, checkpoint management."""
 
+import copy
 import asyncio
 import json
 import random
@@ -746,8 +747,15 @@ async def _monitor_external_training(
 
             exp.config = config
 
-            if exp.status == ExperimentStatus.CANCELLED:
+            from app.services.training_process_service import cancel_requested
+
+            if exp.status == ExperimentStatus.CANCELLED or cancel_requested(output_dir):
+                # A cancel stopped this process (or raced its exit): the run
+                # stays CANCELLED — never COMPLETED / FAILED from its exit.
                 runtime["cancelled_completion_returncode"] = process.returncode
+                if exp.status != ExperimentStatus.CANCELLED:
+                    exp.status = ExperimentStatus.CANCELLED
+                    exp.completed_at = finished
                 final_status = "cancelled"
             else:
                 if process.returncode == 0:
@@ -804,7 +812,14 @@ async def _monitor_external_training(
                     }
                 )
                 config["_runtime"] = runtime
-                if exp.status != ExperimentStatus.CANCELLED:
+                from app.services.training_process_service import cancel_requested
+
+                if exp.status == ExperimentStatus.CANCELLED or cancel_requested(output_dir):
+                    final_status = "cancelled"
+                    if exp.status != ExperimentStatus.CANCELLED:
+                        exp.status = ExperimentStatus.CANCELLED
+                        exp.completed_at = datetime.now(timezone.utc)
+                else:
                     exp.status = ExperimentStatus.FAILED
                     exp.completed_at = datetime.now(timezone.utc)
                 exp.config = config
@@ -1555,7 +1570,12 @@ async def start_training(
     exp.total_epochs = epochs
     exp.total_steps = epochs * steps_per_epoch
     cfg = dict(exp.config or {})
-    cfg["_runtime"] = runtime_config
+    # A COPY: ``runtime_config`` is mutated below with the runtime's updates
+    # (task_id, runtime_kind, …). Storing the same dict object here made the
+    # committed snapshot change along with it, so SQLAlchemy compared
+    # old == new at the next flush and skipped the UPDATE — external runs
+    # never persisted their Celery task id and could not be cancelled.
+    cfg["_runtime"] = copy.deepcopy(runtime_config)
     # Launch-time warm-start resolution lives in its own stable block, NOT only
     # in ``_runtime`` (which the runtime loop rewrites). The live "Why this plan"
     # view + manifest capture read this so a warm-started run never reads back as
@@ -1587,7 +1607,7 @@ async def start_training(
             runtime_config["task_id"] = task_id
         message = str(runtime_result.message or "Training runtime started.")
         cfg = dict(exp.config or {})
-        cfg["_runtime"] = runtime_config
+        cfg["_runtime"] = copy.deepcopy(runtime_config)
         cfg["_warm_start"] = warm_start
         exp.config = cfg
         await db.flush()
@@ -1709,7 +1729,20 @@ async def cancel_training(
     project_id: int,
     experiment_id: int,
 ) -> dict:
-    """Best-effort cancellation for a running training experiment."""
+    """Cancel a running training experiment and stop what runs it.
+
+    External runs (``_runtime.backend == "external"`` or a process record in
+    the output dir): write the cancel marker the worker + completion monitor
+    read, revoke the Celery task (so a still-queued task never starts),
+    SIGTERM the recorded process group (SIGKILL after
+    ``TRAINING_CANCEL_GRACE_SECONDS``; PID identity checked first), then
+    mark the run CANCELLED. ``cancel_status`` says what actually happened:
+    ``process_terminated`` / ``process_killed`` / ``process_not_found`` /
+    ``process_mismatch`` (pid reused — not signalled) /
+    ``process_kill_failed`` / ``revoked`` (no process yet; queued task
+    revoked). Simulate / plugin runs keep the old behaviour (their loop
+    watches the status).
+    """
     exp = await _get_experiment_for_project(db, project_id, experiment_id)
     if not exp:
         raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
@@ -1720,8 +1753,50 @@ async def cancel_training(
     runtime = dict(cfg.get("_runtime") or {})
     task_id = str(runtime.get("task_id", "")).strip()
     cancel_note = "cancel_requested"
+    response_extra: dict[str, object] = {}
 
-    if task_id:
+    from app.services import training_process_service as tps
+
+    output_dir = Path(exp.output_dir) if exp.output_dir else _experiment_dir(project_id, experiment_id)
+    process_record = tps.read_training_process(output_dir)
+    is_external = (
+        str(runtime.get("backend") or "").strip().lower() == "external"
+        or str(runtime.get("runtime_kind") or "") == "external_celery"
+        or process_record is not None
+    )
+
+    if is_external:
+        try:
+            tps.write_cancel_marker(output_dir)
+        except OSError as marker_error:
+            response_extra["cancel_marker_error"] = str(marker_error)
+        task_revoked = False
+        if task_id:
+            # No ``terminate``: under the worker's thread pool it is a no-op,
+            # under prefork it would kill the pool child (and its cleanup),
+            # not train.py. Revoke stops a task that has not started yet.
+            try:
+                from app.services.job_service import cancel_task
+
+                cancel_task(task_id, terminate=False)
+                task_revoked = True
+            except Exception as revoke_error:  # noqa: BLE001 — broker down
+                response_extra["revoke_error"] = str(revoke_error)
+        result = await tps.terminate_process_record(
+            process_record,
+            grace_seconds=float(settings.TRAINING_CANCEL_GRACE_SECONDS),
+        )
+        status = str(result.get("status") or "")
+        if status == "no_process_record":
+            cancel_note = "revoked" if task_revoked else "process_not_found"
+        else:
+            cancel_note = status
+        for key in ("pid", "pgid", "signal", "error"):
+            if result.get(key) is not None:
+                response_extra[key] = result[key]
+        response_extra["task_revoked"] = task_revoked
+        runtime["cancel_process"] = dict(result)
+    elif task_id:
         from app.services.job_service import cancel_task
 
         cancel_task(task_id, terminate=True)
@@ -1730,12 +1805,30 @@ async def cancel_training(
 
     runtime["cancel_status"] = cancel_note
     runtime["cancel_requested_at"] = datetime.now(timezone.utc).isoformat()
-    cfg["_runtime"] = runtime
 
-    exp.config = cfg
+    if is_external:
+        # The completion monitor may have written this row while the kill
+        # was in flight (it honours the marker → CANCELLED); keep its
+        # runtime fields (returncode, …) and add ours on top.
+        try:
+            await db.refresh(exp)
+        except Exception:  # noqa: BLE001 — best effort
+            pass
+    merged_cfg = dict(exp.config or {})
+    merged_runtime = dict(merged_cfg.get("_runtime") or {})
+    merged_runtime.update(runtime)
+    merged_cfg["_runtime"] = merged_runtime
+    exp.config = merged_cfg
+    if exp.status != ExperimentStatus.CANCELLED or exp.completed_at is None:
+        exp.completed_at = datetime.now(timezone.utc)
     exp.status = ExperimentStatus.CANCELLED
-    exp.completed_at = datetime.now(timezone.utc)
     await db.flush()
+    if is_external:
+        # Commit now: the run's process is already gone, and on the shared
+        # single-connection SQLite engine another session's ROLLBACK (the
+        # watcher Job polls this row) can wipe a flushed-but-uncommitted
+        # CANCELLED, leaving a stopped run that reads RUNNING forever.
+        await db.commit()
 
     await broadcast_event(experiment_id, {"type": "status", "status": "cancelled"})
     return {
@@ -1743,6 +1836,7 @@ async def cancel_training(
         "status": exp.status.value,
         "task_id": task_id or None,
         "cancel_status": cancel_note,
+        **response_extra,
     }
 
 

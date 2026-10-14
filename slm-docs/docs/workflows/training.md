@@ -423,6 +423,22 @@ curl -X POST http://localhost:8000/api/projects/1/experiments/42/cancel \
   -d '{"reason": "wrong recipe"}'
 ```
 
+**What cancel stops (external runtime).** The Celery worker runs
+`scripts/train.py` in its own process group and records it in
+`training_process.json` next to the run's outputs. Cancel writes
+`cancel_requested.json`, revokes the Celery task (so a still-queued run never
+starts), sends SIGTERM to the process group, and SIGKILL after
+`TRAINING_CANCEL_GRACE_SECONDS` (default 10). The PID's start time and command
+line are checked first, so a reused PID is never signalled. The worker also
+watches the marker, which gives a second path to stop the process. The response's
+`cancel_status` reports what happened: `process_terminated`, `process_killed`
+(SIGKILL needed), `process_not_found` (it had already exited), `process_mismatch`
+(the PID now belongs to another program, so nothing was signalled),
+`process_kill_failed`, or `revoked` (no process yet). The run stays
+`cancelled`, even if the process later exits 0. Simulate runs report
+`cancel_requested_without_task_id` as before. Their loop stops on the
+status.
+
 ## Checkpoint browser
 
 Every N steps the runtime saves a checkpoint. The browser lets you promote a non-final one (useful when training overfit late) or resume from any past step.
