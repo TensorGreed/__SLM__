@@ -87,3 +87,14 @@ class ReviewGateTests(unittest.TestCase):
             self.assertEqual(kept, ["accepted row", "legacy row without a status"])
             everything = ds._load_records_from_file(path, include_pending_synth=True)
             self.assertEqual(len(everything), 4, "the review queue still sees every row")
+
+
+class SqliteUrlTests(unittest.TestCase):
+    def test_in_memory_sqlite_urls_are_not_turned_into_files(self):
+        from app.config import Settings
+
+        s = Settings.__new__(Settings)
+        for url in ("sqlite+aiosqlite:///:memory:", "sqlite:///:memory:"):
+            self.assertEqual(s._normalize_sqlite_database_url(url), url)
+        relative = s._normalize_sqlite_database_url("sqlite+aiosqlite:///./data/x.db")
+        self.assertTrue(relative.startswith("sqlite+aiosqlite:////"), "relative paths still become absolute")

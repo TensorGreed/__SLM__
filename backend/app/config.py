@@ -257,6 +257,12 @@ class Settings(BaseSettings):
             path_and_query = value[len(prefix):]
             path_part, sep, query_part = path_and_query.partition("?")
 
+            # In-memory databases are not paths: resolving ":memory:" against
+            # the project root created a real file literally named ":memory:"
+            # there (shared by every phase test that asked for an in-memory DB).
+            if path_part in ("", ":memory:") or path_part.startswith("file::memory:"):
+                return value
+
             # Already absolute: sqlite+aiosqlite:////abs/path.db
             if path_part.startswith("/"):
                 return value
