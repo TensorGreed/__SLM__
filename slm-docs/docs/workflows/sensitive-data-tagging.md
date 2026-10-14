@@ -178,7 +178,25 @@ with `target: "training"`) rewrites the saved rows' labels in place
 under the conventions — texts unchanged, then the regex pass — so rows
 generated before the conventions existed follow them too.
 
-<!-- conventions run: numbers below -->
+What the conventions did on project 31 (2026-10-14), measured in three
+steps on the same 44 test texts:
+
+| step | result |
+|---|---|
+| suggested wording accepted for all 23 types | one line each; both labellers get the lines for the types they label |
+| Haiku re-keys the test split under them | 44/44 in 60 s, 288 entities. Run #57 (trained on the *old* labels) scores the same against it — F1 0.79 — so the gap is in the training labels, not the key |
+| local teacher relabels the 874 training rows under them | 39 min on gemma4, 0 failures; old vs new training labels agree at F1 0.82 — the conventions moved about one label in six |
+| labeller agreement, local vs Haiku | **0.74 → 0.85** (provider_name 0.93, national_id 0.92, visit_date 0.89, date_of_birth 0.78) |
+| re-train → run #58, scored against the Haiku key | **P 0.83 / R 0.85 / F1 0.84** (run #57: 0.79). date_of_birth 0.52 → **0.78**, national_id 0.69 → **0.92**, visit_date 0.69 → **0.87**, medication 0.70 → **0.88**, diagnosis 0.74 → **0.96**, provider_name 0.80 → **0.85**; phone and email 1.00 |
+
+Two types didn't move, and both are about the span's *edges*, not its
+type: all 12 remaining person_name disagreements are a title one
+labeller includes and the other doesn't ("Ms. Olivia Reed" vs "Olivia
+Reed"), and bank_account (0.21) splits "Account XXXX-3344, routing
+number 99001122" into one span or two. The suggested wording now says
+where those edges are (a person's name without the title; each account
+or routing number its own span, digits only) — a definition has to fix
+the boundaries, not just the category. Run #58 is export 7.
 
 ## 5. Export → Hugging Face
 

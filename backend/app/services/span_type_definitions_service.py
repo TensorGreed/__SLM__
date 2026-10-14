@@ -29,14 +29,16 @@ MAX_DEFINITION_CHARS = 400
 
 # Starting wording for common type names — a suggestion the user edits,
 # never applied silently. Each line says what the type is AND what it is
-# not, because the disagreements are at the boundaries.
+# not, because the disagreements are at the boundaries — including the
+# span's own boundaries: on project 31 every remaining person_name
+# disagreement was a title included by one labeller and not the other.
 _SUGGESTIONS: dict[str, str] = {
     "date_of_birth": "a person's birth date, only when the text says or clearly implies it is the birth date (DOB, born on, date of birth); any other date is not a date_of_birth",
     "visit_date": "the date of an appointment, visit, admission, procedure or discharge; not a birth date, not a billing or due date",
-    "bank_account": "a domestic bank account or routing/sort-code + account number; an IBAN is iban, not bank_account",
+    "bank_account": "a domestic bank account, routing or sort-code number — each number its own span, digits (and masking X's) only, never the word 'account' or the label; an IBAN is iban, a card's last four digits are credit_card",
     "iban": "an International Bank Account Number (two letters, two check digits, then the account, often grouped in fours)",
-    "person_name": "a private individual's name, including in greetings and signatures; a clinician or other care provider named in their professional role is provider_name",
-    "provider_name": "a clinician, care provider or healthcare organisation named in that role (Dr. Chen, Nurse Patel, St. Mary's Clinic); the patient or customer is person_name",
+    "person_name": "a private individual's name, including in greetings and signatures — the name only, without a title (Mr., Ms., Dr.); a clinician or other care provider named in their professional role is provider_name",
+    "provider_name": "a clinician, care provider or healthcare organisation named in that role, including the title (Dr. Chen, Nurse Patel, St. Mary's Clinic); the patient or customer is person_name",
     "national_id": "a government-issued personal identifier (SSN, National Insurance number, national ID card number); not a passport number, not a tax or employee id",
     "passport": "a passport number; not other government ids",
     "credit_card": "a payment card number (full or masked with visible digits); not the expiry date or the CVV",
