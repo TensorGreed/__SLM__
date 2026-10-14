@@ -424,6 +424,34 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
         );
     }, [provider, savedSecretCoords]);
 
+    // Save the pasted key as this project's secret for the provider, so the
+    // span tools (Write answer key / Relabel / Label passages with a cloud
+    // pin) can use it — they resolve the saved key server-side.
+    const [savingKey, setSavingKey] = useState(false);
+    const saveProviderKey = async () => {
+        const coords = LEGACY_PROVIDER_PRESETS[provider]?.secretCoords;
+        if (!coords || !apiKey.trim()) return;
+        setSavingKey(true);
+        try {
+            await api.put(`/projects/${projectId}/secrets`, {
+                provider: coords.provider,
+                key_name: coords.keyName,
+                value: apiKey.trim(),
+            });
+            setSavedSecretCoords((prev) => (
+                prev.some((c) => c.provider === coords.provider && c.keyName === coords.keyName)
+                    ? prev
+                    : [...prev, { provider: coords.provider, keyName: coords.keyName }]
+            ));
+            setApiKey('');
+            toast.success('Key saved on this project (encrypted). It is never shown back.', 4000);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Could not save the key.', 5000);
+        } finally {
+            setSavingKey(false);
+        }
+    };
+
     const handleProviderChange = (p: Provider) => {
         setProvider(p);
         const preset = LEGACY_PROVIDER_PRESETS[p];
@@ -653,7 +681,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
      *  write. Runs as the `span_relabel` Job the bell tracks. */
     const [relabelStarting, setRelabelStarting] = useState(false);
     const relabelPin = provider === 'ollama' ? 'ollama' : provider === 'custom' ? null : `cloud:${provider}:${modelName}`;
-    const handleWriteAnswerKey = async (target: 'answer_key' | 'training' = 'answer_key') => {
+    const handleWriteAnswerKey = async (target: 'answer_key' | 'training' | 'passages' = 'answer_key') => {
         if (!relabelPin) {
             toast.info('Pick Ollama or a cloud provider — the answer key is written through a synth backend.', 5000);
             return;
@@ -664,10 +692,12 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 split: 'test',
                 backend: relabelPin,
                 entity_types: parseEntityTypes(entityTypesInput),
-                ...(target === 'training' ? { target: 'training' } : {}),
+                ...(target !== 'answer_key' ? { target } : {}),
             });
             toast.info(
-                target === 'training'
+                target === 'passages'
+                    ? `Labelling your document passages as they are with ${relabelPin} — page headers and footers included (job #${res.data?.id}). They land in the review queue as "passage_labels"; accept them there, then re-split (keep the test examples) and re-train.`
+                    : target === 'training'
                     ? `Relabelling the saved training rows with ${relabelPin} under the labelling conventions — the bell tracks it (job #${res.data?.id}). Re-split and re-train when it finishes.`
                     : `Writing the answer key with ${relabelPin} — the bell tracks it (job #${res.data?.id}). Evaluate against "gold_test" when it finishes.`,
                 6000,
@@ -1037,6 +1067,18 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                     placeholder={hasSavedProviderKey ? '(using saved key)' : 'sk-...'}
                                     data-testid="synth-legacy-api-key"
                                 />
+                                {apiKey.trim() && LEGACY_PROVIDER_PRESETS[provider]?.secretCoords && (
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={() => void saveProviderKey()}
+                                        disabled={savingKey}
+                                        data-testid="synth-save-api-key"
+                                        title="Stores the key encrypted on this project. Every model call that pins this provider — span rows, the answer key, relabelling — uses it; the key is never shown back."
+                                    >
+                                        {savingKey ? 'Saving…' : hasSavedProviderKey ? 'Replace the saved key' : 'Save key to this project'}
+                                    </button>
+                                )}
                             </div>
                         )}
                     </div>
@@ -1188,6 +1230,16 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                     title="Relabel every saved training row (texts unchanged) with the selected model under the project's labelling conventions, then the regex pass — so the training labels follow the same rules as the answer key."
                                 >
                                     Relabel training rows with {relabelPin ?? 'this model'}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => void handleWriteAnswerKey('passages')}
+                                    disabled={relabelStarting || isGenerating}
+                                    data-testid="synthetic-label-passages"
+                                    title="Labels your cleaned document passages AS THEY ARE (no rewrite) under the labelling conventions and adds them as training rows — so the model also learns real layout: letterheads, page numbers, footers. Passages labelled before are skipped."
+                                >
+                                    Label document passages with {relabelPin ?? 'this model'}
                                 </button>
                                 <SpanTypeDefinitionsEditor projectId={projectId} />
                                 {refineInfo && refineInfo.types.length > 0 && (

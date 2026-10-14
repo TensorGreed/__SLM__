@@ -440,3 +440,129 @@ async def relabel_training_rows(
         summary.warnings.append(f"{calls['failed']} rows could not be labelled and kept their old labels.")
     await report(1.0, f"Relabelled {relabelled} training rows")
     return summary
+
+
+PASSAGE_SOURCE_PREFIX = "passage_labels"
+
+
+def load_document_passages(project_id: int, document_id: int | None = None) -> list[dict[str, Any]]:
+    """Cleaned document passages (``cleaned/cleaned.jsonl`` rows without a
+    ``row_index``), optionally of one source document, in file order."""
+    path = settings.DATA_DIR / "projects" / str(project_id) / "cleaned" / "cleaned.jsonl"
+    if not path.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict) or "row_index" in row or not str(row.get("text") or "").strip():
+                continue
+            if document_id is not None and int(row.get("source_document_id") or -1) != int(document_id):
+                continue
+            out.append(row)
+    return out
+
+
+async def label_passages_as_training_rows(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    document_id: int | None = None,
+    backend: str | None = None,
+    entity_types: list[str] | None = None,
+    progress: ProgressFn | None = None,
+    backend_override: Any = None,
+    max_passages: int = 2000,
+) -> RelabelSummary:
+    """Label the project's cleaned document passages AS THEY ARE (no
+    rewrite) under the labelling conventions and append them to the
+    synthetic span rows — the way to train on text with real layout
+    (page headers, footers, letterheads) that the span generator's
+    rewritten snippets never keep. The regex pass runs too. Passages
+    already labelled (same text) are skipped, so a re-run only adds new
+    ones. Raises when nothing could be labelled."""
+    from app.services.synth_backends.base import pick_backend
+    from app.services.synthetic_service import _merge_regex_entities
+
+    async def report(fraction: float, message: str) -> None:
+        if progress is not None:
+            await progress(fraction, message)
+
+    passages = load_document_passages(project_id, document_id)[:max_passages]
+    syn_path = settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl"
+    existing_texts: set[str] = set()
+    existing_types: set[str] = set()
+    max_id = 0
+    if syn_path.exists():
+        for line in syn_path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                if isinstance(row.get("id"), int) and not isinstance(row.get("id"), bool):
+                    max_id = max(max_id, row["id"])
+                if isinstance(row.get("text"), str):
+                    existing_texts.add(row["text"])
+                existing_types.update(e["type"] for e in _row_entities(row))
+    todo = [p for p in passages if str(p["text"]) not in existing_texts]
+    if not todo:
+        raise RuntimeError(
+            "No unlabelled document passages"
+            + (f" for document #{document_id}" if document_id is not None else "")
+            + f" in project {project_id} ({len(passages)} passages, all already labelled)."
+        )
+    types = [t.strip().lower() for t in (entity_types or []) if isinstance(t, str) and t.strip()] or sorted(existing_types)
+    if not types:
+        raise RuntimeError("Name the entity types to label (the project has no labelled rows to take them from).")
+    from app.services.span_type_definitions_service import definitions_clause, load_definitions
+
+    definitions = await load_definitions(db, project_id)
+    conventions = definitions_clause(types, definitions)
+    llm = backend_override or pick_backend(backend)
+    backend_label = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
+    texts = [str(p["text"]) for p in todo]
+    labels, calls = await label_texts(llm, texts, types, conventions, report, backend_label, start=0.02, span=0.9)
+
+    stamp = datetime.now(timezone.utc).isoformat()
+    counts: Counter[str] = Counter()
+    new_rows: list[dict[str, Any]] = []
+    for passage, text, spans in zip(todo, texts, labels):
+        if spans is None:
+            continue
+        merged, _ = _merge_regex_entities(text, spans, types)
+        counts.update(e["type"] for e in merged)
+        doc = passage.get("source_document_id")
+        new_rows.append({
+            # The review queue acts on rows by integer id; these land pending.
+            "id": max_id + len(new_rows) + 1,
+            "text": text,
+            "entities": merged,
+            "source": f"{PASSAGE_SOURCE_PREFIX}:{backend_label}",
+            "synth_source": f"{PASSAGE_SOURCE_PREFIX}:doc={doc}",
+            "source_document_id": doc,
+            "chunk_id": passage.get("chunk_id"),
+            "review_status": "pending",
+            "generated_at": stamp,
+        })
+    if not new_rows:
+        raise RuntimeError(f"{backend_label} labelled none of the {len(todo)} passages.")
+    syn_path.parent.mkdir(parents=True, exist_ok=True)
+    with syn_path.open("a", encoding="utf-8") as handle:
+        for row in new_rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    summary = RelabelSummary(
+        project_id=project_id, split="passages", backend=backend_label, rows=len(todo), labelled_rows=len(new_rows),
+        failed_calls=calls["failed"], entities=sum(counts.values()), entity_counts=dict(counts.most_common()),
+        conventions_types=[t for t in types if t in definitions], file_path=str(syn_path),
+    )
+    skipped = len(passages) - len(todo)
+    if skipped:
+        summary.warnings.append(f"{skipped} passages were already labelled and were skipped.")
+    if calls["failed"]:
+        summary.warnings.append(f"{calls['failed']} passages could not be labelled and were left out.")
+    await report(1.0, f"Labelled {len(new_rows)} passages as training rows")
+    return summary

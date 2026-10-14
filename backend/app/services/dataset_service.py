@@ -1069,6 +1069,71 @@ def _dedup_entries_for_split(
     return kept, dropped
 
 
+_TEST_KEY_FIELDS = ("text", "input", "prompt", "question", "instruction", "source_text")
+
+
+def _entry_text_key(entry: Any) -> str:
+    """What makes two prepared rows "the same example": their input text,
+    whitespace-normalised and lower-cased (metadata such as
+    ``_source_dataset`` may differ between two splits of the same row)."""
+    if not isinstance(entry, dict):
+        return ""
+    parts = [str(entry.get(k)) for k in _TEST_KEY_FIELDS if isinstance(entry.get(k), str) and entry.get(k).strip()]
+    return " ".join(" ".join(parts).split()).lower()
+
+
+def _keep_test_rows(
+    project_id: int,
+    splits: dict[str, list[dict[str, Any]]],
+    *,
+    train_ratio: float,
+    val_ratio: float,
+    seed: int,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
+    """``split_dataset(keep_test=True)``: the active test rows stay as they
+    are; every other row (old and new) is re-divided train / val by their
+    ratio; rows matching a test row's text never reach train or val."""
+    test_path = _prep_dir(project_id) / "test.jsonl"
+    if not test_path.exists():
+        return splits, {"applied": False, "reason": "no active test split"}
+    kept: list[dict[str, Any]] = []
+    with test_path.open(encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                kept.append(row)
+    if not kept:
+        return splits, {"applied": False, "reason": "the active test split is empty"}
+    test_keys = {_entry_text_key(r) for r in kept}
+    pool: list[dict[str, Any]] = []
+    excluded = 0
+    seen: set[str] = set()
+    for name in ("train", "val", "test"):
+        for entry in splits.get(name, []):
+            key = _entry_text_key(entry)
+            if key in test_keys:
+                excluded += 1
+                continue
+            if key and key in seen:
+                continue
+            seen.add(key)
+            pool.append(entry)
+    rng = random.Random(seed)
+    rng.shuffle(pool)
+    share = val_ratio / (train_ratio + val_ratio) if (train_ratio + val_ratio) > 0 else 0.0
+    n_val = int(round(len(pool) * share))
+    report = {
+        "applied": True,
+        "test_rows_kept": len(kept),
+        "rows_matching_test_excluded": excluded,
+        "train_val_pool": len(pool),
+    }
+    return {"train": pool[n_val:], "val": pool[:n_val], "test": kept}, report
+
+
 async def split_dataset(
     db: AsyncSession,
     project_id: int,
@@ -1086,8 +1151,16 @@ async def split_dataset(
     disjoint_by: str | None = None,
     dedup_rows: bool = True,
     auto_stratify: bool = True,
+    keep_test: bool = False,
 ) -> dict:
     """Split combined data into train/val/test and save as JSONL.
+
+    ``keep_test``: keep the active test examples exactly (the current
+    ``prepared/test.jsonl`` rows, verbatim) and split everything else into
+    train / val only — rows with the same text as a kept test row are
+    removed from train and val, so adding data never moves the answer key
+    into training and runs before and after stay comparable on the same
+    test rows. A no-op (reported) when there is no active test split.
 
     Defaults are the safe ones for a newcomer: exact + near-duplicate rows
     are dropped before splitting (``dedup_rows``, reported in the
@@ -1228,6 +1301,12 @@ async def split_dataset(
             "test": entries[val_end:],
         }
 
+    keep_test_report: dict[str, Any] | None = None
+    if keep_test:
+        splits, keep_test_report = _keep_test_rows(
+            project_id, splits, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed,
+        )
+
     prep_dir = _prep_dir(project_id)
     file_paths: dict[str, str] = {}
     file_hashes: dict[str, str] = {}
@@ -1338,6 +1417,7 @@ async def split_dataset(
         "disjoint_by": str(disjoint_by).strip() if disjoint_by else None,
         "disjoint_report": disjoint_report,
         "dedup_requested": bool(dedup_rows),
+        "keep_test": keep_test_report,
         "dedup_report": dedup_report,
     }
     manifest_path = prep_dir / "manifest.json"

@@ -14,7 +14,22 @@ export type EvalVerdict =
     | 'no_baseline'
     | 'no_comparison'
     | 'not_evaluated'
-    | 'no_trained_run';
+    | 'no_trained_run'
+    /** span_eval: a token-classification run scored on its own (no base). */
+    | 'evaluated';
+
+/** One span_set evaluation of a token-classification run. */
+export interface SpanEvalBlock {
+    eval_result_id: number;
+    dataset_name: string;
+    precision: number | null;
+    recall: number | null;
+    f1: number | null;
+    rows: number | null;
+    weakest_types: Array<{ type: string; f1: number; support: number }>;
+    /** answer_key only: who wrote it (e.g. cloud:anthropic:claude-haiku-4-5…). */
+    written_by?: string | null;
+}
 
 export interface EvalSummaryHeadline {
     metric_id: string;
@@ -66,7 +81,12 @@ export interface EvalSummary {
     /** 'rag_passages': a RAG-first project — the "run" is the base model +
      *  document-passage retrieval, scored by the judge against the base
      *  model alone (no training). Absent for trained runs. */
-    kind?: 'rag_passages';
+    kind?: 'rag_passages' | 'span_eval';
+    /** span_eval: scores on the answer key written by a second model (the
+     *  headline when present) and on the test examples. */
+    answer_key?: SpanEvalBlock | null;
+    test?: SpanEvalBlock | null;
+    dataset_name?: string | null;
     split?: string | null;
     /** rag_passages: the retrieval scored and served (top-k + reranker,
      *  and after the staged sweep possibly a candidate pool / passage size). */

@@ -152,6 +152,8 @@ class SeedDocumentsRequest(BaseModel):
     words: int = Field(160, ge=MIN_WORDS, le=MAX_WORDS)
     backend: str | None = None
     domain_hint: str = Field("", max_length=500)
+    layout: str = Field("plain", pattern="^(plain|paged)$")
+    words_per_page: int = Field(110, ge=40, le=600)
     chunk_size: int = Field(900, ge=200, le=4000)
     chunk_overlap: int = Field(60, ge=0, le=1000)
 
@@ -215,6 +217,8 @@ async def start_seed_documents(
                     domain_hint=req.domain_hint,
                     chunk_size=req.chunk_size,
                     chunk_overlap=req.chunk_overlap,
+                    layout=req.layout,
+                    words_per_page=req.words_per_page,
                     progress=_progress,
                 )
             except SynthBackendError as exc:
@@ -227,6 +231,6 @@ async def start_seed_documents(
         title=f"Sample documents · project #{project_id}",
         runner=_runner,
         project_id=project_id,
-        params={"project_id": project_id, "count": req.count, "words": req.words, "genres": req.genres, "backend": req.backend},
+        params={"project_id": project_id, "count": req.count, "words": req.words, "genres": req.genres, "backend": req.backend, "layout": req.layout},
     )
     return serialize_job(job)

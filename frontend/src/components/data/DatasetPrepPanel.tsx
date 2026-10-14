@@ -377,6 +377,12 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     const [splitFieldMappingText, setSplitFieldMappingText] = useState('');
     const [stratifyBy, setStratifyBy] = useState('');
     const [disjointBy, setDisjointBy] = useState('');
+    // Keep the active test examples exactly; split everything else into
+    // train / val (for adding data between runs scored on the same rows).
+    const [keepTest, setKeepTest] = useState(false);
+    // Test rows in the ACTIVE prepared version (0 = no split yet) — the
+    // keep-test option only makes sense when there is one.
+    const [activeTestRows, setActiveTestRows] = useState(0);
     const [useProfileDefaults, setUseProfileDefaults] = useState(true);
     const [splitTouched, setSplitTouched] = useState({
         train_ratio: false,
@@ -438,6 +444,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         if (trimmedDisjoint) {
             payload.disjoint_by = trimmedDisjoint;
         }
+        if (keepTest) payload.keep_test = true;
         return payload;
     };
 
@@ -529,6 +536,8 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
             const m = res.data || {};
             const hydrated: string[] = [];
 
+            const activeSplits = (m.splits || {}) as Record<string, unknown>;
+            setActiveTestRows(typeof activeSplits.test === 'number' ? activeSplits.test : 0);
             const stratify = typeof m.stratify_by === 'string' ? m.stratify_by.trim() : '';
             const disjoint = typeof m.disjoint_by === 'string' ? m.disjoint_by.trim() : '';
             if (stratify) { setStratifyBy(stratify); hydrated.push('stratify_by'); }
@@ -1901,6 +1910,13 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                         </p>
                     </div>
                 </div>
+                {(activeTestRows > 0 || (splitManifest?.splits?.test ?? 0) > 0) && (
+                    <label className="dp-strat-help" data-testid="split-keep-test-label">
+                        <input type="checkbox" checked={keepTest} onChange={(e) => setKeepTest(e.target.checked)} data-testid="split-keep-test" />
+                        {' '}Keep the current {activeTestRows || splitManifest?.splits?.test} test examples — re-split only train and validation. Use it when you've added data and
+                        want the new run scored on exactly the same rows as the last one (rows with the same text never move into training).
+                    </label>
+                )}
                 <div className="dp-actions">
                     <button className="btn-primary" onClick={previewEffectiveSplitConfig} disabled={effectiveSplitLoading}>
                         {effectiveSplitLoading ? '⏳ Resolving...' : '🧭 Preview Effective Config'}

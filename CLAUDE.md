@@ -1073,7 +1073,14 @@ runs real CPU inference). ~4 min locally.
   source="seed_documents")` → `process_document` → `clean_document` (one
   `seed-documents-<stamp>.txt`). Raises when nothing usable was written.
   `SeedDocumentsCard` is the first card on the Data tab (`IngestionPanel`);
-  bell deep-links `#seed-documents`. Tests: `tests/test_seed_documents.py`
+  bell deep-links `#seed-documents`. **`layout="paged"`** (card checkbox
+  "Multi-page, with headers and footers"; `words_per_page`, default 110):
+  `paginate_document` splits each document at sentence ends and inserts
+  invented header / footer lines by code (`_HEADERS` / `_FOOTERS`: org
+  letterheads, CONFIDENTIAL, "Page i of n", "- i -", print dates…). The
+  bracketed "[i/n]" footer is deliberately never generated — it is the
+  held-out style for measuring. Cleaning flattens the line breaks, so a
+  footer reads inline in the passage. Tests: `tests/test_seed_documents.py`
   (read the ingested doc back IN THE SAME LOOP — a later TestClient read can
   lose the write on the StaticPool).
 - **Refine weak types** (`services/span_refine_service.py`): `latest_span_eval`
@@ -1111,6 +1118,29 @@ runs real CPU inference). ~4 min locally.
   `POST /synthetic/relabel-answer-key {target: "training"}`, button
   "Relabel training rows with <pin>". Summaries carry `conventions_types`.
   Tests: `tests/test_span_type_definitions.py`.
+- **Label passages as training rows** (`span_relabel_service.label_passages_as_training_rows`,
+  `POST /synthetic/relabel-answer-key {target: "passages", document_id?}`,
+  Synthetic-tab button "Label document passages with <pin>"): the cleaned
+  passages (`load_document_passages`: cleaned.jsonl rows without
+  `row_index`, optionally one document) are labelled AS THEY ARE under the
+  conventions (+ regex pass) and appended to `synthetic.jsonl`
+  (`synth_source="passage_labels:doc=<id>"`, pending). The span generator
+  rewrites passages into snippets and loses layout; this keeps letterheads /
+  page numbers in training text. Passages already present (same text) are
+  skipped; raises when none are new. Summary `split="passages"`.
+- **Split keeping the test rows** (`split_dataset(keep_test=True)`, API
+  `keep_test`, split-form checkbox "Keep the current N test examples",
+  shown when the active manifest has a test split): `_keep_test_rows` keeps
+  `prepared/test.jsonl` verbatim, re-divides everything else train / val by
+  their ratio, and drops any row whose `_entry_text_key` (text/input/prompt…
+  whitespace-normalised, lower-cased) matches a test row — so adding data
+  never moves the answer key into training. Manifest `keep_test` report.
+  Tests: `tests/test_split_keep_test.py`.
+- **Saving a cloud key from the Synthetic tab**: with a cloud provider and a
+  pasted key, "Save key to this project" PUTs `/projects/{id}/secrets`
+  (`cloud_llm_<provider>` / `api_key`) and flips the "✓ saved on project"
+  badge; the span tools' cloud pins resolve it server-side. (Before this the
+  only UI that saved one was the Answer Key tab's LLM-gold panel checkbox.)
 - **Answer key from a second model** (`services/span_relabel_service.py`,
   Job `span_relabel`, `POST /synthetic/relabel-answer-key` {split, backend,
   entity_types}): `relabel_split_as_answer_key` prompts the backend (synth
@@ -1139,7 +1169,19 @@ runs real CPU inference). ~4 min locally.
   `_resolve_token_classifier_artifacts` (config.json `*ForTokenClassification`
   under `model_ref` or `model_ref/model`) → `_run_token_classification_inference`
   tags the pair's `structured_input` and emits `{"entities": [...]}` JSON for
-  the span_set scorer; dispatched before the classifier-head check. Data gate
+  the span_set scorer; dispatched before the classifier-head check.
+  **"Evaluate this run"** works for these runs: the lift job
+  (`run_post_training_lift_eval`, auto after training too) routes
+  `is_token_classification` runs to `run_span_evaluation` — no base model
+  (an untrained head means nothing), scores on `test` and, when a GOLD_TEST
+  dataset exists (`project_has_answer_key`), on `gold_test`; result
+  `{kind: "span_eval", test, answer_key}` (`span_block`: P/R/F1, rows,
+  `weakest_types`). `eval_summary_service.span_eval_summary` →
+  `kind="span_eval"`, `verdict="evaluated"`, answer key first (+
+  `written_by` from gold rows' `source`), failures from the answer key.
+  `EvalSummaryCard`: "Span F1 x against the answer key", both score lines,
+  weakest types, "Re-evaluate". Bell: "span F1 … on the answer key · … on
+  the test examples". Tests: `tests/test_span_eval_summary.py`. Data gate
   accepts `entities` targets for this task type; UI option in
   `TrainingModelEssentialsSection`. Tests: `tests/test_train_token_classification.py`.
   **Long texts (Epic P1)**: `encode_windows` (fast tokenizer overflow,

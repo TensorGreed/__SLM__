@@ -69,6 +69,10 @@ class SplitRequest(BaseModel):
     # Stratify by a categorical ``label`` when the caller set neither
     # ``stratify_by`` nor ``disjoint_by`` (manifest ``stratify_auto``).
     auto_stratify: bool = True
+    # Keep the active test examples exactly; split the rest into train / val
+    # (dataset_service._keep_test_rows). For adding data between runs that
+    # must be scored on the same test rows.
+    keep_test: bool = False
 
     @model_validator(mode="after")
     def validate_ratios(self):
@@ -379,6 +383,7 @@ async def split(
             disjoint_by=disjoint_by,
             dedup_rows=req.dedup_rows,
             auto_stratify=req.auto_stratify,
+            keep_test=req.keep_test,
         )
         manifest["domain_pack_applied"] = runtime.get("domain_pack_applied")
         manifest["domain_pack_source"] = runtime.get("domain_pack_source")

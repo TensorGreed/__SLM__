@@ -51,6 +51,25 @@ def _read_all_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _ensure_row_ids(path: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Give every row without an integer ``id`` the next free one and save.
+    The queue acts on rows by id, so a row written without one (any writer
+    that forgot) could never be accepted — and pending rows never train —
+    so it was silently left out of training for good."""
+    used = [r["id"] for r in rows if isinstance(r.get("id"), int) and not isinstance(r.get("id"), bool)]
+    next_id = (max(used) if used else 0) + 1
+    changed = False
+    for row in rows:
+        rid = row.get("id")
+        if not isinstance(rid, int) or isinstance(rid, bool):
+            row["id"] = next_id
+            next_id += 1
+            changed = True
+    if changed:
+        _atomic_write_rows(path, rows)
+    return rows
+
+
 def _atomic_write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
     """Write the full row list back to disk via a temp-file + rename
     so a crash mid-write can't truncate the synthetic dataset."""
@@ -217,7 +236,7 @@ async def list_review_queue(
     )
     dataset = ds_result.scalar_one_or_none()
     path = _synthetic_jsonl_path(project_id)
-    all_rows = _read_all_rows(path)
+    all_rows = _ensure_row_ids(path, _read_all_rows(path))
     pending = [r for r in all_rows if r.get("review_status") == "pending"]
     # "Accepted" = explicitly accepted, OR no review_status field
     # (legacy rows from the pre-Epic-2a flow). Both will enter
@@ -303,7 +322,7 @@ async def bulk_update_review_queue(
 
     target_ids = set(int(rid) for rid in row_ids)
     path = _synthetic_jsonl_path(project_id)
-    rows = _read_all_rows(path)
+    rows = _ensure_row_ids(path, _read_all_rows(path))
 
     accepted_count = 0
     rejected_count = 0
@@ -390,7 +409,7 @@ async def bulk_update_by_source(
         raise ValueError("source must be a non-empty synth_source key")
 
     path = _synthetic_jsonl_path(project_id)
-    rows = _read_all_rows(path)
+    rows = _ensure_row_ids(path, _read_all_rows(path))
     matched_ids = [
         int(row["id"])
         for row in rows

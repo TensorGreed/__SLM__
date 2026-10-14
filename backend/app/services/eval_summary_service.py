@@ -239,6 +239,14 @@ async def build_eval_summary(
         if grouped is not None:
             return grouped
 
+    if experiment is not None:
+        from app.services.post_training_eval_service import is_token_classification
+
+        if is_token_classification(experiment):
+            span = await span_eval_summary(db, project_id, experiment)
+            if span is not None:
+                return span
+
     latest = (
         await db.execute(
             select(EvalResult)
@@ -305,6 +313,85 @@ async def build_eval_summary(
         # None when the task isn't long-answer or no judge was reachable.
         "judge": _judge_block(metrics),
         "dataset_name": (details.get("dataset") or {}).get("name") if isinstance(details.get("dataset"), dict) else latest.dataset_name,
+    }
+
+
+def _answer_key_source(project_id: int) -> str | None:
+    """Who wrote the project's answer key (``gold/gold_test.jsonl`` rows'
+    ``source``, e.g. ``answer_key:cloud:anthropic:claude-haiku-4-5``)."""
+    import json
+
+    from app.config import settings
+
+    path = settings.DATA_DIR / "projects" / str(project_id) / "gold" / "gold_test.jsonl"
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                row = json.loads(line)
+                source = row.get("source") if isinstance(row, dict) else None
+                if isinstance(source, str) and source:
+                    return source.split(":", 1)[1] if source.startswith("answer_key:") else source
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+async def span_eval_summary(db: AsyncSession, project_id: int, experiment: Experiment) -> dict[str, Any] | None:
+    """``kind="span_eval"`` for a token-classification run: its own span
+    scores (no base-model lift — the base is an untrained head), on the
+    answer key written by a second model when there is one (the headline:
+    the test examples were labelled by the training-data teacher) and on
+    the test examples. None when the run has no span evaluation yet."""
+    from app.services.post_training_eval_service import span_block
+
+    latest: dict[str, EvalResult] = {}
+    rows = (
+        await db.execute(
+            select(EvalResult)
+            .where(EvalResult.experiment_id == experiment.id)
+            .where(EvalResult.dataset_name.in_(("gold_test", "test")))
+            .order_by(desc(EvalResult.id))
+        )
+    ).scalars().all()
+    for result in rows:
+        metrics = result.metrics if isinstance(result.metrics, dict) else {}
+        if not isinstance(metrics.get("per_class"), dict) or result.dataset_name in latest:
+            continue
+        latest[result.dataset_name] = result
+    if not latest:
+        return None
+    key_result = latest.get("gold_test")
+    test_result = latest.get("test")
+    primary = key_result or test_result
+    failures, failed_count = _failures_from(primary)
+    answer_key = span_block(key_result) if key_result is not None else None
+    if answer_key is not None:
+        answer_key["written_by"] = _answer_key_source(project_id)
+    test = span_block(test_result) if test_result is not None else None
+    return {
+        "kind": "span_eval",
+        "project_id": project_id,
+        "experiment_id": experiment.id,
+        "verdict": "evaluated",
+        "message": (
+            None if answer_key is not None else
+            "Scored against the test examples, which the training-data teacher labelled. "
+            "Write an answer key with a second model (Synthetic tab) for a score that can see the teacher's mistakes."
+        ),
+        "headline": None,
+        "answer_key": answer_key,
+        "test": test,
+        "trained": {"experiment_name": experiment.name},
+        "eval_result_id": primary.id,
+        "eval_type": primary.eval_type,
+        "evaluated_samples": (answer_key or test or {}).get("rows"),
+        "failures": failures,
+        "failed_count": failed_count,
+        "dataset_name": primary.dataset_name,
+        "evidence": None,
+        "seed_evidence": None,
+        "seeds": None,
+        "n_seeds": 1,
     }
 
 

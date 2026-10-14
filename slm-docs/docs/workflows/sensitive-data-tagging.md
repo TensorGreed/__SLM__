@@ -95,7 +95,14 @@ the row count (≈1500 example-passes, 3–20 epochs) unless you set them.
 
 ## 4. Evaluate → refine → re-train
 
-The held-out evaluation recognises a token-classification checkpoint and
+**Evaluate this run** on the Eval tab (it also runs by itself after
+training) scores a token-classification run *on its own* — there is no
+base-model comparison, because its base is an encoder with an untrained
+head. The card reads "Span F1 0.85 against the answer key": the answer
+key written by a second model first (with who wrote it), the test
+examples second (labelled by the training-data teacher), the weakest
+types, and the failing texts; **Re-evaluate** re-scores both. The
+held-out evaluation recognises a token-classification checkpoint and
 tags the test rows with it (no generation), so the **span_set** report is
 the usual one: precision / recall / F1 overall, **per type** (where the
 model is weak), and per row the entities *matched*, *missed* and
@@ -251,6 +258,44 @@ vs 0.84). What they don't fix: with a "Page n of 11" footer between the
 texts, precision falls to 0.65 (F1 0.74) — the model tags page
 furniture it never saw in training. That's a data gap, not a windowing
 one: train on documents that carry headers and footers.
+
+### Page headers and footers: train on real layout
+
+Three pieces, all in the UI:
+
+1. **Write sample documents → "Multi-page, with headers and footers"**
+   (`layout: "paged"`). Each document is split into pages, and header
+   and footer lines are inserted by code — letterheads, "CONFIDENTIAL",
+   "Page 2 of 5", "- 2 -", print dates — varied per document.
+2. **Label document passages with *model*** (Synthetic tab, span mode;
+   `POST /synthetic/relabel-answer-key {target: "passages",
+   document_id}`). The span generator *rewrites* passages into new
+   snippets, which drops the layout; this labels the passages **as
+   they are**, under your conventions, and adds them as training rows.
+   They land in the review queue (source `passage_labels:doc=<id>`):
+   accept them there — pending rows never train.
+3. **Split with "Keep the current N test examples"** (`keep_test`). The
+   test rows stay exactly as they were (rows with the same text never
+   move into training), and only train / validation are re-divided — so
+   the new run is scored on the same rows as the old one.
+
+Project 31 (2026-10-14): 40 paged documents (7 min) → 129 passages, 83
+of them with page lines → 128 labelled by gemma4 in 5 min (708
+entities) → accepted → run #62. Scored on the same multi-page documents,
+plus a footer style the paged layout never generates (`[3/11]` and a
+hospital letterhead), against the Haiku key. Run #60 is the control:
+the old training data, only re-split.
+
+| documents | run #59 | run #60 (control) | **run #62 (+ passages)** |
+|---|---|---|---|
+| texts joined by blank lines | 0.82 | 0.84 | 0.84 |
+| "Page n of 11" footers | 0.74 (precision 0.65) | 0.73 | **0.84 (precision 0.82)** |
+| held-out footer + letterhead | 0.69 (precision 0.57) | 0.65 | **0.83 (precision 0.80)** |
+| the 44 answer-key texts, one by one | 0.84 | 0.83 | 0.85 |
+
+The footer gap closed, including for a style the model never saw; short
+texts didn't regress. (All the measuring text was invented, as were the
+footers; real scanned documents add OCR noise this doesn't test.)
 
 ## What the first run produced (2026-10-13)
 

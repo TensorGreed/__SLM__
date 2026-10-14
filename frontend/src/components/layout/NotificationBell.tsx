@@ -147,7 +147,13 @@ function jobOutcomeSummary(job: Job): string | null {
         const agreement = r.agreement && typeof (r.agreement as { f1?: unknown }).f1 === 'number' ? (r.agreement as { f1: number }).f1 : null;
         const parts: string[] = [];
         const isTraining = r.split === 'synthetic';
-        if (rows !== null) parts.push(isTraining ? `training labels: ${rows} rows relabelled` : `answer key: ${rows} rows`);
+        const isPassages = r.split === 'passages';
+        if (rows !== null) {
+            parts.push(
+                isPassages ? `${rows} passages labelled — accept them in the review queue`
+                    : isTraining ? `training labels: ${rows} rows relabelled` : `answer key: ${rows} rows`,
+            );
+        }
         if (entities !== null) parts.push(`${entities} entities`);
         if (agreement !== null) parts.push(`agreement with the old labels F1 ${agreement.toFixed(2)}`);
         return parts.length ? parts.join(' · ') : null;
@@ -174,6 +180,14 @@ function jobOutcomeSummary(job: Job): string | null {
     }
 
     if (job.kind === 'post_training_lift_eval') {
+        if (r.kind === 'span_eval') {
+            // Token-classification run: its own span scores, the answer key first.
+            const blocks = [['answer key', r.answer_key], ['test examples', r.test]] as const;
+            const parts = blocks
+                .filter(([, b]) => b && typeof (b as { f1?: unknown }).f1 === 'number')
+                .map(([label, b]) => `span F1 ${(b as { f1: number }).f1.toFixed(2)} on the ${label}`);
+            return parts.length ? parts.join(' · ') : 'span evaluation done';
+        }
         const h = (r.headline || null) as {
             metric_id?: string;
             baseline_value?: number;

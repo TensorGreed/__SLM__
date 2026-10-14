@@ -149,3 +149,55 @@ class TrainingRelabelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PassageLabelTests(unittest.TestCase):
+    def test_passages_are_labelled_as_they_are_and_appended_once(self):
+        pid = client.post("/api/projects", json={"name": f"passages-{time.time_ns()}", "description": "x"}).json()["id"]
+        base = settings.DATA_DIR / "projects" / str(pid)
+        (base / "cleaned").mkdir(parents=True, exist_ok=True)
+        (base / "synthetic").mkdir(parents=True, exist_ok=True)
+        passages = [
+            {"source_document_id": 5, "chunk_id": 0, "text": "NORTHWIND HEALTH PARTNERS\nPatient Ada Lovelace, call 555-0100.\nPage 1 of 2"},
+            {"source_document_id": 5, "chunk_id": 1, "text": "Northwind\nNo identifiers on this page at all.\nPage 2 of 2"},
+            {"source_document_id": 9, "chunk_id": 0, "text": "Another document's passage, call 555-0199."},
+            {"row_index": 3, "text": "a structured row, not a passage"},
+        ]
+        (base / "cleaned" / "cleaned.jsonl").write_text("\n".join(json.dumps(p) for p in passages) + "\n")
+        (base / "synthetic" / "synthetic.jsonl").write_text(json.dumps({"text": "old row", "entities": [{"type": "person_name", "start": 0, "end": 3, "text": "old"}]}) + "\n")
+        prompts: list[str] = []
+
+        class Labeller:
+            name = "fake"
+
+            def describe(self):
+                return "fake:labeller"
+
+            async def complete(self, prompt, **kw):
+                prompts.append(prompt)
+                return json.dumps({"rows": [{"index": 0, "entities": [{"type": "person_name", "text": "Ada Lovelace"}]}, {"index": 1, "entities": []}]})
+
+        async def _go():
+            async with async_session_factory() as db:
+                return await relabel.label_passages_as_training_rows(
+                    db, pid, document_id=5, backend_override=Labeller(), entity_types=["person_name", "phone"],
+                )
+
+        summary = asyncio.run(_go())
+        self.assertEqual((summary.rows, summary.labelled_rows), (2, 2))
+        self.assertIn("Page 1 of 2", prompts[0], "the passage goes to the labeller as it is, layout lines included")
+        rows = [json.loads(l) for l in (base / "synthetic" / "synthetic.jsonl").read_text().splitlines() if l.strip()]
+        self.assertEqual(len(rows), 3, "appended to the existing rows")
+        first = rows[1]
+        self.assertEqual(first["text"], passages[0]["text"])
+        self.assertEqual(sorted(e["type"] for e in first["entities"]), ["person_name", "phone"], "labeller + regex pass")
+        self.assertEqual(first["synth_source"], "passage_labels:doc=5")
+        self.assertEqual([r.get("id") for r in rows[1:]], [1, 2], "ids continue after the highest existing one (none here)")
+        accepted = client.post(f"/api/projects/{pid}/synthetic/review-queue/bulk-update-by-source", json={"source": "passage_labels:doc=5", "action": "accept"}).json()
+        self.assertEqual(accepted["accepted"], 2, "the review queue can accept them")
+        self.assertEqual(rows[2]["entities"], [], "a page with nothing sensitive is a useful negative")
+        with self.assertRaisesRegex(RuntimeError, "already labelled"):
+            async def _again():
+                async with async_session_factory() as db:
+                    return await relabel.label_passages_as_training_rows(db, pid, document_id=5, backend_override=Labeller(), entity_types=["person_name"])
+            asyncio.run(_again())

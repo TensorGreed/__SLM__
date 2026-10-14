@@ -81,6 +81,77 @@ def build_document_prompt(
     )
 
 
+# ── Page furniture (layout="paged") ──────────────────────────────────────
+#
+# Real documents arrive with page headers and footers — "Page 3 of 11",
+# a letterhead, a confidentiality line, a print date. A model trained only
+# on clean prose tags them (on project 31, "Page n of 11" lines between
+# texts dropped precision from 0.79 to 0.65). The paged layout splits each
+# document into pages and inserts invented furniture lines by code (not by
+# the model, so they are always there and always varied). The bracketed
+# "[3/11]" footer is deliberately absent: it is the held-out style the
+# re-measurement uses.
+
+LAYOUTS = ("plain", "paged")
+DEFAULT_WORDS_PER_PAGE = 110
+_ORGS = (
+    "Northwind Health Partners", "Bluebell Mutual", "Harbor & Finch LLP", "Crestline Payments",
+    "Meridian Clinic Group", "Atlas Freight Services", "Juniper Benefits Ltd", "Orchard Valley Bank",
+)
+_HEADERS = (
+    "{org}", "{org} — {genre}", "CONFIDENTIAL", "{org} | Internal use only", "{genre} · {org}",
+    "Strictly private and confidential", "{ORG}",
+)
+_FOOTERS = (
+    "Page {i} of {n}", "- {i} -", "{i} / {n}", "Page {i}", "p. {i}",
+    "{org} · Confidential · Page {i} of {n}", "Printed {date} · Page {i} of {n}",
+    "Continued on next page", "Document generated {date}",
+)
+
+
+def _furniture_date(rng: random.Random) -> str:
+    y, m, d = rng.randint(2019, 2026), rng.randint(1, 12), rng.randint(1, 28)
+    return rng.choice((f"{y}-{m:02d}-{d:02d}", f"{d:02d}/{m:02d}/{y}", f"{d} {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1]} {y}"))
+
+
+def paginate_document(
+    text: str, rng: random.Random, *, genre: str = "document", words_per_page: int = DEFAULT_WORDS_PER_PAGE,
+) -> str:
+    """Split ``text`` into pages of about ``words_per_page`` words (at a
+    sentence end where possible) and put a header line above and a footer
+    line below each page, each drawn from varied templates. Returns the
+    text with the furniture on its own lines."""
+    words = text.split()
+    if not words:
+        return text
+    pages: list[str] = []
+    current: list[str] = []
+    for word in words:
+        current.append(word)
+        if len(current) >= words_per_page and word.endswith((".", "!", "?")):
+            pages.append(" ".join(current))
+            current = []
+        elif len(current) >= int(words_per_page * 1.5):
+            pages.append(" ".join(current))
+            current = []
+    if current:
+        pages.append(" ".join(current))
+    n = len(pages)
+    org = rng.choice(_ORGS)
+    header_tpl = rng.choice(_HEADERS)
+    footer_tpl = rng.choice(_FOOTERS)
+    date = _furniture_date(rng)
+    title = genre.strip().split(" or ")[0][:60].strip().capitalize() or "Document"
+    out: list[str] = []
+    for i, page in enumerate(pages, start=1):
+        fields = {"org": org, "ORG": org.upper(), "genre": title, "i": i, "n": n, "date": date}
+        if i > 1 or rng.random() < 0.7:
+            out.append(header_tpl.format(**fields))
+        out.append(page)
+        out.append(footer_tpl.format(**fields))
+    return "\n".join(out)
+
+
 def normalise_document(text: str) -> str:
     """One paragraph per document: collapse whitespace, strip fences."""
     text = re.sub(r"^```[a-z]*\s*|\s*```$", "", (text or "").strip(), flags=re.IGNORECASE)
@@ -98,6 +169,7 @@ class SeedDocumentsSummary:
     document_id: int | None = None
     passages: int | None = None
     genres: list[str] = field(default_factory=list)
+    layout: str = "plain"
     warnings: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -111,6 +183,7 @@ class SeedDocumentsSummary:
             "document_id": self.document_id,
             "passages": self.passages,
             "genres": list(self.genres),
+            "layout": self.layout,
             "warnings": list(self.warnings),
         }
 
@@ -127,14 +200,18 @@ async def run_seed_documents(
     domain_hint: str = "",
     chunk_size: int = 900,
     chunk_overlap: int = 60,
+    layout: str = "plain",
+    words_per_page: int = DEFAULT_WORDS_PER_PAGE,
     seed: int = 7,
     progress: ProgressFn | None = None,
     backend_override: Any = None,
 ) -> SeedDocumentsSummary:
     """Write ``count`` sample documents spread over ``genres`` (default
     ``DEFAULT_GENRES``), each containing ``kinds``, ingest them as one
-    text file, parse and clean it into passages. Raises when nothing was
-    written (a silent "Done" with no documents misleads)."""
+    text file, parse and clean it into passages. ``layout="paged"`` splits
+    each document into pages with header / footer lines
+    (``paginate_document``). Raises when nothing was written (a silent
+    "Done" with no documents misleads)."""
     from app.services.cleaning_service import clean_document
     from app.services.ingestion_service import ingest_file, process_document
     from app.services.synth_backends.base import pick_backend
@@ -142,6 +219,7 @@ async def run_seed_documents(
     count = max(MIN_COUNT, min(MAX_COUNT, int(count)))
     words = max(MIN_WORDS, min(MAX_WORDS, int(words)))
     chosen_genres = [g.strip() for g in (genres or []) if isinstance(g, str) and g.strip()] or list(DEFAULT_GENRES)
+    layout = layout if layout in LAYOUTS else "plain"
 
     async def report(fraction: float, message: str) -> None:
         if progress is not None:
@@ -168,11 +246,13 @@ async def run_seed_documents(
         if len(text) < MIN_ACCEPTED_CHARS:
             failed += 1
             continue
+        if layout == "paged":
+            text = paginate_document(text, rng, genre=genre, words_per_page=words_per_page)
         texts.append(text)
 
     summary = SeedDocumentsSummary(
         project_id=project_id, requested=count, written=len(texts), failed=failed, backend=backend_label,
-        genres=chosen_genres,
+        genres=chosen_genres, layout=layout,
     )
     if not texts:
         raise RuntimeError(

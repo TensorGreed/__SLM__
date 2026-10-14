@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
-import { checkLiftAcrossSeeds, fetchEvalSummary, type EvalSummary } from '../../api/evalSummary';
+import { checkLiftAcrossSeeds, fetchEvalSummary, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
 import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import { retrievalLabel } from './retrievalLabel';
 import { retrievalRowText, retrievalSplitText } from './retrievalSplit';
@@ -38,7 +38,21 @@ const VERDICT_TEXT: Record<string, { title: string; tone: string }> = {
     no_comparison: { title: 'Evaluated — nothing comparable to the base model', tone: 'neutral' },
     not_evaluated: { title: 'Not evaluated yet', tone: 'neutral' },
     no_trained_run: { title: 'No trained model yet', tone: 'neutral' },
+    evaluated: { title: 'Evaluated', tone: 'neutral' },
 };
+
+/** span_eval: "P 0.83 · R 0.85 · F1 0.84 on 44 texts". */
+export function spanScoreText(block: SpanEvalBlock): string {
+    const f = (v: number | null) => (typeof v === 'number' ? v.toFixed(2) : '—');
+    return `precision ${f(block.precision)} · recall ${f(block.recall)} · F1 ${f(block.f1)}${block.rows ? ` on ${block.rows} texts` : ''}`;
+}
+
+function spanTitle(summary: EvalSummary): string {
+    const key = summary.answer_key;
+    const block = key ?? summary.test;
+    const f1 = typeof block?.f1 === 'number' ? block.f1.toFixed(2) : '—';
+    return key ? `Span F1 ${f1} against the answer key` : `Span F1 ${f1} on the test examples`;
+}
 
 /** A "better" / "worse" headline whose row-level evidence can't back it up
  *  must not be announced as a result. */
@@ -161,6 +175,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     const verdict = titleFor(summary.verdict, evidence, seedEvidence);
     const unit = metricUnit(seedEvidence?.metric_id ?? evidence?.metric_id ?? summary.headline?.metric_id);
     const isPassages = summary.kind === 'rag_passages';
+    const isSpan = summary.kind === 'span_eval';
     const note = evidence ? evidenceNote(evidence, { trained: !seedEvidence && !isPassages, unit }) : null;
     const subject = isPassages ? 'Retrieval' : 'Fine-tuning';
     const seedNote = seedEvidence ? seedEvidenceNote(seedEvidence, unit) : null;
@@ -196,7 +211,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
         >
             <div className="eval-summary__top">
                 <div>
-                    <h3 className="eval-summary__title">{verdict.title}</h3>
+                    <h3 className="eval-summary__title">{isSpan ? spanTitle(summary) : verdict.title}</h3>
                     {isPassages && (
                         <p className="eval-summary__run" data-testid="eval-summary-passages-run">
                             Base model + your document passages vs the base model alone
@@ -210,7 +225,8 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                             Run #{runId}
                             {summary.trained?.experiment_name ? ` · ${summary.trained.experiment_name}` : ''}
                             {summary.baseline?.base_model ? ` vs base ${summary.baseline.base_model}` : ''}
-                            {summary.evaluated_samples ? ` · ${summary.evaluated_samples} test examples` : ''}
+                            {isSpan ? ' · token classification, scored on its own (its base is an untrained head)' : ''}
+                            {!isSpan && summary.evaluated_samples ? ` · ${summary.evaluated_samples} test examples` : ''}
                         </p>
                     )}
                 </div>
@@ -249,7 +265,19 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         {starting ? 'Starting…' : 'Re-run lift check'}
                     </button>
                 )}
-                {canCheckSeeds && (
+                {isSpan && runId != null && (
+                    <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => void runEval(runId)}
+                        disabled={starting}
+                        data-testid="eval-summary-rerun-span"
+                        title="Scores this run again on the test examples and, when there is one, the answer key written by a second model."
+                    >
+                        {starting ? 'Starting…' : 'Re-evaluate'}
+                    </button>
+                )}
+                {canCheckSeeds && !isSpan && (
                     <button
                         type="button"
                         className="btn btn-secondary"
@@ -351,13 +379,37 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                             : ''}
                 </p>
             )}
+            {isSpan && (
+                <div className="eval-summary__span" data-testid="eval-summary-span">
+                    {summary.answer_key && (
+                        <p className="eval-summary__metric" data-testid="eval-summary-span-key">
+                            <strong>Answer key</strong>
+                            {summary.answer_key.written_by ? ` (written by ${summary.answer_key.written_by})` : ''}: {spanScoreText(summary.answer_key)}
+                        </p>
+                    )}
+                    {summary.test && (
+                        <p className="eval-summary__metric" data-testid="eval-summary-span-test">
+                            <strong>Test examples</strong> (labelled by the training-data teacher): {spanScoreText(summary.test)}
+                        </p>
+                    )}
+                    {(summary.answer_key ?? summary.test)?.weakest_types.length ? (
+                        <p className="eval-summary__judge" data-testid="eval-summary-span-weakest">
+                            Weakest types{summary.answer_key ? ' on the answer key' : ''}:{' '}
+                            {(summary.answer_key ?? summary.test)!.weakest_types
+                                .map((t) => `${t.type} ${t.f1.toFixed(2)} (${t.support} span${t.support === 1 ? '' : 's'})`)
+                                .join(', ')}
+                            . <em>Refine weak types</em> on the Synthetic tab targets them.
+                        </p>
+                    ) : null}
+                </div>
+            )}
             {summary.message && <p className="eval-summary__message">{summary.message}</p>}
 
             {summary.failures.length > 0 && (
                 <div className="eval-summary__failures" data-testid="eval-summary-failures">
                     <h4>
                         Where it still fails
-                        {summary.failed_count ? ` — ${summary.failed_count} of ${summary.evaluated_samples ?? '?'} test examples` : ''}
+                        {summary.failed_count ? ` — ${summary.failed_count} of ${summary.evaluated_samples ?? '?'} ${summary.dataset_name === 'gold_test' ? 'answer-key texts' : 'test examples'}` : ''}
                     </h4>
                     <ol>
                         {summary.failures.map((failure, index) => (

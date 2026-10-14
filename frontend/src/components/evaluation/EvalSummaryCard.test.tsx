@@ -62,6 +62,35 @@ describe('EvalSummaryCard', () => {
         expect(apiMock.get).toHaveBeenCalledWith('/projects/7/evaluation/summary', { params: { experiment_id: 21 } });
     });
 
+    it('shows a token-classification run on its own: answer key first, then test examples', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                kind: 'span_eval', project_id: 7, experiment_id: 59, verdict: 'evaluated', message: null, headline: null,
+                trained: { experiment_id: 59, experiment_name: 'deberta tc' },
+                answer_key: {
+                    eval_result_id: 2, dataset_name: 'gold_test', precision: 0.83, recall: 0.85, f1: 0.84, rows: 44,
+                    written_by: 'cloud:anthropic:claude-haiku-4-5',
+                    weakest_types: [{ type: 'bank_account', f1: 0.21, support: 9 }, { type: 'person_name', f1: 0.65, support: 46 }],
+                },
+                test: { eval_result_id: 1, dataset_name: 'test', precision: 0.87, recall: 0.92, f1: 0.89, rows: 44, weakest_types: [] },
+                dataset_name: 'gold_test', evaluated_samples: 44, failed_count: 1,
+                failures: [{ prompt: 'Pay to account 12345678.', reference: '{"entities": []}', prediction: '{"entities": []}' }],
+            },
+        });
+        apiMock.post.mockResolvedValue({ data: { started: true } });
+        render(<EvalSummaryCard projectId={7} experimentId={59} />);
+        expect(await screen.findByText('Span F1 0.84 against the answer key')).toBeInTheDocument();
+        expect(screen.getByTestId('eval-summary-span-key')).toHaveTextContent(
+            'Answer key (written by cloud:anthropic:claude-haiku-4-5): precision 0.83 · recall 0.85 · F1 0.84 on 44 texts',
+        );
+        expect(screen.getByTestId('eval-summary-span-test')).toHaveTextContent('F1 0.89 on 44 texts');
+        expect(screen.getByTestId('eval-summary-span-weakest')).toHaveTextContent('bank_account 0.21 (9 spans), person_name 0.65 (46 spans)');
+        expect(screen.getByTestId('eval-summary-failures')).toHaveTextContent('1 of 44 answer-key texts');
+        expect(screen.queryByTestId('eval-summary-check-seeds')).toBeNull();
+        await userEvent.setup().click(screen.getByTestId('eval-summary-rerun-span'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/7/evaluation/summary/lift-check', { experiment_id: 59 }));
+    });
+
     it('offers to re-run the lift check on an evaluated run', async () => {
         apiMock.get.mockResolvedValue({ data: BETTER });
         apiMock.post.mockResolvedValue({ data: { started: true, job_id: 5 } });

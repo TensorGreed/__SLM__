@@ -115,7 +115,11 @@ export async function fetchSeedDocumentsDefaults(projectId: number): Promise<See
  *  cleaned into passages. */
 export async function startSeedDocuments(
     projectId: number,
-    options: { kinds?: string; genres?: string[]; count?: number; words?: number; backend?: string | null; domainHint?: string } = {},
+    options: {
+        kinds?: string; genres?: string[]; count?: number; words?: number; backend?: string | null; domainHint?: string;
+        /** "paged": pages with header / footer lines (letterheads, "Page 2 of 5"…). */
+        layout?: 'plain' | 'paged';
+    } = {},
 ): Promise<Job> {
     const body: Record<string, unknown> = {};
     if (options.kinds != null) body.kinds = options.kinds;
@@ -124,6 +128,7 @@ export async function startSeedDocuments(
     if (options.words != null) body.words = options.words;
     if (options.backend) body.backend = options.backend;
     if (options.domainHint) body.domain_hint = options.domainHint;
+    if (options.layout && options.layout !== 'plain') body.layout = options.layout;
     const res = await api.post<Job>(`/projects/${projectId}/flows/seed-documents`, body);
     return res.data;
 }

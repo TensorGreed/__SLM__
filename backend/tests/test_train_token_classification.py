@@ -200,15 +200,66 @@ class EvaluationPathTests(unittest.TestCase):
         self.assertEqual(runtime["inference"]["rows"], 2)
 
 
-class LiftCheckSkipTests(unittest.TestCase):
-    def test_lift_check_skips_a_token_classification_run(self):
+class LiftCheckSpanEvalTests(unittest.TestCase):
+    """"Evaluate this run" on a token-classification run: no base-model lift
+    (the base is an untrained head) — the run is scored on its own, on the
+    test examples and the answer key when the project has one."""
+
+    def test_a_token_classification_run_is_no_longer_skipped(self):
         from types import SimpleNamespace
 
-        from app.services.post_training_eval_service import auto_lift_skip_reason
+        from app.services.post_training_eval_service import auto_lift_skip_reason, is_token_classification
 
-        exp = SimpleNamespace(config={"task_type": "token_classification", "base_model": "microsoft/deberta-v3-base"}, status="COMPLETED", output_dir="/tmp/x", seed_group_id=None, seed_value=None)
-        reason = auto_lift_skip_reason(exp, SimpleNamespace(runtime_config={}))
-        self.assertEqual(reason, "token_classification_no_baseline")
+        exp = SimpleNamespace(config={"task_type": "token_classification", "base_model": "microsoft/deberta-v3-base"}, status="COMPLETED", output_dir="/tmp/nowhere", seed_group_id=None, seed_value=None)
+        self.assertTrue(is_token_classification(exp))
+        self.assertNotEqual(auto_lift_skip_reason(exp, SimpleNamespace(runtime_config={})), "token_classification_no_baseline")
+
+    def test_span_block_reports_the_weakest_types(self):
+        from types import SimpleNamespace
+
+        from app.services.post_training_eval_service import span_block
+
+        result = SimpleNamespace(id=7, dataset_name="gold_test", metrics={
+            "precision": 0.8, "recall": 0.7, "f1": 0.75, "total": 44,
+            "per_class": {
+                "email": {"f1": 1.0, "tp": 27, "fn": 0},
+                "bank_account": {"f1": 0.21, "tp": 3, "fn": 6},
+                "person_name": {"f1": 0.65, "tp": 33, "fn": 13},
+                "cvv": {"f1": 0.65, "tp": 9, "fn": 1},
+            },
+        })
+        block = span_block(result)
+        self.assertEqual((block["f1"], block["rows"], block["eval_result_id"]), (0.75, 44, 7))
+        self.assertEqual([t["type"] for t in block["weakest_types"]], ["bank_account", "person_name", "cvv", "email"],
+                         "lowest F1 first; a tie goes to the type with more gold spans")
+        self.assertEqual(block["weakest_types"][1]["support"], 46)
+
+    def test_run_span_evaluation_scores_test_and_answer_key(self):
+        import asyncio
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from app.services import post_training_eval_service as pt
+
+        calls = []
+
+        async def fake_heldout(**kw):
+            calls.append((kw["dataset_name"], kw["eval_type"], kw["answer_judge_enabled"], kw["max_samples"]))
+            return SimpleNamespace(id=len(calls), dataset_name=kw["dataset_name"], metrics={"precision": 0.9, "recall": 0.8, "f1": 0.85, "total": 44, "per_class": {}})
+
+        class Db:
+            async def commit(self):
+                return None
+
+        async def has_key(db, pid):
+            return True
+
+        with mock.patch("app.services.evaluation_service.run_heldout_evaluation", fake_heldout), \
+                mock.patch.object(pt, "project_has_answer_key", has_key):
+            out = asyncio.run(pt.run_span_evaluation(Db(), project_id=3, experiment=SimpleNamespace(id=59)))
+        self.assertEqual(calls, [("test", "f1", False, pt.SPAN_EVAL_MAX_ROWS), ("gold_test", "f1", False, pt.SPAN_EVAL_MAX_ROWS)])
+        self.assertEqual(out["kind"], "span_eval")
+        self.assertEqual((out["test"]["dataset_name"], out["answer_key"]["dataset_name"]), ("test", "gold_test"))
 
 
 class PreflightTests(unittest.TestCase):

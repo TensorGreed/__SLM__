@@ -152,11 +152,6 @@ def auto_lift_skip_reason(
     cfg = exp.config if isinstance(exp.config, dict) else {}
     if cfg.get("is_baseline") is True:
         return "baseline_experiment"
-    if str(cfg.get("task_type") or "").strip().lower() == "token_classification":
-        # The "base model" of a token-classification run is an encoder with
-        # an untrained head: a lift against it is meaningless. The run's
-        # held-out span_set report is the evaluation.
-        return "token_classification_no_baseline"
     if exp.status != ExperimentStatus.COMPLETED:
         return "not_completed"
     if exp.seed_group_id and exp.seed_value is not None:
@@ -243,6 +238,102 @@ async def _resolve_lift_judge(db: AsyncSession, project: Project):
 # ── Runner ─────────────────────────────────────────────────────────────
 
 
+# ── Token classification: the run's own span evaluation ──────────────────
+#
+# The "base model" of a token-classification run is an encoder with an
+# untrained head, so a lift against it means nothing. "Evaluate this run"
+# (and the automatic check after training) instead scores the run on the
+# test examples AND, when the project has one, on the answer key written by
+# a second model (GOLD_TEST, span_relabel_service) — the score to believe,
+# because the test examples were labelled by the training-data teacher.
+
+SPAN_EVAL_MAX_ROWS = 2000
+SPAN_WEAKEST_TYPES = 5
+
+
+def is_token_classification(exp: Experiment) -> bool:
+    cfg = exp.config if isinstance(exp.config, dict) else {}
+    return str(cfg.get("task_type") or "").strip().lower() == "token_classification"
+
+
+def span_block(result: Any) -> dict[str, Any]:
+    """The compact span report of one EvalResult: P / R / F1, rows, and
+    the weakest types (lowest F1 first, ties → more gold spans first)."""
+    metrics = result.metrics if isinstance(result.metrics, dict) else {}
+    per_class = metrics.get("per_class") if isinstance(metrics.get("per_class"), dict) else {}
+    weakest = sorted(
+        (
+            {"type": t, "f1": v.get("f1"), "support": int((v.get("tp") or 0) + (v.get("fn") or 0))}
+            for t, v in per_class.items()
+            if isinstance(v, dict) and isinstance(v.get("f1"), (int, float))
+        ),
+        key=lambda row: (row["f1"], -row["support"]),
+    )[:SPAN_WEAKEST_TYPES]
+    return {
+        "eval_result_id": int(result.id),
+        "dataset_name": result.dataset_name,
+        "precision": metrics.get("precision"),
+        "recall": metrics.get("recall"),
+        "f1": metrics.get("f1"),
+        "rows": metrics.get("total") or metrics.get("evaluated_samples"),
+        "weakest_types": weakest,
+    }
+
+
+async def project_has_answer_key(db: AsyncSession, project_id: int) -> bool:
+    from app.models.dataset import Dataset, DatasetType
+
+    row = (
+        await db.execute(
+            select(Dataset.id)
+            .where(Dataset.project_id == project_id, Dataset.dataset_type == DatasetType.GOLD_TEST)
+            .where(Dataset.record_count > 0)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return row is not None
+
+
+async def run_span_evaluation(
+    db: AsyncSession, *, project_id: int, experiment: Experiment, report=None,
+) -> dict[str, Any]:
+    """Score a token-classification run on the test examples and, when
+    the project has an answer key, on it too. Returns the Job result."""
+    from app.services.evaluation_service import run_heldout_evaluation
+
+    async def _report(fraction: float, message: str) -> None:
+        if report is not None:
+            await report(fraction, message)
+
+    targets = [("test", "test")]
+    if await project_has_answer_key(db, project_id):
+        targets.append(("answer_key", "gold_test"))
+    blocks: dict[str, Any] = {}
+    for index, (label, dataset_name) in enumerate(targets):
+        await _report(0.1 + 0.8 * index / len(targets), f"Scoring run #{experiment.id} on the {'answer key' if label == 'answer_key' else 'test examples'}")
+        result = await run_heldout_evaluation(
+            db=db,
+            project_id=project_id,
+            experiment_id=experiment.id,
+            dataset_name=dataset_name,
+            eval_type="f1",
+            max_samples=SPAN_EVAL_MAX_ROWS,
+            max_new_tokens=8,
+            temperature=0.0,
+            model_path=None,
+            judge_model=None,
+            answer_judge_enabled=False,
+        )
+        await db.commit()
+        blocks[label] = span_block(result)
+    return {
+        "kind": "span_eval",
+        "experiment_id": experiment.id,
+        "test": blocks.get("test"),
+        "answer_key": blocks.get("answer_key"),
+    }
+
+
 async def run_post_training_lift_eval(
     db: AsyncSession,
     *,
@@ -270,6 +361,8 @@ async def run_post_training_lift_eval(
         raise ValueError(f"Automatic lift eval skipped: {reason}")
     if is_seed_group_leader(exp):
         return await _run_seed_group_lift_eval(db, project=project, leader=exp, report=_report)
+    if is_token_classification(exp):
+        return await run_span_evaluation(db, project_id=project_id, experiment=exp, report=_report)
 
     eval_type = eval_type_for_project(project)
     max_samples, max_new_tokens = _lift_eval_limits()

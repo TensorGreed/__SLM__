@@ -687,6 +687,21 @@ describe('NotificationBell', () => {
         );
     });
 
+    it('a span evaluation reports its own scores, answer key first', async () => {
+        const jobs = [
+            jobFixture({
+                id: 61, kind: 'post_training_lift_eval', status: 'succeeded', title: 'Did fine-tuning help? · run #59',
+                result: { kind: 'span_eval', experiment_id: 59, answer_key: { f1: 0.8396 }, test: { f1: 0.8931 } },
+            }),
+        ];
+        apiMock.get.mockResolvedValue({ data: { count: jobs.length, jobs } });
+        render(<NotificationBell />);
+        await userEvent.click(await screen.findByTestId('notification-bell-button'));
+        expect(screen.getByTestId('notification-bell-row-61-summary')).toHaveTextContent(
+            'span F1 0.84 on the answer key · span F1 0.89 on the test examples',
+        );
+    });
+
     it('renders an empty-state message when no jobs are in the bell', async () => {
         apiMock.get.mockResolvedValue({ data: { count: 0, jobs: [] } });
         render(<NotificationBell />);

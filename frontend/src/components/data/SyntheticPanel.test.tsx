@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -225,6 +225,37 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
                 split: 'test', backend: 'ollama', entity_types: ['email'], target: 'training',
             });
         });
+    });
+
+    it('"Label document passages" starts the span_relabel Job with target=passages', async () => {
+        installGetRouter({
+            'prepared-manifest': { task_profile: 'structured_extraction', output_schema: { scoring_mode: 'span_set' }, entity_types: ['email'] },
+        });
+        apiMock.post.mockResolvedValueOnce({ data: { id: 131, kind: 'span_relabel', status: 'queued' } });
+        render(<SyntheticPanel projectId={1} />);
+        await userEvent.click(await screen.findByTestId('synthetic-label-passages'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith('/projects/1/synthetic/relabel-answer-key', {
+                split: 'test', backend: 'ollama', entity_types: ['email'], target: 'passages',
+            });
+        });
+    });
+
+    it('saves a pasted cloud key on the project and clears the field', async () => {
+        installGetRouter({});
+        apiMock.put.mockResolvedValueOnce({ data: { provider: 'cloud_llm_anthropic', key_name: 'api_key' } });
+        render(<SyntheticPanel projectId={1} />);
+        const user = userEvent.setup();
+        const providerSelect = (await screen.findAllByRole('combobox')).find((el) => within(el).queryByText('Anthropic')) as HTMLElement;
+        await user.selectOptions(providerSelect, 'anthropic');
+        expect(screen.queryByTestId('synth-save-api-key')).toBeNull();
+        await user.type(screen.getByTestId('synth-legacy-api-key'), 'sk-ant-test');
+        await user.click(screen.getByTestId('synth-save-api-key'));
+        await waitFor(() => expect(apiMock.put).toHaveBeenCalledWith('/projects/1/secrets', {
+            provider: 'cloud_llm_anthropic', key_name: 'api_key', value: 'sk-ant-test',
+        }));
+        await waitFor(() => expect(screen.getByTestId('synth-legacy-saved-key-badge')).toBeInTheDocument());
+        expect(screen.getByTestId('synth-legacy-api-key')).toHaveValue('');
     });
 
     it('uses the QA async endpoint when num_pairs > 50', async () => {

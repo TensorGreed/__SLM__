@@ -155,3 +155,33 @@ class SeedDocumentsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PagedLayoutTests(unittest.TestCase):
+    """layout="paged": pages with header / footer lines, varied, invented,
+    never the held-out bracketed "[i/n]" style."""
+
+    def test_paginate_inserts_furniture_lines(self):
+        import random
+        import re
+
+        from app.services.seed_documents_service import paginate_document
+
+        text = " ".join(f"Sentence number {i} is here." for i in range(120))
+        styles = set()
+        for seed in range(40):
+            paged = paginate_document(text, random.Random(seed), genre="clinical visit note or discharge summary", words_per_page=60)
+            lines = paged.split("\n")
+            body = [l for l in lines if l.startswith("Sentence number")]
+            furniture = [l for l in lines if not l.startswith("Sentence number")]
+            self.assertGreaterEqual(len(body), 7, "about 480 words → 8 pages")
+            self.assertGreaterEqual(len(furniture), len(body), "a footer per page, a header on most")
+            self.assertEqual(" ".join(body).split(), text.split(), "the prose is unchanged, only split")
+            self.assertFalse(any(re.fullmatch(r"\[\d+/\d+\]", l) for l in furniture), "the held-out style never appears")
+            styles.add(lines[-1].split()[0] if lines[-1].split() else "")
+        self.assertGreater(len(styles), 3, "footer styles vary across documents")
+
+    def test_plain_layout_is_unchanged(self):
+        from app.services.seed_documents_service import LAYOUTS
+
+        self.assertEqual(LAYOUTS, ("plain", "paged"))

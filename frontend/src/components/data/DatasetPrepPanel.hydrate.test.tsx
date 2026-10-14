@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
@@ -75,6 +75,19 @@ describe('DatasetPrepPanel — split-form hydration from the active prepared ver
         // hydrated ratios/seed rather than falling back to profile defaults.
         const profileToggle = screen.getByRole('checkbox') as HTMLInputElement;
         expect(profileToggle.checked).toBe(false);
+    });
+
+    it('sends keep_test when "Keep the current test examples" is ticked', async () => {
+        mockApi({ ...ACTIVE_MANIFEST, splits: { train: 341, val: 42, test: 44 } });
+        apiMock.post.mockResolvedValue({ data: { splits: { train: 400, val: 50, test: 44 } } });
+        const user = await renderAndOpenSplit();
+        await screen.findByTestId('dp-active-config-hint');
+        const keep = await screen.findByTestId('split-keep-test');
+        await user.click(keep);
+        await user.click(screen.getByRole('button', { name: /Run Split/ }));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(
+            '/projects/42/dataset/split', expect.objectContaining({ keep_test: true }),
+        ));
     });
 
     it('shows no reuse hint on a fresh project with no active prepared version', async () => {
