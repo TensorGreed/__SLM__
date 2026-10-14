@@ -387,12 +387,24 @@ def predict_spans(
     stride: int | None = None,
     batch_size: int = 16,
     device: str | None = None,
+    with_scores: bool = False,
+    thresholds: dict[str, float] | None = None,
+    min_score: float | None = None,
+    recall_bias: float = 0.0,
 ) -> list[list[dict[str, Any]]]:
     """Character spans for each text with a loaded token-classification
     model. A text longer than ``max_length`` tokens is read in overlapping
     windows (``encode_windows``) and merged (``merge_window_scores``), so
     nothing past the first window is dropped. ``batch_size`` counts
-    windows."""
+    windows.
+
+    By default every token takes its argmax label (the eval path). With
+    ``with_scores``, ``thresholds`` / ``min_score`` or a ``recall_bias``
+    the scored decoder runs instead (``decode_scored_spans``): each span
+    carries ``score`` / ``min_score`` (its tokens' probability of being
+    that type), spans under their type's threshold are dropped, and a
+    recall bias lowers the "O" probability so borderline tokens become
+    entities ("high-recall mode")."""
     import torch
 
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -413,7 +425,86 @@ def predict_spans(
             logits = model(**{k: v.to(device) for k, v in batch.items()}).logits.float().cpu().numpy()
         for row, feature in zip(logits, features):
             window_logits.append(row[: len(feature["input_ids"])])
+    if with_scores or thresholds or min_score or recall_bias:
+        merged = merge_window_scores(len(texts), window_offsets, sample_map, window_logits)
+        return [
+            decode_scored_spans(
+                text, offsets, scores, id_to_label,
+                recall_bias=recall_bias, thresholds=thresholds, min_score=min_score,
+            )
+            for text, (offsets, scores) in zip(texts, merged)
+        ]
     return decode_window_predictions(texts, window_offsets, sample_map, window_logits, id_to_label)
+
+
+def _softmax(values: Any) -> Any:
+    import numpy as np
+
+    arr = np.asarray(values, dtype=np.float64)
+    arr = arr - arr.max()
+    exp = np.exp(arr)
+    return exp / exp.sum()
+
+
+def decode_scored_spans(
+    text: str,
+    offsets: list[tuple[int, int]],
+    token_logits: list[Any],
+    id_to_label: dict[int, str],
+    *,
+    recall_bias: float = 0.0,
+    thresholds: dict[str, float] | None = None,
+    min_score: float | None = None,
+) -> list[dict[str, Any]]:
+    """BIO-decode one text's merged token logits with confidences.
+
+    Per token: softmax probabilities; ``recall_bias`` (0–1) is subtracted
+    from the "O" probability before the argmax, so a token whose entity
+    probability is within the bias of "O" is tagged. Spans decode exactly
+    like ``token_labels_to_spans``; each gets ``score`` (mean over its
+    tokens of P(B-type) + P(I-type), unbiased) and ``min_score`` (the
+    weakest token). A span whose ``score`` is below ``thresholds[type]``
+    (else ``min_score``) is dropped. With bias 0 and no thresholds the
+    spans equal the argmax decoder's."""
+    import numpy as np
+
+    label_to_id = {label: int(i) for i, label in id_to_label.items()}
+    outside_id = label_to_id.get(OUTSIDE)
+    probs = [_softmax(v) for v in token_logits]
+    ids: list[int] = []
+    for p in probs:
+        adjusted = np.array(p, copy=True)
+        if recall_bias and outside_id is not None and outside_id < len(adjusted):
+            adjusted[outside_id] -= float(recall_bias)
+        ids.append(int(np.argmax(adjusted)))
+    spans = token_labels_to_spans(offsets, ids, id_to_label, text)
+
+    def _type_prob(p: Any, ent_type: str) -> float:
+        total = 0.0
+        for prefix in ("B-", "I-"):
+            idx = label_to_id.get(f"{prefix}{ent_type}")
+            if idx is not None and idx < len(p):
+                total += float(p[idx])
+        return total
+
+    kept: list[dict[str, Any]] = []
+    for span in spans:
+        token_scores = [
+            _type_prob(p, span["type"])
+            for (start, end), p, label_id in zip(offsets, probs, ids)
+            if end > start and start < span["end"] and end > span["start"]
+            and id_to_label.get(label_id, OUTSIDE)[2:] == span["type"]
+        ]
+        if token_scores:
+            span["score"] = round(sum(token_scores) / len(token_scores), 4)
+            span["min_score"] = round(min(token_scores), 4)
+        else:  # pragma: no cover - a decoded span always has a token
+            span["score"] = span["min_score"] = 0.0
+        floor = (thresholds or {}).get(span["type"], min_score)
+        if floor is not None and span["score"] < float(floor):
+            continue
+        kept.append(span)
+    return kept
 
 
 # ── Training ─────────────────────────────────────────────────────────────

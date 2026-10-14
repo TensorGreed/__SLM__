@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
 import { checkLiftAcrossSeeds, fetchEvalSummary, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
 import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
+import RedactionTryBox from './RedactionTryBox';
 import { retrievalLabel } from './retrievalLabel';
 import { retrievalRowText, retrievalSplitText } from './retrievalSplit';
 import { toast } from '../../stores/toastStore';
@@ -401,6 +402,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                             . <em>Refine weak types</em> on the Synthetic tab targets them.
                         </p>
                     ) : null}
+                    <RedactionTryBox projectId={projectId} experimentId={runId ?? null} />
                 </div>
             )}
             {summary.message && <p className="eval-summary__message">{summary.message}</p>}

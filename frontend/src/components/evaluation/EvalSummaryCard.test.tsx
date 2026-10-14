@@ -85,6 +85,7 @@ describe('EvalSummaryCard', () => {
         );
         expect(screen.getByTestId('eval-summary-span-test')).toHaveTextContent('F1 0.89 on 44 texts');
         expect(screen.getByTestId('eval-summary-span-weakest')).toHaveTextContent('bank_account 0.21 (9 spans), person_name 0.65 (46 spans)');
+        expect(screen.getByTestId('redaction-try')).toBeInTheDocument();
         expect(screen.getByTestId('eval-summary-failures')).toHaveTextContent('1 of 44 answer-key texts');
         expect(screen.queryByTestId('eval-summary-check-seeds')).toBeNull();
         await userEvent.setup().click(screen.getByTestId('eval-summary-rerun-span'));

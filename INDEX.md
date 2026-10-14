@@ -65,6 +65,7 @@ session-start guidance.
 - `backend/app/api/projects.py` — Project CRUD API routes.
 - `backend/app/api/quickstart.py` — Project-guide quickstart endpoints (Theme 1 Epic 4 + Theme 8 Epic 1).
 - `backend/app/api/recipes.py` — Recipe catalog + shape-sniffer API routes.
+- `backend/app/api/redact.py` — Redact text with a project's span-tagging (token classification) run.
 - `backend/app/api/registry.py` — Model registry API routes.
 - `backend/app/api/remediation.py` — Remediation event tracking API (E2).
 - `backend/app/api/run_event_clusters.py` — Project-wide failure-cluster API (priority.md P33, Wave G).
@@ -220,6 +221,7 @@ session-start guidance.
 - `backend/app/services/recipe_apply_service.py` — Apply a Theme 2 recipe selection to a Project record.
 - `backend/app/services/recipe_service.py` — Task-shape recipe registry.
 - `backend/app/services/record_normalization.py` — Generic record normalization utilities for arbitrary tabular/text datasets.
+- `backend/app/services/redaction_service.py` — Redact text with a trained token-classification run (Epic P5).
 - `backend/app/services/registry_service.py` — Model registry and promotion governance service.
 - `backend/app/services/remediation_tracking_service.py` — Remediation tracking service (E2).
 - `backend/app/services/rerun_service.py` — P15 — Rerun-from-manifest + clone-from-run services.
@@ -237,6 +239,7 @@ session-start guidance.
 - `backend/app/services/sft_lift_summary_service.py` — Did SFT help? — baseline vs trained eval lift summary (Theme 8 Epic 4).
 - `backend/app/services/slice_definitions_service.py` — Quality-Lift phase 2, slice 1 — Project slice-definitions validator.
 - `backend/app/services/slice_evaluator_service.py` — Quality-Lift phase 2, slice 2 — Slice predicate evaluator + handler wrapper.
+- `backend/app/services/span_model_package_service.py` — Packaging for token-classification (span) models — Epic P5.
 - `backend/app/services/span_refine_service.py` — Refine weak entity types: read the latest span_set evaluation and name
 - `backend/app/services/span_relabel_service.py` — Answer key from a second model: relabel a split's texts without changing
 - `backend/app/services/span_type_definitions_service.py` — Entity-type definitions: one labelling convention for every model that
@@ -442,6 +445,7 @@ session-start guidance.
 - `frontend/src/api/projectTemplates.ts` — Typed wrappers for the project-template catalog + instantiation API.
 - `frontend/src/api/quickstart.ts` — Typed wrappers for the project-guide quickstart endpoints
 - `frontend/src/api/recipes.ts` — Typed wrappers around the Theme 2 recipe registry + shape sniffer.
+- `frontend/src/api/redact.ts` — POST /api/projects/{id}/redact — tag a text with a span-tagging
 - `frontend/src/api/remediation.ts` — Typed wrapper for the remediation tracking API (E2).
 - `frontend/src/api/rerouteAnalysis.ts` — USER-SUCCESS Epic 7 Phase 7c — typed client for the post-eval
 - `frontend/src/api/seedGroupDrillDown.ts` — Quality-Lift phase 8 slice 1 — seed-group drill-down client.
@@ -567,6 +571,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/PackSectionEditor.tsx` — Quality-Lift phase 7 slice 1 — Generic pack section editor.
 - `frontend/src/components/evaluation/PerSliceMetricsTable.tsx` — Quality-Lift phase 8 slice 2 — PerSliceMetricsTable.
 - `frontend/src/components/evaluation/ProbePackPanel.tsx` — ProbePackPanel — Coach-stage-2 phase 8.
+- `frontend/src/components/evaluation/RedactionTryBox.tsx` — "Try redaction" — paste a text, run it through a span-tagging run
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.tsx` — RerouteRecommendationPanel — USER-SUCCESS Epic 7 Phase 7c.
 - `frontend/src/components/evaluation/ScorecardPanel.tsx` — Quality gate reporter showing pass/fail decisions with missing-metric detection.
 - `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Did SFT help?" lift summary panel (Theme 8 Epic 4).
@@ -906,6 +911,7 @@ session-start guidance.
 - `backend/tests/test_slice_evaluator_slice2.py` — Quality-Lift phase 2, slice 2 — slice predicate evaluator + handler wrapper.
 - `backend/tests/test_slice_gates_slice3.py` — Quality-Lift phase 2, slice 3 — Slice gate evaluator behaviors.
 - `backend/tests/test_span_eval_summary.py` — The eval summary of a token-classification run (kind="span_eval"): its
+- `backend/tests/test_span_packaging.py` — Epic P5 — packaging a span (token-classification) model:
 - `backend/tests/test_span_refine.py` — Refine weak types: the latest span_set evaluation names the types under
 - `backend/tests/test_span_relabel.py` — Answer key from a second model: relabel a split's texts (unchanged),
 - `backend/tests/test_span_type_definitions.py` — Entity-type definitions: one labelling convention for every model that
@@ -1017,6 +1023,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/PackSectionEditor.test.tsx` — Quality-Lift phase 7 slice 1 — Generic PackSectionEditor tests.
 - `frontend/src/components/evaluation/PerSliceMetricsTable.test.tsx` — Quality-Lift phase 8 slice 2 — PerSliceMetricsTable tests.
 - `frontend/src/components/evaluation/ProbePackPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/RedactionTryBox.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ScorecardPanel.test.tsx` — Quality-Lift phase 1, slice 3 — ScorecardPanel variance + drill-down.
 - `frontend/src/components/evaluation/SftLiftPanel.test.tsx` — _(no docstring)_

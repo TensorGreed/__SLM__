@@ -860,6 +860,25 @@ async def run_export(
         window_note = cap_token_classifier_window(
             model_dir, _experiment_max_seq_length(experiment),
         )
+        # A span tagger ships with a model card (evidence-only) and the
+        # per-type thresholds its scored decoder reads.
+        span_package = None
+        if export.export_format not in COMPRESSED_EXPORT_FORMATS:
+            from app.services.span_model_package_service import package_token_classifier
+
+            span_package = await package_token_classifier(
+                db,
+                project_id=project_id,
+                experiment=experiment,
+                model_dir=model_dir,
+                project_name=project.name if project else None,
+            )
+            if span_package:
+                known = {p.resolve() for p in copied_model_files}
+                for name in (span_package["model_card"], span_package["thresholds"]):
+                    path = model_dir / name
+                    if path.is_file() and path.resolve() not in known:
+                        copied_model_files.append(path)
         for copied in copied_model_files:
             artifacts.append(_artifact_manifest_entry(copied, run_dir))
         model_size_bytes = sum(p.stat().st_size for p in copied_model_files)
@@ -920,6 +939,11 @@ async def run_export(
                     "(the training window; long texts: pipeline(..., stride=128))\n"
                     if window_note else ""
                 )
+                + (
+                    f"- Span model: README.md model card ({', '.join(span_package['evaluations']) or 'no evaluation recorded'}) "
+                    f"+ thresholds.json; HF pipeline stride={span_package['pipeline_stride']}\n"
+                    if span_package else ""
+                )
             ),
             encoding="utf-8",
         )
@@ -928,6 +952,7 @@ async def run_export(
         # Generate version manifest
         manifest = {
             "token_window": window_note,
+            "span_package": span_package,
             "run_id": run_id,
             "export_id": export.id,
             "project_id": export.project_id,
