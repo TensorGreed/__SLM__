@@ -239,7 +239,12 @@ async def process_document(
         await db.flush()
 
         file_path = Path(doc.file_path)
-        text = parse_file(file_path)
+        # Off the event loop: parsing is sync, and OCR of a scanned PDF
+        # (tesseract per page) takes minutes — run inline it froze every
+        # other request to the backend for the whole scan.
+        import asyncio as _asyncio
+
+        text = await _asyncio.to_thread(parse_file, file_path)
 
         # Save extracted text
         text_path = file_path.with_suffix(".extracted.txt")

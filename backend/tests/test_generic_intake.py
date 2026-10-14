@@ -304,3 +304,14 @@ class OcrTests(unittest.TestCase):
             path.write_bytes(_blank_pdf())
             with self.assertRaisesRegex(DocumentParseError, "tesseract-ocr poppler-utils"):
                 file_parsers.parse_pdf(path)
+
+
+class ParseOffLoopTests(unittest.TestCase):
+    def test_process_document_parses_in_a_worker_thread(self):
+        """A slow parse (OCR) must not block the event loop."""
+        import inspect
+
+        from app.services import ingestion_service
+
+        src = inspect.getsource(ingestion_service.process_document)
+        self.assertIn("to_thread(parse_file,", src.replace(" ", ""))
