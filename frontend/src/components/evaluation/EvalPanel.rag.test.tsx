@@ -34,6 +34,7 @@ vi.mock('../../api/client', () => ({
 }));
 
 import EvalPanel from './EvalPanel';
+import { useProjectStore } from '../../stores/projectStore';
 
 
 function mockApi(predictionsPreview: unknown[]) {
@@ -129,6 +130,9 @@ describe('EvalPanel — Sample Predictions with RAGHandler enrichment', () => {
     beforeEach(() => {
         apiMock.get.mockReset();
         apiMock.post.mockReset();
+        // Not beginner mode, so "Advanced evaluation" (where the
+        // predictions card lives) starts open.
+        useProjectStore.setState({ activeProject: null });
     });
 
     it('renders a green Faithful badge for grounded answers', async () => {
