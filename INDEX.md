@@ -905,10 +905,12 @@ session-start guidance.
 - `backend/tests/test_slice_definitions_slice1.py` — Quality-Lift phase 2, slice 1 — slice_definitions schema + endpoints.
 - `backend/tests/test_slice_evaluator_slice2.py` — Quality-Lift phase 2, slice 2 — slice predicate evaluator + handler wrapper.
 - `backend/tests/test_slice_gates_slice3.py` — Quality-Lift phase 2, slice 3 — Slice gate evaluator behaviors.
+- `backend/tests/test_span_eval_summary.py` — The eval summary of a token-classification run (kind="span_eval"): its
 - `backend/tests/test_span_refine.py` — Refine weak types: the latest span_set evaluation names the types under
 - `backend/tests/test_span_relabel.py` — Answer key from a second model: relabel a split's texts (unchanged),
 - `backend/tests/test_span_type_definitions.py` — Entity-type definitions: one labelling convention for every model that
 - `backend/tests/test_split_defaults.py` — Wave 2d — safe data defaults a newcomer doesn't have to know about.
+- `backend/tests/test_split_keep_test.py` — split_dataset(keep_test=True): the active test rows stay verbatim, the
 - `backend/tests/test_sprint1.py` — _(no docstring)_
 - `backend/tests/test_sprint2.py` — _(no docstring)_
 - `backend/tests/test_stratified_split.py` — Unit tests for ``_stratified_split_entries`` (Gap #4 fix).

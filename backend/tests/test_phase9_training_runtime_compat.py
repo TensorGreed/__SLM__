@@ -15,6 +15,15 @@ class _DummyTrainingArgsV5:
         self.save_strategy = save_strategy
 
 
+class _DummyTrainingArgsV519:
+    """transformers 5.19: warmup_ratio is gone; warmup_steps takes a ratio."""
+
+    def __init__(self, output_dir, warmup_steps=0, eval_strategy=None):
+        self.output_dir = output_dir
+        self.warmup_steps = warmup_steps
+        self.eval_strategy = eval_strategy
+
+
 class _DummyTrainerV5:
     def __init__(self, model, args, train_dataset=None, eval_dataset=None, processing_class=None):
         self.model = model
@@ -37,6 +46,14 @@ class TrainingRuntimeCompatTests(unittest.TestCase):
         self.assertNotIn("evaluation_strategy", filtered)
         self.assertNotIn("overwrite_output_dir", filtered)
         self.assertIn("overwrite_output_dir", dropped)
+
+    def test_warmup_ratio_becomes_warmup_steps_when_removed(self):
+        filtered, dropped = _coerce_training_arguments_kwargs(
+            {"output_dir": "/tmp/out", "warmup_ratio": 0.03}, _DummyTrainingArgsV519,
+        )
+        self.assertEqual(filtered["warmup_steps"], 0.03, "carried over as a ratio, not dropped")
+        self.assertNotIn("warmup_ratio", filtered)
+        self.assertEqual(dropped, [])
 
     def test_trainer_alias_tokenizer_to_processing_class(self):
         raw = {

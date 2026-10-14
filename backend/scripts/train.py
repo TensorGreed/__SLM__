@@ -1262,6 +1262,10 @@ def _coerce_training_arguments_kwargs(
         alias_pairs=[
             ("evaluation_strategy", "eval_strategy"),
             ("eval_strategy", "evaluation_strategy"),
+            # transformers removed warmup_ratio (5.19 rejects it); warmup_steps
+            # takes a float in [0, 1) as a ratio of total steps (5.x). Dropping
+            # the key instead silently trained without warmup.
+            ("warmup_ratio", "warmup_steps"),
         ],
     )
 

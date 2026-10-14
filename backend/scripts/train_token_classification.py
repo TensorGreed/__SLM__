@@ -488,7 +488,9 @@ def run_token_classification(
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=max(batch_size, 16),
         learning_rate=learning_rate,
-        warmup_ratio=warmup_ratio,
+        # A float in [0, 1) is a ratio of total steps (transformers 5.x);
+        # warmup_ratio itself is gone in newer releases (5.19 rejects it).
+        warmup_steps=min(max(warmup_ratio, 0.0), 0.99),
         weight_decay=float(config.get("weight_decay") or 0.01),
         eval_strategy=eval_strategy,
         save_strategy="no",
