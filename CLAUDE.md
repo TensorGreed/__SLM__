@@ -1096,6 +1096,21 @@ runs real CPU inference). ~4 min locally.
   rows generated under a restricted list (project 31: +438 entities; run #57
   vs the Haiku key 0.74 → 0.79, phone 0.61 → 0.96, email 0.71 → 1.00). The
   Refine button sends `all_types` as the list and the weak ones as focus.
+- **Labelling conventions** (`services/span_type_definitions_service.py`):
+  `runtime_config["span_type_definitions"]` = `{type: definition}`
+  (`normalise_definitions`, `project_definitions`, `load_definitions(db, pid)`);
+  `definitions_clause(types, defs)` is the prompt block, sent by BOTH
+  `generate_span_extraction_rows` (training labels) and the relabeller
+  (`build_relabel_prompt(texts, types, conventions)`); `suggest_definitions`
+  offers starting wording for common type names (never applied silently).
+  `GET/PUT /synthetic/type-definitions` (GET: definitions, the project's
+  types, suggestions for undefined ones). `SpanTypeDefinitionsEditor` in the
+  Synthetic tab's span mode. The relabeller's core is `label_texts(llm,
+  texts, types, conventions, …)`; `relabel_training_rows` relabels
+  `synthetic.jsonl` in place (+ regex pass; failed rows keep old labels) —
+  `POST /synthetic/relabel-answer-key {target: "training"}`, button
+  "Relabel training rows with <pin>". Summaries carry `conventions_types`.
+  Tests: `tests/test_span_type_definitions.py`.
 - **Answer key from a second model** (`services/span_relabel_service.py`,
   Job `span_relabel`, `POST /synthetic/relabel-answer-key` {split, backend,
   entity_types}): `relabel_split_as_answer_key` prompts the backend (synth

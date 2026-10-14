@@ -11,6 +11,7 @@ import SynthReviewQueue from './SynthReviewQueue';
 import StepFooter from '../shared/StepFooter';
 import { toast } from '../../stores/toastStore';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
+import SpanTypeDefinitionsEditor from './SpanTypeDefinitionsEditor';
 
 interface SyntheticPanelProps { projectId: number; onNextStep?: () => void; }
 
@@ -652,7 +653,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
      *  write. Runs as the `span_relabel` Job the bell tracks. */
     const [relabelStarting, setRelabelStarting] = useState(false);
     const relabelPin = provider === 'ollama' ? 'ollama' : provider === 'custom' ? null : `cloud:${provider}:${modelName}`;
-    const handleWriteAnswerKey = async () => {
+    const handleWriteAnswerKey = async (target: 'answer_key' | 'training' = 'answer_key') => {
         if (!relabelPin) {
             toast.info('Pick Ollama or a cloud provider — the answer key is written through a synth backend.', 5000);
             return;
@@ -663,8 +664,14 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 split: 'test',
                 backend: relabelPin,
                 entity_types: parseEntityTypes(entityTypesInput),
+                ...(target === 'training' ? { target: 'training' } : {}),
             });
-            toast.info(`Writing the answer key with ${relabelPin} — the bell tracks it (job #${res.data?.id}). Evaluate against "gold_test" when it finishes.`, 6000);
+            toast.info(
+                target === 'training'
+                    ? `Relabelling the saved training rows with ${relabelPin} under the labelling conventions — the bell tracks it (job #${res.data?.id}). Re-split and re-train when it finishes.`
+                    : `Writing the answer key with ${relabelPin} — the bell tracks it (job #${res.data?.id}). Evaluate against "gold_test" when it finishes.`,
+                6000,
+            );
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Could not start the answer key.', 5000);
         } finally {
@@ -1165,13 +1172,24 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                 <button
                                     type="button"
                                     className="btn btn-secondary"
-                                    onClick={() => void handleWriteAnswerKey()}
+                                    onClick={() => void handleWriteAnswerKey('answer_key')}
                                     disabled={relabelStarting || isGenerating}
                                     data-testid="synthetic-write-answer-key"
                                     title="Label the test split's texts with the selected model (texts unchanged, offsets verified) and keep them as the project's answer key (gold_test) — a key the training teacher didn't write."
                                 >
                                     {relabelStarting ? 'Starting…' : `Write answer key with ${relabelPin ?? 'this model'}`}
                                 </button>
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => void handleWriteAnswerKey('training')}
+                                    disabled={relabelStarting || isGenerating}
+                                    data-testid="synthetic-relabel-training"
+                                    title="Relabel every saved training row (texts unchanged) with the selected model under the project's labelling conventions, then the regex pass — so the training labels follow the same rules as the answer key."
+                                >
+                                    Relabel training rows with {relabelPin ?? 'this model'}
+                                </button>
+                                <SpanTypeDefinitionsEditor projectId={projectId} />
                                 {refineInfo && refineInfo.types.length > 0 && (
                                     <div className="form-hint" data-testid="synthetic-refine-info">
                                         Weak on run #{refineInfo.experiment_id}: {refineInfo.types.map((t) => `${t.type} (${t.f1.toFixed(2)})`).join(', ')} — generating {refineInfo.suggested_rows} rows that must contain them; every other type in the list is still labelled.

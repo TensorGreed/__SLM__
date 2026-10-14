@@ -162,6 +162,24 @@ dates), `bank_account` 0.32, `national_id` 0.59, `provider_name` 0.52
 (the two labellers disagree on those too), and names inside greetings
 (person_name recall 0.72).
 
+### One labelling convention for both labellers
+
+Two models can both be right and still disagree — is a date in a
+clinical note a date of birth or a visit date, is `GB29 NWBK …` a bank
+account or an IBAN, is "Dr. Chen" a person or a provider? **Labelling
+conventions** (Synthetic tab, span mode) is one line per type — what
+counts and what doesn't — stored on the project
+(`GET/PUT /synthetic/type-definitions`, with suggested starting wording
+for common type names). Both the model that writes the training labels
+and the model that writes the answer key get the lines for the types
+they label, so they draw the boundaries in the same place. **Relabel
+training rows with *model*** (`POST /synthetic/relabel-answer-key`
+with `target: "training"`) rewrites the saved rows' labels in place
+under the conventions — texts unchanged, then the regex pass — so rows
+generated before the conventions existed follow them too.
+
+<!-- conventions run: numbers below -->
+
 ## 5. Export → Hugging Face
 
 **Export → Hugging Face** packages the run's `model/` directory as-is

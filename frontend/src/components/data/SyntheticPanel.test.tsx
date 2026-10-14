@@ -213,6 +213,20 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
         });
     });
 
+    it('"Relabel training rows" starts the span_relabel Job with target=training', async () => {
+        installGetRouter({
+            'prepared-manifest': { task_profile: 'structured_extraction', output_schema: { scoring_mode: 'span_set' }, entity_types: ['email'] },
+        });
+        apiMock.post.mockResolvedValueOnce({ data: { id: 121, kind: 'span_relabel', status: 'queued' } });
+        render(<SyntheticPanel projectId={1} />);
+        await userEvent.click(await screen.findByTestId('synthetic-relabel-training'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith('/projects/1/synthetic/relabel-answer-key', {
+                split: 'test', backend: 'ollama', entity_types: ['email'], target: 'training',
+            });
+        });
+    });
+
     it('uses the QA async endpoint when num_pairs > 50', async () => {
         installGetRouter({
             tasks: {

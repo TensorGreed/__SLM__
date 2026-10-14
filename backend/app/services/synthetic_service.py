@@ -1492,10 +1492,16 @@ async def generate_span_extraction_rows(
         "Still label EVERY other entity of the allowed types that appears.\n"
         if focus else ""
     )
+    # The project's labelling conventions (span_type_definitions_service) —
+    # the same lines the answer-key relabeller sends, so both labellers draw
+    # the type boundaries in the same place.
+    from app.services.span_type_definitions_service import definitions_clause, load_definitions
+
+    conventions = definitions_clause(entity_types, await load_definitions(db, project_id))
     types_clause = (
-        f"Allowed entity types (use ONLY these): {', '.join(entity_types)}.\n{focus_clause}"
+        f"Allowed entity types (use ONLY these): {', '.join(entity_types)}.\n{conventions}{focus_clause}"
         if entity_types
-        else "Detect any common PII / PCI entity types.\n"
+        else f"Detect any common PII / PCI entity types.\n{conventions}"
     )
     # Few-shot example. Small teacher models (llama3 7B) follow concrete
     # patterns much better than abstract instructions; one worked example

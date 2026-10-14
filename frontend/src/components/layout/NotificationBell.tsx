@@ -146,7 +146,8 @@ function jobOutcomeSummary(job: Job): string | null {
         const entities = typeof r.entities === 'number' ? r.entities : null;
         const agreement = r.agreement && typeof (r.agreement as { f1?: unknown }).f1 === 'number' ? (r.agreement as { f1: number }).f1 : null;
         const parts: string[] = [];
-        if (rows !== null) parts.push(`answer key: ${rows} rows`);
+        const isTraining = r.split === 'synthetic';
+        if (rows !== null) parts.push(isTraining ? `training labels: ${rows} rows relabelled` : `answer key: ${rows} rows`);
         if (entities !== null) parts.push(`${entities} entities`);
         if (agreement !== null) parts.push(`agreement with the old labels F1 ${agreement.toFixed(2)}`);
         return parts.length ? parts.join(' · ') : null;

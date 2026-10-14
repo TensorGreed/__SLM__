@@ -731,6 +731,9 @@ class RelabelAnswerKeyRequest(BaseModel):
     split: str = Field("test", pattern="^(train|val|test|gold_dev|gold_test)$")
     backend: str | None = None
     entity_types: list[str] = Field(default_factory=list)
+    # "answer_key": label ``split`` as gold_test (default). "training":
+    # relabel the saved synthetic rows in place, under the same conventions.
+    target: str = Field("answer_key", pattern="^(answer_key|training)$")
 
 
 @router.post("/relabel-answer-key", status_code=202)
@@ -748,7 +751,7 @@ async def relabel_answer_key(
 
     from app.models.job import Job, JobStatus
     from app.services.jobs_service import JobProgressHandle, serialize_job, start_job
-    from app.services.span_relabel_service import relabel_split_as_answer_key
+    from app.services.span_relabel_service import relabel_split_as_answer_key, relabel_training_rows
 
     req = data or RelabelAnswerKeyRequest()
     cloud_override = await _resolve_cloud_backend_override(db, project_id, req.backend)
@@ -768,17 +771,29 @@ async def relabel_answer_key(
             await handle.set_progress(fraction=fraction, message=message)
 
         async with async_session_factory() as runner_db:
-            summary = await relabel_split_as_answer_key(
-                runner_db, project_id, split=req.split,
-                backend=req.backend if cloud_override is None else None,
-                entity_types=req.entity_types, progress=_progress, backend_override=cloud_override,
-            )
+            if req.target == "training":
+                summary = await relabel_training_rows(
+                    runner_db, project_id,
+                    backend=req.backend if cloud_override is None else None,
+                    entity_types=req.entity_types, progress=_progress, backend_override=cloud_override,
+                )
+            else:
+                summary = await relabel_split_as_answer_key(
+                    runner_db, project_id, split=req.split,
+                    backend=req.backend if cloud_override is None else None,
+                    entity_types=req.entity_types, progress=_progress, backend_override=cloud_override,
+                )
             return summary.as_dict()
 
     job = await start_job(
-        db, kind="span_relabel", title=f"Answer key by {req.backend or 'local model'} · {req.split} split · project #{project_id}",
+        db, kind="span_relabel",
+        title=(
+            f"Training labels by {req.backend or 'local model'} · project #{project_id}"
+            if req.target == "training"
+            else f"Answer key by {req.backend or 'local model'} · {req.split} split · project #{project_id}"
+        ),
         runner=_runner, project_id=project_id,
-        params={"project_id": project_id, "split": req.split, "backend": req.backend, "entity_types": req.entity_types},
+        params={"project_id": project_id, "split": req.split, "backend": req.backend, "entity_types": req.entity_types, "target": req.target},
     )
     return serialize_job(job)
 
@@ -793,6 +808,75 @@ async def regex_augment_saved_spans(project_id: int, data: dict | None = None) -
 
     types = (data or {}).get("entity_types") if isinstance(data, dict) else None
     return augment_saved_rows_with_regex(project_id, types if isinstance(types, list) else None)
+
+
+class TypeDefinitionsRequest(BaseModel):
+    """``{type: one-line definition}`` — the project's labelling convention.
+    Replaces the stored map; send ``{}`` to clear."""
+
+    definitions: dict[str, str] = Field(default_factory=dict)
+
+
+@router.get("/type-definitions")
+async def get_type_definitions(project_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """The project's entity-type definitions (what the span generator and
+    the answer-key relabeller both put in their prompts), the types the
+    project's data uses, and suggested starting wording for those that
+    have none."""
+    from app.models.project import Project
+    from app.services.span_type_definitions_service import project_definitions, suggest_definitions
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    definitions = project_definitions(project)
+    types = _project_entity_types(project_id)
+    return {
+        "definitions": definitions,
+        "types": types,
+        "suggestions": {t: d for t, d in suggest_definitions(types).items() if t not in definitions},
+    }
+
+
+@router.put("/type-definitions")
+async def put_type_definitions(
+    project_id: int, data: TypeDefinitionsRequest, db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    from app.models.project import Project
+    from app.services.span_type_definitions_service import DEFINITIONS_KEY, normalise_definitions
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    cfg = dict(project.runtime_config or {})
+    cfg[DEFINITIONS_KEY] = normalise_definitions(data.definitions)
+    project.runtime_config = cfg
+    await db.commit()
+    return {"definitions": cfg[DEFINITIONS_KEY]}
+
+
+def _project_entity_types(project_id: int) -> list[str]:
+    """Entity types in the project's saved synthetic span rows and prepared
+    splits (sorted)."""
+    import json as _json
+
+    from app.config import settings as _settings
+
+    base = _settings.DATA_DIR / "projects" / str(project_id)
+    found: set[str] = set()
+    for path in (base / "synthetic" / "synthetic.jsonl", base / "prepared" / "train.jsonl"):
+        if not path.exists():
+            continue
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    row = _json.loads(line)
+                except Exception:  # noqa: BLE001
+                    continue
+                for ent in row.get("entities") or [] if isinstance(row, dict) else []:
+                    if isinstance(ent, dict) and ent.get("type"):
+                        found.add(str(ent["type"]).strip().lower())
+    return sorted(found)
 
 
 @router.get("/weak-types")
