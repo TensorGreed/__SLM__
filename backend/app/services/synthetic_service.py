@@ -1348,6 +1348,45 @@ _SPAN_RESPONSE_SCHEMA: dict = {
 }
 
 
+def augment_saved_rows_with_regex(project_id: int, entity_types: list[str] | None = None) -> dict[str, Any]:
+    """Run the regex pass over every saved synthetic span row and add the
+    well-defined entities (email / phone / card / IP / …) it finds that
+    don't overlap an existing one. Deterministic and idempotent; the fix
+    for rows labelled under a restricted type list. Returns counts."""
+    path = settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl"
+    if not path.exists():
+        return {"rows": 0, "rows_changed": 0, "entities_added": 0, "added_by_type": {}}
+    lines = path.read_text(encoding="utf-8").splitlines()
+    out: list[str] = []
+    rows = changed = added = 0
+    by_type: dict[str, int] = {}
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            out.append(line)
+            continue
+        text = row.get("text") if isinstance(row, dict) else None
+        if not isinstance(text, str) or not isinstance(row.get("entities"), list):
+            out.append(line)
+            continue
+        rows += 1
+        merged, augmented = _merge_regex_entities(text, row["entities"], entity_types)
+        if augmented:
+            new = [e for e in merged if e not in row["entities"]]
+            for e in new:
+                by_type[e["type"]] = by_type.get(e["type"], 0) + 1
+            added += len(new)
+            changed += 1
+            row["entities"] = merged
+            row["regex_augmented"] = True
+        out.append(json.dumps(row, ensure_ascii=False))
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return {"rows": rows, "rows_changed": changed, "entities_added": added, "added_by_type": dict(sorted(by_type.items(), key=lambda kv: -kv[1]))}
+
+
 # Rows the teacher returned with no entity at all are negatives: useful in
 # small doses, useless as the bulk of a span dataset. Keep at most this
 # share of them per batch, and no snippet shorter than this.
@@ -1397,9 +1436,17 @@ async def generate_span_extraction_rows(
     model_name: str = "llama3",
     backend: str | None = None,
     backend_override: Any = None,
+    focus_types: list[str] | None = None,
 ) -> list[dict]:
     """Generate `{text, entities: [...]}` rows for PII / NER /
     structured-extraction span_set training.
+
+    ``entity_types`` is the vocabulary: every entity of these types in a
+    snippet is labelled (teacher + regex). ``focus_types`` (a subset) is
+    what each snippet must contain — a refine pass for weak types. The two
+    were one list once, and a refine restricted to its weak types left the
+    phones, emails and names in its texts unlabelled; the re-split then
+    taught the model those spans are nothing.
 
     Two teachers: ``backend`` names a synth backend (``"ollama"``, a pin
     like ``"cloud:anthropic:claude-haiku-4-5-20251001"``; the same picker
@@ -1439,8 +1486,14 @@ async def generate_span_extraction_rows(
         rows = _generate_demo_span_rows(source_text, num_rows, entity_types)
         return rows
 
+    focus = [t.strip().lower() for t in (focus_types or []) if isinstance(t, str) and t.strip()]
+    focus_clause = (
+        f"Every snippet MUST contain several entities of these types: {', '.join(focus)}. "
+        "Still label EVERY other entity of the allowed types that appears.\n"
+        if focus else ""
+    )
     types_clause = (
-        f"Allowed entity types (use ONLY these): {', '.join(entity_types)}.\n"
+        f"Allowed entity types (use ONLY these): {', '.join(entity_types)}.\n{focus_clause}"
         if entity_types
         else "Detect any common PII / PCI entity types.\n"
     )
@@ -1668,6 +1721,7 @@ class SyntheticSpanTask:
     backend: str | None
     use_all_chunks: bool
     source_text: str
+    focus_types: list[str] = field(default_factory=list)
 
     status: str = "pending"  # pending | running | completed | failed
     rows: list[dict] = field(default_factory=list)
@@ -1838,6 +1892,7 @@ async def _run_span_generation_task(task: SyntheticSpanTask) -> None:
                         task.api_key,
                         task.model_name,
                         backend=task.backend,
+                        focus_types=task.focus_types or None,
                     )
                     task.rows.extend(batch_rows)
                 except Exception as exc:  # noqa: BLE001
@@ -1871,6 +1926,7 @@ def start_span_generation_task(
     use_all_chunks: bool,
     source_text: str,
     backend: str | None = None,
+    focus_types: list[str] | None = None,
 ) -> SyntheticSpanTask:
     """Register + launch a span-generation task. Returns the task
     record immediately; the actual work runs in the background.
@@ -1896,6 +1952,7 @@ def start_span_generation_task(
         api_key=api_key,
         model_name=model_name,
         backend=backend,
+        focus_types=list(focus_types or []),
         use_all_chunks=use_all_chunks,
         source_text=source_text,
     )

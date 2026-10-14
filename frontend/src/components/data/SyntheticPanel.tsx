@@ -604,13 +604,17 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
      *  F1 0.8 become the entity-type list, sampling from all passages, with
      *  the suggested row count — then the normal generate path runs. */
     const [refineInfo, setRefineInfo] = useState<{ types: Array<{ type: string; f1: number }>; experiment_id: number | null; suggested_rows: number } | null>(null);
+    // A refine pass: the weak types each snippet must contain, while the
+    // entity-type list stays the project's full vocabulary (so phones,
+    // emails and names in those texts are still labelled).
+    const [focusTypes, setFocusTypes] = useState<string[]>([]);
     const [refineLoading, setRefineLoading] = useState(false);
     const refineRequested = useRef(false);
     const handleRefineWeakTypes = async () => {
         setRefineLoading(true);
         try {
             const res = await api.get(`/projects/${projectId}/synthetic/weak-types`, { params: { threshold: 0.8 } });
-            const info = res.data as { types: Array<{ type: string; f1: number }>; experiment_id: number | null; suggested_rows: number; eval_result_id: number | null };
+            const info = res.data as { types: Array<{ type: string; f1: number }>; all_types?: string[]; experiment_id: number | null; suggested_rows: number; eval_result_id: number | null };
             setRefineInfo(info);
             if (!info.eval_result_id) {
                 toast.info('No span evaluation yet — train a run and evaluate it on the test examples first.', 5000);
@@ -620,7 +624,10 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 toast.success('Every entity type scored F1 ≥ 0.8 on the last evaluation — nothing to refine.', 5000);
                 return;
             }
-            setEntityTypesInput(info.types.map((t) => t.type).join(', '));
+            const weak = info.types.map((t) => t.type);
+            const vocabulary = Array.from(new Set([...(info.all_types ?? []), ...parseEntityTypes(entityTypesInput), ...weak]));
+            setEntityTypesInput(vocabulary.join(', '));
+            setFocusTypes(weak);
             setUseAllChunks(true);
             setNumSpans(info.suggested_rows);
             refineRequested.current = true;
@@ -744,6 +751,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                             // A local provider goes through the synth backend (native
                             // Ollama turns thinking off); cloud providers keep the URL.
                             backend: provider === 'ollama' ? 'ollama' : undefined,
+                            ...(focusTypes.length ? { focus_types: focusTypes } : {}),
                             use_all_chunks: useAllChunks,
                             source_text: useAllChunks ? '' : sourceText,
                         },
@@ -1166,7 +1174,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                 </button>
                                 {refineInfo && refineInfo.types.length > 0 && (
                                     <div className="form-hint" data-testid="synthetic-refine-info">
-                                        Weak on run #{refineInfo.experiment_id}: {refineInfo.types.map((t) => `${t.type} (${t.f1.toFixed(2)})`).join(', ')} — generating {refineInfo.suggested_rows} rows for them.
+                                        Weak on run #{refineInfo.experiment_id}: {refineInfo.types.map((t) => `${t.type} (${t.f1.toFixed(2)})`).join(', ')} — generating {refineInfo.suggested_rows} rows that must contain them; every other type in the list is still labelled.
                                     </div>
                                 )}
                             </div>

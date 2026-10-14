@@ -528,3 +528,64 @@ class BackendBatchCapTests(unittest.TestCase):
         self.assertEqual(_span_batch_cap(SimpleNamespace(backend="ollama")), BACKEND_BATCH_ROW_CAP)
         self.assertEqual(_span_batch_cap(SimpleNamespace(backend=None)), PER_BATCH_ROW_CAP)
         self.assertLess(BACKEND_BATCH_ROW_CAP, PER_BATCH_ROW_CAP)
+
+
+class FocusTypesAndRegexAugmentTests(unittest.TestCase):
+    """A refine pass names focus types but the full vocabulary is still
+    labelled (prompt + regex); saved rows can be augmented with regex hits
+    afterwards, idempotently."""
+
+    def test_focus_types_keep_the_full_vocabulary_in_the_prompt(self):
+        import asyncio
+
+        from app.services.synthetic_service import generate_span_extraction_rows
+
+        seen: dict = {}
+
+        class Fake:
+            name = "fake"
+
+            def describe(self):
+                return "fake:teacher"
+
+            async def complete(self, prompt, **kw):
+                seen["prompt"] = prompt
+                return '{"rows":[{"text":"Passport X1234567 for Ada Lovelace, reach her at ada@example.test or 555-0100 about the refund of the deposit.","entities":[{"type":"passport","text":"X1234567"},{"type":"person_name","text":"Ada Lovelace"}]}]}'
+
+        rows = asyncio.run(generate_span_extraction_rows(
+            None, 1, "src", num_rows=1, entity_types=["passport", "person_name", "email", "phone"],
+            focus_types=["passport"], backend_override=Fake(),
+        ))
+        self.assertIn("MUST contain several entities of these types: passport", seen["prompt"])
+        self.assertIn("Allowed entity types (use ONLY these): passport, person_name, email, phone", seen["prompt"])
+        # The regex pass labelled the email and phone the teacher skipped.
+        self.assertEqual(sorted(e["type"] for e in rows[0]["entities"]), ["email", "passport", "person_name", "phone"])
+
+    def test_augment_saved_rows_with_regex_is_idempotent(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from app.config import settings
+        from app.services.synthetic_service import augment_saved_rows_with_regex
+
+        with tempfile.TemporaryDirectory() as tmp:
+            syn = Path(tmp) / "projects" / "9" / "synthetic"
+            syn.mkdir(parents=True)
+            rows = [
+                {"text": "Call 555-0100 or mail ada@example.test today.", "entities": []},
+                {"text": "Call 555-0100 now.", "entities": [{"type": "phone", "start": 5, "end": 13, "text": "555-0100"}]},
+                {"text": "no entities here", "entities": []},
+            ]
+            (syn / "synthetic.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+            with mock.patch.object(settings, "DATA_DIR", Path(tmp)):
+                first = augment_saved_rows_with_regex(9, ["phone", "email"])
+                second = augment_saved_rows_with_regex(9, ["phone", "email"])
+            self.assertEqual((first["rows"], first["rows_changed"], first["entities_added"]), (3, 1, 2))
+            self.assertEqual(first["added_by_type"], {"email": 1, "phone": 1})
+            self.assertEqual((second["rows_changed"], second["entities_added"]), (0, 0))
+            saved = [json.loads(l) for l in (syn / "synthetic.jsonl").read_text().splitlines() if l.strip()]
+            self.assertEqual(sorted(e["type"] for e in saved[0]["entities"]), ["email", "phone"])
+            self.assertTrue(saved[0]["regex_augmented"])
+            self.assertEqual(len(saved[1]["entities"]), 1, "an existing overlapping entity is kept, not duplicated")

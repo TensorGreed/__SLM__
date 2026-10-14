@@ -309,6 +309,9 @@ class GenerateSpanAsyncRequest(BaseModel):
     # teacher instead of api_url — the native Ollama backend turns thinking
     # off, which a thinking model needs or it returns empty content.
     backend: str | None = None
+    # A refine pass: what each snippet must contain (a subset of entity_types,
+    # which stays the full vocabulary that gets labelled).
+    focus_types: list[str] = Field(default_factory=list)
     use_all_chunks: bool = Field(
         default=True,
         description=(
@@ -568,6 +571,7 @@ async def generate_spans_async(
             api_key=req.api_key,
             model_name=req.model_name,
             backend=req.backend,
+            focus_types=req.focus_types,
             use_all_chunks=req.use_all_chunks,
             source_text=req.source_text,
         )
@@ -777,6 +781,18 @@ async def relabel_answer_key(
         params={"project_id": project_id, "split": req.split, "backend": req.backend, "entity_types": req.entity_types},
     )
     return serialize_job(job)
+
+
+@router.post("/spans/regex-augment")
+async def regex_augment_saved_spans(project_id: int, data: dict | None = None) -> dict[str, Any]:
+    """Add regex-detected entities (email / phone / card / IP / …) to every
+    saved synthetic span row where they're missing. Deterministic and
+    idempotent — the fix for rows generated under a restricted type list.
+    Body: ``{"entity_types": [...]}`` optional (defaults to every pattern)."""
+    from app.services.synthetic_service import augment_saved_rows_with_regex
+
+    types = (data or {}).get("entity_types") if isinstance(data, dict) else None
+    return augment_saved_rows_with_regex(project_id, types if isinstance(types, list) else None)
 
 
 @router.get("/weak-types")

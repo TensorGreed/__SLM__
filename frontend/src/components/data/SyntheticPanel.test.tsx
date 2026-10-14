@@ -187,13 +187,14 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
                 '/projects/1/synthetic/generate-spans-async',
                 expect.objectContaining({
                     target_rows: 100,
-                    entity_types: ['passport', 'medication', 'provider_name', 'national_id'],
+                    entity_types: ['email', 'passport', 'medication', 'provider_name', 'national_id'],
+                    focus_types: ['passport', 'medication', 'provider_name', 'national_id'],
                     use_all_chunks: true,
                     backend: 'ollama',
                 }),
             );
         });
-        expect(screen.getByTestId('synthetic-refine-info')).toHaveTextContent('Weak on run #55: passport (0.00), medication (0.60), provider_name (0.67), national_id (0.76) — generating 100 rows for them.');
+        expect(screen.getByTestId('synthetic-refine-info')).toHaveTextContent('Weak on run #55: passport (0.00), medication (0.60), provider_name (0.67), national_id (0.76) — generating 100 rows that must contain them; every other type in the list is still labelled.');
     });
 
     it('"Write answer key with this model" starts the span_relabel Job with the provider pin', async () => {
