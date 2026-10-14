@@ -102,6 +102,10 @@ interface GenerateResponse {
     prompt_preview: string;
     reference_chunk_count: number;
     estimated_cost_usd: number;
+    /** What the backend repaired or dropped (span offsets re-located,
+     *  rows dropped, off-vocabulary types) and any count drift — a
+     *  short result explains itself instead of failing the paid call. */
+    warnings?: string[];
 }
 
 interface CostEstimateResponse {
@@ -1524,6 +1528,22 @@ export default function LlmGoldGeneratePanel({
                                 && ` · grounded in ${preview.reference_chunk_count} chunks`}
                         </span>
                     </div>
+                    {(preview.warnings?.length ?? 0) > 0 && (
+                        <ul
+                            role="status"
+                            data-testid="llm-gold-preview-warnings"
+                            style={{
+                                margin: 0,
+                                padding: 'var(--space-sm) var(--space-md) var(--space-sm) var(--space-xl)',
+                                border: '1px solid var(--color-warning, #f0a020)',
+                                background: 'var(--color-warning-bg, rgba(240, 160, 32, 0.10))',
+                                borderRadius: 'var(--radius-md)',
+                                fontSize: '0.85rem',
+                            }}
+                        >
+                            {preview.warnings?.map((w) => <li key={w}>{w}</li>)}
+                        </ul>
+                    )}
                     <p
                         style={{
                             margin: 0,

@@ -31,6 +31,43 @@ describe('parseApiErrorDetail', () => {
         });
     });
 
+    it('reads the structured-error envelope (top-level error_code + message)', () => {
+        // What the backend actually sends: app/main.py hoists error_code
+        // and flattens detail to the message string.
+        const err = {
+            response: {
+                status: 400,
+                data: {
+                    error_code: 'LLM_RESPONSE_UNPARSEABLE',
+                    message: 'Every row labelled an entity that can\'t be found in the row.',
+                    stage: 'gold',
+                    detail: 'Every row labelled an entity that can\'t be found in the row.',
+                },
+            },
+        };
+        expect(parseApiErrorDetail(err)).toEqual({
+            code: 'LLM_RESPONSE_UNPARSEABLE',
+            message: 'Every row labelled an entity that can\'t be found in the row.',
+        });
+    });
+
+    it('keeps UPSTREAM_ERROR for a 502 envelope (generic stage code)', () => {
+        const err = {
+            response: {
+                status: 502,
+                data: {
+                    error_code: 'GOLD_INTERNAL_ERROR',
+                    message: 'Anthropic returned 401: invalid x-api-key',
+                    detail: 'Anthropic returned 401: invalid x-api-key',
+                },
+            },
+        };
+        expect(parseApiErrorDetail(err)).toEqual({
+            code: 'UPSTREAM_ERROR',
+            message: 'Anthropic returned 401: invalid x-api-key',
+        });
+    });
+
     it('returns null when no response body (network/timeout)', () => {
         // axios reports message: "Network Error" with NO response field
         // for connection-level failures.

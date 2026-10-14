@@ -29,9 +29,35 @@ export interface ApiErrorInfo {
  *  decides how to surface network/timeout failures with context-
  *  appropriate copy. */
 export function parseApiErrorDetail(err: unknown): ApiErrorInfo | null {
-    const detail = (
-        err as { response?: { data?: { detail?: unknown } } }
-    )?.response?.data?.detail;
+    const response = (
+        err as {
+            response?: {
+                status?: number;
+                data?: { detail?: unknown; error_code?: unknown; message?: unknown };
+            };
+        }
+    )?.response;
+    const data = response?.data;
+    const detail = data?.detail;
+    // The backend's structured-error envelope (app/main.py) hoists
+    // ``error_code`` + ``message`` to the top level and flattens
+    // ``detail`` to the message string. Read the envelope first —
+    // otherwise every real caller-fixable 400 (e.g.
+    // LLM_RESPONSE_UNPARSEABLE) was labelled UPSTREAM_ERROR, which reads
+    // as "the provider broke". Gateway statuses keep UPSTREAM_ERROR:
+    // their envelope code is only the generic stage default.
+    const status = Number(response?.status || 0);
+    if (
+        typeof detail === 'string'
+        && typeof data?.error_code === 'string'
+        && data.error_code
+        && !(status >= 502 && status <= 504)
+    ) {
+        return {
+            code: data.error_code,
+            message: String(data.message || detail),
+        };
+    }
     if (detail && typeof detail === 'object') {
         const d = detail as { error_code?: unknown; message?: unknown };
         return {

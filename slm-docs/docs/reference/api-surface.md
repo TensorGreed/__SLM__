@@ -197,6 +197,16 @@ caller-supplied values.
 an optional `distribution: {easy, medium, hard, hallucination_traps}` block
 (qa-sft only — silently ignored elsewhere).
 
+The response carries `warnings` (list of strings). A result with fewer (or
+more) usable rows than `count` is a 200 with a warning, not an error — the
+call is paid for and every row is reviewed in the preview. Only "no usable row
+at all" is a 400 (`LLM_RESPONSE_UNPARSEABLE`, reason in `message`). For
+span-extraction, entity offsets that don't match the entity text are
+re-located from that text (a row is dropped only when a labelled entity isn't
+in it), the prompt names the project's entity types + labelling conventions
+(`runtime_config.span_type_definitions`), and entities of other types are
+dropped unless the prompt was overridden.
+
 ## Export
 
 ```
