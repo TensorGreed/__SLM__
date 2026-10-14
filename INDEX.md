@@ -237,6 +237,7 @@ session-start guidance.
 - `backend/app/services/sft_lift_summary_service.py` — Did SFT help? — baseline vs trained eval lift summary (Theme 8 Epic 4).
 - `backend/app/services/slice_definitions_service.py` — Quality-Lift phase 2, slice 1 — Project slice-definitions validator.
 - `backend/app/services/slice_evaluator_service.py` — Quality-Lift phase 2, slice 2 — Slice predicate evaluator + handler wrapper.
+- `backend/app/services/span_refine_service.py` — Refine weak entity types: read the latest span_set evaluation and name
 - `backend/app/services/starter_pack_service.py` — Dynamic starter-pack registry for domain-specific onboarding defaults.
 - `backend/app/services/student_teacher_comparison_service.py` — Student-vs-teacher distillation comparison (Track 1, Epic A, slice 3).
 - `backend/app/services/support_bundle_service.py` — Support-bundle service with redaction (priority.md P34, Wave G).
@@ -901,6 +902,7 @@ session-start guidance.
 - `backend/tests/test_slice_definitions_slice1.py` — Quality-Lift phase 2, slice 1 — slice_definitions schema + endpoints.
 - `backend/tests/test_slice_evaluator_slice2.py` — Quality-Lift phase 2, slice 2 — slice predicate evaluator + handler wrapper.
 - `backend/tests/test_slice_gates_slice3.py` — Quality-Lift phase 2, slice 3 — Slice gate evaluator behaviors.
+- `backend/tests/test_span_refine.py` — Refine weak types: the latest span_set evaluation names the types under
 - `backend/tests/test_split_defaults.py` — Wave 2d — safe data defaults a newcomer doesn't have to know about.
 - `backend/tests/test_sprint1.py` — _(no docstring)_
 - `backend/tests/test_sprint2.py` — _(no docstring)_

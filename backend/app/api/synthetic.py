@@ -1,6 +1,8 @@
 """Synthetic data generation API routes."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Any
+
+from fastapi import Query, APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -710,6 +712,21 @@ class RunPlaybookRequest(BaseModel):
     target_count: int = Field(30, ge=1, le=500)
     target_class: str | None = Field(default=None)
     backend: str | None = Field(default=None, description="Optional backend pin, e.g. 'ollama:llama3.1:8b'.")
+
+
+@router.get("/weak-types")
+async def get_weak_entity_types(
+    project_id: int,
+    threshold: float = Query(0.8, ge=0.0, le=1.0),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """The entity types the latest span_set evaluation scored under
+    ``threshold`` (weakest first) with the evaluation's provenance and a
+    suggested row count — what the Synthetic tab's "Refine weak types"
+    button points the span generator at."""
+    from app.services.span_refine_service import weak_entity_types
+
+    return await weak_entity_types(db, project_id, threshold)
 
 
 @router.get("/backends")

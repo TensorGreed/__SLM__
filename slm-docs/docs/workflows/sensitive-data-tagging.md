@@ -100,9 +100,13 @@ tags the test rows with it (no generation), so the **span_set** report is
 the usual one: precision / recall / F1 overall, **per type** (where the
 model is weak), and per row the entities *matched*, *missed* and
 *hallucinated* — with the model's output beside the key. Weak types are
-the refine loop: run the span generator again **restricted to those
-types** (the entity-type list is the lever), accept the rows, re-split,
-re-train; the Eval summary compares the runs.
+the refine loop, and it is one button: **Refine weak types** on the
+Synthetic tab (span mode) reads the latest span evaluation, names every
+type under F1 0.8 with its score ("Weak on run #55: passport (0.00),
+medication (0.60), …"), and starts the span generator restricted to
+those types, sampling from all passages, with a row count sized to how
+many types are weak (`GET /synthetic/weak-types?threshold=`). Accept the
+rows, re-split, re-train; the Eval summary compares the runs.
 
 ## 5. Export → Hugging Face
 

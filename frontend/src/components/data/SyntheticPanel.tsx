@@ -600,6 +600,45 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
         }
     };
 
+    /** "Refine weak types": the latest span_set evaluation's types under
+     *  F1 0.8 become the entity-type list, sampling from all passages, with
+     *  the suggested row count — then the normal generate path runs. */
+    const [refineInfo, setRefineInfo] = useState<{ types: Array<{ type: string; f1: number }>; experiment_id: number | null; suggested_rows: number } | null>(null);
+    const [refineLoading, setRefineLoading] = useState(false);
+    const refineRequested = useRef(false);
+    const handleRefineWeakTypes = async () => {
+        setRefineLoading(true);
+        try {
+            const res = await api.get(`/projects/${projectId}/synthetic/weak-types`, { params: { threshold: 0.8 } });
+            const info = res.data as { types: Array<{ type: string; f1: number }>; experiment_id: number | null; suggested_rows: number; eval_result_id: number | null };
+            setRefineInfo(info);
+            if (!info.eval_result_id) {
+                toast.info('No span evaluation yet — train a run and evaluate it on the test examples first.', 5000);
+                return;
+            }
+            if (!info.types.length) {
+                toast.success('Every entity type scored F1 ≥ 0.8 on the last evaluation — nothing to refine.', 5000);
+                return;
+            }
+            setEntityTypesInput(info.types.map((t) => t.type).join(', '));
+            setUseAllChunks(true);
+            setNumSpans(info.suggested_rows);
+            refineRequested.current = true;
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Could not read the last evaluation.', 5000);
+        } finally {
+            setRefineLoading(false);
+        }
+    };
+    useEffect(() => {
+        // Generate once the refine settings have landed in state.
+        if (refineRequested.current && entityTypesInput && useAllChunks) {
+            refineRequested.current = false;
+            void handleGenerate();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [entityTypesInput, useAllChunks, numSpans]);
+
     const handleGenerate = async () => {
         // useAllChunks doesn't need source_text — the server samples
         // from the cleaned-chunk pool per batch.
@@ -676,6 +715,9 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                             api_url: apiUrl,
                             api_key: apiKey,
                             model_name: modelName,
+                            // A local provider goes through the synth backend (native
+                            // Ollama turns thinking off); cloud providers keep the URL.
+                            backend: provider === 'ollama' ? 'ollama' : undefined,
                             use_all_chunks: useAllChunks,
                             source_text: useAllChunks ? '' : sourceText,
                         },
@@ -1076,6 +1118,21 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                     onChange={(e) => setEntityTypesInput(e.target.value)}
                                     placeholder="email, phone, ssn, credit_card, person_name"
                                 />
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => void handleRefineWeakTypes()}
+                                    disabled={refineLoading || isGenerating}
+                                    data-testid="synthetic-refine-weak-types"
+                                    title="Read the last span evaluation and generate rows for the entity types it scored under F1 0.8, sampling from all passages."
+                                >
+                                    {refineLoading ? 'Reading last evaluation…' : 'Refine weak types'}
+                                </button>
+                                {refineInfo && refineInfo.types.length > 0 && (
+                                    <div className="form-hint" data-testid="synthetic-refine-info">
+                                        Weak on run #{refineInfo.experiment_id}: {refineInfo.types.map((t) => `${t.type} (${t.f1.toFixed(2)})`).join(', ')} — generating {refineInfo.suggested_rows} rows for them.
+                                    </div>
+                                )}
                             </div>
                         </>
                     ) : (

@@ -1076,6 +1076,17 @@ runs real CPU inference). ~4 min locally.
   bell deep-links `#seed-documents`. Tests: `tests/test_seed_documents.py`
   (read the ingested doc back IN THE SAME LOOP — a later TestClient read can
   lose the write on the StaticPool).
+- **Refine weak types** (`services/span_refine_service.py`): `latest_span_eval`
+  (newest EvalResult of the project with `metrics.scoring_mode == span_set`),
+  `weak_types_from_metrics(metrics, threshold)` (pure; weakest first),
+  `weak_entity_types(db, pid, threshold)` → `{eval_result_id, experiment_id,
+  types, all_types, suggested_rows}` (`ROWS_PER_WEAK_TYPE` 25 within 60–300);
+  `GET /synthetic/weak-types?threshold=0.8`. `SyntheticPanel`'s "Refine weak
+  types" button (span mode) fills the entity types, sets all-passages + the
+  suggested rows and runs the normal generate path; the async span body now
+  sends `backend: "ollama"` for the local provider. Seed prompt asks for
+  varied surface forms (separators, locale id formats, names in greetings).
+  Tests: `tests/test_span_refine.py`, `SyntheticPanel.test.tsx`.
 - **Token classification** (`task_type="token_classification"`,
   `scripts/train_token_classification.py`, dispatched from
   `train.py::_run_training_attempt` right after `_normalize_task_type`):

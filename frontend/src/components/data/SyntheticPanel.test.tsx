@@ -36,6 +36,9 @@ function installGetRouter(overrides: Record<string, any> = {}) {
         if (url.includes('prepared-manifest')) {
             return { data: overrides['prepared-manifest'] ?? {} };
         }
+        if (url.includes('/synthetic/weak-types')) {
+            return { data: overrides['weak-types'] ?? { eval_result_id: null, experiment_id: null, types: [], all_types: [], suggested_rows: 0 } };
+        }
         if (url.includes('/synthetic/playbooks')) {
             return {
                 data: overrides['playbooks'] ?? {
@@ -162,6 +165,35 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
         fireEvent.change(input, { target: { value: '50' } });
         // Per-batch cap for conversations is 5 → 50 / 5 = 10 batches.
         expect(screen.getByText(/Will run in 10 background batches/i)).toBeInTheDocument();
+    });
+
+    it('"Refine weak types" reads the last span evaluation and generates rows for the weak types from all passages', async () => {
+        installGetRouter({
+            'prepared-manifest': { task_profile: 'structured_extraction', output_schema: { scoring_mode: 'span_set' }, entity_types: ['email', 'passport', 'medication'] },
+            'weak-types': {
+                eval_result_id: 74, experiment_id: 55, dataset_name: 'test', overall_f1: 0.9, suggested_rows: 100,
+                types: [{ type: 'passport', f1: 0.0 }, { type: 'medication', f1: 0.6 }, { type: 'provider_name', f1: 0.6667 }, { type: 'national_id', f1: 0.7619 }],
+                all_types: ['email', 'passport', 'medication', 'provider_name', 'national_id'],
+            },
+            tasks: { task_id: 'task-span-9', task_kind: 'span', status: 'completed', target_rows: 100, rows_so_far: 100, batches_done: 9, batches_total: 9, rows: [{ text: 'x', entities: [] }], error: null },
+        });
+        apiMock.post.mockResolvedValueOnce({ data: { task_id: 'task-span-9', status: 'pending', target_rows: 100, batches_total: 9 } });
+
+        render(<SyntheticPanel projectId={1} />);
+        const button = await screen.findByTestId('synthetic-refine-weak-types');
+        await userEvent.click(button);
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/1/synthetic/generate-spans-async',
+                expect.objectContaining({
+                    target_rows: 100,
+                    entity_types: ['passport', 'medication', 'provider_name', 'national_id'],
+                    use_all_chunks: true,
+                    backend: 'ollama',
+                }),
+            );
+        });
+        expect(screen.getByTestId('synthetic-refine-info')).toHaveTextContent('Weak on run #55: passport (0.00), medication (0.60), provider_name (0.67), national_id (0.76) — generating 100 rows for them.');
     });
 
     it('uses the QA async endpoint when num_pairs > 50', async () => {

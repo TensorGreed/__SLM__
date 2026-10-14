@@ -75,7 +75,9 @@ def build_document_prompt(
         f"Write one realistic {genre.strip()} ({locale} conventions), about {words} words, as plain prose "
         f"or a short message — no markdown, no headings, no bullet lists.{hint}{must} "
         f"Style: {style}. All details are invented but realistic in format "
-        "(e.g. a card number that looks real, a plausible record number). Output only the text."
+        "(e.g. a card number that looks real, a plausible record number). Vary the surface forms: "
+        "numbers with spaces, dashes or none; identifiers in the locale's own formats; a person's "
+        "full name inside a greeting or signature as well as in the body. Output only the text."
     )
 
 
