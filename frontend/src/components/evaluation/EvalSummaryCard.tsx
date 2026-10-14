@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
 import { checkLiftAcrossSeeds, fetchEvalSummary, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
 import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
+import RedactionTryBox from './RedactionTryBox';
 import { retrievalLabel } from './retrievalLabel';
 import { retrievalRowText, retrievalSplitText } from './retrievalSplit';
 import { toast } from '../../stores/toastStore';
@@ -443,6 +444,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         </p>
                     ) : null}
                     <SpanRegimeTable block={summary.answer_key ?? summary.test ?? null} onAnswerKey={Boolean(summary.answer_key)} />
+                    <RedactionTryBox projectId={projectId} experimentId={runId ?? null} />
                 </div>
             )}
             {summary.message && <p className="eval-summary__message">{summary.message}</p>}

@@ -53,6 +53,7 @@ from app.api.dataset_import import (
     project_router as dataset_import_project_router,
 )
 from app.api.tokenization import router as tokenization_router
+from app.api.redact import router as redact_router
 from app.api.training import router as training_router
 from app.api.evaluation import router as evaluation_router
 from app.api.compression import router as compression_router
@@ -399,6 +400,7 @@ app.include_router(dataset_import_catalog_router, prefix="/api", dependencies=AP
 app.include_router(dataset_import_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(task_shape_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(tokenization_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(redact_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(training_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(evaluation_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(compression_router, prefix="/api", dependencies=API_DEPENDENCIES)

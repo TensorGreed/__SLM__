@@ -323,6 +323,66 @@ tokenizer attaches the space before a word to the word, so the pipeline's
 `start` can sit one character early — the two-line trim above (which
 BrewSLM's own evaluation applies) gives the exact span.
 
+### What's in the exported `model/`
+
+Besides the weights and tokenizer, a span export writes two files:
+
+- **`README.md` — the model card.** Built only from what BrewSLM
+  recorded for the run: base model, entity types (from
+  `label_space.json`), training rows and where they came from (the run's
+  `training_report.json` and the prepared train file it read; the source
+  tally is left out if the split has changed since), and per-type
+  precision / recall / F1 from the run's latest span evaluations —
+  **answer key first** (with the model that wrote it), test examples
+  second. It carries the usage snippet above with the right `stride`
+  for the run's window, and a limitations list that says how many texts
+  the scores rest on, which types have too few reference spans to trust,
+  whether there is an independent answer key, and whether the training
+  data is synthetic. A section with no data (no evaluation yet, no
+  training report) is left out — the card never fills a gap with a
+  number. Uploading the folder to the Hub publishes it as the model page.
+- **`thresholds.json`** — per-type minimum span scores and a
+  `recall_bias`, all `0.0` by default (= exactly the argmax spans).
+  BrewSLM's redact endpoint reads it; edit it to tune the shipped
+  behaviour.
+
+### Confidence and high-recall mode
+
+`predict_spans` (the decoder evaluation uses) can also score each span:
+`score` is the mean over the span's tokens of P(B-type) + P(I-type),
+`min_score` the weakest token. Two knobs trade precision for recall:
+
+- **Per-type thresholds** drop spans of one type below a score — e.g.
+  `{"person_name": 0.8}` keeps only confident names and leaves every
+  other type alone.
+- **Recall bias** (0–1) is subtracted from each token's "O" probability
+  before the label is picked, so a token the model thought *probably not*
+  an entity, but only by a small margin, gets tagged. For redaction a
+  missed account number costs more than a masked word, so a bias of
+  0.1–0.3 is the usual "high-recall mode". Scores stay unbiased, so a
+  borderline span shows a low score.
+
+With no thresholds and bias 0 the output is identical to the argmax
+decoder (evaluation is unchanged).
+
+### Try it: the redact endpoint
+
+```bash
+curl -X POST localhost:8000/api/projects/31/redact \
+  -H 'Content-Type: application/json' \
+  -d '{"text": "Call Ada on 555-0101", "mode": "mask", "recall_bias": 0.2}'
+```
+
+`mode` is `mask` (`[PHONE]`), `tag` (`<phone>555-0101</phone>`) or
+`spans` (text unchanged). The response carries every span with `score`
+/ `min_score`, the redacted `text`, and `offsets` mapping each span in
+the input to its replacement in the output. `experiment_id` picks a run
+(default: the newest completed span run); `min_score` / `recall_bias`
+override the run's `thresholds.json` for that call. The Eval tab's span
+summary has a **Try redaction** box over the same endpoint, with a
+recall-bias slider. The model stays loaded between calls (one model in
+memory at a time).
+
 ### Long documents: pass `stride`
 
 The encoder reads 512 tokens at a time. BrewSLM trains, validates,
