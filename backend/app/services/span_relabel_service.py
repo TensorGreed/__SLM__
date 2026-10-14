@@ -32,6 +32,7 @@ ProgressFn = Callable[[float, str], Awaitable[None]]
 # Texts per teacher call: enough to amortise the prompt, few enough that
 # the model labels every one.
 TEXTS_PER_CALL = 6
+RETRIES_PER_CALL = 1
 MAX_ROWS = 2000
 
 _SYSTEM_PROMPT = (
@@ -243,22 +244,28 @@ async def relabel_split_as_answer_key(
     for b, batch in enumerate(batches):
         await report(0.05 + 0.85 * b / max(1, len(batches)), f"Labelling texts {batch[0] + 1}–{batch[-1] + 1} of {len(keep)} ({backend_label})")
         batch_texts = [texts[i] for i in batch]
-        try:
-            raw = await llm.complete(
-                build_relabel_prompt(batch_texts, types),
-                system_prompt=_SYSTEM_PROMPT,
-                max_tokens=max(1500, 350 * len(batch)),
-                temperature=0.0,
-                response_schema=_RESPONSE_SCHEMA,
-            )
-        except SynthBackendError as exc:
-            failed_calls += 1
-            _LOG.warning("relabel batch %s failed: %s", b + 1, exc)
-            continue
-        parsed = _parse_rows(str(raw or ""))
+        parsed: dict[int, list[dict[str, Any]]] = {}
+        # One retry: a cloud call that errors or comes back unparseable is
+        # usually transient, and a skipped batch is six texts missing from
+        # the key.
+        for attempt in range(1 + RETRIES_PER_CALL):
+            try:
+                raw = await llm.complete(
+                    build_relabel_prompt(batch_texts, types),
+                    system_prompt=_SYSTEM_PROMPT,
+                    max_tokens=max(1500, 350 * len(batch)),
+                    temperature=0.0,
+                    response_schema=_RESPONSE_SCHEMA,
+                )
+            except SynthBackendError as exc:
+                _LOG.warning("relabel batch %s attempt %s failed: %s", b + 1, attempt + 1, exc)
+                continue
+            parsed = _parse_rows(str(raw or ""))
+            if parsed:
+                break
+            _LOG.warning("relabel batch %s attempt %s: no rows parsed (content starts: %r)", b + 1, attempt + 1, str(raw)[:160])
         if not parsed:
             failed_calls += 1
-            _LOG.warning("relabel batch %s: no rows parsed (content starts: %r)", b + 1, str(raw)[:160])
             continue
         for local_index, source_index in enumerate(batch):
             ents = parsed.get(local_index)

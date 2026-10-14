@@ -128,6 +128,24 @@ class RelabelTests(unittest.TestCase):
         self.assertEqual((datasets[0].file_path, datasets[0].record_count), (str(path), 2))
         self.assertEqual(datasets[0].metadata_["source"], "span_relabel")
 
+    def test_a_failed_call_is_retried_once(self):
+        calls = {"n": 0}
+        inner = FakeLabeller()
+
+        class Flaky(FakeLabeller):
+            async def complete(self, prompt, **kw):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise __import__("app.services.synth_backends.base", fromlist=["SynthBackendError"]).SynthBackendError("rate limited")
+                return await inner.complete(prompt, **kw)
+
+        async def _go():
+            async with async_session_factory() as db:
+                return await svc.relabel_split_as_answer_key(db, self.pid, split="test", backend_override=Flaky())
+
+        summary = asyncio.run(_go())
+        self.assertEqual((calls["n"], summary.failed_calls, summary.labelled_rows), (2, 0, 2))
+
     def test_endpoint_runs_as_a_job(self):
         from unittest import mock
 
