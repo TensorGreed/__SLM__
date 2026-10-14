@@ -32,7 +32,12 @@ ProgressFn = Callable[[float, str], Awaitable[None]]
 # Texts per teacher call: enough to amortise the prompt, few enough that
 # the model labels every one.
 TEXTS_PER_CALL = 6
-RETRIES_PER_CALL = 1
+# A reply cut mid-JSON (the budget) parses to nothing; the same call again
+# fails the same way, so a failed batch is split in two and each half
+# retried, down to single texts.
+MIN_TEXTS_PER_CALL = 1
+# Tokens per text in the reply: compact JSON, entity type + text only.
+TOKENS_PER_TEXT = 700
 MAX_ROWS = 2000
 
 _SYSTEM_PROMPT = (
@@ -56,8 +61,6 @@ _RESPONSE_SCHEMA: dict[str, Any] = {
                             "properties": {
                                 "type": {"type": "string"},
                                 "text": {"type": "string"},
-                                "start": {"type": "integer"},
-                                "end": {"type": "integer"},
                             },
                             "required": ["type", "text"],
                         },
@@ -78,13 +81,13 @@ def build_relabel_prompt(texts: list[str], entity_types: list[str]) -> str:
         "Label every entity in each text below. Entity types (use ONLY these, lower-case): "
         f"{types}.\n\n"
         "Rules:\n"
-        "- entity.text is the EXACT characters as they appear in the text (copy them; offsets are "
-        "verified from the text, so start/end may be approximate or omitted).\n"
+        "- entity.text is the EXACT characters as they appear in the text (copy them). Do NOT give "
+        "offsets — they are located from the text.\n"
         "- Label every occurrence; a person's name that appears twice is two entities.\n"
         "- Do not invent entities that are not in the text, and do not change the texts.\n\n"
         f"{numbered}\n\n"
-        'Return JSON {"rows": [{"index": <text number>, "entities": [{"type": "...", "text": "...", '
-        '"start": N, "end": M}, ...]}, ...]} with one row per text, in order.'
+        'Return compact JSON (no indentation) {"rows": [{"index": <text number>, "entities": '
+        '[{"type": "...", "text": "..."}, ...]}, ...]} with one row per text, in order.'
     )
 
 
@@ -239,40 +242,47 @@ async def relabel_split_as_answer_key(
     llm = backend_override or pick_backend(backend)
     backend_label = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
     new_labels: list[list[dict[str, Any]] | None] = [None] * len(keep)
-    failed_calls = 0
+    calls = {"made": 0, "failed": 0}
     batches = [keep[i:i + TEXTS_PER_CALL] for i in range(0, len(keep), TEXTS_PER_CALL)]
-    for b, batch in enumerate(batches):
-        await report(0.05 + 0.85 * b / max(1, len(batches)), f"Labelling texts {batch[0] + 1}–{batch[-1] + 1} of {len(keep)} ({backend_label})")
+
+    async def label_batch(batch: list[int]) -> None:
+        """One call for ``batch``; on an error or an unparseable reply,
+        split the batch and label each half (down to one text)."""
         batch_texts = [texts[i] for i in batch]
+        calls["made"] += 1
         parsed: dict[int, list[dict[str, Any]]] = {}
-        # One retry: a cloud call that errors or comes back unparseable is
-        # usually transient, and a skipped batch is six texts missing from
-        # the key.
-        for attempt in range(1 + RETRIES_PER_CALL):
-            try:
-                raw = await llm.complete(
-                    build_relabel_prompt(batch_texts, types),
-                    system_prompt=_SYSTEM_PROMPT,
-                    max_tokens=max(1500, 350 * len(batch)),
-                    temperature=0.0,
-                    response_schema=_RESPONSE_SCHEMA,
-                )
-            except SynthBackendError as exc:
-                _LOG.warning("relabel batch %s attempt %s failed: %s", b + 1, attempt + 1, exc)
-                continue
+        try:
+            raw = await llm.complete(
+                build_relabel_prompt(batch_texts, types),
+                system_prompt=_SYSTEM_PROMPT,
+                max_tokens=max(2000, TOKENS_PER_TEXT * len(batch)),
+                temperature=0.0,
+                response_schema=_RESPONSE_SCHEMA,
+            )
             parsed = _parse_rows(str(raw or ""))
-            if parsed:
-                break
-            _LOG.warning("relabel batch %s attempt %s: no rows parsed (content starts: %r)", b + 1, attempt + 1, str(raw)[:160])
+            if not parsed:
+                _LOG.warning("relabel: %d texts, no rows parsed (content starts: %r)", len(batch), str(raw)[:160])
+        except SynthBackendError as exc:
+            _LOG.warning("relabel: %d texts failed: %s", len(batch), exc)
         if not parsed:
-            failed_calls += 1
-            continue
+            if len(batch) > MIN_TEXTS_PER_CALL:
+                half = len(batch) // 2
+                await label_batch(batch[:half])
+                await label_batch(batch[half:])
+            else:
+                calls["failed"] += 1
+            return
         for local_index, source_index in enumerate(batch):
             ents = parsed.get(local_index)
             if ents is None:
                 continue
             validated = _validate_span_rows([{"text": texts[source_index], "entities": ents}], types)
             new_labels[keep.index(source_index)] = validated[0]["entities"] if validated else []
+
+    for b, batch in enumerate(batches):
+        await report(0.05 + 0.85 * b / max(1, len(batches)), f"Labelling texts {batch[0] + 1}–{batch[-1] + 1} of {len(keep)} ({backend_label})")
+        await label_batch(batch)
+    failed_calls = calls["failed"]
 
     labelled = [(keep[j], spans) for j, spans in enumerate(new_labels) if spans is not None]
     if not labelled:
@@ -321,7 +331,7 @@ async def relabel_split_as_answer_key(
         agreement=agreement(old_for_agreement, new_for_agreement), dataset_id=int(existing.id), file_path=str(path),
     )
     if failed_calls:
-        summary.warnings.append(f"{failed_calls} of {len(batches)} labelling calls failed; those texts were skipped.")
+        summary.warnings.append(f"{failed_calls} text{'s' if failed_calls != 1 else ''} could not be labelled even alone and were skipped ({calls['made']} calls).")
     if len(labelled) < len(keep):
         summary.warnings.append(f"{len(keep) - len(labelled)} of {len(keep)} texts were not labelled.")
     await report(1.0, f"Answer key written: {len(labelled)} rows, {sum(counts.values())} entities")

@@ -128,23 +128,29 @@ class RelabelTests(unittest.TestCase):
         self.assertEqual((datasets[0].file_path, datasets[0].record_count), (str(path), 2))
         self.assertEqual(datasets[0].metadata_["source"], "span_relabel")
 
-    def test_a_failed_call_is_retried_once(self):
-        calls = {"n": 0}
-        inner = FakeLabeller()
+    def test_a_failed_batch_is_split_not_resent(self):
+        """A reply cut mid-JSON for two texts fails the same way again; the
+        batch is split and each text labelled alone."""
+        sizes: list[int] = []
 
-        class Flaky(FakeLabeller):
+        class Truncating(FakeLabeller):
             async def complete(self, prompt, **kw):
-                calls["n"] += 1
-                if calls["n"] == 1:
-                    raise __import__("app.services.synth_backends.base", fromlist=["SynthBackendError"]).SynthBackendError("rate limited")
-                return await inner.complete(prompt, **kw)
+                n = prompt.count("\n[")
+                sizes.append(n)
+                if n > 1:
+                    return '```json\n{"rows": [{"index": 0, "entities": [{"type": "person_name", "te'  # cut off
+                index = 0 if T1 in prompt else 1
+                full = json.loads(await FakeLabeller().complete(prompt, **kw))["rows"][index]["entities"]
+                return json.dumps({"rows": [{"index": 0, "entities": full}]})
 
         async def _go():
             async with async_session_factory() as db:
-                return await svc.relabel_split_as_answer_key(db, self.pid, split="test", backend_override=Flaky())
+                return await svc.relabel_split_as_answer_key(db, self.pid, split="test", backend_override=Truncating())
 
         summary = asyncio.run(_go())
-        self.assertEqual((calls["n"], summary.failed_calls, summary.labelled_rows), (2, 0, 2))
+        self.assertEqual(sizes, [2, 1, 1], "one two-text call, then each text alone")
+        self.assertEqual((summary.failed_calls, summary.labelled_rows), (0, 2))
+        self.assertNotIn("start", svc.build_relabel_prompt(["x"], ["email"]).split("Return")[0].split("Rules")[1], "no offsets asked")
 
     def test_endpoint_runs_as_a_job(self):
         from unittest import mock
