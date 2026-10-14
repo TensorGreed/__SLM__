@@ -205,6 +205,60 @@ where those edges are (a person's name without the title; each account
 or routing number its own span, digits only) — a definition has to fix
 the boundaries, not just the category. Run #58 is export 7.
 
+### Your own identifier types (custom patterns)
+
+The built-in regex pass knows the well-known formats — email, phone,
+SSN, card, IP, API key, ISO / US dates. Your organisation's own
+identifiers (an employee id like `EMP-48213`, a ticket reference, an
+internal account format) are just as regular, and a regex catches them
+with exact offsets where a labelling model may miss one or misplace its
+edges. **Add a type** (Synthetic tab, span mode, under the labelling
+conventions) does it in one place:
+
+1. a **name** (normalised like the conventions: lower-case, spaces → `_`),
+2. a **one-line definition** — saved with the labelling conventions, so
+   every labelling model gets it,
+3. an optional **pattern** (a Python regex, optional *ignore case*) —
+   **Test pattern** shows how many matches it finds in your saved span
+   rows and cleaned document passages, with the first ten in context
+   and their character offsets, before anything is saved,
+
+and adds the type to the entity-type list. Saved patterns are listed
+under the form with a Remove button.
+
+From then on **every regex pass** for the project uses the built-ins
+**plus** your patterns, under the same entity-type filter: span
+generation (the teacher's prompt also names your types among the ones
+the regex pass catches), **Regex pass over saved rows**, and relabelling
+training rows / labelling passages / labelling whole documents. A custom
+pattern adds matches for its type and overrides nothing — a pattern for
+`phone` in a local format catches those numbers *as well as* the
+built-in ones. Run the regex pass over saved rows after adding a type to
+label rows saved before it existed (idempotent). The second-model answer
+key is left alone: it stays the other model's independent reading.
+
+Patterns are checked when saved (`PUT /synthetic/type-patterns`; nothing
+is saved if any entry fails, the error names the entry and why):
+
+- it must compile and be at most 300 characters;
+- it must not match the empty string (`\d*`, a bare lookahead) — it
+  would tag zero-length spans everywhere;
+- no **catastrophic backtracking**: an unbounded repeat nested in
+  another (`(a+)+`, `(\w+\s?)*`) is rejected outright, and the rest is
+  timed over ~2,000-character repetitive strings in a separate process
+  that is killed after 3 s — so `(a|a)+b` is refused instead of hanging
+  the server. Rewrite such a pattern without the nesting
+  (`\bEMP-\d{5}\b`, not `(EMP-(\d+)+)`).
+
+API: `GET /synthetic/type-patterns` (patterns, any stored entry that no
+longer validates, the built-in types, the limits),
+`PUT /synthetic/type-patterns` `{patterns: [{type, pattern, description,
+flags}]}` (flags: letters `i` / `m` / `s`), and
+`POST /synthetic/type-patterns/test` `{pattern, type, flags}` →
+`{valid, error, texts_scanned, texts_matched, count, matches: [{source,
+text_index, start, end, match, before, after}]}`. The patterns live in
+the project's `runtime_config["span_custom_patterns"]`.
+
 ## 5. Export → Hugging Face
 
 **Export → Hugging Face** packages the run's `model/` directory as-is
