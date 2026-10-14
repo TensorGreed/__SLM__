@@ -564,9 +564,29 @@ OCR'd training text didn't move the scan score. The weak types on the
 scan are digit strings OCR mangles (passport, bank account, card
 number) — and the local labeller, labelling the same mangled text, may
 skip them, so the training labels are thinnest exactly where the model
-needs help. Next: label the OCR'd passages with a stronger model, and
-grow the scan test past 18 passages before trusting differences of a
-few points.
+needs help.
+
+**A bigger scan test, and better labels on OCR'd text** (2026-10-14).
+60 more scanned documents → 194 OCR'd passages → Haiku 4.5 labelled 192
+(1,011 entities; rejected from training — evaluation only). Haiku also
+relabelled the 125 OCR'd *training* passages (Relabel training rows,
+source group `passage_labels:doc=742`): the local labels agreed with
+Haiku's at only F1 0.65 (282 entities Haiku found that the local model
+missed), so the local labels on OCR'd text were thin. Run #69 trained
+on Haiku's labels:
+
+| run | 18-passage scan | 192-passage scan | all 210 (1,290 spans) | clean answer key |
+|---|---|---|---|---|
+| #65 (passages + noise copies) | 0.71 | 0.59 | 0.62 | 0.83 |
+| #67 (+ OCR'd passages, local labels) | 0.72 | 0.60 | 0.63 | 0.85 |
+| #69 (+ OCR'd passages, Haiku labels) | 0.72 | **0.62** | **0.64** | **0.86** |
+
+The 18-passage test flattered every run by ~0.1. On the larger one,
+better labels on OCR'd text help a little (0.59 → 0.62, mostly recall)
+and the clean score is the best yet, but scanned text stays ~0.22 below
+clean. The weakest types on scans are now `provider_name` (0.29 on 82
+spans), `visit_date` and `credit_card` — names and dates OCR splits
+across lines, and card numbers whose digits it confuses.
 
 ## What the first run produced (2026-10-13)
 
