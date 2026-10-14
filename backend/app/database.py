@@ -28,6 +28,74 @@ if _is_sqlite:
 engine = create_async_engine(settings.DATABASE_URL, **_engine_kwargs)
 
 
+# ── Shared-connection rollback guard (SQLite / StaticPool only) ────────
+#
+# StaticPool hands the SAME DBAPI connection to every session, and
+# concurrent sessions (a request handler + a background Job runner, a
+# runner + its heartbeat, …) interleave on it at every ``await``. A
+# transaction boundary from one session therefore lands on whatever the
+# others have in flight. The destructive case is ROLLBACK: every session
+# that only *read* still ends with one — ``Session.close()`` rolls back
+# its implicit transaction and the pool resets the connection on checkin
+# — and on the shared connection that discards another session's
+# flushed-but-uncommitted writes. Traced: the distillation capture runner
+# flushed ``UPDATE datasets`` + ``INSERT run_events``, the POST request
+# that spawned it ended its read-only session (COMMIT, then the pool's
+# reset ROLLBACK) between the runner's INSERT and its COMMIT, and the
+# RunEvent vanished. Same mechanism behind "Project N not found" in the
+# async-job tests, the lift-check Job stuck QUEUED and the documents flow
+# stuck RUNNING.
+#
+# A read-only session never needs that ROLLBACK: pysqlite only opens a
+# SQLite transaction on DML, so on a private connection the rollback of a
+# read-only session is a no-op. So: remember, per pool checkout, whether
+# the checkout executed anything other than a SELECT / PRAGMA since its
+# last commit or rollback, and skip the DBAPI rollback when it didn't.
+# Sessions that wrote still roll back exactly as before (error paths);
+# commits are untouched. Postgres / any non-StaticPool engine is unaffected.
+
+_WROTE_ATTR = "_brewslm_wrote"
+_READ_ONLY_PREFIXES = ("SELECT", "PRAGMA")
+
+
+def _is_read_only_statement(statement: str) -> bool:
+    return statement.lstrip()[:6].upper().startswith(_READ_ONLY_PREFIXES)
+
+
+def _install_shared_connection_rollback_guard(sync_engine) -> None:
+    dialect = sync_engine.dialect
+    default_do_rollback = dialect.do_rollback
+    default_do_commit = dialect.do_commit
+
+    @event.listens_for(sync_engine, "before_cursor_execute")
+    def _mark_writes(conn, cursor, statement, parameters, context, executemany):  # noqa: ARG001
+        if not _is_read_only_statement(statement):
+            # ``conn.connection`` is the pool checkout (a _ConnectionFairy,
+            # one per checkout even when StaticPool shares the DBAPI conn).
+            setattr(conn.connection, _WROTE_ATTR, True)
+
+    def do_rollback(proxied_connection):
+        if not getattr(proxied_connection, _WROTE_ATTR, False):
+            # Read-only checkout: nothing of its own to undo, and a
+            # ROLLBACK here would undo some other session's work.
+            return
+        try:
+            default_do_rollback(proxied_connection)
+        finally:
+            setattr(proxied_connection, _WROTE_ATTR, False)
+
+    def do_commit(proxied_connection):
+        default_do_commit(proxied_connection)
+        setattr(proxied_connection, _WROTE_ATTR, False)
+
+    dialect.do_rollback = do_rollback
+    dialect.do_commit = do_commit
+
+
+if _is_sqlite and _engine_kwargs.get("poolclass") is not None:
+    _install_shared_connection_rollback_guard(engine.sync_engine)
+
+
 @event.listens_for(engine.sync_engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, connection_record):
     """Enable WAL journal mode and other performance pragmas for SQLite."""
