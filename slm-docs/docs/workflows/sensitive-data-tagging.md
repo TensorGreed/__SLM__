@@ -588,6 +588,42 @@ clean. The weakest types on scans are now `provider_name` (0.29 on 82
 spans), `visit_date` and `credit_card` — names and dates OCR splits
 across lines, and card numbers whose digits it confuses.
 
+**Scanned-text mode** (Synthetic tab → *Labelling conventions* →
+"Texts come from scanned documents (OCR)"; the API is
+`PUT /synthetic/type-definitions {"scan_tolerant": true}`). Two things change:
+
+- **Labelling** — every model that labels your spans (the training-label
+  generator, the relabeller, the answer key) is told that a value broken
+  by stray spaces or marks (`2024-02- 10`, `US- Z1Y2X3W4`, `Sarah -
+  Jenkins`) is one span, without the marks or a label word at its edges.
+- **Decoding** — evaluation and the redact endpoint tidy predicted spans:
+  stray marks are trimmed off span edges, and neighbouring spans of the
+  same type separated only by whitespace and stray marks (never a comma,
+  letter or digit) are joined — so a span can cross where an OCR line
+  break was.
+
+What it did on project 31's 210-passage scan test (2026-10-14). Cleaning
+had already flattened every line break into a space, so the "break" is
+the debris it leaves; categorising run #69's 410 missed spans showed most
+are not debris at all — 189 entities missed outright (short fragments,
+letterheads), ~80 a title convention ("Mr. Kevin Brown" vs "Kevin
+Brown"), 44 a type mix-up (visit date read as a date of birth); debris
+and broken values account for under a quarter.
+
+| | old scan key | scan-tolerant key (re-keyed by Haiku) |
+|---|---|---|
+| run #69, plain decoding | 0.640 | 0.651 |
+| run #69, OCR-tolerant decoding | 0.652 | **0.664** |
+| run #70 (labels re-done under the convention), plain | 0.631 | 0.643 |
+| run #70, OCR-tolerant decoding | 0.642 | 0.657 |
+
+OCR-tolerant decoding helps every time (+0.012–0.014) and changes
+nothing on clean text. Retraining on scan-tolerant labels did *not*
+help (#70 sits ~0.01 below #69 — within noise; clean 0.855 vs 0.862).
+The convention mainly made the answer key more consistent (17% of the
+192-passage key's spans changed). The scan gap is now mostly entities
+the model never finds, not their edges.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the

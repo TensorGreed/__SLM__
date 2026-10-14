@@ -337,3 +337,105 @@ class OllamaContextTests(unittest.TestCase):
         self.assertEqual(context_window_for("x" * 3000, None, 700), 4096)
         self.assertEqual(context_window_for("x" * 12000, "s" * 600, 4200), 16384)
         self.assertEqual(context_window_for("x" * 500000, None, 100), 32768, "capped")
+
+
+class ScanTolerantTests(unittest.TestCase):
+    """Texts from scans: a scan-tolerant labelling clause for both
+    labellers, OCR-tolerant span decoding, and a flag that can be set
+    without touching the definitions."""
+
+    def test_clause_is_appended_only_when_the_flag_is_on(self):
+        self.assertNotIn("scanned documents", defs.definitions_clause(["email"], {"email": "an email"}))
+        clause = defs.definitions_clause(["email"], {"email": "an email"}, scan_tolerant=True)
+        self.assertIn("- email: an email", clause)
+        self.assertIn("ONE entity", clause)
+        self.assertIn("scanned documents", defs.definitions_clause([], {}, scan_tolerant=True), "even with no definitions")
+
+    def test_flag_is_saved_without_wiping_the_definitions(self):
+        pid = client.post("/api/projects", json={"name": f"scan-{time.time_ns()}", "description": "x"}).json()["id"]
+        client.put(f"/api/projects/{pid}/synthetic/type-definitions", json={"definitions": {"email": "an email"}})
+        out = client.put(f"/api/projects/{pid}/synthetic/type-definitions", json={"scan_tolerant": True}).json()
+        self.assertEqual(out, {"definitions": {"email": "an email"}, "scan_tolerant": True})
+        got = client.get(f"/api/projects/{pid}/synthetic/type-definitions").json()
+        self.assertTrue(got["scan_tolerant"])
+        self.assertEqual(got["definitions"], {"email": "an email"})
+        cleared = client.put(f"/api/projects/{pid}/synthetic/type-definitions", json={"definitions": {}}).json()
+        self.assertEqual(cleared, {"definitions": {}, "scan_tolerant": True}, "{} still clears; the flag stays")
+
+
+class OcrTidyTests(unittest.TestCase):
+    def test_trims_marks_and_joins_spans_broken_by_ocr(self):
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        from train_token_classification import ocr_tidy_spans
+
+        text = "Call Sarah - Jenkins or _jsmith@x.com, John, Mary; card 4111 ~ 1111 today"
+        spans = [
+            {"type": "person_name", "start": 5, "end": 10},
+            {"type": "person_name", "start": 13, "end": 20},
+            {"type": "email", "start": 24, "end": 37},
+            {"type": "person_name", "start": 39, "end": 43},
+            {"type": "person_name", "start": 45, "end": 49},
+            {"type": "credit_card", "start": 56, "end": 60},
+            {"type": "credit_card", "start": 63, "end": 67},
+        ]
+        got = [(s["type"], s["text"]) for s in ocr_tidy_spans(text, spans)]
+        self.assertEqual(got, [
+            ("person_name", "Sarah - Jenkins"),
+            ("email", "jsmith@x.com"),
+            ("person_name", "John"),
+            ("person_name", "Mary"),
+            ("credit_card", "4111 ~ 1111"),
+        ])
+        far = [{"type": "phone", "start": 0, "end": 4}, {"type": "phone", "start": 10, "end": 14}]
+        self.assertEqual(len(ocr_tidy_spans("5550 ----- 0101", far)), 2, "a gap longer than max_gap stays apart")
+        mixed = [{"type": "phone", "start": 0, "end": 4}, {"type": "email", "start": 7, "end": 10}]
+        self.assertEqual(len(ocr_tidy_spans("5550 - abc", mixed)), 2, "different types never merge")
+
+
+class EvalHonoursScanFlagTests(unittest.TestCase):
+    def test_token_classification_inference_passes_ocr_tolerant_from_the_pairs(self):
+        import sys
+        import types as _types
+        from unittest import mock
+
+        from app.services import evaluation_service as ev
+
+        seen = {}
+
+        def fake_predict(texts, model, tokenizer, id2label, **kw):
+            seen.update(kw)
+            return [[] for _ in texts]
+
+        class FakeTok:
+            @staticmethod
+            def from_pretrained(path):
+                return "tok"
+
+        class FakeModel:
+            @staticmethod
+            def from_pretrained(path, **kw):
+                return FakeModel()
+
+            def to(self, device):
+                return self
+
+            def eval(self):
+                return self
+
+        saved = sys.modules.get("train_token_classification")
+        sys.modules["train_token_classification"] = _types.SimpleNamespace(predict_spans=fake_predict)
+        try:
+            with mock.patch("transformers.AutoTokenizer", FakeTok), mock.patch("transformers.AutoModelForTokenClassification", FakeModel):
+                ev._run_token_classification_inference(
+                    {"model_path": "/x/model", "id2label": {0: "O"}, "max_length": 512},
+                    [{"prompt": "p", "reference": "{}", "structured_input": "t", "ocr_tolerant": True}],
+                )
+        finally:
+            if saved is None:
+                sys.modules.pop("train_token_classification", None)
+            else:
+                sys.modules["train_token_classification"] = saved
+        self.assertTrue(seen.get("ocr_tolerant"))

@@ -957,7 +957,11 @@ class TypeDefinitionsRequest(BaseModel):
     """``{type: one-line definition}`` — the project's labelling convention.
     Replaces the stored map; send ``{}`` to clear."""
 
-    definitions: dict[str, str] = Field(default_factory=dict)
+    # None = leave the stored map unchanged; {} clears it.
+    definitions: dict[str, str] | None = None
+    # The project's texts come from scans (OCR): adds the scan-tolerant
+    # labelling clause and OCR-tolerant span decoding. None = unchanged.
+    scan_tolerant: bool | None = None
 
 
 @router.get("/type-definitions")
@@ -967,7 +971,7 @@ async def get_type_definitions(project_id: int, db: AsyncSession = Depends(get_d
     project's data uses, and suggested starting wording for those that
     have none."""
     from app.models.project import Project
-    from app.services.span_type_definitions_service import project_definitions, suggest_definitions
+    from app.services.span_type_definitions_service import project_definitions, project_scan_tolerant, suggest_definitions
 
     project = await db.get(Project, project_id)
     if project is None:
@@ -976,6 +980,7 @@ async def get_type_definitions(project_id: int, db: AsyncSession = Depends(get_d
     types = _project_entity_types(project_id)
     return {
         "definitions": definitions,
+        "scan_tolerant": project_scan_tolerant(project),
         "types": types,
         "suggestions": {t: d for t, d in suggest_definitions(types).items() if t not in definitions},
     }
@@ -991,11 +996,16 @@ async def put_type_definitions(
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
+    from app.services.span_type_definitions_service import SCAN_TOLERANT_KEY
+
     cfg = dict(project.runtime_config or {})
-    cfg[DEFINITIONS_KEY] = normalise_definitions(data.definitions)
+    if data.definitions is not None:
+        cfg[DEFINITIONS_KEY] = normalise_definitions(data.definitions)
+    if data.scan_tolerant is not None:
+        cfg[SCAN_TOLERANT_KEY] = bool(data.scan_tolerant)
     project.runtime_config = cfg
     await db.commit()
-    return {"definitions": cfg[DEFINITIONS_KEY]}
+    return {"definitions": cfg.get(DEFINITIONS_KEY) or {}, "scan_tolerant": bool(cfg.get(SCAN_TOLERANT_KEY))}
 
 
 def _project_entity_types(project_id: int) -> list[str]:

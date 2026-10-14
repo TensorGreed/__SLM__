@@ -698,7 +698,9 @@ def _build_span_prompt(
             "ENTITY TYPES (use ONLY these type names, spelled exactly):\n"
             + ", ".join(vocabulary)
         )
-        clause = definitions_clause(vocabulary, definitions)
+        from app.services.span_type_definitions_service import project_scan_tolerant
+
+        clause = definitions_clause(vocabulary, definitions, scan_tolerant=project_scan_tolerant(project))
         if clause:
             parts.append(clause.strip())
 

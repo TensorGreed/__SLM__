@@ -19,6 +19,19 @@ describe('SpanTypeDefinitionsEditor', () => {
         expect(textToDefinitions('no colon here\n: empty type\nemail:')).toEqual({});
     });
 
+    it('saves the scanned-text toggle on its own, without touching the definitions', async () => {
+        apiMock.get.mockResolvedValue({ data: { definitions: { email: 'an email address' }, types: ['email'], suggestions: {}, scan_tolerant: false } });
+        apiMock.put.mockResolvedValue({ data: { definitions: { email: 'an email address' }, scan_tolerant: true } });
+        const user = userEvent.setup();
+        render(<SpanTypeDefinitionsEditor projectId={31} />);
+        await user.click(screen.getByTestId('span-type-definitions-toggle'));
+        const box = await screen.findByTestId('span-scan-tolerant');
+        await waitFor(() => expect(box).not.toBeChecked());
+        await user.click(box);
+        await waitFor(() => expect(apiMock.put).toHaveBeenCalledWith('/projects/31/synthetic/type-definitions', { scan_tolerant: true }));
+        expect(box).toBeChecked();
+    });
+
     it('loads, adds suggested wording, and saves', async () => {
         apiMock.get.mockResolvedValue({ data: { definitions: { email: 'an email address' }, types: ['email', 'bank_account'], suggestions: { bank_account: 'a domestic account; an IBAN is iban' } } });
         apiMock.put.mockImplementation(async (_url: string, body: { definitions: Record<string, string> }) => ({ data: { definitions: body.definitions } }));

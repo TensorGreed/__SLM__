@@ -1214,6 +1214,22 @@ runs real CPU inference). ~4 min locally.
   {ocr_noise_rate, copies, rows_added}. `h g u Z 9 2 @ -` are deliberately
   NOT in TRAIN_CONFUSIONS (held-out noise for measuring). Project 31 run
   #65: 10% noise 0.69 → 0.79, 20% 0.51 → 0.75, clean 0.85 → 0.83.
+- **Scanned-text mode** (P1h): `runtime_config["span_scan_tolerant"]`
+  (`span_type_definitions_service.SCAN_TOLERANT_KEY`, `project_scan_tolerant`,
+  `load_scan_tolerant`); `definitions_clause(types, defs, scan_tolerant=)`
+  appends `SCAN_TOLERANT_CLAUSE` (a value broken by stray spaces / marks is one
+  span, no marks or label word at its edges) — passed by span synthesis, the
+  relabeller (all three paths) and the gold-LLM prompt. Decoding:
+  `train_token_classification.ocr_tidy_spans` (trim `OCR_EDGE_MARKS`; join
+  same-type neighbours whose gap ≤ `OCR_MAX_GAP` 3 chars of whitespace /
+  stray marks, never a comma / letter / digit) via `predict_spans(
+  ocr_tolerant=)`; `run_heldout_evaluation` marks the pairs (`ocr_tolerant`)
+  when the flag is on and `_run_token_classification_inference` reads it; the
+  redact service reads the flag too. `PUT /synthetic/type-definitions` now
+  takes `definitions` optional (None = unchanged, {} clears) +
+  `scan_tolerant`; GET returns it. UI: checkbox in `SpanTypeDefinitionsEditor`
+  (saves immediately). Project 31: decoding +0.012–0.014 F1 on the scan key,
+  0 on clean; retraining under the clause didn't help (run #70 ≈ #69).
 - **Ollama context**: `synth_backends/ollama.context_window_for` sets
   `num_ctx` per request (prompt chars / 3 + max_tokens + 256, buckets
   4096 / 8192 / 16384 / 32768) — without it Ollama runs at its server

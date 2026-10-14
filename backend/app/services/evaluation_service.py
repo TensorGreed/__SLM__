@@ -1994,6 +1994,7 @@ def _run_token_classification_inference(
     spans = predict_spans(
         texts, model, tokenizer, artifacts["id2label"],
         max_length=min(512, int(artifacts.get("max_length") or 512)), device=device,
+        ocr_tolerant=any(bool(p.get("ocr_tolerant")) for p in pairs),
     )
     predictions: list[dict] = []
     for pair, text, row_spans in zip(pairs, texts, spans):
@@ -2573,6 +2574,17 @@ async def run_heldout_evaluation(
         )
 
     model_ref = _resolve_model_reference(exp, model_path)
+    # A project whose texts come from scans: the span decoder tidies OCR
+    # debris (``ocr_tidy_spans``). Carried on the pairs because the
+    # inference path below is sync and project-agnostic.
+    try:
+        from app.services.span_type_definitions_service import load_scan_tolerant
+
+        if await load_scan_tolerant(db, project_id):
+            for pair in pairs:
+                pair["ocr_tolerant"] = True
+    except Exception:  # noqa: BLE001
+        pass
     # Handlers may cap generation length for short-answer tasks
     # (classification: a label is a few tokens; letting the model emit
     # 128 new tokens just gives it room to ramble).

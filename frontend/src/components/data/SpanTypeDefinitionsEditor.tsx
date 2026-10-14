@@ -7,6 +7,8 @@ interface TypeDefinitionsPayload {
     definitions: Record<string, string>;
     types: string[];
     suggestions: Record<string, string>;
+    /** The project's texts come from scans (OCR). */
+    scan_tolerant?: boolean;
 }
 
 /** Fired on window when the project's definitions change outside the editor. */
@@ -37,12 +39,27 @@ export default function SpanTypeDefinitionsEditor({ projectId }: { projectId: nu
     const [payload, setPayload] = useState<TypeDefinitionsPayload | null>(null);
     const [text, setText] = useState('');
     const [saving, setSaving] = useState(false);
+    const [scanTolerant, setScanTolerant] = useState(false);
+
+    // Saved immediately: both labellers then get the scan-tolerant clause,
+    // and evaluation / redaction tidy OCR debris off predicted spans.
+    const toggleScanTolerant = async (next: boolean) => {
+        setScanTolerant(next);
+        try {
+            await api.put(`/projects/${projectId}/synthetic/type-definitions`, { scan_tolerant: next });
+            toast.success(next ? 'Scanned-text mode on: labelling and evaluation now tolerate OCR debris.' : 'Scanned-text mode off.', 4000);
+        } catch (err) {
+            setScanTolerant(!next);
+            toast.error(err instanceof Error ? err.message : 'Could not save the setting.', 5000);
+        }
+    };
 
     useEffect(() => {
         if (!open || payload) return;
         api.get<TypeDefinitionsPayload>(`/projects/${projectId}/synthetic/type-definitions`)
             .then((res) => {
                 setPayload(res.data);
+                setScanTolerant(Boolean(res.data.scan_tolerant));
                 setText(definitionsToText(res.data.definitions));
             })
             .catch(() => undefined);
@@ -91,6 +108,16 @@ export default function SpanTypeDefinitionsEditor({ projectId }: { projectId: nu
                         training labels and the model that writes the answer key get these, so a date, an account number or a
                         name is labelled the same way by both.
                     </div>
+                    <label className="form-hint" data-testid="span-scan-tolerant-label">
+                        <input
+                            type="checkbox"
+                            checked={scanTolerant}
+                            onChange={(e) => void toggleScanTolerant(e.target.checked)}
+                            data-testid="span-scan-tolerant"
+                        />
+                        {' '}Texts come from scanned documents (OCR) — a value broken by stray spaces or marks is one span,
+                        labelled without the marks; predicted spans are tidied the same way.
+                    </label>
                     <textarea
                         className="input"
                         rows={8}

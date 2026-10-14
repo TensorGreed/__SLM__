@@ -309,10 +309,10 @@ async def relabel_split_as_answer_key(
     types = [t.strip().lower() for t in (entity_types or []) if isinstance(t, str) and t.strip()]
     if not types:
         types = sorted({e["type"] for spans in old_labels for e in spans})
-    from app.services.span_type_definitions_service import definitions_clause, load_definitions
+    from app.services.span_type_definitions_service import definitions_clause, load_definitions, load_scan_tolerant
 
     definitions = await load_definitions(db, project_id)
-    conventions = definitions_clause(types, definitions)
+    conventions = definitions_clause(types, definitions, scan_tolerant=await load_scan_tolerant(db, project_id))
 
     llm = backend_override or pick_backend(backend)
     backend_label = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
@@ -418,10 +418,10 @@ async def relabel_training_rows(
     types = [t.strip().lower() for t in (entity_types or []) if isinstance(t, str) and t.strip()]
     if not types:
         types = sorted({e["type"] for spans in old_labels for e in spans})
-    from app.services.span_type_definitions_service import definitions_clause, load_definitions
+    from app.services.span_type_definitions_service import definitions_clause, load_definitions, load_scan_tolerant
 
     definitions = await load_definitions(db, project_id)
-    conventions = definitions_clause(types, definitions)
+    conventions = definitions_clause(types, definitions, scan_tolerant=await load_scan_tolerant(db, project_id))
     from app.services.span_custom_patterns_service import load_patterns
 
     custom_patterns = await load_patterns(db, project_id)
@@ -683,10 +683,10 @@ async def _label_and_append(
     types = [t.strip().lower() for t in (entity_types or []) if isinstance(t, str) and t.strip()] or sorted(existing_types)
     if not types:
         raise RuntimeError("Name the entity types to label (the project has no labelled rows to take them from).")
-    from app.services.span_type_definitions_service import definitions_clause, load_definitions
+    from app.services.span_type_definitions_service import definitions_clause, load_definitions, load_scan_tolerant
 
     definitions = await load_definitions(db, project_id)
-    conventions = definitions_clause(types, definitions)
+    conventions = definitions_clause(types, definitions, scan_tolerant=await load_scan_tolerant(db, project_id))
     from app.services.span_custom_patterns_service import load_patterns
 
     custom_patterns = await load_patterns(db, project_id)

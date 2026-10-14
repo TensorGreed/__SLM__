@@ -391,8 +391,11 @@ def predict_spans(
     thresholds: dict[str, float] | None = None,
     min_score: float | None = None,
     recall_bias: float = 0.0,
+    ocr_tolerant: bool = False,
 ) -> list[list[dict[str, Any]]]:
-    """Character spans for each text with a loaded token-classification
+    """``ocr_tolerant``: tidy the spans for OCR'd text (``ocr_tidy_spans``).
+
+    Character spans for each text with a loaded token-classification
     model. A text longer than ``max_length`` tokens is read in overlapping
     windows (``encode_windows``) and merged (``merge_window_scores``), so
     nothing past the first window is dropped. ``batch_size`` counts
@@ -427,14 +430,67 @@ def predict_spans(
             window_logits.append(row[: len(feature["input_ids"])])
     if with_scores or thresholds or min_score or recall_bias:
         merged = merge_window_scores(len(texts), window_offsets, sample_map, window_logits)
-        return [
+        out = [
             decode_scored_spans(
                 text, offsets, scores, id_to_label,
                 recall_bias=recall_bias, thresholds=thresholds, min_score=min_score,
             )
             for text, (offsets, scores) in zip(texts, merged)
         ]
-    return decode_window_predictions(texts, window_offsets, sample_map, window_logits, id_to_label)
+    else:
+        out = decode_window_predictions(texts, window_offsets, sample_map, window_logits, id_to_label)
+    if ocr_tolerant:
+        out = [ocr_tidy_spans(text, spans) for text, spans in zip(texts, out)]
+    return out
+
+
+# ── OCR-tolerant decoding ────────────────────────────────────────────────
+#
+# On OCR'd text a line break is flattened into a space and leaves stray
+# marks behind (‘ ~ _ « :), and a value can be broken by them
+# ("Sarah - Jenkins", "XJ9LKM2P-QW 3R- T5Y6"). The model then predicts the
+# value in pieces, or pulls a stray mark into its edge ("_jsmith@…").
+# ``ocr_tidy_spans`` trims stray marks off span edges and joins neighbouring
+# spans of the same type separated only by whitespace and stray marks — so a
+# predicted span can cross where an OCR line break was. A comma, a letter or
+# a digit in the gap keeps two spans apart ("John, Mary" stays two names).
+
+OCR_EDGE_MARKS = "‘’'`~_|«»:;,—–-"
+OCR_LEADING_MARKS = OCR_EDGE_MARKS + "."
+OCR_GAP_RE = re.compile(r"^[\s‘’'`~_|«»:;—–\-.]*$")
+OCR_MAX_GAP = 3
+
+
+def ocr_tidy_spans(text: str, spans: list[dict[str, Any]], *, max_gap: int = OCR_MAX_GAP) -> list[dict[str, Any]]:
+    """Trim stray OCR marks off span edges, then merge same-type neighbours
+    whose gap is at most ``max_gap`` characters of whitespace / stray marks
+    (never a comma, letter or digit). Pure; returns new span dicts."""
+    tidy: list[dict[str, Any]] = []
+    for span in sorted(spans, key=lambda e: (e["start"], e["end"])):
+        start, end = int(span["start"]), int(span["end"])
+        while start < end and (text[start].isspace() or text[start] in OCR_LEADING_MARKS):
+            start += 1
+        while end > start and (text[end - 1].isspace() or text[end - 1] in OCR_EDGE_MARKS):
+            end -= 1
+        if end <= start:
+            continue
+        item = {**span, "start": start, "end": end, "text": text[start:end]}
+        if tidy:
+            prev = tidy[-1]
+            gap = text[prev["end"]:start]
+            if (
+                prev["type"] == item["type"]
+                and len(gap) <= max_gap
+                and OCR_GAP_RE.match(gap)
+                and "," not in gap
+            ):
+                prev["end"] = end
+                prev["text"] = text[prev["start"]:end]
+                if "score" in prev and "score" in item:
+                    prev["score"] = min(prev["score"], item["score"])
+                continue
+        tidy.append(item)
+    return tidy
 
 
 def _softmax(values: Any) -> Any:

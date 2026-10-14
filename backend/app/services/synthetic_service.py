@@ -1524,9 +1524,11 @@ async def generate_span_extraction_rows(
     # The project's labelling conventions (span_type_definitions_service) —
     # the same lines the answer-key relabeller sends, so both labellers draw
     # the type boundaries in the same place.
-    from app.services.span_type_definitions_service import definitions_clause, load_definitions
+    from app.services.span_type_definitions_service import definitions_clause, load_definitions, load_scan_tolerant
 
-    conventions = definitions_clause(entity_types, await load_definitions(db, project_id))
+    conventions = definitions_clause(
+        entity_types, await load_definitions(db, project_id), scan_tolerant=await load_scan_tolerant(db, project_id),
+    )
     # The project's own identifier formats join the built-in regex pass.
     from app.services.span_custom_patterns_service import load_patterns
 

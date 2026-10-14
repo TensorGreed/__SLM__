@@ -158,6 +158,7 @@ def tag_text(
     min_score: float | None,
     recall_bias: float | None,
     per_type: dict[str, float] | None,
+    ocr_tolerant: bool = False,
 ) -> list[dict[str, Any]]:
     _scripts_on_path()
     from train_token_classification import predict_spans
@@ -170,6 +171,7 @@ def tag_text(
             thresholds=per_type or None,
             min_score=min_score,
             recall_bias=float(recall_bias or 0.0),
+            ocr_tolerant=ocr_tolerant,
         )
     return spans[0] if spans else []
 
@@ -208,9 +210,13 @@ async def redact(
         per_type = {k: max(v, float(min_score)) for k, v in per_type.items()}
     effective_bias = recall_bias if recall_bias is not None else float(saved.get("recall_bias") or 0.0)
     bundle = await asyncio.to_thread(load_tagger, artifacts)
+    from app.services.span_type_definitions_service import load_scan_tolerant
+
+    ocr_tolerant = await load_scan_tolerant(db, project_id)
     spans = await asyncio.to_thread(
         tag_text, bundle, text,
         min_score=effective_min, recall_bias=effective_bias, per_type=per_type,
+        ocr_tolerant=ocr_tolerant,
     )
     redacted = apply_redaction(text, spans, mode)
     return {

@@ -24,6 +24,17 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 DEFINITIONS_KEY = "span_type_definitions"
+# Project flag: the texts come from scans (OCR). Both labellers get
+# SCAN_TOLERANT_CLAUSE, and evaluation / redaction tidy predicted spans
+# (``train_token_classification.ocr_tidy_spans``).
+SCAN_TOLERANT_KEY = "span_scan_tolerant"
+SCAN_TOLERANT_CLAUSE = (
+    "The texts may come from scanned documents (OCR): line breaks became spaces and stray marks "
+    "(‘ ~ _ « : |) can sit inside or next to a value. A value broken by spaces or stray marks is still "
+    "ONE entity — label it from its first to its last character (e.g. \"2024-02- 10\", "
+    "\"US- Z1Y2X3W4\", \"Sarah - Jenkins\"); never include a stray mark at its start or end, nor a "
+    "label word or prefix in front of it (\"Type\", \"SSN:\", \"MRN\").\n"
+)
 MAX_TYPES = 200
 MAX_DEFINITION_CHARS = 400
 
@@ -92,17 +103,36 @@ async def load_definitions(db: AsyncSession | None, project_id: int) -> dict[str
     return project_definitions(project) if project is not None else {}
 
 
-def definitions_clause(types: list[str] | None, definitions: dict[str, str]) -> str:
+def project_scan_tolerant(project: Any) -> bool:
+    cfg = getattr(project, "runtime_config", None)
+    return bool(isinstance(cfg, dict) and cfg.get(SCAN_TOLERANT_KEY))
+
+
+async def load_scan_tolerant(db: AsyncSession | None, project_id: int) -> bool:
+    if db is None:
+        return False
+    from app.models.project import Project
+
+    project = await db.get(Project, project_id)
+    return project_scan_tolerant(project) if project is not None else False
+
+
+def definitions_clause(
+    types: list[str] | None, definitions: dict[str, str], *, scan_tolerant: bool = False,
+) -> str:
     """The prompt block: one line per labelled type that has a definition,
-    in the order of ``types`` (all definitions when ``types`` is empty).
+    in the order of ``types`` (all definitions when ``types`` is empty),
+    plus ``SCAN_TOLERANT_CLAUSE`` when the project's texts come from scans.
     Empty string when there is nothing to say."""
-    if not definitions:
-        return ""
-    names = [_normalise_type(t) for t in (types or [])] or list(definitions)
-    lines = [f"- {name}: {definitions[name]}" for name in names if name in definitions]
-    if not lines:
-        return ""
-    return "Labelling conventions (follow these exactly; where two types could apply, these decide):\n" + "\n".join(lines) + "\n"
+    block = ""
+    if definitions:
+        names = [_normalise_type(t) for t in (types or [])] or list(definitions)
+        lines = [f"- {name}: {definitions[name]}" for name in names if name in definitions]
+        if lines:
+            block = "Labelling conventions (follow these exactly; where two types could apply, these decide):\n" + "\n".join(lines) + "\n"
+    if scan_tolerant:
+        block += SCAN_TOLERANT_CLAUSE
+    return block
 
 
 def suggest_definitions(types: list[str]) -> dict[str, str]:
