@@ -206,13 +206,22 @@ cd backend && python -m pytest -k "name_pattern"        # by name
   StaticPool engine. The non-phase files are pytest-developed (they rely on
   `conftest.py`'s per-PID `/tmp` DB pin) and several **fail under bare
   `unittest`** (no conftest) — keep them on the pytest loop, don't fold them
-  into the unittest job. The loop retries each file up to 3× because a few
-  async-job tests (`test_jobs_service`'s heldout / quickstart / llm-judge async
-  endpoints) are intermittently flaky — their background `Job` runners race with
-  the test's own requests over the single-connection StaticPool aiosqlite engine
-  ("Project N not found", ~1-in-8). A genuinely broken file still fails all 3
-  attempts. (Proper fix — isolate the runner's DB session or await/cancel the job
-  in tearDown — is deferred; tracked in `/tmp/brewslm-progress.md`.)
+  into the unittest job. The loop retries each file up to 3×. The original reason —
+  async-job tests (`test_jobs_service`'s heldout / quickstart / llm-judge
+  endpoints, `test_distillation_teacher_capture::test_run_event_emitted`)
+  failing ~1-in-8 with "Project N not found" / a missing RunEvent — is fixed
+  at the root: on the shared StaticPool connection a read-only session's
+  ROLLBACK (`Session.close()` / pool reset-on-checkin) discarded another
+  session's flushed-but-uncommitted writes; `app/database.py`'s rollback
+  guard skips the DBAPI rollback for checkouts that executed no DML (only on
+  the SQLite StaticPool engine; regression test
+  `tests/test_shared_connection_rollback_guard.py`). The retry stays as a
+  safety net for load-dependent timeouts (e.g. the 1.2 s base-model
+  introspection in `training_preflight_service._infer_model_capability`); a
+  genuinely broken file still fails all 3 attempts. Tests that start Jobs
+  must still wait for them in tearDown — `from _job_wait import
+  wait_for_jobs_idle` (raises naming the in-flight Jobs) — because a Job
+  alive at TestClient shutdown hangs the process.
 
 - **Real-runtime gate** (`tests/test_real_training_path.py`, CI job
   `real-training`): drives a LIVE stack over HTTP (backend on
@@ -764,6 +773,23 @@ runs real CPU inference). ~4 min locally.
   `optimizer_effective` (`paged_adamw_8bit` → `adamw_torch` without
   bitsandbytes) — the config's wishes silently fall back, the report is the
   truth.
+  **Cancel stops the process (external runtime)** —
+  `services/training_process_service.py`: the worker starts `train.py` in its
+  own session and writes `training_process.json` {pid, pgid, /proc start
+  time, command} in the run's output dir (removed on exit). `cancel_training`
+  writes `cancel_requested.json`, revokes the Celery task (`terminate=False` —
+  terminate is a no-op under `--pool=threads`), verifies the pid (start time +
+  cmdline; a reused pid is never signalled), SIGTERMs the process group,
+  SIGKILLs after `TRAINING_CANCEL_GRACE_SECONDS` (10), then commits CANCELLED
+  at once. `cancel_status`: process_terminated / process_killed /
+  process_not_found / process_mismatch / process_kill_failed / revoked. The
+  worker skips spawning when the marker exists and kills its own child when
+  it appears; `_monitor_external_training` keeps CANCELLED even on exit 0.
+  `start_training` stores `copy.deepcopy(runtime_config)` — the same dict
+  before and after `start_runtime` made SQLAlchemy skip the UPDATE, so
+  `task_id` was never persisted. Verified live 2026-10-14 (run #68: cancel →
+  process_terminated, train.py gone, GPU freed, stays CANCELLED). Tests:
+  `tests/test_training_cancel_external.py`.
   `scripts/train.py` runs as a standalone script (`python scripts/train.py`
   from the Celery worker), so it adds `backend/` to `sys.path` itself — its
   lazy `from app...` imports otherwise fail with "No module named 'app'"
