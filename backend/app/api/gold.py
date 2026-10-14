@@ -312,8 +312,12 @@ async def generate_via_llm(
     Status codes:
       * 200 — rows generated + returned in the payload.
       * 400 — structured error (RECIPE_REQUIRED, RECIPE_NOT_SUPPORTED,
-        API_KEY_REQUIRED, COUNT_OUT_OF_RANGE, LLM_RESPONSE_UNPARSEABLE,
-        LLM_RESPONSE_COUNT_MISMATCH).
+        API_KEY_REQUIRED, COUNT_OUT_OF_RANGE, DISTRIBUTION_OUT_OF_RANGE,
+        LLM_RESPONSE_UNPARSEABLE — no usable row at all).
+        A response with fewer (or more) usable rows than asked is a 200
+        carrying ``warnings`` (count drift, rows dropped, span offsets
+        repaired) — the call is paid for and the preview lets the user
+        review every row, so a short result is never thrown away.
       * 502 — upstream provider failure (rate limit, bad key, model
         not found). Body has the provider's error text.
     """
@@ -409,6 +413,7 @@ async def generate_via_llm(
         "prompt_preview": result.prompt_preview,
         "reference_chunk_count": result.reference_chunk_count,
         "estimated_cost_usd": result.estimated_cost_usd,
+        "warnings": list(result.warnings),
     }
 
 

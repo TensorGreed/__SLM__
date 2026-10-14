@@ -2296,3 +2296,156 @@ class SavedKeyEndpointTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpanAnswerKeyRegressionTests(unittest.TestCase):
+    """Regression for 2026-10-14: "Generate answer key via LLM" on a
+    span-extraction project (project 31: Anthropic key saved as a project
+    secret, ``span_type_definitions`` set) returned HTTP 400 three times
+    after a 35–60s paid Anthropic call. The parser dropped every row whose
+    entity offsets were all off (the LLM miscounts characters in long
+    grounded rows) and the count-drift check then failed the whole call
+    with LLM_RESPONSE_COUNT_MISMATCH."""
+
+    DEFINITIONS = {
+        "email": "an email address",
+        "phone": "a telephone number in any format",
+        "person_name": "a private individual's name",
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._client_cm.__exit__(None, None, None)
+
+    def _make_span_project(self, name: str) -> int:
+        import asyncio
+        from app.database import async_session_factory
+        from app.models.project import Project
+
+        create = self.client.post("/api/projects", json={"name": name})
+        self.assertEqual(create.status_code, 201, create.text)
+        pid = int(create.json()["id"])
+
+        async def _configure() -> None:
+            async with async_session_factory() as db:
+                project = await db.get(Project, pid)
+                project.selected_recipe = {
+                    "recipe_id": "span-extraction",
+                    "task_profile": "structured_extraction",
+                    "scoring_mode": "span_set",
+                }
+                project.runtime_config = {"span_type_definitions": dict(self.DEFINITIONS)}
+                await db.commit()
+        asyncio.run(_configure())
+        # The key lives only as a saved project secret, as on project 31.
+        put = self.client.put(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            json={"provider": "anthropic", "api_key": "sk-ant-test-0000"},
+        )
+        self.assertEqual(put.status_code, 200, put.text)
+        return pid
+
+    @staticmethod
+    def _row(text: str, spans: list[tuple[str, str]], shift: int) -> dict:
+        """A row whose offsets are off by ``shift`` characters — the
+        LLM's usual mistake — but whose entity text is exact."""
+        ents = []
+        for etype, ent_text in spans:
+            start = text.index(ent_text) + shift
+            ents.append({"type": etype, "start": start,
+                         "end": start + len(ent_text), "text": ent_text})
+        return {"text": text, "entities": ents}
+
+    def _llm_rows(self) -> list[dict]:
+        rows = []
+        for i in range(10):
+            text = (
+                f"Ticket {i}: Hi, this is Maria Lopez{i}. Please call me back on "
+                f"+1 555-010{i} or write to maria{i}@example.com about the refund."
+            )
+            # 7 of 10 rows have every offset wrong; 3 are right.
+            rows.append(self._row(
+                text,
+                [("person_name", f"Maria Lopez{i}"), ("phone", f"+1 555-010{i}"),
+                 ("email", f"maria{i}@example.com")],
+                shift=0 if i < 3 else 3,
+            ))
+        return rows
+
+    def _generate(self, pid: int, content: str, **extra):
+        captured: dict = {}
+
+        async def _fake(**kwargs):
+            captured.update(kwargs)
+            return CloudLlmResponse(content=content, model=kwargs["model"],
+                                    prompt_tokens=900, completion_tokens=1800)
+
+        body = {"provider": "anthropic", "model": "claude-haiku-4-5-20251001",
+                "count": 10, "ground_in_source": True}
+        body.update(extra)
+        with patch("app.services.gold_llm_service.call_anthropic_chat", side_effect=_fake):
+            resp = self.client.post(f"/api/projects/{pid}/gold/generate-via-llm", json=body)
+        return resp, captured
+
+    def test_wrong_offsets_no_longer_fail_the_call(self):
+        pid = self._make_span_project("Span answer key regression")
+        resp, captured = self._generate(pid, json.dumps({"rows": self._llm_rows()}))
+        # Before the fix: 400 LLM_RESPONSE_COUNT_MISMATCH (3 of 10 rows survived).
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(captured["api_key"], "sk-ant-test-0000")
+        body = resp.json()
+        self.assertEqual(body["recipe_id"], "span-extraction")
+        self.assertEqual(len(body["rows"]), 10)
+        for row in body["rows"]:
+            self.assertEqual(len(row["entities"]), 3)
+            for ent in row["entities"]:
+                self.assertEqual(row["text"][ent["start"]:ent["end"]], ent["text"])
+        self.assertTrue(any("re-located" in w for w in body["warnings"]), body["warnings"])
+
+    def test_prompt_names_project_vocabulary_and_drops_other_types(self):
+        pid = self._make_span_project("Span answer key vocabulary")
+        text = "Call Dr. Chen at 555-0100 or Maria at maria@example.com."
+        content = json.dumps({"rows": [{
+            "text": text,
+            "entities": [
+                {"type": "PHONE", "start": 17, "end": 25, "text": "555-0100"},
+                {"type": "doctor", "start": 5, "end": 13, "text": "Dr. Chen"},
+                {"type": "email", "start": 38, "end": 55, "text": "maria@example.com"},
+            ],
+        }]})
+        resp, captured = self._generate(pid, content, count=1)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        prompt = captured["user_prompt"]
+        self.assertIn("ENTITY TYPES", prompt)
+        self.assertIn("person_name", prompt)
+        self.assertIn("a telephone number in any format", prompt)
+        row = resp.json()["rows"][0]
+        self.assertEqual(sorted(e["type"] for e in row["entities"]), ["email", "phone"])
+        self.assertTrue(any("doctor (1)" in w for w in resp.json()["warnings"]))
+
+    def test_short_result_is_a_warning_not_a_400(self):
+        pid = self._make_span_project("Span answer key short")
+        rows = self._llm_rows()[:4]
+        resp, _ = self._generate(pid, json.dumps({"rows": rows}))
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(len(resp.json()["rows"]), 4)
+        self.assertIn("Asked for 10 rows; 4 usable row(s) came back.", resp.json()["warnings"])
+
+    def test_legitimate_400_carries_its_reason_in_the_envelope(self):
+        # Every row labels text that isn't in the row → nothing usable.
+        pid = self._make_span_project("Span answer key unusable")
+        content = json.dumps({"rows": [
+            {"text": "Nothing to see here.",
+             "entities": [{"type": "email", "start": 0, "end": 5, "text": "a@b.co"}]},
+        ]})
+        resp, _ = self._generate(pid, content, count=1)
+        self.assertEqual(resp.status_code, 400, resp.text)
+        body = resp.json()  # structured-error envelope: error_code/message top-level
+        self.assertEqual(body["error_code"], "LLM_RESPONSE_UNPARSEABLE")
+        self.assertIn("can't be found in the row", body["message"])
+        self.assertEqual(body["detail"], body["message"])

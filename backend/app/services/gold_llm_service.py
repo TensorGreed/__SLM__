@@ -49,7 +49,21 @@ from app.services.cloud_llm_service import (
 # Imported at module level (not inside the function) so tests can
 # patch ``app.services.gold_llm_service._load_project_cleaned_chunks``.
 # No import cycle — synthetic_service doesn't import from this module.
-from app.services.synthetic_service import _load_project_cleaned_chunks
+from app.services.synthetic_service import _load_project_cleaned_chunks, _locate_entity
+from app.services.span_type_definitions_service import (
+    _normalise_type,
+    definitions_clause,
+    project_definitions,
+)
+
+
+def span_vocabulary(project: Any) -> list[str]:
+    """The project's entity types for span-extraction gold rows: the
+    types the user wrote labelling conventions for
+    (``runtime_config["span_type_definitions"]``), in their saved order.
+    Empty when none are set — the prompt then lets the LLM pick a small
+    vocabulary and the parser keeps every type."""
+    return list(project_definitions(project))
 
 
 Provider = Literal["openai", "anthropic"]
@@ -118,6 +132,9 @@ class GenerationResult:
     # New fields for grounding + cost transparency.
     reference_chunk_count: int = 0
     estimated_cost_usd: float = 0.0
+    # What the parser repaired / dropped and any count drift — shown
+    # above the preview so a short result explains itself.
+    warnings: tuple[str, ...] = ()
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -670,6 +687,21 @@ def _build_span_prompt(
     if ref_section:
         parts.append(ref_section)
 
+    # The project's entity vocabulary + labelling conventions (the same
+    # block the synthetic span generator and the relabeller send), so
+    # the answer key uses the types the model is trained on instead of
+    # a vocabulary the LLM invents ("PERSON" vs "person_name").
+    definitions = project_definitions(project)
+    vocabulary = span_vocabulary(project)
+    if vocabulary:
+        parts.append(
+            "ENTITY TYPES (use ONLY these type names, spelled exactly):\n"
+            + ", ".join(vocabulary)
+        )
+        clause = definitions_clause(vocabulary, definitions)
+        if clause:
+            parts.append(clause.strip())
+
     parts.append(
         f"Generate exactly {count} span-extraction examples for the project above."
     )
@@ -683,8 +715,18 @@ def _build_span_prompt(
         "by mentally slicing before emitting.",
         "``end`` is EXCLUSIVE (Python slice convention). A span of \"foo\" "
         "starting at offset 5 has end=8.",
-        "Entity ``type`` values: use a small consistent vocabulary across rows. "
-        "If the FOCUS REQUEST names span types, use ONLY those types.",
+        (
+            "Entity ``type`` values: use ONLY the ENTITY TYPES listed above. "
+            "If the FOCUS REQUEST names some of them, favour those."
+            if vocabulary
+            else "Entity ``type`` values: use a small consistent vocabulary across "
+            "rows. If the FOCUS REQUEST names span types, use ONLY those types."
+        ),
+        "Copy each entity's ``text`` EXACTLY as it appears in the row's "
+        "``text`` (same characters, same spacing) — offsets that are off are "
+        "repaired from it, but a span whose text is not in the row is dropped.",
+        "Label EVERY entity of an allowed type that appears in the row — an "
+        "unlabelled one turns into a wrong answer in the answer key.",
         "Rows can have multiple spans; an empty ``entities`` list is allowed "
         "(no-span examples are useful negative cases).",
     ]
@@ -946,14 +988,8 @@ def _parse_qa_payload(content: str, expected_count: int) -> list[GeneratedQa]:
             "ungrounded mode OR add more focused source content. "
             f"Raw response (first 300 chars): {snippet!r}",
         )
-    if abs(len(rows) - expected_count) > max(2, expected_count // 4):
-        # Soft warning rather than hard fail — preview lets the user
-        # discard. Reject only on egregious mismatch (off by >25%).
-        raise GoldGenerationError(
-            "LLM_RESPONSE_COUNT_MISMATCH",
-            f"Asked for {expected_count} pairs but the LLM returned {len(rows)}. "
-            "Try a different model or reduce the count.",
-        )
+    # Count drift is a warning, not an error — see
+    # ``count_drift_warning`` (applied by ``generate_gold_qa_via_llm``).
     return rows
 
 
@@ -1100,17 +1136,6 @@ def _raise_parse_error(
     )
 
 
-def _check_count_drift(rows: list[Any], expected_count: int) -> None:
-    """Same count-drift rule as `_parse_qa_payload` — reject only on
-    egregious off-by-more-than-25% mismatch."""
-    if abs(len(rows) - expected_count) > max(2, expected_count // 4):
-        raise GoldGenerationError(
-            "LLM_RESPONSE_COUNT_MISMATCH",
-            f"Asked for {expected_count} rows but the LLM returned {len(rows)}. "
-            "Try a different model or reduce the count.",
-        )
-
-
 def _parse_classification_rows(
     content: str,
     expected_count: int,
@@ -1159,21 +1184,45 @@ def _parse_classification_rows(
             recipe_id="classification",
             required_field_summary="text + label",
         )
-    _check_count_drift(rows, expected_count)
     return rows
 
 
 def _parse_span_rows(
     content: str,
     expected_count: int,
+    *,
+    vocabulary: list[str] | None = None,
+    stats: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Parse span-extraction rows. Returns dicts with shape
     `{text, entities, rationale, source_excerpt}` where ``entities``
-    is a list of `{type, start, end, text}` dicts. Per-span offsets
-    are validated against the row's text — spans where
-    ``text[start:end]`` doesn't match the span's claimed text are
-    dropped silently (off-by-one is the dominant LLM failure for
-    this shape; we don't poison eval with broken offsets)."""
+    is a list of `{type, start, end, text}` dicts.
+
+    LLMs get character offsets wrong far more often than the entity
+    text (they have to count characters, and grounded rows are long),
+    so a span whose ``text[start:end]`` doesn't match its claimed text
+    is REPAIRED by locating that exact text in the row (first
+    occurrence not already claimed) — the same rule the span
+    relabeller uses (``synthetic_service._validate_span_rows``). It used
+    to be dropped, which dropped any row whose spans were all off and
+    then failed the whole paid call on the count check.
+
+    A row is dropped only when one of its spans names text that is not
+    in the row at all: the model labelled something it didn't write,
+    so the row's labels can't be trusted as an answer key. With a
+    ``vocabulary``, spans of other types are dropped (the row is kept —
+    those entities aren't in the project's label space). Overlapping
+    spans keep the first. ``stats`` (optional) collects the counts the
+    caller turns into user-facing warnings."""
+    st = stats if stats is not None else {}
+    for key in (
+        "rows_in", "rows_kept", "rows_dropped_span_not_in_text",
+        "rows_dropped_no_text", "repaired_offsets", "dropped_overlap",
+    ):
+        st.setdefault(key, 0)
+    st.setdefault("dropped_type", {})
+    allowed = {_normalise_type(t) for t in (vocabulary or []) if t}
+
     try:
         payload = extract_json_payload(content)
     except ValueError as exc:
@@ -1187,44 +1236,66 @@ def _parse_span_rows(
     for item in items:
         if not isinstance(item, dict):
             continue
+        st["rows_in"] += 1
         # Preserve original whitespace: span offsets are indexed
         # against the raw text. Stripping would silently break valid
         # spans whose offsets land inside the leading/trailing space.
         text = _extract_field_raw(item, _TEXT_FIELD_ALIASES)
         if not text:
+            st["rows_dropped_no_text"] += 1
             continue
         raw_entities = _extract_list(item, _ENTITIES_FIELD_ALIASES)
         clean_entities: list[dict[str, Any]] = []
+        row_ok = True
         for ent in raw_entities:
             if not isinstance(ent, dict):
                 continue
-            etype = str(ent.get("type") or ent.get("label") or "").strip()
+            etype = _normalise_type(ent.get("type") or ent.get("label") or "")
+            if not etype:
+                continue
+            if allowed and etype not in allowed:
+                st["dropped_type"][etype] = st["dropped_type"].get(etype, 0) + 1
+                continue
+            claimed = str(ent.get("text") or "")
             try:
                 start = int(ent.get("start", -1))
                 end = int(ent.get("end", -1))
             except (TypeError, ValueError):
-                continue
-            if start < 0 or end <= start or end > len(text) or not etype:
-                continue
-            span_text = str(ent.get("text") or text[start:end]).strip()
-            # Verify offsets actually match the claimed span text. We
-            # allow whitespace-tolerant equality because some LLMs
-            # emit the span text with surrounding spaces stripped.
-            actual = text[start:end]
-            if actual.strip() != span_text.strip():
+                start, end = -1, -1
+            offsets_ok = 0 <= start < end <= len(text)
+            if offsets_ok and claimed.strip() and text[start:end].strip() != claimed.strip():
+                offsets_ok = False
+            if offsets_ok:
+                # Canonicalize to the offset-derived text, trimmed of
+                # surrounding whitespace the offsets may include.
+                actual = text[start:end]
+                lead = len(actual) - len(actual.lstrip())
+                start, end = start + lead, start + len(actual.rstrip())
+                if end <= start:
+                    continue
+            else:
+                needle = claimed.strip()
+                located = (
+                    _locate_entity(text, needle, clean_entities) if needle else None
+                )
+                if located is None:
+                    row_ok = False
+                    break
+                start, end = located
+                st["repaired_offsets"] += 1
+            if any(start < e["end"] and end > e["start"] for e in clean_entities):
+                st["dropped_overlap"] += 1
                 continue
             clean_entities.append({
                 "type": etype,
                 "start": start,
                 "end": end,
-                "text": actual,  # canonicalize to the offset-derived text
+                "text": text[start:end],
             })
-        # Rows can legitimately have zero entities (negative examples).
-        # Accept the row as long as the text is present + any provided
-        # entities passed offset validation.
-        if raw_entities and not clean_entities:
-            # The model tried but all spans were broken — drop the row.
+        if not row_ok:
+            st["rows_dropped_span_not_in_text"] += 1
             continue
+        clean_entities.sort(key=lambda e: (e["start"], e["end"]))
         rows.append({
             "text": text,
             "entities": clean_entities,
@@ -1232,7 +1303,16 @@ def _parse_span_rows(
             "source_excerpt": _extract_field(item, _SOURCE_EXCERPT_ALIASES),
         })
 
+    st["rows_kept"] = len(rows)
     if not rows:
+        if st["rows_dropped_span_not_in_text"]:
+            raise GoldGenerationError(
+                "LLM_RESPONSE_UNPARSEABLE",
+                f"The LLM returned {st['rows_in']} row(s), but every one "
+                "labelled an entity that can't be found in the row, so none "
+                "can be used as an answer key. Try again, lower the count, "
+                "or try a stronger model.",
+            )
         _raise_parse_error(
             items=items,
             payload=payload,
@@ -1240,8 +1320,48 @@ def _parse_span_rows(
             recipe_id="span-extraction",
             required_field_summary="text + entities[]",
         )
-    _check_count_drift(rows, expected_count)
     return rows
+
+
+def span_parse_warnings(stats: dict[str, Any]) -> list[str]:
+    """User-facing lines for what ``_parse_span_rows`` repaired or
+    dropped. Empty when nothing happened."""
+    out: list[str] = []
+    dropped = int(stats.get("rows_dropped_span_not_in_text") or 0)
+    if dropped:
+        out.append(
+            f"{dropped} row(s) dropped: they labelled an entity that can't "
+            "be found in the row's text."
+        )
+    repaired = int(stats.get("repaired_offsets") or 0)
+    if repaired:
+        out.append(
+            f"{repaired} entity offset(s) were wrong and were re-located "
+            "from the entity text — check those spans in the preview."
+        )
+    by_type = stats.get("dropped_type") or {}
+    if by_type:
+        listed = ", ".join(f"{t} ({n})" for t, n in sorted(by_type.items()))
+        out.append(
+            "Entities of types outside the project's vocabulary were "
+            f"dropped: {listed}."
+        )
+    overlap = int(stats.get("dropped_overlap") or 0)
+    if overlap:
+        out.append(f"{overlap} overlapping span(s) dropped (kept the first).")
+    return out
+
+
+def count_drift_warning(got: int, expected_count: int) -> str | None:
+    """A warning — never an error — when the usable row count differs
+    from what was asked. The call is already paid for and the preview
+    lets the user review every row, so returning fewer (or more) rows
+    with an explanation beats a 400 that throws them all away."""
+    if got == expected_count:
+        return None
+    return (
+        f"Asked for {expected_count} rows; {got} usable row(s) came back."
+    )
 
 
 def _parse_summarization_rows(
@@ -1287,7 +1407,6 @@ def _parse_summarization_rows(
             recipe_id="summarization",
             required_field_summary="document + summary (summary < document length)",
         )
-    _check_count_drift(rows, expected_count)
     return rows
 
 
@@ -1583,12 +1702,24 @@ async def generate_gold_qa_via_llm(
             f"Provider '{provider}' is not supported. Use 'openai' or 'anthropic'.",
         )
 
+    # Span rows: same rule as classification — keep to the project's
+    # vocabulary unless the user rewrote the prompt.
+    span_stats: dict[str, Any] = {}
     rows = _parse_rows_for_recipe(
         recipe_id=recipe_id,
         content=response.content,
         expected_count=effective_count,
         known_labels=parse_known_labels,
+        span_vocabulary_for_parse=(
+            [] if used_user_override else span_vocabulary(project)
+        ),
+        span_stats=span_stats,
     )
+    warnings: list[str] = []
+    drift = count_drift_warning(len(rows), effective_count)
+    if drift:
+        warnings.append(drift)
+    warnings.extend(span_parse_warnings(span_stats))
 
     return GenerationResult(
         rows=rows,
@@ -1604,6 +1735,7 @@ async def generate_gold_qa_via_llm(
             prompt_tokens=response.prompt_tokens,
             completion_tokens=response.completion_tokens,
         ),
+        warnings=tuple(warnings),
     )
 
 
@@ -1681,6 +1813,8 @@ def _parse_rows_for_recipe(
     content: str,
     expected_count: int,
     known_labels: list[str],
+    span_vocabulary_for_parse: list[str] | None = None,
+    span_stats: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Route to the per-recipe parser. qa-sft returns ``GeneratedQa``
     dataclasses internally — we convert them to dicts here so the API
@@ -1703,7 +1837,10 @@ def _parse_rows_for_recipe(
             content, expected_count, known_labels=known_labels,
         )
     if recipe_id == "span-extraction":
-        return _parse_span_rows(content, expected_count)
+        return _parse_span_rows(
+            content, expected_count, vocabulary=span_vocabulary_for_parse,
+            stats=span_stats,
+        )
     if recipe_id == "summarization":
         return _parse_summarization_rows(content, expected_count)
     raise GoldGenerationError(

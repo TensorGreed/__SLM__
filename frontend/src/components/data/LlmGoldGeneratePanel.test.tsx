@@ -1430,6 +1430,80 @@ describe('LlmGoldGeneratePanel', () => {
         expect(entitiesBlock.textContent).toContain('[8:24]');
     });
 
+    it('span-extraction: shows the backend warnings above the preview rows', async () => {
+        installPostRouter({
+            generate: makeGenerateResponse({
+                recipe_id: 'span-extraction',
+                rows: [{ text: 'clean text, no PII', entities: [] }],
+                warnings: [
+                    'Asked for 10 rows; 7 usable row(s) came back.',
+                    '3 row(s) dropped: they labelled an entity that can\'t be found in the row\'s text.',
+                ],
+            }),
+        });
+        renderPanel(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                recipeId="span-extraction"
+                onRowsSaved={() => {}}
+            />,
+        );
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-preview-warnings')).toBeInTheDocument();
+        });
+        const text = screen.getByTestId('llm-gold-preview-warnings').textContent || '';
+        expect(text).toContain('7 usable row(s)');
+        expect(text).toContain('3 row(s) dropped');
+    });
+
+    it('renders a real structured-error envelope 400 with its code + message', async () => {
+        // The shape the backend actually returns (app/main.py envelope):
+        // error_code + message at the top level, detail = message string.
+        // It used to render as "UPSTREAM_ERROR", which read as a
+        // provider failure.
+        const message = 'The LLM returned 10 row(s), but every one labelled an entity '
+            + 'that can\'t be found in the row, so none can be used as an answer key.';
+        installPostRouter({
+            generateError: {
+                response: {
+                    status: 400,
+                    data: {
+                        error_code: 'LLM_RESPONSE_UNPARSEABLE',
+                        message,
+                        stage: 'gold',
+                        actionable_fix: 'Review request inputs and retry.',
+                        troubleshooting_id: 'err_abc',
+                        detail: message,
+                    },
+                },
+            },
+        });
+        renderPanel(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                recipeId="span-extraction"
+                onRowsSaved={() => {}}
+            />,
+        );
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-error')).toBeInTheDocument();
+        });
+        const text = screen.getByTestId('llm-gold-error').textContent || '';
+        expect(text).toContain('LLM_RESPONSE_UNPARSEABLE');
+        expect(text).not.toContain('UPSTREAM_ERROR');
+        expect(text).toContain('can\'t be found in the row');
+    });
+
     it('span-extraction: empty entities renders the negative-example hint', async () => {
         installPostRouter({
             generate: makeGenerateResponse({
