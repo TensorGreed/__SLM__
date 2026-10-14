@@ -17,9 +17,13 @@ vi.mock('../../api/client', () => ({
 }));
 
 import EvalPanel from './EvalPanel';
+import { useProjectStore } from '../../stores/projectStore';
 
 describe('EvalPanel remediation planner', () => {
   beforeEach(() => {
+    // Not beginner mode, so the remediation planner (under "Advanced
+    // evaluation") is open by default.
+    useProjectStore.setState({ activeProject: null });
     let generated = false;
 
     apiMock.get.mockImplementation(async (url: string) => {

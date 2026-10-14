@@ -31,6 +31,7 @@ vi.mock('../../api/client', () => ({
 }));
 
 import EvalPanel from './EvalPanel';
+import { useProjectStore } from '../../stores/projectStore';
 
 
 function mockApi(predictionsPreview: unknown[]) {
@@ -130,6 +131,9 @@ describe('EvalPanel — Sample Predictions card with QAHandler enrichment', () =
     beforeEach(() => {
         apiMock.get.mockReset();
         apiMock.post.mockReset();
+        // Not beginner mode, so "Advanced evaluation" (where the
+        // predictions card lives) starts open.
+        useProjectStore.setState({ activeProject: null });
     });
 
     it('renders Status column + per-row badges when row scores are present', async () => {

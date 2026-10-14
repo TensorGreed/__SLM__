@@ -27,6 +27,8 @@ vi.mock('../../api/client', () => ({
 }));
 
 import EvalPanel from './EvalPanel';
+import { useProjectStore } from '../../stores/projectStore';
+import type { Project } from '../../types';
 
 
 function mockApi(predictionsPreview: unknown[]) {
@@ -122,6 +124,9 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
     beforeEach(() => {
         apiMock.get.mockReset();
         apiMock.post.mockReset();
+        // No active project => not beginner mode => "Advanced evaluation"
+        // (where the predictions card lives) starts open.
+        useProjectStore.setState({ activeProject: null });
     });
 
     it('renders a green "Preferred chosen" badge when the model picked correctly', async () => {
@@ -229,5 +234,39 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
         expect(
             screen.queryByText(/Show chosen vs rejected/i),
         ).not.toBeInTheDocument();
+    });
+
+    it('beginner projects reach the badges once Advanced evaluation is opened', async () => {
+        useProjectStore.setState({
+            activeProject: { id: 4, name: 'p', beginner_mode: true } as Project,
+        });
+        mockApi([
+            {
+                prompt: 'Explain DPO.',
+                reference: 'DPO is direct preference optimization.',
+                prediction: 'DPO is direct preference optimization.',
+                alignment_has_pair: true,
+                alignment_chosen: 'DPO is direct preference optimization.',
+                alignment_rejected: 'DPO is a programming language.',
+                alignment_chosen_sim: 1.0,
+                alignment_rejected_sim: 0.2,
+                alignment_margin: 0.8,
+                alignment_preference_correct: true,
+                row_exact_match: 1.0,
+                row_f1: 1.0,
+            },
+        ]);
+
+        const user = userEvent.setup();
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+
+        // Collapsed by default for beginners: the per-row badge is hidden.
+        const toggle = screen.getByTestId('eval-advanced-toggle');
+        expect(toggle).toHaveTextContent('Advanced evaluation');
+        expect(screen.queryByText(/Preferred chosen/i)).not.toBeInTheDocument();
+
+        await user.click(toggle);
+        expect(await screen.findByText(/Preferred chosen/i)).toBeInTheDocument();
     });
 });
