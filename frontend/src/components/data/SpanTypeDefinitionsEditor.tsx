@@ -9,6 +9,9 @@ interface TypeDefinitionsPayload {
     suggestions: Record<string, string>;
 }
 
+/** Fired on window when the project's definitions change outside the editor. */
+export const SPAN_DEFINITIONS_CHANGED_EVENT = 'brewslm:span-definitions-changed';
+
 /** "type: definition" lines ↔ map. */
 export function definitionsToText(defs: Record<string, string>): string {
     return Object.entries(defs).map(([t, d]) => `${t}: ${d}`).join('\n');
@@ -44,6 +47,13 @@ export default function SpanTypeDefinitionsEditor({ projectId }: { projectId: nu
             })
             .catch(() => undefined);
     }, [open, payload, projectId]);
+
+    // A compliance bundle applied elsewhere adds definitions — reload.
+    useEffect(() => {
+        const reload = () => setPayload(null);
+        window.addEventListener(SPAN_DEFINITIONS_CHANGED_EVENT, reload);
+        return () => window.removeEventListener(SPAN_DEFINITIONS_CHANGED_EVENT, reload);
+    }, []);
 
     const suggestionCount = payload ? Object.keys(payload.suggestions).length : 0;
 

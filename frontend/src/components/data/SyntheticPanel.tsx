@@ -12,6 +12,7 @@ import StepFooter from '../shared/StepFooter';
 import { toast } from '../../stores/toastStore';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 import SpanTypeDefinitionsEditor from './SpanTypeDefinitionsEditor';
+import ComplianceBundlePicker from './ComplianceBundlePicker';
 
 interface SyntheticPanelProps { projectId: number; onNextStep?: () => void; }
 
@@ -1264,6 +1265,11 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                 >
                                     Label whole documents with {relabelPin ?? 'this model'}
                                 </button>
+                                <ComplianceBundlePicker
+                                    projectId={projectId}
+                                    entityTypes={parseEntityTypes(entityTypesInput)}
+                                    onEntityTypesChange={(types) => setEntityTypesInput(types.join(', '))}
+                                />
                                 <SpanTypeDefinitionsEditor projectId={projectId} />
                                 {refineInfo && refineInfo.types.length > 0 && (
                                     <div className="form-hint" data-testid="synthetic-refine-info">

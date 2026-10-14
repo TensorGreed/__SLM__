@@ -18,6 +18,22 @@ export type EvalVerdict =
     /** span_eval: a token-classification run scored on its own (no base). */
     | 'evaluated';
 
+/** One compliance regime's span scores (recall = the redaction headline). */
+export interface SpanRegimeScore {
+    regime: string;
+    label: string;
+    custom: boolean;
+    types: string[];
+    unscored_types: string[];
+    tp: number;
+    fp: number;
+    fn: number;
+    support: number;
+    precision: number | null;
+    recall: number | null;
+    f1: number | null;
+}
+
 /** One span_set evaluation of a token-classification run. */
 export interface SpanEvalBlock {
     eval_result_id: number;
@@ -27,6 +43,9 @@ export interface SpanEvalBlock {
     f1: number | null;
     rows: number | null;
     weakest_types: Array<{ type: string; f1: number; support: number }>;
+    /** Micro P/R/F1 per compliance regime (project's type→regimes map),
+     *  weakest recall first; [] when the project tags no types. */
+    by_regime?: SpanRegimeScore[];
     /** answer_key only: who wrote it (e.g. cloud:anthropic:claude-haiku-4-5…). */
     written_by?: string | null;
 }

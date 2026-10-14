@@ -91,6 +91,30 @@ describe('EvalSummaryCard', () => {
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/7/evaluation/summary/lift-check', { experiment_id: 59 }));
     });
 
+    it('shows per-regime span scores with recall first when the project tags its types', async () => {
+        const regime = (r: string, label: string, recall: number, fn: number, support: number, unscored: string[] = []) => ({
+            regime: r, label, custom: false, types: ['a'], unscored_types: unscored, tp: support - fn, fp: 1, fn, support,
+            precision: 0.9, recall, f1: 0.8,
+        });
+        apiMock.get.mockResolvedValue({
+            data: {
+                kind: 'span_eval', project_id: 7, experiment_id: 59, verdict: 'evaluated', message: null, headline: null,
+                trained: { experiment_id: 59, experiment_name: 'deberta tc' },
+                answer_key: null,
+                test: {
+                    eval_result_id: 1, dataset_name: 'test', precision: 0.87, recall: 0.92, f1: 0.89, rows: 44, weakest_types: [],
+                    by_regime: [regime('hipaa', 'HIPAA', 0.71, 4, 14, ['diagnosis']), regime('pci_dss', 'PCI-DSS', 0.95, 1, 20)],
+                },
+                dataset_name: 'test', evaluated_samples: 44, failed_count: 0, failures: [],
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={59} />);
+        const table = await screen.findByTestId('eval-summary-span-regimes');
+        expect(table).toHaveTextContent('By regime (test examples)');
+        expect(screen.getByTestId('eval-summary-regime-hipaa')).toHaveTextContent('HIPAA · 1 type not in this eval0.710.900.804 of 14');
+        expect(screen.getByTestId('eval-summary-regime-pci_dss')).toHaveTextContent('PCI-DSS0.95');
+    });
+
     it('offers to re-run the lift check on an evaluated run', async () => {
         apiMock.get.mockResolvedValue({ data: BETTER });
         apiMock.post.mockResolvedValue({ data: { started: true, job_id: 5 } });

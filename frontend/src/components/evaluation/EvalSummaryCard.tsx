@@ -47,6 +47,47 @@ export function spanScoreText(block: SpanEvalBlock): string {
     return `precision ${f(block.precision)} · recall ${f(block.recall)} · F1 ${f(block.f1)}${block.rows ? ` on ${block.rows} texts` : ''}`;
 }
 
+/** span_eval: per-regime scores, recall first (a missed span is the leak). */
+export function SpanRegimeTable({ block, onAnswerKey }: { block: SpanEvalBlock | null; onAnswerKey: boolean }) {
+    const rows = block?.by_regime ?? [];
+    if (!rows.length) return null;
+    const f = (v: number | null) => (typeof v === 'number' ? v.toFixed(2) : '—');
+    return (
+        <div className="eval-summary__regimes" data-testid="eval-summary-span-regimes">
+            <p className="eval-summary__judge">
+                <strong>By regime</strong>{onAnswerKey ? ' (answer key)' : ' (test examples)'} — recall is what matters for redaction: every missed span is a leak.
+            </p>
+            <table className="eval-summary__regime-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Regime</th>
+                        <th scope="col">Recall</th>
+                        <th scope="col">Precision</th>
+                        <th scope="col">F1</th>
+                        <th scope="col">Missed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows.map((r) => (
+                        <tr key={r.regime} data-testid={`eval-summary-regime-${r.regime}`}>
+                            <th scope="row" title={[...r.types, ...r.unscored_types].join(', ')}>
+                                {r.label}
+                                {r.unscored_types.length ? (
+                                    <span className="eval-summary__regime-unscored"> · {r.unscored_types.length} type{r.unscored_types.length === 1 ? '' : 's'} not in this eval</span>
+                                ) : null}
+                            </th>
+                            <td className="eval-summary__regime-recall"><strong>{f(r.recall)}</strong></td>
+                            <td>{f(r.precision)}</td>
+                            <td>{f(r.f1)}</td>
+                            <td>{r.support ? `${r.fn} of ${r.support}` : '—'}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
 function spanTitle(summary: EvalSummary): string {
     const key = summary.answer_key;
     const block = key ?? summary.test;
@@ -401,6 +442,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                             . <em>Refine weak types</em> on the Synthetic tab targets them.
                         </p>
                     ) : null}
+                    <SpanRegimeTable block={summary.answer_key ?? summary.test ?? null} onAnswerKey={Boolean(summary.answer_key)} />
                 </div>
             )}
             {summary.message && <p className="eval-summary__message">{summary.message}</p>}

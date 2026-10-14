@@ -32,6 +32,7 @@ session-start guidance.
 - `backend/app/api/cleaning.py` — Data Cleaning API routes.
 - `backend/app/api/coach.py` — Coach Mode API routes (USER-SUCCESS Epic 4 Phase 1).
 - `backend/app/api/comparison.py` — Comparison API for experiments.
+- `backend/app/api/compliance.py` — Compliance bundles API: named groups of entity types tagged with the
 - `backend/app/api/compression.py` — Compression API routes.
 - `backend/app/api/curriculum.py` — Curriculum-ranking API routes (USER-SUCCESS Epic 6 Phase 6a).
 - `backend/app/api/data_health.py` — Data Health Report API — D1/D3/D4 of the data-quality arc.
@@ -111,6 +112,7 @@ session-start guidance.
 - `backend/app/services/cloud_llm_service.py` — Thin client wrappers for flagship cloud LLM providers (OpenAI +
 - `backend/app/services/cluster_explanation_service.py` — Per-cluster failure explanations (Theme 8 Epic 3).
 - `backend/app/services/coach_service.py` — Coach Mode service (USER-SUCCESS Epic 4).
+- `backend/app/services/compliance_bundles_service.py` — Compliance bundles: named groups of entity types, each type tagged with
 - `backend/app/services/compression_service.py` — Compression engine service — quantization, LoRA merge, benchmarking.
 - `backend/app/services/continued_pretraining_policy.py` — Continued pretraining for projects whose data is plain documents.
 - `backend/app/services/cost_estimator_service.py` — P18 — Cost estimator with provenance (priority.md, RM3).
@@ -424,6 +426,7 @@ session-start guidance.
 - `frontend/src/api/blueprintAnalyze.ts` — Typed wrapper for the brief-analysis endpoint
 - `frontend/src/api/client.ts` — Axios HTTP client configured with /api base URL and auth-token interceptor that redirects on 401.
 - `frontend/src/api/coach.ts` — Coach suggestion types + async fetcher for stage-specific coaching recommendations.
+- `frontend/src/api/compliance.ts` — _(no docstring)_
 - `frontend/src/api/dataStudio.ts` — Types and verdict enums for DataStudio dashboard panels (mapping, domain, synthetic, quality).
 - `frontend/src/api/datasetImport.ts` — Typed wrappers around the Phase A–E dataset-import API.
 - `frontend/src/api/drift.ts` — Typed client for the drift API (E4 UI).
@@ -507,6 +510,7 @@ session-start guidance.
 - `frontend/src/components/dashboard/ProjectCard.tsx` — Project summary card displaying status, description, stats, and pipeline-stage progress.
 - `frontend/src/components/data/AutofixPreviewModal.tsx` — AutofixPreviewModal — D3.2 + D4 of the data-quality arc.
 - `frontend/src/components/data/CleaningPanel.tsx` — Panel for async batch document cleaning with progress tracking and quality scoring.
+- `frontend/src/components/data/ComplianceBundlePicker.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataHealthReportPanel.tsx` — DataHealthReportPanel — D1+D2 of the data-quality arc.
 - `frontend/src/components/data/DataStudioAssistPanel.tsx` — Panel for running AI-assisted suggestions on mapping and domain with provider configuration.
 - `frontend/src/components/data/DataStudioCoachRailPanel.tsx` — Coach rail panel for DataStudio checks with blocked / attention / ready verdicts.
@@ -699,6 +703,7 @@ session-start guidance.
 - `backend/tests/test_coach_probe_divergence.py` — Coach-stage-2 phase 11 — probe-vs-gold divergence nudge.
 - `backend/tests/test_coach_reroute_nudge.py` — Tests for the Phase 7d Coach Mode reroute nudge.
 - `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
+- `backend/tests/test_compliance_bundles.py` — Compliance bundles: built-in bundles are data (types + definitions +
 - `backend/tests/test_continued_pretraining.py` — Continued pretraining for documents-only projects (Wave 2c-1).
 - `backend/tests/test_curriculum_ab.py` — Tests for the Phase 6c A/B harness (pure-function pieces).
 - `backend/tests/test_curriculum_api.py` — Tests for the curriculum-preview API (USER-SUCCESS Epic 6 Phase 6a).
@@ -957,6 +962,7 @@ session-start guidance.
 - `frontend/src/components/coach/CoachToggle.test.tsx` — _(no docstring)_
 - `frontend/src/components/dashboard/DemoProjectTiles.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/AutofixPreviewModal.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/ComplianceBundlePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataHealthReportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataStudioAssistPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataStudioCoachRailPanel.test.tsx` — _(no docstring)_

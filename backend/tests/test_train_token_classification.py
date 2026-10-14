@@ -251,6 +251,9 @@ class LiftCheckSpanEvalTests(unittest.TestCase):
             async def commit(self):
                 return None
 
+            async def get(self, model, pk):  # the project (compliance type→regimes map)
+                return None
+
         async def has_key(db, pid):
             return True
 
