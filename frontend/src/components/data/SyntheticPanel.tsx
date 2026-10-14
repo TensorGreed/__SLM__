@@ -637,6 +637,8 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     // entity-type list stays the project's full vocabulary (so phones,
     // emails and names in those texts are still labelled).
     const [focusTypes, setFocusTypes] = useState<string[]>([]);
+    // "Relabel training rows": limit to one synth_source group (optional).
+    const [relabelSource, setRelabelSource] = useState('');
     const [refineLoading, setRefineLoading] = useState(false);
     const refineRequested = useRef(false);
     const handleRefineWeakTypes = async () => {
@@ -681,7 +683,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
      *  write. Runs as the `span_relabel` Job the bell tracks. */
     const [relabelStarting, setRelabelStarting] = useState(false);
     const relabelPin = provider === 'ollama' ? 'ollama' : provider === 'custom' ? null : `cloud:${provider}:${modelName}`;
-    const handleWriteAnswerKey = async (target: 'answer_key' | 'training' | 'passages' = 'answer_key') => {
+    const handleWriteAnswerKey = async (target: 'answer_key' | 'training' | 'passages' | 'documents' = 'answer_key') => {
         if (!relabelPin) {
             toast.info('Pick Ollama or a cloud provider — the answer key is written through a synth backend.', 5000);
             return;
@@ -693,9 +695,12 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 backend: relabelPin,
                 entity_types: parseEntityTypes(entityTypesInput),
                 ...(target !== 'answer_key' ? { target } : {}),
+                ...(target === 'training' && relabelSource.trim() ? { source: relabelSource.trim() } : {}),
             });
             toast.info(
-                target === 'passages'
+                target === 'documents'
+                    ? `Labelling your documents whole with ${relabelPin} — multi-page, page lines included, longer than one model window (job #${res.data?.id}). They land in the review queue as "document_labels"; accept them there, then re-split (keep the test examples) and re-train.`
+                    : target === 'passages'
                     ? `Labelling your document passages as they are with ${relabelPin} — page headers and footers included (job #${res.data?.id}). They land in the review queue as "passage_labels"; accept them there, then re-split (keep the test examples) and re-train.`
                     : target === 'training'
                     ? `Relabelling the saved training rows with ${relabelPin} under the labelling conventions — the bell tracks it (job #${res.data?.id}). Re-split and re-train when it finishes.`
@@ -1231,6 +1236,14 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                 >
                                     Relabel training rows with {relabelPin ?? 'this model'}
                                 </button>
+                                <input
+                                    className="input"
+                                    value={relabelSource}
+                                    onChange={(e) => setRelabelSource(e.target.value)}
+                                    placeholder="Relabel only this source group (optional), e.g. document_labels:doc=740"
+                                    data-testid="synthetic-relabel-source"
+                                    title="The source group names come from the review queue. Empty = relabel every training row."
+                                />
                                 <button
                                     type="button"
                                     className="btn btn-secondary"
@@ -1240,6 +1253,16 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                     title="Labels your cleaned document passages AS THEY ARE (no rewrite) under the labelling conventions and adds them as training rows — so the model also learns real layout: letterheads, page numbers, footers. Passages labelled before are skipped."
                                 >
                                     Label document passages with {relabelPin ?? 'this model'}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => void handleWriteAnswerKey('documents')}
+                                    disabled={relabelStarting || isGenerating}
+                                    data-testid="synthetic-label-documents"
+                                    title="Labels whole documents (up to ~4,000 characters per row, cut at paragraph breaks) as they are and adds them as training rows — longer than one 512-token window, so the model trains on long, multi-page text the way it will read it."
+                                >
+                                    Label whole documents with {relabelPin ?? 'this model'}
                                 </button>
                                 <SpanTypeDefinitionsEditor projectId={projectId} />
                                 {refineInfo && refineInfo.types.length > 0 && (

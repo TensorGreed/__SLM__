@@ -62,6 +62,24 @@ def _strip_thinking_blocks(text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
+# Ollama runs a model at its server's default context (often 4096 tokens)
+# unless the request says otherwise, and silently drops the start of a
+# prompt that doesn't fit — a long document to label, plus the labelling
+# conventions, plus room for the reply, can overrun it. Size the window to
+# the request, in a few fixed buckets so the model isn't reloaded for every
+# slightly different size.
+CONTEXT_BUCKETS = (4096, 8192, 16384, 32768)
+_CHARS_PER_TOKEN = 3  # conservative for mixed text / JSON
+
+
+def context_window_for(prompt: str, system_prompt: str | None, max_tokens: int) -> int:
+    needed = (len(prompt or "") + len(system_prompt or "")) // _CHARS_PER_TOKEN + int(max_tokens) + 256
+    for bucket in CONTEXT_BUCKETS:
+        if needed <= bucket:
+            return bucket
+    return CONTEXT_BUCKETS[-1]
+
+
 class OllamaBackend:
     """Ollama chat backend (native /api/chat: thinking off, JSON-schema ``format``)."""
 
@@ -159,7 +177,11 @@ class OllamaBackend:
             "messages": messages,
             "stream": False,
             "think": False,
-            "options": {"temperature": temperature, "num_predict": max_tokens},
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+                "num_ctx": context_window_for(prompt, system_prompt, max_tokens),
+            },
         }
         if response_schema:
             payload["format"] = response_schema

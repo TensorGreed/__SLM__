@@ -1128,6 +1128,26 @@ runs real CPU inference). ~4 min locally.
   rewrites passages into snippets and loses layout; this keeps letterheads /
   page numbers in training text. Passages already present (same text) are
   skipped; raises when none are new. Summary `split="passages"`.
+- **Label whole documents** (`label_documents_as_training_rows`,
+  `target: "documents"`, `max_chars` 4000; button "Label whole documents"):
+  `load_document_texts` (raw/<name>.cleaned.txt per source doc, line breaks
+  kept) → `pack_long_rows` (whole blank-line blocks up to max_chars; an
+  oversized block cut by `chunk_text`) → rows `synth_source=
+  "document_labels:doc=<id>"`, `unit: "document"`, pending, with ids.
+  **All labelling goes through `label_texts_any`**: texts ≤
+  `LABEL_PIECE_CHARS` (1000) as they are, longer ones via `_label_in_pieces`
+  (`piece_offsets` at line / sentence ends, edge whitespace trimmed — the
+  span validator strips, so an untrimmed piece came back one char early —
+  spans shifted back; a text is labelled only if every piece was; a
+  misaligned span drops the row). A whole document labelled at once got
+  ~4.1 entities / 1,000 chars vs ~6.8 in pieces. `relabel_training_rows(
+  source=)` / API `source` relabels one synth_source group. Every labeller
+  warns when texts come back with no labels. `_label_and_append` is the
+  shared append core (passages + documents).
+- **Ollama context**: `synth_backends/ollama.context_window_for` sets
+  `num_ctx` per request (prompt chars / 3 + max_tokens + 256, buckets
+  4096 / 8192 / 16384 / 32768) — without it Ollama runs at its server
+  default and silently drops the start of a prompt that doesn't fit.
 - **Split keeping the test rows** (`split_dataset(keep_test=True)`, API
   `keep_test`, split-form checkbox "Keep the current N test examples",
   shown when the active manifest has a test split): `_keep_test_rows` keeps

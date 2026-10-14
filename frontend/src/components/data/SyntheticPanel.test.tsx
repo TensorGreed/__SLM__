@@ -241,6 +241,35 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
         });
     });
 
+    it('"Relabel training rows" can be limited to one source group', async () => {
+        installGetRouter({
+            'prepared-manifest': { task_profile: 'structured_extraction', output_schema: { scoring_mode: 'span_set' }, entity_types: ['email'] },
+        });
+        apiMock.post.mockResolvedValueOnce({ data: { id: 133, kind: 'span_relabel', status: 'queued' } });
+        render(<SyntheticPanel projectId={1} />);
+        await userEvent.type(await screen.findByTestId('synthetic-relabel-source'), 'document_labels:doc=740');
+        await userEvent.click(screen.getByTestId('synthetic-relabel-training'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith('/projects/1/synthetic/relabel-answer-key', {
+                split: 'test', backend: 'ollama', entity_types: ['email'], target: 'training', source: 'document_labels:doc=740',
+            });
+        });
+    });
+
+    it('"Label whole documents" starts the span_relabel Job with target=documents', async () => {
+        installGetRouter({
+            'prepared-manifest': { task_profile: 'structured_extraction', output_schema: { scoring_mode: 'span_set' }, entity_types: ['email'] },
+        });
+        apiMock.post.mockResolvedValueOnce({ data: { id: 132, kind: 'span_relabel', status: 'queued' } });
+        render(<SyntheticPanel projectId={1} />);
+        await userEvent.click(await screen.findByTestId('synthetic-label-documents'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith('/projects/1/synthetic/relabel-answer-key', {
+                split: 'test', backend: 'ollama', entity_types: ['email'], target: 'documents',
+            });
+        });
+    });
+
     it('saves a pasted cloud key on the project and clears the field', async () => {
         installGetRouter({});
         apiMock.put.mockResolvedValueOnce({ data: { provider: 'cloud_llm_anthropic', key_name: 'api_key' } });

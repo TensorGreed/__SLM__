@@ -735,8 +735,14 @@ class RelabelAnswerKeyRequest(BaseModel):
     # relabel the saved synthetic rows in place, under the same conventions.
     # "passages": label the cleaned document passages as they are (no
     # rewrite) and add them as training rows — layout lines included.
-    target: str = Field("answer_key", pattern="^(answer_key|training|passages)$")
+    # "documents": whole documents (runs of whole paragraphs up to
+    # max_chars), longer than one 512-token window.
+    target: str = Field("answer_key", pattern="^(answer_key|training|passages|documents)$")
     document_id: int | None = None
+    max_chars: int = Field(4000, ge=500, le=20000)
+    # target "training": relabel only this synth_source group (e.g.
+    # "document_labels:doc=740"); empty = every row.
+    source: str | None = None
 
 
 @router.post("/relabel-answer-key", status_code=202)
@@ -755,6 +761,7 @@ async def relabel_answer_key(
     from app.models.job import Job, JobStatus
     from app.services.jobs_service import JobProgressHandle, serialize_job, start_job
     from app.services.span_relabel_service import (
+        label_documents_as_training_rows,
         label_passages_as_training_rows,
         relabel_split_as_answer_key,
         relabel_training_rows,
@@ -778,7 +785,13 @@ async def relabel_answer_key(
             await handle.set_progress(fraction=fraction, message=message)
 
         async with async_session_factory() as runner_db:
-            if req.target == "passages":
+            if req.target == "documents":
+                summary = await label_documents_as_training_rows(
+                    runner_db, project_id, document_id=req.document_id, max_chars=req.max_chars,
+                    backend=req.backend if cloud_override is None else None,
+                    entity_types=req.entity_types, progress=_progress, backend_override=cloud_override,
+                )
+            elif req.target == "passages":
                 summary = await label_passages_as_training_rows(
                     runner_db, project_id, document_id=req.document_id,
                     backend=req.backend if cloud_override is None else None,
@@ -786,7 +799,7 @@ async def relabel_answer_key(
                 )
             elif req.target == "training":
                 summary = await relabel_training_rows(
-                    runner_db, project_id,
+                    runner_db, project_id, source=req.source or None,
                     backend=req.backend if cloud_override is None else None,
                     entity_types=req.entity_types, progress=_progress, backend_override=cloud_override,
                 )
@@ -801,7 +814,9 @@ async def relabel_answer_key(
     job = await start_job(
         db, kind="span_relabel",
         title=(
-            f"Passage labels by {req.backend or 'local model'} · project #{project_id}"
+            f"Whole-document labels by {req.backend or 'local model'} · project #{project_id}"
+            if req.target == "documents"
+            else f"Passage labels by {req.backend or 'local model'} · project #{project_id}"
             if req.target == "passages"
             else f"Training labels by {req.backend or 'local model'} · project #{project_id}"
             if req.target == "training"

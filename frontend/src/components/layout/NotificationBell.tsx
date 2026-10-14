@@ -147,10 +147,10 @@ function jobOutcomeSummary(job: Job): string | null {
         const agreement = r.agreement && typeof (r.agreement as { f1?: unknown }).f1 === 'number' ? (r.agreement as { f1: number }).f1 : null;
         const parts: string[] = [];
         const isTraining = r.split === 'synthetic';
-        const isPassages = r.split === 'passages';
+        const isPassages = r.split === 'passages' || r.split === 'documents';
         if (rows !== null) {
             parts.push(
-                isPassages ? `${rows} passages labelled — accept them in the review queue`
+                isPassages ? `${rows} ${r.split === 'documents' ? 'documents' : 'passages'} labelled — accept them in the review queue`
                     : isTraining ? `training labels: ${rows} rows relabelled` : `answer key: ${rows} rows`,
             );
         }

@@ -295,7 +295,42 @@ the old training data, only re-split.
 
 The footer gap closed, including for a style the model never saw; short
 texts didn't regress. (All the measuring text was invented, as were the
-footers; real scanned documents add OCR noise this doesn't test.)
+footers.)
+
+### Whole documents as training rows, and OCR noise
+
+**Label whole documents with *model*** (Synthetic tab; `target:
+"documents"`, `max_chars` default 4000) makes each training row a run of
+whole paragraphs of one document — on paged sample documents, a whole
+multi-page document with its page lines, usually longer than one
+512-token window — so training runs in windows on real long rows. The
+labeller sees each row in **passage-sized pieces** (~1,000 chars, cut at
+line / sentence ends) and the spans are shifted back onto the row: asked
+to label a whole document at once, gemma4 put ~4.1 entities per 1,000
+characters on it against ~6.8 on passages, and a model trained on those
+thin labels got worse. Every labelling path now pieces long texts.
+**Relabel training rows** takes an optional source group
+(`document_labels:doc=740`) to redo one batch.
+
+Project 31 (2026-10-14): 40 more paged documents → 36 long rows (29 over
+one window; training made 517 windows from 486 rows) → whole-document
+labels 399 entities → in pieces 610. On the multi-page documents, F1 vs
+the Haiku key:
+
+| | run #62 (passages) | run #63 (whole, labelled whole) | **run #64 (whole, labelled in pieces)** |
+|---|---|---|---|
+| blank lines / footers / held-out footer | 0.84 / 0.84 / 0.83 | 0.79 / 0.80 / 0.79 | 0.85 / 0.85 / 0.85 |
+| with 5% OCR-style noise | 0.76 / 0.76 / 0.77 | 0.73 / 0.74 / 0.75 | 0.76 / 0.78 / 0.75 |
+| with 10% | 0.69 / 0.66 / 0.70 | 0.68 / 0.67 / 0.70 | 0.69 / 0.67 / 0.71 |
+| the 44 answer-key texts one by one | 0.85 | 0.84 | 0.83 |
+
+Long rows train correctly but add little over passages here (0.84 →
+0.85 on 288 spans is within noise; 0.85 → 0.83 on the 44 texts too).
+**OCR-style noise** — length-preserving character confusions (O↔0, l↔1,
+S↔5, e→c, rn-style swaps, . ↔ ,) on that share of the confusable
+characters, so a noisy entity is still the right span: the scores hold
+at 2% (−0.01), lose ~0.07 at 5%, ~0.15 at 10% and ~0.30 at 20%. Noise
+wasn't in the training data; that is the next lever.
 
 ## What the first run produced (2026-10-13)
 
