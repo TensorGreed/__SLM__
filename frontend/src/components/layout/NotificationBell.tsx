@@ -96,7 +96,27 @@ function jobStatusLabel(job: Job): string {
  * Returns null when the job has no useful summary (caller hides
  * the line entirely).
  */
-function jobOutcomeSummary(job: Job): string | null {
+export function jobOutcomeSummary(job: Job): string | null {
+    const core = jobOutcomeSummaryCore(job);
+    // Any kind: the jobs framework meters every runner's cloud-LLM calls
+    // into result.tokens / cost_usd — also on a failed or cancelled Job
+    // (tokens spent are spent).
+    const spend = cloudSpendText((job.result || {}) as Record<string, unknown>);
+    if (!spend) return core;
+    if (job.status === 'succeeded') return core ? `${core} · ${spend}` : spend;
+    if (job.status === 'failed' || job.status === 'cancelled') return `spent ${spend}`;
+    return core;
+}
+
+/** "12k tokens (~$0.04 at list price)" from a Job result that carries
+ *  cloud-LLM usage, else null. */
+export function cloudSpendText(r: Record<string, unknown>): string | null {
+    if (typeof r.tokens !== 'number' || r.tokens <= 0) return null;
+    const k = r.tokens >= 1000 ? `${Math.round(r.tokens / 1000)}k` : String(r.tokens);
+    return typeof r.cost_usd === 'number' ? `${k} tokens (~$${r.cost_usd.toFixed(2)} at list price)` : `${k} tokens`;
+}
+
+function jobOutcomeSummaryCore(job: Job): string | null {
     if (job.status !== 'succeeded') return null;
     const r = (job.result || {}) as Record<string, unknown>;
 
@@ -186,11 +206,8 @@ function jobOutcomeSummary(job: Job): string | null {
         if (targeting && typeof targeting.carried_forward === 'number' && targeting.carried_forward > 0) {
             parts.push(`${targeting.carried_forward} rows untouched by the change carried forward`);
         }
-        if (typeof r.tokens === 'number' && r.tokens > 0) {
-            const k = r.tokens >= 1000 ? `${Math.round(r.tokens / 1000)}k` : String(r.tokens);
-            parts.push(typeof r.cost_usd === 'number' ? `${k} tokens (~$${r.cost_usd.toFixed(2)} at list price)` : `${k} tokens`);
-        }
         if (viaBatch) parts.push(viaBatch);
+        // Spend is appended by jobOutcomeSummary (every kind).
         return parts.length ? parts.join(' · ') : null;
     }
     if (job.kind === 'seed_documents') {

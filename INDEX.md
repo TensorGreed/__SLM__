@@ -59,6 +59,7 @@ session-start guidance.
 - `backend/app/api/ingestion.py` — Data Ingestion API routes — file upload and document management.
 - `backend/app/api/jobs.py` — Jobs API routes (Hardening Phase H1).
 - `backend/app/api/label_noise.py` — Quality-Lift phase 4 slice 1 — Label-noise scan API.
+- `backend/app/api/llm_spend.py` — Project cloud-LLM spend tally (``llm_spend_service``).
 - `backend/app/api/manifest.py` — Pipeline-as-code manifest API (priority.md P21 + P22).
 - `backend/app/api/models.py` — Universal base-model registry + compatibility API routes.
 - `backend/app/api/pipeline.py` — Pipeline status API routes.
@@ -196,6 +197,8 @@ session-start guidance.
 - `backend/app/services/jobs_service.py` — Generic background-job framework (Hardening Phase H1).
 - `backend/app/services/label_noise_scoring_service.py` — Quality-Lift phase 4 slice 1 — Label-noise scoring (Confident-Learning-lite).
 - `backend/app/services/llm_pricing.py` — List-price cost estimates for cloud LLM token usage.
+- `backend/app/services/llm_spend_service.py` — Project cloud-LLM spend tally.
+- `backend/app/services/llm_usage.py` — Cloud-LLM token metering: who spent what, per operation.
 - `backend/app/services/local_chat_service.py` — In-process chat with a trained run's checkpoint (Playground "experiment"
 - `backend/app/services/lora_target_policy.py` — Which layers LoRA adapts when the config says ``target_modules="auto"``.
 - `backend/app/services/manifest_apply_service.py` — Manifest validate / diff / apply services (priority.md P22).
@@ -453,6 +456,7 @@ session-start guidance.
 - `frontend/src/api/gamification.ts` — Typed wrappers for the Lab Journal (gamification) API.
 - `frontend/src/api/goal.ts` — Arc H — Project end-goal contract + progress ledger client.
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
+- `frontend/src/api/llmSpend.ts` — _(no docstring)_
 - `frontend/src/api/planRefinement.ts` — _(no docstring)_
 - `frontend/src/api/probePack.ts` — Probe Pack API client — Coach-stage-2 phase 8.
 - `frontend/src/api/projectTemplates.ts` — Typed wrappers for the project-template catalog + instantiation API.
@@ -554,6 +558,7 @@ session-start guidance.
 - `frontend/src/components/data/IngestionPanel.tsx` — Panel for ingesting data from files, Hugging Face, Kaggle, and URLs with validation and EDA.
 - `frontend/src/components/data/LabelNoiseReviewPanel.tsx` — Quality-Lift phase 4 slice 3 — Label-noise review surface.
 - `frontend/src/components/data/LlmGoldGeneratePanel.tsx` — LlmGoldGeneratePanel — generate gold-set Q&A pairs using a flagship
+- `frontend/src/components/data/LlmSpendCard.tsx` — _(no docstring)_
 - `frontend/src/components/data/PlaybookPickerPanel.tsx` — PlaybookPickerPanel — USER-SUCCESS Epic 2.
 - `frontend/src/components/data/RecipePicker.tsx` — Recipe Picker — Theme 2 Epic 3 + 4.
 - `frontend/src/components/data/SavedMappingsPanel.tsx` — Saved dataset-import mappings panel (Phase G of DATASET_IMPORT_PLAN).
@@ -777,6 +782,7 @@ session-start guidance.
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
 - `backend/tests/test_label_noise_slice1.py` — Quality-Lift phase 4 slice 1 — Label-noise scan service + endpoints.
 - `backend/tests/test_labelling_cost.py` — Labelling cost: prompt caching, usage + cost per relabel, convention-aware
+- `backend/tests/test_llm_spend.py` — Cloud-LLM cost beyond relabels: usage metering at every cloud call site,
 - `backend/tests/test_multi_seed_aggregation.py` — Tests for Quality-Lift phase 1, slice 2 — multi-seed dispatch + aggregation.
 - `backend/tests/test_multi_seed_gate_variance.py` — Tests for Quality-Lift phase 1, slice 3 — variance-aware gate evaluator.
 - `backend/tests/test_multi_seed_schema.py` — Tests for Quality-Lift phase 1, slice 1 — multi-seed schema foundation.
@@ -1016,6 +1022,7 @@ session-start guidance.
 - `frontend/src/components/data/GoldSetPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LabelNoiseReviewPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LlmGoldGeneratePanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/LlmSpendCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/PlaybookPickerPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/RecipePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SavedMappingsPanel.test.tsx` — Saved-mappings panel contract.

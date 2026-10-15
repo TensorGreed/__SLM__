@@ -158,6 +158,11 @@ async def call_teacher_with_logprobs(
     content = _coerce_completion_content(
         data.get("choices", [{}])[0].get("message", {}).get("content", "")
     )
+    # A cloud teacher's tokens count toward the capture's spend (llm_usage;
+    # local hosts are free and skipped).
+    from app.services import llm_usage
+
+    llm_usage.record_openai_usage(url, str(data.get("model") or model_name), data.get("usage"))
     return {
         "content": content,
         "teacher_logits": _parse_logprobs(data),
@@ -499,6 +504,9 @@ class DistillationCaptureTask:
     written_path: str | None = None
     chunk_errors: list[dict] = field(default_factory=list)
     error: str | None = None
+    # Cloud teacher spend (llm_usage): {usage, cost_usd, tokens}, empty for
+    # a local teacher.
+    llm_cost: dict[str, Any] = field(default_factory=dict)
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
@@ -516,6 +524,7 @@ class DistillationCaptureTask:
             "written_path": self.written_path,
             "chunk_errors": list(self.chunk_errors),
             "error": self.error,
+            **dict(self.llm_cost),
             "started_at": self.started_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "finished_at": (
@@ -556,26 +565,34 @@ async def _run_capture_task(task: DistillationCaptureTask) -> None:
         task.produced_count = produced
         task.updated_at = datetime.now(timezone.utc)
 
+    from app.services import llm_usage
+
+    # Not a Job: the cloud teacher's spend goes on the task record and the
+    # project's spend ledger (also when the capture fails).
+    meter = llm_usage.UsageMeter()
     try:
-        async with async_session_factory() as db:
-            result = await capture_teacher_outputs(
-                db,
-                task.project_id,
-                task.dataset_id,
-                top_k=task.top_k,
-                teacher_model_name=task.teacher_model_name,
-                limit=task.limit,
-                on_progress=_progress,
-            )
-            await db.commit()
-        task.written_path = result["written_path"]
-        task.chunk_errors = list(result["chunk_errors"])
-        task.produced_count = result["captured_count"]
-        task.status = "completed"
-    except Exception as exc:  # noqa: BLE001 — fatal (bad dataset / no teacher / DB)
-        task.status = "failed"
-        task.error = str(exc)
+        with llm_usage.metered_operation(task.project_id, "distillation_capture") as meter:
+            try:
+                async with async_session_factory() as db:
+                    result = await capture_teacher_outputs(
+                        db,
+                        task.project_id,
+                        task.dataset_id,
+                        top_k=task.top_k,
+                        teacher_model_name=task.teacher_model_name,
+                        limit=task.limit,
+                        on_progress=_progress,
+                    )
+                    await db.commit()
+                task.written_path = result["written_path"]
+                task.chunk_errors = list(result["chunk_errors"])
+                task.produced_count = result["captured_count"]
+                task.status = "completed"
+            except Exception as exc:  # noqa: BLE001 — fatal (bad dataset / no teacher / DB)
+                task.status = "failed"
+                task.error = str(exc)
     finally:
+        task.llm_cost = meter.block()
         task.finished_at = datetime.now(timezone.utc)
         task.updated_at = task.finished_at
 

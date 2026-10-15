@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 
@@ -135,6 +135,9 @@ class GenerationResult:
     # What the parser repaired / dropped and any count drift — shown
     # above the preview so a short result explains itself.
     warnings: tuple[str, ...] = ()
+    # ``{usage, cost_usd, tokens}`` (llm_usage) — cache-aware list-price
+    # estimate; empty when the provider reported no usage.
+    llm_cost: dict[str, Any] = field(default_factory=dict)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1681,28 +1684,38 @@ async def generate_gold_qa_via_llm(
     # not shoot" guard for an opt-in user action.
     grounded_max_tokens = 8192 if reference_chunks else 4096
 
-    if provider == "openai":
-        response = await call_openai_chat(
-            api_key=api_key,
-            model=model,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            api_url=api_url,
-            max_tokens=grounded_max_tokens,
-        )
-    elif provider == "anthropic":
-        response = await call_anthropic_chat(
-            api_key=api_key,
-            model=model,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            max_tokens=grounded_max_tokens,
-        )
-    else:
-        raise GoldGenerationError(
-            "PROVIDER_NOT_SUPPORTED",
-            f"Provider '{provider}' is not supported. Use 'openai' or 'anthropic'.",
-        )
+    # The system prompt is the stable block across generate clicks — sent as
+    # Anthropic's cached system block (same content; below the model's
+    # minimum cacheable length it simply goes uncached). The call's tokens
+    # and list-price estimate land on the result and the project's spend
+    # ledger (llm_usage).
+    from app.services import llm_usage
+
+    with llm_usage.metered_operation(project_id, "gold_llm_generate") as meter:
+        if provider == "openai":
+            response = await call_openai_chat(
+                api_key=api_key,
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                api_url=api_url,
+                max_tokens=grounded_max_tokens,
+            )
+        elif provider == "anthropic":
+            response = await call_anthropic_chat(
+                api_key=api_key,
+                model=model,
+                system_prompt="",
+                cached_system=system_prompt,
+                user_prompt=user_prompt,
+                max_tokens=grounded_max_tokens,
+            )
+        else:
+            raise GoldGenerationError(
+                "PROVIDER_NOT_SUPPORTED",
+                f"Provider '{provider}' is not supported. Use 'openai' or 'anthropic'.",
+            )
+    llm_cost = meter.block()
 
     # Span rows: same rule as classification — keep to the project's
     # vocabulary unless the user rewrote the prompt.
@@ -1738,6 +1751,7 @@ async def generate_gold_qa_via_llm(
             completion_tokens=response.completion_tokens,
         ),
         warnings=tuple(warnings),
+        llm_cost=llm_cost,
     )
 
 

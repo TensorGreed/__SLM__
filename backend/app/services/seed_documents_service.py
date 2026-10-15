@@ -27,6 +27,7 @@ from typing import Any, Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import llm_usage
 from app.services.synth_backends.base import SynthBackendError
 
 _LOG = logging.getLogger(__name__)
@@ -323,7 +324,11 @@ async def run_seed_documents(
             genre, kinds, words=words, locale=rng.choice(DEFAULT_LOCALES), style=rng.choice(STYLES), domain_hint=domain_hint,
         )
         try:
-            raw = await llm.complete(prompt, system_prompt=_SYSTEM_PROMPT, max_tokens=words * 3 + 200, temperature=0.9)
+            raw = await llm.complete(
+                prompt, system_prompt=_SYSTEM_PROMPT, max_tokens=words * 3 + 200, temperature=0.9,
+                # Same system prompt for every document: a cloud backend marks it cached.
+                **llm_usage.cache_kwargs(llm),
+            )
         except SynthBackendError as exc:
             failed += 1
             _LOG.warning("seed_documents %s/%s failed: %s", index + 1, count, exc)

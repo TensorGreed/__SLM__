@@ -36,6 +36,7 @@ from app.api.data_studio import router as data_studio_router
 from app.api.gold import router as gold_router
 from app.api.synthetic import router as synthetic_router
 from app.api.compliance import router as compliance_router
+from app.api.llm_spend import router as llm_spend_router
 from app.api.gamification import router as gamification_router
 from app.api.coach import router as coach_router
 from app.api.curriculum import router as curriculum_router
@@ -387,6 +388,7 @@ app.include_router(data_studio_router, prefix="/api", dependencies=API_DEPENDENC
 app.include_router(gold_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(synthetic_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(compliance_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(llm_spend_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(gamification_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(coach_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(curriculum_router, prefix="/api", dependencies=API_DEPENDENCIES)

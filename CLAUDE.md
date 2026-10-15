@@ -1320,6 +1320,25 @@ runs real CPU inference). ~4 min locally.
   `estimate_cost(batch=True)` (`llm_pricing.BATCH_DISCOUNT` 0.5); summary `batch` /
   `via_batch` → bell "via batch". Checkbox "Batch (half price, slower)" in the
   Synthetic span tools + StaleConventionsStrip. Tests `tests/test_relabel_batch.py`.
+- **Cloud LLM spend (all call sites)** — `services/llm_usage.py`: `call_anthropic_chat` /
+  `call_openai_chat` (non-local hosts) and the teacher endpoints (`call_teacher_model`,
+  distillation `call_teacher_with_logprobs`; `is_local_url` skips Ollama/LAN) `record()`
+  into every open `UsageMeter` (contextvar; survives `to_thread` / nested `asyncio.run`).
+  `jobs_service._runner_wrapper` opens a ROOT meter per Job → `merge_into_result` adds
+  `usage` (estimate_cost list) / `cost_usd` / `tokens` (a runner's own `usage` list wins;
+  a non-list `usage` key → `llm_usage`), also on FAILED / CANCELLED Jobs. Non-Job ops use
+  `metered_operation(pid, kind)` → outermost appends `data/projects/<id>/llm_spend.jsonl`
+  (`gold_llm_generate` → response `llm_cost`; `plan_refinement` → refinement `llm_cost`;
+  `probe_judge` → `metrics["probe"]` usage; `distillation_capture` → task dict). Answer /
+  retrieval judge snapshots carry `usage`. Caching: judge / probe / gold / strategy system
+  prompts → `cached_system` (same text); `CloudLlmBackend.complete(cache_system=)` +
+  `llm_usage.cache_kwargs(llm)` (seed documents, playbooks, judges via synth backend);
+  span synthesis + documents→Q&A send instructions as `cache_prefix` (uncached backends get
+  the unchanged prompt; `passage_prompt_parts`). Below the model's minimum cacheable
+  length Anthropic just doesn't cache. Tally: `llm_spend_service.project_llm_spend` (Jobs ∪
+  ledger, by model / kind, window) → `GET /projects/{id}/llm-spend?days=30` →
+  `LlmSpendCard` on the Synthetic tab; bell `cloudSpendText` on every kind ("spent …" on
+  failed). Tests `tests/test_llm_spend.py`, `LlmSpendCard.test.tsx`.
 - **Ollama context**: `synth_backends/ollama.context_window_for` sets
   `num_ctx` per request (prompt chars / 3 + max_tokens + 256, buckets
   4096 / 8192 / 16384 / 32768) — without it Ollama runs at its server

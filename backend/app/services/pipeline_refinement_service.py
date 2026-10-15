@@ -460,9 +460,11 @@ def _build_cloud_strategy_fn(config: dict[str, Any]) -> StrategyFn:
         system, user = _build_strategy_prompt(profile)
         try:
             if config["provider"] == "anthropic":
+                # The strategy instructions are the stable part (the profile
+                # varies): Anthropic's cached system block, same text.
                 resp = await call_anthropic_chat(
                     api_key=config["api_key"], model=config["model"],
-                    system_prompt=system, user_prompt=user, max_tokens=800, temperature=0.2,
+                    system_prompt="", cached_system=system, user_prompt=user, max_tokens=800, temperature=0.2,
                 )
             else:
                 resp = await call_openai_chat(
@@ -517,7 +519,12 @@ async def run_cloud_strategy_pass(
         fn = _build_cloud_strategy_fn(config)
         provider_label = f"{config['provider']}:{config['model']}"
 
-    raw = await fn(profile)
+    from app.services import llm_usage
+
+    # The billable call: its tokens + list-price estimate go on the
+    # refinement and the project's spend ledger (also when it fails).
+    with llm_usage.metered_operation(project_id, "plan_refinement") as meter:
+        raw = await fn(profile)
     if raw is None:
         return None
 
@@ -526,6 +533,9 @@ async def run_cloud_strategy_pass(
         "model": provider_label or "injected",
         "shared": "cloud_safe_profile",  # what left the box — aggregates only
     }
+    spent = meter.block()
+    if spent:
+        refinement["llm_cost"] = spent
 
     runtime_config[_PLAN_REFINEMENT_KEY] = {"profile_hash": phash, "refinement": refinement}
     project.runtime_config = runtime_config

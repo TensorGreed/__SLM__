@@ -188,6 +188,11 @@ async def call_teacher_model(
         data.get("choices", [{}])[0].get("message", {}).get("content", "")
     )
     usage = data.get("usage", {})
+    # Cloud teacher (not a local Ollama / vLLM host): counted by the open
+    # usage meter — the Job or operation this call belongs to (llm_usage).
+    from app.services import llm_usage
+
+    llm_usage.record_openai_usage(url, str(data.get("model") or model_name), usage)
 
     return {
         "content": content,
@@ -1561,14 +1566,18 @@ async def generate_span_extraction_rows(
         '{"type":"phone","start":43,"end":51,"text":"555-0173"}'
         ']}\n\n'
     )
-    prompt = (
-        f"You're generating training data for a PII / PCI span-detection "
-        f"model. Produce {num_rows} new realistic snippets in the same "
-        "style as the source paragraph but with DIFFERENT, SYNTHETIC PII "
-        "values (use 555- phone numbers, 000- SSNs, test PANs like "
-        "4242424242424242, @example.* emails). For each snippet, return "
-        "the text AND a list of every PII entity with character offsets "
-        "and type.\n\n"
+    def _intro(count_words: str) -> str:
+        return (
+            f"You're generating training data for a PII / PCI span-detection "
+            f"model. Produce {count_words} new realistic snippets in the same "
+            "style as the source paragraph but with DIFFERENT, SYNTHETIC PII "
+            "values (use 555- phone numbers, 000- SSNs, test PANs like "
+            "4242424242424242, @example.* emails). For each snippet, return "
+            "the text AND a list of every PII entity with character offsets "
+            "and type.\n\n"
+        )
+
+    rules = (
         f"{types_clause}"
         f"{example}"
         "Output rules:\n"
@@ -1586,17 +1595,26 @@ async def generate_span_extraction_rows(
         f"{'/' + '/'.join(custom_regex_types) if custom_regex_types else ''}).\n"
         "- Use only synthetic values — never real identifiers.\n"
         "- Vary entity coverage across rows so the dataset isn't repetitive.\n\n"
-        f"Source paragraph:\n{source_text[:4000]}\n\n"
-        f"Return exactly {num_rows} rows now."
     )
+    varying = f"Source paragraph:\n{source_text[:4000]}\n\nReturn exactly {num_rows} rows now."
+    prompt = _intro(str(num_rows)) + rules + varying
 
     if llm is not None:
+        cache_kwargs: dict[str, Any] = {}
+        llm_prompt = prompt
+        if getattr(llm, "supports_prompt_cache", False):
+            # A cloud backend: the instructions, types, conventions and
+            # example are the same for every batch of a run — the cached
+            # block; only the source paragraph and the count vary.
+            cache_kwargs = {"cache_prefix": _intro("the requested number of") + rules}
+            llm_prompt = varying
         content = await llm.complete(
-            prompt,
+            llm_prompt,
             system_prompt=_SPAN_SYSTEM_PROMPT,
             max_tokens=max(1200, 450 * num_rows),
             temperature=0.5,
             response_schema=_SPAN_RESPONSE_SCHEMA,
+            **cache_kwargs,
         )
         model_name = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
         result = {"content": content, "model": model_name}

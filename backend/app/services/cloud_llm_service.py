@@ -34,8 +34,11 @@ import re
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
+
+from app.services import llm_usage
 
 
 _LOG = logging.getLogger("cloud_llm")
@@ -185,12 +188,16 @@ async def call_openai_chat(
             "max_tokens or reducing the count.",
             max_tokens, data.get("model") or model,
         )
-    return CloudLlmResponse(
+    response = CloudLlmResponse(
         content=content,
         model=str(data.get("model") or model),
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
     )
+    if not llm_usage.is_local_url(url):
+        host = (urlparse(url).hostname or "").lower()
+        llm_usage.record_response("deepseek" if "deepseek" in host else "openai" if "openai" in host else host, response)
+    return response
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -318,6 +325,10 @@ async def call_anthropic_chat(
 
     data = resp.json()
     out = anthropic_response_from_message(data, model)
+    # Every open usage meter (the Job / operation this call belongs to)
+    # counts it — see llm_usage. Only the synchronous path: batch results
+    # are accounted by the batch path itself, at the batch discount.
+    llm_usage.record_response("anthropic", out)
     stop_reason = str(data.get("stop_reason") or "")
     _LOG.info(
         "anthropic OK after %.1fs: model=%s prompt_tokens=%d "

@@ -48,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory
 from app.models.job import Job, JobStatus
+from app.services import llm_usage
 
 
 _LOG = logging.getLogger("jobs")
@@ -243,26 +244,37 @@ async def _runner_wrapper(job_id: int, runner: JobRunner) -> None:
 
     result_payload: dict[str, Any] | None = None
     error_text: str | None = None
-    try:
-        result_payload = await runner(handle)
-    except asyncio.CancelledError:
-        # Honor task cancellation explicitly so we don't mis-record
-        # it as a generic failure.
-        await _finish_job(job_id, status=JobStatus.CANCELLED)
-        raise
-    except Exception as exc:  # noqa: BLE001 — boundary
-        error_text = f"{type(exc).__name__}: {exc}"
-        _LOG.exception("Job %s failed: %s", job_id, error_text)
-        # Keep the traceback in the progress_message slot so the UI
-        # has something to surface to a power user. Truncated.
-        tb = traceback.format_exc()[-1000:]
-        await _finish_job(job_id, status=JobStatus.FAILED, error=error_text, progress_message=tb)
-        return
+    # Every cloud-LLM call the runner makes is counted on this Job (root:
+    # a Job started from inside another Job counts only its own calls) —
+    # the result gains usage / cost_usd / tokens, read by the spend tally.
+    with llm_usage.metered(root=True) as meter:
+        try:
+            result_payload = await runner(handle)
+        except asyncio.CancelledError:
+            # Honor task cancellation explicitly so we don't mis-record
+            # it as a generic failure.
+            await _finish_job(job_id, status=JobStatus.CANCELLED, result=meter.block() or None)
+            raise
+        except Exception as exc:  # noqa: BLE001 — boundary
+            error_text = f"{type(exc).__name__}: {exc}"
+            _LOG.exception("Job %s failed: %s", job_id, error_text)
+            # Keep the traceback in the progress_message slot so the UI
+            # has something to surface to a power user. Truncated.
+            tb = traceback.format_exc()[-1000:]
+            # Tokens spent on a failed run are still spent.
+            await _finish_job(
+                job_id, status=JobStatus.FAILED, error=error_text, progress_message=tb,
+                result=meter.block() or None,
+            )
+            return
 
     # Success path — write the result + final status. If the runner
     # honored a cancellation it may have already been marked CANCELLED;
     # don't overwrite that.
-    await _finish_job(job_id, status=JobStatus.SUCCEEDED, result=dict(result_payload or {}), progress=1.0)
+    await _finish_job(
+        job_id, status=JobStatus.SUCCEEDED,
+        result=llm_usage.merge_into_result(dict(result_payload or {}), meter), progress=1.0,
+    )
 
 
 _TERMINAL = (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED)
@@ -293,6 +305,11 @@ async def _finish_job(
             if job is None:
                 return
             if job.status == JobStatus.CANCELLED and status == JobStatus.SUCCEEDED:
+                # Keep the status; record what the run spent before it stopped.
+                spent = {k: result[k] for k in ("usage", "cost_usd", "tokens") if result and k in result}
+                if spent and llm_usage.is_usage_list(spent.get("usage")) and not job.result:
+                    job.result = spent
+                    await db.commit()
                 return
             job.status = status
             job.completed_at = _utcnow()
