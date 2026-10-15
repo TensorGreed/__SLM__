@@ -52,7 +52,7 @@ _SUGGESTIONS: dict[str, str] = {
     "bank_account": "a domestic bank account, routing or sort-code number — each number its own span, digits (and masking X's) only, never the word 'account' or the label; an IBAN is iban, a card's last four digits are credit_card",
     "iban": "an International Bank Account Number (two letters, two check digits, then the account, often grouped in fours)",
     "person_name": "a private individual's name, including in greetings and signatures — the name only, without a title (Mr., Ms., Dr.); a clinician or other care provider named in their professional role is provider_name",
-    "provider_name": "a clinician, care provider or healthcare organisation named in that role, including the title (Dr. Chen, Nurse Patel, St. Mary's Clinic); the patient or customer is person_name; a shop, bank, insurer's or other company's name is not a provider_name (not labelled)",
+    "provider_name": "a clinician, care provider or healthcare organisation named in that role — a person's name without a title, like person_name (\"Chen\" in \"Dr. Chen\", \"Patel\" in \"Nurse Patel\"), or the organisation's name (St. Mary's Clinic); the patient or customer is person_name; a shop, bank, insurer's or other company's name is not a provider_name (not labelled)",
     "national_id": "a government-issued personal identifier (SSN, National Insurance number, national ID card number); not a passport number, not a tax or employee id",
     "passport": "a passport number; not other government ids",
     "credit_card": "a payment card number, full or masked with visible digits, including a card's last four digits when the text says so ('card ending in 4242'); not the expiry date or the CVV",

@@ -762,6 +762,28 @@ down. Recall on news names is still low (0.33): sports results ("Andrei
 Ivanov ( Russia ) 24.88") and surnames alone on later mentions are the
 misses.
 
+**One labeller, one wording (run #87, 2026-10-15).** `provider_name` now
+excludes titles exactly like `person_name` ("Laura White" in "Dr. Laura
+White"; the shipped suggestion says so too). Sonnet re-keyed both keys under
+that wording, labelled 40 more news documents (surname-only later mentions,
+sports results lines, initials — 101 passages), and relabelled every group
+the review queue flagged as labelled under older conventions — 1,384 rows
+through the strip's *Relabel with* request:
+
+| run | scan key | clean key | CoNLL people (P / R / F1) |
+|---|---|---|---|
+| #74 | 0.727 | 0.837 | 0.52 / 0.13 / 0.21 |
+| #86 | 0.752 | 0.858 | 0.90 / 0.33 / 0.49 |
+| #87 | **0.856** | **0.949** | 0.82 / **0.56 / 0.67** |
+
+Read the first two columns with care: the keys and the training labels now
+come from the same labeller under the same conventions, so part of that jump
+is the model agreeing with Sonnet, not being right. The CoNLL column is
+labelled by people and owes nothing to our labellers — and it rose too
+(recall 0.33 → 0.56), which is the evidence the model improved. 27 rows got
+no labels back from Sonnet and kept their old ones, so five groups still show
+in the stale list with a handful of rows each.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the
