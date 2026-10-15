@@ -52,6 +52,11 @@ class CloudLlmResponse:
     model: str
     prompt_tokens: int
     completion_tokens: int
+    # Anthropic prompt caching: input tokens written to / read from the
+    # cache (billed at 1.25x / 0.1x the input price), on top of
+    # ``prompt_tokens`` (the uncached input).
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
 
 
 class CloudLlmError(RuntimeError):
@@ -215,8 +220,13 @@ async def call_anthropic_chat(
     user_prompt: str,
     max_tokens: int = 4096,
     temperature: float = 0.4,
+    cached_system: str | None = None,
 ) -> CloudLlmResponse:
-    """Call Anthropic's messages endpoint.
+    """Call Anthropic's messages endpoint. ``cached_system``: a stable
+    block (the same across many calls) sent as a cached system block —
+    repeats read it from Anthropic's prompt cache at a tenth of the input
+    price. Below the model's minimum cacheable length it is simply sent
+    uncached.
 
     Notable shape differences from OpenAI:
       * ``system`` is a top-level field, NOT a message with role=system
@@ -229,9 +239,15 @@ async def call_anthropic_chat(
     """
     if not api_key:
         raise CloudLlmError("Anthropic API key is required.")
+    system: Any = system_prompt
+    if cached_system:
+        system = [
+            *([{"type": "text", "text": system_prompt}] if system_prompt else []),
+            {"type": "text", "text": cached_system, "cache_control": {"type": "ephemeral"}},
+        ]
     payload: dict[str, Any] = {
         "model": model,
-        "system": system_prompt,
+        "system": system,
         "messages": [
             {"role": "user", "content": user_prompt},
         ],
@@ -295,6 +311,8 @@ async def call_anthropic_chat(
     usage = data.get("usage") or {}
     prompt_tokens = int(usage.get("input_tokens") or 0)
     completion_tokens = int(usage.get("output_tokens") or 0)
+    cache_write_tokens = int(usage.get("cache_creation_input_tokens") or 0)
+    cache_read_tokens = int(usage.get("cache_read_input_tokens") or 0)
     _LOG.info(
         "anthropic OK after %.1fs: model=%s prompt_tokens=%d "
         "completion_tokens=%d stop_reason=%s content_chars=%d",
@@ -312,6 +330,8 @@ async def call_anthropic_chat(
         model=str(data.get("model") or model),
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        cache_write_tokens=cache_write_tokens,
+        cache_read_tokens=cache_read_tokens,
     )
 
 

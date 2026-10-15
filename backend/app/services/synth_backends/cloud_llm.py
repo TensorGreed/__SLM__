@@ -83,6 +83,18 @@ class CloudLlmBackend:
         self._provider: Provider = provider
         self._model = model.strip()
         self._api_key = api_key.strip()
+        # Running totals for this instance (one per job) — what a relabel
+        # reports as its token use and estimated cost.
+        self.usage: dict[str, int] = {
+            "calls": 0, "input_tokens": 0, "output_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 0,
+        }
+
+    # Labelling prompts can pass their stable part separately (``cache_prefix``).
+    supports_prompt_cache: bool = True
+
+    @property
+    def model(self) -> str:
+        return self._model
 
     @classmethod
     def is_available(cls) -> bool:
@@ -104,7 +116,11 @@ class CloudLlmBackend:
         max_tokens: int = 1024,
         temperature: float = 0.7,
         response_schema: dict | None = None,  # noqa: ARG002 — cloud_llm_service uses force_json instead
+        cache_prefix: str | None = None,
     ) -> str:
+        """``cache_prefix``: the stable part of the prompt (instructions that
+        repeat across calls). Anthropic gets it as a cached system block;
+        other providers get it prepended to ``prompt``."""
         # call_*_chat both return CloudLlmResponse with a ``content``
         # str. Map any CloudLlmError to SynthBackendError so the
         # playbook framework's existing 5xx handling kicks in.
@@ -117,6 +133,7 @@ class CloudLlmBackend:
                     user_prompt=prompt,
                     max_tokens=max_tokens,
                     temperature=temperature,
+                    cached_system=cache_prefix,
                 )
             else:
                 # openai + deepseek both ride on call_openai_chat with
@@ -128,7 +145,7 @@ class CloudLlmBackend:
                     api_key=self._api_key,
                     model=self._model,
                     system_prompt=system_prompt or "",
-                    user_prompt=prompt,
+                    user_prompt=(cache_prefix + "\n\n" + prompt) if cache_prefix else prompt,
                     max_tokens=max_tokens,
                     temperature=temperature,
                     api_url=_PROVIDER_URLS[self._provider],
@@ -144,4 +161,9 @@ class CloudLlmBackend:
             raise SynthBackendError(
                 f"Cloud LLM ({self._provider}:{self._model}) failed: {e}"
             ) from e
+        self.usage["calls"] += 1
+        self.usage["input_tokens"] += int(getattr(resp, "prompt_tokens", 0) or 0)
+        self.usage["output_tokens"] += int(getattr(resp, "completion_tokens", 0) or 0)
+        self.usage["cache_write_tokens"] += int(getattr(resp, "cache_write_tokens", 0) or 0)
+        self.usage["cache_read_tokens"] += int(getattr(resp, "cache_read_tokens", 0) or 0)
         return resp.content or ""

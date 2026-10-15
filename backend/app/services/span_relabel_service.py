@@ -75,14 +75,13 @@ _RESPONSE_SCHEMA: dict[str, Any] = {
 }
 
 
-def build_relabel_prompt(texts: list[str], entity_types: list[str], conventions: str = "") -> str:
-    """``conventions``: the project's labelling conventions block
-    (``span_type_definitions_service.definitions_clause``) — the same one
-    the training-label generator sends."""
-    numbered = "\n\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
+def relabel_prompt_parts(texts: list[str], entity_types: list[str], conventions: str = "") -> tuple[str, str]:
+    """(stable, varying): the instructions, types and conventions — the same
+    for every call of a job, sent as a cached block where the provider
+    supports it — and the numbered texts of this call."""
     types = ", ".join(entity_types) if entity_types else "every kind of sensitive or identifying data"
-    return (
-        "Label every entity in each text below. Entity types (use ONLY these, lower-case): "
+    stable = (
+        "Label every entity in each text you are given. Entity types (use ONLY these, lower-case): "
         f"{types}.\n\n"
         f"{conventions + chr(10) if conventions else ''}"
         "Rules:\n"
@@ -90,10 +89,20 @@ def build_relabel_prompt(texts: list[str], entity_types: list[str], conventions:
         "offsets — they are located from the text.\n"
         "- Label every occurrence; a person's name that appears twice is two entities.\n"
         "- Do not invent entities that are not in the text, and do not change the texts.\n\n"
-        f"{numbered}\n\n"
         'Return compact JSON (no indentation) {"rows": [{"index": <text number>, "entities": '
         '[{"type": "...", "text": "..."}, ...]}, ...]} with one row per text, in order.'
     )
+    varying = "Texts:\n\n" + "\n\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
+    return stable, varying
+
+
+def build_relabel_prompt(texts: list[str], entity_types: list[str], conventions: str = "") -> str:
+    """``conventions``: the project's labelling conventions block
+    (``span_type_definitions_service.definitions_clause``) — the same one
+    the training-label generator sends. One string (backends without a
+    prompt cache)."""
+    stable, varying = relabel_prompt_parts(texts, entity_types, conventions)
+    return stable + "\n\n" + varying
 
 
 def _parse_rows(raw: str) -> dict[int, list[dict[str, Any]]]:
@@ -194,6 +203,11 @@ class RelabelSummary:
     dataset_id: int | None = None
     file_path: str | None = None
     warnings: list[str] = field(default_factory=list)
+    # Token use + list-price estimate per model (``llm_pricing``), and the
+    # tiered pass / targeted-relabel reports when they ran.
+    usage: list[dict[str, Any]] = field(default_factory=list)
+    review: dict[str, Any] | None = None
+    targeting: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -210,7 +224,101 @@ class RelabelSummary:
             "dataset_id": self.dataset_id,
             "file_path": self.file_path,
             "warnings": list(self.warnings),
+            "usage": list(self.usage),
+            "cost_usd": round(sum(u.get("usd") or 0 for u in self.usage), 4) if self.usage else None,
+            "tokens": sum(u.get("total_tokens") or 0 for u in self.usage) if self.usage else None,
+            "review": self.review,
+            "targeting": self.targeting,
         }
+
+
+def usage_block(*llms: Any) -> list[dict[str, Any]]:
+    """Per-backend token use + cost estimate (backends that count usage)."""
+    from app.services.llm_pricing import estimate_cost
+
+    out = []
+    for llm in llms:
+        usage = getattr(llm, "usage", None)
+        if isinstance(usage, dict) and usage.get("calls"):
+            out.append({"backend": llm.describe() if hasattr(llm, "describe") else str(llm),
+                        **estimate_cost(getattr(llm, "model", None) or (llm.describe() if hasattr(llm, "describe") else ""), usage)})
+    return out
+
+
+async def latest_span_run_predictions(
+    db: AsyncSession, project_id: int, texts: list[str], experiment_id: int | None = None,
+) -> tuple[int | None, list[list[dict[str, Any]]] | None]:
+    """The project's newest completed token-classification run (or
+    ``experiment_id``) tagging ``texts`` — (run id, spans per text); (None,
+    None) when the project has no such run."""
+    import asyncio
+
+    from sqlalchemy import desc
+
+    from app.models.experiment import Experiment, ExperimentStatus
+    from app.services.evaluation_service import _resolve_token_classifier_artifacts
+    from app.services.post_training_eval_service import is_token_classification
+    from app.services.span_threshold_service import _score_split
+    from app.services.span_type_definitions_service import load_scan_tolerant
+
+    if experiment_id is not None:
+        candidates = [await db.get(Experiment, experiment_id)]
+    else:
+        candidates = list((await db.execute(
+            select(Experiment).where(Experiment.project_id == project_id, Experiment.status == ExperimentStatus.COMPLETED)
+            .order_by(desc(Experiment.id))
+        )).scalars().all())
+    for exp in candidates:
+        if exp is None or exp.project_id != project_id or not is_token_classification(exp) or not exp.output_dir:
+            continue
+        artifacts = _resolve_token_classifier_artifacts(exp.output_dir)
+        if artifacts is None:
+            continue
+        spans = await asyncio.to_thread(
+            _score_split, artifacts["model_path"], artifacts["id2label"], texts, await load_scan_tolerant(db, project_id),
+        )
+        return exp.id, spans
+    return None, None
+
+
+def _span_key(spans: list[dict[str, Any]] | None) -> set[tuple[str, int, int]]:
+    return {(e["type"], int(e["start"]), int(e["end"])) for e in spans or [] if isinstance(e, dict)}
+
+
+async def review_disagreements(
+    db: AsyncSession,
+    project_id: int,
+    texts: list[str],
+    labels: list[list[dict[str, Any]] | None],
+    types: list[str],
+    conventions: str,
+    review_llm: Any,
+    report: ProgressFn,
+    *,
+    experiment_id: int | None = None,
+) -> tuple[list[list[dict[str, Any]] | None], dict[str, Any]]:
+    """Tiered labelling: rows where the bulk labeller and the project's
+    trained model disagree (or the bulk labeller returned nothing) go to
+    ``review_llm``; its labels replace the bulk ones there. Without a
+    trained span model nothing is reviewed (reported)."""
+    run_id, preds = await latest_span_run_predictions(db, project_id, texts, experiment_id)
+    if preds is None:
+        return labels, {"skipped": "no trained span model to compare with", "rows": len(texts), "disagreed": 0, "reviewed": 0}
+    disagree = [i for i, (lab, pred) in enumerate(zip(labels, preds)) if lab is None or _span_key(lab) != _span_key(pred)]
+    review_label = review_llm.describe() if hasattr(review_llm, "describe") else "review model"
+    reviewed = 0
+    if disagree:
+        new, _calls = await label_texts_any(review_llm, [texts[i] for i in disagree], types, conventions, report, review_label)
+        out = list(labels)
+        for k, i in enumerate(disagree):
+            if new[k] is not None:
+                out[i] = new[k]
+                reviewed += 1
+        labels = out
+    return labels, {
+        "review_backend": review_label, "model_experiment_id": run_id,
+        "rows": len(texts), "disagreed": len(disagree), "reviewed": reviewed,
+    }
 
 
 async def label_texts(
@@ -243,9 +351,14 @@ async def label_texts(
         calls["made"] += 1
         parsed: dict[int, list[dict[str, Any]]] = {}
         try:
+            stable, varying = relabel_prompt_parts(batch_texts, types, conventions)
+            cache_kwargs = (
+                {"cache_prefix": stable} if getattr(llm, "supports_prompt_cache", False) else {}
+            )
             raw = await llm.complete(
-                build_relabel_prompt(batch_texts, types, conventions),
+                varying if cache_kwargs else stable + "\n\n" + varying,
                 system_prompt=_SYSTEM_PROMPT,
+                **cache_kwargs,
                 # A long text carries more entities: budget the reply by length.
                 max_tokens=max(2000, sum(max(TOKENS_PER_TEXT, len(texts[i]) // 3) for i in batch)),
                 temperature=0.0,
@@ -372,6 +485,7 @@ async def relabel_split_as_answer_key(
     if len(labelled) < len(keep):
         summary.warnings.append(f"{len(keep) - len(labelled)} of {len(keep)} texts were not labelled.")
     await report(1.0, f"Answer key written: {len(labelled)} rows, {sum(counts.values())} entities")
+    summary.usage = usage_block(llm)
     return summary
 
 
@@ -457,6 +571,7 @@ async def relabel_split_in_place(
         summary.warnings.append(f"Also updated {len(snapshots)} saved version(s) holding the same {split} split.")
     if len(done) < len(span_idx):
         summary.warnings.append(f"{len(span_idx) - len(done)} of {len(span_idx)} rows got no labels back and kept their old ones.")
+    summary.usage = usage_block(llm)
     return summary
 
 
@@ -470,11 +585,20 @@ async def relabel_training_rows(
     backend_override: Any = None,
     source: str | None = None,
     only_stale: bool = False,
+    only_affected: bool = False,
+    review_override: Any = None,
+    review_experiment_id: int | None = None,
+    dry_run: bool = False,
 ) -> RelabelSummary:
     """``source``: only the rows of that ``synth_source`` group (e.g.
     ``document_labels:doc=740``) — redo one batch without the rest.
     ``only_stale``: only rows not stamped with the current conventions
-    version (what the review queue counts as stale).
+    version (what the review queue counts as stale). ``only_affected``
+    (implies only_stale): of those, only rows the change touches — a span
+    of a changed type, or text a changed type's pattern matches; the rest
+    are re-stamped as current without a call (``conventions_carried_
+    forward_at``). ``review_override``: a second (stronger) labeller run
+    only on rows where this one and the project's trained model disagree.
 
     Relabel the project's saved synthetic span rows IN PLACE with
     ``backend`` under the project's labelling conventions — texts unchanged,
@@ -517,15 +641,68 @@ async def relabel_training_rows(
 
     definitions = await load_definitions(db, project_id)
     scan_tolerant = await load_scan_tolerant(db, project_id)
-    if only_stale:
+    from app.services.span_type_definitions_service import (
+        HISTORY_KEY,
+        changed_types,
+        conventions_snapshot,
+        remember_current_conventions,
+        row_affected,
+    )
+
+    await remember_current_conventions(db, project_id)
+    targeting: dict[str, Any] | None = None
+    carried: list[int] = []
+    if only_stale or only_affected:
         current = conventions_version(definitions, scan_tolerant)
         keep = [j for j, i in enumerate(span_idx) if rows[i].get(CONVENTIONS_VERSION_KEY) != current]
         if not keep:
             raise RuntimeError(
                 "Every row" + (f" in {source!r}" if source else "") + " is already labelled under the current conventions."
             )
+        if only_affected:
+            from app.models.project import Project
+            from app.services.synthetic_service import _extract_entities_via_regex
+
+            project = await db.get(Project, project_id)
+            history = dict((project.runtime_config or {}).get(HISTORY_KEY) or {}) if project is not None else {}
+            now = conventions_snapshot(definitions, scan_tolerant)
+
+            def _pattern_hit(text: str, kinds: list[str]) -> bool:
+                return bool(_extract_entities_via_regex(text, kinds))
+
+            affected, changed_seen = [], set()
+            for j in keep:
+                row = rows[span_idx[j]]
+                changed = changed_types(history.get(str(row.get(CONVENTIONS_VERSION_KEY) or "")), now)
+                if changed:
+                    changed_seen |= changed
+                if row_affected(row, changed, _pattern_hit):
+                    affected.append(j)
+                else:
+                    carried.append(span_idx[j])
+            targeting = {
+                "stale_rows": len(keep), "affected_rows": len(affected), "carried_forward": len(carried),
+                "changed_types": sorted(changed_seen),
+            }
+            keep = affected
+        if dry_run:
+            return RelabelSummary(
+                project_id=project_id, split="synthetic", backend="(dry run — no model called)",
+                rows=len(keep), labelled_rows=0, failed_calls=0, entities=0, targeting=targeting,
+            )
         span_idx = [span_idx[j] for j in keep]
         old_labels = [old_labels[j] for j in keep]
+        if not span_idx and carried:
+            stamp_now = datetime.now(timezone.utc).isoformat()
+            for i in carried:
+                rows[i][CONVENTIONS_VERSION_KEY] = current
+                rows[i]["conventions_carried_forward_at"] = stamp_now
+            path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+            return RelabelSummary(
+                project_id=project_id, split="synthetic", backend="(none — no row touched by the change)",
+                rows=0, labelled_rows=0, failed_calls=0, entities=0, file_path=str(path), targeting=targeting,
+                warnings=[f"{len(carried)} stale rows don't involve the changed types and were carried forward without relabelling."],
+            )
     types = [t.strip().lower() for t in (entity_types or []) if isinstance(t, str) and t.strip()]
     if not types:
         # The project's vocabulary: every defined type plus every type any
@@ -540,10 +717,19 @@ async def relabel_training_rows(
     backend_label = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
     texts = [rows[i]["text"] for i in span_idx]
     new_labels, calls = await label_texts_any(llm, texts, types, conventions, report, backend_label)
+    review = None
+    if review_override is not None:
+        new_labels, review = await review_disagreements(
+            db, project_id, texts, new_labels, types, conventions, review_override, report,
+            experiment_id=review_experiment_id,
+        )
 
     stamp = datetime.now(timezone.utc).isoformat()
     counts: Counter[str] = Counter()
     relabelled = 0
+    for i in carried:
+        rows[i][CONVENTIONS_VERSION_KEY] = version
+        rows[i]["conventions_carried_forward_at"] = stamp
     for j, i in enumerate(span_idx):
         spans = new_labels[j]
         if spans is None:
@@ -566,6 +752,9 @@ async def relabel_training_rows(
         agreement=agreement([old_labels[j] for j in done], [rows[span_idx[j]]["entities"] for j in done]),
         conventions_types=[t for t in types if t in definitions], file_path=str(path),
     )
+    summary.usage = usage_block(llm, *([review_override] if review_override is not None else []))
+    summary.review = review
+    summary.targeting = targeting
     kept_old = len(span_idx) - relabelled
     if kept_old:
         summary.warnings.append(
@@ -762,6 +951,8 @@ async def _label_and_append(
     backend_override: Any,
     texts_per_call: int = TEXTS_PER_CALL,
     piece_chars: int | None = None,
+    review_override: Any = None,
+    review_experiment_id: int | None = None,
 ) -> RelabelSummary:
     """Label ``items`` (text, metadata) as they are under the conventions
     (+ regex pass) and append them to ``synthetic.jsonl`` as pending rows
@@ -818,6 +1009,12 @@ async def _label_and_append(
         llm, texts, types, conventions, report, backend_label,
         piece_chars=piece_chars or LABEL_PIECE_CHARS, texts_per_call=texts_per_call,
     )
+    review = None
+    if review_override is not None:
+        labels, review = await review_disagreements(
+            db, project_id, texts, labels, types, conventions, review_override, report,
+            experiment_id=review_experiment_id,
+        )
 
     stamp = datetime.now(timezone.utc).isoformat()
     counts: Counter[str] = Counter()
@@ -862,6 +1059,8 @@ async def _label_and_append(
             f"{missing} of {len(todo)} texts got no labels back ({calls['failed']} failed calls) and were left out."
         )
     await report(1.0, f"Labelled {len(new_rows)} rows — accept them in the review queue ({source_prefix}:doc=…)")
+    summary.usage = usage_block(llm, *([review_override] if review_override is not None else []))
+    summary.review = review
     return summary
 
 
@@ -874,6 +1073,7 @@ async def label_passages_as_training_rows(
     entity_types: list[str] | None = None,
     progress: ProgressFn | None = None,
     backend_override: Any = None,
+    review_override: Any = None,
     max_passages: int = 2000,
 ) -> RelabelSummary:
     """Label the project's cleaned document passages AS THEY ARE (no
@@ -894,7 +1094,7 @@ async def label_passages_as_training_rows(
             + (f" for document #{document_id}" if document_id is not None else "")
             + f" in project {project_id} ({len(passages)} passages, all already labelled)."
         ),
-        backend=backend, entity_types=entity_types, progress=progress, backend_override=backend_override,
+        backend=backend, entity_types=entity_types, progress=progress, backend_override=backend_override, review_override=review_override,
     )
 
 
@@ -908,6 +1108,7 @@ async def label_documents_as_training_rows(
     entity_types: list[str] | None = None,
     progress: ProgressFn | None = None,
     backend_override: Any = None,
+    review_override: Any = None,
     max_rows: int = 1000,
 ) -> RelabelSummary:
     """Like ``label_passages_as_training_rows`` but on WHOLE documents: each
@@ -931,6 +1132,6 @@ async def label_documents_as_training_rows(
         db, project_id, items,
         source_prefix=DOCUMENT_SOURCE_PREFIX, split_label="documents",
         nothing_new=f"All {len(items)} document rows of project {project_id} are already labelled.",
-        backend=backend, entity_types=entity_types, progress=progress, backend_override=backend_override,
+        backend=backend, entity_types=entity_types, progress=progress, backend_override=backend_override, review_override=review_override,
         piece_chars=LABEL_PIECE_CHARS,
     )

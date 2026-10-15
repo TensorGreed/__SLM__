@@ -712,7 +712,7 @@ describe('SynthReviewQueue — groups labelled under older conventions', () => {
         expect(screen.getByTestId('synth-review-queue-stale-badge-passage_labels:doc=739')).toBeInTheDocument();
         await user.click(screen.getByTestId('synth-review-queue-relabel-passage_labels:doc=739'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/31/synthetic/relabel-answer-key', {
-            target: 'training', source: 'passage_labels:doc=739', backend: 'ollama', only_stale: true,
+            target: 'training', source: 'passage_labels:doc=739', backend: 'ollama', only_stale: true, only_affected: true,
         }));
         expect(await screen.findByText('relabelling (job #190)')).toBeInTheDocument();
     });
@@ -752,7 +752,27 @@ describe('SynthReviewQueue — groups labelled under older conventions', () => {
         expect(btn).toHaveTextContent('with cloud:anthropic:haiku');
         await user.click(btn);
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/31/synthetic/relabel-answer-key', {
-            target: 'training', source: 'passage_labels:doc=739', backend: 'cloud:anthropic:haiku', only_stale: true,
+            target: 'training', source: 'passage_labels:doc=739', backend: 'cloud:anthropic:haiku', only_stale: true, only_affected: true,
+        }));
+    });
+
+    it('sends a review model for the tiered pass when one is picked', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 31, dataset_id: 1, total_rows: 2, total_pending: 0, total_accepted: 2,
+                groups: [], accepted_groups: [staleGroup], rejected_groups: [],
+                labeller_pins: ['cloud:anthropic:haiku', 'cloud:anthropic:sonnet'],
+            },
+        });
+        apiMock.post.mockResolvedValue({ data: { id: 192 } });
+        const user = userEvent.setup();
+        render(<SynthReviewQueue projectId={31} />);
+        await user.selectOptions(await screen.findByTestId('synth-review-queue-relabel-with'), 'cloud:anthropic:haiku');
+        await user.selectOptions(screen.getByTestId('synth-review-queue-review-with'), 'cloud:anthropic:sonnet');
+        await user.click(screen.getByTestId('synth-review-queue-relabel-passage_labels:doc=739'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/31/synthetic/relabel-answer-key', {
+            target: 'training', source: 'passage_labels:doc=739', backend: 'cloud:anthropic:haiku',
+            only_stale: true, only_affected: true, review_backend: 'cloud:anthropic:sonnet',
         }));
     });
 

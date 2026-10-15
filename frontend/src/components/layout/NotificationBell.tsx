@@ -171,6 +171,19 @@ function jobOutcomeSummary(job: Job): string | null {
         }
         if (entities !== null) parts.push(`${entities} entities`);
         if (agreement !== null) parts.push(`agreement with the old labels F1 ${agreement.toFixed(2)}`);
+        const review = r.review as { reviewed?: number; disagreed?: number; rows?: number; review_backend?: string; skipped?: string } | null | undefined;
+        if (review?.skipped) parts.push(`no review pass (${review.skipped})`);
+        else if (review && typeof review.disagreed === 'number') {
+            parts.push(`${review.review_backend ?? 'review model'} checked ${review.disagreed} of ${review.rows} rows (disagreements)`);
+        }
+        const targeting = r.targeting as { affected_rows?: number; carried_forward?: number } | null | undefined;
+        if (targeting && typeof targeting.carried_forward === 'number' && targeting.carried_forward > 0) {
+            parts.push(`${targeting.carried_forward} rows untouched by the change carried forward`);
+        }
+        if (typeof r.tokens === 'number' && r.tokens > 0) {
+            const k = r.tokens >= 1000 ? `${Math.round(r.tokens / 1000)}k` : String(r.tokens);
+            parts.push(typeof r.cost_usd === 'number' ? `${k} tokens (~$${r.cost_usd.toFixed(2)} at list price)` : `${k} tokens`);
+        }
         return parts.length ? parts.join(' · ') : null;
     }
     if (job.kind === 'seed_documents') {

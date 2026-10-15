@@ -161,6 +161,81 @@ async def load_conventions_version(db: AsyncSession | None, project_id: int) -> 
     return project_conventions_version(project) if project is not None else None
 
 
+# What each conventions version said, so a later change can be diffed type
+# by type: runtime_config[HISTORY_KEY] = {version: snapshot}. A row stamped
+# with an older version is only *affected* by the change if it involves a
+# changed type (``rows_affected``) — the rest keep their labels.
+HISTORY_KEY = "conventions_history"
+MAX_HISTORY = 50
+
+
+def conventions_snapshot(definitions: dict[str, str] | None, scan_tolerant: bool = False) -> dict[str, Any]:
+    return {
+        "definitions": normalise_definitions(definitions),
+        "scan_tolerant": bool(scan_tolerant),
+        "clause": SCAN_TOLERANT_CLAUSE if scan_tolerant else None,
+    }
+
+
+def remember_conventions(project: Any) -> str | None:
+    """Record the project's current conventions under their version in
+    ``runtime_config[HISTORY_KEY]`` (on the object; the caller commits).
+    Returns the version (None without conventions)."""
+    defs, scan = project_definitions(project), project_scan_tolerant(project)
+    version = conventions_version(defs, scan)
+    if version is None:
+        return None
+    cfg = dict(project.runtime_config or {})
+    history = dict(cfg.get(HISTORY_KEY) or {})
+    if version not in history:
+        history[version] = conventions_snapshot(defs, scan)
+        while len(history) > MAX_HISTORY:
+            history.pop(next(iter(history)))
+        cfg[HISTORY_KEY] = history
+        project.runtime_config = cfg
+    return version
+
+
+async def remember_current_conventions(db: AsyncSession, project_id: int) -> str | None:
+    from app.models.project import Project
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        return None
+    before = dict(project.runtime_config or {}).get(HISTORY_KEY)
+    version = remember_conventions(project)
+    if dict(project.runtime_config or {}).get(HISTORY_KEY) != before:
+        await db.commit()
+    return version
+
+
+def changed_types(old: dict[str, Any] | None, new: dict[str, Any] | None) -> set[str] | None:
+    """Types whose definition was added, removed or reworded between two
+    snapshots; None when the change isn't type-local (the scanned-text flag
+    or clause changed, or a snapshot is unknown) — then every row is
+    affected."""
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return None
+    if bool(old.get("scan_tolerant")) != bool(new.get("scan_tolerant")) or old.get("clause") != new.get("clause"):
+        return None
+    a, b = old.get("definitions") or {}, new.get("definitions") or {}
+    return {t for t in set(a) | set(b) if a.get(t) != b.get(t)}
+
+
+def row_affected(row: dict[str, Any], changed: set[str] | None, pattern_hit: Any = None) -> bool:
+    """Whether a row labelled under an older version needs relabelling:
+    always when the change isn't type-local; otherwise when it has a span
+    of a changed type or ``pattern_hit(text, types)`` finds one in its text
+    (an unlabelled instance the new wording may now cover)."""
+    if changed is None:
+        return True
+    if not changed:
+        return False
+    if any(isinstance(e, dict) and e.get("type") in changed for e in row.get("entities") or []):
+        return True
+    return bool(pattern_hit and pattern_hit(str(row.get("text") or ""), sorted(changed)))
+
+
 _LABELLER_SOURCE_PREFIXES = ("passage_labels:", "document_labels:")
 
 

@@ -636,6 +636,9 @@ function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] 
     const [started, setStarted] = useState<Record<string, number>>({});
     // '' = each group's own labeller; else one pin for every group.
     const [withPin, setWithPin] = useState('');
+    // Tiered labelling: a second model checks only rows where the relabel
+    // and the project's trained model disagree ('' = no review pass).
+    const [reviewPin, setReviewPin] = useState('');
     const pinFor = (group: ReviewQueueGroup) => withPin || group.conventions?.relabel_pin || null;
     const stale = groups.filter((g) => g.conventions?.is_stale);
     // The user attests a group already follows the current conventions
@@ -663,8 +666,11 @@ function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] 
                 target: 'training',
                 source: group.synth_source,
                 backend: pin,
-                // Only the rows not labelled under the current conventions.
+                // Only the stale rows the convention change touches; the
+                // rest are carried forward without a model call.
                 only_stale: true,
+                only_affected: true,
+                ...(reviewPin ? { review_backend: reviewPin } : {}),
             });
             setStarted((prev) => ({ ...prev, [group.synth_source]: res.data?.id }));
             toast.info(
@@ -690,6 +696,22 @@ function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] 
                         data-testid="synth-review-queue-relabel-with"
                     >
                         <option value="">each group&apos;s own labeller</option>
+                        {labellerPins.map((pin) => (
+                            <option key={pin} value={pin}>{pin}</option>
+                        ))}
+                    </select>
+                </label>
+            )}
+            {labellerPins.length > 0 && (
+                <label className="synth-review-queue__stale-with">
+                    Review disagreements with{' '}
+                    <select
+                        value={reviewPin}
+                        onChange={(e) => setReviewPin(e.target.value)}
+                        data-testid="synth-review-queue-review-with"
+                        title="Only rows where the relabel and your trained model disagree go to this model — e.g. Haiku for the bulk, Sonnet for the disagreements."
+                    >
+                        <option value="">no review pass</option>
                         {labellerPins.map((pin) => (
                             <option key={pin} value={pin}>{pin}</option>
                         ))}

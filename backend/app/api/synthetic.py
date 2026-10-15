@@ -748,6 +748,14 @@ class RelabelAnswerKeyRequest(BaseModel):
     # target "training": only rows not labelled under the current
     # conventions (the review queue's stale rows) — current rows untouched.
     only_stale: bool = False
+    # Only the stale rows a convention change touches (implies only_stale).
+    only_affected: bool = False
+    # Tiered labelling: a second (stronger) model, run only on rows where
+    # ``backend`` and the project's trained span model disagree.
+    review_backend: str | None = None
+    review_experiment_id: int | None = None
+    # With only_affected: report how many rows the change touches, call no model.
+    dry_run: bool = False
 
 
 @router.post("/relabel-answer-key", status_code=202)
@@ -774,6 +782,13 @@ async def relabel_answer_key(
 
     req = data or RelabelAnswerKeyRequest()
     cloud_override = await _resolve_cloud_backend_override(db, project_id, req.backend)
+    review_override = None
+    if req.review_backend:
+        review_override = await _resolve_cloud_backend_override(db, project_id, req.review_backend)
+        if review_override is None:
+            from app.services.synth_backends.base import pick_backend
+
+            review_override = pick_backend(req.review_backend)
     in_flight = (
         await db.execute(
             select(Job).where(Job.kind == "span_relabel", Job.project_id == project_id)
@@ -795,12 +810,14 @@ async def relabel_answer_key(
                     runner_db, project_id, document_id=req.document_id, max_chars=req.max_chars,
                     backend=req.backend if cloud_override is None else None,
                     entity_types=req.entity_types, progress=_progress, backend_override=cloud_override,
+                    review_override=review_override,
                 )
             elif req.target == "passages":
                 summary = await label_passages_as_training_rows(
                     runner_db, project_id, document_id=req.document_id,
                     backend=req.backend if cloud_override is None else None,
                     entity_types=req.entity_types, progress=_progress, backend_override=cloud_override,
+                    review_override=review_override,
                 )
             elif req.target == "split":
                 from app.services.span_relabel_service import relabel_split_in_place
@@ -813,8 +830,11 @@ async def relabel_answer_key(
             elif req.target == "training":
                 summary = await relabel_training_rows(
                     runner_db, project_id, source=req.source or None, only_stale=req.only_stale,
+                    only_affected=req.only_affected,
                     backend=req.backend if cloud_override is None else None,
                     entity_types=req.entity_types, progress=_progress, backend_override=cloud_override,
+                    review_override=review_override, review_experiment_id=req.review_experiment_id,
+                    dry_run=req.dry_run,
                 )
             else:
                 summary = await relabel_split_as_answer_key(
@@ -1011,14 +1031,18 @@ async def put_type_definitions(
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
-    from app.services.span_type_definitions_service import SCAN_TOLERANT_KEY
+    from app.services.span_type_definitions_service import SCAN_TOLERANT_KEY, remember_conventions
 
+    # Snapshot the wording before and after, so rows labelled under the
+    # old one can be diffed type by type (targeted relabels).
+    remember_conventions(project)
     cfg = dict(project.runtime_config or {})
     if data.definitions is not None:
         cfg[DEFINITIONS_KEY] = normalise_definitions(data.definitions)
     if data.scan_tolerant is not None:
         cfg[SCAN_TOLERANT_KEY] = bool(data.scan_tolerant)
     project.runtime_config = cfg
+    remember_conventions(project)
     await db.commit()
     return {"definitions": cfg.get(DEFINITIONS_KEY) or {}, "scan_tolerant": bool(cfg.get(SCAN_TOLERANT_KEY))}
 
