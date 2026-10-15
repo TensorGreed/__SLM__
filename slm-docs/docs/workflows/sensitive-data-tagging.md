@@ -810,6 +810,31 @@ The relabel button in the review queue now relabels only the rows that are
 not labelled under the current conventions (`only_stale`), so retrying the
 27 rows Sonnet skipped sent 27 rows, not the thousand around them.
 
+**Identifier formats (P1p, 2026-10-15).** 50 more documents were generated
+from a generic brief — licence plates from eight countries, sort codes /
+IBANs / masked accounts, spaced / dashed / masked card numbers, employee
+ids, MRNs, full addresses in several layouts (never from Gretel's
+examples) — and labelled by Sonnet (90 passages: 131 plates, 113 addresses,
+80 cards, 78 employee ids, 61 MRNs, 71 accounts / IBANs). Three seeds of
+#87's config on the new split:
+
+| | #87 (3 seeds) | + identifier rows (3 seeds) |
+|---|---|---|
+| Gretel PII F1 | 0.562 ± 0.004 | **0.619 ± 0.011** |
+| CoNLL people F1 | 0.666 ± 0.032 | 0.678 ± 0.036 (no regression) |
+| scan / clean key (Sonnet) | 0.861 / 0.957 | 0.866 / 0.976 |
+
+Employee ids rose 0.45 → 0.62, email 0.81 → 0.94, IP addresses 0.75 →
+0.83. License plates (0.00 → 0.08), card numbers (0.41 → 0.40) and bank
+accounts (0.09 → 0.10) did not move, and the misses say why: the model
+reads an identifier's *shape* and ignores the label in front of it — a
+16-digit number after "Credit Card Number:" is tagged bank_account, and
+Gretel's synthetic plates ("G71-6482-344-91") look like nothing but an id,
+so only the word "License plate" could tell. Two misses are convention
+differences, not errors: Gretel keeps an "ACCT-" prefix the scanned-text
+rule strips. The next gap is context, not formats: rows where the same
+shape carries different types depending on the label before it.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the
