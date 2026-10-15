@@ -197,6 +197,16 @@ _ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_API_VERSION = "2023-06-01"
 
 
+# Models that reject a ``temperature`` field (newer Anthropic models answer
+# 400 "`temperature` is deprecated for this model"). Learned on the first
+# such 400; later calls to that model leave it out.
+_NO_TEMPERATURE_MODELS: set[str] = set()
+
+
+def _rejects_temperature(status: int, body: str) -> bool:
+    return status == 400 and "temperature" in body and ("deprecated" in body or "not supported" in body)
+
+
 async def call_anthropic_chat(
     *,
     api_key: str,
@@ -226,24 +236,27 @@ async def call_anthropic_chat(
             {"role": "user", "content": user_prompt},
         ],
         "max_tokens": max_tokens,
-        "temperature": temperature,
     }
+    if model not in _NO_TEMPERATURE_MODELS:
+        payload["temperature"] = temperature
     started = time.monotonic()
     _LOG.info(
         "anthropic call → model=%s max_tokens=%d",
         model, max_tokens,
     )
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": _ANTHROPIC_API_VERSION,
+        "Content-Type": "application/json",
+    }
     async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT_SECONDS) as client:
         try:
-            resp = await client.post(
-                _ANTHROPIC_URL,
-                json=payload,
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": _ANTHROPIC_API_VERSION,
-                    "Content-Type": "application/json",
-                },
-            )
+            resp = await client.post(_ANTHROPIC_URL, json=payload, headers=headers)
+            if "temperature" in payload and _rejects_temperature(resp.status_code, resp.text):
+                _NO_TEMPERATURE_MODELS.add(model)
+                payload.pop("temperature")
+                _LOG.info("anthropic model=%s rejects temperature; retrying without it", model)
+                resp = await client.post(_ANTHROPIC_URL, json=payload, headers=headers)
         except httpx.HTTPError as exc:
             elapsed = time.monotonic() - started
             _LOG.warning(

@@ -734,6 +734,34 @@ looks like), so none was retired. Haiku also tags some footer print
 dates despite the convention, so that error is the labeller's, not the
 old groups'.
 
+**A stronger answer key, and the first external check (2026-10-15).**
+Both keys were re-keyed by Claude Sonnet. Sonnet agrees with Haiku's clean
+key at F1 0.92 but with its scan key at only 0.76 — on OCR'd text the two
+labellers disagree about a quarter of the spans, so scan scores carry a lot
+of key noise. On the Sonnet keys runs #73–#79 score 0.71–0.74 (scan) and
+0.85–0.88 (clean). Most of the clean-key gap is one ambiguity in the
+conventions: `provider_name`'s example is "Dr. Chen" (title included) while
+`person_name` says "without a title" — Haiku kept "Dr.", Sonnet dropped it.
+Pick one and say it in both definitions.
+
+The project's model was then scored on an [external benchmark](./external-benchmarks.md):
+400 sentences of CoNLL-2003 news (people's names, labelled by people) — F1
+0.21, recall 0.13. The model had only ever seen names in correspondence.
+`person_name` was widened to any person's name ("private individuals and
+public figures alike"), and 40 news-style documents (match reports, wire
+stories, press releases, court reports — 107 passages, 375 names) were
+labelled by Sonnet and added:
+
+| run | CoNLL people (P / R / F1) | scan key (Sonnet) | clean key (Sonnet) |
+|---|---|---|---|
+| #74 | 0.52 / 0.13 / 0.21 | 0.735 | 0.861 |
+| #86 (+ news names) | **0.90 / 0.33 / 0.49** | **0.757** | **0.882** |
+
+The benchmark more than doubled and the project's own keys went up, not
+down. Recall on news names is still low (0.33): sports results ("Andrei
+Ivanov ( Russia ) 24.88") and surnames alone on later mentions are the
+misses.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the

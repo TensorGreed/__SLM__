@@ -1253,6 +1253,11 @@ runs real CPU inference). ~4 min locally.
   cards + `RetiredGroupsList` with Restore. `relabel_training_rows(source=)`
   matches groups with the queue's `_resolve_source_label` (rows without a
   synth_source are `legacy:<source>`).
+- **Anthropic `temperature`**: newer models (e.g. claude-sonnet-5-5) answer
+  400 "`temperature` is deprecated for this model" —
+  `cloud_llm_service.call_anthropic_chat` retries once without it and records
+  the model in `_NO_TEMPERATURE_MODELS` (later calls omit it). Tests:
+  `tests/test_cloud_llm_temperature.py`.
 - **Ollama context**: `synth_backends/ollama.context_window_for` sets
   `num_ctx` per request (prompt chars / 3 + max_tokens + 256, buckets
   4096 / 8192 / 16384 / 32768) — without it Ollama runs at its server
