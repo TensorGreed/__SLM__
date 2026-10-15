@@ -116,3 +116,7 @@
 .eval-summary__regime-table thead th { color: var(--text-tertiary); }
 .eval-summary__regime-recall { font-size: 0.95rem; }
 .eval-summary__regime-unscored { color: var(--text-tertiary); font-size: 0.8rem; }
+
+/* Multi-seed run: ship one seed (SeedShipTable). */
+.eval-summary__seed-ship { margin-top: 0.75rem; }
+.eval-summary__seed-picked { color: var(--accent-primary, var(--text-primary)); font-weight: 600; }

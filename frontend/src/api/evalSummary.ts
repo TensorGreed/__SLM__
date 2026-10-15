@@ -139,6 +139,8 @@ export interface EvalSummary {
     seeds?: Array<{ experiment_id: number; seed_value: number | null; headline: EvalSummaryHeadline | null }> | null;
     n_seeds?: number;
     representative_experiment_id?: number | null;
+    /** True when the summarised run is a multi-seed leader ("Ship this seed"). */
+    seed_group_leader?: boolean;
     baseline?: { experiment_id: number; base_model: string } | null;
     trained?: { experiment_id: number; experiment_name: string } | null;
     eval_result_id?: number;

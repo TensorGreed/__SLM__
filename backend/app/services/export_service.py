@@ -862,6 +862,10 @@ async def run_export(
         )
         # A span tagger ships with a model card (evidence-only) and the
         # per-type thresholds its scored decoder reads.
+        # A seed picked from a multi-seed group says how it was picked.
+        from app.services.seed_selection_service import selection_for_experiment
+
+        seed_selection = await selection_for_experiment(db, experiment)
         span_package = None
         if export.export_format not in COMPRESSED_EXPORT_FORMATS:
             from app.services.span_model_package_service import package_token_classifier
@@ -872,6 +876,7 @@ async def run_export(
                 experiment=experiment,
                 model_dir=model_dir,
                 project_name=project.name if project else None,
+                seed_selection=seed_selection,
             )
             if span_package:
                 known = {p.resolve() for p in copied_model_files}
@@ -944,6 +949,7 @@ async def run_export(
                     f"+ thresholds.json; HF pipeline stride={span_package['pipeline_stride']}\n"
                     if span_package else ""
                 )
+                + (f"- Seed selection: {seed_selection['text']}\n" if seed_selection else "")
             ),
             encoding="utf-8",
         )
@@ -953,6 +959,7 @@ async def run_export(
         manifest = {
             "token_window": window_note,
             "span_package": span_package,
+            "seed_selection": seed_selection,
             "run_id": run_id,
             "export_id": export.id,
             "project_id": export.project_id,

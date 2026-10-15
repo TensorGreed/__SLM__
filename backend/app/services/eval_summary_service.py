@@ -196,6 +196,12 @@ async def build_eval_summary(
     project's external benchmarks with this run's latest score on each
     (``benchmarks``, empty when the project has none)."""
     summary = await _build_eval_summary_core(db, project_id, experiment_id)
+    # A multi-seed run's card offers "Ship this seed" (seed_selection_service).
+    summary_run = summary.get("experiment_id")
+    leader = await db.get(Experiment, summary_run) if summary_run is not None else None
+    summary["seed_group_leader"] = bool(
+        leader is not None and leader.seed_group_id and leader.seed_value is None
+    )
     try:
         from app.services.external_benchmark_service import benchmarks_for_run
 
