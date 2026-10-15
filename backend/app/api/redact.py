@@ -38,3 +38,20 @@ async def redact(project_id: int, req: RedactRequest, db: AsyncSession = Depends
         )
     except redaction_service.RedactionError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+class TuneThresholdsRequest(BaseModel):
+    experiment_id: int
+
+
+@router.post("/span-thresholds/tune")
+async def tune_span_thresholds(project_id: int, req: TuneThresholdsRequest, db: AsyncSession = Depends(get_db)):
+    """Tune a span run's per-type score thresholds on the validation split
+    and write them to its thresholds.json (read by evaluation, the redact
+    endpoint and the export). See ``span_threshold_service``."""
+    from app.services.span_threshold_service import tune_run_thresholds
+
+    try:
+        return await tune_run_thresholds(db, project_id, req.experiment_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc

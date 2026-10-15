@@ -159,6 +159,20 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     const [summary, setSummary] = useState<EvalSummary | null>(null);
     const [loading, setLoading] = useState(true);
     const [starting, setStarting] = useState(false);
+    // Span runs: per-type score thresholds tuned on the validation split.
+    const [tuning, setTuning] = useState(false);
+    const [tuned, setTuned] = useState<{ rows: number; micro_f1_before: number; micro_f1_after: number; raised: Record<string, number> } | null>(null);
+    const tuneThresholds = async (expId: number) => {
+        setTuning(true);
+        try {
+            const res = await api.post(`/projects/${projectId}/span-thresholds/tune`, { experiment_id: expId });
+            setTuned(res.data);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Could not tune thresholds.', 5000);
+        } finally {
+            setTuning(false);
+        }
+    };
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -329,6 +343,18 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         {starting ? 'Starting…' : 'Re-evaluate'}
                     </button>
                 )}
+                {isSpan && runId != null && (
+                    <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => void tuneThresholds(runId)}
+                        disabled={tuning}
+                        data-testid="eval-summary-tune-thresholds"
+                        title="Per type, keep only spans scored above the threshold that maximises that type's F1 on the validation split (thresholds.json — used by evaluation, redaction and the export). Re-evaluate afterwards."
+                    >
+                        {tuning ? 'Tuning…' : 'Tune thresholds'}
+                    </button>
+                )}
                 {canCheckSeeds && !isSpan && !isHead && (
                     <button
                         type="button"
@@ -429,6 +455,15 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         : summary.judge.retrieval.wrong_misread > 0
                             ? ' The reader is the bigger lever here — a stronger base model, not a different retrieval.'
                             : ''}
+                </p>
+            )}
+            {isSpan && tuned && (
+                <p className="eval-summary__message" data-testid="eval-summary-tuned">
+                    Thresholds tuned on {tuned.rows} validation rows: F1 {tuned.micro_f1_before.toFixed(2)} → {tuned.micro_f1_after.toFixed(2)}
+                    {Object.keys(tuned.raised).length > 0
+                        ? ` · raised ${Object.entries(tuned.raised).map(([t, v]) => `${t} ≥ ${v}`).join(', ')}`
+                        : ' · no type gained from a threshold (all stay at 0)'}
+                    . Re-evaluate to score the test examples and benchmarks with them.
                 </p>
             )}
             {isSpan && (

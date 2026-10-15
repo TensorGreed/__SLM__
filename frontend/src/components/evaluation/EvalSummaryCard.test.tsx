@@ -92,6 +92,24 @@ describe('EvalSummaryCard', () => {
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/7/evaluation/summary/lift-check', { experiment_id: 59 }));
     });
 
+    it('tunes per-type thresholds for a span run and says what changed', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                kind: 'span_eval', project_id: 7, experiment_id: 59, verdict: 'evaluated', message: null, headline: null,
+                trained: { experiment_name: 'tc' }, answer_key: null,
+                test: { eval_result_id: 1, dataset_name: 'test', precision: 0.8, recall: 0.8, f1: 0.8, rows: 44, weakest_types: [] },
+                dataset_name: 'test', evaluated_samples: 44, failed_count: 0, failures: [],
+            },
+        });
+        apiMock.post.mockResolvedValue({ data: { rows: 136, micro_f1_before: 0.931, micro_f1_after: 0.937, raised: { bank_account: 0.7 } } });
+        render(<EvalSummaryCard projectId={7} experimentId={59} />);
+        await userEvent.setup().click(await screen.findByTestId('eval-summary-tune-thresholds'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/7/span-thresholds/tune', { experiment_id: 59 }));
+        expect(await screen.findByTestId('eval-summary-tuned')).toHaveTextContent(
+            'Thresholds tuned on 136 validation rows: F1 0.93 → 0.94 · raised bank_account ≥ 0.7',
+        );
+    });
+
     it('shows an encoder classifier on its own, with external benchmark scores beside it', async () => {
         apiMock.get.mockResolvedValue({
             data: {

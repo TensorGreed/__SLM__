@@ -194,6 +194,7 @@ session-start guidance.
 - `backend/app/services/job_service.py` — Shared Celery job helpers for status and cancellation.
 - `backend/app/services/jobs_service.py` — Generic background-job framework (Hardening Phase H1).
 - `backend/app/services/label_noise_scoring_service.py` — Quality-Lift phase 4 slice 1 — Label-noise scoring (Confident-Learning-lite).
+- `backend/app/services/llm_pricing.py` — List-price cost estimates for cloud LLM token usage.
 - `backend/app/services/local_chat_service.py` — In-process chat with a trained run's checkpoint (Playground "experiment"
 - `backend/app/services/lora_target_policy.py` — Which layers LoRA adapts when the config says ``target_modules="auto"``.
 - `backend/app/services/manifest_apply_service.py` — Manifest validate / diff / apply services (priority.md P22).
@@ -247,6 +248,7 @@ session-start guidance.
 - `backend/app/services/span_model_package_service.py` — Packaging for token-classification (span) models — Epic P5.
 - `backend/app/services/span_refine_service.py` — Refine weak entity types: read the latest span_set evaluation and name
 - `backend/app/services/span_relabel_service.py` — Answer key from a second model: relabel a split's texts without changing
+- `backend/app/services/span_threshold_service.py` — Per-type score thresholds for a span tagger, tuned on a held-out split.
 - `backend/app/services/span_type_definitions_service.py` — Entity-type definitions: one labelling convention for every model that
 - `backend/app/services/starter_pack_service.py` — Dynamic starter-pack registry for domain-specific onboarding defaults.
 - `backend/app/services/student_teacher_comparison_service.py` — Student-vs-teacher distillation comparison (Track 1, Epic A, slice 3).
@@ -770,6 +772,7 @@ session-start guidance.
 - `backend/tests/test_hyperparameter_sweep.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
 - `backend/tests/test_label_noise_slice1.py` — Quality-Lift phase 4 slice 1 — Label-noise scan service + endpoints.
+- `backend/tests/test_labelling_cost.py` — Labelling cost: prompt caching, usage + cost per relabel, convention-aware
 - `backend/tests/test_multi_seed_aggregation.py` — Tests for Quality-Lift phase 1, slice 2 — multi-seed dispatch + aggregation.
 - `backend/tests/test_multi_seed_gate_variance.py` — Tests for Quality-Lift phase 1, slice 3 — variance-aware gate evaluator.
 - `backend/tests/test_multi_seed_schema.py` — Tests for Quality-Lift phase 1, slice 1 — multi-seed schema foundation.
@@ -932,6 +935,7 @@ session-start guidance.
 - `backend/tests/test_span_packaging.py` — Epic P5 — packaging a span (token-classification) model:
 - `backend/tests/test_span_refine.py` — Refine weak types: the latest span_set evaluation names the types under
 - `backend/tests/test_span_relabel.py` — Answer key from a second model: relabel a split's texts (unchanged),
+- `backend/tests/test_span_thresholds.py` — Per-type score thresholds tuned on the validation split (P1t).
 - `backend/tests/test_span_type_definitions.py` — Entity-type definitions: one labelling convention for every model that
 - `backend/tests/test_split_defaults.py` — Wave 2d — safe data defaults a newcomer doesn't have to know about.
 - `backend/tests/test_split_keep_test.py` — split_dataset(keep_test=True): the active test rows stay verbatim, the

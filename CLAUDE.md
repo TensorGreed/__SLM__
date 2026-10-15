@@ -1266,6 +1266,33 @@ runs real CPU inference). ~4 min locally.
   `cloud_llm_service.call_anthropic_chat` retries once without it and records
   the model in `_NO_TEMPERATURE_MODELS` (later calls omit it). Tests:
   `tests/test_cloud_llm_temperature.py`.
+- **Span thresholds (P1t)** (`services/span_threshold_service.py`): `tune_from_scored`
+  (pure; per type the `GRID` threshold maximising strict F1, kept at 0 unless
+  it gains ≥ `MIN_GAIN` 0.005), `tune_run_thresholds(db, pid, eid, split="val")`
+  (refuses test / benchmarks) writes the run's `model/thresholds.json`
+  (`per_type` + a `tuned` report); `POST /projects/{id}/span-thresholds/tune`;
+  "Tune thresholds" on the span Eval card. `thresholds_for_decoding(model)` (non-zero
+  per-type only) is applied by `_run_token_classification_inference` — so held-out
+  eval and benchmark scores use the same decoding as /redact and the export
+  (runtime `thresholds_applied`). Tests `tests/test_span_thresholds.py`.
+- **Labelling cost**: `span_relabel_service.relabel_prompt_parts` → (stable, varying);
+  a backend with `supports_prompt_cache` (CloudLlmBackend) gets `cache_prefix=stable`
+  → `call_anthropic_chat(cached_system=)` (cached system block; usage
+  `cache_write_tokens` / `cache_read_tokens` on `CloudLlmResponse`); other
+  providers get it prepended. `CloudLlmBackend.usage` counts per instance (one per
+  job); `usage_block(*llms)` + `llm_pricing.estimate_cost` (list prices by family,
+  `LLM_PRICES_JSON` override, cache write 1.25× / read 0.1×, `usd_uncached`) →
+  `RelabelSummary.usage` / `cost_usd` / `tokens` on every relabel path; bell line.
+  Targeted: `span_type_definitions_service.HISTORY_KEY` snapshots each conventions
+  version (`remember_conventions`, on every type-definitions PUT before + after, and
+  by relabels); `changed_types(old, new)` (None = not type-local → all rows);
+  `row_affected(row, changed, pattern_hit)`; `relabel_training_rows(only_affected=,
+  dry_run=)` relabels only touched stale rows, carries the rest forward
+  (`conventions_carried_forward_at`), reports `targeting`. Tiered:
+  `review_disagreements` — rows where the bulk labels ≠ the latest span run's
+  predictions (`latest_span_run_predictions`) go to `review_override`; request
+  `review_backend` / `review_experiment_id`; strip "Review disagreements with".
+  Tests `tests/test_labelling_cost.py`.
 - **Ollama context**: `synth_backends/ollama.context_window_for` sets
   `num_ctx` per request (prompt chars / 3 + max_tokens + 256, buckets
   4096 / 8192 / 16384 / 32768) — without it Ollama runs at its server
