@@ -1329,7 +1329,11 @@ runs real CPU inference). ~4 min locally.
   `review_disagreements` — rows where the bulk labels ≠ the latest span run's
   predictions (`latest_span_run_predictions`) go to `review_override`; request
   `review_backend` / `review_experiment_id`; strip "Review disagreements with".
-  Tests `tests/test_labelling_cost.py`.
+  Tests `tests/test_labelling_cost.py`. Measured on project 31 (114 rows):
+  cache −15% (output tokens dominate; Haiku's prefix is below its minimum
+  cacheable length); tiered cost MORE (113/114 rows disagreed — any span
+  difference counts); targeted relabel after a one-type change: 154 of 1,927
+  rows (−92%) — the real saving.
 - **Batch relabels** (Anthropic Message Batches, half price): request `use_batch`
   (400 `BATCH_NEEDS_ANTHROPIC` unless `cloud:anthropic:*`) sets
   `CloudLlmBackend.use_batch`; `label_texts` (via `uses_message_batch`) sends every

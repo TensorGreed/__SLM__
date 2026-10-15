@@ -958,6 +958,56 @@ than five characters.
 Relabelled by the same model as the answer key, the 44 test examples now
 agree with it at 0.95 — they stopped being a second opinion.
 
+**Larger model vs tuned thresholds (P1t, 2026-10-15).** Three seeds each of
+deberta-v3-large (learning rate 2e-5, ~15 min a seed) and of the base model,
+each with and without per-type thresholds tuned on the validation split
+(*Tune thresholds* on the span Eval card):
+
+| three seeds each | base | base + thresholds | large | large + thresholds |
+|---|---|---|---|---|
+| Gretel precision | 0.588 ± 0.005 | **0.687 ± 0.007** | 0.563 | 0.674 |
+| Gretel F1 | 0.661 ± 0.008 | **0.705 ± 0.010** | 0.612 | 0.655 |
+| CoNLL people F1 | 0.685 | **0.685** | 0.579 | 0.579 |
+| scan / clean key | 0.878 / 0.965 | **0.889 / 0.965** | 0.857 / 0.943 | 0.876 / 0.951 |
+
+The thresholds win: +0.10 precision and +0.04 F1 on Gretel, CoNLL untouched
+(person_name's threshold stayed at 0). The large model lost everywhere at
+this one configuration. The winner was shipped with *Ship this seed*:
+seed 43 (run #107) of three, picked by validation span F1 — its model card
+records the rule and the values, its thresholds.json the tuned thresholds,
+and its benchmark table Gretel 0.71 / CoNLL 0.69.
+
+## What it costs to relabel
+
+Measured on project 31 (2026-10-15), one 114-row group, list-price estimates
+from each job's own token counts:
+
+| | cost | agreement with Sonnet-only labels |
+|---|---|---|
+| Sonnet, no prompt cache (before) | $0.506 | — |
+| Sonnet, prompt cache | **$0.429** (−15%) | — |
+| tiered: Haiku, Sonnet on rows where Haiku and the model disagree | $0.617 | 0.92 |
+| Haiku alone | $0.150 | 0.57 |
+
+- **Prompt caching saves ~15%, not more**: output tokens (~1,000 a call,
+  priced 5× input) dominate, and only the ~1,500-token instruction block is
+  cached. Haiku did not cache at all — the block is below its minimum
+  cacheable length.
+- **The tiered mode did not pay here**: 113 of 114 rows disagreed with the
+  trained model (any one span differing in a dense passage counts), so
+  nearly every row went to Sonnet on top of Haiku's cost. On this project
+  Haiku also follows the conventions poorly (0.57 against Sonnet), so a
+  looser rule would still send most rows. Use it on projects where the cheap
+  labeller and the model mostly agree.
+- **Targeted relabels are the big saving**: after a one-type wording change
+  (license_plate), only 154 of 1,927 stale rows involve the type; the rest
+  are carried forward without a call — ~92% less than relabelling all.
+- **Batch mode** halves whatever remains.
+
+A full Sonnet relabel of the 1,927 rows: ≈ $8.55 before, ≈ $7.25 with the
+cache, ≈ $3.60 with cache + batch; a typical one-type change ≈ $0.58, or
+≈ $0.29 batched.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the
