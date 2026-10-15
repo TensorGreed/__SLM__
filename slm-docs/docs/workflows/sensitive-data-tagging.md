@@ -624,6 +624,38 @@ The convention mainly made the answer key more consistent (17% of the
 192-passage key's spans changed). The scan gap is now mostly entities
 the model never finds, not their edges.
 
+**Where the remaining misses came from — and two fixes that worked**
+(2026-10-14, run #71). Two conventions were doing the damage, not OCR:
+
+- **Titles.** The project's person_name definition predated the "name
+  only, without a title" wording, so 52 names in the scan key and 12 in
+  the clean key were labelled "Mr. Kevin Brown" while the model learned
+  "Kevin Brown". Re-wording the definition and re-keying fixed the clean
+  key (person_name 0.68 → 1.00 for every run — it was a key error). Haiku
+  still kept a title on 21 scan names.
+- **A card's last four digits.** "card ending in 4242" was labelled
+  credit_card about half the time in training (89 of 178 left blank) and
+  almost always in the keys — so the model found 14 of 26 on the scans.
+  The fix: say so in the definition, and add a custom pattern
+  (Synthetic tab → *Add a type* → pattern
+  `(?:(?<=ending in )|(?<=last four digits )|…)\d{4}\b` for credit_card,
+  flag i), whose regex pass labelled 175 more in the saved rows.
+  Run #71 then finds 25 of 26 on the scans and 14 of 15 on the clean key.
+  The shipped suggestions now say this for credit_card, and that cvv is
+  the digits only.
+
+| run | scan key (re-keyed, 1327 spans) | clean answer key (re-keyed, 44) |
+|---|---|---|
+| #69 | 0.675 | 0.910 |
+| #70 (scan-tolerant labels) | 0.665 | 0.900 |
+| #71 (+ no-title names, last-four labels) | **0.680** | **0.919** |
+
+On the scans the gain is small (+0.005, noise-level). The short
+fragments it missed were mostly last-four digits (fixed) and CVVs,
+which on scans are often a bare "the CVV 123" after debris. What's left
+is provider names (45 misses) and visit dates (26) the model never
+tags — a coverage gap in the training text, not a decoding one.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the
