@@ -952,4 +952,20 @@ encoder is small), the evaluation (seconds). Cloud: only what you choose
 to send — the answer key, or a judge pass — and the Synthetic tab's
 backend picker shows the model name on every row it wrote.
 
+**Batch relabels at half price.** A relabel that can wait — the answer
+key, Relabel training rows, the passages or whole documents, or a stale
+group from the review queue's strip — can go through Anthropic's Message
+Batches API: tick **Batch (half price, slower)** next to the buttons
+(enabled only for a `cloud:anthropic:…` model; the API answers 400
+`BATCH_NEEDS_ANTHROPIC` otherwise, `use_batch: true` on
+`POST /synthetic/relabel-answer-key`). Every label call of the job is
+submitted as one batch with the same prompts (the conventions still go
+as the cached block), billed at half the list price; results take
+minutes to hours, and the bell shows "batch submitted · N requests ·
+waiting" until they're in. A request that errors or expires is redone
+directly at the normal price, split in halves if its reply won't parse,
+exactly as without a batch. The finished job's cost line counts the
+batch tokens at half price and says "via batch". The tiered review pass
+(Review disagreements with) stays synchronous.
+
 <!-- numbers: filled in from the first full run (see ROADMAP) -->

@@ -24,8 +24,9 @@ verbatim; provider-specific routing is on the ``provider`` arg.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Awaitable, Callable, Literal
 
+from app.services import cloud_llm_service
 from app.services.cloud_llm_service import (
     CloudLlmError,
     call_anthropic_chat,
@@ -88,6 +89,12 @@ class CloudLlmBackend:
         self.usage: dict[str, int] = {
             "calls": 0, "input_tokens": 0, "output_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 0,
         }
+        # Message Batches (Anthropic only): set by the API when the caller
+        # asked for a batch; labelling then submits its calls through
+        # ``complete_batch``. Batch tokens are counted apart (half price).
+        self.use_batch: bool = False
+        self.batch_usage: dict[str, int] = {k: 0 for k in self.usage}
+        self.batch_report: list[dict[str, Any]] = []
 
     # Labelling prompts can pass their stable part separately (``cache_prefix``).
     supports_prompt_cache: bool = True
@@ -107,6 +114,93 @@ class CloudLlmBackend:
 
     def describe(self) -> str:
         return f"cloud:{self._provider}:{self._model}"
+
+    @property
+    def supports_batch(self) -> bool:
+        return self._provider == "anthropic"
+
+    async def complete_batch(
+        self,
+        requests: list[dict[str, Any]],
+        *,
+        progress: Callable[[str, int, int], Awaitable[None]] | None = None,
+    ) -> list[str | None]:
+        """Send ``requests`` (each ``{prompt, system_prompt, max_tokens,
+        temperature, cache_prefix}`` — what ``complete`` takes) as ONE
+        Anthropic Message Batch, wait for it, and return each request's text
+        in order (None where it errored / expired — the caller retries those
+        synchronously). ``progress(message, done, total)`` after each poll.
+        A model that rejects ``temperature`` fails every request with the
+        same 400; those are resubmitted once without it."""
+        if not self.supports_batch:
+            raise SynthBackendError(f"Message batches are Anthropic-only (this backend is {self.describe()}).")
+        out: list[str | None] = [None] * len(requests)
+        todo = list(range(len(requests)))
+        for attempt in range(2):
+            batch_req = [
+                {
+                    "custom_id": f"r{i}",
+                    "params": cloud_llm_service.anthropic_message_params(
+                        model=self._model,
+                        system_prompt=str(requests[i].get("system_prompt") or ""),
+                        user_prompt=str(requests[i]["prompt"]),
+                        max_tokens=int(requests[i].get("max_tokens") or 1024),
+                        temperature=float(requests[i].get("temperature", 0.7)),
+                        cached_system=requests[i].get("cache_prefix"),
+                    ),
+                }
+                for i in todo
+            ]
+            try:
+                batch = await cloud_llm_service.create_anthropic_batch(api_key=self._api_key, requests=batch_req)
+                batch_id = str(batch.get("id") or "")
+                total = len(batch_req)
+
+                async def _on_status(b: dict[str, Any]) -> None:
+                    if progress is None:
+                        return
+                    counts = b.get("request_counts") or {}
+                    done = sum(int(counts.get(k) or 0) for k in ("succeeded", "errored", "canceled", "expired"))
+                    await progress(f"batch submitted · {total} requests · waiting ({done}/{total} done)", done, total)
+
+                if progress is not None:
+                    await progress(f"batch submitted · {total} requests · waiting", 0, total)
+                ended = await cloud_llm_service.wait_for_anthropic_batch(
+                    api_key=self._api_key, batch_id=batch_id, on_status=_on_status,
+                )
+                results = await cloud_llm_service.fetch_anthropic_batch_results(
+                    api_key=self._api_key, results_url=str(ended.get("results_url") or ""),
+                )
+            except CloudLlmError as e:
+                raise SynthBackendError(f"Cloud LLM batch ({self._provider}:{self._model}) failed: {e}") from e
+            failed: list[int] = []
+            temperature_rejected = False
+            for i in todo:
+                result = results.get(f"r{i}")
+                why = cloud_llm_service.batch_result_error(result)
+                if why:
+                    failed.append(i)
+                    low = why.lower()
+                    if "temperature" in low and ("deprecated" in low or "not supported" in low):
+                        temperature_rejected = True
+                    continue
+                resp = cloud_llm_service.anthropic_response_from_message(result.get("message") or {}, self._model)
+                out[i] = resp.content or ""
+                self.batch_usage["calls"] += 1
+                self.batch_usage["input_tokens"] += resp.prompt_tokens
+                self.batch_usage["output_tokens"] += resp.completion_tokens
+                self.batch_usage["cache_write_tokens"] += resp.cache_write_tokens
+                self.batch_usage["cache_read_tokens"] += resp.cache_read_tokens
+            self.batch_report.append({
+                "batch_id": batch_id, "requests": len(todo),
+                "succeeded": len(todo) - len(failed), "failed": len(failed),
+            })
+            if temperature_rejected and attempt == 0 and self._model not in cloud_llm_service._NO_TEMPERATURE_MODELS:
+                cloud_llm_service._NO_TEMPERATURE_MODELS.add(self._model)
+                todo = failed
+                continue
+            break
+        return out
 
     async def complete(
         self,

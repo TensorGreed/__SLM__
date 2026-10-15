@@ -208,6 +208,8 @@ class RelabelSummary:
     usage: list[dict[str, Any]] = field(default_factory=list)
     review: dict[str, Any] | None = None
     targeting: dict[str, Any] | None = None
+    # Message Batch report (``batch_info``) when the labels came through one.
+    batch: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -229,6 +231,8 @@ class RelabelSummary:
             "tokens": sum(u.get("total_tokens") or 0 for u in self.usage) if self.usage else None,
             "review": self.review,
             "targeting": self.targeting,
+            "batch": self.batch,
+            "via_batch": bool(self.batch),
         }
 
 
@@ -238,10 +242,14 @@ def usage_block(*llms: Any) -> list[dict[str, Any]]:
 
     out = []
     for llm in llms:
+        label = llm.describe() if hasattr(llm, "describe") else str(llm)
+        model = getattr(llm, "model", None) or (llm.describe() if hasattr(llm, "describe") else "")
+        batch_usage = getattr(llm, "batch_usage", None)
+        if isinstance(batch_usage, dict) and batch_usage.get("calls"):
+            out.append({"backend": f"{label} (batch)", **estimate_cost(model, batch_usage, batch=True)})
         usage = getattr(llm, "usage", None)
         if isinstance(usage, dict) and usage.get("calls"):
-            out.append({"backend": llm.describe() if hasattr(llm, "describe") else str(llm),
-                        **estimate_cost(getattr(llm, "model", None) or (llm.describe() if hasattr(llm, "describe") else ""), usage)})
+            out.append({"backend": label, **estimate_cost(model, usage)})
     return out
 
 
@@ -346,29 +354,37 @@ async def label_texts(
     batches = [order[i:i + per_call] for i in range(0, len(order), per_call)]
     calls["batches"] = len(batches)
 
-    async def label_batch(batch: list[int]) -> None:
-        batch_texts = [texts[i] for i in batch]
-        calls["made"] += 1
+    def call_args(batch: list[int]) -> dict[str, Any]:
+        stable, varying = relabel_prompt_parts([texts[i] for i in batch], types, conventions)
+        cached = getattr(llm, "supports_prompt_cache", False)
+        return {
+            "prompt": varying if cached else stable + "\n\n" + varying,
+            "system_prompt": _SYSTEM_PROMPT,
+            **({"cache_prefix": stable} if cached else {}),
+            # A long text carries more entities: budget the reply by length.
+            "max_tokens": max(2000, sum(max(TOKENS_PER_TEXT, len(texts[i]) // 3) for i in batch)),
+            "temperature": 0.0,
+        }
+
+    async def label_batch(batch: list[int], raw_from_batch: str | None = None) -> None:
         parsed: dict[int, list[dict[str, Any]]] = {}
-        try:
-            stable, varying = relabel_prompt_parts(batch_texts, types, conventions)
-            cache_kwargs = (
-                {"cache_prefix": stable} if getattr(llm, "supports_prompt_cache", False) else {}
-            )
-            raw = await llm.complete(
-                varying if cache_kwargs else stable + "\n\n" + varying,
-                system_prompt=_SYSTEM_PROMPT,
-                **cache_kwargs,
-                # A long text carries more entities: budget the reply by length.
-                max_tokens=max(2000, sum(max(TOKENS_PER_TEXT, len(texts[i]) // 3) for i in batch)),
-                temperature=0.0,
-                response_schema=_RESPONSE_SCHEMA,
-            )
-            parsed = _parse_rows(str(raw or ""))
+        if raw_from_batch is not None:
+            # A batch result came back but may not parse (a reply cut by
+            # the budget): it would fail the same way again, so split.
+            parsed = _parse_rows(raw_from_batch)
             if not parsed:
-                _LOG.warning("relabel: %d texts, no rows parsed (content starts: %r)", len(batch), str(raw)[:160])
-        except SynthBackendError as exc:
-            _LOG.warning("relabel: %d texts failed: %s", len(batch), exc)
+                _LOG.warning("relabel: batch result for %d texts, no rows parsed (starts: %r)", len(batch), raw_from_batch[:160])
+        else:
+            calls["made"] += 1
+            try:
+                args = call_args(batch)
+                prompt = args.pop("prompt")
+                raw = await llm.complete(prompt, **args, response_schema=_RESPONSE_SCHEMA)
+                parsed = _parse_rows(str(raw or ""))
+                if not parsed:
+                    _LOG.warning("relabel: %d texts, no rows parsed (content starts: %r)", len(batch), str(raw)[:160])
+            except SynthBackendError as exc:
+                _LOG.warning("relabel: %d texts failed: %s", len(batch), exc)
         if not parsed:
             if len(batch) > MIN_TEXTS_PER_CALL:
                 half = len(batch) // 2
@@ -384,10 +400,47 @@ async def label_texts(
             validated = _validate_span_rows([{"text": texts[index], "entities": ents}], types)
             labels[index] = validated[0]["entities"] if validated else []
 
+    if batches and uses_message_batch(llm):
+        # One Message Batch for every call (half price, slower); a request
+        # that errored / expired falls back to the synchronous path below.
+        async def batch_progress(message: str, done: int, total: int) -> None:
+            await report(start + span * 0.9 * done / max(1, total), f"Labelling {len(texts)} texts ({backend_label}): {message}")
+
+        try:
+            raws = await llm.complete_batch([call_args(b) for b in batches], progress=batch_progress)
+        except SynthBackendError as exc:
+            _LOG.warning("relabel: message batch failed, labelling synchronously: %s", exc)
+            raws = [None] * len(batches)
+        calls["batched"] = len(batches)
+        calls["batch_fallback"] = sum(1 for r in raws if r is None)
+        for b, (batch, raw) in enumerate(zip(batches, raws)):
+            if raw is None:
+                await report(start + span * (0.9 + 0.1 * b / len(batches)), f"Batch request failed — labelling texts {batch[0] + 1}–{batch[-1] + 1} directly ({backend_label})")
+            await label_batch(batch, raw)
+        return labels, calls
+
     for b, batch in enumerate(batches):
         await report(start + span * b / max(1, len(batches)), f"Labelling texts {batch[0] + 1}–{batch[-1] + 1} of {len(texts)} ({backend_label})")
         await label_batch(batch)
     return labels, calls
+
+
+def uses_message_batch(llm: Any) -> bool:
+    """The caller asked for a Message Batch and the backend can do one."""
+    return bool(getattr(llm, "use_batch", False)) and bool(getattr(llm, "supports_batch", False)) and hasattr(llm, "complete_batch")
+
+
+def batch_info(llm: Any) -> dict[str, Any] | None:
+    """What went through Message Batches in this job (None when nothing did)."""
+    report = getattr(llm, "batch_report", None)
+    if not uses_message_batch(llm) or not report:
+        return None
+    return {
+        "batches": list(report),
+        "requests": report[0]["requests"],
+        "succeeded": sum(int(r.get("succeeded") or 0) for r in report),
+        "fell_back": report[-1].get("failed", 0),
+    }
 
 
 async def relabel_split_as_answer_key(
@@ -486,6 +539,7 @@ async def relabel_split_as_answer_key(
         summary.warnings.append(f"{len(keep) - len(labelled)} of {len(keep)} texts were not labelled.")
     await report(1.0, f"Answer key written: {len(labelled)} rows, {sum(counts.values())} entities")
     summary.usage = usage_block(llm)
+    summary.batch = batch_info(llm)
     return summary
 
 
@@ -572,6 +626,7 @@ async def relabel_split_in_place(
     if len(done) < len(span_idx):
         summary.warnings.append(f"{len(span_idx) - len(done)} of {len(span_idx)} rows got no labels back and kept their old ones.")
     summary.usage = usage_block(llm)
+    summary.batch = batch_info(llm)
     return summary
 
 
@@ -753,6 +808,7 @@ async def relabel_training_rows(
         conventions_types=[t for t in types if t in definitions], file_path=str(path),
     )
     summary.usage = usage_block(llm, *([review_override] if review_override is not None else []))
+    summary.batch = batch_info(llm)
     summary.review = review
     summary.targeting = targeting
     kept_old = len(span_idx) - relabelled
@@ -871,6 +927,15 @@ async def _label_in_pieces(
     entities per 1,000 chars whole vs ~7 per passage), so long rows were
     trained on thin labels. A text is labelled only if all its pieces
     were (a half-labelled long row would teach the gaps as negatives)."""
+    flat, owners = _flatten_pieces(texts, piece_chars)
+    piece_labels, calls = await label_texts(llm, flat, types, conventions, report, backend_label, start=0.02, span=0.9)
+    calls["pieces"] = len(flat)
+    return _merge_pieces(texts, owners, piece_labels), calls
+
+
+def _flatten_pieces(texts: list[str], piece_chars: int) -> tuple[list[str], list[tuple[int, int]]]:
+    """Each text's pieces (``piece_offsets``, edge whitespace trimmed) and
+    their owners ``(text index, piece start)``."""
     flat: list[str] = []
     owners: list[tuple[int, int]] = []  # (text index, piece start)
     for t_index, text in enumerate(texts):
@@ -885,7 +950,14 @@ async def _label_in_pieces(
             if start < end:
                 flat.append(text[start:end])
                 owners.append((t_index, start))
-    piece_labels, calls = await label_texts(llm, flat, types, conventions, report, backend_label, start=0.02, span=0.9)
+    return flat, owners
+
+
+def _merge_pieces(
+    texts: list[str], owners: list[tuple[int, int]], piece_labels: list[list[dict[str, Any]] | None],
+) -> list[list[dict[str, Any]] | None]:
+    """Piece labels shifted back onto their texts; a text with any unlabelled
+    piece (or a misaligned span) is None."""
     merged: list[list[dict[str, Any]] | None] = [[] for _ in texts]
     for (t_index, offset), spans in zip(owners, piece_labels):
         if merged[t_index] is None:
@@ -902,8 +974,7 @@ async def _label_in_pieces(
             if bad:  # never expected — drop the row rather than train misplaced spans
                 _LOG.warning("piece labels misaligned on text %d: %s", t_index, bad[:2])
                 merged[t_index] = None
-    calls["pieces"] = len(flat)
-    return merged, calls
+    return merged
 
 
 async def label_texts_any(
@@ -918,6 +989,22 @@ async def label_texts_any(
     long = [i for i, t in enumerate(texts) if len(t) > piece_chars]
     out: list[list[dict[str, Any]] | None] = [None] * len(texts)
     calls = {"made": 0, "failed": 0, "batches": 0, "pieces": 0}
+    if uses_message_batch(llm) and long:
+        # Message Batch: the short texts and every long text's pieces go in
+        # ONE batch (one wait), then the pieces are merged back as usual.
+        flat, owners = _flatten_pieces([texts[i] for i in long], piece_chars)
+        labels, c = await label_texts(
+            llm, [texts[i] for i in short] + flat, types, conventions, report, backend_label,
+            start=0.02, span=0.9, texts_per_call=texts_per_call,
+        )
+        for i, spans in zip(short, labels[:len(short)]):
+            out[i] = spans
+        for i, spans in zip(long, _merge_pieces([texts[i] for i in long], owners, labels[len(short):])):
+            out[i] = spans
+        calls.update({k: v for k, v in c.items()})
+        calls["pieces"] = len(flat)
+        calls["long_texts"] = len(long)
+        return out, calls
     if short:
         labels, c = await label_texts(
             llm, [texts[i] for i in short], types, conventions, report, backend_label,
@@ -1060,6 +1147,7 @@ async def _label_and_append(
         )
     await report(1.0, f"Labelled {len(new_rows)} rows — accept them in the review queue ({source_prefix}:doc=…)")
     summary.usage = usage_block(llm, *([review_override] if review_override is not None else []))
+    summary.batch = batch_info(llm)
     summary.review = review
     return summary
 

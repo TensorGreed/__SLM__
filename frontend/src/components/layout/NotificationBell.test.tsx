@@ -531,6 +531,28 @@ describe('NotificationBell', () => {
         expect(summary).toHaveTextContent('600 steps');
     });
 
+    it('says "via batch" for a span relabel that ran as a Message Batch', async () => {
+        const job = jobFixture({
+            id: 18,
+            kind: 'span_relabel',
+            status: 'succeeded',
+            title: 'Training labels by cloud:anthropic:haiku · project #4 · batch',
+            result: {
+                split: 'synthetic', labelled_rows: 40, entities: 120, tokens: 52000, cost_usd: 0.04,
+                via_batch: true, batch: { requests: 7, succeeded: 6, fell_back: 1 },
+            },
+        });
+        apiMock.get.mockResolvedValue({ data: { count: 1, jobs: [job] } });
+        render(<NotificationBell />);
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+        const summary = await screen.findByTestId('notification-bell-row-18-summary');
+        expect(summary).toHaveTextContent('training labels: 40 rows relabelled');
+        expect(summary).toHaveTextContent('via batch (half price), 1 request redone directly');
+    });
+
     it('renders auto_rag_comparison summary with off→on F1 + lift% + val rows', async () => {
         apiMock.get.mockResolvedValueOnce({
             data: {
