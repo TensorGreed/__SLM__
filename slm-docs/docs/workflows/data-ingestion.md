@@ -248,6 +248,20 @@ curl -X POST http://localhost:8000/api/projects/1/synthetic/generate \
   -d '{"seed_dataset":"tickets_v1","count":200,"strategy":"q_and_a"}'
 ```
 
+### Cloud LLM cost
+
+Local models (Ollama, a teacher on your own machine or LAN) cost nothing and are never counted. Every call to a cloud model — Anthropic, OpenAI, DeepSeek or another hosted OpenAI-compatible endpoint — is metered with the provider's own token counts:
+
+- **Background jobs** (synthesis, sample documents, the documents → Q&A flow, relabels and answer keys, lift checks and retrieval comparisons judged by a cloud model) carry `usage` (per model: calls, input / output / cache-write / cache-read tokens, a list-price estimate), `cost_usd` and `tokens` in their result. The notification bell adds "12k tokens (~$0.04 at list price)" to the outcome line, and "spent …" on a job that failed or was cancelled — tokens spent are spent.
+- **Operations that are not jobs** — the LLM answer key (`llm_cost` in the response), the AI plan strategy pass, the built-in-checks judge in an evaluation and distillation teacher capture — record the same figures and add them to the project's spend log.
+- **Prompt caching**: the instructions that repeat on every call (judge rules, labelling conventions, the span-synthesis types and rules, the documents → Q&A instructions) go to Anthropic as a cached block, billed at a tenth of the input price on a cache hit. A block shorter than the model's minimum cacheable length (about 1,000–4,000 tokens depending on the model) is simply sent uncached, so short prompts cost what they did before.
+
+The **Cloud LLM spend (last 30 days)** card on the Synthetic tab totals it per project: tokens, the estimated dollars, a row per model, and a line per kind of operation. The dollar figure is a **list-price estimate** from `llm_pricing` (override a family's price with `LLM_PRICES_JSON`, e.g. `{"sonnet": [3, 15]}`); your provider's invoice is the truth.
+
+```sh
+curl http://localhost:8000/api/projects/1/llm-spend?days=30
+```
+
 ## Step 3 — Dataset prep
 
 ### What it does

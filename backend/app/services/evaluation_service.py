@@ -616,8 +616,10 @@ async def _judge_probe_via_cloud(
     )
     try:
         if provider == "anthropic":
+            # Same evaluator instructions on every probe: Anthropic's cached
+            # system block (same text; uncached below the minimum length).
             resp = await call_anthropic_chat(
-                api_key=api_key, model=model, system_prompt=system,
+                api_key=api_key, model=model, system_prompt="", cached_system=system,
                 user_prompt=user, max_tokens=200, temperature=0.0,
             )
         else:  # openai / deepseek (deepseek rides the openai-compatible path)
@@ -752,11 +754,17 @@ async def _safe_run_probe_pack(
                 # costs no judge calls.
                 from app.services.probe_pack_service import build_probe_judge_cache
 
+                from app.services import llm_usage
+
                 cache = build_probe_judge_cache(project_id)
-                snapshot = await apply_llm_judge(
-                    snapshot, list(probes), judge_fn, cache=cache
-                )
+                # Judge spend: on the probe snapshot, and in the project's
+                # spend ledger when this eval is not running inside a Job.
+                with llm_usage.metered_operation(project_id, "probe_judge") as meter:
+                    snapshot = await apply_llm_judge(
+                        snapshot, list(probes), judge_fn, cache=cache
+                    )
                 cache.flush()
+                snapshot = {**snapshot, **meter.block()}
         return snapshot
     except Exception as exc:  # noqa: BLE001 — never block eval completion
         print(

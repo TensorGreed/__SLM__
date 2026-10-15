@@ -36,6 +36,7 @@ from statistics import median
 from typing import Any, Awaitable, Callable
 
 from app.config import settings
+from app.services import llm_usage
 
 _LOG = logging.getLogger(__name__)
 
@@ -278,6 +279,7 @@ def _judge_from_synth_backend(backend: Any, label: str) -> JudgeFn:
             system_prompt=_SYSTEM_PROMPT,
             max_tokens=MAX_JUDGE_TOKENS,
             temperature=0.0,
+            **llm_usage.cache_kwargs(backend),
             response_schema=_RESPONSE_SCHEMA,
         )
         parsed = parse_verdict(raw)
@@ -296,6 +298,7 @@ def _retrieval_judge_from_synth_backend(backend: Any) -> RetrievalJudgeFn:
             system_prompt=_RETRIEVAL_SYSTEM_PROMPT,
             max_tokens=MAX_JUDGE_TOKENS,
             temperature=0.0,
+            **llm_usage.cache_kwargs(backend),
             response_schema=_RETRIEVAL_RESPONSE_SCHEMA,
         )
         parsed = parse_retrieval_verdict(raw)
@@ -313,8 +316,11 @@ def _retrieval_judge_from_cloud(provider: str, model: str, api_key: str) -> Retr
 
         user = build_retrieval_judge_prompt(question, reference, passages)
         if provider == "anthropic":
+            # The judge instructions repeat on every row: Anthropic's cached
+            # system block (same text; below the cacheable minimum it
+            # simply goes uncached).
             resp = await call_anthropic_chat(
-                api_key=api_key, model=model, system_prompt=_RETRIEVAL_SYSTEM_PROMPT,
+                api_key=api_key, model=model, system_prompt="", cached_system=_RETRIEVAL_SYSTEM_PROMPT,
                 user_prompt=user, max_tokens=MAX_JUDGE_TOKENS, temperature=0.0,
             )
         else:
@@ -340,8 +346,11 @@ def _judge_from_cloud(provider: str, model: str, api_key: str) -> JudgeFn:
 
         user = build_judge_prompt(question, reference, prediction)
         if provider == "anthropic":
+            # The judge instructions repeat on every row: Anthropic's cached
+            # system block (same text; below the cacheable minimum it
+            # simply goes uncached).
             resp = await call_anthropic_chat(
-                api_key=api_key, model=model, system_prompt=_SYSTEM_PROMPT,
+                api_key=api_key, model=model, system_prompt="", cached_system=_SYSTEM_PROMPT,
                 user_prompt=user, max_tokens=MAX_JUDGE_TOKENS, temperature=0.0,
             )
         else:
@@ -452,7 +461,7 @@ async def _cloud_config(db: Any, project_id: int, provider: str | None) -> dict[
     return {"provider": str(cfg["provider"]), "model": str(cfg["model"]), "api_key": str(cfg["api_key"])}
 
 
-async def judge_predictions(
+async def _judge_predictions(
     predictions: list[dict[str, Any]],
     judge: JudgeFn,
     *,
@@ -520,7 +529,7 @@ async def judge_predictions(
     }
 
 
-async def judge_retrieval(
+async def _judge_retrieval(
     rows: list[dict[str, Any]],
     judge: RetrievalJudgeFn,
     *,
@@ -601,3 +610,21 @@ async def judge_retrieval(
         "judge_cached": cached,
         "judge_tokens": tokens,
     }
+
+
+async def judge_predictions(predictions: list[dict[str, Any]], judge: JudgeFn, **kwargs: Any) -> dict[str, Any]:
+    """Judge every row (``_judge_predictions``); the snapshot also carries
+    the cloud calls' ``usage`` / ``cost_usd`` / ``tokens`` (llm_usage) when
+    the judge is a cloud model."""
+    with llm_usage.metered() as meter:
+        snapshot = await _judge_predictions(predictions, judge, **kwargs)
+    snapshot.update(meter.block())
+    return snapshot
+
+
+async def judge_retrieval(rows: list[dict[str, Any]], judge: RetrievalJudgeFn, **kwargs: Any) -> dict[str, Any]:
+    """``_judge_retrieval`` + the cloud calls' usage (see ``judge_predictions``)."""
+    with llm_usage.metered() as meter:
+        snapshot = await _judge_retrieval(rows, judge, **kwargs)
+    snapshot.update(meter.block())
+    return snapshot

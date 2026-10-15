@@ -413,6 +413,9 @@ async def generate_via_llm(
         "prompt_preview": result.prompt_preview,
         "reference_chunk_count": result.reference_chunk_count,
         "estimated_cost_usd": result.estimated_cost_usd,
+        # Cache-aware list-price estimate, same shape as a relabel's
+        # (usage per backend, cost_usd, tokens); also in the spend tally.
+        "llm_cost": dict(result.llm_cost or {}),
         "warnings": list(result.warnings),
     }
 

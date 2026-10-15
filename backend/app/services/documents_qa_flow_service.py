@@ -171,6 +171,12 @@ def build_passage_prompt(passage_text: str, pairs_per_passage: int, *, domain_hi
     return (
         f"Read this passage.{hint}\n\n"
         f"<passage>\n{passage_text.strip()[:MAX_PASSAGE_CHARS]}\n</passage>\n\n"
+        + _passage_instructions(pairs_per_passage)
+    )
+
+
+def _passage_instructions(pairs_per_passage: int) -> str:
+    return (
         f"Write {pairs_per_passage} question-and-answer pairs a reader might ask about this passage, "
         "each answerable from the passage alone. Vary what they ask about (who, what, when, why, how much, "
         "which rule applies). Then write ONE more evaluation question about the same passage that none of "
@@ -185,6 +191,17 @@ def build_passage_prompt(passage_text: str, pairs_per_passage: int, *, domain_hi
         'Return JSON of the form {"pairs": [{"question": "...", "answer": "..."}, ...], '
         '"eval": {"question": "...", "answer": "..."}} and nothing else.'
     )
+
+
+def passage_prompt_parts(passage_text: str, pairs_per_passage: int, *, domain_hint: str = "") -> tuple[str, str]:
+    """``(stable, varying)`` for a backend with prompt caching: the
+    instructions (identical for every passage of a run) go first as the
+    cached block, the passage follows. Same instructions as
+    ``build_passage_prompt``."""
+    hint = f" The documents are about: {domain_hint.strip()}." if domain_hint.strip() else ""
+    stable = f"You will be sent one passage at a time.{hint}\n\n" + _passage_instructions(pairs_per_passage)
+    varying = f"Read this passage.\n\n<passage>\n{passage_text.strip()[:MAX_PASSAGE_CHARS]}\n</passage>"
+    return stable, varying
 
 
 # ── Is the evaluation pair quotable? ─────────────────────────────────────
@@ -518,12 +535,21 @@ async def run_documents_qa_flow(
             f"Writing questions for passage {index + 1}/{len(chosen)} ({backend_label})",
         )
         try:
+            if getattr(llm, "supports_prompt_cache", False):
+                # A cloud backend: the per-run instructions are the cached
+                # block, only the passage varies between calls.
+                stable, varying = passage_prompt_parts(passage["text"], pairs_per_passage, domain_hint=domain_hint)
+                prompt_kwargs: dict[str, Any] = {"cache_prefix": stable}
+            else:
+                varying = build_passage_prompt(passage["text"], pairs_per_passage, domain_hint=domain_hint)
+                prompt_kwargs = {}
             raw = await llm.complete(
-                build_passage_prompt(passage["text"], pairs_per_passage, domain_hint=domain_hint),
+                varying,
                 system_prompt=_SYSTEM_PROMPT,
                 max_tokens=1600,
                 temperature=0.4,
                 response_schema=_RESPONSE_SCHEMA,
+                **prompt_kwargs,
             )
         except SynthBackendError as exc:
             failed += 1

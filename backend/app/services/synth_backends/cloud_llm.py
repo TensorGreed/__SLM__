@@ -117,23 +117,31 @@ class CloudLlmBackend:
         temperature: float = 0.7,
         response_schema: dict | None = None,  # noqa: ARG002 — cloud_llm_service uses force_json instead
         cache_prefix: str | None = None,
+        cache_system: bool = False,
     ) -> str:
         """``cache_prefix``: the stable part of the prompt (instructions that
         repeat across calls). Anthropic gets it as a cached system block;
-        other providers get it prepended to ``prompt``."""
+        other providers get it prepended to ``prompt``. ``cache_system``:
+        mark the system prompt itself as the cached block (same content —
+        for callers whose stable instructions already live there; OpenAI
+        caches long prefixes on its own, so nothing changes there)."""
         # call_*_chat both return CloudLlmResponse with a ``content``
         # str. Map any CloudLlmError to SynthBackendError so the
         # playbook framework's existing 5xx handling kicks in.
         try:
             if self._provider == "anthropic":
+                cached = cache_prefix
+                system = system_prompt or ""
+                if cache_system and not cache_prefix and system:
+                    cached, system = system, ""
                 resp = await call_anthropic_chat(
                     api_key=self._api_key,
                     model=self._model,
-                    system_prompt=system_prompt or "",
+                    system_prompt=system,
                     user_prompt=prompt,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    cached_system=cache_prefix,
+                    cached_system=cached,
                 )
             else:
                 # openai + deepseek both ride on call_openai_chat with

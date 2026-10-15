@@ -1,0 +1,30 @@
+.llm-spend-card__title {
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    margin-bottom: var(--space-sm);
+}
+
+.llm-spend-card__headline {
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--space-sm);
+}
+
+.llm-spend-card__muted {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin: var(--space-xs) 0;
+}
+
+.llm-spend-card__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+    margin: var(--space-sm) 0;
+}
+
+.llm-spend-card__table th,
+.llm-spend-card__table td {
+    text-align: left;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border-color, rgba(127, 127, 127, 0.2));
+}

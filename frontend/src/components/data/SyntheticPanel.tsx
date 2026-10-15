@@ -14,6 +14,7 @@ import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 import SpanAddTypeForm from './SpanAddTypeForm';
 import SpanTypeDefinitionsEditor from './SpanTypeDefinitionsEditor';
 import ComplianceBundlePicker from './ComplianceBundlePicker';
+import LlmSpendCard from './LlmSpendCard';
 
 interface SyntheticPanelProps { projectId: number; onNextStep?: () => void; }
 
@@ -974,6 +975,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                     focusSource={focusSynthSource}
                 />
             </div>
+            <LlmSpendCard projectId={projectId} />
             <div className="card">
                 <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>🧪 Synthetic Data Generation</h3>
                 {prefillSourceStage && (

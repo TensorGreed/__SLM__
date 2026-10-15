@@ -35,7 +35,7 @@ Object.defineProperty(window, 'location', {
     writable: true,
 });
 
-import NotificationBell from './NotificationBell';
+import NotificationBell, { cloudSpendText, jobOutcomeSummary } from './NotificationBell';
 import { useJobsStore } from '../../stores/jobsStore';
 
 
@@ -712,5 +712,25 @@ describe('NotificationBell', () => {
             await userEvent.click(screen.getByTestId('notification-bell-button'));
         });
         expect(screen.getByTestId('notification-bell-empty')).toBeInTheDocument();
+    });
+});
+
+
+describe('NotificationBell cloud spend line', () => {
+    it('appends tokens and the list-price estimate to any kind', () => {
+        const seed = jobFixture({
+            kind: 'seed_documents', status: 'succeeded',
+            result: { written: 4, tokens: 12_400, cost_usd: 0.031 },
+        });
+        expect(jobOutcomeSummary(seed as never)).toContain('12k tokens (~$0.03 at list price)');
+        const unknownKind = jobFixture({ kind: 'some_new_kind', status: 'succeeded', result: { tokens: 800 } });
+        expect(jobOutcomeSummary(unknownKind as never)).toBe('800 tokens');
+    });
+
+    it('says what a failed job spent and stays quiet without usage', () => {
+        const failed = jobFixture({ kind: 'documents_qa_flow', status: 'failed', result: { tokens: 3000, cost_usd: 0.01 } });
+        expect(jobOutcomeSummary(failed as never)).toBe('spent 3k tokens (~$0.01 at list price)');
+        expect(cloudSpendText({ rows: 3 })).toBeNull();
+        expect(cloudSpendText({ tokens: 0 })).toBeNull();
     });
 });

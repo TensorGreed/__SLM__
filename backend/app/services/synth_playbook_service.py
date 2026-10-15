@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dataset import Dataset, DatasetType
 from app.models.project import Project
+from app.services import llm_usage
 from app.services.dataset_service import _load_records_from_file
 from app.services.recipe_service import get_recipe
 from app.services.synth_backends import (
@@ -258,6 +259,9 @@ async def run_playbook(
         max_tokens=2048,
         temperature=0.7,
         response_schema=response_schema,
+        # The mode's system prompt repeats across playbook runs: a cloud
+        # backend marks it as a cached block (same text).
+        **llm_usage.cache_kwargs(selected_backend),
     )
     elapsed = time.monotonic() - started_at
 
