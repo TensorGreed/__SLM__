@@ -142,7 +142,8 @@ def auto_lift_skip_reason(
 ) -> str | None:
     """``None`` when the run should get an automatic lift eval, else a
     short machine-readable reason. ``manual`` (the user asked for the
-    check) ignores the automatic-run opt-outs."""
+    check) ignores the automatic-run opt-outs and evaluates a single seed
+    of a seed group."""
     if not manual:
         if not settings.AUTO_LIFT_EVAL_ENABLED:
             return "disabled_globally"
@@ -154,7 +155,9 @@ def auto_lift_skip_reason(
         return "baseline_experiment"
     if exp.status != ExperimentStatus.COMPLETED:
         return "not_completed"
-    if exp.seed_group_id and exp.seed_value is not None:
+    if exp.seed_group_id and exp.seed_value is not None and not manual:
+        # The group is checked as a whole; a user evaluating one seed (to
+        # ship it) asked for that seed.
         return "seed_group_child"
     runtime = cfg.get("_runtime") if isinstance(cfg.get("_runtime"), dict) else {}
     backend = str(runtime.get("backend") or "").lower()

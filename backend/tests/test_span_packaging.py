@@ -338,3 +338,43 @@ class RedactEndpointTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ModelCardBenchmarkTests(unittest.TestCase):
+    def test_card_lists_external_benchmarks_with_source_and_licence(self):
+        from app.services.span_model_package_service import build_span_model_card
+
+        card = build_span_model_card(
+            entity_types=["person_name"],
+            benchmarks=[
+                {"name": "CoNLL-2003 people", "source": {"dataset_id": "eriktks/conll2003", "split": "test"}, "licence": "other",
+                 "rows": 400, "scored_labels": ["person_name"], "result": {"rows": 400, "precision": 0.82, "recall": 0.56, "f1": 0.67}},
+                {"name": "never scored", "source": {}, "result": None},
+            ],
+        )
+        self.assertIn("## External benchmarks", card)
+        self.assertIn("| CoNLL-2003 people | `eriktks/conll2003:test` | other | 400 | person_name | 0.82 | 0.56 | 0.67 |", card)
+        self.assertNotIn("never scored", card)
+        self.assertNotIn("## External benchmarks", build_span_model_card(entity_types=["x"], benchmarks=[]))
+
+
+class LabellerTallyTests(unittest.TestCase):
+    def test_card_says_who_labelled_the_rows(self):
+        import json as _json
+        import tempfile
+        from pathlib import Path as _P
+
+        from app.services.span_model_package_service import build_span_model_card, training_evidence
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = _P(tmp)
+            train = out / "train.jsonl"
+            train.write_text("\n".join(_json.dumps(r) for r in [
+                {"text": "a", "entities": [], "source": "passage_labels:ollama", "relabelled_by": "cloud:anthropic:s"},
+                {"text": "b", "entities": [], "source": "passage_labels:ollama"},
+            ]) + "\n")
+            (out / "training_report.json").write_text(_json.dumps({"train_records": 2, "train_file": str(train)}))
+            ev = training_evidence(out)
+            self.assertEqual(ev["labellers"], {"cloud:anthropic:s": 1, "ollama": 1})
+            card = build_span_model_card(entity_types=["x"], training=ev)
+            self.assertIn("- **Labelled by:** `cloud:anthropic:s` 1; `ollama` 1", card)

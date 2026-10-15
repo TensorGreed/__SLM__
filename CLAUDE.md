@@ -1337,7 +1337,9 @@ runs real CPU inference). ~4 min locally.
   **Packaging (Epic P5)**: HF/Docker export of a span run →
   `span_model_package_service.package_token_classifier` writes
   `model/README.md` (pure `build_span_model_card`: evidence-only — label
-  space, row sources only when the train file's row count still matches,
+  space, row sources + **Labelled by** (`row_labeller` tally) only when the
+  train file's row count still matches, an **External benchmarks** table
+  (`benchmarks_for_run` rows with a result for the run),
   per-type P/R/F1 from the latest span EvalResults, answer key first, usage
   with `stride` = ¼ window + the leading-space trim, limitations) +
   `model/thresholds.json` (all 0 = argmax); manifest `span_package`.

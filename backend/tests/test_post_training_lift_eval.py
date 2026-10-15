@@ -157,6 +157,15 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
                 exp_id = await self._run(pid, **overrides)
                 self.assertEqual(await self._skip_reason(exp_id), expected)
 
+    async def test_a_seed_child_can_be_evaluated_by_hand(self):
+        pid = await self._project()
+        exp_id = await self._run(pid, seed_group_id="g9", seed_value=7)
+        async with self.sf() as db:
+            exp = await db.get(Experiment, exp_id)
+            project = await db.get(Project, exp.project_id)
+            self.assertEqual(svc.auto_lift_skip_reason(exp, project), "seed_group_child")
+            self.assertIsNone(svc.auto_lift_skip_reason(exp, project, manual=True))
+
     async def test_project_opt_out(self):
         pid = await self._project({"auto_lift_eval": False})
         self.assertEqual(await self._skip_reason(await self._run(pid)), "disabled_for_project")

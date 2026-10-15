@@ -89,6 +89,7 @@ def build_span_model_card(
     training: dict[str, Any] | None = None,
     evaluations: list[dict[str, Any]] | None = None,
     thresholds_file: bool = True,
+    benchmarks: list[dict[str, Any]] | None = None,
 ) -> str:
     """Markdown model card (with HF front matter) for a span tagger.
 
@@ -98,7 +99,9 @@ def build_span_model_card(
     in the order to show (answer key first): ``{label, dataset_name,
     precision, recall, f1, rows, per_type: {type: {precision, recall, f1,
     tp, fp, fn}}, written_by}``. Numbers are copied, never derived beyond
-    a gold-span count (tp + fn); a section with no data is omitted."""
+    a gold-span count (tp + fn); a section with no data is omitted.
+    ``benchmarks``: external benchmarks scored for this run
+    (``external_benchmark_service.serialize_benchmark`` with a ``result``)."""
     training = training or {}
     evaluations = [e for e in (evaluations or []) if isinstance(e, dict) and e.get("f1") is not None]
     types = sorted({str(t) for t in entity_types if t})
@@ -155,6 +158,10 @@ def build_span_model_card(
     if sources:
         listed = sorted(sources.items(), key=lambda kv: -kv[1])[:MAX_SOURCES_LISTED]
         train_lines.append("- **Row sources:** " + "; ".join(f"`{name}` {n}" for name, n in listed))
+    labellers = training.get("labellers") or {}
+    if labellers:
+        listed = sorted(labellers.items(), key=lambda kv: -kv[1])[:MAX_SOURCES_LISTED]
+        train_lines.append("- **Labelled by:** " + "; ".join(f"`{name}` {n}" for name, n in listed))
     aug = training.get("augmentation")
     if isinstance(aug, dict) and aug.get("rows_added"):
         train_lines.append(
@@ -199,6 +206,29 @@ def build_span_model_card(
                         f"{support if support is not None else '–'} |"
                     )
                 lines.append("")
+
+    scored = [b for b in (benchmarks or []) if isinstance(b, dict) and isinstance(b.get("result"), dict)]
+    if scored:
+        lines.append("## External benchmarks")
+        lines.append("")
+        lines.append(
+            "Labelled sets made by someone else, mapped onto this model's types; only the mapped types are "
+            "scored (a prediction of another type is neither a hit nor a false positive)."
+        )
+        lines.append("")
+        lines.append("| Benchmark | Source | Licence | Texts | Types scored | Precision | Recall | F1 |")
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for b in scored:
+            r = b["result"]
+            src = b.get("source") or {}
+            where = src.get("dataset_id") or src.get("locator") or "–"
+            if src.get("split"):
+                where += f":{src['split']}"
+            lines.append(
+                f"| {b.get('name')} | `{where}` | {b.get('licence') or 'unknown'} | {r.get('rows') or b.get('rows') or '–'} | "
+                f"{', '.join(b.get('scored_labels') or []) or '–'} | {_fmt(r.get('precision'))} | {_fmt(r.get('recall'))} | {_fmt(r.get('f1'))} |"
+            )
+        lines.append("")
 
     model_ref = "path/to/model"
     lines.append("## Usage")
@@ -289,7 +319,20 @@ def _row_sources(train_file: Path, expected_rows: int | None) -> dict[str, int]:
     """``{source: rows}`` from the training file the run read — only when
     its parseable row count still matches the run's report (a re-split
     since would make the tally describe different data)."""
+    return _row_tallies(train_file, expected_rows)[0]
+
+
+def _row_labellers(train_file: Path, expected_rows: int | None) -> dict[str, int]:
+    """``{labeller: rows}`` — who last labelled each row (a relabelled row's
+    ``source`` still names the model that generated it)."""
+    return _row_tallies(train_file, expected_rows)[1]
+
+
+def _row_tallies(train_file: Path, expected_rows: int | None) -> tuple[dict[str, int], dict[str, int]]:
+    from app.services.span_type_definitions_service import row_labeller
+
     counts: Counter[str] = Counter()
+    labellers: Counter[str] = Counter()
     total = 0
     try:
         with train_file.open(encoding="utf-8") as handle:
@@ -307,11 +350,14 @@ def _row_sources(train_file: Path, expected_rows: int | None) -> dict[str, int]:
                 source = row.get("source") or row.get("synth_source") or row.get("_source_type")
                 if isinstance(source, str) and source:
                     counts[source] += 1
+                labeller = row_labeller(row)
+                if labeller:
+                    labellers[labeller] += 1
     except Exception:  # noqa: BLE001
-        return {}
+        return {}, {}
     if expected_rows is not None and total != expected_rows:
-        return {}
-    return dict(counts)
+        return {}, {}
+    return dict(counts), dict(labellers)
 
 
 def training_evidence(output_dir: Path | None) -> dict[str, Any]:
@@ -334,6 +380,9 @@ def training_evidence(output_dir: Path | None) -> dict[str, Any]:
         sources = _row_sources(train_file, rows)
         if sources:
             out["sources"] = sources
+        labellers = _row_labellers(train_file, rows)
+        if labellers:
+            out["labellers"] = labellers
         manifest = _read_json(train_file.parent / "manifest.json") or {}
         splits = manifest.get("splits") if isinstance(manifest.get("splits"), dict) else {}
         if manifest.get("included_types") and (rows is None or splits.get("train") == rows):
@@ -423,6 +472,12 @@ async def package_token_classifier(
     output_dir = Path(experiment.output_dir).expanduser() if experiment.output_dir else None
     training = training_evidence(output_dir)
     evaluations = await span_evaluations(db, project_id, experiment.id)
+    try:
+        from app.services.external_benchmark_service import benchmarks_for_run
+
+        benchmarks = [b for b in await benchmarks_for_run(db, project_id, experiment.id) if b.get("result")]
+    except Exception:  # noqa: BLE001 — the card never fails an export
+        benchmarks = []
     window = _window(model_dir)
     card = build_span_model_card(
         entity_types=entity_types,
@@ -432,6 +487,7 @@ async def package_token_classifier(
         window=window,
         training=training,
         evaluations=evaluations,
+        benchmarks=benchmarks,
     )
     (model_dir / MODEL_CARD_FILE).write_text(card, encoding="utf-8")
     thresholds_path = model_dir / THRESHOLDS_FILE
@@ -442,6 +498,7 @@ async def package_token_classifier(
         "thresholds": THRESHOLDS_FILE,
         "entity_types": entity_types,
         "evaluations": [b["dataset_name"] for b in evaluations],
+        "benchmarks": [b.get("name") for b in benchmarks],
         "eval_result_ids": [b["eval_result_id"] for b in evaluations],
         "window": window,
         "pipeline_stride": pipeline_stride(window),
