@@ -90,6 +90,7 @@ def build_span_model_card(
     evaluations: list[dict[str, Any]] | None = None,
     thresholds_file: bool = True,
     benchmarks: list[dict[str, Any]] | None = None,
+    seed_selection: str | None = None,
 ) -> str:
     """Markdown model card (with HF front matter) for a span tagger.
 
@@ -101,7 +102,9 @@ def build_span_model_card(
     tp, fp, fn}}, written_by}``. Numbers are copied, never derived beyond
     a gold-span count (tp + fn); a section with no data is omitted.
     ``benchmarks``: external benchmarks scored for this run
-    (``external_benchmark_service.serialize_benchmark`` with a ``result``)."""
+    (``external_benchmark_service.serialize_benchmark`` with a ``result``).
+    ``seed_selection``: how this run was picked from a multi-seed group
+    (``seed_selection_service.selection_text``) — a "Seed selection" line."""
     training = training or {}
     evaluations = [e for e in (evaluations or []) if isinstance(e, dict) and e.get("f1") is not None]
     types = sorted({str(t) for t in entity_types if t})
@@ -169,6 +172,8 @@ def build_span_model_card(
         )
     if isinstance(training.get("epochs"), (int, float)):
         train_lines.append(f"- **Epochs:** {training['epochs']:g}")
+    if seed_selection:
+        train_lines.append(f"- **Seed selection:** {seed_selection}")
     if train_lines:
         lines.append("## Training data")
         lines.append("")
@@ -461,6 +466,7 @@ async def package_token_classifier(
     experiment: Experiment,
     model_dir: Path,
     project_name: str | None = None,
+    seed_selection: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Write ``README.md`` + ``thresholds.json`` into an exported span
     model directory. None (nothing written) for any other model. An
@@ -488,6 +494,7 @@ async def package_token_classifier(
         training=training,
         evaluations=evaluations,
         benchmarks=benchmarks,
+        seed_selection=(seed_selection or {}).get("text"),
     )
     (model_dir / MODEL_CARD_FILE).write_text(card, encoding="utf-8")
     thresholds_path = model_dir / THRESHOLDS_FILE

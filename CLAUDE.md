@@ -743,6 +743,20 @@ runs real CPU inference). ~4 min locally.
   stage and the Eval card title. `POST /evaluation/summary/check-seeds`
   clones a run's config with `num_seeds` and starts the group ("Check across
   3 seeds" on `EvalSummaryCard`).
+  **Ship the best seed** (`services/seed_selection_service.py`, `api/seed_groups.py`):
+  `pick_seed` (pure) picks a group's child by a **validation** metric from each
+  child's `training_report.json` only (`validation_values`: token_classification →
+  `task_metrics.span_set.f1`, classification → `final_eval_macro_f1` else
+  `final_eval_accuracy`, else lowest `final_eval_loss`; ties → lower run id; a
+  child without the metric is listed, never picked) — never test / answer key /
+  benchmarks. `GET /projects/{id}/seed-groups/{leader}/pick` (`?metric=` override;
+  `recorded` = last selection), `POST .../ship` {export_format=huggingface, metric,
+  run_smoke_tests} → `record_selection` on the leader's `config["seed_selection"]`
+  + `create_export`/`run_export` of the child. `run_export` reads
+  `selection_for_experiment` → manifest `seed_selection`, RELEASE_NOTES line, span
+  card "Seed selection" line (`build_span_model_card(seed_selection=)`). Summary
+  flag `seed_group_leader` → `SeedShipTable` on `EvalSummaryCard`. Tests:
+  `tests/test_seed_selection.py`, `SeedShipTable.test.tsx`.
 - **Reroute-to-RAG** — `rag_project_service.clone_project_for_rag()`
   creates a sibling project with `runtime_config.rag_first=True`. The
   playground uses base model + retrieval (no LoRA).

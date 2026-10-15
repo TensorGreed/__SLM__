@@ -135,6 +135,22 @@ exports/project-1/export-19/
 └── README.md                        # deployment instructions for this target
 ```
 
+### Shipping one seed of a multi-seed run
+
+A multi-seed run (*Seeds* in the training config, or **Check across 3 seeds** on the Eval summary) trains the same recipe N times. The lift check reports the group; to ship you need one model. On the Eval summary card of a multi-seed run, the **Ship one seed** table lists every seed: its run id, its **validation** metric, and its test score when the lift check has one. The seed to ship is picked by the validation metric only:
+
+| Task type | Picked by |
+|---|---|
+| Token classification | highest validation span F1 |
+| Classification | highest validation macro-F1 (accuracy when macro-F1 wasn't recorded) |
+| Anything else | lowest validation loss |
+
+Ties go to the lower run id. A seed without the metric in its training report is listed but never picked. Test examples, the answer key and external benchmarks are never used to pick: they are what the shipped model is reported on, and choosing on them would make those numbers optimistic. The test column is shown for comparison only.
+
+**Ship this seed** runs the normal export of the picked seed (Hugging Face format) and records the choice on the group's leader run. The export says how the seed was chosen, for example "Picked seed 43 (run #102) of 3 by validation span F1 (higher is better; values: seed 42 0.81, seed 43 0.84, seed 44 0.82)". That sentence appears in `manifest.json` (`seed_selection`, with every seed's value), in `RELEASE_NOTES.md`, and, for a span tagger, as a **Seed selection** line in the model card. A later export of the same seed carries it too.
+
+API: `GET /api/projects/{id}/seed-groups/{leader_id}/pick` (add `?metric=span_f1|macro_f1|accuracy|eval_loss` to override the default) and `POST /api/projects/{id}/seed-groups/{leader_id}/ship` with `{"export_format": "huggingface", "metric": null, "run_smoke_tests": true}`. The response includes the export's id, status and output path.
+
 ### Reason codes you might hit
 
 | Code | Means |

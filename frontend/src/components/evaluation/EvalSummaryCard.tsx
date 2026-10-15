@@ -15,6 +15,7 @@ import api from '../../api/client';
 import { checkLiftAcrossSeeds, fetchEvalSummary, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
 import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import RedactionTryBox from './RedactionTryBox';
+import SeedShipTable from './SeedShipTable';
 import { retrievalLabel } from './retrievalLabel';
 import { retrievalRowText, retrievalSplitText } from './retrievalSplit';
 import { toast } from '../../stores/toastStore';
@@ -378,6 +379,9 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         </span>
                     )}
                 </p>
+            )}
+            {summary.seed_group_leader && runId != null && (
+                <SeedShipTable projectId={projectId} leaderId={runId} seeds={summary.seeds} />
             )}
             {evidence && note && (
                 <p

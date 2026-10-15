@@ -73,6 +73,7 @@ session-start guidance.
 - `backend/app/api/run_event_clusters.py` — Project-wide failure-cluster API (priority.md P33, Wave G).
 - `backend/app/api/run_events.py` — Run-events + timeline API (priority.md P31 + P32, Wave G).
 - `backend/app/api/secrets.py` — Project secret management API routes.
+- `backend/app/api/seed_groups.py` — Seed groups API: pick the seed of a multi-seed run to ship (by a
 - `backend/app/api/settings.py` — System settings API routes.
 - `backend/app/api/starter_packs.py` — Starter-pack catalog API routes.
 - `backend/app/api/support_bundles.py` — Support-bundle API (priority.md P34, Wave G).
@@ -237,6 +238,7 @@ session-start guidance.
 - `backend/app/services/scaffold_service.py` — Plugin scaffold templating service (priority.md P38, Wave H).
 - `backend/app/services/secret_service.py` — Project secret storage service with reversible at-rest encryption.
 - `backend/app/services/seed_documents_service.py` — Seed documents: write sample documents for a domain when the user has
+- `backend/app/services/seed_selection_service.py` — Ship the best seed of a multi-seed group.
 - `backend/app/services/serve_runtime_service.py` — Ephemeral local serve run manager (start/status/stop + live log tail).
 - `backend/app/services/serve_service.py` — Local serving plan generation for export and registry artifacts.
 - `backend/app/services/served_model_telemetry_service.py` — Post-deploy telemetry service (priority.md P26).
@@ -458,6 +460,7 @@ session-start guidance.
 - `frontend/src/api/remediation.ts` — Typed wrapper for the remediation tracking API (E2).
 - `frontend/src/api/rerouteAnalysis.ts` — USER-SUCCESS Epic 7 Phase 7c — typed client for the post-eval
 - `frontend/src/api/seedGroupDrillDown.ts` — Quality-Lift phase 8 slice 1 — seed-group drill-down client.
+- `frontend/src/api/seedGroups.ts` — _(no docstring)_
 - `frontend/src/api/sftLift.ts` — Typed wrapper for the Theme 8 Epic 4 "Did SFT help?" lift summary.
 - `frontend/src/api/sliceDefinitions.ts` — Slice-definitions CRUD client.
 - `frontend/src/api/smokeTest.ts` — Typed client for the project smoke-test endpoint (Diagnostics
@@ -586,6 +589,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/RedactionTryBox.tsx` — "Try redaction" — paste a text, run it through a span-tagging run
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.tsx` — RerouteRecommendationPanel — USER-SUCCESS Epic 7 Phase 7c.
 - `frontend/src/components/evaluation/ScorecardPanel.tsx` — Quality gate reporter showing pass/fail decisions with missing-metric detection.
+- `frontend/src/components/evaluation/SeedShipTable.tsx` — SeedShipTable — on a multi-seed run's Eval summary: every seed with its
 - `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Did SFT help?" lift summary panel (Theme 8 Epic 4).
 - `frontend/src/components/evaluation/SlicesSection.tsx` — Quality-Lift phase 7 slice 1 — Slices editor section.
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.tsx` — Student-vs-teacher distillation comparison panel (Track 1, Epic A, slice 3).
@@ -921,6 +925,7 @@ session-start guidance.
 - `backend/tests/test_retrieval_reranker.py` — Cross-encoder reranking + per-project retrieval settings.
 - `backend/tests/test_seed_documents.py` — Seed documents: a generation model writes sample documents for a domain
 - `backend/tests/test_seed_group_drilldown_endpoint.py` — Quality-Lift phase 8 slice 1 — seed-group drill-down endpoint.
+- `backend/tests/test_seed_selection.py` — Ship the best seed of a multi-seed group (``seed_selection_service``).
 - `backend/tests/test_seq2seq_adapter_prompt_wrap.py` — θ-fix tests — seq2seq-pair adapter writes the production
 - `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).
 - `backend/tests/test_shared_connection_rollback_guard.py` — The SQLite StaticPool rollback guard (``app.database``).
@@ -1048,6 +1053,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/RedactionTryBox.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ScorecardPanel.test.tsx` — Quality-Lift phase 1, slice 3 — ScorecardPanel variance + drill-down.
+- `frontend/src/components/evaluation/SeedShipTable.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/SftLiftPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/SlicesSection.test.tsx` — Quality-Lift phase 7 slice 1 — SlicesSection tests.
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.test.tsx` — _(no docstring)_
