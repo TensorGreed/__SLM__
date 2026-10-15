@@ -32,6 +32,7 @@ import EvalGapsPanel from './EvalGapsPanel';
 import ProbePackPanel from './ProbePackPanel';
 import EvalSummaryCard from './EvalSummaryCard';
 import './EvalPanel.css';
+import ExternalBenchmarksPanel from './ExternalBenchmarksPanel';
 
 type EvalSubTab = 'runs' | 'workbench';
 
@@ -1013,6 +1014,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     }}
                 />
             )}
+            {subTab === 'runs' && <ExternalBenchmarksPanel projectId={projectId} experimentId={selectedExp} />}
             {subTab === 'runs' && (<>
             <div className="card">
                 <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Select Experiment / Model</h3>

@@ -192,6 +192,24 @@ async def build_eval_summary(
     project_id: int,
     experiment_id: int | None = None,
 ) -> dict[str, Any]:
+    """The Eval tab's default view (``_build_eval_summary_core``) plus the
+    project's external benchmarks with this run's latest score on each
+    (``benchmarks``, empty when the project has none)."""
+    summary = await _build_eval_summary_core(db, project_id, experiment_id)
+    try:
+        from app.services.external_benchmark_service import benchmarks_for_run
+
+        summary["benchmarks"] = await benchmarks_for_run(db, project_id, summary.get("experiment_id"))
+    except Exception:  # noqa: BLE001 — a broken benchmark never breaks the summary
+        summary["benchmarks"] = []
+    return summary
+
+
+async def _build_eval_summary_core(
+    db: AsyncSession,
+    project_id: int,
+    experiment_id: int | None = None,
+) -> dict[str, Any]:
     from app.services.sft_lift_summary_service import compute_sft_lift_summary
 
     if experiment_id is None:
@@ -246,6 +264,12 @@ async def build_eval_summary(
             span = await span_eval_summary(db, project_id, experiment)
             if span is not None:
                 return span
+        from app.services.post_training_eval_service import is_encoder_classification
+
+        if is_encoder_classification(experiment):
+            head = await head_eval_summary(db, project_id, experiment)
+            if head is not None:
+                return head
 
     latest = (
         await db.execute(
@@ -334,6 +358,51 @@ def _answer_key_source(project_id: int) -> str | None:
     except Exception:  # noqa: BLE001
         return None
     return None
+
+
+async def head_eval_summary(db: AsyncSession, project_id: int, experiment: Experiment) -> dict[str, Any] | None:
+    """``kind="head_eval"`` for a classification head on an encoder base
+    model: its own scores on the test examples — an encoder can't answer
+    zero-shot, so there is no base-model lift to show. None until the run
+    has been evaluated."""
+    result = (
+        await db.execute(
+            select(EvalResult)
+            .where(EvalResult.experiment_id == experiment.id, EvalResult.dataset_name == "test")
+            .order_by(desc(EvalResult.id))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    metrics = result.metrics if result is not None and isinstance(result.metrics, dict) else {}
+    if result is None or not isinstance(metrics.get("accuracy"), (int, float)):
+        return None
+    failures, failed_count = _failures_from(result)
+    rows = metrics.get("evaluated_samples") or metrics.get("total")
+    return {
+        "kind": "head_eval",
+        "project_id": project_id,
+        "experiment_id": experiment.id,
+        "verdict": "evaluated",
+        "message": "Scored on its own: an encoder base model can't answer zero-shot, so there is no base-model lift.",
+        "headline": None,
+        "head": {
+            "accuracy": metrics.get("accuracy"),
+            "macro_f1": metrics.get("macro_f1"),
+            "rows": rows,
+            "per_class": metrics.get("per_class") if isinstance(metrics.get("per_class"), dict) else {},
+        },
+        "trained": {"experiment_name": experiment.name},
+        "eval_result_id": result.id,
+        "eval_type": result.eval_type,
+        "evaluated_samples": rows,
+        "failures": failures,
+        "failed_count": failed_count,
+        "dataset_name": result.dataset_name,
+        "evidence": None,
+        "seed_evidence": None,
+        "seeds": None,
+        "n_seeds": 1,
+    }
 
 
 async def span_eval_summary(db: AsyncSession, project_id: int, experiment: Experiment) -> dict[str, Any] | None:

@@ -668,3 +668,29 @@ class RunLocalInferenceMultimodalDispatchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FullFineTuneClassifierDetectionTests(unittest.TestCase):
+    """A fully fine-tuned classifier (no LoRA adapter) is still a classifier
+    head: eval must not fall through to the causal-LM generation path."""
+
+    def test_detects_full_fine_tuned_sequence_classifier(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            model_dir = Path(tmp) / "model"
+            model_dir.mkdir()
+            (model_dir / "config.json").write_text(json.dumps({
+                "architectures": ["DebertaV2ForSequenceClassification"],
+                "id2label": {"0": "positive", "1": "negative"},
+            }))
+            art = _resolve_classifier_head_artifacts(tmp)
+            self.assertEqual(art["base_model"], str(model_dir))
+            self.assertIsNone(art["adapter_path"])
+            self.assertEqual(art["id2label"], {0: "positive", 1: "negative"})
+            (model_dir / "config.json").write_text(json.dumps({
+                "architectures": ["DebertaV2ForSequenceClassification"], "id2label": {"0": "LABEL_0", "1": "LABEL_1"},
+            }))
+            self.assertIsNone(_resolve_classifier_head_artifacts(tmp), "unnamed labels can't be scored")
+            (model_dir / "config.json").write_text(json.dumps({"architectures": ["LlamaForCausalLM"]}))
+            self.assertIsNone(_resolve_classifier_head_artifacts(tmp))

@@ -97,10 +97,14 @@ export interface EvalSummaryJudge {
 export interface EvalSummary {
     project_id: number;
     experiment_id: number | null;
+    /** External benchmarks with this run's latest score on each (G-B1). */
+    benchmarks?: import('./benchmarks').BenchmarkInfo[];
     /** 'rag_passages': a RAG-first project — the "run" is the base model +
      *  document-passage retrieval, scored by the judge against the base
      *  model alone (no training). Absent for trained runs. */
-    kind?: 'rag_passages' | 'span_eval';
+    kind?: 'rag_passages' | 'span_eval' | 'head_eval';
+    /** kind 'head_eval': a classifier head on an encoder, scored on its own. */
+    head?: { accuracy: number | null; macro_f1: number | null; rows: number | null; per_class?: Record<string, { f1?: number }> };
     /** span_eval: scores on the answer key written by a second model (the
      *  headline when present) and on the test examples. */
     answer_key?: SpanEvalBlock | null;

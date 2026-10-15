@@ -1448,6 +1448,43 @@ runs real CPU inference). ~4 min locally.
   action) via `_retrieval_ready_nudge` (quiet once a run exists / rag_first);
   `build_eval_summary` for an untrained non-RAG project returns the
   passages summary with `pretraining_gate` + a "nothing trained yet" message.
+- **External benchmarks (G-B1)** (`services/external_benchmark_service.py`,
+  `api/benchmarks.py`, `DatasetType.BENCHMARK`, migration 0049): any
+  dataset-import locator (`hf:<id>[:<split>[:<revision>]]`, or a file under
+  `projects/<id>/imports/` — `check_locator` refuses other paths) →
+  `load_source` (≤ 5000 rows; HF `ClassLabel` names via features; licence from
+  the card) → `sample_rows` (spread, seeded) → `detect_shape` (classification
+  `text_label`; spans `char_spans` or `bio_tokens` → `bio_to_spans`; anything
+  else 400) → `convert_rows` → `apply_mapping` (source label → project label |
+  `ignore`, many-to-one; `join_adjacent` for spans) → `leakage_filter`
+  (data_health matcher vs prepared train+val) → locked BENCHMARK Dataset
+  `benchmark:<slug>` + `benchmarks/<slug>/{rows.jsonl,manifest.json}`. Scoring
+  (`evaluate_benchmark`, Job `benchmark_eval`) = `evaluation_service.
+  _generate_heldout_predictions` (extracted from `run_heldout_evaluation`) +
+  the handler's `score_with_slices`, IN MEMORY — never an EvalResult (32
+  "latest eval" readers would pick it up); appended to `results.jsonl`;
+  spans scored over mapped types only (`score_block`/`_micro`). Refuses
+  non-completed runs; `local_only` refuses a run whose model isn't a local
+  checkpoint. `build_eval_summary` wraps `_build_eval_summary_core` and adds
+  `benchmarks` (`benchmarks_for_run`). Routes: `POST
+  /projects/{id}/benchmarks/preview`, `POST /benchmarks`, `GET` (`?experiment_id`),
+  `DELETE /{bid}`, `POST /{bid}/evaluate` (202 Job). Data Studio's quality scan
+  skips BENCHMARK datasets. UI: `ExternalBenchmarksPanel` (Eval tab, under the
+  summary card; `#external-benchmarks`), benchmark lines in `EvalSummaryCard`,
+  bell outcome + deep link. Helpers `api/benchmarks.ts` (`benchmarkScoreText`,
+  `benchmarkSourceText`). Docs `workflows/external-benchmarks.md`.
+  **Found by its classification proof (fixed)**: the HF source returned
+  `ClassLabel` ids, not names (`sources/hf._class_label_names`); LoRA
+  `"auto"` on encoders targeted no modules (`lora_target_policy.
+  query_value_modules`, aliases DeBERTa/BERT/DistilBERT/T5, else all-linear);
+  full fine-tunes and classification heads trained with bf16 weights and
+  stayed at chance (`train.needs_fp32_master_weights` → fp32 masters,
+  report `master_dtype`); full fine-tuned classifiers weren't recognised by
+  eval (`_resolve_full_classifier_artifacts`); the lift check loaded encoders
+  as causal LMs — `post_training_eval_service.is_encoder_classification` →
+  `run_head_only_evaluation` (`kind="head_eval"`), summary
+  `eval_summary_service.head_eval_summary` (card: "Accuracy x on the test
+  examples", Re-evaluate, no seeds button).
 - **Distillation (offline KD)** — `services/distillation/`: slice 1
   captures a teacher's top-k logprobs (`teacher_capture.py`, `POST
   .../distillation/capture` → bg task) to

@@ -256,6 +256,31 @@ def is_token_classification(exp: Experiment) -> bool:
     return str(cfg.get("task_type") or "").strip().lower() == "token_classification"
 
 
+def base_is_causal_lm(base_model: str | None) -> bool:
+    """Whether the base checkpoint is a causal LM (can answer a prompt zero-
+    shot). An encoder (DeBERTa, BERT…) can't — its untrained classifier head
+    is no baseline. Unknown → True (keep the usual base-vs-fine-tuned check)."""
+    if not base_model:
+        return True
+    try:
+        from transformers import AutoConfig
+        from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
+
+        cfg = AutoConfig.from_pretrained(base_model)
+        return getattr(cfg, "model_type", None) in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def is_encoder_classification(exp: Experiment) -> bool:
+    """A classification-head run on an encoder base model: evaluated on its
+    own (no base-model baseline exists)."""
+    cfg = exp.config if isinstance(exp.config, dict) else {}
+    if str(cfg.get("task_type") or "").strip().lower() != "classification":
+        return False
+    return not base_is_causal_lm(exp.base_model)
+
+
 def span_block(result: Any, type_regimes: dict[str, list[str]] | None = None) -> dict[str, Any]:
     """The compact span report of one EvalResult: P / R / F1, rows, the
     weakest types (lowest F1 first, ties → more gold spans first) and,
@@ -377,6 +402,8 @@ async def run_post_training_lift_eval(
         return await _run_seed_group_lift_eval(db, project=project, leader=exp, report=_report)
     if is_token_classification(exp):
         return await run_span_evaluation(db, project_id=project_id, experiment=exp, report=_report)
+    if is_encoder_classification(exp):
+        return await run_head_only_evaluation(db, project=project, experiment=exp, report=_report)
 
     eval_type = eval_type_for_project(project)
     max_samples, max_new_tokens = _lift_eval_limits()
@@ -444,6 +471,33 @@ async def run_post_training_lift_eval(
         "trained_eval_result_id": getattr(trained_result, "id", None),
         "lift_status": summary.get("status"),
         "headline": headline,
+    }
+
+
+async def run_head_only_evaluation(db: AsyncSession, *, project: Project, experiment: Experiment, report) -> dict[str, Any]:
+    """Score a classification-head run on an encoder against the test
+    examples only — there is no zero-shot base model to compare with."""
+    from app.services.evaluation_service import run_heldout_evaluation
+
+    await report(0.2, f"Evaluating run #{experiment.id} (classifier head; no base-model baseline for an encoder)")
+    max_samples, max_new_tokens = _lift_eval_limits()
+    result = await run_heldout_evaluation(
+        db=db, project_id=project.id, experiment_id=experiment.id, dataset_name=AUTO_LIFT_DATASET,
+        eval_type=eval_type_for_project(project), max_samples=max_samples, max_new_tokens=max_new_tokens,
+        temperature=0.0, judge_model=None, model_path=None,
+    )
+    await db.commit()
+    metrics = result.metrics if isinstance(result.metrics, dict) else {}
+    return {
+        "kind": "head_eval",
+        "experiment_id": experiment.id,
+        "base_model": experiment.base_model,
+        "trained_eval_result_id": result.id,
+        "lift_status": "no_baseline",
+        "reason": "encoder base model: an untrained classifier head is no baseline",
+        "accuracy": metrics.get("accuracy"),
+        "macro_f1": metrics.get("macro_f1"),
+        "rows": metrics.get("evaluated_samples") or metrics.get("total"),
     }
 
 

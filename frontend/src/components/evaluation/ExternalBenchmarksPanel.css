@@ -1,0 +1,17 @@
+.ext-bench__head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-sm, 8px); }
+.ext-bench__title { font-size: var(--font-size-md, 15px); font-weight: 600; margin: 0; }
+.ext-bench__hint, .ext-bench__meta, .ext-bench__empty { color: var(--text-secondary); font-size: var(--font-size-sm, 13px); }
+.ext-bench__list { list-style: none; padding: 0; margin: var(--space-sm, 8px) 0; display: flex; flex-direction: column; gap: var(--space-sm, 8px); }
+.ext-bench__item { border: 1px solid var(--border-color, #ddd); border-radius: var(--radius-md, 8px); padding: var(--space-sm, 8px) var(--space-md, 12px); display: flex; flex-direction: column; gap: 4px; }
+.ext-bench__score { font-weight: 600; }
+.ext-bench__actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.ext-bench__form, .ext-bench__preview { display: flex; flex-direction: column; gap: var(--space-sm, 8px); margin-top: var(--space-sm, 8px); }
+.ext-bench__field { display: flex; flex-direction: column; gap: 4px; font-size: var(--font-size-sm, 13px); }
+.ext-bench__field--narrow { max-width: 220px; }
+.ext-bench__check { font-size: var(--font-size-sm, 13px); }
+.ext-bench__warn { color: var(--color-warning, #d97706); }
+.ext-bench__map { border-collapse: collapse; font-size: var(--font-size-sm, 13px); max-width: 100%; }
+.ext-bench__map th, .ext-bench__map td { text-align: left; padding: 3px 10px 3px 0; }
+.eval-summary__benchmarks { margin-top: var(--space-sm, 8px); font-size: var(--font-size-sm, 13px); }
+.eval-summary__benchmarks ul { margin: 2px 0 0; padding-left: 1.2em; }
+.eval-summary__muted { color: var(--text-secondary); }

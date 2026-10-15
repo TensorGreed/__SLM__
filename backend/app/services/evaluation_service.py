@@ -2040,7 +2040,7 @@ def _resolve_classifier_head_artifacts(
         return None
     adapter_cfg_path = path / "adapter_config.json"
     if not adapter_cfg_path.exists():
-        return None
+        return _resolve_full_classifier_artifacts(path)
     try:
         adapter_cfg = json.loads(adapter_cfg_path.read_text())
     except Exception:
@@ -2093,6 +2093,38 @@ def _resolve_classifier_head_artifacts(
     }
 
 
+def _resolve_full_classifier_artifacts(path: Path) -> dict[str, Any] | None:
+    """A fully fine-tuned classifier (no LoRA): ``config.json`` with a
+    ``*ForSequenceClassification`` architecture in ``path`` or
+    ``path/model``; labels from its ``id2label``. ``adapter_path`` None →
+    the checkpoint is loaded as-is."""
+    for candidate in (path, path / "model"):
+        cfg_path = candidate / "config.json"
+        if not cfg_path.exists():
+            continue
+        try:
+            cfg = json.loads(cfg_path.read_text())
+        except Exception:  # noqa: BLE001
+            continue
+        archs = [str(a) for a in (cfg.get("architectures") or [])]
+        if not any(a.endswith("ForSequenceClassification") for a in archs):
+            continue
+        raw = cfg.get("id2label") or {}
+        try:
+            id2label = {int(k): str(v) for k, v in raw.items()}
+        except (TypeError, ValueError):
+            continue
+        if not id2label or any(v.startswith("LABEL_") for v in id2label.values()):
+            continue
+        return {
+            "base_model": str(candidate),
+            "adapter_path": None,
+            "id2label": id2label,
+            "num_labels": len(id2label),
+        }
+    return None
+
+
 def _run_classifier_head_inference(
     artifacts: dict[str, Any],
     pairs: list[dict],
@@ -2123,7 +2155,7 @@ def _run_classifier_head_inference(
     # Tokenizer ships with the adapter dir (trainer saved it
     # alongside the adapter weights); fall back to the base model
     # if not present so a hand-trimmed checkpoint still loads.
-    tokenizer_src = adapter_path if (Path(adapter_path) / "tokenizer.json").exists() else base_model
+    tokenizer_src = adapter_path if adapter_path and (Path(adapter_path) / "tokenizer.json").exists() else base_model
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_src, trust_remote_code=True)
     if tokenizer.pad_token_id is None:
         if tokenizer.eos_token:
@@ -2146,6 +2178,8 @@ def _run_classifier_head_inference(
     if len(tokenizer) > base.get_input_embeddings().num_embeddings:
         base.resize_token_embeddings(len(tokenizer))
     try:
+        if adapter_path is None:
+            raise ValueError("full fine-tune: no adapter")
         model = PeftModel.from_pretrained(base, adapter_path)
     except Exception:
         # The adapter directory might be a merged full-fine-tune
@@ -2499,80 +2533,25 @@ async def _safe_judge_answers(
         return {"skipped": f"error: {exc}"[:200]}
 
 
-async def run_heldout_evaluation(
+async def _generate_heldout_predictions(
     db: AsyncSession,
+    *,
+    exp: Any,
     project_id: int,
-    experiment_id: int,
-    dataset_name: str = "test",
-    eval_type: str = "exact_match",
-    max_samples: int = 100,
-    max_new_tokens: int = 128,
-    temperature: float = 0.0,
-    model_path: str | None = None,
-    judge_model: str = "meta-llama/Meta-Llama-3-70B-Instruct",
-    answer_judge: "ResolvedJudge | None" = None,
-    answer_judge_enabled: bool = True,
-) -> EvalResult:
-    """Run end-to-end evaluation by generating predictions on held-out data.
-
-    For long-answer generative tasks (``answer_judge_service.should_judge``)
-    an LLM judge also scores every row correct / partial / wrong →
-    ``metrics["judge_correct"]`` + per-row ``row_scores["judge_correct"]``,
-    beside F1. ``answer_judge`` injects one (tests); otherwise it is
-    resolved per project (local model first) and skipped when none is
-    reachable. ``answer_judge_enabled=False`` turns it off for a call.
-    """
-    supported = {"exact_match", "f1", "llm_judge", PERPLEXITY_EVAL_TYPE}
-    if eval_type not in supported:
-        raise ValueError(f"Unsupported eval_type '{eval_type}'. Use one of: {', '.join(sorted(supported))}")
-
-    exp = await _get_experiment_for_project(db, project_id, experiment_id)
-    if not exp:
-        raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
-
-    dataset = await _resolve_heldout_dataset(db, project_id, dataset_name)
-    if not dataset.file_path:
-        raise ValueError(f"Dataset '{dataset.name}' has no file path")
-    dataset_path = Path(dataset.file_path).expanduser().resolve()
-    # Pull the experiment's task_type so build_eval_context can fall
-    # back to it when the prepared manifest doesn't declare a
-    # task_profile (common for dataset-import projects).
-    if eval_type == PERPLEXITY_EVAL_TYPE:
-        return await _run_perplexity_evaluation(
-            db, exp=exp, experiment_id=experiment_id, dataset=dataset,
-            dataset_path=dataset_path, model_path=model_path,
-            max_samples=max_samples, reason="requested",
-        )
-    exp_config = dict(exp.config or {})
-    experiment_task_type = str(exp_config.get("task_type") or "").strip() or None
-    eval_ctx, task_handler = build_eval_context(
-        project_id=project_id,
-        experiment_id=experiment_id,
-        eval_type=eval_type,
-        dataset_name=dataset_name,
-        experiment_task_type=experiment_task_type,
-    )
-    pairs = _load_heldout_pairs(
-        dataset_path,
-        max_samples=max_samples,
-        handler=task_handler,
-        ctx=eval_ctx,
-    )
-    if not pairs and _heldout_texts(dataset_path, max_docs=1):
-        # Plain documents (no prompt/answer columns): generation metrics
-        # have nothing to compare against — measure perplexity instead of
-        # failing.
-        return await _run_perplexity_evaluation(
-            db, exp=exp, experiment_id=experiment_id, dataset=dataset,
-            dataset_path=dataset_path, model_path=model_path,
-            max_samples=max_samples, reason="plain_text_split",
-        )
-    if not pairs:
-        raise ValueError(
-            f"No valid evaluation rows found in {dataset_path}. "
-            "Rows must include prompt/question and reference/answer fields."
-        )
-
+    pairs: list[dict],
+    task_handler: Any,
+    eval_ctx: Any,
+    model_path: str | None,
+    max_new_tokens: int,
+    temperature: float,
+) -> tuple[list[dict], dict, dict[str, int], dict[str, Any]]:
+    """Run the experiment's model over prepared held-out ``pairs`` the way
+    ``run_heldout_evaluation`` does (handler token cap / stop sequences /
+    own-prompt flag, scanned-text decoding, per-row extras the handlers
+    score with) and return ``(predictions, runtime, modality_counts,
+    settings)`` — settings = model_ref / max_new_tokens / stop_sequences
+    the run used.
+    Nothing is persisted — external benchmarks score these in memory."""
     model_ref = _resolve_model_reference(exp, model_path)
     # A project whose texts come from scans: the span decoder tidies OCR
     # debris (``ocr_tidy_spans``). Carried on the pairs because the
@@ -2656,6 +2635,103 @@ async def run_heldout_evaluation(
                 predictions[idx]["alignment_rejected"] = pair.get("alignment_rejected")
             if pair.get("alignment_has_pair") is not None:
                 predictions[idx]["alignment_has_pair"] = pair.get("alignment_has_pair")
+
+    settings = {
+        "model_ref": model_ref,
+        "max_new_tokens": effective_max_new_tokens,
+        "stop_sequences": handler_stop_sequences,
+    }
+    return predictions, runtime, modality_counts, settings
+
+
+async def run_heldout_evaluation(
+    db: AsyncSession,
+    project_id: int,
+    experiment_id: int,
+    dataset_name: str = "test",
+    eval_type: str = "exact_match",
+    max_samples: int = 100,
+    max_new_tokens: int = 128,
+    temperature: float = 0.0,
+    model_path: str | None = None,
+    judge_model: str = "meta-llama/Meta-Llama-3-70B-Instruct",
+    answer_judge: "ResolvedJudge | None" = None,
+    answer_judge_enabled: bool = True,
+) -> EvalResult:
+    """Run end-to-end evaluation by generating predictions on held-out data.
+
+    For long-answer generative tasks (``answer_judge_service.should_judge``)
+    an LLM judge also scores every row correct / partial / wrong →
+    ``metrics["judge_correct"]`` + per-row ``row_scores["judge_correct"]``,
+    beside F1. ``answer_judge`` injects one (tests); otherwise it is
+    resolved per project (local model first) and skipped when none is
+    reachable. ``answer_judge_enabled=False`` turns it off for a call.
+    """
+    supported = {"exact_match", "f1", "llm_judge", PERPLEXITY_EVAL_TYPE}
+    if eval_type not in supported:
+        raise ValueError(f"Unsupported eval_type '{eval_type}'. Use one of: {', '.join(sorted(supported))}")
+
+    exp = await _get_experiment_for_project(db, project_id, experiment_id)
+    if not exp:
+        raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
+
+    dataset = await _resolve_heldout_dataset(db, project_id, dataset_name)
+    if not dataset.file_path:
+        raise ValueError(f"Dataset '{dataset.name}' has no file path")
+    dataset_path = Path(dataset.file_path).expanduser().resolve()
+    # Pull the experiment's task_type so build_eval_context can fall
+    # back to it when the prepared manifest doesn't declare a
+    # task_profile (common for dataset-import projects).
+    if eval_type == PERPLEXITY_EVAL_TYPE:
+        return await _run_perplexity_evaluation(
+            db, exp=exp, experiment_id=experiment_id, dataset=dataset,
+            dataset_path=dataset_path, model_path=model_path,
+            max_samples=max_samples, reason="requested",
+        )
+    exp_config = dict(exp.config or {})
+    experiment_task_type = str(exp_config.get("task_type") or "").strip() or None
+    eval_ctx, task_handler = build_eval_context(
+        project_id=project_id,
+        experiment_id=experiment_id,
+        eval_type=eval_type,
+        dataset_name=dataset_name,
+        experiment_task_type=experiment_task_type,
+    )
+    pairs = _load_heldout_pairs(
+        dataset_path,
+        max_samples=max_samples,
+        handler=task_handler,
+        ctx=eval_ctx,
+    )
+    if not pairs and _heldout_texts(dataset_path, max_docs=1):
+        # Plain documents (no prompt/answer columns): generation metrics
+        # have nothing to compare against — measure perplexity instead of
+        # failing.
+        return await _run_perplexity_evaluation(
+            db, exp=exp, experiment_id=experiment_id, dataset=dataset,
+            dataset_path=dataset_path, model_path=model_path,
+            max_samples=max_samples, reason="plain_text_split",
+        )
+    if not pairs:
+        raise ValueError(
+            f"No valid evaluation rows found in {dataset_path}. "
+            "Rows must include prompt/question and reference/answer fields."
+        )
+
+    predictions, runtime, modality_counts, gen_settings = await _generate_heldout_predictions(
+        db,
+        exp=exp,
+        project_id=project_id,
+        pairs=pairs,
+        task_handler=task_handler,
+        eval_ctx=eval_ctx,
+        model_path=model_path,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+    )
+    model_ref = gen_settings["model_ref"]
+    effective_max_new_tokens = gen_settings["max_new_tokens"]
+    handler_stop_sequences = gen_settings["stop_sequences"]
 
     eval_dataset_name = dataset.dataset_type.value
     if eval_type == "llm_judge":

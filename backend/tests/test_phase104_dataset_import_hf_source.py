@@ -344,3 +344,32 @@ class IntrospectAndPreviewIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClassLabelNamesTests(unittest.TestCase):
+    """HF stores class labels as ids; imports must see the names."""
+
+    def test_load_and_describe_resolve_class_label_ids(self):
+        class _ClassLabel:
+            names = ["negative", "positive"]
+            feature = None
+
+        class _Tags:  # a list-of-ClassLabel column (BIO tags) is left as ids
+            feature = _ClassLabel()
+
+        rows = [{"text": "bad", "label": 0, "tags": [1]}, {"text": "good", "label": 1, "tags": [0]}]
+
+        def _loader(**kwargs):
+            ds = _FakeIterableDataset(rows)
+            ds.features = {"text": object(), "label": _ClassLabel(), "tags": _Tags()}
+            return ds
+
+        source = HuggingFaceSource()
+        with _no_token_env(), mock.patch(
+            "app.services.dataset_import.sources.hf._import_datasets", return_value=(_loader, Exception),
+        ):
+            out = list(source.load("dataset_id:train"))
+            described = source.describe("dataset_id:train")
+        self.assertEqual([r["label"] for r in out], ["negative", "positive"])
+        self.assertEqual(out[0]["tags"], [1])
+        self.assertEqual(described["sample_rows"][1]["label"], "positive")

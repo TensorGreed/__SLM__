@@ -23,7 +23,7 @@ export type PipelineGraphStage =
     | 'model_merge';
 
 export type ProjectStatus = 'draft' | 'active' | 'paused' | 'completed' | 'failed';
-export type DatasetType = 'raw' | 'cleaned' | 'gold_dev' | 'gold_test' | 'synthetic' | 'train' | 'validation' | 'test';
+export type DatasetType = 'raw' | 'cleaned' | 'gold_dev' | 'gold_test' | 'synthetic' | 'train' | 'validation' | 'test' | 'benchmark';
 export type DocumentStatus = 'pending' | 'processing' | 'accepted' | 'rejected' | 'error';
 export type ExperimentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type TrainingMode = 'sft' | 'domain_pretrain' | 'dpo' | 'orpo';

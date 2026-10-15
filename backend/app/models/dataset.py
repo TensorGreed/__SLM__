@@ -22,6 +22,9 @@ class DatasetType(str, enum.Enum):
     TRAIN = "train"
     VALIDATION = "validation"
     TEST = "test"
+    # External benchmark (Epic G-B1): a labelled set someone else made,
+    # mapped onto the project's labels. Eval only — never a training source.
+    BENCHMARK = "benchmark"
 
 
 class DocumentStatus(str, enum.Enum):

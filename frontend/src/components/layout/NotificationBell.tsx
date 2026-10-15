@@ -66,6 +66,9 @@ function jobDeepLink(job: Job): string | null {
     if (job.kind === 'span_relabel' && job.project_id) {
         return `/project/${job.project_id}/pipeline/eval`;
     }
+    if (job.kind === 'benchmark_eval' && job.project_id) {
+        return `/project/${job.project_id}/pipeline/eval#external-benchmarks`;
+    }
     if (job.project_id) {
         return `/project/${job.project_id}`;
     }
@@ -141,6 +144,14 @@ function jobOutcomeSummary(job: Job): string | null {
         return null;
     }
 
+    if (job.kind === 'benchmark_eval') {
+        const score = typeof r.score === 'number' ? r.score : null;
+        if (score === null) return null;
+        const metric = r.headline === 'f1' ? 'F1' : 'accuracy';
+        const rows = typeof r.rows === 'number' ? ` on ${r.rows} rows` : '';
+        return `${String(r.benchmark ?? 'benchmark')}: ${metric} ${score.toFixed(2)}${rows}`;
+    }
+
     if (job.kind === 'span_relabel') {
         const rows = typeof r.labelled_rows === 'number' ? r.labelled_rows : null;
         const entities = typeof r.entities === 'number' ? r.entities : null;
@@ -187,6 +198,13 @@ function jobOutcomeSummary(job: Job): string | null {
                 .filter(([, b]) => b && typeof (b as { f1?: unknown }).f1 === 'number')
                 .map(([label, b]) => `span F1 ${(b as { f1: number }).f1.toFixed(2)} on the ${label}`);
             return parts.length ? parts.join(' · ') : 'span evaluation done';
+        }
+        if (r.kind === 'head_eval') {
+            // Classifier head on an encoder: scored alone (no zero-shot base model to compare with).
+            const acc = typeof r.accuracy === 'number' ? `accuracy ${r.accuracy.toFixed(2)}` : null;
+            const f1 = typeof r.macro_f1 === 'number' ? `macro-F1 ${r.macro_f1.toFixed(2)}` : null;
+            const parts = [acc, f1].filter(Boolean);
+            return parts.length ? `${parts.join(' · ')} on the test examples (no base-model baseline for an encoder)` : 'evaluation done';
         }
         const h = (r.headline || null) as {
             metric_id?: string;

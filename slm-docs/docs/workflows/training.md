@@ -483,3 +483,18 @@ For walk-throughs of each, see [Common blockers](../reliability/common-blockers.
 - [Evaluation + remediation](evaluation-and-remediation.md) — what to do with the trained checkpoint.
 - [Export + deployment](export-and-deployment.md) — shipping it.
 - [Measured vs estimated](../reliability/measured-vs-estimated.md) — reading the cost estimate.
+
+## Precision and LoRA targets for classifiers
+
+- Weights that train in full — a full fine-tune (`use_lora: false`) or a
+  freshly initialised classification head (trained in full even under LoRA)
+  — load in fp32; the `bf16` / `fp16` setting then means mixed precision.
+  Only LoRA on a frozen base loads the model in half precision. The training
+  report records `runtime_environment.master_dtype` and why.
+- `target_modules: "auto"` on a non-causal-LM run (classification, seq2seq)
+  adapts the model's own attention query/value projections — `q_proj`/`v_proj`,
+  DeBERTa's `query_proj`/`value_proj`, BERT's `query`/`value`, DistilBERT's
+  `q_lin`/`v_lin`, T5's `q`/`v` — and every linear layer when it has none of
+  those.
+- A classifier on an encoder has no zero-shot base model to compare with, so
+  its automatic check scores the run on its own (the Eval card says so).

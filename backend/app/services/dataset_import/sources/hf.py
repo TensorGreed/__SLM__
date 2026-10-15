@@ -119,6 +119,30 @@ def _materialize_first_split(loaded: Any) -> tuple[Any, str | None]:
     return loaded, None
 
 
+def _class_label_names(dataset: Any) -> dict[str, list[str]]:
+    """Plain ``ClassLabel`` columns → their names. HF stores class labels as
+    integer ids; without this an imported classification set trained on
+    "0" / "1" instead of "negative" / "positive"."""
+    out: dict[str, list[str]] = {}
+    try:
+        items = dict(getattr(dataset, "features", None) or {}).items()
+    except Exception:  # noqa: BLE001
+        return out
+    for name, feature in items:
+        names = getattr(feature, "names", None)
+        if isinstance(names, list) and names and getattr(feature, "feature", None) is None:
+            out[str(name)] = [str(n) for n in names]
+    return out
+
+
+def _with_label_names(row: RawRow, names: dict[str, list[str]]) -> RawRow:
+    for column, labels in names.items():
+        value = row.get(column)
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < len(labels):
+            row[column] = labels[value]
+    return row
+
+
 def _normalize_row(value: Any) -> RawRow:
     """Coerce a non-dict row (rare — usually datasets emit dicts) into
     a single-key dict so the downstream mapper sees a stable shape."""
@@ -186,9 +210,10 @@ class HuggingFaceSource:
         limit: int | None = None,
     ) -> Iterable[RawRow]:
         dataset, _dataset_id, _split, _revision = self._open_streaming(locator)
+        names = _class_label_names(dataset)
         yielded = 0
         for row in dataset:
-            yield _normalize_row(row)
+            yield _with_label_names(_normalize_row(row), names)
             yielded += 1
             if limit is not None and yielded >= limit:
                 return
@@ -201,11 +226,12 @@ class HuggingFaceSource:
         """
 
         dataset, dataset_id, split, revision = self._open_streaming(locator)
+        names = _class_label_names(dataset)
         sample: list[dict[str, Any]] = []
         columns: list[str] = []
         seen: set[str] = set()
         for row in dataset:
-            normalized = _normalize_row(row)
+            normalized = _with_label_names(_normalize_row(row), names)
             sample.append(normalized)
             for key in normalized.keys():
                 if key not in seen:

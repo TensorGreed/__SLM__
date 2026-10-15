@@ -1483,6 +1483,14 @@ def _load_training_runtime_dependencies() -> dict[str, Any]:
     }
 
 
+def needs_fp32_master_weights(*, use_cuda: bool, half_precision: bool, use_lora: bool, task_type: str) -> bool:
+    """Load the model in fp32 (the Trainer's bf16 / fp16 flag autocasts the
+    compute) when non-adapter weights train: a full fine-tune, or a fresh
+    classification head (trained in full even under LoRA). Half-precision
+    master weights lose fine-tuning-sized updates to rounding."""
+    return bool(use_cuda and half_precision and (not use_lora or task_type == "classification"))
+
+
 def _run_training_attempt(
     args: argparse.Namespace,
     *,
@@ -1961,7 +1969,22 @@ def _run_training_attempt(
         warnings.append(f"Auto epochs: {epoch_plan['reason']}")
     use_bf16 = bool(use_cuda and want_bf16 and torch.cuda.is_bf16_supported())
     use_fp16 = bool(use_cuda and not use_bf16 and want_fp16)
-    if use_bf16:
+    # Weights that TRAIN keep fp32 master copies (the Trainer's bf16 / fp16
+    # flag still autocasts the compute): a full fine-tune, or a freshly
+    # initialised classification head (trained even under LoRA). Loaded in
+    # bf16, updates at a fine-tuning learning rate round away — a DeBERTa
+    # sentiment classifier stayed at chance (loss 0.69 → 0.65, val accuracy
+    # 0.59). Only LoRA on a frozen base loads in half precision.
+    fp32_master = needs_fp32_master_weights(
+        use_cuda=use_cuda, half_precision=use_bf16 or use_fp16, use_lora=use_lora, task_type=normalized_task_type,
+    )
+    if fp32_master:
+        model_kwargs["dtype"] = torch.float32
+        runtime_environment["master_dtype"] = "float32"
+        runtime_environment["master_dtype_reason"] = (
+            "full fine-tune" if not use_lora else "classification head trains in full"
+        ) + f" — {'bf16' if use_bf16 else 'fp16'} mixed precision"
+    elif use_bf16:
         model_kwargs["dtype"] = torch.bfloat16
     elif use_fp16:
         model_kwargs["dtype"] = torch.float16
@@ -2101,6 +2124,9 @@ def _run_training_attempt(
                 target_modules,
                 model_params=sum(p.numel() for p in model.parameters()),
                 task_type=normalized_task_type,
+                linear_module_names=[
+                    name for name, module in model.named_modules() if isinstance(module, torch.nn.Linear)
+                ],
             )
             target_modules = lora_target_plan["target_modules"]
             runtime_environment["lora_target_modules"] = lora_target_plan

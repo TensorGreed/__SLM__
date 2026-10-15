@@ -1752,7 +1752,9 @@ async def _quality_source_rows(
         )
         .order_by(Dataset.updated_at.desc(), Dataset.id.asc())
     )
-    datasets = list(datasets_result.scalars().all())
+    # External benchmarks are someone else's eval-only data, not the
+    # project's — keep them out of its data-quality scan.
+    datasets = [d for d in datasets_result.scalars().all() if d.dataset_type != DatasetType.BENCHMARK]
     datasets_by_id = {int(dataset.id): dataset for dataset in datasets}
 
     raw_docs_result = await db.execute(

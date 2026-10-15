@@ -51,6 +51,7 @@ const sidebars: SidebarsConfig = {
         'workflows/training',
         'workflows/distillation',
         'workflows/evaluation-and-remediation',
+        'workflows/external-benchmarks',
         'workflows/export-and-deployment',
         'workflows/sensitive-data-tagging',
       ],

@@ -182,6 +182,24 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(base.config["is_baseline"])
             self.assertEqual(base.base_model, BASE)
 
+    async def test_encoder_classifier_is_scored_alone(self):
+        pid = await self._project()
+        exp_id = await self._run(pid, config={"task_type": "classification"})
+        with mock.patch("app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout), \
+                mock.patch.object(svc, "base_is_causal_lm", return_value=False):
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=exp_id)
+        self.assertEqual([c["model_path"] for c in self.eval_calls], [None], "no base-model eval")
+        self.assertEqual((out["kind"], out["lift_status"]), ("head_eval", "no_baseline"))
+        # A classifier on a causal LM keeps its zero-shot baseline.
+        self.eval_calls.clear()
+        exp2 = await self._run(pid, config={"task_type": "classification"})
+        with mock.patch("app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout), \
+                mock.patch.object(svc, "base_is_causal_lm", return_value=True):
+            async with self.sf() as db:
+                await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=exp2)
+        self.assertEqual([c["model_path"] for c in self.eval_calls], [BASE, None])
+
     async def test_baseline_without_row_scores_is_re_evaluated_once(self):
         """A cached base-model result from before per-row scores were kept
         can't be paired row by row — it is recomputed, then reused."""

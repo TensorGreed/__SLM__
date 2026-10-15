@@ -92,6 +92,33 @@ describe('EvalSummaryCard', () => {
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/7/evaluation/summary/lift-check', { experiment_id: 59 }));
     });
 
+    it('shows an encoder classifier on its own, with external benchmark scores beside it', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                kind: 'head_eval', project_id: 32, experiment_id: 84, verdict: 'evaluated', headline: null,
+                message: 'Scored on its own: an encoder base model can\'t answer zero-shot, so there is no base-model lift.',
+                trained: { experiment_name: 'deberta sentiment' },
+                head: { accuracy: 0.67, macro_f1: 0.63, rows: 100 },
+                dataset_name: 'test', evaluated_samples: 100, failed_count: 0, failures: [],
+                benchmarks: [{
+                    id: 5, name: 'Yelp reviews', slug: 'yelp', task_profile: 'classification',
+                    source: { locator: 'hf:Yelp/yelp_review_full:test', source_id: 'hf', dataset_id: 'Yelp/yelp_review_full', split: 'test', revision: null },
+                    licence: 'other', local_only: false, rows: 241, mapping: {}, scored_labels: ['negative', 'positive'], created_at: 'x',
+                    result: { experiment_id: 84, evaluated_at: 'x', rows: 241, headline: 'accuracy', score: 0.7386 }, latest_result: null,
+                }],
+            },
+        });
+        apiMock.post.mockResolvedValue({ data: { started: true } });
+        render(<EvalSummaryCard projectId={32} experimentId={84} />);
+        expect(await screen.findByText('Accuracy 0.67 on the test examples · macro-F1 0.63')).toBeInTheDocument();
+        expect(screen.getByText(/classifier head on an encoder, scored on its own/)).toBeInTheDocument();
+        expect(screen.getByTestId('eval-summary-benchmark-yelp')).toHaveTextContent(
+            'Yelp reviews: accuracy 0.74 on 241 rows (Yelp/yelp_review_full:test · licence other)',
+        );
+        expect(screen.queryByTestId('eval-summary-check-seeds')).toBeNull();
+        expect(screen.getByTestId('eval-summary-rerun-span')).toBeInTheDocument();
+    });
+
     it('shows per-regime span scores with recall first when the project tags its types', async () => {
         const regime = (r: string, label: string, recall: number, fn: number, support: number, unscored: string[] = []) => ({
             regime: r, label, custom: false, types: ['a'], unscored_types: unscored, tp: support - fn, fp: 1, fn, support,

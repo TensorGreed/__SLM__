@@ -267,6 +267,24 @@ class LoraTargetPolicyTests(unittest.TestCase):
         plan = resolve_lora_target_modules("auto", model_params=135_000_000, task_type="classification")
         self.assertEqual(plan["target_modules"], ["q_proj", "v_proj"])
 
+    def test_auto_uses_the_models_own_query_value_names_for_encoders(self):
+        from app.services.lora_target_policy import resolve_lora_target_modules
+
+        deberta = ["deberta.encoder.layer.0.attention.self.query_proj", "deberta.encoder.layer.0.attention.self.key_proj",
+                   "deberta.encoder.layer.0.attention.self.value_proj", "classifier"]
+        plan = resolve_lora_target_modules("auto", model_params=184_000_000, task_type="classification", linear_module_names=deberta)
+        self.assertEqual(plan["target_modules"], ["query_proj", "value_proj"])
+        bert = ["bert.encoder.layer.0.attention.self.query", "bert.encoder.layer.0.attention.self.value", "classifier"]
+        self.assertEqual(
+            resolve_lora_target_modules("auto", model_params=1, task_type="classification", linear_module_names=bert)["target_modules"],
+            ["query", "value"],
+        )
+        odd = ["encoder.blocks.0.mix", "classifier"]
+        self.assertEqual(
+            resolve_lora_target_modules("auto", model_params=1, task_type="classification", linear_module_names=odd)["target_modules"],
+            "all-linear",
+        )
+
     def test_explicit_choice_is_never_overridden(self):
         from app.services.lora_target_policy import resolve_lora_target_modules
 
@@ -494,3 +512,18 @@ class GradientCheckpointingPolicyTests(unittest.TestCase):
         self.assertTrue(resolve_gradient_checkpointing(True, model_params=135_000_000)["enabled"])
         self.assertFalse(resolve_gradient_checkpointing(False, model_params=7_000_000_000)["enabled"])
         self.assertFalse(resolve_gradient_checkpointing(True, model_params=1)["auto"])
+
+
+class MasterDtypeTests(unittest.TestCase):
+    def test_trainable_full_weights_keep_fp32_masters(self):
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location("train_script", Path(__file__).resolve().parents[1] / "scripts" / "train.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        f = mod.needs_fp32_master_weights
+        self.assertTrue(f(use_cuda=True, half_precision=True, use_lora=False, task_type="causal_lm"), "full fine-tune")
+        self.assertTrue(f(use_cuda=True, half_precision=True, use_lora=True, task_type="classification"), "fresh head")
+        self.assertFalse(f(use_cuda=True, half_precision=True, use_lora=True, task_type="causal_lm"), "LoRA on a frozen base")
+        self.assertFalse(f(use_cuda=False, half_precision=False, use_lora=False, task_type="classification"), "CPU: fp32 anyway")

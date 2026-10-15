@@ -27,6 +27,28 @@ from typing import Any
 AUTO = "auto"
 ALL_LINEAR = "all-linear"
 CLASSIC_TARGET_MODULES: tuple[str, ...] = ("q_proj", "v_proj")
+# The same attention query/value projections under other model families'
+# names, tried in order when the model has no q_proj/v_proj (encoders:
+# DeBERTa query_proj/value_proj, BERT/RoBERTa query/value, DistilBERT
+# q_lin/v_lin, T5 q/v). Without this a classification run on an encoder
+# failed: "No modules were targeted for adaptation".
+QUERY_VALUE_ALIASES: tuple[tuple[str, str], ...] = (
+    ("q_proj", "v_proj"),
+    ("query_proj", "value_proj"),
+    ("query", "value"),
+    ("q_lin", "v_lin"),
+    ("q", "v"),
+)
+
+
+def query_value_modules(linear_module_names: Any) -> list[str] | None:
+    """The model's own query/value projection names (leaf names of its
+    linear layers), or None when it has none of the known pairs."""
+    names = {str(n).rsplit(".", 1)[-1] for n in (linear_module_names or [])}
+    for q, v in QUERY_VALUE_ALIASES:
+        if q in names and v in names:
+            return [q, v]
+    return None
 # Largest model the all-linear default was measured on (Qwen2.5-1.5B), with
 # headroom for the 2B class.
 AUTO_ALL_LINEAR_MAX_PARAMS = 2_000_000_000
@@ -37,6 +59,7 @@ def resolve_lora_target_modules(
     *,
     model_params: int | None,
     task_type: str = "causal_lm",
+    linear_module_names: Any = None,
 ) -> dict[str, Any]:
     """Resolve the configured ``target_modules`` to what PEFT should get.
 
@@ -52,8 +75,13 @@ def resolve_lora_target_modules(
     params = int(model_params) if model_params else None
     normalized_task = str(task_type or "").strip().lower()
     if normalized_task != "causal_lm":
-        resolved: Any = list(CLASSIC_TARGET_MODULES)
-        reason = f"task_type={normalized_task or 'unknown'}: all-linear is only the default for causal LM runs"
+        own = query_value_modules(linear_module_names) if linear_module_names is not None else list(CLASSIC_TARGET_MODULES)
+        if own:
+            resolved: Any = own
+            reason = f"task_type={normalized_task or 'unknown'}: the model's query/value projections ({own[0]}/{own[1]})"
+        else:
+            resolved = ALL_LINEAR
+            reason = f"task_type={normalized_task or 'unknown'}: no known query/value projection names — every linear layer"
     elif params is None:
         resolved = list(CLASSIC_TARGET_MODULES)
         reason = "model size unknown"

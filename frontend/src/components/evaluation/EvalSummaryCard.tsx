@@ -20,6 +20,7 @@ import { retrievalRowText, retrievalSplitText } from './retrievalSplit';
 import { toast } from '../../stores/toastStore';
 import { useJobsStore } from '../../stores/jobsStore';
 import './EvalSummaryCard.css';
+import { benchmarkScoreText, benchmarkSourceText } from '../../api/benchmarks';
 
 interface EvalSummaryCardProps {
     projectId: number;
@@ -87,6 +88,13 @@ export function SpanRegimeTable({ block, onAnswerKey }: { block: SpanEvalBlock |
             </table>
         </div>
     );
+}
+
+function headTitle(summary: EvalSummary): string {
+    const acc = summary.head?.accuracy;
+    const f1 = summary.head?.macro_f1;
+    return `Accuracy ${typeof acc === 'number' ? acc.toFixed(2) : '—'} on the test examples`
+        + (typeof f1 === 'number' ? ` · macro-F1 ${f1.toFixed(2)}` : '');
 }
 
 function spanTitle(summary: EvalSummary): string {
@@ -218,6 +226,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     const unit = metricUnit(seedEvidence?.metric_id ?? evidence?.metric_id ?? summary.headline?.metric_id);
     const isPassages = summary.kind === 'rag_passages';
     const isSpan = summary.kind === 'span_eval';
+    const isHead = summary.kind === 'head_eval';
     const note = evidence ? evidenceNote(evidence, { trained: !seedEvidence && !isPassages, unit }) : null;
     const subject = isPassages ? 'Retrieval' : 'Fine-tuning';
     const seedNote = seedEvidence ? seedEvidenceNote(seedEvidence, unit) : null;
@@ -253,7 +262,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
         >
             <div className="eval-summary__top">
                 <div>
-                    <h3 className="eval-summary__title">{isSpan ? spanTitle(summary) : verdict.title}</h3>
+                    <h3 className="eval-summary__title">{isSpan ? spanTitle(summary) : isHead ? headTitle(summary) : verdict.title}</h3>
                     {isPassages && (
                         <p className="eval-summary__run" data-testid="eval-summary-passages-run">
                             Base model + your document passages vs the base model alone
@@ -268,6 +277,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                             {summary.trained?.experiment_name ? ` · ${summary.trained.experiment_name}` : ''}
                             {summary.baseline?.base_model ? ` vs base ${summary.baseline.base_model}` : ''}
                             {isSpan ? ' · token classification, scored on its own (its base is an untrained head)' : ''}
+                            {isHead ? ' · classifier head on an encoder, scored on its own (no zero-shot base model to compare)' : ''}
                             {!isSpan && summary.evaluated_samples ? ` · ${summary.evaluated_samples} test examples` : ''}
                         </p>
                     )}
@@ -307,7 +317,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         {starting ? 'Starting…' : 'Re-run lift check'}
                     </button>
                 )}
-                {isSpan && runId != null && (
+                {(isSpan || isHead) && runId != null && (
                     <button
                         type="button"
                         className="btn btn-secondary"
@@ -319,7 +329,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         {starting ? 'Starting…' : 'Re-evaluate'}
                     </button>
                 )}
-                {canCheckSeeds && !isSpan && (
+                {canCheckSeeds && !isSpan && !isHead && (
                     <button
                         type="button"
                         className="btn btn-secondary"
@@ -484,6 +494,19 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     Measured by perplexity on test examples (lower is better) — continued pretraining on your documents has no
                     right/wrong answers per row.
                 </p>
+            )}
+            {(summary.benchmarks?.length ?? 0) > 0 && (
+                <div className="eval-summary__benchmarks" data-testid="eval-summary-benchmarks">
+                    <strong>External benchmarks</strong>
+                    <ul>
+                        {summary.benchmarks!.map((b) => (
+                            <li key={b.id} data-testid={`eval-summary-benchmark-${b.slug}`}>
+                                {b.name}: {benchmarkScoreText(b.result)}{' '}
+                                <span className="eval-summary__muted">({benchmarkSourceText(b)})</span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
             )}
         </section>
     );
