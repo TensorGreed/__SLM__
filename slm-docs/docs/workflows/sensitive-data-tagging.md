@@ -656,6 +656,32 @@ which on scans are often a bare "the CVV 123" after debris. What's left
 is provider names (45 misses) and visit dates (26) the model never
 tags — a coverage gap in the training text, not a decoding one.
 
+**Provider names and visit dates (run #72, 2026-10-14).** Looking at
+those misses first changed the plan: about half were the *key* breaking
+the project's own conventions — Haiku tagged companies ("TechSphere
+India Pvt Ltd") as provider_name and order, ticket and "document
+generated" dates as visit_date. So the definitions now say what those
+types are *not* (shipped suggestions updated too): visit_date is a date
+the patient was or will be seen for care, never an order, transaction,
+ticket, billing, print or "document generated" date; provider_name is
+never a shop's, bank's or insurer's name. Then 40 more scanned documents
+from the seed card (layout *scanned*, genres clinical plus order and
+support emails as contrast) were labelled by Haiku as training rows:
+114 passages, 205 provider names, 223 visit dates.
+
+| run | scan key (v3, 1272 spans) | clean key (v3, 44) | scan provider_name | scan visit_date |
+|---|---|---|---|---|
+| #71 | 0.678 | 0.911 | 0.45 | 0.58 |
+| #72 (+114 scanned clinical passages) | **0.684** | **0.924** | **0.52** | 0.53 |
+
+provider_name improved; visit_date did not. Run #72 finds the same
+visit dates (35 vs 34 exact) but adds false ones, mostly footer print
+dates. That traced back to the training rows: 47 accepted rows still
+label a "Printed …" / "Document generated …" date as a birth or visit
+date, mostly in groups labelled before the new wording. Relabel the
+older groups after changing a definition — a convention only reaches
+the rows labelled under it.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the
