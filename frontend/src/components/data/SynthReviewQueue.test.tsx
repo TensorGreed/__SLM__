@@ -668,3 +668,83 @@ describe('SynthReviewQueue', () => {
         });
     });
 });
+
+
+describe('SynthReviewQueue — groups labelled under older conventions', () => {
+    const staleGroup = {
+        synth_source: 'passage_labels:doc=739',
+        count: 2,
+        truncated: false,
+        conventions: {
+            current: 'abc123', span_rows: 2, current_rows: 0, stale_rows: 0, untracked_rows: 2,
+            is_stale: true, labelled_by: 'ollama', relabel_pin: 'ollama',
+        },
+        rows: [
+            { id: 7, synth_confidence: 0.7, preview: 'x', payload: { text: 'x', entities: [] } },
+        ],
+    };
+    const freshGroup = {
+        ...staleGroup,
+        synth_source: 'passage_labels:doc=744',
+        conventions: { ...staleGroup.conventions, current_rows: 2, untracked_rows: 0, is_stale: false },
+    };
+
+    beforeEach(() => {
+        apiMock.get.mockReset();
+        apiMock.post.mockReset();
+    });
+
+    it('lists only stale groups and relabels one with its labeller under the current conventions', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 31, dataset_id: 1, total_rows: 4, total_pending: 0, total_accepted: 4,
+                groups: [], accepted_groups: [staleGroup, freshGroup], rejected_groups: [],
+            },
+        });
+        apiMock.post.mockResolvedValue({ data: { id: 190 } });
+        const user = userEvent.setup();
+        render(<SynthReviewQueue projectId={31} />);
+        await screen.findByTestId('synth-review-queue-stale');
+        expect(screen.getByTestId('synth-review-queue-stale-passage_labels:doc=739')).toHaveTextContent(
+            '2 of 2 span rows labelled before versions were recorded · labelled by ollama',
+        );
+        expect(screen.queryByTestId('synth-review-queue-stale-passage_labels:doc=744')).toBeNull();
+        expect(screen.getByTestId('synth-review-queue-stale-badge-passage_labels:doc=739')).toBeInTheDocument();
+        await user.click(screen.getByTestId('synth-review-queue-relabel-passage_labels:doc=739'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/31/synthetic/relabel-answer-key', {
+            target: 'training', source: 'passage_labels:doc=739', backend: 'ollama',
+        }));
+        expect(await screen.findByText('relabelling (job #190)')).toBeInTheDocument();
+    });
+
+    it('marks an untracked group current after a confirm, then reloads', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 31, dataset_id: 1, total_rows: 2, total_pending: 0, total_accepted: 2,
+                groups: [], accepted_groups: [staleGroup], rejected_groups: [],
+            },
+        });
+        apiMock.post.mockResolvedValue({ data: { rows_marked: 2 } });
+        const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        const user = userEvent.setup();
+        render(<SynthReviewQueue projectId={31} />);
+        await user.click(await screen.findByTestId('synth-review-queue-mark-current-passage_labels:doc=739'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(
+            '/projects/31/synthetic/review-queue/mark-conventions-current', { source: 'passage_labels:doc=739' },
+        ));
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalledTimes(2));
+        confirm.mockRestore();
+    });
+
+    it('renders nothing when every group is current', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 31, dataset_id: 1, total_rows: 2, total_pending: 0, total_accepted: 2,
+                groups: [], accepted_groups: [freshGroup], rejected_groups: [],
+            },
+        });
+        render(<SynthReviewQueue projectId={31} />);
+        await screen.findByTestId('synth-review-queue');
+        expect(screen.queryByTestId('synth-review-queue-stale')).toBeNull();
+    });
+});

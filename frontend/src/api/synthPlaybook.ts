@@ -293,9 +293,25 @@ export interface ReviewQueueEntry {
     payload: Record<string, unknown>;
 }
 
+/** Span rows of a group vs the project's current labelling conventions. */
+export interface ReviewQueueConventions {
+    current: string;
+    span_rows: number;
+    current_rows: number;
+    /** Labelled under an older version of the conventions. */
+    stale_rows: number;
+    /** Labelled before conventions versions were stamped. */
+    untracked_rows: number;
+    is_stale: boolean;
+    labelled_by: string | null;
+    /** Backend pin to relabel with (the group's labeller), or null. */
+    relabel_pin: string | null;
+}
+
 export interface ReviewQueueGroup {
     synth_source: string;
     count: number;
+    conventions?: ReviewQueueConventions | null;
     /** True when `rows` is a truncated sample of the group (legacy
      *  buckets with thousands of rows hit the cap). */
     truncated?: boolean;

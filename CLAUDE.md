@@ -1230,6 +1230,21 @@ runs real CPU inference). ~4 min locally.
   `scan_tolerant`; GET returns it. UI: checkbox in `SpanTypeDefinitionsEditor`
   (saves immediately). Project 31: decoding +0.012–0.014 F1 on the scan key,
   0 on clean; retraining under the clause didn't help (run #70 ≈ #69).
+- **Conventions version** (P1k): `span_type_definitions_service.conventions_version(
+  defs, scan_tolerant)` = 12-char hash (None with no conventions);
+  `CONVENTIONS_VERSION_KEY` stamped on rows by `relabel_training_rows`,
+  `_label_and_append` (+ `labelled_by`) and span synthesis (kept by
+  `save_synthetic_span_batch` and the legacy auto-save). `conventions_status(rows,
+  current)` → {span_rows, current_rows, stale_rows, untracked_rows, is_stale,
+  labelled_by (`row_labeller`), relabel_pin (`relabel_pin`: cloud pin or
+  `ollama`)}; the review queue (source grouping only) puts it on each group as
+  `conventions` + top-level `conventions_version`. `relabel_training_rows`
+  without entity_types now uses the project vocabulary (defined types ∪ every
+  saved row's types). `POST /synthetic/review-queue/mark-conventions-current
+  {source}` (`mark_conventions_current`) stamps a group without relabelling
+  (`conventions_marked_current_at`). UI: `StaleConventionsStrip` in
+  `SynthReviewQueue` ("Relabel under current conventions with <pin>" /
+  "Mark as current") + "older conventions" badge on accepted groups.
 - **Ollama context**: `synth_backends/ollama.context_window_for` sets
   `num_ctx` per request (prompt chars / 3 + max_tokens + 256, buckets
   4096 / 8192 / 16384 / 32768) — without it Ollama runs at its server

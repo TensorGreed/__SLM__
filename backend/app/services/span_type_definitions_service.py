@@ -18,7 +18,10 @@ names, which the user edits.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+from collections import Counter
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -115,6 +118,97 @@ async def load_scan_tolerant(db: AsyncSession | None, project_id: int) -> bool:
 
     project = await db.get(Project, project_id)
     return project_scan_tolerant(project) if project is not None else False
+
+
+# ── Conventions version ─────────────────────────────────────────────────
+#
+# Every labeller stamps the rows it writes with CONVENTIONS_VERSION_KEY =
+# a short hash of the definitions + the scan flag it labelled under. A
+# convention only reaches the rows labelled after it changed, so the review
+# queue compares each group's stamps with the project's current version
+# (``conventions_status``) and offers to relabel stale groups.
+
+CONVENTIONS_VERSION_KEY = "conventions_version"
+
+
+def conventions_version(definitions: dict[str, str] | None, scan_tolerant: bool = False) -> str | None:
+    """Short stable hash of what the labellers are told; None when the
+    project has no conventions at all (nothing can be stale)."""
+    defs = normalise_definitions(definitions)
+    if not defs and not scan_tolerant:
+        return None
+    payload = json.dumps({"definitions": defs, "scan_tolerant": bool(scan_tolerant)}, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def project_conventions_version(project: Any) -> str | None:
+    return conventions_version(project_definitions(project), project_scan_tolerant(project))
+
+
+async def load_conventions_version(db: AsyncSession | None, project_id: int) -> str | None:
+    if db is None:
+        return None
+    from app.models.project import Project
+
+    project = await db.get(Project, project_id)
+    return project_conventions_version(project) if project is not None else None
+
+
+_LABELLER_SOURCE_PREFIXES = ("passage_labels:", "document_labels:")
+
+
+def row_labeller(row: dict[str, Any]) -> str | None:
+    """Who last labelled a span row: ``relabelled_by`` / ``labelled_by``,
+    else the backend in a ``passage_labels:<backend>`` source."""
+    for key in ("relabelled_by", "labelled_by"):
+        if isinstance(row.get(key), str) and row[key]:
+            return row[key]
+    source = row.get("source")
+    if isinstance(source, str):
+        for prefix in _LABELLER_SOURCE_PREFIXES:
+            if source.startswith(prefix) and len(source) > len(prefix):
+                return source[len(prefix):]
+    return None
+
+
+def relabel_pin(labeller: str | None) -> str | None:
+    """The backend pin the relabel endpoint takes for a labeller label:
+    a cloud pin as it is, any Ollama model → ``ollama``; else None."""
+    if not labeller:
+        return None
+    if labeller.startswith("cloud:") and labeller.count(":") >= 2:
+        return labeller
+    if labeller == "ollama" or labeller.startswith("ollama:"):
+        return "ollama"
+    return None
+
+
+def conventions_status(rows: list[dict[str, Any]], current: str | None) -> dict[str, Any] | None:
+    """For one group of rows: how many span rows were labelled under the
+    current conventions, under an older version (``stale_rows``) or before
+    versions were stamped (``untracked_rows``), and the pin of the most
+    common labeller. None when there is nothing to compare (no
+    conventions, no span rows)."""
+    if current is None:
+        return None
+    span_rows = [r for r in rows if isinstance(r, dict) and isinstance(r.get("entities"), list)]
+    if not span_rows:
+        return None
+    stamps = [r.get(CONVENTIONS_VERSION_KEY) for r in span_rows]
+    current_rows = sum(1 for s in stamps if s == current)
+    untracked = sum(1 for s in stamps if not s)
+    labellers = Counter(l for l in (row_labeller(r) for r in span_rows) if l)
+    labelled_by = labellers.most_common(1)[0][0] if labellers else None
+    return {
+        "current": current,
+        "span_rows": len(span_rows),
+        "current_rows": current_rows,
+        "stale_rows": len(span_rows) - current_rows - untracked,
+        "untracked_rows": untracked,
+        "is_stale": current_rows < len(span_rows),
+        "labelled_by": labelled_by,
+        "relabel_pin": relabel_pin(labelled_by),
+    }
 
 
 def definitions_clause(

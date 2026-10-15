@@ -415,13 +415,23 @@ async def relabel_training_rows(
             f"Project {project_id} has no span rows to relabel" + (f" in source group {source!r}." if source else ".")
         )
     old_labels = [_row_entities(rows[i]) for i in span_idx]
-    types = [t.strip().lower() for t in (entity_types or []) if isinstance(t, str) and t.strip()]
-    if not types:
-        types = sorted({e["type"] for spans in old_labels for e in spans})
-    from app.services.span_type_definitions_service import definitions_clause, load_definitions, load_scan_tolerant
+    from app.services.span_type_definitions_service import (
+        CONVENTIONS_VERSION_KEY,
+        conventions_version,
+        definitions_clause,
+        load_definitions,
+        load_scan_tolerant,
+    )
 
     definitions = await load_definitions(db, project_id)
-    conventions = definitions_clause(types, definitions, scan_tolerant=await load_scan_tolerant(db, project_id))
+    scan_tolerant = await load_scan_tolerant(db, project_id)
+    types = [t.strip().lower() for t in (entity_types or []) if isinstance(t, str) and t.strip()]
+    if not types:
+        # The project's vocabulary: every defined type plus every type any
+        # saved row carries — one group alone may lack a type it should get.
+        types = sorted(set(definitions) | {e["type"] for r in rows if isinstance(r, dict) for e in _row_entities(r)})
+    conventions = definitions_clause(types, definitions, scan_tolerant=scan_tolerant)
+    version = conventions_version(definitions, scan_tolerant)
     from app.services.span_custom_patterns_service import load_patterns
 
     custom_patterns = await load_patterns(db, project_id)
@@ -441,6 +451,8 @@ async def relabel_training_rows(
         rows[i]["entities"] = merged
         rows[i]["relabelled_by"] = backend_label
         rows[i]["relabelled_at"] = stamp
+        if version:
+            rows[i][CONVENTIONS_VERSION_KEY] = version
         counts.update(e["type"] for e in merged)
         relabelled += 1
     if not relabelled:
@@ -683,10 +695,18 @@ async def _label_and_append(
     types = [t.strip().lower() for t in (entity_types or []) if isinstance(t, str) and t.strip()] or sorted(existing_types)
     if not types:
         raise RuntimeError("Name the entity types to label (the project has no labelled rows to take them from).")
-    from app.services.span_type_definitions_service import definitions_clause, load_definitions, load_scan_tolerant
+    from app.services.span_type_definitions_service import (
+        CONVENTIONS_VERSION_KEY,
+        conventions_version,
+        definitions_clause,
+        load_definitions,
+        load_scan_tolerant,
+    )
 
     definitions = await load_definitions(db, project_id)
-    conventions = definitions_clause(types, definitions, scan_tolerant=await load_scan_tolerant(db, project_id))
+    scan_tolerant = await load_scan_tolerant(db, project_id)
+    conventions = definitions_clause(types, definitions, scan_tolerant=scan_tolerant)
+    version = conventions_version(definitions, scan_tolerant)
     from app.services.span_custom_patterns_service import load_patterns
 
     custom_patterns = await load_patterns(db, project_id)
@@ -718,6 +738,8 @@ async def _label_and_append(
             **{k: v for k, v in meta.items() if k != "doc"},
             "review_status": "pending",
             "generated_at": stamp,
+            "labelled_by": backend_label,
+            **({CONVENTIONS_VERSION_KEY: version} if version else {}),
         })
     if not new_rows:
         raise RuntimeError(f"{backend_label} labelled none of the {len(todo)} texts.")

@@ -682,6 +682,36 @@ date, mostly in groups labelled before the new wording. Relabel the
 older groups after changing a definition — a convention only reaches
 the rows labelled under it.
 
+**Groups labelled under older conventions.** Every labeller now stamps
+the rows it writes with the version of the conventions it was given (a
+short hash of the definitions and the scanned-text flag). The Synthetic
+tab's review queue compares each source group with the project's current
+version and lists the groups labelled under an older one, or before
+versions were recorded, at the top of the queue (an "older conventions"
+badge marks them in the accepted list too). Each has **Relabel under
+current conventions with &lt;labeller&gt;**, which relabels that group in
+place with the model that labelled it, and, for unstamped groups,
+**Mark as current**: use that when you know the group was labelled under
+today's wording; it stamps the rows without relabelling and records that
+it was an attestation.
+
+On project 31 the queue flagged every group at first, since nothing was
+stamped yet. Docs 742 and 744 had been labelled by Haiku under the
+current wording, so they were marked current. Docs 739 and 740 were
+relabelled with their own labeller (the local model):
+
+| run | scan key (v3) | scan visit_date | visit dates predicted | dates on print footers | clean key (v3) |
+|---|---|---|---|---|---|
+| #71 | 0.678 | 0.58 | 51 | 19 | 0.911 |
+| #72 | 0.684 | 0.53 | 65 | 17 | 0.924 |
+| #73 (739/740 relabelled) | **0.697** | **0.62** | 62 | 14 | 0.920 |
+
+Visit dates recovered past run #71, and the scan score is the best so
+far. The local model still labels some footer print dates despite the
+wording (27 of the 31 such labels in 739/740 remained). The clean key
+has about 19 visit dates, so its visit_date swings (0.92 → 0.85) are
+within noise.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the

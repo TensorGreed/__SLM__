@@ -12,6 +12,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import api from '../../api/client';
+import { toast } from '../../stores/toastStore';
+
 import type {
     ReviewQueueGroup,
     ReviewQueueResponse,
@@ -240,6 +243,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                     </p>
                 </header>
                 <TotalCountStrip data={data} />
+                <StaleConventionsStrip projectId={projectId} groups={[...data.groups, ...data.accepted_groups]} onMarked={load} />
                 {data.accepted_groups.length > 0 && (
                     <AcceptedRowsSection
                         groups={data.accepted_groups}
@@ -323,6 +327,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                 </p>
             </header>
             <TotalCountStrip data={data} />
+            <StaleConventionsStrip projectId={projectId} groups={[...data.groups, ...data.accepted_groups]} onMarked={load} />
 
             {focusActive && focusSource && (
                 <div
@@ -553,6 +558,116 @@ function AcceptedRowsSection({ groups, totalAccepted }: AcceptedRowsSectionProps
 }
 
 
+interface StaleConventionsStripProps {
+    projectId: number;
+    groups: ReviewQueueGroup[];
+    /** Reload the queue after a group is marked current. */
+    onMarked?: () => void;
+}
+
+function staleText(c: NonNullable<ReviewQueueGroup['conventions']>): string {
+    const head = `${c.span_rows - c.current_rows} of ${c.span_rows} span rows`;
+    if (c.stale_rows && c.untracked_rows) {
+        return `${head}: ${c.stale_rows} labelled under an older version, ${c.untracked_rows} before versions were recorded`;
+    }
+    return `${head} labelled ${c.stale_rows ? 'under an older version' : 'before versions were recorded'}`;
+}
+
+/** Span-row groups labelled under older labelling conventions than the
+ *  project's current ones — a definition change only reaches rows labelled
+ *  after it. One click relabels a group in place with the model that
+ *  labelled it (the `span_relabel` Job; re-split + retrain afterwards). */
+function StaleConventionsStrip({ projectId, groups, onMarked }: StaleConventionsStripProps) {
+    const [started, setStarted] = useState<Record<string, number>>({});
+    const stale = groups.filter((g) => g.conventions?.is_stale);
+    // The user attests a group already follows the current conventions
+    // (labelled under the current wording before versions were recorded).
+    const markCurrent = async (group: ReviewQueueGroup) => {
+        if (!window.confirm(
+            `Mark ${group.synth_source} as labelled under the current conventions? Only do this if its labels already follow them — nothing is relabelled.`,
+        )) return;
+        try {
+            const res = await api.post(`/projects/${projectId}/synthetic/review-queue/mark-conventions-current`, {
+                source: group.synth_source,
+            });
+            toast.success(`${group.synth_source}: ${res.data?.rows_marked ?? 0} rows marked current.`, 4000);
+            onMarked?.();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Could not mark the group current.', 5000);
+        }
+    };
+    if (stale.length === 0) return null;
+    const relabel = async (group: ReviewQueueGroup) => {
+        const pin = group.conventions?.relabel_pin;
+        if (!pin) return;
+        try {
+            const res = await api.post(`/projects/${projectId}/synthetic/relabel-answer-key`, {
+                target: 'training',
+                source: group.synth_source,
+                backend: pin,
+            });
+            setStarted((prev) => ({ ...prev, [group.synth_source]: res.data?.id }));
+            toast.info(
+                `Relabelling ${group.synth_source} with ${pin} under the current conventions (job #${res.data?.id}). Re-split (keep the test examples) and retrain when it finishes.`,
+                6000,
+            );
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Could not start the relabel.', 5000);
+        }
+    };
+    return (
+        <div className="synth-review-queue__stale" data-testid="synth-review-queue-stale">
+            <p className="synth-review-queue__stale-head">
+                <strong>{stale.length}</strong> group{stale.length === 1 ? ' was' : 's were'} labelled under older labelling
+                conventions — a definition change only reaches the rows labelled after it.
+            </p>
+            <ul className="synth-review-queue__stale-list">
+                {stale.map((group) => {
+                    const c = group.conventions!;
+                    const jobId = started[group.synth_source];
+                    return (
+                        <li key={group.synth_source} data-testid={`synth-review-queue-stale-${group.synth_source}`}>
+                            <code>{group.synth_source}</code>{' '}
+                            <span className="synth-review-queue__stale-detail">
+                                {staleText(c)}{c.labelled_by ? ` · labelled by ${c.labelled_by}` : ''}
+                            </span>{' '}
+                            {jobId ? (
+                                <span className="synth-review-queue__stale-started">relabelling (job #{jobId})</span>
+                            ) : c.relabel_pin ? (
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => void relabel(group)}
+                                    data-testid={`synth-review-queue-relabel-${group.synth_source}`}
+                                >
+                                    Relabel under current conventions with {c.relabel_pin}
+                                </button>
+                            ) : (
+                                <span className="synth-review-queue__stale-detail">
+                                    relabel it from the span tools below (&quot;Relabel training rows&quot;).
+                                </span>
+                            )}
+                            {!jobId && c.untracked_rows > 0 && (
+                                <>
+                                    {' '}
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost btn-sm"
+                                        onClick={() => void markCurrent(group)}
+                                        data-testid={`synth-review-queue-mark-current-${group.synth_source}`}
+                                    >
+                                        Mark as current
+                                    </button>
+                                </>
+                            )}
+                        </li>
+                    );
+                })}
+            </ul>
+        </div>
+    );
+}
+
 interface AcceptedGroupCardProps {
     group: import('../../api/synthPlaybook').ReviewQueueGroup;
 }
@@ -566,6 +681,14 @@ function AcceptedGroupCard({ group }: AcceptedGroupCardProps) {
             <summary className="synth-review-queue__accepted-group-summary">
                 <code>{group.synth_source || '(no source)'}</code>
                 <span className="synth-review-queue__accepted-count">{group.count}</span>
+                {group.conventions?.is_stale && (
+                    <span
+                        className="synth-review-queue__stale-badge"
+                        data-testid={`synth-review-queue-stale-badge-${group.synth_source}`}
+                    >
+                        older conventions
+                    </span>
+                )}
             </summary>
             {group.rows.length > 0 ? (
                 <>

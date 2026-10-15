@@ -1524,11 +1524,20 @@ async def generate_span_extraction_rows(
     # The project's labelling conventions (span_type_definitions_service) —
     # the same lines the answer-key relabeller sends, so both labellers draw
     # the type boundaries in the same place.
-    from app.services.span_type_definitions_service import definitions_clause, load_definitions, load_scan_tolerant
-
-    conventions = definitions_clause(
-        entity_types, await load_definitions(db, project_id), scan_tolerant=await load_scan_tolerant(db, project_id),
+    from app.services.span_type_definitions_service import (
+        CONVENTIONS_VERSION_KEY,
+        conventions_version,
+        definitions_clause,
+        load_definitions,
+        load_scan_tolerant,
     )
+
+    span_definitions = await load_definitions(db, project_id)
+    span_scan_tolerant = await load_scan_tolerant(db, project_id)
+    conventions = definitions_clause(entity_types, span_definitions, scan_tolerant=span_scan_tolerant)
+    # Stamped on every row so the review queue can tell when the
+    # conventions changed after these rows were labelled.
+    span_conventions_version = conventions_version(span_definitions, span_scan_tolerant)
     # The project's own identifier formats join the built-in regex pass.
     from app.services.span_custom_patterns_service import load_patterns
 
@@ -1663,6 +1672,7 @@ async def generate_span_extraction_rows(
                 "source": source_label,
                 "model": model_name,
                 "generated_at": now,
+                **({CONVENTIONS_VERSION_KEY: span_conventions_version} if span_conventions_version else {}),
             }
         )
     return enriched
@@ -1699,6 +1709,8 @@ async def save_synthetic_span_batch(
                     "generated_at": row.get("generated_at"),
                     "status": "accepted",
                 }
+                if row.get("conventions_version"):
+                    entry["conventions_version"] = row["conventions_version"]
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
                 accepted.append(entry)
             else:

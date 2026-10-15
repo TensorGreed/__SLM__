@@ -158,6 +158,7 @@ def _bucket_rows_by_source(
     *,
     rows_per_group_cap: int | None = None,
     key_fn: Any = None,
+    conventions_current: str | None = None,
 ) -> list[dict[str, Any]]:
     """Group rows by a key (``synth_source`` by default, or the class label
     when ``key_fn`` is ``_resolve_class_label``), sort, project to the UI shape.
@@ -172,6 +173,8 @@ def _bucket_rows_by_source(
     accept/reject); the accepted view passes the cap because
     legacy buckets may have thousands of rows.
     """
+    from app.services.span_type_definitions_service import conventions_status
+
     resolve = key_fn or _resolve_source_label
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -195,6 +198,9 @@ def _bucket_rows_by_source(
             "synth_source": source,
             "count": total_in_group,
             "truncated": truncated,
+            # Span rows labelled under older labelling conventions than the
+            # project's current ones (None when nothing to compare).
+            "conventions": conventions_status(groups[source], conventions_current),
             "rows": [
                 {
                     "id": row.get("id"),
@@ -261,6 +267,11 @@ async def list_review_queue(
     }
     normalized_group_by = group_by if group_by in _GROUP_RESOLVERS else "source"
     key_fn = _GROUP_RESOLVERS[normalized_group_by]
+    from app.services.span_type_definitions_service import load_conventions_version
+
+    # Staleness is per synth_source group (what a relabel acts on), so only
+    # computed for the source grouping.
+    current = await load_conventions_version(db, project_id) if normalized_group_by == "source" else None
 
     return {
         "project_id": project_id,
@@ -270,9 +281,11 @@ async def list_review_queue(
         "total_pending": len(pending),
         "total_accepted": len(accepted),
         "total_rejected": len(rejected),
-        "groups": _bucket_rows_by_source(pending, key_fn=key_fn),
+        "conventions_version": current,
+        "groups": _bucket_rows_by_source(pending, key_fn=key_fn, conventions_current=current),
         "accepted_groups": _bucket_rows_by_source(
             accepted, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP, key_fn=key_fn,
+            conventions_current=current,
         ),
         "rejected_groups": _bucket_rows_by_source(
             rejected, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP, key_fn=key_fn,
@@ -437,6 +450,38 @@ async def bulk_update_by_source(
     summary["source"] = source
     summary["matched"] = len(matched_ids)
     return summary
+
+
+async def mark_conventions_current(db: AsyncSession, project_id: int, *, source: str) -> dict[str, Any]:
+    """Stamp every span row of one ``synth_source`` group with the project's
+    current conventions version — the user attests the group already
+    follows them (e.g. it was labelled under the current wording before
+    versions were recorded). Rows get ``conventions_marked_current_at`` so
+    the attestation stays distinguishable from a real relabel."""
+    from datetime import datetime, timezone
+
+    from app.services.span_type_definitions_service import CONVENTIONS_VERSION_KEY, load_conventions_version
+
+    if not source or not source.strip():
+        raise ValueError("source must be a non-empty synth_source key")
+    current = await load_conventions_version(db, project_id)
+    if current is None:
+        raise ValueError("This project has no labelling conventions to mark rows current with.")
+    path = _synthetic_jsonl_path(project_id)
+    rows = _read_all_rows(path)
+    group = [r for r in rows if _resolve_source_label(r) == source and isinstance(r.get("entities"), list)]
+    if not group:
+        raise ValueError(f"No span rows in source group {source!r}.")
+    stamp = datetime.now(timezone.utc).isoformat()
+    marked = 0
+    for row in group:
+        if row.get(CONVENTIONS_VERSION_KEY) != current:
+            row[CONVENTIONS_VERSION_KEY] = current
+            row["conventions_marked_current_at"] = stamp
+            marked += 1
+    if marked:
+        _atomic_write_rows(path, rows)
+    return {"source": source, "span_rows": len(group), "rows_marked": marked, "conventions_version": current}
 
 
 async def purge_rejected_rows(

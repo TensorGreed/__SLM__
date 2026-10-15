@@ -1345,6 +1345,27 @@ async def bulk_update_synth_review_queue_by_source(
     )
 
 
+class MarkConventionsCurrentRequest(BaseModel):
+    source: str = Field(..., max_length=256)
+
+
+@router.post("/review-queue/mark-conventions-current")
+async def mark_synth_group_conventions_current(
+    project_id: int,
+    req: MarkConventionsCurrentRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """"Mark as current" on a review-queue group flagged as labelled under
+    older conventions: the user attests it already follows the current
+    ones (no relabel). See ``mark_conventions_current``."""
+    from app.services.synth_review_queue_service import mark_conventions_current
+
+    try:
+        return await mark_conventions_current(db, project_id, source=req.source)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.post("/review-queue/purge")
 async def purge_rejected_synth_rows(
     project_id: int,

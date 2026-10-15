@@ -439,3 +439,105 @@ class EvalHonoursScanFlagTests(unittest.TestCase):
             else:
                 sys.modules["train_token_classification"] = saved
         self.assertTrue(seen.get("ocr_tolerant"))
+
+
+class ConventionsVersionTests(unittest.TestCase):
+    """P1k: labellers stamp the conventions version on the rows they write;
+    the review queue flags groups labelled under an older one."""
+
+    def test_version_is_stable_and_tracks_definitions_and_the_scan_flag(self):
+        self.assertIsNone(defs.conventions_version({}, False), "no conventions → nothing can be stale")
+        a = defs.conventions_version({"email": "an email"})
+        self.assertEqual(a, defs.conventions_version({"Email": " an email "}), "normalised")
+        self.assertNotEqual(a, defs.conventions_version({"email": "an email address"}))
+        self.assertNotEqual(a, defs.conventions_version({"email": "an email"}, True))
+        self.assertIsNotNone(defs.conventions_version({}, True))
+
+    def test_labeller_and_pin(self):
+        self.assertEqual(defs.row_labeller({"relabelled_by": "cloud:anthropic:m"}), "cloud:anthropic:m")
+        self.assertEqual(defs.row_labeller({"source": "passage_labels:ollama"}), "ollama")
+        self.assertIsNone(defs.row_labeller({"source": "teacher_llm"}))
+        self.assertEqual(defs.relabel_pin("cloud:anthropic:m"), "cloud:anthropic:m")
+        self.assertEqual(defs.relabel_pin("ollama:gemma4:12b"), "ollama")
+        self.assertIsNone(defs.relabel_pin("teacher:x@http://h"))
+
+    def test_status_counts_current_stale_and_untracked(self):
+        rows = [
+            {"text": "a", "entities": [], "conventions_version": "v2", "relabelled_by": "ollama"},
+            {"text": "b", "entities": [], "conventions_version": "v1", "relabelled_by": "ollama"},
+            {"text": "c", "entities": [], "source": "passage_labels:cloud:anthropic:m"},
+            {"text": "d", "label": "x"},  # not a span row
+        ]
+        st = defs.conventions_status(rows, "v2")
+        self.assertEqual(
+            {k: st[k] for k in ("span_rows", "current_rows", "stale_rows", "untracked_rows", "is_stale", "relabel_pin")},
+            {"span_rows": 3, "current_rows": 1, "stale_rows": 1, "untracked_rows": 1, "is_stale": True, "relabel_pin": "ollama"},
+        )
+        self.assertIsNone(defs.conventions_status(rows, None))
+        self.assertIsNone(defs.conventions_status([{"text": "d", "label": "x"}], "v2"))
+
+    def test_relabel_stamps_rows_and_the_queue_clears_the_flag(self):
+        pid = client.post("/api/projects", json={"name": f"conv-{time.time_ns()}", "description": "x"}).json()["id"]
+        client.put(f"/api/projects/{pid}/synthetic/type-definitions", json={"definitions": {"person_name": "a name"}})
+        syn = settings.DATA_DIR / "projects" / str(pid) / "synthetic"
+        syn.mkdir(parents=True, exist_ok=True)
+        rows = [
+            {"id": 1, "text": "Ada Lovelace wrote.", "entities": [], "synth_source": "passage_labels:doc=1",
+             "source": "passage_labels:ollama", "review_status": "accepted"},
+            {"id": 2, "text": "Hi Grace Hopper.", "entities": [], "synth_source": "passage_labels:doc=2",
+             "source": "passage_labels:ollama", "review_status": "accepted"},
+        ]
+        (syn / "synthetic.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+
+        def stale_sources():
+            q = client.get(f"/api/projects/{pid}/synthetic/review-queue").json()
+            self.assertTrue(q["conventions_version"])
+            return sorted(g["synth_source"] for g in q["accepted_groups"] if (g.get("conventions") or {}).get("is_stale"))
+
+        self.assertEqual(stale_sources(), ["passage_labels:doc=1", "passage_labels:doc=2"], "untracked rows are flagged")
+
+        class Labeller:
+            name = "fake"
+
+            def describe(self):
+                return "fake"
+
+            async def complete(self, prompt, **kw):
+                import re as _re
+                return json.dumps({"rows": [{"index": int(m.group(1)), "entities": []} for m in _re.finditer(r"\[(\d+)\] ", prompt)]})
+
+        async def _go():
+            async with async_session_factory() as db:
+                return await relabel.relabel_training_rows(db, pid, backend_override=Labeller(), source="passage_labels:doc=1")
+
+        summary = asyncio.run(_go())
+        self.assertEqual(summary.conventions_types, ["person_name"], "default vocabulary = the project's defined types")
+        self.assertEqual(stale_sources(), ["passage_labels:doc=2"], "the relabelled group is current")
+        client.put(f"/api/projects/{pid}/synthetic/type-definitions", json={"definitions": {"person_name": "a person's name"}})
+        self.assertEqual(stale_sources(), ["passage_labels:doc=1", "passage_labels:doc=2"], "a definition change makes it stale again")
+
+
+class MarkConventionsCurrentTests(unittest.TestCase):
+    def test_mark_current_stamps_one_group_with_provenance(self):
+        pid = client.post("/api/projects", json={"name": f"mark-{time.time_ns()}", "description": "x"}).json()["id"]
+        r = client.post(f"/api/projects/{pid}/synthetic/review-queue/mark-conventions-current", json={"source": "g1"})
+        self.assertEqual(r.status_code, 400, "no conventions yet")
+        client.put(f"/api/projects/{pid}/synthetic/type-definitions", json={"definitions": {"email": "an email"}})
+        syn = settings.DATA_DIR / "projects" / str(pid) / "synthetic"
+        syn.mkdir(parents=True, exist_ok=True)
+        rows = [
+            {"id": 1, "text": "a", "entities": [], "synth_source": "g1", "review_status": "accepted"},
+            {"id": 2, "text": "b", "entities": [], "synth_source": "g2", "review_status": "accepted"},
+        ]
+        (syn / "synthetic.jsonl").write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+        out = client.post(f"/api/projects/{pid}/synthetic/review-queue/mark-conventions-current", json={"source": "g1"}).json()
+        self.assertEqual((out["span_rows"], out["rows_marked"]), (1, 1))
+        saved = {x["synth_source"]: x for x in (json.loads(l) for l in (syn / "synthetic.jsonl").read_text().splitlines() if l.strip())}
+        self.assertEqual(saved["g1"]["conventions_version"], out["conventions_version"])
+        self.assertIn("conventions_marked_current_at", saved["g1"])
+        self.assertNotIn("conventions_version", saved["g2"])
+        q = client.get(f"/api/projects/{pid}/synthetic/review-queue").json()
+        stale = sorted(g["synth_source"] for g in q["accepted_groups"] if g["conventions"]["is_stale"])
+        self.assertEqual(stale, ["g2"])
+        r = client.post(f"/api/projects/{pid}/synthetic/review-queue/mark-conventions-current", json={"source": "nope"})
+        self.assertEqual(r.status_code, 400)

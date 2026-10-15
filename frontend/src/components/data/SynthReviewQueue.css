@@ -552,3 +552,24 @@
     border-color: var(--accent, var(--accent-primary));
     color: #fff;
 }
+
+/* P1k — groups labelled under older labelling conventions. */
+.synth-review-queue__stale {
+    border: 1px solid var(--color-warning, #d97706);
+    border-radius: var(--radius-md, 8px);
+    padding: var(--space-sm, 8px) var(--space-md, 12px);
+    margin: var(--space-sm, 8px) 0;
+    font-size: var(--font-size-sm, 13px);
+}
+.synth-review-queue__stale-head { margin: 0 0 var(--space-xs, 4px); }
+.synth-review-queue__stale-list { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px; }
+.synth-review-queue__stale-detail { color: var(--text-secondary); }
+.synth-review-queue__stale-started { color: var(--text-secondary); font-style: italic; }
+.synth-review-queue__stale-badge {
+    margin-left: 6px;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--color-warning, #d97706);
+    color: var(--color-warning, #d97706);
+}
