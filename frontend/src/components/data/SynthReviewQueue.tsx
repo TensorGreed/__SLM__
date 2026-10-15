@@ -663,6 +663,8 @@ function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] 
                 target: 'training',
                 source: group.synth_source,
                 backend: pin,
+                // Only the rows not labelled under the current conventions.
+                only_stale: true,
             });
             setStarted((prev) => ({ ...prev, [group.synth_source]: res.data?.id }));
             toast.info(
@@ -713,7 +715,7 @@ function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] 
                                     onClick={() => void relabel(group)}
                                     data-testid={`synth-review-queue-relabel-${group.synth_source}`}
                                 >
-                                    Relabel under current conventions with {pinFor(group)}
+                                    Relabel {c.span_rows - c.current_rows} row{c.span_rows - c.current_rows === 1 ? '' : 's'} under current conventions with {pinFor(group)}
                                 </button>
                             ) : (
                                 <span className="synth-review-queue__stale-detail">

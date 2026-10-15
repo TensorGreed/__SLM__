@@ -743,6 +743,9 @@ class RelabelAnswerKeyRequest(BaseModel):
     # target "training": relabel only this synth_source group (e.g.
     # "document_labels:doc=740"); empty = every row.
     source: str | None = None
+    # target "training": only rows not labelled under the current
+    # conventions (the review queue's stale rows) — current rows untouched.
+    only_stale: bool = False
 
 
 @router.post("/relabel-answer-key", status_code=202)
@@ -799,7 +802,7 @@ async def relabel_answer_key(
                 )
             elif req.target == "training":
                 summary = await relabel_training_rows(
-                    runner_db, project_id, source=req.source or None,
+                    runner_db, project_id, source=req.source or None, only_stale=req.only_stale,
                     backend=req.backend if cloud_override is None else None,
                     entity_types=req.entity_types, progress=_progress, backend_override=cloud_override,
                 )

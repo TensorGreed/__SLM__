@@ -384,9 +384,12 @@ async def relabel_training_rows(
     progress: ProgressFn | None = None,
     backend_override: Any = None,
     source: str | None = None,
+    only_stale: bool = False,
 ) -> RelabelSummary:
     """``source``: only the rows of that ``synth_source`` group (e.g.
     ``document_labels:doc=740``) — redo one batch without the rest.
+    ``only_stale``: only rows not stamped with the current conventions
+    version (what the review queue counts as stale).
 
     Relabel the project's saved synthetic span rows IN PLACE with
     ``backend`` under the project's labelling conventions — texts unchanged,
@@ -429,6 +432,15 @@ async def relabel_training_rows(
 
     definitions = await load_definitions(db, project_id)
     scan_tolerant = await load_scan_tolerant(db, project_id)
+    if only_stale:
+        current = conventions_version(definitions, scan_tolerant)
+        keep = [j for j, i in enumerate(span_idx) if rows[i].get(CONVENTIONS_VERSION_KEY) != current]
+        if not keep:
+            raise RuntimeError(
+                "Every row" + (f" in {source!r}" if source else "") + " is already labelled under the current conventions."
+            )
+        span_idx = [span_idx[j] for j in keep]
+        old_labels = [old_labels[j] for j in keep]
     types = [t.strip().lower() for t in (entity_types or []) if isinstance(t, str) and t.strip()]
     if not types:
         # The project's vocabulary: every defined type plus every type any

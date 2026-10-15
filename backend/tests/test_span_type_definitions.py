@@ -584,3 +584,43 @@ class RetireGroupTests(unittest.TestCase):
         self.assertEqual(saved[1]["review_status"], "accepted")
         self.assertEqual(saved[2]["reject_reason"], "bad", "a row rejected for another reason stays rejected")
         self.assertEqual(client.post(url, json={"source": "nope"}).status_code, 400)
+
+
+class OnlyStaleRelabelTests(unittest.TestCase):
+    def test_only_rows_not_labelled_under_the_current_conventions_are_sent(self):
+        pid = client.post("/api/projects", json={"name": f"stale-{time.time_ns()}", "description": "x"}).json()["id"]
+        client.put(f"/api/projects/{pid}/synthetic/type-definitions", json={"definitions": {"person_name": "a name"}})
+        current = defs.conventions_version({"person_name": "a name"})
+        syn = settings.DATA_DIR / "projects" / str(pid) / "synthetic"
+        syn.mkdir(parents=True, exist_ok=True)
+        rows = [
+            {"id": 1, "text": "Ada wrote.", "entities": [], "synth_source": "g", "conventions_version": current},
+            {"id": 2, "text": "Grace wrote.", "entities": [], "synth_source": "g"},
+        ]
+        (syn / "synthetic.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+        prompts: list[str] = []
+
+        class Labeller:
+            name = "fake"
+
+            def describe(self):
+                return "fake"
+
+            async def complete(self, prompt, **kw):
+                import re as _re
+                prompts.append(prompt)
+                return json.dumps({"rows": [{"index": int(m.group(1)), "entities": []} for m in _re.finditer(r"\[(\d+)\] ", prompt)]})
+
+        async def _go():
+            async with async_session_factory() as db:
+                return await relabel.relabel_training_rows(db, pid, backend_override=Labeller(), source="g", only_stale=True)
+
+        self.assertEqual(asyncio.run(_go()).rows, 1)
+        self.assertNotIn("Ada wrote", "".join(prompts))
+
+        async def _again():
+            async with async_session_factory() as db:
+                return await relabel.relabel_training_rows(db, pid, backend_override=Labeller(), source="g", only_stale=True)
+
+        with self.assertRaises(RuntimeError):
+            asyncio.run(_again())

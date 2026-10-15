@@ -1253,6 +1253,9 @@ runs real CPU inference). ~4 min locally.
   cards + `RetiredGroupsList` with Restore. `relabel_training_rows(source=)`
   matches groups with the queue's `_resolve_source_label` (rows without a
   synth_source are `legacy:<source>`).
+  `relabel_training_rows(only_stale=True)` / request `only_stale` sends only
+  rows not stamped with the current conventions version (raises when none);
+  the strip always sends it ("Relabel N rows under current conventions").
 - **Anthropic `temperature`**: newer models (e.g. claude-sonnet-5-5) answer
   400 "`temperature` is deprecated for this model" —
   `cloud_llm_service.call_anthropic_chat` retries once without it and records
@@ -1478,6 +1481,10 @@ runs real CPU inference). ~4 min locally.
   summary card; `#external-benchmarks`), benchmark lines in `EvalSummaryCard`,
   bell outcome + deep link. Helpers `api/benchmarks.ts` (`benchmarkScoreText`,
   `benchmarkSourceText`). Docs `workflows/external-benchmarks.md`.
+  Third span format `entity_strings` (offset-less `[{entity|value|text,
+  types|type|label}]`, list or JSON/literal string — `_parse_entity_list`,
+  `_entity_string_key` (≥ 80% of values found in the text), `locate_entities`:
+  every non-overlapping occurrence, longest first) — Gretel PII.
   **Found by its classification proof (fixed)**: the HF source returned
   `ClassLabel` ids, not names (`sources/hf._class_label_names`); LoRA
   `"auto"` on encoders targeted no modules (`lora_target_policy.

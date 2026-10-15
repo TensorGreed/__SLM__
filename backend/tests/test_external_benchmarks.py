@@ -52,6 +52,16 @@ class PureTests(unittest.TestCase):
         with self.assertRaises(svc.BenchmarkError):
             svc.detect_shape([{"question": "q?", "answer": "a long answer here"} for _ in range(5)])
 
+    def test_offsetless_entity_strings_are_located(self):
+        rows = [{"text": "Mail jo@x.io or call 555-0101; jo@x.io again.",
+                 "entities": "[{'entity': 'jo@x.io', 'types': ['email']}, {'entity': '555-0101', 'types': ['phone_number', 'x']}]"}]
+        shape = svc.detect_shape(rows)
+        self.assertEqual(shape["format"], "entity_strings")
+        out = svc.convert_rows(rows, shape, {})
+        self.assertEqual([(e["type"], e["start"]) for e in out[0]["entities"]], [("email", 5), ("phone_number", 21), ("email", 31)])
+        self.assertEqual(svc.locate_entities("Ann Lee and Lee", [("Lee", "LAST"), ("Ann Lee", "NAME")]),
+                         [{"type": "NAME", "start": 0, "end": 7, "text": "Ann Lee"}, {"type": "LAST", "start": 12, "end": 15, "text": "Lee"}])
+
     def test_many_to_one_ignore_and_join(self):
         rows = [{"text": "t1", "label": "1 star"}, {"text": "t2", "label": "2 star"}, {"text": "t3", "label": "3 stars"}, {"text": "t5", "label": "5 stars"}]
         mapping = {"1 star": "negative", "2 star": "negative", "3 stars": "ignore", "5 stars": "positive"}

@@ -68,6 +68,9 @@ _LABEL_KEYS = ("label", "labels", "sentiment", "category", "class", "target", "s
 _TOKEN_KEYS = ("tokens", "words")
 _TAG_KEYS = ("ner_tags", "tags", "labels", "ner", "bio_tags")
 _SPAN_LABEL_KEYS = ("label", "type", "entity", "entity_type", "entity_group", "tag")
+# Entity lists without offsets: [{"entity": "jo@x.io", "types": ["email"]}]
+_ENTITY_TEXT_KEYS = ("entity", "value", "text", "span", "word")
+_ENTITY_TYPE_KEYS = ("types", "type", "label", "labels", "entity_type", "category")
 _TOKEN_JOIN = " "
 
 
@@ -211,6 +214,77 @@ def _pick_text_column(rows: list[dict[str, Any]], candidates: list[str]) -> str 
     return max(candidates, key=lambda c: sum(len(str(r.get(c) or "")) for r in rows[:50]))
 
 
+def _parse_entity_list(value: Any) -> list[Any] | None:
+    """A list, or a string holding one (JSON or a Python literal)."""
+    items = _as_list(value)
+    if items is not None:
+        return items
+    if isinstance(value, str) and value.strip().startswith("["):
+        import ast
+
+        for parse in (json.loads, ast.literal_eval):
+            try:
+                parsed = parse(value)
+            except (ValueError, SyntaxError):
+                continue
+            if isinstance(parsed, list):
+                return parsed
+    return None
+
+
+def _entity_fields(item: Any) -> tuple[str, str] | None:
+    """(text key, type key) of an offset-less entity dict."""
+    if not isinstance(item, dict):
+        return None
+    tk = next((k for k in _ENTITY_TEXT_KEYS if isinstance(item.get(k), str) and item.get(k)), None)
+    yk = next((k for k in _ENTITY_TYPE_KEYS if k != tk and (isinstance(item.get(k), str) or _as_list(item.get(k)))), None)
+    return (tk, yk) if tk and yk else None
+
+
+def _entity_string_key(rows: list[dict[str, Any]], text_key: str) -> tuple[str, str, str] | None:
+    """A column of offset-less entity dicts whose texts occur in ``text_key``
+    → (column, entity-text key, type key)."""
+    for key in rows[0]:
+        if key == text_key:
+            continue
+        found = hits = 0
+        fields = None
+        for r in rows[:30]:
+            items = _parse_entity_list(r.get(key))
+            if items is None:
+                fields = None
+                break
+            text = str(r.get(text_key) or "")
+            for it in items:
+                f = _entity_fields(it)
+                if f is None:
+                    continue
+                fields = fields or f
+                found += 1
+                hits += it[f[0]] in text
+        if fields and found and hits / found >= 0.8:
+            return key, fields[0], fields[1]
+    return None
+
+
+def locate_entities(text: str, entities: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    """Offset-less (entity text, type) pairs → every non-overlapping
+    occurrence in ``text``, longest entity first."""
+    taken: list[tuple[int, int]] = []
+    spans: list[dict[str, Any]] = []
+    for value, label in sorted(set(entities), key=lambda e: -len(e[0])):
+        if not value.strip():
+            continue
+        start = text.find(value)
+        while start != -1:
+            end = start + len(value)
+            if not any(start < b and end > a for a, b in taken):
+                taken.append((start, end))
+                spans.append({"type": label, "start": start, "end": end, "text": value})
+            start = text.find(value, end)
+    return sorted(spans, key=lambda e: (e["start"], e["end"]))
+
+
 def _span_list_key(rows: list[dict[str, Any]], text_key: str) -> tuple[str, str] | None:
     """A column of span dicts whose offsets fit ``text_key`` → (column, label key)."""
     for key in rows[0]:
@@ -269,6 +343,10 @@ def detect_shape(rows: list[dict[str, Any]], label_names: dict[str, list[str]] |
         if spans:
             return {"task_profile": SHAPE_SPANS, "format": "char_spans",
                     "fields": {"text": text_key, "spans": spans[0], "span_label": spans[1]}}
+        strings = _entity_string_key(rows, text_key)
+        if strings:
+            return {"task_profile": SHAPE_SPANS, "format": "entity_strings",
+                    "fields": {"text": text_key, "entities": strings[0], "entity_text": strings[1], "entity_type": strings[2]}}
         for key in [k for k in rows[0] if k in label_names] + [k for k in _LABEL_KEYS if k in keys]:
             if key == text_key:
                 continue
@@ -346,6 +424,21 @@ def convert_rows(rows: list[dict[str, Any]], shape: dict[str, Any], label_names:
             tags = [_label_name(t, label_names.get(fields["tags"])) for t in raw_tags]
             text, spans = bio_to_spans(tokens, tags)
             out.append({"text": text, "entities": spans})
+        elif shape["format"] == "entity_strings":
+            text = r.get(fields["text"])
+            items = _parse_entity_list(r.get(fields["entities"]))
+            if not isinstance(text, str) or not text.strip() or items is None:
+                continue
+            pairs: list[tuple[str, str]] = []
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                value = it.get(fields["entity_text"])
+                kind = it.get(fields["entity_type"])
+                kinds = _as_list(kind) or ([kind] if isinstance(kind, str) else [])
+                if isinstance(value, str) and kinds:
+                    pairs.append((value, str(kinds[0])))  # several types: the first
+            out.append({"text": text, "entities": locate_entities(text, pairs)})
         else:  # char_spans
             text = r.get(fields["text"])
             if not isinstance(text, str) or not text.strip():

@@ -21,8 +21,12 @@ Works for **classification** and **span (entity) tagging** projects.
 2. **Preview** — BrewSLM detects the shape:
    - *classification*: a text column + a label column (a Hugging Face
      `ClassLabel` is read by name, e.g. `1 star`, not `0`);
-   - *spans*: a text column + a list of `{start, end, label}` offsets, or
-     `tokens` + BIO `ner_tags` (joined with spaces, offsets computed).
+   - *spans*: a text column + a list of `{start, end, label}` offsets,
+     `tokens` + BIO `ner_tags` (joined with spaces, offsets computed), or a
+     list of entity strings without offsets (`[{"entity": "jo@x.io",
+     "types": ["email"]}]`, also as a JSON / Python-literal string) — each
+     value is located in the text (every occurrence, longest first; an entity
+     with several types takes the first).
 3. **Map the labels** — every benchmark label onto one of your labels or
    **ignore**. Several can map to one (`1 star`, `2 star` → `negative`).
    Ignored classification rows are dropped; ignored entity types are removed

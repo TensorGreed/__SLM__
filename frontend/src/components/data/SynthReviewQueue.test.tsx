@@ -712,7 +712,7 @@ describe('SynthReviewQueue — groups labelled under older conventions', () => {
         expect(screen.getByTestId('synth-review-queue-stale-badge-passage_labels:doc=739')).toBeInTheDocument();
         await user.click(screen.getByTestId('synth-review-queue-relabel-passage_labels:doc=739'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/31/synthetic/relabel-answer-key', {
-            target: 'training', source: 'passage_labels:doc=739', backend: 'ollama',
+            target: 'training', source: 'passage_labels:doc=739', backend: 'ollama', only_stale: true,
         }));
         expect(await screen.findByText('relabelling (job #190)')).toBeInTheDocument();
     });
@@ -752,7 +752,7 @@ describe('SynthReviewQueue — groups labelled under older conventions', () => {
         expect(btn).toHaveTextContent('with cloud:anthropic:haiku');
         await user.click(btn);
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/31/synthetic/relabel-answer-key', {
-            target: 'training', source: 'passage_labels:doc=739', backend: 'cloud:anthropic:haiku',
+            target: 'training', source: 'passage_labels:doc=739', backend: 'cloud:anthropic:haiku', only_stale: true,
         }));
     });
 

@@ -784,6 +784,32 @@ labelled by people and owes nothing to our labellers — and it rose too
 no labels back from Sonnet and kept their old ones, so five groups still show
 in the stale list with a handful of rows each.
 
+**What holds up independently (2026-10-15).** A second external benchmark,
+500 texts of [Gretel's PII set](./external-benchmarks.md) (Apache-2.0,
+machine-generated but independent of our labellers), maps 19 of its types
+onto 14 of ours (`ssn` → national_id, `first_name` + `last_name` → one
+person_name, `ipv4`/`ipv6` → ip_address …; generic `date` and the address
+parts ignored). Then runs #86 and #87 were each retrained with three seeds
+on their own data snapshot (the versioned split each one trained on):
+
+| | #86 (3 seeds) | #87 (3 seeds) | holds up? |
+|---|---|---|---|
+| CoNLL people F1 (human labels) | 0.445 ± 0.003 | **0.666 ± 0.032** | yes — far beyond the seed spread |
+| Gretel PII F1 (14 types) | 0.559 ± 0.009 | 0.562 ± 0.004 | no change |
+| scan key (Sonnet) | 0.748 ± 0.005 | 0.861 ± 0.002 | yes, but partly self-agreement |
+| clean key (Sonnet) | 0.852 ± 0.005 | 0.957 ± 0.004 | yes, but partly self-agreement |
+
+The news names transferred; nothing else did. On Gretel the model finds
+emails (0.85), IP addresses (0.76), names (0.72) and phones (0.68), and
+misses identifiers in formats it never saw: license_plate 0.00 (55 spans),
+bank_account 0.11, credit_card 0.40, address 0.46, employee_id 0.50,
+medical_record_number 0.53. That is the next gap — identifier formats,
+not more of the same documents.
+
+The relabel button in the review queue now relabels only the rows that are
+not labelled under the current conventions (`only_stale`), so retrying the
+27 rows Sonnet skipped sent 27 rows, not the thousand around them.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the
