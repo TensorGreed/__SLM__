@@ -977,6 +977,29 @@ seed 43 (run #107) of three, picked by validation span F1 — its model card
 records the rule and the values, its thresholds.json the tuned thresholds,
 and its benchmark table Gretel 0.71 / CoNLL 0.69.
 
+**Final round and the shipped model (2026-10-15).** One last combined
+round: 50 documents of identifier contexts for the weakest benchmark types
+and 40 of news names (178 passages, Sonnet-labelled), three seeds of the
+shipped config, thresholds tuned on validation for each, seed picked by
+validation span F1 and exported with *Ship this seed*:
+
+| | previous (#107) | new seeds (#115–117, mean) | shipped (#117) |
+|---|---|---|---|
+| Gretel PII F1 | 0.710 | 0.708 | 0.708 |
+| CoNLL people F1 | 0.689 | 0.676 | 0.708 |
+| scan / clean key | 0.891 / 0.966 | 0.885 / 0.966 | 0.882 / 0.968 |
+| Gretel credit_card | 0.57 | 0.78 | 0.74 |
+| Gretel bank_account | 0.34 | 0.61 | 0.58 |
+| Gretel employee_id | 0.59 | 0.70 | 0.75 |
+| Gretel license_plate | 0.68 | 0.52 | 0.54 |
+
+Overall the round is a tie within seed noise, but it moves the types that
+matter most for a redaction tool: card numbers and bank accounts (PCI) gain
+~0.2, plates lose ~0.15. Run #117 (export 33) is the shipped model; #107
+(export 32) remains the alternative where plates matter more. That closes
+the training work for this project: from the first span model (CoNLL F1
+0.21, a scan F1 of 0.59) to Gretel 0.71 and CoNLL 0.71 on independent data.
+
 ## What it costs to relabel
 
 Measured on project 31 (2026-10-15), one 114-row group, list-price estimates
