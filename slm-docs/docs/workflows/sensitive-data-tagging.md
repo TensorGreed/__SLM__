@@ -1008,6 +1008,30 @@ A full Sonnet relabel of the 1,927 rows: ≈ $8.55 before, ≈ $7.25 with the
 cache, ≈ $3.60 with cache + batch; a typical one-type change ≈ $0.58, or
 ≈ $0.29 batched.
 
+**Batch mode, live (2026-10-15).** A 16-row group relabelled by Haiku through
+Anthropic's Message Batches API: 3 requests, all succeeded in ~3 minutes,
+none fell back to the direct path, $0.009 at half price.
+
+**Tiered mode with an agreement threshold.** A row now goes to the review
+model only when its bulk labels and the trained model agree less than a
+threshold (row span F1; *Review disagreements with … when a row's
+agreement is below* in the review queue; default 0.8; the job reports the
+distribution). Same 114-row group:
+
+| | cost | rows sent to Sonnet | agreement with Sonnet-only |
+|---|---|---|---|
+| Sonnet only | $0.429 | — | 1.00 |
+| tiered, any difference | $0.617 | 113 | 0.92 |
+| tiered, below 0.8 | $0.533 | 104 | 0.92 |
+| tiered, below 0.5 | $0.275 | 39 | 0.73 |
+| Haiku only | $0.150 | — | 0.57 |
+
+Most rows sit between 0.5 and 0.8 agreement, so a threshold either still
+sends nearly everything to Sonnet or saves ~36% at a real loss of quality.
+On this project the cheaper labeller is too far from the conventions for
+the tiered mode to pay; it is for projects where the bulk labeller and the
+model mostly agree — the job's agreement distribution shows which you have.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the

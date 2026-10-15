@@ -1334,6 +1334,11 @@ runs real CPU inference). ~4 min locally.
   cacheable length); tiered cost MORE (113/114 rows disagreed — any span
   difference counts); targeted relabel after a one-type change: 154 of 1,927
   rows (−92%) — the real saving.
+  Tiered threshold: `row_agreement` (row span F1) < `review_min_agreement`
+  (`DEFAULT_REVIEW_MIN_AGREEMENT` 0.8; request field; 1.0 = any difference) →
+  review; `review.agreement_distribution`. Project 31: @0.8 104/114 rows ($0.53),
+  @0.5 39 rows ($0.27, agreement 0.73) vs Sonnet-only $0.43 — Haiku too far from
+  the conventions there. Batch mode verified live (16 rows, 3/3, ~3 min).
 - **Batch relabels** (Anthropic Message Batches, half price): request `use_batch`
   (400 `BATCH_NEEDS_ANTHROPIC` unless `cloud:anthropic:*`) sets
   `CloudLlmBackend.use_batch`; `label_texts` (via `uses_message_batch`) sends every

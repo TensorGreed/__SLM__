@@ -293,6 +293,24 @@ def _span_key(spans: list[dict[str, Any]] | None) -> set[tuple[str, int, int]]:
     return {(e["type"], int(e["start"]), int(e["end"])) for e in spans or [] if isinstance(e, dict)}
 
 
+# Tiered mode: a row goes to the review model when the bulk labels and the
+# trained model agree less than this (strict span F1 of the row). 1.0 = any
+# difference (measured on project 31: 113 of 114 dense passages differed
+# somewhere — the review pass then cost more than labelling with the review
+# model alone).
+DEFAULT_REVIEW_MIN_AGREEMENT = 0.8
+
+
+def row_agreement(a: list[dict[str, Any]] | None, b: list[dict[str, Any]] | None) -> float:
+    """Strict span F1 between two labellings of one text (1.0 when both
+    are empty)."""
+    ka, kb = _span_key(a), _span_key(b)
+    if not ka and not kb:
+        return 1.0
+    tp = len(ka & kb)
+    return 2 * tp / (len(ka) + len(kb))
+
+
 async def review_disagreements(
     db: AsyncSession,
     project_id: int,
@@ -304,15 +322,30 @@ async def review_disagreements(
     report: ProgressFn,
     *,
     experiment_id: int | None = None,
+    min_agreement: float = DEFAULT_REVIEW_MIN_AGREEMENT,
 ) -> tuple[list[list[dict[str, Any]] | None], dict[str, Any]]:
     """Tiered labelling: rows where the bulk labeller and the project's
-    trained model disagree (or the bulk labeller returned nothing) go to
+    trained model agree less than ``min_agreement`` (row span F1; 1.0 = any
+    difference), or the bulk labeller returned nothing, go to
     ``review_llm``; its labels replace the bulk ones there. Without a
     trained span model nothing is reviewed (reported)."""
     run_id, preds = await latest_span_run_predictions(db, project_id, texts, experiment_id)
     if preds is None:
         return labels, {"skipped": "no trained span model to compare with", "rows": len(texts), "disagreed": 0, "reviewed": 0}
-    disagree = [i for i, (lab, pred) in enumerate(zip(labels, preds)) if lab is None or _span_key(lab) != _span_key(pred)]
+    min_agreement = max(0.0, min(1.0, float(min_agreement)))
+    scores = [None if lab is None else row_agreement(lab, pred) for lab, pred in zip(labels, preds)]
+    disagree = [
+        i for i, sc in enumerate(scores)
+        if sc is None or (sc < min_agreement if min_agreement < 1.0 else sc < 1.0)
+    ]
+    known = [sc for sc in scores if sc is not None]
+    distribution = {
+        "identical": sum(1 for sc in known if sc >= 1.0),
+        "0.8-1": sum(1 for sc in known if 0.8 <= sc < 1.0),
+        "0.5-0.8": sum(1 for sc in known if 0.5 <= sc < 0.8),
+        "below_0.5": sum(1 for sc in known if sc < 0.5),
+        "no_bulk_labels": len(scores) - len(known),
+    }
     review_label = review_llm.describe() if hasattr(review_llm, "describe") else "review model"
     reviewed = 0
     if disagree:
@@ -326,6 +359,7 @@ async def review_disagreements(
     return labels, {
         "review_backend": review_label, "model_experiment_id": run_id,
         "rows": len(texts), "disagreed": len(disagree), "reviewed": reviewed,
+        "min_agreement": min_agreement, "agreement_distribution": distribution,
     }
 
 
@@ -644,6 +678,7 @@ async def relabel_training_rows(
     review_override: Any = None,
     review_experiment_id: int | None = None,
     dry_run: bool = False,
+    review_min_agreement: float = DEFAULT_REVIEW_MIN_AGREEMENT,
 ) -> RelabelSummary:
     """``source``: only the rows of that ``synth_source`` group (e.g.
     ``document_labels:doc=740``) — redo one batch without the rest.
@@ -776,7 +811,7 @@ async def relabel_training_rows(
     if review_override is not None:
         new_labels, review = await review_disagreements(
             db, project_id, texts, new_labels, types, conventions, review_override, report,
-            experiment_id=review_experiment_id,
+            experiment_id=review_experiment_id, min_agreement=review_min_agreement,
         )
 
     stamp = datetime.now(timezone.utc).isoformat()
@@ -1040,6 +1075,7 @@ async def _label_and_append(
     piece_chars: int | None = None,
     review_override: Any = None,
     review_experiment_id: int | None = None,
+    review_min_agreement: float = DEFAULT_REVIEW_MIN_AGREEMENT,
 ) -> RelabelSummary:
     """Label ``items`` (text, metadata) as they are under the conventions
     (+ regex pass) and append them to ``synthetic.jsonl`` as pending rows
@@ -1100,7 +1136,7 @@ async def _label_and_append(
     if review_override is not None:
         labels, review = await review_disagreements(
             db, project_id, texts, labels, types, conventions, review_override, report,
-            experiment_id=review_experiment_id,
+            experiment_id=review_experiment_id, min_agreement=review_min_agreement,
         )
 
     stamp = datetime.now(timezone.utc).isoformat()

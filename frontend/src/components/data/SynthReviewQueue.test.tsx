@@ -795,7 +795,7 @@ describe('SynthReviewQueue — groups labelled under older conventions', () => {
         await user.click(screen.getByTestId('synth-review-queue-relabel-passage_labels:doc=739'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/31/synthetic/relabel-answer-key', {
             target: 'training', source: 'passage_labels:doc=739', backend: 'cloud:anthropic:haiku',
-            only_stale: true, only_affected: true, review_backend: 'cloud:anthropic:sonnet',
+            only_stale: true, only_affected: true, review_backend: 'cloud:anthropic:sonnet', review_min_agreement: 0.8,
         }));
     });
 

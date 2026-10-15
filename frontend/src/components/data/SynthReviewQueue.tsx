@@ -640,6 +640,8 @@ function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] 
     // Tiered labelling: a second model checks only rows where the relabel
     // and the project's trained model disagree ('' = no review pass).
     const [reviewPin, setReviewPin] = useState('');
+    // Review a row only when the relabel and the model agree less than this.
+    const [reviewBelow, setReviewBelow] = useState('0.8');
     const pinFor = (group: ReviewQueueGroup) => withPin || group.conventions?.relabel_pin || null;
     const stale = groups.filter((g) => g.conventions?.is_stale);
     // Anthropic Message Batches (half price, slower) — only for an
@@ -676,7 +678,7 @@ function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] 
                 // rest are carried forward without a model call.
                 only_stale: true,
                 only_affected: true,
-                ...(reviewPin ? { review_backend: reviewPin } : {}),
+                ...(reviewPin ? { review_backend: reviewPin, review_min_agreement: Number(reviewBelow) } : {}),
                 ...(useBatch && batchable(pin) ? { use_batch: true } : {}),
             });
             setStarted((prev) => ({ ...prev, [group.synth_source]: res.data?.id }));
@@ -727,6 +729,19 @@ function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] 
                             <option key={pin} value={pin}>{pin}</option>
                         ))}
                     </select>
+                    {reviewPin && (
+                        <>
+                            {' '}when a row&apos;s agreement with the model is below{' '}
+                            <select
+                                value={reviewBelow}
+                                onChange={(e) => setReviewBelow(e.target.value)}
+                                data-testid="synth-review-queue-review-below"
+                                title="Row span F1 between the relabel and your trained model's prediction. 1.0 sends every row with any difference."
+                            >
+                                {['0.5', '0.7', '0.8', '0.9', '1.0'].map((v) => <option key={v} value={v}>{v}</option>)}
+                            </select>
+                        </>
+                    )}
                 </label>
             )}
             <label

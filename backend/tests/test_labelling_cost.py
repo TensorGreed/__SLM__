@@ -213,3 +213,37 @@ class DryRunTests(unittest.TestCase):
         est = llm_pricing.estimate_cost("sonnet", {"calls": 1, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 1_000_000})
         self.assertAlmostEqual(est["usd"], 0.3)
         self.assertAlmostEqual(est["usd_uncached"], 3.0)
+
+
+class ReviewThresholdTests(unittest.TestCase):
+    def test_row_agreement_and_the_threshold(self):
+        a = [{"type": "email", "start": 0, "end": 5}, {"type": "phone", "start": 10, "end": 15},
+             {"type": "name", "start": 20, "end": 25}, {"type": "name", "start": 30, "end": 35}, {"type": "iban", "start": 40, "end": 50}]
+        b = a[:4] + [{"type": "iban", "start": 40, "end": 51}]  # one boundary differs
+        self.assertAlmostEqual(relabel.row_agreement(a, b), 0.8)
+        self.assertEqual(relabel.row_agreement([], []), 1.0)
+        texts = ["one", "two"]
+        bulk = [a, [{"type": "email", "start": 0, "end": 3}]]
+        model = [b, [{"type": "phone", "start": 0, "end": 3}]]
+        seen = []
+
+        class Review:
+            def describe(self):
+                return "review"
+
+            async def complete(self, prompt, **kw):
+                seen.append(prompt)
+                return json.dumps({"rows": [{"index": int(m.group(1)), "entities": []} for m in re.finditer(r"\[(\d+)\] ", prompt)]})
+
+        async def report(*x):
+            return None
+
+        async def fake_preds(db, pid, ts, experiment_id=None):
+            return 7, model
+
+        with mock.patch.object(relabel, "latest_span_run_predictions", fake_preds):
+            _, info = asyncio.run(relabel.review_disagreements(None, 1, texts, bulk, ["email"], "", Review(), report, min_agreement=0.8))
+            self.assertEqual(info["disagreed"], 1, "0.8 agreement is not below 0.8; the 0.0 row is")
+            self.assertEqual(info["agreement_distribution"]["0.8-1"], 1)
+            _, info = asyncio.run(relabel.review_disagreements(None, 1, texts, bulk, ["email"], "", Review(), report, min_agreement=1.0))
+            self.assertEqual(info["disagreed"], 2, "1.0: any difference")

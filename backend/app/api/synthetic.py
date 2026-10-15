@@ -764,6 +764,9 @@ class RelabelAnswerKeyRequest(BaseModel):
     # ``backend`` and the project's trained span model disagree.
     review_backend: str | None = None
     review_experiment_id: int | None = None
+    # A row goes to review_backend only when its bulk labels and the model's
+    # prediction agree less than this (row span F1; 1.0 = any difference).
+    review_min_agreement: float = Field(0.8, ge=0.0, le=1.0)
     # With only_affected: report how many rows the change touches, call no model.
     dry_run: bool = False
     # Anthropic Message Batches: every label call in ONE batch at half the
@@ -855,7 +858,7 @@ async def relabel_answer_key(
                     backend=req.backend if cloud_override is None else None,
                     entity_types=req.entity_types, progress=_progress, backend_override=cloud_override,
                     review_override=review_override, review_experiment_id=req.review_experiment_id,
-                    dry_run=req.dry_run,
+                    dry_run=req.dry_run, review_min_agreement=req.review_min_agreement,
                 )
             else:
                 summary = await relabel_split_as_answer_key(
