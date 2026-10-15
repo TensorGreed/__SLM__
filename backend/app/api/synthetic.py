@@ -1050,25 +1050,9 @@ async def put_type_definitions(
 def _project_entity_types(project_id: int) -> list[str]:
     """Entity types in the project's saved synthetic span rows and prepared
     splits (sorted)."""
-    import json as _json
+    from app.services.span_type_definitions_service import project_entity_types
 
-    from app.config import settings as _settings
-
-    base = _settings.DATA_DIR / "projects" / str(project_id)
-    found: set[str] = set()
-    for path in (base / "synthetic" / "synthetic.jsonl", base / "prepared" / "train.jsonl"):
-        if not path.exists():
-            continue
-        with path.open(encoding="utf-8") as handle:
-            for line in handle:
-                try:
-                    row = _json.loads(line)
-                except Exception:  # noqa: BLE001
-                    continue
-                for ent in row.get("entities") or [] if isinstance(row, dict) else []:
-                    if isinstance(ent, dict) and ent.get("type"):
-                        found.add(str(ent["type"]).strip().lower())
-    return sorted(found)
+    return project_entity_types(project_id)
 
 
 @router.get("/weak-types")

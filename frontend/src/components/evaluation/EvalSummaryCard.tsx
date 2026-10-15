@@ -15,6 +15,8 @@ import api from '../../api/client';
 import { checkLiftAcrossSeeds, fetchEvalSummary, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
 import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import RedactionTryBox from './RedactionTryBox';
+import SpanThresholdTuner from './SpanThresholdTuner';
+import type { TuneThresholdsResult } from '../../api/spanThresholds';
 import { retrievalLabel } from './retrievalLabel';
 import { retrievalRowText, retrievalSplitText } from './retrievalSplit';
 import { toast } from '../../stores/toastStore';
@@ -159,20 +161,10 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     const [summary, setSummary] = useState<EvalSummary | null>(null);
     const [loading, setLoading] = useState(true);
     const [starting, setStarting] = useState(false);
-    // Span runs: per-type score thresholds tuned on the validation split.
-    const [tuning, setTuning] = useState(false);
-    const [tuned, setTuned] = useState<{ rows: number; micro_f1_before: number; micro_f1_after: number; raised: Record<string, number> } | null>(null);
-    const tuneThresholds = async (expId: number) => {
-        setTuning(true);
-        try {
-            const res = await api.post(`/projects/${projectId}/span-thresholds/tune`, { experiment_id: expId });
-            setTuned(res.data);
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Could not tune thresholds.', 5000);
-        } finally {
-            setTuning(false);
-        }
-    };
+    // Span runs: per-type score thresholds tuned on the validation split,
+    // with per-type recall floors (SpanThresholdTuner).
+    const [tunerOpen, setTunerOpen] = useState(false);
+    const [tuned, setTuned] = useState<TuneThresholdsResult | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -347,12 +339,11 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     <button
                         type="button"
                         className="btn btn-secondary"
-                        onClick={() => void tuneThresholds(runId)}
-                        disabled={tuning}
+                        onClick={() => setTunerOpen((open) => !open)}
                         data-testid="eval-summary-tune-thresholds"
-                        title="Per type, keep only spans scored above the threshold that maximises that type's F1 on the validation split (thresholds.json — used by evaluation, redaction and the export). Re-evaluate afterwards."
+                        title="Per type, keep only spans scored above a threshold tuned on the validation split — for F1, or for the best precision that keeps a recall floor (thresholds.json — used by evaluation, redaction and the export). Re-evaluate afterwards."
                     >
-                        {tuning ? 'Tuning…' : 'Tune thresholds'}
+                        {tunerOpen ? 'Hide threshold tuning' : 'Tune thresholds'}
                     </button>
                 )}
                 {canCheckSeeds && !isSpan && !isHead && (
@@ -463,8 +454,14 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     {Object.keys(tuned.raised).length > 0
                         ? ` · raised ${Object.entries(tuned.raised).map(([t, v]) => `${t} ≥ ${v}`).join(', ')}`
                         : ' · no type gained from a threshold (all stay at 0)'}
+                    {(tuned.floors_met?.length ?? 0) + (tuned.floors_not_reachable?.length ?? 0) > 0
+                        ? ` · recall floors met: ${tuned.floors_met?.length ?? 0}, not reachable: ${tuned.floors_not_reachable?.length ?? 0}`
+                        : ''}
                     . Re-evaluate to score the test examples and benchmarks with them.
                 </p>
+            )}
+            {isSpan && tunerOpen && runId != null && (
+                <SpanThresholdTuner projectId={projectId} experimentId={runId} onTuned={setTuned} />
             )}
             {isSpan && (
                 <div className="eval-summary__span" data-testid="eval-summary-span">

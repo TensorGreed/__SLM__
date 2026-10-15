@@ -92,22 +92,50 @@ describe('EvalSummaryCard', () => {
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/7/evaluation/summary/lift-check', { experiment_id: 59 }));
     });
 
-    it('tunes per-type thresholds for a span run and says what changed', async () => {
-        apiMock.get.mockResolvedValue({
+    it('tunes per-type thresholds for a span run with recall floors and says what changed', async () => {
+        const spanSummary = {
+            kind: 'span_eval', project_id: 7, experiment_id: 59, verdict: 'evaluated', message: null, headline: null,
+            trained: { experiment_name: 'tc' }, answer_key: null,
+            test: { eval_result_id: 1, dataset_name: 'test', precision: 0.8, recall: 0.8, f1: 0.8, rows: 44, weakest_types: [] },
+            dataset_name: 'test', evaluated_samples: 44, failed_count: 0, failures: [],
+        };
+        apiMock.get.mockImplementation((url: string) => Promise.resolve({
+            data: url.endsWith('/span-recall-floors')
+                ? { floors: { iban: 0.95 }, default: null, types: ['bank_account', 'iban'], suggestions: {} }
+                : spanSummary,
+        }));
+        const row = (floor: number | null, status: string | null, rb: number, ra: number, pb: number, pa: number, th: number) => ({
+            threshold: th, f1_before: 0, f1_after: 0, precision_before: pb, precision_after: pa,
+            recall_before: rb, recall_after: ra, support: 10, predicted: 10, floor, floor_status: status,
+        });
+        apiMock.post.mockResolvedValue({
             data: {
-                kind: 'span_eval', project_id: 7, experiment_id: 59, verdict: 'evaluated', message: null, headline: null,
-                trained: { experiment_name: 'tc' }, answer_key: null,
-                test: { eval_result_id: 1, dataset_name: 'test', precision: 0.8, recall: 0.8, f1: 0.8, rows: 44, weakest_types: [] },
-                dataset_name: 'test', evaluated_samples: 44, failed_count: 0, failures: [],
+                experiment_id: 59, split: 'val', rows: 136, micro_f1_before: 0.931, micro_f1_after: 0.937, raised: { bank_account: 0.7 },
+                report: { bank_account: row(null, null, 0.9, 0.88, 0.8, 0.95, 0.7), iban: row(0.95, 'not_reachable', 0.9, 0.9, 0.97, 0.97, 0) },
+                floors_met: [], floors_not_reachable: ['iban'], recall_bias: 0,
+                recall_bias_suggestion: {
+                    recall_bias: 0.2, grid: [0.05, 0.1, 0.2], micro_precision_cost: 0.04,
+                    per_type: { iban: { floor: 0.95, bias: 0.2, recall_before: 0.9, precision_before: 0.97, recall_at_bias: 0.96, precision_at_bias: 0.9, precision_cost: 0.07 } },
+                },
             },
         });
-        apiMock.post.mockResolvedValue({ data: { rows: 136, micro_f1_before: 0.931, micro_f1_after: 0.937, raised: { bank_account: 0.7 } } });
         render(<EvalSummaryCard projectId={7} experimentId={59} />);
-        await userEvent.setup().click(await screen.findByTestId('eval-summary-tune-thresholds'));
-        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/7/span-thresholds/tune', { experiment_id: 59 }));
+        const user = userEvent.setup();
+        await user.click(await screen.findByTestId('eval-summary-tune-thresholds'));
+        expect(await screen.findByTestId('span-tuner-floor-iban')).toHaveValue(0.95);
+        await user.click(screen.getByTestId('eval-summary-tune-run'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/7/span-thresholds/tune', {
+            experiment_id: 59, floors: { iban: 0.95 }, apply_recall_bias: false,
+        }));
         expect(await screen.findByTestId('eval-summary-tuned')).toHaveTextContent(
-            'Thresholds tuned on 136 validation rows: F1 0.93 → 0.94 · raised bank_account ≥ 0.7',
+            'Thresholds tuned on 136 validation rows: F1 0.93 → 0.94 · raised bank_account ≥ 0.7 · recall floors met: 0, not reachable: 1',
         );
+        expect(screen.getByTestId('span-tuner-row-iban')).toHaveTextContent('iban0.950.90 → 0.900.97 → 0.970not reachable at threshold 0');
+        expect(screen.queryByTestId('span-tuner-row-bank_account')).toBeNull();
+        expect(screen.getByTestId('span-tuner-bias-suggestion')).toHaveTextContent(
+            'iban: recall bias 0.2 meets the 0.95 floor (recall 0.90 → 0.96, precision 0.97 → 0.90).',
+        );
+        expect(screen.getByTestId('span-tuner-bias-suggestion')).toHaveTextContent('Suggested recall bias: 0.2; overall precision −0.04');
     });
 
     it('shows an encoder classifier on its own, with external benchmark scores beside it', async () => {

@@ -1272,9 +1272,32 @@ runs real CPU inference). ~4 min locally.
   (refuses test / benchmarks) writes the run's `model/thresholds.json`
   (`per_type` + a `tuned` report); `POST /projects/{id}/span-thresholds/tune`;
   "Tune thresholds" on the span Eval card. `thresholds_for_decoding(model)` (non-zero
-  per-type only) is applied by `_run_token_classification_inference` — so held-out
-  eval and benchmark scores use the same decoding as /redact and the export
-  (runtime `thresholds_applied`). Tests `tests/test_span_thresholds.py`.
+  per-type only) + `recall_bias_for_decoding(model)` are applied by
+  `_run_token_classification_inference` — so held-out eval and benchmark scores use
+  the same decoding as /redact and the export (runtime `thresholds_applied` /
+  `recall_bias_applied`). **Recall floors (P1u)**: `runtime_config["span_recall_floors"]`
+  = `{type: 0–1, "_default": 0–1}` (`FLOORS_KEY`, `normalise_floors(raw, known_types)`,
+  `floor_for`, `known_span_types` = data types ∪ definitions ∪ compliance types);
+  `GET/PUT /projects/{id}/span-recall-floors` (422 out of range / unknown type; GET
+  carries `suggestions` from `compliance_bundles_service.suggested_recall_floors` —
+  each built-in bundle has a `recall_floor`, PCI/HIPAA 0.95, GDPR/CCPA 0.9 — never
+  applied server-side). `tune_from_scored(floors=, before_pred=)`: a floored type takes
+  the best-precision threshold whose recall ≥ floor (ties → higher recall, then higher
+  threshold; 0 unless +`MIN_GAIN` precision), `floor_status` met / not_reachable /
+  no_support; no floor → F1 behaviour unchanged. `suggest_recall_bias` re-decodes with
+  `BIAS_GRID` (0.05–0.5) → smallest bias meeting every unreachable floor + per-type /
+  micro precision cost; `tune_scored_split(gold, decode, types, floors=,
+  apply_recall_bias=)` (pure over a `decode(bias)` callable) re-tunes under the bias
+  only when asked. The split is scored ONCE: `train_token_classification.score_tokens`
+  (model call → merged per-token logits) + `decode_token_scores` (model-free;
+  `predict_spans` = the two). Tune request `{experiment_id, floors?, apply_recall_bias}`
+  (floors None → project setting). thresholds.json adds `recall_floors`, `recall_bias`
+  (tuning owns it — 0 unless applied), `tuned.report` (recall/precision before → after,
+  floor, floor_status), `tuned.recall_bias_suggestion`; the model card
+  (`recall_floor_lines`) adds a "Recall floors" table. UI `SpanThresholdTuner`
+  (floors editor + "Use compliance suggestions" + save + tune + result table; api
+  `api/spanThresholds.ts`) opens from the card's "Tune thresholds". Tests
+  `tests/test_span_thresholds.py` (patch `_load_model`), `SpanThresholdTuner.test.tsx`.
 - **Labelling cost**: `span_relabel_service.relabel_prompt_parts` → (stable, varying);
   a backend with `supports_prompt_cache` (CloudLlmBackend) gets `cache_prefix=stable`
   → `call_anthropic_chat(cached_system=)` (cached system block; usage

@@ -53,6 +53,20 @@ class BundleDataTests(unittest.TestCase):
         self.assertTrue({"medical_record_number", "health_plan_id", "provider_name", "person_name"} <= set(hipaa["types"]))
 
 
+class RecallFloorSuggestionTests(unittest.TestCase):
+    def test_suggests_the_strictest_builtin_floor_and_never_writes(self):
+        cfg, _ = cb.apply_bundles({}, ["gdpr", "hipaa"])
+        cfg, _ = cb.set_type_regimes(cfg, {**cfg["compliance"]["type_regimes"], "badge_id": ["vault"]})
+        snapshot = dict(cfg)
+        floors = cb.suggested_recall_floors(cfg)
+        self.assertEqual(floors["person_name"], {"floor": 0.95, "regimes": ["gdpr", "hipaa"]})
+        self.assertEqual(floors["geolocation"], {"floor": 0.9, "regimes": ["gdpr"]})
+        self.assertNotIn("badge_id", floors, "custom tags carry no floor")
+        self.assertNotIn("span_recall_floors", cfg)
+        self.assertEqual(cfg, snapshot)
+        self.assertTrue(all(b["recall_floor"] for b in cb.list_bundles()))
+
+
 class ApplyTests(unittest.TestCase):
     def test_apply_merges_without_overwriting_user_definitions(self):
         cfg = {DEFINITIONS_KEY: {"iban": "my own IBAN rule"}, "other": 1}

@@ -365,6 +365,49 @@ Besides the weights and tokenizer, a span export writes two files:
 With no thresholds and bias 0 the output is identical to the argmax
 decoder (evaluation is unchanged).
 
+### Tuning thresholds, with recall floors
+
+**Tune thresholds** on the span Eval card picks the thresholds for you on
+the **validation split**. It never uses the test examples or a benchmark,
+because those are what the thresholds are then measured on. The split is
+run through the model once. Every threshold and recall bias after that
+is a cheap re-decode of the same scores. The result goes into the run's
+`thresholds.json`, which evaluation, the redact endpoint and the export
+all read. Re-evaluate afterwards to see the test score under the new
+thresholds.
+
+Without floors, each type gets the threshold that maximises its F1, and
+it stays at 0 unless the gain is real. For redaction that is the wrong
+target: a missed account number is the leak, while an extra masked word
+is only noise. So you can give a type a **recall floor**, which is the
+minimum validation recall it must keep. Set floors in the tune panel,
+per type plus an optional default for every other type, and they are
+saved on the project (`GET/PUT /api/projects/{id}/span-recall-floors`).
+A floored type is not tuned for F1. Instead it gets the
+**best-precision threshold whose recall still meets the floor**. When
+two thresholds tie, the higher one wins.
+
+Sometimes even threshold 0, which keeps every predicted span, misses the
+floor. Thresholds only remove spans, so they cannot fix that. The panel
+then says **not reachable at threshold 0**. It also tries recall biases
+(0.05 to 0.5) on the same scores and reports the smallest one that meets
+the floor, with its precision cost for that type and overall. The bias
+is global, so every type gets more spans. That is why it is only written
+to `thresholds.json` when you tick *apply the suggested recall bias*. The
+thresholds are then re-tuned under that bias.
+
+If you applied a compliance bundle (PCI-DSS, HIPAA: 0.95; GDPR, CCPA:
+0.9), the panel shows each regime's floor beside the types it covers.
+**Use compliance suggestions** copies them into the editor. Nothing is
+set until you save or tune with them.
+
+`thresholds.json` records the floors (`recall_floors`), the chosen
+`per_type` thresholds and `recall_bias`, and under `tuned.report` each
+type's recall and precision before → after along with its
+`floor_status` (`met` / `not_reachable` / `no_support`). The exported
+model card has a **Recall floors** table that shows whether each floor
+was met on validation.
+
 ### Try it: the redact endpoint
 
 ```bash
