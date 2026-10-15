@@ -9,8 +9,15 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+from app.services import llm_usage
+
 DEFAULT_OPENAI_COMPATIBLE_URL = "http://localhost:11434/v1/chat/completions"
 DEFAULT_LLAMA_CPP_URL = "http://localhost:8080/v1/chat/completions"
+
+# Spend-ledger kind for a cloud chat in the playground (``llm_usage``).
+PLAYGROUND_SPEND_KIND = "playground_chat"
+# Rough chars-per-token used only when a provider sent no usage at all.
+_CHARS_PER_TOKEN_ESTIMATE = 4
 
 _PLAYGROUND_PROVIDER_SPECS: dict[str, dict[str, Any]] = {
     "mock": {
@@ -191,6 +198,11 @@ async def _openai_compatible_chat_stream(
         "max_tokens": int(max_tokens),
         "stream": True,
     }
+    if not llm_usage.is_local_url(endpoint):
+        # OpenAI-style APIs send token usage on a stream only when asked
+        # (one last chunk with ``usage``) — that is what the spend ledger
+        # records. Local servers are not metered, so they get the plain body.
+        payload["stream_options"] = {"include_usage": True}
     headers = {"Content-Type": "application/json"}
     if api_key and api_key.strip():
         headers["Authorization"] = f"Bearer {api_key.strip()}"
@@ -469,3 +481,78 @@ async def stream_playground_chat(
         payload["model_name"] = model_name
         payload["latency_ms"] = round((perf_counter() - started) * 1000, 2)
         yield payload
+
+
+# -- Cloud spend metering ----------------------------------------------------
+
+
+def is_metered_chat(provider: str | None, endpoint: str | None) -> bool:
+    """Only an OpenAI-compatible endpoint on a non-local host costs money.
+    Mock, the in-process trained run, llama.cpp and Ollama / LAN servers are
+    free and never metered."""
+    return _normalize_provider(provider) == "openai_compatible" and not llm_usage.is_local_url(endpoint)
+
+
+def playground_usage_counts(
+    usage: Any, *, messages: list[dict[str, str]], reply: str
+) -> tuple[dict[str, int], bool]:
+    """``(counts, estimated)`` from a provider's ``usage`` — OpenAI shape
+    (``prompt_tokens`` / ``completion_tokens``, cached share in
+    ``prompt_tokens_details.cached_tokens``) or Anthropic shape
+    (``input_tokens`` / ``output_tokens`` / ``cache_*_input_tokens``).
+    With no usage, estimate from characters (~4 per token) and say so."""
+    if isinstance(usage, dict):
+        if "input_tokens" in usage or "output_tokens" in usage:
+            counts = {
+                "input_tokens": int(usage.get("input_tokens") or 0),
+                "output_tokens": int(usage.get("output_tokens") or 0),
+                "cache_write_tokens": int(usage.get("cache_creation_input_tokens") or 0),
+                "cache_read_tokens": int(usage.get("cache_read_input_tokens") or 0),
+            }
+        else:
+            prompt = int(usage.get("prompt_tokens") or 0)
+            details = usage.get("prompt_tokens_details") if isinstance(usage.get("prompt_tokens_details"), dict) else {}
+            cached = min(prompt, int(details.get("cached_tokens") or 0))
+            counts = {
+                "input_tokens": prompt - cached,
+                "output_tokens": int(usage.get("completion_tokens") or 0),
+                "cache_write_tokens": 0,
+                "cache_read_tokens": cached,
+            }
+        if any(counts.values()):
+            return counts, False
+    prompt_chars = sum(len(str(m.get("content") or "")) for m in messages)
+    per = _CHARS_PER_TOKEN_ESTIMATE
+    return {
+        "input_tokens": -(-prompt_chars // per),
+        "output_tokens": -(-len(str(reply or "")) // per),
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+    }, True
+
+
+def meter_playground_reply(
+    project_id: int,
+    *,
+    provider: str | None,
+    endpoint: str | None,
+    model_name: str,
+    usage: Any,
+    messages: list[dict[str, str]],
+    reply: str,
+) -> dict[str, Any] | None:
+    """Record one cloud playground reply in the project's spend ledger
+    (``metered_operation(project_id, "playground_chat")``) and return its
+    ``{usage, cost_usd, tokens, estimated}`` — None for a local provider.
+    Never raises: accounting never fails a chat."""
+    try:
+        if not is_metered_chat(provider, endpoint):
+            return None
+        counts, estimated = playground_usage_counts(usage, messages=messages, reply=reply)
+        with llm_usage.metered_operation(project_id, PLAYGROUND_SPEND_KIND) as meter:
+            meter.estimated = estimated
+            llm_usage.record(llm_usage.provider_for_url(endpoint), model_name, **counts)
+        block = meter.block()
+        return {**block, "estimated": estimated} if block else None
+    except Exception:  # noqa: BLE001 — accounting never fails a chat
+        return None

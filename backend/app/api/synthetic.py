@@ -60,6 +60,16 @@ _CLOUD_MODELS_CATALOG: dict[str, list[dict[str, str]]] = {
 }
 
 
+async def _with_budget_warning(db: AsyncSession, project_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    """Add ``budget_warning`` to a Job-start response when the project's
+    cloud-LLM spend this month is already over its budget. Advisory: the Job
+    has started either way (the user decides)."""
+    from app.services.llm_spend_service import budget_warning
+
+    warning = await budget_warning(db, project_id)
+    return {**payload, "budget_warning": warning} if warning else payload
+
+
 async def _resolve_cloud_backend_override(
     db: AsyncSession, project_id: int, backend_pin: str | None,
 ):
@@ -871,7 +881,7 @@ async def relabel_answer_key(
         runner=_runner, project_id=project_id,
         params={"project_id": project_id, "split": req.split, "backend": req.backend, "entity_types": req.entity_types, "target": req.target, "document_id": req.document_id, "use_batch": req.use_batch},
     )
-    return serialize_job(job)
+    return await _with_budget_warning(db, project_id, serialize_job(job))
 
 
 @router.post("/spans/regex-augment")
@@ -1626,7 +1636,7 @@ async def run_synth_playbook(
         )
         return JSONResponse(
             status_code=202,
-            content=serialize_job(job),
+            content=await _with_budget_warning(db, project_id, serialize_job(job)),
         )
 
     try:

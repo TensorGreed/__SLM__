@@ -40,8 +40,59 @@ export interface LlmSpend {
     };
     by_model: LlmSpendModelRow[];
     by_kind: LlmSpendKindRow[];
+    /** Ledger operations whose tokens were estimated (a stream with no usage event). */
+    estimated_operations?: number;
+    /** Calendar month to date (UTC), whatever the window. */
+    month?: { since: string; operations: number; total_tokens: number; cost_usd: number };
+    budget?: LlmBudget | null;
+    budget_status?: LlmBudgetStatus | null;
     basis: string;
     note: string;
+}
+
+/** runtime_config["llm_budget_usd"] — advisory, never blocks anything. */
+export interface LlmBudget {
+    monthly: number;
+    warn_at: number;
+}
+
+export interface LlmBudgetStatus {
+    budget: number;
+    warn_at: number;
+    spent: number;
+    share: number;
+    status: 'ok' | 'warning' | 'over';
+    month_start?: string;
+}
+
+/** A Job-start response's ``budget_warning`` (the month is over budget; the Job runs). */
+export interface LlmBudgetWarning extends LlmBudgetStatus {
+    message: string;
+}
+
+export interface LlmBudgetPayload {
+    project_id: number;
+    budget: LlmBudget | null;
+    status: LlmBudgetStatus | null;
+}
+
+/** PUT /projects/{id}/llm-budget — ``monthly: null`` clears it. */
+export async function saveLlmBudget(
+    projectId: number,
+    monthly: number | null,
+    warnAt?: number,
+): Promise<LlmBudgetPayload> {
+    const res = await api.put<LlmBudgetPayload>(`/projects/${projectId}/llm-budget`, {
+        monthly,
+        ...(warnAt !== undefined ? { warn_at: warnAt } : {}),
+    });
+    return res.data;
+}
+
+/** The ``budget_warning`` message on a Job-start response, if any. */
+export function budgetWarningMessage(data: unknown): string | null {
+    const w = (data as { budget_warning?: LlmBudgetWarning | null } | null)?.budget_warning;
+    return w && typeof w.message === 'string' ? w.message : null;
 }
 
 export async function fetchLlmSpend(projectId: number, days = 30): Promise<LlmSpend> {

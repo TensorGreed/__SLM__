@@ -28,3 +28,49 @@
     padding: 4px 8px;
     border-bottom: 1px solid var(--border-color, rgba(127, 127, 127, 0.2));
 }
+
+.llm-spend-card__budget {
+    margin-bottom: var(--space-sm);
+}
+
+.llm-spend-card__budget-line {
+    font-size: var(--font-size-sm);
+    margin: var(--space-xs) 0;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border-left: 3px solid var(--color-success, #2e7d32);
+}
+
+.llm-spend-card__budget-line--warning {
+    border-left-color: var(--color-warning, #ed6c02);
+    background: rgba(237, 108, 2, 0.08);
+}
+
+.llm-spend-card__budget-line--over {
+    border-left-color: var(--color-error, #d32f2f);
+    background: rgba(211, 47, 47, 0.1);
+}
+
+.llm-spend-card__budget-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    align-items: flex-end;
+    font-size: var(--font-size-sm);
+    margin: var(--space-xs) 0;
+}
+
+.llm-spend-card__budget-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.llm-spend-card__budget-form input {
+    width: 7rem;
+}
+
+.llm-spend-card__budget-error {
+    font-size: var(--font-size-sm);
+    color: var(--color-error, #d32f2f);
+}

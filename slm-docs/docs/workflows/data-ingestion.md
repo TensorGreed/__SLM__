@@ -254,12 +254,21 @@ Local models (Ollama, a teacher on your own machine or LAN) cost nothing and are
 
 - **Background jobs** (synthesis, sample documents, the documents → Q&A flow, relabels and answer keys, lift checks and retrieval comparisons judged by a cloud model) carry `usage` (per model: calls, input / output / cache-write / cache-read tokens, a list-price estimate), `cost_usd` and `tokens` in their result. The notification bell adds "12k tokens (~$0.04 at list price)" to the outcome line, and "spent …" on a job that failed or was cancelled — tokens spent are spent.
 - **Operations that are not jobs** — the LLM answer key (`llm_cost` in the response), the AI plan strategy pass, the built-in-checks judge in an evaluation and distillation teacher capture — record the same figures and add them to the project's spend log.
+- **Playground chats** with a cloud OpenAI-compatible endpoint (any API URL that is not this machine or your LAN) are logged as `playground_chat`, chat and streaming alike, and the reply carries `llm_cost`. A stream asks the provider for its token counts (`stream_options.include_usage`). If the provider sends none, the tokens are estimated at about four characters per token, and the log entry and the spend tally (`estimated_operations`) say so. Ollama, llama.cpp, the mock runtime and chatting with a trained run in-process are free and not logged. A logging failure never fails a chat.
 - **Prompt caching**: the instructions that repeat on every call (judge rules, labelling conventions, the span-synthesis types and rules, the documents → Q&A instructions) go to Anthropic as a cached block, billed at a tenth of the input price on a cache hit. A block shorter than the model's minimum cacheable length (about 1,000–4,000 tokens depending on the model) is simply sent uncached, so short prompts cost what they did before.
 
 The **Cloud LLM spend (last 30 days)** card on the Synthetic tab totals it per project: tokens, the estimated dollars, a row per model, and a line per kind of operation. The dollar figure is a **list-price estimate** from `llm_pricing` (override a family's price with `LLM_PRICES_JSON`, e.g. `{"sonnet": [3, 15]}`); your provider's invoice is the truth.
 
 ```sh
 curl http://localhost:8000/api/projects/1/llm-spend?days=30
+```
+
+**Monthly budget.** Set one on the same card (**Set a monthly budget**: an amount in dollars and a warn-at share, default 80%), or through the API. The card shows "This month: ~$4.10 of $5.00 (82%)" for the calendar month to date (UTC), whatever window the rest of the card covers. The line is amber once spend passes the warn-at share and red once it is over the budget. The Coach's Synthetic stage gives a warning at the warn-at share and a critical nudge (`synthetic:llm-budget`) once you are over. When the month is already over budget, starting a relabel or a playbook still starts the job, but the response carries a `budget_warning` that the UI shows as a toast. The budget is advisory: nothing is blocked, and you decide. It uses the same list-price estimate as the card.
+
+```sh
+curl -X PUT http://localhost:8000/api/projects/1/llm-budget \
+  -H 'Content-Type: application/json' -d '{"monthly": 5, "warn_at": 0.8}'
+curl -X PUT http://localhost:8000/api/projects/1/llm-budget -d '{"monthly": null}' -H 'Content-Type: application/json'  # clear
 ```
 
 ## Step 3 — Dataset prep

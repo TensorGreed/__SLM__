@@ -59,7 +59,7 @@ session-start guidance.
 - `backend/app/api/ingestion.py` — Data Ingestion API routes — file upload and document management.
 - `backend/app/api/jobs.py` — Jobs API routes (Hardening Phase H1).
 - `backend/app/api/label_noise.py` — Quality-Lift phase 4 slice 1 — Label-noise scan API.
-- `backend/app/api/llm_spend.py` — Project cloud-LLM spend tally (``llm_spend_service``).
+- `backend/app/api/llm_spend.py` — Project cloud-LLM spend tally + monthly budget (``llm_spend_service``).
 - `backend/app/api/manifest.py` — Pipeline-as-code manifest API (priority.md P21 + P22).
 - `backend/app/api/models.py` — Universal base-model registry + compatibility API routes.
 - `backend/app/api/pipeline.py` — Pipeline status API routes.
@@ -784,6 +784,7 @@ session-start guidance.
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
 - `backend/tests/test_label_noise_slice1.py` — Quality-Lift phase 4 slice 1 — Label-noise scan service + endpoints.
 - `backend/tests/test_labelling_cost.py` — Labelling cost: prompt caching, usage + cost per relabel, convention-aware
+- `backend/tests/test_llm_budget.py` — Playground cloud-chat metering + the monthly cloud-LLM budget.
 - `backend/tests/test_llm_spend.py` — Cloud-LLM cost beyond relabels: usage metering at every cloud call site,
 - `backend/tests/test_multi_seed_aggregation.py` — Tests for Quality-Lift phase 1, slice 2 — multi-seed dispatch + aggregation.
 - `backend/tests/test_multi_seed_gate_variance.py` — Tests for Quality-Lift phase 1, slice 3 — variance-aware gate evaluator.

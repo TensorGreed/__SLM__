@@ -88,6 +88,7 @@ from app.services.training_telemetry_service import (
 )
 from app.services.playground_service import (
     list_playground_provider_catalog,
+    meter_playground_reply,
     normalize_playground_messages,
     run_playground_chat,
     stream_playground_chat,
@@ -3691,6 +3692,17 @@ async def playground_chat(
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
+    # A cloud endpoint's tokens go to the project's spend ledger
+    # (``playground_chat``); local providers return None.
+    llm_cost = meter_playground_reply(
+        project_id,
+        provider=runtime_provider,
+        endpoint=result.get("endpoint"),
+        model_name=resolved_model_name,
+        usage=result.get("usage"),
+        messages=normalized_messages,
+        reply=str(result.get("reply") or ""),
+    )
 
     session_payload = None
     if bool(req.save_history):
@@ -3764,6 +3776,7 @@ async def playground_chat(
         # isn't a rag_first clone.
         **({"rag_first_active": True} if rag_first_active else {}),
         **result,
+        **({"llm_cost": llm_cost} if llm_cost else {}),
     }
 
 
@@ -3831,6 +3844,17 @@ async def playground_chat_stream(
                     continue
 
                 final_event = dict(event)
+                llm_cost = meter_playground_reply(
+                    project_id,
+                    provider=runtime_provider,
+                    endpoint=final_event.get("endpoint"),
+                    model_name=resolved_model_name,
+                    usage=final_event.get("usage"),
+                    messages=normalized_messages,
+                    reply=str(final_event.get("reply") or ""),
+                )
+                if llm_cost:
+                    final_event["llm_cost"] = llm_cost
                 session_payload = None
                 if bool(req.save_history):
                     transcript = list(normalized_messages)

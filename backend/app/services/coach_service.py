@@ -3358,12 +3358,58 @@ def _file_mtime(dataset: Dataset | None) -> float | None:
         return None
 
 
+def _llm_budget_nudge(status: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Pure: ``synthetic:llm-budget`` from a month-to-date budget status —
+    warning at ≥ warn_at of the monthly budget, critical once over it.
+    Advisory: nothing is blocked."""
+    if not status or status.get("status") not in {"warning", "over"}:
+        return None
+    over = status["status"] == "over"
+    spent, budget = float(status.get("spent") or 0.0), float(status.get("budget") or 0.0)
+    pct = round(float(status.get("share") or 0.0) * 100)
+    title = (
+        f"Cloud LLM spend is over this month's budget (~${spent:.2f} of ${budget:.2f})"
+        if over
+        else f"Cloud LLM spend is at {pct}% of this month's budget (~${spent:.2f} of ${budget:.2f})"
+    )
+    return {
+        "id": "synthetic:llm-budget",
+        "title": title,
+        "body": (
+            "Relabels, synthesis, judges and cloud playground chats all count (list-price "
+            "estimate, not an invoice). Nothing is blocked — switch to a local model (Ollama "
+            "costs nothing), use Anthropic batch mode for relabels (half price), or raise the "
+            "budget on the spend card."
+        ),
+        "severity": "critical" if over else "warning",
+        "action": {
+            "kind": "navigate",
+            "label": "Open the spend card",
+            "params": {"target": "pipeline-tab", "tab": "synthetic"},
+        },
+        "rule_id": "synthetic.llm-budget" + (".over" if over else ""),
+        "context": {k: status.get(k) for k in ("budget", "spent", "share", "warn_at", "status")},
+    }
+
+
+async def _llm_budget_nudge_for(db: AsyncSession, project: Project) -> dict[str, Any] | None:
+    try:
+        from app.services.llm_spend_service import month_budget_status
+
+        return _llm_budget_nudge(await month_budget_status(db, project))
+    except Exception:  # noqa: BLE001 — a spend read never blanks the strip
+        return None
+
+
 async def _synthetic_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
     """Synthetic tab: unreviewed rows, a synthetic-heavy training mix, and
     playbooks that can't run until a task type is chosen."""
     suggestions: list[dict[str, Any]] = []
+    budget_nudge = await _llm_budget_nudge_for(db, project)
+    if budget_nudge:
+        suggestions.append(budget_nudge)
     if not await _project_has_any_data(db, project.id):
         return suggestions
 
