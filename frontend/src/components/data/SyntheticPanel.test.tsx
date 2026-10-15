@@ -284,6 +284,28 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
         });
     });
 
+    it('the Batch checkbox is enabled only for an Anthropic pin and sends use_batch', async () => {
+        installGetRouter({
+            'prepared-manifest': { task_profile: 'structured_extraction', output_schema: { scoring_mode: 'span_set' }, entity_types: ['email'] },
+        });
+        apiMock.post.mockResolvedValueOnce({ data: { id: 151, kind: 'span_relabel', status: 'queued' } });
+        render(<SyntheticPanel projectId={1} />);
+        const user = userEvent.setup();
+        const box = await screen.findByTestId('synthetic-relabel-batch') as HTMLInputElement;
+        expect(box).toBeDisabled();
+        const providerSelect = (await screen.findAllByRole('combobox')).find((el) => within(el).queryByText('Anthropic')) as HTMLElement;
+        await user.selectOptions(providerSelect, 'anthropic');
+        expect(box).not.toBeDisabled();
+        await user.click(box);
+        await user.click(screen.getByTestId('synthetic-relabel-training'));
+        await waitFor(() => {
+            const [url, body] = apiMock.post.mock.calls[apiMock.post.mock.calls.length - 1];
+            expect(url).toBe('/projects/1/synthetic/relabel-answer-key');
+            expect(body).toMatchObject({ target: 'training', use_batch: true });
+            expect(String(body.backend)).toMatch(/^cloud:anthropic:/);
+        });
+    });
+
     it('saves a pasted cloud key on the project and clears the field', async () => {
         installGetRouter({});
         apiMock.put.mockResolvedValueOnce({ data: { provider: 'cloud_llm_anthropic', key_name: 'api_key' } });

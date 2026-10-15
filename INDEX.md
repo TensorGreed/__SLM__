@@ -919,6 +919,7 @@ session-start guidance.
 - `backend/tests/test_real_training_path.py` — The core training loop on the REAL runtime, end to end, through the API.
 - `backend/tests/test_recipe_apply_service.py` — Tests for recipe_apply_service — applying a Theme 2 recipe pick
 - `backend/tests/test_recipe_service.py` — Tests for the task-shape recipe registry + header-based shape sniffer.
+- `backend/tests/test_relabel_batch.py` — Anthropic Message Batches for span relabels: create / poll / results
 - `backend/tests/test_remediation_tracking.py` — Tests for the remediation tracking service + API (E2).
 - `backend/tests/test_retrieval_decisions.py` — Pin decisions (retrieval_decisions_service): append-only record of what
 - `backend/tests/test_retrieval_reranker.py` — Cross-encoder reranking + per-project retrieval settings.

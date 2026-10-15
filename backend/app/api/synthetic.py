@@ -756,6 +756,9 @@ class RelabelAnswerKeyRequest(BaseModel):
     review_experiment_id: int | None = None
     # With only_affected: report how many rows the change touches, call no model.
     dry_run: bool = False
+    # Anthropic Message Batches: every label call in ONE batch at half the
+    # list price; results take minutes to hours. ``cloud:anthropic:*`` only.
+    use_batch: bool = False
 
 
 @router.post("/relabel-answer-key", status_code=202)
@@ -781,7 +784,15 @@ async def relabel_answer_key(
     )
 
     req = data or RelabelAnswerKeyRequest()
+    if req.use_batch and not (req.backend or "").startswith("cloud:anthropic:"):
+        raise HTTPException(400, {
+            "error_code": "BATCH_NEEDS_ANTHROPIC",
+            "message": "Batch mode uses Anthropic's Message Batches API — pick a cloud:anthropic:<model> backend, or turn batch off.",
+            "metadata": {"backend": req.backend},
+        })
     cloud_override = await _resolve_cloud_backend_override(db, project_id, req.backend)
+    if req.use_batch and cloud_override is not None:
+        cloud_override.use_batch = True
     review_override = None
     if req.review_backend:
         review_override = await _resolve_cloud_backend_override(db, project_id, req.review_backend)
@@ -856,9 +867,9 @@ async def relabel_answer_key(
             else f"{req.split.capitalize()} split relabelled by {req.backend or 'local model'} · project #{project_id}"
             if req.target == "split"
             else f"Answer key by {req.backend or 'local model'} · {req.split} split · project #{project_id}"
-        ),
+        ) + (" · batch" if req.use_batch else ""),
         runner=_runner, project_id=project_id,
-        params={"project_id": project_id, "split": req.split, "backend": req.backend, "entity_types": req.entity_types, "target": req.target, "document_id": req.document_id},
+        params={"project_id": project_id, "split": req.split, "backend": req.backend, "entity_types": req.entity_types, "target": req.target, "document_id": req.document_id, "use_batch": req.use_batch},
     )
     return serialize_job(job)
 

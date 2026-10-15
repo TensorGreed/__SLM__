@@ -4,7 +4,8 @@ Prices are USD per million tokens (input, output) by model family, as listed
 by the providers (checked 2026-10; edit ``LLM_PRICES_JSON`` — e.g.
 ``{"sonnet": [3, 15]}`` — when they change or for a negotiated rate).
 Anthropic prompt caching bills a cache write at 1.25x and a cache read at
-0.1x the input price. Always shown as an *estimate*: the provider's invoice
+0.1x the input price. Anthropic Message Batches bill every token (cache
+factors included) at ``BATCH_DISCOUNT`` of the list price. Always shown as an *estimate*: the provider's invoice
 is the truth.
 """
 
@@ -24,6 +25,8 @@ DEFAULT_PRICES: dict[str, tuple[float, float]] = {
 }
 CACHE_WRITE_FACTOR = 1.25
 CACHE_READ_FACTOR = 0.1
+# Message Batches: half the list price on input, output and cache tokens.
+BATCH_DISCOUNT = 0.5
 
 
 def _prices() -> dict[str, tuple[float, float]]:
@@ -45,13 +48,16 @@ def price_for(model: str | None) -> tuple[float, float] | None:
     return max(matches, key=lambda kv: len(kv[0]))[1] if matches else None
 
 
-def estimate_cost(model: str | None, usage: dict[str, Any] | None) -> dict[str, Any]:
+def estimate_cost(model: str | None, usage: dict[str, Any] | None, *, batch: bool = False) -> dict[str, Any]:
     """``{tokens, usd, basis}`` for one model's usage counters (``usd`` None
-    when the model's price is unknown)."""
+    when the model's price is unknown). ``batch``: the calls went through
+    Message Batches — every price times ``BATCH_DISCOUNT``."""
     u = usage or {}
     inp, out = int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0)
     cw, cr = int(u.get("cache_write_tokens") or 0), int(u.get("cache_read_tokens") or 0)
     price = price_for(model)
+    if price is not None and batch:
+        price = (price[0] * BATCH_DISCOUNT, price[1] * BATCH_DISCOUNT)
     usd = None
     if price is not None:
         pin, pout = price
@@ -63,5 +69,6 @@ def estimate_cost(model: str | None, usage: dict[str, Any] | None) -> dict[str, 
         # What the same calls cost without the prompt cache (every cached
         # token billed as plain input) — the saving is usd_uncached - usd.
         "usd_uncached": round(((inp + cw + cr) * price[0] + out * price[1]) / 1e6, 4) if price is not None else None,
-        "basis": "list-price estimate" if usd is not None else "price unknown",
+        "batch": bool(batch),
+        "basis": ("list-price estimate" + (" (batch, half price)" if batch else "")) if usd is not None else "price unknown",
     }

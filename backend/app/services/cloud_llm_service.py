@@ -212,6 +212,36 @@ def _rejects_temperature(status: int, body: str) -> bool:
     return status == 400 and "temperature" in body and ("deprecated" in body or "not supported" in body)
 
 
+def anthropic_message_params(
+    *,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int = 4096,
+    temperature: float = 0.4,
+    cached_system: str | None = None,
+) -> dict[str, Any]:
+    """The ``/v1/messages`` body — shared by the synchronous call and a
+    Message Batches request's ``params`` so both send the same prompt."""
+    system: Any = system_prompt
+    if cached_system:
+        system = [
+            *([{"type": "text", "text": system_prompt}] if system_prompt else []),
+            {"type": "text", "text": cached_system, "cache_control": {"type": "ephemeral"}},
+        ]
+    payload: dict[str, Any] = {
+        "model": model,
+        "system": system,
+        "messages": [
+            {"role": "user", "content": user_prompt},
+        ],
+        "max_tokens": max_tokens,
+    }
+    if model not in _NO_TEMPERATURE_MODELS:
+        payload["temperature"] = temperature
+    return payload
+
+
 async def call_anthropic_chat(
     *,
     api_key: str,
@@ -239,22 +269,10 @@ async def call_anthropic_chat(
     """
     if not api_key:
         raise CloudLlmError("Anthropic API key is required.")
-    system: Any = system_prompt
-    if cached_system:
-        system = [
-            *([{"type": "text", "text": system_prompt}] if system_prompt else []),
-            {"type": "text", "text": cached_system, "cache_control": {"type": "ephemeral"}},
-        ]
-    payload: dict[str, Any] = {
-        "model": model,
-        "system": system,
-        "messages": [
-            {"role": "user", "content": user_prompt},
-        ],
-        "max_tokens": max_tokens,
-    }
-    if model not in _NO_TEMPERATURE_MODELS:
-        payload["temperature"] = temperature
+    payload = anthropic_message_params(
+        model=model, system_prompt=system_prompt, user_prompt=user_prompt,
+        max_tokens=max_tokens, temperature=temperature, cached_system=cached_system,
+    )
     started = time.monotonic()
     _LOG.info(
         "anthropic call → model=%s max_tokens=%d",
@@ -299,6 +317,26 @@ async def call_anthropic_chat(
         )
 
     data = resp.json()
+    out = anthropic_response_from_message(data, model)
+    stop_reason = str(data.get("stop_reason") or "")
+    _LOG.info(
+        "anthropic OK after %.1fs: model=%s prompt_tokens=%d "
+        "completion_tokens=%d stop_reason=%s content_chars=%d",
+        elapsed, out.model, out.prompt_tokens,
+        out.completion_tokens, stop_reason, len(out.content),
+    )
+    if stop_reason == "max_tokens":
+        _LOG.warning(
+            "anthropic hit max_tokens (%d) on model=%s — response was "
+            "truncated; downstream parse will likely fail.",
+            max_tokens, out.model,
+        )
+    return out
+
+
+def anthropic_response_from_message(data: dict[str, Any], model: str) -> CloudLlmResponse:
+    """A ``/v1/messages`` response body (or a batch result's ``message``)
+    → ``CloudLlmResponse``: text blocks joined, usage incl. cache tokens."""
     # ``content`` is a list of blocks: [{"type": "text", "text": "..."}]
     blocks = data.get("content") or []
     text_parts = [
@@ -306,33 +344,161 @@ async def call_anthropic_chat(
         for b in blocks
         if isinstance(b, dict) and b.get("type") == "text"
     ]
-    content = "".join(text_parts)
-    stop_reason = str(data.get("stop_reason") or "")
     usage = data.get("usage") or {}
-    prompt_tokens = int(usage.get("input_tokens") or 0)
-    completion_tokens = int(usage.get("output_tokens") or 0)
-    cache_write_tokens = int(usage.get("cache_creation_input_tokens") or 0)
-    cache_read_tokens = int(usage.get("cache_read_input_tokens") or 0)
-    _LOG.info(
-        "anthropic OK after %.1fs: model=%s prompt_tokens=%d "
-        "completion_tokens=%d stop_reason=%s content_chars=%d",
-        elapsed, data.get("model") or model, prompt_tokens,
-        completion_tokens, stop_reason, len(content),
-    )
-    if stop_reason == "max_tokens":
-        _LOG.warning(
-            "anthropic hit max_tokens (%d) on model=%s — response was "
-            "truncated; downstream parse will likely fail.",
-            max_tokens, data.get("model") or model,
-        )
     return CloudLlmResponse(
-        content=content,
+        content="".join(text_parts),
         model=str(data.get("model") or model),
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        cache_write_tokens=cache_write_tokens,
-        cache_read_tokens=cache_read_tokens,
+        prompt_tokens=int(usage.get("input_tokens") or 0),
+        completion_tokens=int(usage.get("output_tokens") or 0),
+        cache_write_tokens=int(usage.get("cache_creation_input_tokens") or 0),
+        cache_read_tokens=int(usage.get("cache_read_input_tokens") or 0),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Anthropic Message Batches — half the list price, results in minutes
+# to hours (at most 24 h). Used for non-urgent labelling jobs.
+# ─────────────────────────────────────────────────────────────────────
+
+
+_ANTHROPIC_BATCHES_URL = "https://api.anthropic.com/v1/messages/batches"
+# Seconds between status polls (ANTHROPIC_BATCH_POLL_SECONDS overrides).
+BATCH_POLL_SECONDS = 30.0
+# A batch that has not ended after this long is given up on (Anthropic
+# expires unfinished requests at 24 h; the margin covers the last poll).
+BATCH_MAX_WAIT_SECONDS = 25 * 3600.0
+_CUSTOM_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+def _anthropic_headers(api_key: str) -> dict[str, str]:
+    return {
+        "x-api-key": api_key,
+        "anthropic-version": _ANTHROPIC_API_VERSION,
+        "Content-Type": "application/json",
+    }
+
+
+async def _anthropic_batch_request(method: str, url: str, api_key: str, what: str, **kwargs: Any) -> httpx.Response:
+    if not api_key:
+        raise CloudLlmError("Anthropic API key is required.")
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT_SECONDS) as client:
+        try:
+            resp = await client.request(method, url, headers=_anthropic_headers(api_key), **kwargs)
+        except httpx.HTTPError as exc:
+            raise CloudLlmError(f"Anthropic batch {what} failed: {type(exc).__name__}.") from exc
+    if resp.status_code >= 400:
+        body = resp.text[:400]
+        _LOG.warning("anthropic batch %s returned HTTP %d: %s", what, resp.status_code, body[:200])
+        raise CloudLlmError(f"Anthropic batch {what} returned {resp.status_code}: {body}")
+    return resp
+
+
+async def create_anthropic_batch(*, api_key: str, requests: list[dict[str, Any]]) -> dict[str, Any]:
+    """Submit ``requests`` (``[{custom_id, params}]``, ``params`` = a
+    ``/v1/messages`` body — see ``anthropic_message_params``) as one Message
+    Batch. Returns the batch object (``id``, ``processing_status``,
+    ``request_counts``, …)."""
+    if not requests:
+        raise CloudLlmError("A message batch needs at least one request.")
+    ids = [str(r.get("custom_id") or "") for r in requests]
+    bad = [i for i in ids if not _CUSTOM_ID_RE.match(i)]
+    if bad or len(set(ids)) != len(ids):
+        raise CloudLlmError("Batch custom_ids must be unique and match [a-zA-Z0-9_-]{1,64}.")
+    resp = await _anthropic_batch_request("POST", _ANTHROPIC_BATCHES_URL, api_key, "create", json={"requests": requests})
+    data = resp.json()
+    _LOG.info("anthropic batch created: id=%s requests=%d", data.get("id"), len(requests))
+    return data
+
+
+async def get_anthropic_batch(*, api_key: str, batch_id: str) -> dict[str, Any]:
+    """The batch object: ``processing_status`` (in_progress / canceling /
+    ended), ``request_counts`` and, once ended, ``results_url``."""
+    resp = await _anthropic_batch_request("GET", f"{_ANTHROPIC_BATCHES_URL}/{batch_id}", api_key, "status")
+    return resp.json()
+
+
+async def cancel_anthropic_batch(*, api_key: str, batch_id: str) -> dict[str, Any]:
+    resp = await _anthropic_batch_request("POST", f"{_ANTHROPIC_BATCHES_URL}/{batch_id}/cancel", api_key, "cancel")
+    return resp.json()
+
+
+async def fetch_anthropic_batch_results(*, api_key: str, results_url: str) -> dict[str, dict[str, Any]]:
+    """Download an ended batch's results (JSONL, one line per request, in
+    any order) → ``{custom_id: result}`` where ``result`` is ``{"type":
+    "succeeded", "message": {...}}`` or errored / canceled / expired."""
+    if not results_url:
+        raise CloudLlmError("The batch has no results_url yet (has it ended?).")
+    resp = await _anthropic_batch_request("GET", results_url, api_key, "results")
+    out: dict[str, dict[str, Any]] = {}
+    for line in resp.text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict) and item.get("custom_id"):
+            out[str(item["custom_id"])] = item.get("result") if isinstance(item.get("result"), dict) else {}
+    return out
+
+
+def batch_result_error(result: dict[str, Any] | None) -> str:
+    """Why a batch request has no message ("" when it succeeded)."""
+    if not result:
+        return "missing from the batch results"
+    kind = str(result.get("type") or "")
+    if kind == "succeeded":
+        return ""
+    err = result.get("error") or {}
+    inner = err.get("error") if isinstance(err.get("error"), dict) else err
+    message = str((inner or {}).get("message") or "") if isinstance(inner, dict) else ""
+    return f"{kind}: {message}" if message else kind or "unknown result"
+
+
+async def wait_for_anthropic_batch(
+    *,
+    api_key: str,
+    batch_id: str,
+    on_status: Any = None,
+    poll_seconds: float | None = None,
+    max_wait_seconds: float | None = None,
+) -> dict[str, Any]:
+    """Poll until the batch has ended; ``on_status(batch)`` (async) after
+    each poll. Raises ``CloudLlmError`` when it hasn't ended within
+    ``max_wait_seconds`` (the batch is cancelled first, best-effort)."""
+    import asyncio
+    import os
+
+    if poll_seconds is None:
+        try:
+            poll_seconds = float(os.environ.get("ANTHROPIC_BATCH_POLL_SECONDS") or BATCH_POLL_SECONDS)
+        except ValueError:
+            poll_seconds = BATCH_POLL_SECONDS
+    limit = BATCH_MAX_WAIT_SECONDS if max_wait_seconds is None else max_wait_seconds
+    started = time.monotonic()
+    while True:
+        batch = await get_anthropic_batch(api_key=api_key, batch_id=batch_id)
+        if on_status is not None:
+            await on_status(batch)
+        if batch.get("processing_status") == "ended":
+            return batch
+        if time.monotonic() - started > limit:
+            try:
+                await cancel_anthropic_batch(api_key=api_key, batch_id=batch_id)
+            except CloudLlmError:
+                pass
+            raise CloudLlmError(f"Anthropic batch {batch_id} had not ended after {limit / 3600:.1f} h; cancelled it.")
+        try:
+            await asyncio.sleep(max(0.0, poll_seconds))
+        except asyncio.CancelledError:
+            # The Job was cancelled: stop the batch too, so unfinished
+            # requests aren't processed (and billed) for nothing.
+            try:
+                await cancel_anthropic_batch(api_key=api_key, batch_id=batch_id)
+            except Exception:  # noqa: BLE001 — best-effort
+                pass
+            raise
 
 
 # ─────────────────────────────────────────────────────────────────────

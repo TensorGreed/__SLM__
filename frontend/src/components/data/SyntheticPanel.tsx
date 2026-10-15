@@ -697,6 +697,11 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
      *  write. Runs as the `span_relabel` Job the bell tracks. */
     const [relabelStarting, setRelabelStarting] = useState(false);
     const relabelPin = provider === 'ollama' ? 'ollama' : provider === 'custom' ? null : `cloud:${provider}:${modelName}`;
+    // Anthropic Message Batches: half the list price, results in minutes
+    // to hours. Only an Anthropic pin can batch.
+    const [relabelBatch, setRelabelBatch] = useState(false);
+    const batchAvailable = provider === 'anthropic';
+    const useRelabelBatch = relabelBatch && batchAvailable;
     const handleWriteAnswerKey = async (target: 'answer_key' | 'training' | 'passages' | 'documents' | 'split' = 'answer_key') => {
         if (!relabelPin) {
             toast.info('Pick Ollama or a cloud provider — the answer key is written through a synth backend.', 5000);
@@ -710,7 +715,12 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 entity_types: parseEntityTypes(entityTypesInput),
                 ...(target !== 'answer_key' ? { target } : {}),
                 ...(target === 'training' && relabelSource.trim() ? { source: relabelSource.trim() } : {}),
+                ...(useRelabelBatch ? { use_batch: true } : {}),
             });
+            if (useRelabelBatch) {
+                toast.info(`Submitted as one Anthropic batch (half price) — results take minutes to hours; the bell shows "batch submitted · waiting" until they're in (job #${res.data?.id}).`, 6000);
+                return;
+            }
             toast.info(
                 target === 'documents'
                     ? `Labelling your documents whole with ${relabelPin} — multi-page, page lines included, longer than one model window (job #${res.data?.id}). They land in the review queue as "document_labels"; accept them there, then re-split (keep the test examples) and re-train.`
@@ -1232,6 +1242,21 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                 >
                                     {refineLoading ? 'Reading last evaluation…' : 'Refine weak types'}
                                 </button>
+                                <label
+                                    style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--font-size-sm)' }}
+                                    title={batchAvailable
+                                        ? "Send every labelling call of the job as one Anthropic Message Batch — half the list price; results arrive in minutes to hours. Requests that fail are redone directly."
+                                        : 'Batch mode needs an Anthropic model (it uses the Message Batches API).'}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={useRelabelBatch}
+                                        disabled={!batchAvailable}
+                                        onChange={(e) => setRelabelBatch(e.target.checked)}
+                                        data-testid="synthetic-relabel-batch"
+                                    />
+                                    Batch (half price, slower)
+                                </label>
                                 <button
                                     type="button"
                                     className="btn btn-secondary"

@@ -1293,6 +1293,19 @@ runs real CPU inference). ~4 min locally.
   predictions (`latest_span_run_predictions`) go to `review_override`; request
   `review_backend` / `review_experiment_id`; strip "Review disagreements with".
   Tests `tests/test_labelling_cost.py`.
+- **Batch relabels** (Anthropic Message Batches, half price): request `use_batch`
+  (400 `BATCH_NEEDS_ANTHROPIC` unless `cloud:anthropic:*`) sets
+  `CloudLlmBackend.use_batch`; `label_texts` (via `uses_message_batch`) sends every
+  call as ONE batch through `complete_batch` (`cloud_llm_service.create_anthropic_batch`
+  / `wait_for_anthropic_batch` (poll `ANTHROPIC_BATCH_POLL_SECONDS`, cancels the
+  batch on Job cancel) / `fetch_anthropic_batch_results`; params from
+  `anthropic_message_params`; a temperature-rejected batch is resubmitted once
+  without it); `label_texts_any` puts short texts + long-text pieces in the same
+  batch. Errored / expired requests go back through the sync path (unparseable
+  results split, as before). `batch_usage` → `usage_block` entry `"(batch)"` priced
+  `estimate_cost(batch=True)` (`llm_pricing.BATCH_DISCOUNT` 0.5); summary `batch` /
+  `via_batch` → bell "via batch". Checkbox "Batch (half price, slower)" in the
+  Synthetic span tools + StaleConventionsStrip. Tests `tests/test_relabel_batch.py`.
 - **Ollama context**: `synth_backends/ollama.context_window_for` sets
   `num_ctx` per request (prompt chars / 3 + max_tokens + 256, buckets
   4096 / 8192 / 16384 / 32768) — without it Ollama runs at its server

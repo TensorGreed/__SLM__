@@ -756,6 +756,29 @@ describe('SynthReviewQueue — groups labelled under older conventions', () => {
         }));
     });
 
+    it('batches an Anthropic relabel when the Batch box is ticked (disabled for a local labeller)', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 31, dataset_id: 1, total_rows: 2, total_pending: 0, total_accepted: 2,
+                groups: [], accepted_groups: [staleGroup], rejected_groups: [],
+                labeller_pins: ['cloud:anthropic:haiku', 'ollama'],
+            },
+        });
+        apiMock.post.mockResolvedValue({ data: { id: 193 } });
+        const user = userEvent.setup();
+        render(<SynthReviewQueue projectId={31} />);
+        const box = await screen.findByTestId('synth-review-queue-relabel-batch');
+        expect(box).toBeDisabled();
+        await user.selectOptions(screen.getByTestId('synth-review-queue-relabel-with'), 'cloud:anthropic:haiku');
+        expect(box).not.toBeDisabled();
+        await user.click(box);
+        await user.click(screen.getByTestId('synth-review-queue-relabel-passage_labels:doc=739'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/31/synthetic/relabel-answer-key', {
+            target: 'training', source: 'passage_labels:doc=739', backend: 'cloud:anthropic:haiku',
+            only_stale: true, only_affected: true, use_batch: true,
+        }));
+    });
+
     it('sends a review model for the tiered pass when one is picked', async () => {
         apiMock.get.mockResolvedValue({
             data: {

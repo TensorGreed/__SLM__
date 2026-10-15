@@ -158,9 +158,14 @@ function jobOutcomeSummary(job: Job): string | null {
         const agreement = r.agreement && typeof (r.agreement as { f1?: unknown }).f1 === 'number' ? (r.agreement as { f1: number }).f1 : null;
         const parts: string[] = [];
         const isTraining = r.split === 'synthetic';
+        const batch = r.batch as { fell_back?: number } | null | undefined;
+        const viaBatch = r.via_batch === true
+            ? `via batch (half price)${typeof batch?.fell_back === 'number' && batch.fell_back > 0 ? `, ${batch.fell_back} request${batch.fell_back === 1 ? '' : 's'} redone directly` : ''}`
+            : null;
         if (job.title?.includes('split relabelled') && rows !== null) {
             return `${String(r.split)} split relabelled in place: ${rows} rows`
-                + (agreement !== null ? ` · agreement with the old labels F1 ${agreement.toFixed(2)}` : '');
+                + (agreement !== null ? ` · agreement with the old labels F1 ${agreement.toFixed(2)}` : '')
+                + (viaBatch ? ` · ${viaBatch}` : '');
         }
         const isPassages = r.split === 'passages' || r.split === 'documents';
         if (rows !== null) {
@@ -184,6 +189,7 @@ function jobOutcomeSummary(job: Job): string | null {
             const k = r.tokens >= 1000 ? `${Math.round(r.tokens / 1000)}k` : String(r.tokens);
             parts.push(typeof r.cost_usd === 'number' ? `${k} tokens (~$${r.cost_usd.toFixed(2)} at list price)` : `${k} tokens`);
         }
+        if (viaBatch) parts.push(viaBatch);
         return parts.length ? parts.join(' · ') : null;
     }
     if (job.kind === 'seed_documents') {

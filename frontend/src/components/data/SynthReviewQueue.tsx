@@ -641,6 +641,11 @@ function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] 
     const [reviewPin, setReviewPin] = useState('');
     const pinFor = (group: ReviewQueueGroup) => withPin || group.conventions?.relabel_pin || null;
     const stale = groups.filter((g) => g.conventions?.is_stale);
+    // Anthropic Message Batches (half price, slower) — only for an
+    // Anthropic pin; other groups' relabels stay synchronous.
+    const [useBatch, setUseBatch] = useState(false);
+    const batchable = (pin: string | null) => Boolean(pin && pin.startsWith('cloud:anthropic:'));
+    const anyBatchable = stale.some((g) => batchable(pinFor(g)));
     // The user attests a group already follows the current conventions
     // (labelled under the current wording before versions were recorded).
     const markCurrent = async (group: ReviewQueueGroup) => {
@@ -671,10 +676,13 @@ function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] 
                 only_stale: true,
                 only_affected: true,
                 ...(reviewPin ? { review_backend: reviewPin } : {}),
+                ...(useBatch && batchable(pin) ? { use_batch: true } : {}),
             });
             setStarted((prev) => ({ ...prev, [group.synth_source]: res.data?.id }));
             toast.info(
-                `Relabelling ${group.synth_source} with ${pin} under the current conventions (job #${res.data?.id}). Re-split (keep the test examples) and retrain when it finishes.`,
+                `Relabelling ${group.synth_source} with ${pin} under the current conventions (job #${res.data?.id})`
+                + (useBatch && batchable(pin) ? ' as one Anthropic batch — half price, results in minutes to hours' : '')
+                + '. Re-split (keep the test examples) and retrain when it finishes.',
                 6000,
             );
         } catch (err) {
@@ -718,6 +726,21 @@ function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] 
                     </select>
                 </label>
             )}
+            <label
+                className="synth-review-queue__stale-with"
+                title={anyBatchable
+                    ? 'Send the relabel as one Anthropic Message Batch — half the list price; results arrive in minutes to hours. Only Anthropic-labelled groups batch.'
+                    : 'Batch mode needs an Anthropic model (cloud:anthropic:…).'}
+            >
+                <input
+                    type="checkbox"
+                    checked={useBatch && anyBatchable}
+                    disabled={!anyBatchable}
+                    onChange={(e) => setUseBatch(e.target.checked)}
+                    data-testid="synth-review-queue-relabel-batch"
+                />{' '}
+                Batch (half price, slower)
+            </label>
             <ul className="synth-review-queue__stale-list">
                 {stale.map((group) => {
                     const c = group.conventions!;
