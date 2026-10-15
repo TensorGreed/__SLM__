@@ -22,8 +22,10 @@ class PreviewRequest(BaseModel):
 
 class CreateRequest(PreviewRequest):
     name: str = Field(..., min_length=1, max_length=120)
-    # source label -> project label | "ignore" (many-to-one allowed)
-    mapping: dict[str, str]
+    # source label -> project label | [project labels] (a group) | "ignore".
+    # Many-to-one allowed; a project label belongs to at most one group.
+    # Q&A / summarization benchmarks have no labels: {} (or omitted).
+    mapping: dict[str, str | list[str]] = Field(default_factory=dict)
     local_only: bool = False
     licence: str | None = Field(None, max_length=200)
     join_adjacent: bool = False
@@ -62,6 +64,16 @@ async def create(project_id: int, req: CreateRequest, db: AsyncSession = Depends
 @router.get("")
 async def list_all(project_id: int, experiment_id: int | None = None, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     return {"benchmarks": await svc.benchmarks_for_run(db, project_id, experiment_id)}
+
+
+@router.get("/{benchmark_id}/history")
+async def history(project_id: int, benchmark_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Every score of the benchmark, oldest first (run id + name, date, score)."""
+    try:
+        ds = await svc.get_benchmark(db, project_id, benchmark_id)
+    except svc.BenchmarkError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return svc.benchmark_history(ds)
 
 
 @router.delete("/{benchmark_id}")

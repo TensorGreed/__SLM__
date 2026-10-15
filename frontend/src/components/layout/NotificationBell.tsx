@@ -14,6 +14,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { benchmarkHeadlineLabel } from '../../api/benchmarks';
 import { cancelJob, dismissJob, type Job } from '../../api/jobs';
 import { useJobsStore } from '../../stores/jobsStore';
 import { metricDisplayName, shortEvidenceText } from '../evaluation/liftEvidence';
@@ -147,7 +148,7 @@ function jobOutcomeSummary(job: Job): string | null {
     if (job.kind === 'benchmark_eval') {
         const score = typeof r.score === 'number' ? r.score : null;
         if (score === null) return null;
-        const metric = r.headline === 'f1' ? 'F1' : 'accuracy';
+        const metric = benchmarkHeadlineLabel(typeof r.headline === 'string' ? r.headline : null);
         const rows = typeof r.rows === 'number' ? ` on ${r.rows} rows` : '';
         return `${String(r.benchmark ?? 'benchmark')}: ${metric} ${score.toFixed(2)}${rows}`;
     }

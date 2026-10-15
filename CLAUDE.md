@@ -1469,8 +1469,8 @@ runs real CPU inference). ~4 min locally.
   `projects/<id>/imports/` — `check_locator` refuses other paths) →
   `load_source` (≤ 5000 rows; HF `ClassLabel` names via features; licence from
   the card) → `sample_rows` (spread, seeded) → `detect_shape` (classification
-  `text_label`; spans `char_spans` or `bio_tokens` → `bio_to_spans`; anything
-  else 400) → `convert_rows` → `apply_mapping` (source label → project label |
+  `text_label`; spans `char_spans` or `bio_tokens` → `bio_to_spans`; Q&A /
+  summarization since G-B2, below; anything else 400) → `convert_rows` → `apply_mapping` (source label → project label |
   `ignore`, many-to-one; `join_adjacent` for spans) → `leakage_filter`
   (data_health matcher vs prepared train+val) → locked BENCHMARK Dataset
   `benchmark:<slug>` + `benchmarks/<slug>/{rows.jsonl,manifest.json}`. Scoring
@@ -1504,6 +1504,38 @@ runs real CPU inference). ~4 min locally.
   `run_head_only_evaluation` (`kind="head_eval"`), summary
   `eval_summary_service.head_eval_summary` (card: "Accuracy x on the test
   examples", Re-evaluate, no seeds button).
+  **G-B2 — generative shapes, groups, history**: `detect_generative_shape`
+  (after the span checks, before classification) reads Q&A (`qa_pair` /
+  `qa_context`: question + answer [+ context]; SQuAD `answers` dicts via
+  `answer_text`) and summarization (`document_summary`) through
+  `task_shape_service.detect_task_shape` (explicit column names as fallback;
+  an "answer" column that looks like labels — few distinct one-word values —
+  is not generative). Rows → `{"question", "answer"[, "context"]}` (a
+  summary is the answer, the document the question); `fit_rows_to_project`
+  folds the context into the question unless the project is `rag_qa`
+  (manifest `context_folded`). No labels to map (preview `labels_to_map:
+  false`, mapping `{}`); `shapes_compatible` lets a generative benchmark run
+  on any generative project profile (`_generative_project_profile`: manifest
+  task_profile, else `project_data_task_profile`). Scoring = the project's
+  handler + token F1 / exact match where the handler has none + the answer
+  judge (`judge_benchmark_answers`: `should_judge`, `resolve_answer_judge`;
+  `ResolvedJudge.local` is False for cloud judges, and a `local_only`
+  benchmark skips one → `judge.skipped="local_only_cloud_judge"` + message).
+  Headline `judge_correct` when judged, else `f1`. **One-to-many mapping**: a
+  mapping value may be a list of project labels → the group `"a|b"`
+  (`mapping_target`, `GROUP_SEP`); `validate_mapping` refuses a project label
+  in two groups; rows carry the group; `collapse_predictions` maps a member
+  prediction to the group before the handler scores (classification: the
+  parsed label + a collapsed candidate set; spans: entity types in the
+  prediction JSON; original kept as `prediction_before_grouping`); manifest
+  `groups`. **History**: `GET /{bid}/history` → `benchmark_history` (every
+  `results.jsonl` row, oldest first: run id + name, date, headline, score).
+  UI: multi-select mapping per row (`mappingMembers`, `mappingGroupConflict`
+  disables create), "No labels to map" for Q&A / summarization,
+  `BenchmarkTrend` inline SVG sparkline per benchmark (joins only points of
+  the latest headline metric), `benchmarkHeadlineLabel` /
+  `benchmarkJudgeNote` in `api/benchmarks.ts`. Tests:
+  `tests/test_external_benchmarks.py`, `ExternalBenchmarksPanel.test.tsx`.
 - **Distillation (offline KD)** — `services/distillation/`: slice 1
   captures a teacher's top-k logprobs (`teacher_capture.py`, `POST
   .../distillation/capture` → bg task) to

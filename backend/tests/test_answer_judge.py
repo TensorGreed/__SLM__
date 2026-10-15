@@ -255,7 +255,16 @@ class ResolutionTests(unittest.TestCase):
                 mock.patch.dict(os.environ, {"EVAL_JUDGE_BACKEND": ""}):
             resolved = asyncio.run(judge_svc.resolve_answer_judge(_FakeDb(), 1, None))
         self.assertEqual(resolved.label, "fakeb:model-x")
+        self.assertTrue(resolved.local)
         self.assertEqual(asyncio.run(resolved.judge("q", LONG, "x")), (0.5, "partial", "half", 0))
+
+    def test_cloud_judge_is_marked_not_local(self):
+        cfg = {"provider": "anthropic", "model": "claude-x", "api_key": "k"}
+        with mock.patch.object(judge_svc, "_cloud_config", mock.AsyncMock(return_value=dict(cfg))), \
+                mock.patch.dict(os.environ, {"EVAL_JUDGE_BACKEND": "anthropic"}):
+            resolved = asyncio.run(judge_svc.resolve_answer_judge(_FakeDb(), 1, None))
+        self.assertEqual(resolved.label, "anthropic:claude-x")
+        self.assertFalse(resolved.local, "an external benchmark marked local-only must not reach it")
 
 
 class _FakeDb:

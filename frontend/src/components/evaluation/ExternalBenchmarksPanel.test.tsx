@@ -68,4 +68,77 @@ describe('ExternalBenchmarksPanel', () => {
             local_only: true, licence: 'other', join_adjacent: false,
         }));
     });
+
+    const spanPreview = {
+        source: { locator: 'file:/x/i2b2.jsonl', source_id: 'file', dataset_id: '/x/i2b2.jsonl', split: null, revision: null },
+        licence: 'DUA', task_profile: 'structured_extraction', format: 'char_spans', fields: {},
+        project: { task_profile: 'structured_extraction', labels: ['date_of_birth', 'person_name', 'visit_date'] }, shape_matches_project: true,
+        labels_to_map: true, source_labels: { DATE: 40, DOB: 5, NAME: 30 },
+        suggested_mapping: { DATE: 'ignore', DOB: 'ignore', NAME: 'ignore' }, sample: [], rows_scanned: 200,
+    };
+
+    it('maps one benchmark label onto a group of project labels and flags a label in two groups', async () => {
+        apiMock.get.mockResolvedValue({ data: { benchmarks: [] } });
+        apiMock.post.mockImplementation((url: string) => Promise.resolve({ data: url.endsWith('/preview') ? spanPreview : { ...yelp, result: null } }));
+        const user = userEvent.setup();
+        render(<ExternalBenchmarksPanel projectId={33} experimentId={null} />);
+        await user.click(await screen.findByTestId('ext-bench-add-toggle'));
+        await user.type(screen.getByTestId('ext-bench-locator'), 'file:/x/i2b2.jsonl');
+        await user.click(screen.getByTestId('ext-bench-preview'));
+        await screen.findByTestId('ext-bench-preview-result');
+        await user.selectOptions(screen.getByTestId('ext-bench-map-DATE'), ['visit_date', 'date_of_birth']);
+        expect(screen.getByTestId('ext-bench-map-result-DATE')).toHaveTextContent('→ group: date_of_birth + visit_date');
+        await user.selectOptions(screen.getByTestId('ext-bench-map-DOB'), ['date_of_birth']);
+        expect(screen.getByTestId('ext-bench-map-conflict')).toHaveTextContent('“date_of_birth” is in two groups');
+        expect(screen.getByTestId('ext-bench-create')).toBeDisabled();
+        await user.deselectOptions(screen.getByTestId('ext-bench-map-DOB'), ['date_of_birth']);
+        await user.selectOptions(screen.getByTestId('ext-bench-map-NAME'), ['person_name']);
+        expect(screen.queryByTestId('ext-bench-map-conflict')).toBeNull();
+        await user.click(screen.getByTestId('ext-bench-create'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/33/benchmarks', expect.objectContaining({
+            mapping: { DATE: ['date_of_birth', 'visit_date'], DOB: 'ignore', NAME: 'person_name' },
+        })));
+    });
+
+    it('says a Q&A benchmark has no labels to map and lets it be added', async () => {
+        apiMock.get.mockResolvedValue({ data: { benchmarks: [] } });
+        apiMock.post.mockImplementation((url: string) => Promise.resolve({ data: url.endsWith('/preview') ? {
+            ...spanPreview, task_profile: 'qa', format: 'qa_context', fields: { question: 'question', answer: 'answers', context: 'context' },
+            project: { task_profile: 'qa', labels: [] }, labels_to_map: false, source_labels: {}, suggested_mapping: {},
+            source: { ...spanPreview.source, dataset_id: 'rajpurkar/squad' },
+        } : { ...yelp, result: null } }));
+        const user = userEvent.setup();
+        render(<ExternalBenchmarksPanel projectId={33} experimentId={null} />);
+        await user.click(await screen.findByTestId('ext-bench-add-toggle'));
+        await user.type(screen.getByTestId('ext-bench-locator'), 'hf:rajpurkar/squad:validation');
+        await user.click(screen.getByTestId('ext-bench-preview'));
+        expect(await screen.findByTestId('ext-bench-preview-result')).toHaveTextContent('Detected Q&A');
+        expect(screen.getByTestId('ext-bench-no-labels')).toHaveTextContent('No labels to map');
+        expect(screen.queryByTestId('ext-bench-map-DATE')).toBeNull();
+        expect(screen.getByTestId('ext-bench-create')).toHaveTextContent('Add benchmark');
+        await user.click(screen.getByTestId('ext-bench-create'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/33/benchmarks', expect.objectContaining({ mapping: {}, name: 'squad' })));
+    });
+
+    it('shows each benchmark\'s score history as a trend and a judged Q&A score', async () => {
+        const qa = {
+            ...yelp, id: 7, name: 'SQuAD', slug: 'squad', task_profile: 'qa', scored_labels: [], mapping: {}, local_only: true, leakage: undefined,
+            result: { experiment_id: 82, evaluated_at: 'x', rows: 50, headline: 'f1', score: 0.48,
+                judge: { skipped: 'local_only_cloud_judge', judge: 'anthropic:claude-x' } },
+        };
+        apiMock.get.mockImplementation((url: string) => Promise.resolve({ data: url.endsWith('/history') ? { history: [
+            { experiment_id: 80, experiment_name: 'r80', evaluated_at: '2026-10-01T00:00:00', headline: 'f1', score: 0.31, rows: 50 },
+            { experiment_id: 81, experiment_name: 'r81', evaluated_at: '2026-10-05T00:00:00', headline: 'f1', score: 0.40, rows: 50 },
+            { experiment_id: 82, experiment_name: 'r82', evaluated_at: '2026-10-09T00:00:00', headline: 'f1', score: 0.48, rows: 50 },
+        ] } : { benchmarks: [qa] } }));
+        render(<ExternalBenchmarksPanel projectId={33} experimentId={82} />);
+        const trend = await screen.findByTestId('ext-bench-trend-squad');
+        expect(trend).toHaveTextContent('F1 0.31 (run #80) → 0.48 (run #82) · 3 runs');
+        expect(trend.querySelectorAll('circle')).toHaveLength(3);
+        expect(trend.querySelector('title')?.textContent).toBe('Run #80 (r80) · 2026-10-01 · F1 0.31');
+        expect(apiMock.get).toHaveBeenCalledWith('/projects/33/benchmarks/7/history');
+        expect(screen.getByTestId('ext-bench-squad')).toHaveTextContent('Q&A — scores the answers');
+        expect(screen.getByTestId('ext-bench-score-squad')).toHaveTextContent(
+            'Run #82: F1 0.48 on 50 rows · not judged: local-only benchmark, cloud judge (anthropic:claude-x)');
+    });
 });
