@@ -269,6 +269,9 @@ class ResolvedJudge:
     # The same model asked whether the retrieved passages held the answer
     # (None for judges built without one, e.g. tests' fakes).
     retrieval_judge: RetrievalJudgeFn | None = None
+    # False for a cloud model: rows sent to it leave this machine
+    # (a local-only external benchmark skips such a judge).
+    local: bool = True
 
 
 def _judge_from_synth_backend(backend: Any, label: str) -> JudgeFn:
@@ -390,6 +393,7 @@ async def resolve_answer_judge(db: Any, project_id: int, project: Any = None) ->
             label=f"{cloud['provider']}:{cloud['model']}",
             judge=_judge_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
             retrieval_judge=_retrieval_judge_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
+            local=False,
         )
     if requested:
         try:
@@ -398,7 +402,8 @@ async def resolve_answer_judge(db: Any, project_id: int, project: Any = None) ->
             _LOG.warning("eval judge %r unavailable: %s", requested, exc)
             return None
         return ResolvedJudge(label=await _backend_label(backend), judge=_judge_from_synth_backend(backend, requested),
-                             retrieval_judge=_retrieval_judge_from_synth_backend(backend))
+                             retrieval_judge=_retrieval_judge_from_synth_backend(backend),
+                             local=not isinstance(backend, CloudLlmBackend))
 
     # Nothing requested: a local model first, then a configured cloud judge.
     for cls in BACKEND_REGISTRY:
@@ -417,6 +422,7 @@ async def resolve_answer_judge(db: Any, project_id: int, project: Any = None) ->
             label=f"{cloud['provider']}:{cloud['model']}",
             judge=_judge_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
             retrieval_judge=_retrieval_judge_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
+            local=False,
         )
     return None
 

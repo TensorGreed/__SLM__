@@ -581,7 +581,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.tsx` — EvalPackScaffoldPanel — recipe-aware draft eval-pack with inline
 - `frontend/src/components/evaluation/EvalPanel.tsx` — Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
 - `frontend/src/components/evaluation/EvalSummaryCard.tsx` — EvalSummaryCard — the Eval tab's default view (Wave 3b).
-- `frontend/src/components/evaluation/ExternalBenchmarksPanel.tsx` — External benchmarks (Epic G-B1) — score the selected run on labelled sets
+- `frontend/src/components/evaluation/ExternalBenchmarksPanel.tsx` — External benchmarks (Epic G-B1/B2) — score the selected run on labelled
 - `frontend/src/components/evaluation/FailureClustersPanel.tsx` — Failure pattern grouper with cluster explanation and augmentation recommendations.
 - `frontend/src/components/evaluation/FrontierComparisonPanel.tsx` — FrontierComparisonPanel — Track 1, Epic D.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.

@@ -50,7 +50,7 @@ class PureTests(unittest.TestCase):
         cls = [{"text": f"review {i}", "label": i % 5} for i in range(20)]
         self.assertEqual(svc.detect_shape(cls)["task_profile"], "classification")
         with self.assertRaises(svc.BenchmarkError):
-            svc.detect_shape([{"question": "q?", "answer": "a long answer here"} for _ in range(5)])
+            svc.detect_shape([{"prompt": f"p{i}", "chosen": "a good reply", "rejected": "a bad reply"} for i in range(5)])
 
     def test_offsetless_entity_strings_are_located(self):
         rows = [{"text": "Mail jo@x.io or call 555-0101; jo@x.io again.",
@@ -231,6 +231,191 @@ class EvaluateJobTests(unittest.TestCase):
         job = client.get(f"/api/jobs/{job_id}").json()
         self.assertEqual((job["kind"], job["status"]), ("benchmark_eval", "succeeded"))
         self.assertEqual(job["result"]["score"], 0.75)
+
+
+class GenerativeShapeTests(unittest.TestCase):
+    """G-B2: Q&A and summarization benchmarks — no labels to map."""
+
+    def test_detects_and_converts_qa_squad_and_summarization(self):
+        qa = [{"question": f"What does clause {i} say?", "answer": f"Clause {i} says the tenant pays rent monthly"} for i in range(6)]
+        shape = svc.detect_shape(qa)
+        self.assertEqual((shape["task_profile"], shape["format"]), ("qa", "qa_pair"))
+        self.assertEqual(svc.convert_rows(qa[:1], shape, {}), [{"question": "What does clause 0 say?", "answer": "Clause 0 says the tenant pays rent monthly"}])
+
+        squad = [{"id": str(i), "title": "t", "context": f"The capital of land {i} is City{i}.", "question": f"Capital of land {i}?",
+                  "answers": {"text": [f"City{i}"], "answer_start": [24]}} for i in range(8)]
+        shape = svc.detect_shape(squad)
+        self.assertEqual((shape["task_profile"], shape["format"]), ("qa", "qa_context"))
+        self.assertEqual(svc.convert_rows(squad[:1], shape, {}),
+                         [{"question": "Capital of land 0?", "answer": "City0", "context": "The capital of land 0 is City0."}])
+        self.assertEqual(svc.source_label_counts(svc.convert_rows(squad, shape, {})), {}, "nothing to map")
+
+        news = [{"id": i, "article": f"Long article number {i} about the harbour. " * 10, "highlights": f"Harbour story {i} in short form"} for i in range(6)]
+        shape = svc.detect_shape(news)
+        self.assertEqual((shape["task_profile"], shape["fields"]), ("summarization", {"document": "article", "summary": "highlights"}))
+        self.assertEqual(svc.convert_rows(news[:1], shape, {})[0]["answer"], "Harbour story 0 in short form")
+
+    def test_label_like_answers_are_not_generative(self):
+        rows = [{"input": f"text {i}", "output": ["pos", "neg"][i % 2]} for i in range(20)]
+        self.assertIsNone(svc.detect_generative_shape(rows))
+
+    def test_context_is_folded_unless_the_project_answers_from_context(self):
+        rows = [{"question": "Who?", "answer": "Ada", "context": "Ada wrote it."}]
+        folded, did = svc.fit_rows_to_project(rows, "qa")
+        self.assertTrue(did)
+        self.assertEqual(folded, [{"question": "Context: Ada wrote it.\nQuestion: Who?", "answer": "Ada"}])
+        kept, did = svc.fit_rows_to_project(rows, "rag_qa")
+        self.assertFalse(did)
+        self.assertEqual(kept, rows)
+        self.assertTrue(svc.shapes_compatible("summarization", "instruction_sft"))
+        self.assertFalse(svc.shapes_compatible("qa", "classification"))
+
+
+class GroupMappingTests(unittest.TestCase):
+    """G-B2: one benchmark label → a group of project labels."""
+
+    def test_group_mapping_validation_and_rows(self):
+        labels = ["date_of_birth", "visit_date", "person_name"]
+        clean = svc.validate_mapping({"DATE": ["visit_date", "date_of_birth"], "PER": "person_name", "X": "ignore"}, ["DATE", "PER", "X"], labels)
+        self.assertEqual(clean["DATE"], ["date_of_birth", "visit_date"])
+        self.assertEqual(svc.validate_mapping({"DATE": ["visit_date"]}, ["DATE"], labels), {"DATE": "visit_date"})
+        with self.assertRaisesRegex(svc.BenchmarkError, "more than one group"):
+            svc.validate_mapping({"DATE": ["visit_date", "date_of_birth"], "DOB": "date_of_birth"}, ["DATE", "DOB"], labels)
+        with self.assertRaises(svc.BenchmarkError):
+            svc.validate_mapping({"DATE": ["visit_date", "nope"]}, ["DATE"], labels)
+        # Two benchmark labels onto the same group is fine.
+        svc.validate_mapping({"DATE": ["visit_date", "date_of_birth"], "TIME": ["date_of_birth", "visit_date"]}, ["DATE", "TIME"], labels)
+
+        rows = [{"text": "Seen 2024-01-02 by Ann", "entities": [{"type": "DATE", "start": 5, "end": 15}, {"type": "PER", "start": 19, "end": 22}]}]
+        out, _ = svc.apply_mapping(rows, clean)
+        self.assertEqual([e["type"] for e in out[0]["entities"]], ["date_of_birth|visit_date", "person_name"])
+        self.assertEqual(svc.group_members(clean), {"date_of_birth": "date_of_birth|visit_date", "visit_date": "date_of_birth|visit_date"})
+
+    def test_predictions_collapse_to_the_group(self):
+        from app.services.eval_task_handler_service import ClassificationHandler, StructuredExtractionHandler
+
+        members = {"positive": "positive|very_positive", "very_positive": "positive|very_positive"}
+        preds = [{"prediction": "very_positive", "reference": "positive|very_positive"},
+                 {"prediction": "negative.", "reference": "negative"}]
+        candidates = svc.collapse_predictions("classification", preds, members, ClassificationHandler(), ["negative", "positive", "very_positive"])
+        self.assertEqual(candidates, ["negative", "positive|very_positive"])
+        self.assertEqual([p["prediction"] for p in preds], ["positive|very_positive", "negative."])
+        self.assertEqual(preds[0]["prediction_before_grouping"], "very_positive")
+
+        span_members = {"visit_date": "date_of_birth|visit_date", "date_of_birth": "date_of_birth|visit_date"}
+        spans = [{"prediction": '```json\n{"entities": [{"type": "visit_date", "start": 5, "end": 15}, {"type": "person_name", "start": 19, "end": 22}]}\n```'}]
+        svc.collapse_predictions("structured_extraction", spans, span_members, StructuredExtractionHandler())
+        self.assertEqual([e["type"] for e in json.loads(spans[0]["prediction"])["entities"]], ["date_of_birth|visit_date", "person_name"])
+        block = svc.score_block("structured_extraction", {"per_class": {"date_of_birth|visit_date": {"tp": 3, "fp": 1, "fn": 0}}},
+                                ["date_of_birth|visit_date"])
+        self.assertEqual(block["per_type"][0]["type"], "date_of_birth|visit_date")
+
+
+def _exp(pid: int, name: str, task_type: str) -> int:
+    async def _go():
+        from app.models.experiment import Experiment, ExperimentStatus
+
+        async with async_session_factory() as db:
+            exp = Experiment(project_id=pid, name=name, status=ExperimentStatus.COMPLETED, base_model="x",
+                             config={"task_type": task_type}, output_dir=str(settings.DATA_DIR))
+            db.add(exp)
+            await db.commit()
+            return exp.id
+
+    return asyncio.run(_go())
+
+
+def _score(pid: int, bid: int, eid: int) -> dict:
+    async def _go():
+        async with async_session_factory() as db:
+            return await svc.evaluate_benchmark(db, pid, bid, eid)
+
+    return asyncio.run(_go())
+
+
+class GenerativeEndToEndTests(unittest.TestCase):
+    def test_qa_benchmark_scores_f1_judge_skip_for_local_only_and_history(self):
+        from app.services.answer_judge_service import ResolvedJudge
+
+        train = [{"question": f"How long is notice period {i}?", "answer": f"The notice period {i} lasts thirty days in writing"} for i in range(6)]
+        pid = _project("bench-qa", train, train[:2])
+        (settings.DATA_DIR / "projects" / str(pid) / "prepared" / "manifest.json").write_text(json.dumps({"task_profile": "qa"}))
+        bench = [{"context": f"Section {i}: a landlord must repair heating within {i + 2} days of notice.",
+                  "question": f"How fast must heating be repaired under section {i}?",
+                  "answer": f"Within {i + 2} days of the tenant giving notice to the landlord"} for i in range(6)]
+        locator = _upload(pid, "leases.jsonl", bench)
+        prev = client.post(f"/api/projects/{pid}/benchmarks/preview", json={"locator": locator}).json()
+        self.assertEqual((prev["task_profile"], prev["format"], prev["labels_to_map"]), ("qa", "qa_context", False))
+        self.assertEqual(prev["source_labels"], {})
+        self.assertTrue(prev["shape_matches_project"])
+        news = _upload(pid, "news.jsonl", [{"article": f"Long harbour article {i}. " * 12, "summary": f"Harbour piece {i} summarised in brief"} for i in range(5)])
+        self.assertEqual(client.post(f"/api/projects/{pid}/benchmarks/preview", json={"locator": news}).json()["task_profile"], "summarization")
+
+        created = client.post(f"/api/projects/{pid}/benchmarks", json={"locator": locator, "name": "Lease QA", "local_only": True}).json()
+        self.assertEqual((created["task_profile"], created["rows"], created["scored_labels"], created["context_folded"]), ("qa", 6, [], True))
+        rows_file = settings.DATA_DIR / "projects" / str(pid) / "benchmarks" / created["slug"] / "rows.jsonl"
+        first = json.loads(rows_file.read_text().splitlines()[0])
+        self.assertTrue(first["question"].startswith("Context: Section 0"))
+
+        async def fake_generate(db, *, pairs, **kw):
+            preds = [{"prompt": p["prompt"], "reference": p["reference"],
+                      "prediction": p["reference"] if i % 2 == 0 else "I am not sure about that at all"} for i, p in enumerate(pairs)]
+            return preds, {}, {}, {}
+
+        async def fake_judge(question, reference, prediction):
+            return (1.0, "correct", "same", 3) if prediction == reference else (0.0, "wrong", "differs", 3)
+
+        cloud = ResolvedJudge(label=f"anthropic:judge-{pid}", judge=fake_judge, local=False)
+        local = ResolvedJudge(label=f"ollama:judge-{pid}", judge=fake_judge)
+        e1, e2 = _exp(pid, "qa-run-1", "causal_lm"), _exp(pid, "qa-run-2", "causal_lm")
+        with mock.patch("app.services.evaluation_service._generate_heldout_predictions", fake_generate), \
+                mock.patch("app.services.answer_judge_service.resolve_answer_judge", mock.AsyncMock(return_value=cloud)):
+            r1 = _score(pid, created["id"], e1)
+        self.assertEqual(r1["judge"]["skipped"], "local_only_cloud_judge")
+        self.assertIn("local-only", r1["judge"]["message"])
+        self.assertEqual(r1["headline"], "f1")
+        self.assertAlmostEqual(r1["exact_match"], 0.5)
+        with mock.patch("app.services.evaluation_service._generate_heldout_predictions", fake_generate), \
+                mock.patch("app.services.answer_judge_service.resolve_answer_judge", mock.AsyncMock(return_value=local)):
+            r2 = _score(pid, created["id"], e2)
+        self.assertEqual((r2["headline"], r2["score"]), ("judge_correct", 0.5))
+        self.assertEqual(r2["judge"]["judge"], f"ollama:judge-{pid}")
+        self.assertEqual(r2["failures"][0]["judge_verdict"], "wrong")
+
+        hist = client.get(f"/api/projects/{pid}/benchmarks/{created['id']}/history").json()
+        self.assertEqual([(h["experiment_id"], h["experiment_name"], h["headline"]) for h in hist["history"]],
+                         [(e1, "qa-run-1", "f1"), (e2, "qa-run-2", "judge_correct")])
+        self.assertAlmostEqual(hist["history"][1]["score"], 0.5)
+        self.assertEqual(client.get(f"/api/projects/{pid}/benchmarks/999999/history").status_code, 404)
+
+    def test_group_mapping_classification_scoring(self):
+        train = [{"text": f"fine item {i}", "label": "positive"} for i in range(4)] + \
+                [{"text": f"superb item {i}", "label": "very_positive"} for i in range(4)] + \
+                [{"text": f"broken item {i}", "label": "negative"} for i in range(4)]
+        pid = _project("bench-group", train, train[:3])
+        locator = _upload(pid, "g.jsonl", [{"text": f"lovely gadget {i}", "label": "good"} for i in range(4)] +
+                          [{"text": f"dreadful gadget {i}", "label": "bad"} for i in range(4)])
+        bad = client.post(f"/api/projects/{pid}/benchmarks", json={"locator": locator, "name": "G", "mapping": {
+            "good": ["positive", "very_positive"], "bad": ["negative", "positive"]}})
+        self.assertEqual(bad.status_code, 400)
+        created = client.post(f"/api/projects/{pid}/benchmarks", json={"locator": locator, "name": "G", "mapping": {
+            "good": ["very_positive", "positive"], "bad": "negative"}}).json()
+        self.assertEqual(created["scored_labels"], ["negative", "positive|very_positive"])
+        self.assertEqual(created["groups"], {"positive|very_positive": ["positive", "very_positive"]})
+        self.assertEqual(created["mapping"]["good"], ["positive", "very_positive"])
+        eid = _exp(pid, "clf", "classification")
+
+        async def fake_generate(db, *, pairs, **kw):
+            self.assertIn("negative, positive, very_positive", pairs[0]["prompt"], "the prompt lists project labels, not groups")
+            preds = [{"prompt": p["prompt"], "reference": p["reference"],
+                      "prediction": ["very_positive", "positive"][i % 2] if "lovely" in p["prompt"] else "negative"}
+                     for i, p in enumerate(pairs)]
+            return preds, {}, {}, {}
+
+        with mock.patch("app.services.evaluation_service._generate_heldout_predictions", fake_generate):
+            result = _score(pid, created["id"], eid)
+        self.assertAlmostEqual(result["accuracy"], 1.0, msg="either member counts as the group")
+        self.assertIn("positive|very_positive", result["per_class"])
 
 
 class HeadEvalSummaryTests(unittest.TestCase):

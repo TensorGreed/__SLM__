@@ -11,10 +11,27 @@ project's own row format:
   or a low-cardinality column) → ``{"text", "label"}``;
 - ``structured_extraction`` (spans) — either a text column + a list of
   ``{start, end, label|type|entity…}`` dicts, or ``tokens`` + BIO ``tags``
-  (joined with spaces, char offsets computed) → ``{"text", "entities"}``.
+  (joined with spaces, char offsets computed) → ``{"text", "entities"}``;
+- ``qa`` — a question column + an answer column (+ an optional context
+  column; SQuAD-style ``answers`` dicts read their first text) →
+  ``{"question", "answer"[, "context"]}``. For a project that does not
+  answer from a context (anything but ``rag_qa``) the context is folded
+  into the question, so the question stays answerable;
+- ``summarization`` — a document column + a summary column →
+  ``{"question": document, "answer": summary}`` (the qa-pair row format
+  summarization projects train on).
+
+Generative shapes are found by ``task_shape_service.detect_task_shape`` (the
+one detector; explicit column names as the fallback) and have no labels to
+map.
 
 The user maps every source label onto one of the project's labels or
-``ignore`` (many-to-one allowed: ``1 star`` and ``2 star`` → ``negative``).
+``ignore`` (many-to-one allowed: ``1 star`` and ``2 star`` → ``negative``),
+or onto a GROUP of project labels (one-to-many: ``DATE`` →
+``[visit_date, date_of_birth]``). A group is scored as one label named
+``"date_of_birth|visit_date"``: the benchmark rows carry the group, and a
+prediction of any member is collapsed to the group before scoring. A project
+label belongs to at most one group.
 Classification rows whose label is ignored are dropped; ignored entity
 types are removed, and span scoring then counts ONLY the mapped types —
 the model is not penalised for types the benchmark never labels.
@@ -31,9 +48,14 @@ task handler, IN MEMORY — benchmark scores are NOT EvalResult rows (the
 project's "latest eval" readers must keep reading its own answer key).
 Each score is appended to ``benchmarks/<slug>/results.jsonl``.
 
+Generative benchmarks are scored like the project's own held-out eval: the
+handler's exact match / F1, and the LLM answer judge (``answer_judge_service``)
+when the task is long-answer and the project's judge resolution finds one.
+
 ``local_only``: the benchmark's rows may only be read by models running on
 this machine — evaluating a run whose model is not a local checkpoint is
-refused. Import and scoring never send rows anywhere else.
+refused, and a cloud answer judge is skipped (the result says so). Import and
+scoring never send rows anywhere else.
 """
 
 from __future__ import annotations
@@ -62,6 +84,21 @@ FAILURES_PREVIEW = 5
 
 SHAPE_CLASSIFICATION = "classification"
 SHAPE_SPANS = "structured_extraction"
+SHAPE_QA = "qa"
+SHAPE_SUMMARIZATION = "summarization"
+GENERATIVE_SHAPES = frozenset({SHAPE_QA, SHAPE_SUMMARIZATION})
+# Project task profiles a generative benchmark can be scored on.
+GENERATIVE_PROJECT_PROFILES = frozenset({
+    "qa", "rag_qa", "instruction_sft", "chat_sft", "summarization", "seq2seq", "language_modeling",
+})
+GROUP_SEP = "|"
+
+# Generative columns (fallback when the shape detector names none).
+_QUESTION_KEYS = ("question", "query", "instruction", "prompt")
+_ANSWER_KEYS = ("answer", "answers", "response", "output", "reference", "completion", "target_text")
+_CONTEXT_KEYS = ("context", "passage", "evidence", "retrieved_context")
+_DOCUMENT_KEYS = ("document", "article", "text", "dialogue", "content", "body", "transcript", "source")
+_SUMMARY_KEYS = ("summary", "highlights", "abstract", "tldr", "tl_dr", "synopsis")
 
 _TEXT_KEYS = ("text", "sentence", "review", "content", "document", "body", "input", "utterance", "source_text", "question")
 _LABEL_KEYS = ("label", "labels", "sentiment", "category", "class", "target", "stars", "rating", "intent", "topic")
@@ -319,9 +356,110 @@ def _span_list_key(rows: list[dict[str, Any]], text_key: str) -> tuple[str, str]
     return None
 
 
+def answer_text(value: Any) -> str | None:
+    """A text out of an answer cell: a string, the first text of a
+    SQuAD-style ``{"text": [...], "answer_start": [...]}`` dict, or the
+    first string of a list."""
+    if isinstance(value, str):
+        return value if value.strip() else None
+    if isinstance(value, dict):
+        for key in ("text", "answer", "value", "summary"):
+            found = answer_text(value.get(key))
+            if found:
+                return found
+        return None
+    items = _as_list(value)
+    if items is not None:
+        for item in items:
+            found = answer_text(item)
+            if found:
+                return found
+    return None
+
+
+def _flatten_cells(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rows with list / dict cells read as their first text — what the
+    column detector understands."""
+    out = []
+    for r in rows:
+        out.append({k: (answer_text(v) if isinstance(v, (dict, list, tuple)) else v) for k, v in r.items()})
+    return out
+
+
+def _free_text_column(rows: list[dict[str, Any]], key: str) -> bool:
+    """An answer / summary column, not a label: many distinct values, or
+    values of several words."""
+    values = [answer_text(r.get(key)) for r in rows]
+    values = [v for v in values if v]
+    if len(values) < max(1, len(rows) // 2):
+        return False
+    words = sorted(len(v.split()) for v in values)
+    distinct = len({v.strip().lower() for v in values})
+    return words[len(words) // 2] >= 4 or distinct > min(50, len(values) // 2)
+
+
+def _first_key(keys: list[str], candidates: tuple[str, ...], rows: list[dict[str, Any]], exclude: set[str]) -> str | None:
+    for key in candidates:
+        if key in keys and key not in exclude and any(answer_text(r.get(key)) for r in rows[:50]):
+            return key
+    return None
+
+
+def _generative_shape(fields: dict[str, str]) -> dict[str, Any]:
+    if "document" in fields:
+        return {"task_profile": SHAPE_SUMMARIZATION, "format": "document_summary", "fields": fields}
+    return {"task_profile": SHAPE_QA, "format": "qa_context" if fields.get("context") else "qa_pair", "fields": fields}
+
+
+def detect_generative_shape(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Q&A (question + answer [+ context]) or summarization (document +
+    summary) — via the one task-shape detector, with explicit column names
+    as the fallback. None when neither fits (or the "answer" is a label)."""
+    sample = rows[:200]
+    flat = _flatten_cells(sample)
+    keys = list(rows[0])
+    try:
+        from app.services.task_shape_service import detect_task_shape
+
+        detection = detect_task_shape(flat)
+        candidates = detection.get("candidates") or []
+    except Exception:  # noqa: BLE001 — the fallback below still runs
+        candidates = []
+    for cand in candidates:
+        profile = cand.get("task_profile")
+        fm = cand.get("field_map") or {}
+        q, a = fm.get("question_field"), fm.get("answer_field")
+        if cand.get("source") != "columns" or profile not in ("qa", "rag_qa", "summarization") or not (q and a):
+            continue
+        if q not in keys or a not in keys or q == a or not _free_text_column(sample, a):
+            continue
+        if profile == "summarization":
+            return _generative_shape({"document": q, "summary": a})
+        fields = {"question": q, "answer": a}
+        ctx = fm.get("context_field")
+        if profile == "rag_qa" and ctx in keys and ctx not in (q, a):
+            fields["context"] = ctx
+        return _generative_shape(fields)
+    # Fallback: conventional column names.
+    q = _first_key(keys, _QUESTION_KEYS, sample, set())
+    a = _first_key(keys, _ANSWER_KEYS, sample, {q} if q else set())
+    if q and a and _free_text_column(sample, a):
+        fields = {"question": q, "answer": a}
+        ctx = _first_key(keys, _CONTEXT_KEYS + ("document",), sample, {q, a})
+        if ctx:
+            fields["context"] = ctx
+        return _generative_shape(fields)
+    s = _first_key(keys, _SUMMARY_KEYS, sample, set())
+    d = _first_key(keys, _DOCUMENT_KEYS, sample, {s} if s else set())
+    if s and d and _free_text_column(sample, s):
+        return _generative_shape({"document": d, "summary": s})
+    return None
+
+
 def detect_shape(rows: list[dict[str, Any]], label_names: dict[str, list[str]] | None = None) -> dict[str, Any]:
     """The benchmark's shape + the fields it reads. Raises BenchmarkError for
-    shapes not supported yet (anything but classification and spans)."""
+    shapes not supported yet (anything but classification, spans, Q&A and
+    summarization)."""
     label_names = label_names or {}
     if not rows:
         raise BenchmarkError("No rows to inspect.")
@@ -347,6 +485,10 @@ def detect_shape(rows: list[dict[str, Any]], label_names: dict[str, list[str]] |
         if strings:
             return {"task_profile": SHAPE_SPANS, "format": "entity_strings",
                     "fields": {"text": text_key, "entities": strings[0], "entity_text": strings[1], "entity_type": strings[2]}}
+    generative = detect_generative_shape(rows)
+    if generative:
+        return generative
+    if text_key:
         for key in [k for k in rows[0] if k in label_names] + [k for k in _LABEL_KEYS if k in keys]:
             if key == text_key:
                 continue
@@ -359,7 +501,7 @@ def detect_shape(rows: list[dict[str, Any]], label_names: dict[str, list[str]] |
     guess = detect_task_shape(rows[:200])
     top = (guess.get("candidates") or [{}])[0] if isinstance(guess, dict) else {}
     raise BenchmarkError(
-        "Only classification and span benchmarks can be imported so far"
+        "Only classification, span, Q&A and summarization benchmarks can be imported so far"
         + (f" (this looks like {top.get('task_profile') or top.get('profile')})." if top else ".")
     )
 
@@ -410,7 +552,20 @@ def convert_rows(rows: list[dict[str, Any]], shape: dict[str, Any], label_names:
     fields = shape["fields"]
     out: list[dict[str, Any]] = []
     for r in rows:
-        if shape["format"] == "text_label":
+        if shape["format"] in ("qa_pair", "qa_context"):
+            question, answer = answer_text(r.get(fields["question"])), answer_text(r.get(fields["answer"]))
+            if not question or not answer:
+                continue
+            row = {"question": question.strip(), "answer": answer.strip()}
+            context = answer_text(r.get(fields["context"])) if fields.get("context") else None
+            if context:
+                row["context"] = context.strip()
+            out.append(row)
+        elif shape["format"] == "document_summary":
+            document, summary = answer_text(r.get(fields["document"])), answer_text(r.get(fields["summary"]))
+            if document and summary:
+                out.append({"question": document.strip(), "answer": summary.strip()})
+        elif shape["format"] == "text_label":
             text = r.get(fields["text"])
             label = r.get(fields["label"])
             if not isinstance(text, str) or not text.strip() or label is None:
@@ -476,16 +631,59 @@ def suggest_mapping(source_labels: list[str], project_labels: list[str]) -> dict
     return {s: by_norm.get(_norm(s), IGNORE) for s in source_labels}
 
 
+def fit_rows_to_project(rows: list[dict[str, Any]], project_profile: str | None) -> tuple[list[dict[str, Any]], bool]:
+    """Generative rows → the project's row format. A Q&A context is kept
+    for a project that answers from one (``rag_qa`` — its eval handler puts
+    it in the prompt) and folded into the question otherwise. Returns
+    (rows, folded)."""
+    if project_profile == "rag_qa" or not any(r.get("context") for r in rows):
+        return rows, False
+    out = []
+    for r in rows:
+        r = dict(r)
+        context = r.pop("context", None)
+        if context:
+            r["question"] = f"Context: {context}\nQuestion: {r['question']}"
+        out.append(r)
+    return out, True
+
+
+def mapping_target(value: Any) -> str:
+    """One mapping value → the label the benchmark rows carry: a project
+    label, ``ignore``, or a group name (``"a|b"``, members sorted)."""
+    if isinstance(value, (list, tuple)):
+        members = sorted({str(v).strip() for v in value if str(v or "").strip() and str(v).strip() != IGNORE})
+        if not members:
+            return IGNORE
+        return members[0] if len(members) == 1 else GROUP_SEP.join(members)
+    return str(value or IGNORE).strip() or IGNORE
+
+
+def group_members(mapping: dict[str, Any]) -> dict[str, str]:
+    """Project label → its group's name, for every label in a group of two
+    or more (a prediction of any member counts as the group)."""
+    out: dict[str, str] = {}
+    for value in (mapping or {}).values():
+        target = mapping_target(value)
+        if GROUP_SEP in target:
+            for member in target.split(GROUP_SEP):
+                out[member] = target
+    return out
+
+
 def apply_mapping(
     rows: list[dict[str, Any]],
-    mapping: dict[str, str],
+    mapping: dict[str, Any],
     *,
     join_adjacent: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Canonical source-label rows → project-label rows. Unmapped labels are
     ignored. Classification: rows with an ignored label are dropped. Spans:
     ignored entities removed; ``join_adjacent`` joins same-target spans
-    separated only by whitespace (e.g. FIRSTNAME + LASTNAME → one name)."""
+    separated only by whitespace (e.g. FIRSTNAME + LASTNAME → one name).
+    A value that is a list of project labels maps to their group
+    (``mapping_target``)."""
+    mapping = {k: mapping_target(v) for k, v in (mapping or {}).items()}
     out: list[dict[str, Any]] = []
     dropped = Counter()
     ignored_entities = Counter()
@@ -533,17 +731,31 @@ def apply_mapping(
     return out, summary
 
 
-def validate_mapping(mapping: Any, source_labels: list[str], project_labels: list[str]) -> dict[str, str]:
+def validate_mapping(mapping: Any, source_labels: list[str], project_labels: list[str]) -> dict[str, Any]:
+    """``{source: project label | [project labels] | 'ignore'}`` → the clean
+    mapping (a one-label list becomes the label; a group a sorted list).
+    A project label may belong to at most one group."""
     if not isinstance(mapping, dict):
-        raise BenchmarkError("mapping must be an object {source_label: project_label | 'ignore'}")
+        raise BenchmarkError("mapping must be an object {source_label: project_label | [project_labels] | 'ignore'}")
     allowed = set(project_labels)
-    clean: dict[str, str] = {}
+    clean: dict[str, Any] = {}
     for src, target in mapping.items():
-        target = str(target or IGNORE).strip()
-        if target != IGNORE and target not in allowed:
-            raise BenchmarkError(f"'{target}' (for '{src}') is not one of this project's labels: {', '.join(sorted(allowed)) or 'none'}.")
-        clean[str(src)] = target
-    if not any(t != IGNORE for t in clean.values()):
+        members = target if isinstance(target, (list, tuple)) else [target]
+        members = [str(m or IGNORE).strip() or IGNORE for m in members]
+        for m in members:
+            if m != IGNORE and m not in allowed:
+                raise BenchmarkError(f"'{m}' (for '{src}') is not one of this project's labels: {', '.join(sorted(allowed)) or 'none'}.")
+        name = mapping_target(members)
+        clean[str(src)] = name.split(GROUP_SEP) if GROUP_SEP in name else name
+    groups = {frozenset(mapping_target(v).split(GROUP_SEP)) for v in clean.values() if mapping_target(v) != IGNORE}
+    for label in sorted(allowed):
+        owners = sorted(GROUP_SEP.join(sorted(g)) for g in groups if label in g)
+        if len(owners) > 1:
+            raise BenchmarkError(
+                f"'{label}' is in more than one group ({'; '.join(o.replace(GROUP_SEP, ' + ') for o in owners)}) — "
+                "a project label can belong to one group only."
+            )
+    if not any(mapping_target(t) != IGNORE for t in clean.values()):
         raise BenchmarkError("Map at least one benchmark label onto a project label — everything is ignored.")
     unknown = sorted(set(clean) - set(source_labels))
     if unknown and len(unknown) == len(clean):
@@ -610,7 +822,44 @@ async def project_label_space(db: AsyncSession, project_id: int) -> dict[str, An
         pass
     if class_labels:
         return {"task_profile": SHAPE_CLASSIFICATION, "labels": sorted(class_labels)}
-    return {"task_profile": None, "labels": []}
+    return {"task_profile": await _generative_project_profile(db, project_id), "labels": []}
+
+
+async def _generative_project_profile(db: AsyncSession, project_id: int) -> str | None:
+    """A project with neither class labels nor entities: its task profile
+    when it is a generative one (the prepared manifest's, else what the
+    task-shape service says its data is)."""
+    from app.services.task_shape_service import canonical_task_profile, project_data_task_profile
+
+    profile = None
+    try:
+        manifest = json.loads((_project_dir(project_id) / "prepared" / "manifest.json").read_text(encoding="utf-8"))
+        raw = str(manifest.get("task_profile") or "").strip().lower()
+        profile = raw if raw in GENERATIVE_PROJECT_PROFILES else canonical_task_profile(raw)
+    except (OSError, json.JSONDecodeError, AttributeError):
+        profile = None
+    if not profile:
+        try:
+            profile, _source = await project_data_task_profile(db, project_id)
+        except Exception:  # noqa: BLE001
+            profile = None
+    return profile if profile in GENERATIVE_PROJECT_PROFILES else None
+
+
+def shapes_compatible(benchmark_profile: str | None, project_profile: str | None) -> bool:
+    """Can a benchmark of this shape be scored on this project? Unknown
+    project shape → yes; generative benchmarks fit any generative project."""
+    if project_profile in (None, benchmark_profile):
+        return True
+    return benchmark_profile in GENERATIVE_SHAPES and project_profile in GENERATIVE_PROJECT_PROFILES
+
+
+def _row_text(row: dict[str, Any]) -> str:
+    if "text" in row:
+        return str(row.get("text") or "")
+    from app.services.trainability_forecast_service import _row_to_text
+
+    return _row_to_text(row)
 
 
 def leakage_filter(benchmark_rows: list[dict[str, Any]], training_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -624,11 +873,12 @@ def leakage_filter(benchmark_rows: list[dict[str, Any]], training_rows: list[dic
     counts = Counter()
     examples: list[dict[str, Any]] = []
     for row in benchmark_rows:
-        kind, jaccard, _ = _match_row_against_index(str(row.get("text") or ""), index)
+        text = _row_text(row)
+        kind, jaccard, _ = _match_row_against_index(text, index)
         if kind:
             counts[kind] += 1
             if len(examples) < 5:
-                examples.append({"match": kind, "jaccard": round(jaccard, 3), "text": str(row.get("text"))[:160]})
+                examples.append({"match": kind, "jaccard": round(jaccard, 3), "text": text[:160]})
             continue
         kept.append(row)
     return kept, {"checked_against": len(training_rows), "exact": counts.get("exact", 0),
@@ -689,11 +939,33 @@ def serialize_benchmark(ds: Dataset, *, experiment_id: int | None = None) -> dic
         "mapping": m.get("mapping"),
         "scored_labels": m.get("scored_labels"),
         "mapping_summary": m.get("mapping_summary"),
+        "groups": m.get("groups") or {},
+        "context_folded": bool(m.get("context_folded")),
         "leakage": m.get("leakage"),
         "created_at": m.get("created_at"),
         "result": for_run[-1] if for_run else None,
         "latest_result": results[-1] if results else None,
     }
+
+
+def benchmark_history(ds: Dataset) -> dict[str, Any]:
+    """Every score of the benchmark, oldest first: run id + name, date,
+    headline score."""
+    m = manifest_of(ds)
+    results = read_results(ds.project_id, m.get("slug") or "")
+    points = [
+        {
+            "experiment_id": r.get("experiment_id"),
+            "experiment_name": r.get("experiment_name"),
+            "evaluated_at": r.get("evaluated_at"),
+            "headline": r.get("headline"),
+            "score": r.get("score"),
+            "rows": r.get("rows"),
+        }
+        for r in results
+    ]
+    points.sort(key=lambda p: str(p.get("evaluated_at") or ""))
+    return {"benchmark_id": ds.id, "name": m.get("name") or ds.name, "slug": m.get("slug"), "history": points}
 
 
 async def preview_benchmark(db: AsyncSession, project_id: int, locator: str, *, limit: int = DEFAULT_ROWS) -> dict[str, Any]:
@@ -710,7 +982,9 @@ async def preview_benchmark(db: AsyncSession, project_id: int, locator: str, *, 
         "format": shape["format"],
         "fields": shape["fields"],
         "project": project,
-        "shape_matches_project": project["task_profile"] in (None, shape["task_profile"]),
+        "shape_matches_project": shapes_compatible(shape["task_profile"], project["task_profile"]),
+        # Generative shapes (Q&A, summarization) have no labels to map.
+        "labels_to_map": shape["task_profile"] not in GENERATIVE_SHAPES,
         "source_labels": counts,
         "suggested_mapping": suggest_mapping(list(counts), project["labels"]),
         "sample": rows[:5],
@@ -724,7 +998,7 @@ async def create_benchmark(
     *,
     locator: str,
     name: str,
-    mapping: dict[str, str],
+    mapping: dict[str, Any] | None = None,
     limit: int = DEFAULT_ROWS,
     local_only: bool = False,
     licence: str | None = None,
@@ -735,13 +1009,21 @@ async def create_benchmark(
     raw, info = load_source(locator, scan_cap=SCAN_CAP)
     shape = detect_shape(raw, info["label_names"])
     project = await project_label_space(db, project_id)
-    if project["task_profile"] and project["task_profile"] != shape["task_profile"]:
+    if not shapes_compatible(shape["task_profile"], project["task_profile"]):
         raise BenchmarkError(
             f"This benchmark is {shape['task_profile']} but the project's data is {project['task_profile']}."
         )
     rows = convert_rows(sample_rows(raw, limit), shape, info["label_names"])
-    clean_mapping = validate_mapping(mapping, list(source_label_counts(rows)), project["labels"])
-    mapped, mapping_summary = apply_mapping(rows, clean_mapping, join_adjacent=join_adjacent)
+    context_folded = False
+    if shape["task_profile"] in GENERATIVE_SHAPES:
+        # No labels to map: the rows are scored on their answers.
+        clean_mapping: dict[str, Any] = {}
+        mapped, context_folded = fit_rows_to_project(rows, project["task_profile"])
+        mapping_summary = {"rows_in": len(rows), "rows_kept": len(mapped), "rows_dropped_by_label": {},
+                           "entities_kept": {}, "entities_ignored": {}, "unmapped_labels": []}
+    else:
+        clean_mapping = validate_mapping(mapping or {}, list(source_label_counts(rows)), project["labels"])
+        mapped, mapping_summary = apply_mapping(rows, clean_mapping, join_adjacent=join_adjacent)
     kept, leakage = leakage_filter(mapped, await project_training_rows(db, project_id))
     if not kept:
         raise BenchmarkError("No benchmark rows left after mapping and the leakage check.")
@@ -765,7 +1047,10 @@ async def create_benchmark(
         "local_only": bool(local_only),
         "mapping": clean_mapping,
         "join_adjacent": bool(join_adjacent),
-        "scored_labels": sorted({t for t in clean_mapping.values() if t != IGNORE}),
+        "scored_labels": sorted({mapping_target(t) for t in clean_mapping.values() if mapping_target(t) != IGNORE}),
+        "groups": {name: name.split(GROUP_SEP) for name in sorted(set(group_members(clean_mapping).values()))},
+        "context_folded": context_folded,
+        "project_task_profile": project["task_profile"],
         "mapping_summary": mapping_summary,
         "leakage": leakage,
         "rows_scanned": len(raw),
@@ -828,6 +1113,25 @@ def score_block(task_profile: str, metrics: dict[str, Any], scored_labels: list[
     if task_profile == SHAPE_SPANS:
         block = _micro(metrics.get("per_class") or {}, scored_labels)
         return {"headline": "f1", "score": block["f1"], **block}
+    if task_profile in GENERATIVE_SHAPES:
+        judge = metrics.get("judge") if isinstance(metrics.get("judge"), dict) else None
+        judged = judge.get("score") if judge else None
+        if judged is not None:
+            headline = "judge_correct"
+        elif metrics.get("f1") is not None:
+            headline = "f1"
+        else:
+            headline = "exact_match"
+        score = judged if headline == "judge_correct" else metrics.get(headline)
+        return {
+            "headline": headline,
+            "score": score,
+            "exact_match": metrics.get("exact_match"),
+            "f1": metrics.get("f1"),
+            "judge_correct": judged,
+            "judge": judge,
+            **({k: metrics[k] for k in ("rougeL", "rouge_l", "rouge1") if metrics.get(k) is not None}),
+        }
     per_class = metrics.get("per_class") if isinstance(metrics.get("per_class"), dict) else {}
     return {
         "headline": "accuracy",
@@ -840,6 +1144,91 @@ def score_block(task_profile: str, metrics: dict[str, Any], scored_labels: list[
 
 def _is_local_model(model_ref: str | None) -> bool:
     return bool(model_ref) and Path(str(model_ref)).expanduser().exists()
+
+
+def collapse_predictions(
+    task_profile: str,
+    predictions: list[dict[str, Any]],
+    members: dict[str, str],
+    handler: Any,
+    candidates: list[str] | None = None,
+) -> list[str] | None:
+    """Collapse each prediction of a grouped project label to its group, in
+    place, before the handler scores. Classification: the label the handler
+    would parse → the group name (returns the collapsed candidate set the
+    handler should score with). Spans: every entity of a member type → the
+    group type. The original prediction is kept as
+    ``prediction_before_grouping``."""
+    if not members:
+        return None
+    if task_profile == SHAPE_CLASSIFICATION:
+        candidates = list(candidates or [])
+        parse = getattr(handler, "parse_predicted_label", None)
+        for p in predictions:
+            raw = str(p.get("prediction") or "")
+            parsed = parse(raw, candidates) if callable(parse) else raw.strip()
+            if parsed in members:
+                p["prediction_before_grouping"] = raw
+                p["prediction"] = members[parsed]
+        groups = sorted(set(members.values()))
+        return [c for c in candidates if c not in members] + groups
+    if task_profile == SHAPE_SPANS:
+        parse_json = getattr(handler, "_parse_json_safely", None)
+        for p in predictions:
+            raw = p.get("prediction")
+            parsed = parse_json(raw) if callable(parse_json) else None
+            if parsed is None and isinstance(raw, str):
+                try:
+                    parsed = json.loads(raw)
+                except (TypeError, ValueError):
+                    parsed = None
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("entities"), list):
+                continue
+            changed = False
+            for e in parsed["entities"]:
+                if isinstance(e, dict) and str(e.get("type") or "") in members:
+                    e["type"] = members[str(e["type"])]
+                    changed = True
+            if changed:
+                p["prediction_before_grouping"] = raw
+                p["prediction"] = json.dumps(parsed, ensure_ascii=False)
+    return None
+
+
+async def judge_benchmark_answers(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    task_profile: str | None,
+    predictions: list[dict[str, Any]],
+    local_only: bool,
+) -> dict[str, Any]:
+    """The project's answer judge over a generative benchmark — the held-out
+    eval's rule (long-answer generative task, a judge reachable). A
+    ``local_only`` benchmark never reaches a cloud judge: the snapshot says
+    ``skipped: "local_only_cloud_judge"`` and names the judge."""
+    from app.models.project import Project
+    from app.services.answer_judge_service import resolve_answer_judge, should_judge
+    from app.services.evaluation_service import _safe_judge_answers
+
+    references = [str(p.get("reference") or "") for p in predictions if isinstance(p, dict)]
+    if not should_judge(task_profile, references):
+        return {"skipped": "not_long_answer_task"}
+    try:
+        resolved = await resolve_answer_judge(db, project_id, await db.get(Project, project_id))
+    except Exception as exc:  # noqa: BLE001
+        return {"skipped": f"error: {exc}"[:200]}
+    if resolved is None:
+        return {"skipped": "no_judge_available"}
+    if local_only and not getattr(resolved, "local", True):
+        return {
+            "skipped": "local_only_cloud_judge",
+            "judge": resolved.label,
+            "message": f"Not judged: this benchmark is local-only and the project's judge ({resolved.label}) is a cloud model.",
+        }
+    return await _safe_judge_answers(
+        db, project_id=project_id, task_profile=task_profile, predictions=predictions, judge=resolved,
+    )
 
 
 async def evaluate_benchmark(
@@ -877,6 +1266,13 @@ async def evaluate_benchmark(
         project_id=project_id, experiment_id=experiment_id, eval_type="exact_match",
         dataset_name="test", experiment_task_type=exp_task_type,
     )
+    task_profile = m.get("task_profile") or ""
+    members = group_members(m.get("mapping") or {})
+    if members and task_profile == SHAPE_CLASSIFICATION and hasattr(handler, "_cached_candidates") \
+            and not (eval_ctx.manifest or {}).get("labels"):
+        # The prompt lists the project's labels, never the group names the
+        # benchmark rows carry.
+        handler._cached_candidates = (await project_label_space(db, project_id))["labels"]
     pairs = _load_heldout_pairs(Path(ds.file_path), max_samples=ds.record_count or MAX_ROWS, handler=handler, ctx=eval_ctx)
     if not pairs:
         raise BenchmarkError("The benchmark rows produced no evaluation pairs for this run's task.")
@@ -884,8 +1280,29 @@ async def evaluate_benchmark(
         db, exp=exp, project_id=project_id, pairs=pairs, task_handler=handler, eval_ctx=eval_ctx,
         model_path=None, max_new_tokens=max_new_tokens, temperature=0.0,
     )
+    if members:
+        current = getattr(handler, "_cached_candidates", None)
+        collapsed = collapse_predictions(task_profile, predictions, members, handler, current)
+        if collapsed is not None and hasattr(handler, "_cached_candidates"):
+            handler._cached_candidates = collapsed
     metrics = dict(score_with_slices(handler, predictions, eval_ctx, slice_definitions=None))
-    block = score_block(m.get("task_profile") or "", metrics, list(m.get("scored_labels") or []))
+    if task_profile in GENERATIVE_SHAPES:
+        from app.services.evaluation_service import exact_match as _em, f1_score as _f1
+
+        # Handlers without per-answer F1 / EM (e.g. the generic one):
+        # the same token F1 / exact match the held-out eval uses.
+        if metrics.get("f1") is None:
+            for p in predictions:
+                p.setdefault("row_f1", _f1(str(p.get("prediction") or ""), str(p.get("reference") or "")))
+            metrics["f1"] = round(sum(float(p["row_f1"]) for p in predictions) / len(predictions), 4) if predictions else 0.0
+        if metrics.get("exact_match") is None:
+            ems = [_em(str(p.get("prediction") or ""), str(p.get("reference") or "")) for p in predictions]
+            metrics["exact_match"] = round(sum(ems) / len(ems), 4) if ems else 0.0
+        metrics["judge"] = await judge_benchmark_answers(
+            db, project_id, task_profile=eval_ctx.task_profile or task_profile,
+            predictions=predictions, local_only=bool(m.get("local_only")),
+        )
+    block = score_block(task_profile, metrics, list(m.get("scored_labels") or []))
     result = {
         "experiment_id": experiment_id,
         "experiment_name": exp.name,
@@ -894,7 +1311,9 @@ async def evaluate_benchmark(
         **block,
         "failures": [
             {"prompt": str(p.get("prompt", ""))[:300], "reference": str(p.get("reference", ""))[:300],
-             "prediction": str(p.get("prediction", ""))[:300]}
+             "prediction": str(p.get("prediction_before_grouping") or p.get("prediction", ""))[:300],
+             **({"judge_verdict": p.get("row_judge_verdict"), "judge_reason": p.get("row_judge_reason")}
+                if p.get("row_judge_verdict") else {})}
             for p in predictions if _prediction_failed(p)
         ][:FAILURES_PREVIEW],
         "inference_device": (runtime or {}).get("device") if isinstance(runtime, dict) else None,
