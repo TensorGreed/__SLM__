@@ -1366,6 +1366,25 @@ runs real CPU inference). ~4 min locally.
   ledger, by model / kind, window) → `GET /projects/{id}/llm-spend?days=30` →
   `LlmSpendCard` on the Synthetic tab; bell `cloudSpendText` on every kind ("spent …" on
   failed). Tests `tests/test_llm_spend.py`, `LlmSpendCard.test.tsx`.
+  **Playground**: `playground_service.meter_playground_reply` (chat + stream routes in
+  `api/training.py`, after the reply / final event) → `metered_operation(pid,
+  "playground_chat")` only when `is_metered_chat` (openai_compatible + non-local URL;
+  mock / experiment / llama_cpp / Ollama never); usage from the response (OpenAI
+  `prompt_tokens` minus `prompt_tokens_details.cached_tokens` → cache_read, or Anthropic
+  `input_tokens` / `cache_*_input_tokens`); a cloud stream sends `stream_options.include_usage`;
+  no usage → chars/4 estimate, `meter.estimated` → ledger `estimated: true` → tally
+  `estimated_operations`. Reply / final event carry `llm_cost`. Never raises.
+  **Budget**: `runtime_config["llm_budget_usd"] = {monthly, warn_at (0.8)}`
+  (`llm_spend_service.normalize_budget` / `read_budget`; `GET/PUT /projects/{id}/llm-budget`,
+  `monthly: null` clears, 422 on monthly ≤ 0 / warn_at ∉ (0,1]). Tally adds `month`
+  (calendar month-to-date UTC, any window), `budget`, `budget_status` (pure `budget_status`:
+  ok / warning ≥ warn_at / over > monthly). `month_budget_status(db, project)` feeds the
+  Coach synthetic-stage `synthetic:llm-budget` (`_llm_budget_nudge`: warning / critical,
+  `pipeline-tab` synthetic, emitted even before data). `budget_warning(db, pid)` (only when
+  over) → `_with_budget_warning` on relabel-answer-key + run-playbook?async_job starts —
+  advisory, Job still starts; frontend `budgetWarningMessage` toasts it (SyntheticPanel,
+  SynthReviewQueue, PlaybookPickerPanel). `LlmSpendCard` `BudgetSection`: "This month: ~$x
+  of $y (z%)" (`--warning` / `--over` classes) + editor. Tests `tests/test_llm_budget.py`.
 - **Ollama context**: `synth_backends/ollama.context_window_for` sets
   `num_ctx` per request (prompt chars / 3 + max_tokens + 256, buckets
   4096 / 8192 / 16384 / 32768) — without it Ollama runs at its server

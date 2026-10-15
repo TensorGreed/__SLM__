@@ -36,6 +36,7 @@ import ErrorPanel from '../shared/ErrorPanel';
 import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
+import { budgetWarningMessage } from '../../api/llmSpend';
 import './PlaybookPickerPanel.css';
 
 const VALID_SYNTH_MODES: ReadonlySet<SynthMode> = new Set([
@@ -283,6 +284,8 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 `Synth started — track in the notification bell (↑ top-right)`,
                 4000,
             );
+            const budgetMsg = budgetWarningMessage(job);
+            if (budgetMsg) toast.warning(budgetMsg, 8000);
             void useJobsStore.getState().refreshAfterLocalChange();
             setResult({
                 rows: [],

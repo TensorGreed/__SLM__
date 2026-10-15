@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
 import { toast } from '../../stores/toastStore';
+import { budgetWarningMessage } from '../../api/llmSpend';
 
 import type {
     ReviewQueueGroup,
@@ -679,6 +680,8 @@ function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] 
                 ...(useBatch && batchable(pin) ? { use_batch: true } : {}),
             });
             setStarted((prev) => ({ ...prev, [group.synth_source]: res.data?.id }));
+            const budgetMsg = budgetWarningMessage(res.data);
+            if (budgetMsg) toast.warning(budgetMsg, 8000);
             toast.info(
                 `Relabelling ${group.synth_source} with ${pin} under the current conventions (job #${res.data?.id})`
                 + (useBatch && batchable(pin) ? ' as one Anthropic batch — half price, results in minutes to hours' : '')

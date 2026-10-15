@@ -50,6 +50,9 @@ class UsageMeter:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._by_backend: dict[str, dict[str, Any]] = {}
+        # True when some counts were estimated (a stream that sent no usage
+        # event): the ledger entry says so.
+        self.estimated = False
 
     def add(self, provider: str, model: str, counts: dict[str, int]) -> None:
         key = f"{provider}:{model}" if provider else str(model)
@@ -145,12 +148,17 @@ def record_response(provider: str, resp: Any, model: str | None = None) -> None:
     )
 
 
+def provider_for_url(url: str | None) -> str:
+    """``anthropic`` / ``deepseek`` / ``openai`` from an endpoint host, else the host."""
+    host = (urlparse(str(url or "")).hostname or "openai-compatible").lower()
+    return "anthropic" if "anthropic" in host else "deepseek" if "deepseek" in host else "openai" if "openai" in host else host
+
+
 def record_openai_usage(url: str | None, model: str, usage: Any) -> None:
     """``record`` from an OpenAI-shape ``usage`` dict, skipped for local hosts."""
     if is_local_url(url) or not isinstance(usage, dict):
         return
-    host = (urlparse(str(url or "")).hostname or "openai-compatible").lower()
-    provider = "anthropic" if "anthropic" in host else "deepseek" if "deepseek" in host else "openai" if "openai" in host else host
+    provider = provider_for_url(url)
     record(
         provider, model,
         input_tokens=int(usage.get("prompt_tokens") or 0),
@@ -199,6 +207,8 @@ def append_ledger(project_id: int, kind: str, meter: UsageMeter) -> None:
         path = ledger_path(project_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         entry = {"at": datetime.now(timezone.utc).isoformat(), "kind": kind, **fields}
+        if meter.estimated:
+            entry["estimated"] = True
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + "\n")
     except Exception:  # noqa: BLE001

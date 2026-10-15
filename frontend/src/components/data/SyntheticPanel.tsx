@@ -10,6 +10,7 @@ import PlaybookPickerPanel from './PlaybookPickerPanel';
 import SynthReviewQueue from './SynthReviewQueue';
 import StepFooter from '../shared/StepFooter';
 import { toast } from '../../stores/toastStore';
+import { budgetWarningMessage } from '../../api/llmSpend';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 import SpanAddTypeForm from './SpanAddTypeForm';
 import SpanTypeDefinitionsEditor from './SpanTypeDefinitionsEditor';
@@ -718,6 +719,8 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 ...(target === 'training' && relabelSource.trim() ? { source: relabelSource.trim() } : {}),
                 ...(useRelabelBatch ? { use_batch: true } : {}),
             });
+            const budgetMsg = budgetWarningMessage(res.data);
+            if (budgetMsg) toast.warning(budgetMsg, 8000);
             if (useRelabelBatch) {
                 toast.info(`Submitted as one Anthropic batch (half price) — results take minutes to hours; the bell shows "batch submitted · waiting" until they're in (job #${res.data?.id}).`, 6000);
                 return;
