@@ -375,6 +375,91 @@ async def relabel_split_as_answer_key(
     return summary
 
 
+async def relabel_split_in_place(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    split: str = "test",
+    backend: str | None = None,
+    entity_types: list[str] | None = None,
+    progress: ProgressFn | None = None,
+    backend_override: Any = None,
+) -> RelabelSummary:
+    """Relabel a prepared split's rows (``prepared/<split>.jsonl``) IN PLACE
+    under the current conventions — texts unchanged, entities replaced,
+    rows stamped with the conventions version. A split kept across re-splits
+    (``keep_test``) is never touched by relabelling the rows it came from, so
+    this is how its labels catch up. Every saved version snapshot holding a
+    byte-identical copy of the file is rewritten too. A row the model
+    returned nothing for keeps its labels."""
+    from app.services.span_type_definitions_service import (
+        CONVENTIONS_VERSION_KEY,
+        conventions_version,
+        definitions_clause,
+        load_definitions,
+        load_scan_tolerant,
+    )
+    from app.services.synth_backends.base import pick_backend
+
+    async def report(fraction: float, message: str) -> None:
+        if progress is not None:
+            await progress(fraction, message)
+
+    if split not in ("train", "val", "test"):
+        raise RuntimeError(f"Only a prepared split (train / val / test) can be relabelled in place, not {split!r}.")
+    prepared = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
+    path = prepared / f"{split}.jsonl"
+    if not path.exists():
+        raise RuntimeError(f"Project {project_id} has no {split} split.")
+    original = path.read_bytes()
+    rows = [json.loads(l) for l in original.decode("utf-8").splitlines() if l.strip()]
+    span_idx = [i for i, r in enumerate(rows) if isinstance(r, dict) and _row_text(r).strip() and isinstance(r.get("entities"), list)]
+    if not span_idx:
+        raise RuntimeError(f"The {split} split of project {project_id} has no span rows.")
+    old_labels = [_row_entities(rows[i]) for i in span_idx]
+    definitions = await load_definitions(db, project_id)
+    scan_tolerant = await load_scan_tolerant(db, project_id)
+    types = [t.strip().lower() for t in (entity_types or []) if isinstance(t, str) and t.strip()]
+    if not types:
+        types = sorted(set(definitions) | {e["type"] for spans in old_labels for e in spans})
+    conventions = definitions_clause(types, definitions, scan_tolerant=scan_tolerant)
+    version = conventions_version(definitions, scan_tolerant)
+    llm = backend_override or pick_backend(backend)
+    backend_label = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
+    texts = [_row_text(rows[i]) for i in span_idx]
+    new_labels, calls = await label_texts_any(llm, texts, types, conventions, report, backend_label)
+    stamp = datetime.now(timezone.utc).isoformat()
+    counts: Counter[str] = Counter()
+    done: list[int] = []
+    for j, i in enumerate(span_idx):
+        if new_labels[j] is None:
+            continue
+        rows[i]["entities"] = new_labels[j]
+        rows[i]["relabelled_by"] = backend_label
+        rows[i]["relabelled_at"] = stamp
+        if version:
+            rows[i][CONVENTIONS_VERSION_KEY] = version
+        counts.update(e["type"] for e in new_labels[j])
+        done.append(j)
+    if not done:
+        raise RuntimeError(f"{backend_label} relabelled none of the {len(span_idx)} {split} rows.")
+    content = ("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n").encode("utf-8")
+    snapshots = [p for p in sorted((prepared / "versions").glob(f"*/{split}.jsonl")) if p.read_bytes() == original]
+    for target in [path, *snapshots]:
+        target.write_bytes(content)
+    summary = RelabelSummary(
+        project_id=project_id, split=split, backend=backend_label, rows=len(span_idx), labelled_rows=len(done),
+        failed_calls=calls["failed"], entities=sum(counts.values()), entity_counts=dict(counts.most_common()),
+        agreement=agreement([old_labels[j] for j in done], [new_labels[j] for j in done]),
+        conventions_types=[t for t in types if t in definitions], file_path=str(path),
+    )
+    if snapshots:
+        summary.warnings.append(f"Also updated {len(snapshots)} saved version(s) holding the same {split} split.")
+    if len(done) < len(span_idx):
+        summary.warnings.append(f"{len(span_idx) - len(done)} of {len(span_idx)} rows got no labels back and kept their old ones.")
+    return summary
+
+
 async def relabel_training_rows(
     db: AsyncSession,
     project_id: int,

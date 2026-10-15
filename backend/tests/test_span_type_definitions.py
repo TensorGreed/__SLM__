@@ -631,3 +631,41 @@ class OnlyStaleRelabelTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             asyncio.run(_again())
+
+
+class RelabelSplitInPlaceTests(unittest.TestCase):
+    def test_test_split_and_its_identical_snapshots_are_relabelled_in_place(self):
+        pid = client.post("/api/projects", json={"name": f"split-{time.time_ns()}", "description": "x"}).json()["id"]
+        client.put(f"/api/projects/{pid}/synthetic/type-definitions", json={"definitions": {"person_name": "a name"}})
+        prepared = settings.DATA_DIR / "projects" / str(pid) / "prepared"
+        (prepared / "versions" / "1").mkdir(parents=True, exist_ok=True)
+        (prepared / "versions" / "2").mkdir(parents=True, exist_ok=True)
+        rows = "".join(json.dumps(r) + "\n" for r in [
+            {"text": "Hi Ada Lovelace", "entities": [{"type": "person_name", "start": 0, "end": 2}]},
+        ])
+        (prepared / "test.jsonl").write_text(rows)
+        (prepared / "versions" / "1" / "test.jsonl").write_text(rows)
+        (prepared / "versions" / "2" / "test.jsonl").write_text("different\n")
+
+        class Labeller:
+            name = "fake"
+
+            def describe(self):
+                return "fake"
+
+            async def complete(self, prompt, **kw):
+                import re as _re
+                return json.dumps({"rows": [{"index": int(m.group(1)), "entities": [{"type": "person_name", "text": "Ada Lovelace"}]}
+                                            for m in _re.finditer(r"\[(\d+)\] ", prompt)]})
+
+        async def _go():
+            async with async_session_factory() as db:
+                return await relabel.relabel_split_in_place(db, pid, split="test", backend_override=Labeller())
+
+        summary = asyncio.run(_go())
+        self.assertEqual(summary.labelled_rows, 1)
+        row = json.loads((prepared / "test.jsonl").read_text().splitlines()[0])
+        self.assertEqual([("Hi Ada Lovelace"[e["start"]:e["end"]]) for e in row["entities"]], ["Ada Lovelace"])
+        self.assertEqual(row["conventions_version"], defs.conventions_version({"person_name": "a name"}))
+        self.assertEqual((prepared / "versions" / "1" / "test.jsonl").read_text(), (prepared / "test.jsonl").read_text())
+        self.assertEqual((prepared / "versions" / "2" / "test.jsonl").read_text(), "different\n")

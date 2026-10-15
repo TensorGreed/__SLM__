@@ -737,7 +737,9 @@ class RelabelAnswerKeyRequest(BaseModel):
     # rewrite) and add them as training rows — layout lines included.
     # "documents": whole documents (runs of whole paragraphs up to
     # max_chars), longer than one 512-token window.
-    target: str = Field("answer_key", pattern="^(answer_key|training|passages|documents)$")
+    # "split": relabel the prepared ``split`` itself in place (a kept test
+    # split doesn't follow relabelled source rows).
+    target: str = Field("answer_key", pattern="^(answer_key|training|passages|documents|split)$")
     document_id: int | None = None
     max_chars: int = Field(4000, ge=500, le=20000)
     # target "training": relabel only this synth_source group (e.g.
@@ -800,6 +802,14 @@ async def relabel_answer_key(
                     backend=req.backend if cloud_override is None else None,
                     entity_types=req.entity_types, progress=_progress, backend_override=cloud_override,
                 )
+            elif req.target == "split":
+                from app.services.span_relabel_service import relabel_split_in_place
+
+                summary = await relabel_split_in_place(
+                    runner_db, project_id, split=req.split,
+                    backend=req.backend if cloud_override is None else None,
+                    entity_types=req.entity_types, progress=_progress, backend_override=cloud_override,
+                )
             elif req.target == "training":
                 summary = await relabel_training_rows(
                     runner_db, project_id, source=req.source or None, only_stale=req.only_stale,
@@ -823,6 +833,8 @@ async def relabel_answer_key(
             if req.target == "passages"
             else f"Training labels by {req.backend or 'local model'} · project #{project_id}"
             if req.target == "training"
+            else f"{req.split.capitalize()} split relabelled by {req.backend or 'local model'} · project #{project_id}"
+            if req.target == "split"
             else f"Answer key by {req.backend or 'local model'} · {req.split} split · project #{project_id}"
         ),
         runner=_runner, project_id=project_id,

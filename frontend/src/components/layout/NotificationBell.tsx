@@ -158,6 +158,10 @@ function jobOutcomeSummary(job: Job): string | null {
         const agreement = r.agreement && typeof (r.agreement as { f1?: unknown }).f1 === 'number' ? (r.agreement as { f1: number }).f1 : null;
         const parts: string[] = [];
         const isTraining = r.split === 'synthetic';
+        if (job.title?.includes('split relabelled') && rows !== null) {
+            return `${String(r.split)} split relabelled in place: ${rows} rows`
+                + (agreement !== null ? ` · agreement with the old labels F1 ${agreement.toFixed(2)}` : '');
+        }
         const isPassages = r.split === 'passages' || r.split === 'documents';
         if (rows !== null) {
             parts.push(

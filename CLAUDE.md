@@ -1254,6 +1254,10 @@ runs real CPU inference). ~4 min locally.
   cards + `RetiredGroupsList` with Restore. `relabel_training_rows(source=)`
   matches groups with the queue's `_resolve_source_label` (rows without a
   synth_source are `legacy:<source>`).
+  `relabel_split_in_place(split)` / request `target: "split"` relabels a
+  prepared split's rows in place (a `keep_test` split never follows relabelled
+  source rows) + every `prepared/versions/*/<split>.jsonl` byte-identical to it;
+  Synthetic-tab button "Relabel test examples with <pin>".
   `relabel_training_rows(only_stale=True)` / request `only_stale` sends only
   rows not stamped with the current conventions version (raises when none);
   the strip always sends it ("Relabel N rows under current conventions").

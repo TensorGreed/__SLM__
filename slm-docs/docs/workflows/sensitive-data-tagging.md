@@ -885,6 +885,36 @@ most of the conventions (titles, provider names, prefixes): the run scores
 credit_card 0.35 on the test examples are convention disagreements, not
 model errors. Re-key them, or read the answer key.
 
+**Negatives, and a null result (P1s, 2026-10-15).** The bank_account
+definition said "a domestic bank account, routing or sort-code number" —
+so the routing numbers Gretel counts against us were our own convention.
+It now says a routing number / ABA / SWIFT / sort code identifies the bank
+and is not labelled (project and shipped suggestion). 40 documents full of
+numbers that are not sensitive (coordinates, routing and SWIFT codes,
+device / order / tracking ids, VINs, SKUs — ~370 number-like strings, 234
+labelled spans) were added, and the 44 test examples were relabelled in
+place by Sonnet (new **Relabel test examples** button: a test split kept
+across re-splits never follows relabelled training rows; saved versions
+holding the same split are updated too). Three seeds each:
+
+| | P1q | P1s |
+|---|---|---|
+| Gretel precision | 0.583 ± 0.011 | 0.588 ± 0.005 |
+| Gretel bank_account precision | 0.133 ± 0.021 | 0.144 ± 0.028 |
+| Gretel PII F1 | 0.660 ± 0.010 | 0.661 ± 0.008 |
+| CoNLL people F1 | 0.667 ± 0.012 | 0.685 ± 0.006 |
+
+Within noise. The targeted errors did go — bank_account spans on Gretel's
+coordinates 15 → 0, on routing numbers 15 → 7 — but as many appeared on
+id formats the model had never seen (medical record numbers 5 → 19,
+customer ids 5 → 11, SSNs 0 → 6). bank_account is still the model's
+catch-all for an unfamiliar number; fixing formats one at a time moves the
+error rather than removing it. 20 of the extra spans are fragments shorter
+than five characters.
+
+Relabelled by the same model as the answer key, the 44 test examples now
+agree with it at 0.95 — they stopped being a second opinion.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the

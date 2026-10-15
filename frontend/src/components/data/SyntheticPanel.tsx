@@ -697,7 +697,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
      *  write. Runs as the `span_relabel` Job the bell tracks. */
     const [relabelStarting, setRelabelStarting] = useState(false);
     const relabelPin = provider === 'ollama' ? 'ollama' : provider === 'custom' ? null : `cloud:${provider}:${modelName}`;
-    const handleWriteAnswerKey = async (target: 'answer_key' | 'training' | 'passages' | 'documents' = 'answer_key') => {
+    const handleWriteAnswerKey = async (target: 'answer_key' | 'training' | 'passages' | 'documents' | 'split' = 'answer_key') => {
         if (!relabelPin) {
             toast.info('Pick Ollama or a cloud provider — the answer key is written through a synth backend.', 5000);
             return;
@@ -716,6 +716,8 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                     ? `Labelling your documents whole with ${relabelPin} — multi-page, page lines included, longer than one model window (job #${res.data?.id}). They land in the review queue as "document_labels"; accept them there, then re-split (keep the test examples) and re-train.`
                     : target === 'passages'
                     ? `Labelling your document passages as they are with ${relabelPin} — page headers and footers included (job #${res.data?.id}). They land in the review queue as "passage_labels"; accept them there, then re-split (keep the test examples) and re-train.`
+                    : target === 'split'
+                    ? `Relabelling the test examples in place with ${relabelPin} under the labelling conventions (job #${res.data?.id}) — a test split kept across re-splits doesn't follow relabelled source rows.`
                     : target === 'training'
                     ? `Relabelling the saved training rows with ${relabelPin} under the labelling conventions — the bell tracks it (job #${res.data?.id}). Re-split and re-train when it finishes.`
                     : `Writing the answer key with ${relabelPin} — the bell tracks it (job #${res.data?.id}). Evaluate against "gold_test" when it finishes.`,
@@ -1249,6 +1251,16 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                     title="Relabel every saved training row (texts unchanged) with the selected model under the project's labelling conventions, then the regex pass — so the training labels follow the same rules as the answer key."
                                 >
                                     Relabel training rows with {relabelPin ?? 'this model'}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => void handleWriteAnswerKey('split')}
+                                    disabled={relabelStarting || isGenerating}
+                                    data-testid="synthetic-relabel-test-split"
+                                    title="Relabel the test examples themselves (prepared test split, texts unchanged) under the labelling conventions. A test split kept across re-splits doesn't follow relabelled training rows."
+                                >
+                                    Relabel test examples with {relabelPin ?? 'this model'}
                                 </button>
                                 <input
                                     className="input"
