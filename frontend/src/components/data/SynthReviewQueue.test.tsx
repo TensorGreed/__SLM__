@@ -736,6 +736,53 @@ describe('SynthReviewQueue — groups labelled under older conventions', () => {
         confirm.mockRestore();
     });
 
+    it('relabels with the picked labeller instead of the group\'s own', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 31, dataset_id: 1, total_rows: 2, total_pending: 0, total_accepted: 2,
+                groups: [], accepted_groups: [staleGroup], rejected_groups: [],
+                labeller_pins: ['cloud:anthropic:haiku', 'ollama'],
+            },
+        });
+        apiMock.post.mockResolvedValue({ data: { id: 191 } });
+        const user = userEvent.setup();
+        render(<SynthReviewQueue projectId={31} />);
+        await user.selectOptions(await screen.findByTestId('synth-review-queue-relabel-with'), 'cloud:anthropic:haiku');
+        const btn = screen.getByTestId('synth-review-queue-relabel-passage_labels:doc=739');
+        expect(btn).toHaveTextContent('with cloud:anthropic:haiku');
+        await user.click(btn);
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/31/synthetic/relabel-answer-key', {
+            target: 'training', source: 'passage_labels:doc=739', backend: 'cloud:anthropic:haiku',
+        }));
+    });
+
+    it('retires an accepted group and restores a retired one', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 31, dataset_id: 1, total_rows: 3, total_pending: 0, total_accepted: 2,
+                groups: [], accepted_groups: [freshGroup],
+                rejected_groups: [{
+                    synth_source: 'legacy:teacher_llm', count: 1, truncated: false,
+                    rows: [{ id: 9, synth_confidence: 0.5, preview: 'z', payload: { text: 'z', reject_reason: 'retired' } }],
+                }],
+            },
+        });
+        apiMock.post.mockResolvedValue({ data: { rows_changed: 2 } });
+        const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        const user = userEvent.setup();
+        render(<SynthReviewQueue projectId={31} />);
+        await user.click(await screen.findByTestId('synth-review-queue-restore-legacy:teacher_llm'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(
+            '/projects/31/synthetic/review-queue/retire-group', { source: 'legacy:teacher_llm', retired: false },
+        ));
+        await user.click(screen.getByText(/accepted rows? queued for training/));
+        await user.click(screen.getByTestId('synth-review-queue-retire-passage_labels:doc=744'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(
+            '/projects/31/synthetic/review-queue/retire-group', { source: 'passage_labels:doc=744', retired: true },
+        ));
+        confirm.mockRestore();
+    });
+
     it('renders nothing when every group is current', async () => {
         apiMock.get.mockResolvedValue({
             data: {

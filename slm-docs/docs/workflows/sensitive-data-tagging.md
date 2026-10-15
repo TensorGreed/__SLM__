@@ -712,6 +712,28 @@ wording (27 of the 31 such labels in 739/740 remained). The clean key
 has about 19 visit dates, so its visit_date swings (0.92 → 0.85) are
 within noise.
 
+**Relabelling everything with one stronger labeller, and retiring what
+hurts (run #74, 2026-10-14).** The strip has a **Relabel with** picker
+(each group's own labeller, or any model that labelled rows in this
+project) — so the five legacy generator groups and docs 739 / 740 were
+relabelled with Haiku. Accepted groups also have **Retire group**: the
+rows leave training (kept on disk as rejected, reason "retired") and a
+"Retired groups" list offers **Restore**. To decide whether any group
+should go, each legacy group was retired in turn, the model retrained and
+scored, and the group restored (leave-one-out):
+
+| run | scan key | scan visit_date | clean key |
+|---|---|---|---|
+| #73 | 0.697 | 0.62 | 0.920 |
+| #74 (all relabelled by Haiku) | **0.702** | **0.68** | 0.906 |
+| #75–#79 (each legacy group left out once) | 0.686–0.706 | 0.65–0.73 | 0.897–0.922 |
+
+No group helped by its absence beyond noise (the five leave-one-out runs
+spread about ±0.01 — a useful measure of what one training run's noise
+looks like), so none was retired. Haiku also tags some footer print
+dates despite the convention, so that error is the labeller's, not the
+old groups'.
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the

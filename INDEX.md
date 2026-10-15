@@ -29,6 +29,7 @@ session-start guidance.
 - `backend/app/api/auto_rag.py` — Auto-RAG API routes (USER-SUCCESS Epic 9 Phase 9a).
 - `backend/app/api/autopilot.py` — Autopilot API — decision-log query + rollback + repair preview/apply surface.
 - `backend/app/api/behavioral_tests.py` — Quality-Lift phase 7 slice 2 — Behavioral tests CRUD scoped to the
+- `backend/app/api/benchmarks.py` — External benchmarks API (Epic G-B1) — see external_benchmark_service.
 - `backend/app/api/cleaning.py` — Data Cleaning API routes.
 - `backend/app/api/coach.py` — Coach Mode API routes (USER-SUCCESS Epic 4 Phase 1).
 - `backend/app/api/comparison.py` — Comparison API for experiments.
@@ -176,6 +177,7 @@ session-start guidance.
 - `backend/app/services/experiment_comparison_service.py` — Eval-aware experiment comparison service (E3).
 - `backend/app/services/experiment_recovery_service.py` — Experiment lifecycle recovery actions (Story 1.7).
 - `backend/app/services/export_service.py` — Export & runtime packaging service.
+- `backend/app/services/external_benchmark_service.py` — External benchmarks: score a project's runs on a labelled set someone
 - `backend/app/services/failure_cluster_service.py` — P12 — Failure-cluster service.
 - `backend/app/services/frontier_comparison_service.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
 - `backend/app/services/gamification/achievements.py` — Declarative achievement catalog (Lab Journal).
@@ -421,6 +423,7 @@ session-start guidance.
 - `backend/alembic/versions/20260608_0046_multi_seed_experiments.py` — Quality-Lift phase 1 — multi-seed variance reporting columns.
 - `backend/alembic/versions/20260608_0047_project_slice_definitions.py` — Quality-Lift phase 2 slice 1 — Project.slice_definitions column.
 - `backend/alembic/versions/20260609_0048_label_noise_scans.py` — Quality-Lift phase 4 slice 1 — label_noise_scans table.
+- `backend/alembic/versions/20261015_0049_benchmark_dataset_type.py` — External benchmarks: 'benchmark' dataset type (Epic G-B1).
 
 ## Frontend · API clients
 
@@ -428,6 +431,7 @@ session-start guidance.
 - `frontend/src/api/annotation.ts` — Typed wrappers around the Story 1.1 annotation API.
 - `frontend/src/api/archetypeComparison.ts` — Typed client for the per-project archetype comparison
 - `frontend/src/api/behavioralTests.ts` — Behavioral tests CRUD client (Quality-Lift phase 7 slice 2).
+- `frontend/src/api/benchmarks.ts` — External benchmarks (Epic G-B1): a labelled set someone else made, mapped
 - `frontend/src/api/blueprintAnalyze.ts` — Typed wrapper for the brief-analysis endpoint
 - `frontend/src/api/client.ts` — Axios HTTP client configured with /api base URL and auth-token interceptor that redirects on 401.
 - `frontend/src/api/coach.ts` — Coach suggestion types + async fetcher for stage-specific coaching recommendations.
@@ -572,6 +576,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.tsx` — EvalPackScaffoldPanel — recipe-aware draft eval-pack with inline
 - `frontend/src/components/evaluation/EvalPanel.tsx` — Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
 - `frontend/src/components/evaluation/EvalSummaryCard.tsx` — EvalSummaryCard — the Eval tab's default view (Wave 3b).
+- `frontend/src/components/evaluation/ExternalBenchmarksPanel.tsx` — External benchmarks (Epic G-B1) — score the selected run on labelled sets
 - `frontend/src/components/evaluation/FailureClustersPanel.tsx` — Failure pattern grouper with cluster explanation and augmentation recommendations.
 - `frontend/src/components/evaluation/FrontierComparisonPanel.tsx` — FrontierComparisonPanel — Track 1, Epic D.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.
@@ -749,6 +754,7 @@ session-start guidance.
 - `backend/tests/test_experiment_clone.py` — Tests for the experiment-clone endpoint
 - `backend/tests/test_experiment_comparison.py` — Tests for the eval-aware experiment comparison service + API (E3).
 - `backend/tests/test_export_scoping_and_merge.py` — Export correctness (Wave 1b).
+- `backend/tests/test_external_benchmarks.py` — External benchmarks (Epic G-B1): import a labelled set someone else made,
 - `backend/tests/test_failure_cluster_handler_drilldown.py` — Arc 2 — failure-cluster drill-down backend pass-through.
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_frontier_comparison.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
@@ -1031,6 +1037,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPanel.spanset.test.tsx` — Phase 5.3.4b — Sample Predictions card in span_set scoring mode.
 - `frontend/src/components/evaluation/EvalPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalSummaryCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/ExternalBenchmarksPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/FailureClustersPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/FrontierComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.test.tsx` — _(no docstring)_

@@ -405,10 +405,14 @@ async def relabel_training_rows(
         raise RuntimeError(f"Project {project_id} has no saved synthetic rows to relabel.")
     lines = [l for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
     rows = [json.loads(l) for l in lines]
+    # Groups are named the way the review queue names them (rows without a
+    # synth_source are "legacy:<source>"), so its relabel action matches.
+    from app.services.synth_review_queue_service import _resolve_source_label
+
     span_idx = [
         i for i, r in enumerate(rows)
         if isinstance(r, dict) and isinstance(r.get("text"), str) and r["text"].strip() and isinstance(r.get("entities"), list)
-        and (not source or str(r.get("synth_source") or "") == source)
+        and (not source or _resolve_source_label(r) == source)
     ]
     if not span_idx:
         raise RuntimeError(

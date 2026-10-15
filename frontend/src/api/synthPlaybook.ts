@@ -329,6 +329,10 @@ export interface ReviewQueueResponse {
      *  ``review_status="rejected"`` so they can be reviewed and
      *  bulk-purged by reason. */
     total_rejected?: number;
+    /** Current labelling-conventions version (null: no conventions). */
+    conventions_version?: string | null;
+    /** Every model that labelled span rows here, as relabel pins. */
+    labeller_pins?: string[];
     groups: ReviewQueueGroup[];
     /** Accepted rows (passed review or pre-Epic-2a legacy rows).
      *  Surfaces what's queued for the next dataset prep. */

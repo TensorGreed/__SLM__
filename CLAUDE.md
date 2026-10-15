@@ -1245,6 +1245,14 @@ runs real CPU inference). ~4 min locally.
   (`conventions_marked_current_at`). UI: `StaleConventionsStrip` in
   `SynthReviewQueue` ("Relabel under current conventions with <pin>" /
   "Mark as current") + "older conventions" badge on accepted groups.
+  P1l: queue top-level `labeller_pins` (every model that labelled span rows,
+  as pins) → the strip's "Relabel with" picker; `set_group_retired(source,
+  retired)` / `POST /synthetic/review-queue/retire-group {source, retired}`
+  (accepted/legacy rows → rejected, `reject_reason="retired"`, `retired_at`;
+  restore only touches rows rejected AS retired) → "Retire group" on accepted
+  cards + `RetiredGroupsList` with Restore. `relabel_training_rows(source=)`
+  matches groups with the queue's `_resolve_source_label` (rows without a
+  synth_source are `legacy:<source>`).
 - **Ollama context**: `synth_backends/ollama.context_window_for` sets
   `num_ctx` per request (prompt chars / 3 + max_tokens + 256, buckets
   4096 / 8192 / 16384 / 32768) — without it Ollama runs at its server

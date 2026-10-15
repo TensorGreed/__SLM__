@@ -243,11 +243,14 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                     </p>
                 </header>
                 <TotalCountStrip data={data} />
-                <StaleConventionsStrip projectId={projectId} groups={[...data.groups, ...data.accepted_groups]} onMarked={load} />
+                <StaleConventionsStrip projectId={projectId} groups={[...data.groups, ...data.accepted_groups]} onMarked={load} labellerPins={data.labeller_pins || []} />
+                <RetiredGroupsList projectId={projectId} groups={data.rejected_groups || []} onChanged={load} />
                 {data.accepted_groups.length > 0 && (
                     <AcceptedRowsSection
                         groups={data.accepted_groups}
                         totalAccepted={data.total_accepted}
+                        projectId={projectId}
+                        onChanged={load}
                     />
                 )}
                 {purgeFlash && (
@@ -327,7 +330,8 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                 </p>
             </header>
             <TotalCountStrip data={data} />
-            <StaleConventionsStrip projectId={projectId} groups={[...data.groups, ...data.accepted_groups]} onMarked={load} />
+            <StaleConventionsStrip projectId={projectId} groups={[...data.groups, ...data.accepted_groups]} onMarked={load} labellerPins={data.labeller_pins || []} />
+            <RetiredGroupsList projectId={projectId} groups={data.rejected_groups || []} onChanged={load} />
 
             {focusActive && focusSource && (
                 <div
@@ -452,6 +456,8 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                 <AcceptedRowsSection
                     groups={data.accepted_groups}
                     totalAccepted={data.total_accepted}
+                    projectId={projectId}
+                    onChanged={load}
                 />
             )}
             {purgeFlash && (
@@ -521,6 +527,53 @@ function TotalCountStrip({ data }: TotalCountStripProps) {
 interface AcceptedRowsSectionProps {
     groups: import('../../api/synthPlaybook').ReviewQueueGroup[];
     totalAccepted: number;
+    projectId?: number;
+    onChanged?: () => void;
+}
+
+interface RetiredGroupsListProps {
+    projectId: number;
+    groups: ReviewQueueGroup[];
+    onChanged?: () => void;
+}
+
+/** Source groups the user retired (rejected with reason "retired"), each
+ *  with Restore — retiring is reversible until the rejected rows are purged. */
+function RetiredGroupsList({ projectId, groups, onChanged }: RetiredGroupsListProps) {
+    const retired = groups.filter((g) =>
+        g.rows.some((row) => (row.payload as Record<string, unknown>)?.reject_reason === 'retired'),
+    );
+    if (retired.length === 0) return null;
+    const restore = async (group: ReviewQueueGroup) => {
+        try {
+            const n = await setGroupRetired(projectId, group.synth_source, false);
+            toast.success(`${group.synth_source}: ${n} rows restored to training.`, 4000);
+            onChanged?.();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Could not restore the group.', 5000);
+        }
+    };
+    return (
+        <div className="synth-review-queue__retired" data-testid="synth-review-queue-retired">
+            <strong>Retired groups</strong> (out of training, kept on disk):
+            <ul className="synth-review-queue__stale-list">
+                {retired.map((group) => (
+                    <li key={group.synth_source}>
+                        <code>{group.synth_source}</code>{' '}
+                        <span className="synth-review-queue__stale-detail">{group.count} rows</span>{' '}
+                        <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => void restore(group)}
+                            data-testid={`synth-review-queue-restore-${group.synth_source}`}
+                        >
+                            Restore
+                        </button>
+                    </li>
+                ))}
+            </ul>
+        </div>
+    );
 }
 
 /**
@@ -531,7 +584,7 @@ interface AcceptedRowsSectionProps {
  * buckets with thousands of rows). Truncated groups show a
  * "showing N of total" footer.
  */
-function AcceptedRowsSection({ groups, totalAccepted }: AcceptedRowsSectionProps) {
+function AcceptedRowsSection({ groups, totalAccepted, projectId, onChanged }: AcceptedRowsSectionProps) {
     return (
         <details
             className="synth-review-queue__accepted"
@@ -547,7 +600,7 @@ function AcceptedRowsSection({ groups, totalAccepted }: AcceptedRowsSectionProps
             </summary>
             <div className="synth-review-queue__accepted-groups">
                 {groups.map((group) => (
-                    <AcceptedGroupCard key={group.synth_source} group={group} />
+                    <AcceptedGroupCard key={group.synth_source} group={group} projectId={projectId} onChanged={onChanged} />
                 ))}
             </div>
             <p className="synth-review-queue__accepted-footnote">
@@ -563,6 +616,8 @@ interface StaleConventionsStripProps {
     groups: ReviewQueueGroup[];
     /** Reload the queue after a group is marked current. */
     onMarked?: () => void;
+    /** Models that labelled span rows in this project (relabel pins). */
+    labellerPins?: string[];
 }
 
 function staleText(c: NonNullable<ReviewQueueGroup['conventions']>): string {
@@ -577,8 +632,11 @@ function staleText(c: NonNullable<ReviewQueueGroup['conventions']>): string {
  *  project's current ones — a definition change only reaches rows labelled
  *  after it. One click relabels a group in place with the model that
  *  labelled it (the `span_relabel` Job; re-split + retrain afterwards). */
-function StaleConventionsStrip({ projectId, groups, onMarked }: StaleConventionsStripProps) {
+function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] }: StaleConventionsStripProps) {
     const [started, setStarted] = useState<Record<string, number>>({});
+    // '' = each group's own labeller; else one pin for every group.
+    const [withPin, setWithPin] = useState('');
+    const pinFor = (group: ReviewQueueGroup) => withPin || group.conventions?.relabel_pin || null;
     const stale = groups.filter((g) => g.conventions?.is_stale);
     // The user attests a group already follows the current conventions
     // (labelled under the current wording before versions were recorded).
@@ -598,7 +656,7 @@ function StaleConventionsStrip({ projectId, groups, onMarked }: StaleConventions
     };
     if (stale.length === 0) return null;
     const relabel = async (group: ReviewQueueGroup) => {
-        const pin = group.conventions?.relabel_pin;
+        const pin = pinFor(group);
         if (!pin) return;
         try {
             const res = await api.post(`/projects/${projectId}/synthetic/relabel-answer-key`, {
@@ -621,6 +679,21 @@ function StaleConventionsStrip({ projectId, groups, onMarked }: StaleConventions
                 <strong>{stale.length}</strong> group{stale.length === 1 ? ' was' : 's were'} labelled under older labelling
                 conventions — a definition change only reaches the rows labelled after it.
             </p>
+            {labellerPins.length > 0 && (
+                <label className="synth-review-queue__stale-with">
+                    Relabel with{' '}
+                    <select
+                        value={withPin}
+                        onChange={(e) => setWithPin(e.target.value)}
+                        data-testid="synth-review-queue-relabel-with"
+                    >
+                        <option value="">each group&apos;s own labeller</option>
+                        {labellerPins.map((pin) => (
+                            <option key={pin} value={pin}>{pin}</option>
+                        ))}
+                    </select>
+                </label>
+            )}
             <ul className="synth-review-queue__stale-list">
                 {stale.map((group) => {
                     const c = group.conventions!;
@@ -633,14 +706,14 @@ function StaleConventionsStrip({ projectId, groups, onMarked }: StaleConventions
                             </span>{' '}
                             {jobId ? (
                                 <span className="synth-review-queue__stale-started">relabelling (job #{jobId})</span>
-                            ) : c.relabel_pin ? (
+                            ) : pinFor(group) ? (
                                 <button
                                     type="button"
                                     className="btn btn-secondary btn-sm"
                                     onClick={() => void relabel(group)}
                                     data-testid={`synth-review-queue-relabel-${group.synth_source}`}
                                 >
-                                    Relabel under current conventions with {c.relabel_pin}
+                                    Relabel under current conventions with {pinFor(group)}
                                 </button>
                             ) : (
                                 <span className="synth-review-queue__stale-detail">
@@ -670,9 +743,30 @@ function StaleConventionsStrip({ projectId, groups, onMarked }: StaleConventions
 
 interface AcceptedGroupCardProps {
     group: import('../../api/synthPlaybook').ReviewQueueGroup;
+    projectId?: number;
+    onChanged?: () => void;
 }
 
-function AcceptedGroupCard({ group }: AcceptedGroupCardProps) {
+/** Retire (accepted → rejected "retired") or restore a source group. */
+async function setGroupRetired(projectId: number, source: string, retired: boolean): Promise<number> {
+    const res = await api.post(`/projects/${projectId}/synthetic/review-queue/retire-group`, { source, retired });
+    return Number(res.data?.rows_changed ?? 0);
+}
+
+function AcceptedGroupCard({ group, projectId, onChanged }: AcceptedGroupCardProps) {
+    const retire = async () => {
+        if (projectId == null) return;
+        if (!window.confirm(
+            `Retire ${group.synth_source}? Its ${group.count} accepted rows leave training (kept on disk as rejected, reason "retired"; you can restore them).`,
+        )) return;
+        try {
+            const n = await setGroupRetired(projectId, group.synth_source, true);
+            toast.success(`${group.synth_source}: ${n} rows retired. Re-split and retrain to see the effect.`, 5000);
+            onChanged?.();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Could not retire the group.', 5000);
+        }
+    };
     return (
         <details
             className="synth-review-queue__accepted-group"
@@ -690,6 +784,16 @@ function AcceptedGroupCard({ group }: AcceptedGroupCardProps) {
                     </span>
                 )}
             </summary>
+            {projectId != null && (
+                <button
+                    type="button"
+                    className="btn btn-ghost btn-sm synth-review-queue__retire"
+                    onClick={() => void retire()}
+                    data-testid={`synth-review-queue-retire-${group.synth_source}`}
+                >
+                    Retire group
+                </button>
+            )}
             {group.rows.length > 0 ? (
                 <>
                     <ul className="synth-review-queue__accepted-row-list">

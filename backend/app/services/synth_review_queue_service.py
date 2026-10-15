@@ -272,6 +272,13 @@ async def list_review_queue(
     # Staleness is per synth_source group (what a relabel acts on), so only
     # computed for the source grouping.
     current = await load_conventions_version(db, project_id) if normalized_group_by == "source" else None
+    from app.services.span_type_definitions_service import relabel_pin, row_labeller
+
+    # Every model that labelled span rows here, as relabel pins — the
+    # stale-conventions strip offers them as "Relabel with".
+    labeller_pins = sorted({
+        pin for pin in (relabel_pin(row_labeller(r)) for r in all_rows if isinstance(r.get("entities"), list)) if pin
+    })
 
     return {
         "project_id": project_id,
@@ -282,6 +289,7 @@ async def list_review_queue(
         "total_accepted": len(accepted),
         "total_rejected": len(rejected),
         "conventions_version": current,
+        "labeller_pins": labeller_pins,
         "groups": _bucket_rows_by_source(pending, key_fn=key_fn, conventions_current=current),
         "accepted_groups": _bucket_rows_by_source(
             accepted, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP, key_fn=key_fn,
@@ -450,6 +458,43 @@ async def bulk_update_by_source(
     summary["source"] = source
     summary["matched"] = len(matched_ids)
     return summary
+
+
+RETIRED_REASON = "retired"
+
+
+async def set_group_retired(db: AsyncSession, project_id: int, *, source: str, retired: bool) -> dict[str, Any]:
+    """Retire an accepted ``synth_source`` group (its accepted rows become
+    rejected with ``reject_reason="retired"`` — out of training, still on
+    disk) or restore a retired one (only rows rejected AS retired go back to
+    accepted; rows rejected for another reason stay rejected)."""
+    from datetime import datetime, timezone
+
+    source = str(source or "").strip()
+    if not source:
+        raise ValueError("source must be a non-empty synth_source key")
+    path = _synthetic_jsonl_path(project_id)
+    rows = _ensure_row_ids(path, _read_all_rows(path))
+    group = [r for r in rows if _resolve_source_label(r) == source]
+    if not group:
+        raise ValueError(f"No rows in source group {source!r}.")
+    stamp = datetime.now(timezone.utc).isoformat()
+    changed = 0
+    for row in group:
+        status = row.get("review_status")
+        if retired and status in (None, "accepted"):
+            row["review_status"] = "rejected"
+            row["reject_reason"] = RETIRED_REASON
+            row["retired_at"] = stamp
+            changed += 1
+        elif not retired and status == "rejected" and row.get("reject_reason") == RETIRED_REASON:
+            row["review_status"] = "accepted"
+            row.pop("reject_reason", None)
+            row.pop("retired_at", None)
+            changed += 1
+    if changed:
+        _atomic_write_rows(path, rows)
+    return {"source": source, "retired": retired, "rows_changed": changed, "group_rows": len(group)}
 
 
 async def mark_conventions_current(db: AsyncSession, project_id: int, *, source: str) -> dict[str, Any]:

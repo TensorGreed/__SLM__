@@ -1345,6 +1345,29 @@ async def bulk_update_synth_review_queue_by_source(
     )
 
 
+class RetireGroupRequest(BaseModel):
+    source: str = Field(..., max_length=256)
+    # True: accepted rows → rejected ("retired"); False: restore them.
+    retired: bool = True
+
+
+@router.post("/review-queue/retire-group")
+async def retire_synth_group(
+    project_id: int,
+    req: RetireGroupRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """"Retire group" / "Restore" on the review queue: take an accepted
+    source group out of training (soft — rows stay on disk as rejected with
+    reason "retired") or put it back. See ``set_group_retired``."""
+    from app.services.synth_review_queue_service import set_group_retired
+
+    try:
+        return await set_group_retired(db, project_id, source=req.source, retired=req.retired)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 class MarkConventionsCurrentRequest(BaseModel):
     source: str = Field(..., max_length=256)
 

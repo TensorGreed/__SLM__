@@ -512,9 +512,23 @@ class ConventionsVersionTests(unittest.TestCase):
 
         summary = asyncio.run(_go())
         self.assertEqual(summary.conventions_types, ["person_name"], "default vocabulary = the project's defined types")
+
+        # A legacy row without synth_source is the queue's "legacy:<source>" group.
+        rows_now = [json.loads(l) for l in (syn / "synthetic.jsonl").read_text().splitlines() if l.strip()]
+        rows_now.append({"id": 3, "text": "Old Ada row.", "entities": [], "source": "teacher_llm"})
+        (syn / "synthetic.jsonl").write_text("\n".join(json.dumps(r) for r in rows_now) + "\n")
+
+        async def _legacy():
+            async with async_session_factory() as db:
+                return await relabel.relabel_training_rows(db, pid, backend_override=Labeller(), source="legacy:teacher_llm")
+
+        self.assertEqual(asyncio.run(_legacy()).rows, 1)
         self.assertEqual(stale_sources(), ["passage_labels:doc=2"], "the relabelled group is current")
         client.put(f"/api/projects/{pid}/synthetic/type-definitions", json={"definitions": {"person_name": "a person's name"}})
-        self.assertEqual(stale_sources(), ["passage_labels:doc=1", "passage_labels:doc=2"], "a definition change makes it stale again")
+        self.assertEqual(
+            stale_sources(), ["legacy:teacher_llm", "passage_labels:doc=1", "passage_labels:doc=2"],
+            "a definition change makes every group stale again",
+        )
 
 
 class MarkConventionsCurrentTests(unittest.TestCase):
@@ -541,3 +555,32 @@ class MarkConventionsCurrentTests(unittest.TestCase):
         self.assertEqual(stale, ["g2"])
         r = client.post(f"/api/projects/{pid}/synthetic/review-queue/mark-conventions-current", json={"source": "nope"})
         self.assertEqual(r.status_code, 400)
+
+
+class RetireGroupTests(unittest.TestCase):
+    def test_retire_takes_a_group_out_of_training_and_restore_brings_it_back(self):
+        from app.services.dataset_service import _load_records_from_file
+
+        pid = client.post("/api/projects", json={"name": f"retire-{time.time_ns()}", "description": "x"}).json()["id"]
+        syn = settings.DATA_DIR / "projects" / str(pid) / "synthetic"
+        syn.mkdir(parents=True, exist_ok=True)
+        rows = [
+            {"id": 1, "text": "a", "entities": [], "synth_source": "g1"},  # legacy: no review_status = accepted
+            {"id": 2, "text": "b", "entities": [], "synth_source": "g1", "review_status": "rejected", "reject_reason": "bad"},
+            {"id": 3, "text": "c", "entities": [], "synth_source": "g2", "review_status": "accepted", "relabelled_by": "cloud:anthropic:m"},
+        ]
+        path = syn / "synthetic.jsonl"
+        path.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+        url = f"/api/projects/{pid}/synthetic/review-queue/retire-group"
+        out = client.post(url, json={"source": "g1"}).json()
+        self.assertEqual((out["rows_changed"], out["group_rows"]), (1, 2))
+        texts = sorted(r["text"] for r in _load_records_from_file(path))
+        self.assertEqual(texts, ["c"], "retired rows never train")
+        q = client.get(f"/api/projects/{pid}/synthetic/review-queue").json()
+        self.assertEqual(q["labeller_pins"], ["cloud:anthropic:m"])
+        out = client.post(url, json={"source": "g1", "retired": False}).json()
+        self.assertEqual(out["rows_changed"], 1)
+        saved = {x["id"]: x for x in (json.loads(l) for l in path.read_text().splitlines() if l.strip())}
+        self.assertEqual(saved[1]["review_status"], "accepted")
+        self.assertEqual(saved[2]["reject_reason"], "bad", "a row rejected for another reason stays rejected")
+        self.assertEqual(client.post(url, json={"source": "nope"}).status_code, 400)
