@@ -470,6 +470,7 @@ session-start guidance.
 - `frontend/src/api/sftLift.ts` — Typed wrapper for the Theme 8 Epic 4 "Did SFT help?" lift summary.
 - `frontend/src/api/sliceDefinitions.ts` — Slice-definitions CRUD client.
 - `frontend/src/api/smokeTest.ts` — Typed client for the project smoke-test endpoint (Diagnostics
+- `frontend/src/api/spanThresholds.ts` — Span-tagger threshold tuning (validation split) and the project's
 - `frontend/src/api/studentTeacherComparison.ts` — Typed wrapper for the Track 1 Epic A slice 3 student-vs-teacher comparison.
 - `frontend/src/api/synthPlaybook.ts` — Typed API wrapper for the synth playbook framework
 - `frontend/src/api/taskShape.ts` — Typed wrapper for the unified task-shape detector (Wave 2b).
@@ -599,6 +600,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/SeedShipTable.tsx` — SeedShipTable — on a multi-seed run's Eval summary: every seed with its
 - `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Did SFT help?" lift summary panel (Theme 8 Epic 4).
 - `frontend/src/components/evaluation/SlicesSection.tsx` — Quality-Lift phase 7 slice 1 — Slices editor section.
+- `frontend/src/components/evaluation/SpanThresholdTuner.tsx` — Threshold tuning for a span-tagging run, with per-type recall floors.
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.tsx` — Student-vs-teacher distillation comparison panel (Track 1, Epic A, slice 3).
 - `frontend/src/components/export/ExportPanel.tsx` — Model export orchestrator supporting format conversion and deployment-target provisioning.
 - `frontend/src/components/extensions/ExtensionKindList.tsx` — ExtensionKindList — left column of the Extension Studio page
@@ -947,7 +949,7 @@ session-start guidance.
 - `backend/tests/test_span_packaging.py` — Epic P5 — packaging a span (token-classification) model:
 - `backend/tests/test_span_refine.py` — Refine weak types: the latest span_set evaluation names the types under
 - `backend/tests/test_span_relabel.py` — Answer key from a second model: relabel a split's texts (unchanged),
-- `backend/tests/test_span_thresholds.py` — Per-type score thresholds tuned on the validation split (P1t).
+- `backend/tests/test_span_thresholds.py` — Per-type score thresholds tuned on the validation split (P1t), with
 - `backend/tests/test_span_type_definitions.py` — Entity-type definitions: one labelling convention for every model that
 - `backend/tests/test_split_defaults.py` — Wave 2d — safe data defaults a newcomer doesn't have to know about.
 - `backend/tests/test_split_keep_test.py` — split_dataset(keep_test=True): the active test rows stay verbatim, the
@@ -1068,6 +1070,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/SeedShipTable.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/SftLiftPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/SlicesSection.test.tsx` — Quality-Lift phase 7 slice 1 — SlicesSection tests.
+- `frontend/src/components/evaluation/SpanThresholdTuner.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalLabel.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalSplit.test.ts` — _(no docstring)_

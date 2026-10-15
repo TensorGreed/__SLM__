@@ -72,6 +72,63 @@ def _fmt(value: Any) -> str:
     return f"{float(value):.2f}" if isinstance(value, (int, float)) else "–"
 
 
+_FLOOR_STATUS_TEXT = {
+    "met": "met",
+    "not_reachable": "not met — not reachable even keeping every span",
+    "no_support": "not measured — no reference spans of this type",
+}
+
+
+def recall_floor_lines(thresholds: dict[str, Any] | None) -> list[str]:
+    """Card section for the recall floors a thresholds.json records (none →
+    no section). Numbers come from its ``tuned.report`` (validation split);
+    a floor set but never tuned against is said so."""
+    if not isinstance(thresholds, dict):
+        return []
+    floors = thresholds.get("recall_floors") if isinstance(thresholds.get("recall_floors"), dict) else {}
+    if not floors:
+        return []
+    tuned = thresholds.get("tuned") if isinstance(thresholds.get("tuned"), dict) else {}
+    report = tuned.get("report") if isinstance(tuned.get("report"), dict) else {}
+    default = floors.get("_default")
+    lines = ["### Recall floors", ""]
+    split_size = f" ({tuned['rows']} texts)" if tuned.get("rows") else ""
+    lines.append(
+        "A missed span is the leak in redaction, so these types were tuned to keep at least this recall "
+        f"on the validation split{split_size}: the threshold is the "
+        "best-precision one that still meets the floor."
+        + (f" Types without their own floor use {_fmt(default)}." if isinstance(default, (int, float)) else "")
+    )
+    lines.append("")
+    rows = [(t, r) for t, r in sorted(report.items()) if isinstance(r, dict) and r.get("floor") is not None]
+    if rows:
+        lines.append("| Type | Floor | Validation recall | Precision | Threshold | Met on validation |")
+        lines.append("|---|---|---|---|---|---|")
+        for t, r in rows:
+            lines.append(
+                f"| `{t}` | {_fmt(r.get('floor'))} | {_fmt(r.get('recall_before'))} → {_fmt(r.get('recall_after'))} "
+                f"| {_fmt(r.get('precision_before'))} → {_fmt(r.get('precision_after'))} | {_fmt(r.get('threshold'))} "
+                f"| {_FLOOR_STATUS_TEXT.get(str(r.get('floor_status')), '–')} |"
+            )
+        lines.append("")
+    else:
+        lines.append("Floors set: " + ", ".join(f"`{t}` ≥ {_fmt(v)}" for t, v in sorted(floors.items()) if t != "_default")
+                     + ". Thresholds were not tuned against them, so whether they are met is not known.")
+        lines.append("")
+    bias = thresholds.get("recall_bias")
+    suggestion = tuned.get("recall_bias_suggestion") if isinstance(tuned.get("recall_bias_suggestion"), dict) else None
+    if isinstance(bias, (int, float)) and bias > 0:
+        lines.append(f"`recall_bias` is {bias:g}: chosen so the floors above are reachable; it adds spans of every type.")
+        lines.append("")
+    elif suggestion and suggestion.get("recall_bias") is not None:
+        lines.append(
+            f"A `recall_bias` of {suggestion['recall_bias']:g} would meet the unmet floors on validation "
+            "(it was not applied — it lowers precision for every type)."
+        )
+        lines.append("")
+    return lines
+
+
 def _is_hub_id(name: str | None) -> bool:
     if not name:
         return False
@@ -91,6 +148,7 @@ def build_span_model_card(
     thresholds_file: bool = True,
     benchmarks: list[dict[str, Any]] | None = None,
     seed_selection: str | None = None,
+    thresholds: dict[str, Any] | None = None,
 ) -> str:
     """Markdown model card (with HF front matter) for a span tagger.
 
@@ -104,7 +162,9 @@ def build_span_model_card(
     ``benchmarks``: external benchmarks scored for this run
     (``external_benchmark_service.serialize_benchmark`` with a ``result``).
     ``seed_selection``: how this run was picked from a multi-seed group
-    (``seed_selection_service.selection_text``) — a "Seed selection" line."""
+    (``seed_selection_service.selection_text``) — a "Seed selection" line.
+    ``thresholds``: the model's thresholds.json — its recall floors and
+    whether tuning met each on the validation split (``recall_floor_lines``)."""
     training = training or {}
     evaluations = [e for e in (evaluations or []) if isinstance(e, dict) and e.get("f1") is not None]
     types = sorted({str(t) for t in entity_types if t})
@@ -271,6 +331,7 @@ def build_span_model_card(
             "probability so borderline tokens are tagged (more recall, less precision)."
         )
         lines.append("")
+    lines += recall_floor_lines(thresholds)
 
     limits: list[str] = []
     if evaluations:
@@ -485,7 +546,9 @@ async def package_token_classifier(
     except Exception:  # noqa: BLE001 — the card never fails an export
         benchmarks = []
     window = _window(model_dir)
+    saved_thresholds = read_thresholds(model_dir)
     card = build_span_model_card(
+        thresholds=saved_thresholds,
         entity_types=entity_types,
         base_model=experiment.base_model,
         experiment_id=experiment.id,

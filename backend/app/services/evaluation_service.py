@@ -2001,14 +2001,16 @@ def _run_token_classification_inference(
     infer_started = perf_counter()
     # The model's tuned per-type thresholds (thresholds.json) — the same
     # decoding the redact endpoint and the exported model use.
-    from app.services.span_threshold_service import thresholds_for_decoding
+    from app.services.span_threshold_service import recall_bias_for_decoding, thresholds_for_decoding
 
     thresholds = thresholds_for_decoding(model_path)
+    recall_bias = recall_bias_for_decoding(model_path)
     spans = predict_spans(
         texts, model, tokenizer, artifacts["id2label"],
         max_length=min(512, int(artifacts.get("max_length") or 512)), device=device,
         ocr_tolerant=any(bool(p.get("ocr_tolerant")) for p in pairs),
         thresholds=thresholds or None,
+        recall_bias=recall_bias,
     )
     predictions: list[dict] = []
     for pair, text, row_spans in zip(pairs, texts, spans):
@@ -2024,6 +2026,7 @@ def _run_token_classification_inference(
             "mode": "token_classification",
             "device": device,
             "thresholds_applied": thresholds,
+            "recall_bias_applied": recall_bias,
             "load_seconds": round(load_seconds, 3),
             "infer_seconds": round(perf_counter() - infer_started, 3),
             "rows": len(pairs),

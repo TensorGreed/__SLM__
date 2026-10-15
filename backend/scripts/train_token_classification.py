@@ -377,6 +377,80 @@ def decode_window_predictions(
     return out
 
 
+def score_tokens(
+    texts: list[str],
+    model: Any,
+    tokenizer: Any,
+    *,
+    max_length: int = 512,
+    stride: int | None = None,
+    batch_size: int = 16,
+    device: str | None = None,
+) -> list[tuple[list[tuple[int, int]], list[Any]]]:
+    """Run the model once over ``texts`` (windowed like ``predict_spans``)
+    and return, per text, its tokens' character offsets and one logit
+    vector per token (``merge_window_scores``). Decoding these with
+    ``decode_token_scores`` is cheap and model-free, so a caller that wants
+    several decodings of one split (thresholds, recall biases) scores it
+    once."""
+    import torch
+
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    model.eval()
+    if not texts:
+        return []
+    encoded = encode_windows(tokenizer, texts, max_length=max_length, stride=stride)
+    window_offsets = [[tuple(o) for o in offs] for offs in encoded["offset_mapping"]]
+    sample_map = list(encoded["overflow_to_sample_mapping"])
+    window_logits: list[Any] = []
+    for start in range(0, len(window_offsets), batch_size):
+        features = [
+            {"input_ids": encoded["input_ids"][i], "attention_mask": encoded["attention_mask"][i]}
+            for i in range(start, min(start + batch_size, len(window_offsets)))
+        ]
+        batch = tokenizer.pad(features, return_tensors="pt")
+        with torch.no_grad():
+            logits = model(**{k: v.to(device) for k, v in batch.items()}).logits.float().cpu().numpy()
+        for row, feature in zip(logits, features):
+            window_logits.append(row[: len(feature["input_ids"])])
+    return merge_window_scores(len(texts), window_offsets, sample_map, window_logits)
+
+
+def decode_token_scores(
+    texts: list[str],
+    token_scores: list[tuple[list[tuple[int, int]], list[Any]]],
+    id_to_label: dict[int, str],
+    *,
+    with_scores: bool = False,
+    thresholds: dict[str, float] | None = None,
+    min_score: float | None = None,
+    recall_bias: float = 0.0,
+    ocr_tolerant: bool = False,
+) -> list[list[dict[str, Any]]]:
+    """Spans from ``score_tokens`` output — the decoding half of
+    ``predict_spans``: argmax per token by default, the scored decoder
+    (``decode_scored_spans``) with ``with_scores`` / ``thresholds`` /
+    ``min_score`` / ``recall_bias``. No model call."""
+    import numpy as np
+
+    if with_scores or thresholds or min_score or recall_bias:
+        out = [
+            decode_scored_spans(
+                text, offsets, scores, id_to_label,
+                recall_bias=recall_bias, thresholds=thresholds, min_score=min_score,
+            )
+            for text, (offsets, scores) in zip(texts, token_scores)
+        ]
+    else:
+        out = [
+            token_labels_to_spans(offsets, [int(np.argmax(np.asarray(v))) for v in scores], id_to_label, text)
+            for text, (offsets, scores) in zip(texts, token_scores)
+        ]
+    if ocr_tolerant:
+        out = [ocr_tidy_spans(text, spans) for text, spans in zip(texts, out)]
+    return out
+
+
 def predict_spans(
     texts: list[str],
     model: Any,
@@ -399,7 +473,8 @@ def predict_spans(
     model. A text longer than ``max_length`` tokens is read in overlapping
     windows (``encode_windows``) and merged (``merge_window_scores``), so
     nothing past the first window is dropped. ``batch_size`` counts
-    windows.
+    windows. It is ``score_tokens`` (the model call) followed by
+    ``decode_token_scores``.
 
     By default every token takes its argmax label (the eval path). With
     ``with_scores``, ``thresholds`` / ``min_score`` or a ``recall_bias``
@@ -408,40 +483,16 @@ def predict_spans(
     that type), spans under their type's threshold are dropped, and a
     recall bias lowers the "O" probability so borderline tokens become
     entities ("high-recall mode")."""
-    import torch
-
-    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    model.eval()
     if not texts:
         return []
-    encoded = encode_windows(tokenizer, texts, max_length=max_length, stride=stride)
-    window_offsets = [[tuple(o) for o in offs] for offs in encoded["offset_mapping"]]
-    sample_map = list(encoded["overflow_to_sample_mapping"])
-    window_logits: list[Any] = []
-    for start in range(0, len(window_offsets), batch_size):
-        features = [
-            {"input_ids": encoded["input_ids"][i], "attention_mask": encoded["attention_mask"][i]}
-            for i in range(start, min(start + batch_size, len(window_offsets)))
-        ]
-        batch = tokenizer.pad(features, return_tensors="pt")
-        with torch.no_grad():
-            logits = model(**{k: v.to(device) for k, v in batch.items()}).logits.float().cpu().numpy()
-        for row, feature in zip(logits, features):
-            window_logits.append(row[: len(feature["input_ids"])])
-    if with_scores or thresholds or min_score or recall_bias:
-        merged = merge_window_scores(len(texts), window_offsets, sample_map, window_logits)
-        out = [
-            decode_scored_spans(
-                text, offsets, scores, id_to_label,
-                recall_bias=recall_bias, thresholds=thresholds, min_score=min_score,
-            )
-            for text, (offsets, scores) in zip(texts, merged)
-        ]
-    else:
-        out = decode_window_predictions(texts, window_offsets, sample_map, window_logits, id_to_label)
-    if ocr_tolerant:
-        out = [ocr_tidy_spans(text, spans) for text, spans in zip(texts, out)]
-    return out
+    token_scores = score_tokens(
+        texts, model, tokenizer, max_length=max_length, stride=stride, batch_size=batch_size, device=device,
+    )
+    return decode_token_scores(
+        texts, token_scores, id_to_label,
+        with_scores=with_scores, thresholds=thresholds, min_score=min_score,
+        recall_bias=recall_bias, ocr_tolerant=ocr_tolerant,
+    )
 
 
 # ── OCR-tolerant decoding ────────────────────────────────────────────────

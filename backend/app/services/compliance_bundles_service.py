@@ -15,7 +15,10 @@ span project:
 
 ``regime_scores`` turns a span evaluation's ``metrics.per_class`` (tp / fp
 / fn per type) into micro P / R / F1 per regime — recall is the headline:
-for redaction, a missed span is the leak.
+for redaction, a missed span is the leak. Each built-in bundle also carries
+a ``recall_floor``; ``suggested_recall_floors`` offers it for the regime's
+types, but the floors the threshold tuner uses are only ever set by the user
+(``span_threshold_service``, ``runtime_config["span_recall_floors"]``).
 """
 
 from __future__ import annotations
@@ -53,6 +56,7 @@ BUILTIN_BUNDLES: list[dict[str, Any]] = [
     {
         "id": "pci_dss",
         "regime": "pci_dss",
+        "recall_floor": 0.95,
         "name": "PCI-DSS",
         "description": "Payment card and bank data (cardholder data + sensitive authentication data).",
         "types": ["credit_card", "card_expiry", "cvv", "bank_account", "iban"],
@@ -60,6 +64,7 @@ BUILTIN_BUNDLES: list[dict[str, Any]] = [
     {
         "id": "gdpr",
         "regime": "gdpr",
+        "recall_floor": 0.9,
         "name": "GDPR personal data",
         "description": "Data that identifies a natural person directly or indirectly.",
         "types": [
@@ -70,6 +75,7 @@ BUILTIN_BUNDLES: list[dict[str, Any]] = [
     {
         "id": "hipaa",
         "regime": "hipaa",
+        "recall_floor": 0.95,
         "name": "HIPAA PHI",
         "description": "Protected health information: health details plus the identifiers HIPAA counts.",
         "types": [
@@ -81,6 +87,7 @@ BUILTIN_BUNDLES: list[dict[str, Any]] = [
     {
         "id": "ccpa",
         "regime": "ccpa",
+        "recall_floor": 0.9,
         "name": "CCPA personal information",
         "description": "Identifiers and financial data the California Consumer Privacy Act covers.",
         "types": [
@@ -116,6 +123,7 @@ def list_bundles() -> list[dict[str, Any]]:
             "regime_label": regime_label(b["regime"]),
             "name": b["name"],
             "description": b["description"],
+            "recall_floor": b.get("recall_floor"),
             "types": [{"type": t, "definition": type_definition(t)} for t in b["types"]],
         }
         for b in BUILTIN_BUNDLES
@@ -166,6 +174,21 @@ def _custom_tags(type_regimes: dict[str, list[str]]) -> list[str]:
 
 def entity_types(state: dict[str, Any]) -> list[str]:
     return list(state.get("type_regimes") or {})
+
+
+def suggested_recall_floors(runtime_config: Any) -> dict[str, dict[str, Any]]:
+    """Suggested minimum recalls for the project's regime-tagged types:
+    ``{type: {floor, regimes}}`` — the highest ``recall_floor`` among the
+    built-in regimes the type is tagged with (custom tags carry none). A
+    suggestion only: the tuner reads ``runtime_config["span_recall_floors"]``
+    and nothing here writes it — the user accepts a suggestion in the UI."""
+    floors = {b["regime"]: float(b["recall_floor"]) for b in BUILTIN_BUNDLES if b.get("recall_floor") is not None}
+    out: dict[str, dict[str, Any]] = {}
+    for ent_type, regimes in compliance_state(runtime_config)["type_regimes"].items():
+        tagged = [r for r in regimes if r in floors]
+        if tagged:
+            out[ent_type] = {"floor": max(floors[r] for r in tagged), "regimes": tagged}
+    return out
 
 
 def apply_bundles(

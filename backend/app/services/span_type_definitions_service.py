@@ -122,6 +122,28 @@ async def load_scan_tolerant(db: AsyncSession | None, project_id: int) -> bool:
     return project_scan_tolerant(project) if project is not None else False
 
 
+def project_entity_types(project_id: int) -> list[str]:
+    """Entity types in the project's saved synthetic span rows and prepared
+    training split (sorted, lower-cased)."""
+    from app.config import settings
+
+    base = settings.DATA_DIR / "projects" / str(project_id)
+    found: set[str] = set()
+    for path in (base / "synthetic" / "synthetic.jsonl", base / "prepared" / "train.jsonl"):
+        if not path.exists():
+            continue
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    row = json.loads(line)
+                except Exception:  # noqa: BLE001
+                    continue
+                for ent in row.get("entities") or [] if isinstance(row, dict) else []:
+                    if isinstance(ent, dict) and ent.get("type"):
+                        found.add(str(ent["type"]).strip().lower())
+    return sorted(found)
+
+
 # ── Conventions version ─────────────────────────────────────────────────
 #
 # Every labeller stamps the rows it writes with CONVENTIONS_VERSION_KEY =
