@@ -36,7 +36,9 @@ SCAN_TOLERANT_CLAUSE = (
     "(‘ ~ _ « : |) can sit inside or next to a value. A value broken by spaces or stray marks is still "
     "ONE entity — label it from its first to its last character (e.g. \"2024-02- 10\", "
     "\"US- Z1Y2X3W4\", \"Sarah - Jenkins\"); never include a stray mark at its start or end, nor a "
-    "label word or prefix in front of it (\"Type\", \"SSN:\", \"MRN\").\n"
+    "label word in front of it (\"Account number:\", \"SSN:\", \"MRN:\", \"Type\"). A prefix that is part "
+    "of the identifier itself — joined to it by a hyphen or with no space (\"ACCT-3637328949\", "
+    "\"EMP-004521\", \"PT-30021\") — stays in the entity.\n"
 )
 MAX_TYPES = 200
 MAX_DEFINITION_CHARS = 400
@@ -137,7 +139,12 @@ def conventions_version(definitions: dict[str, str] | None, scan_tolerant: bool 
     defs = normalise_definitions(definitions)
     if not defs and not scan_tolerant:
         return None
-    payload = json.dumps({"definitions": defs, "scan_tolerant": bool(scan_tolerant)}, sort_keys=True, ensure_ascii=False)
+    # The clause's own wording is part of what the labellers are told, so a
+    # change to it makes rows labelled under the old wording stale too.
+    payload = json.dumps(
+        {"definitions": defs, "scan_tolerant": bool(scan_tolerant), "scan_clause": SCAN_TOLERANT_CLAUSE if scan_tolerant else None},
+        sort_keys=True, ensure_ascii=False,
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 

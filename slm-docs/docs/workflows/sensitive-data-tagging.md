@@ -835,6 +835,32 @@ differences, not errors: Gretel keeps an "ACCT-" prefix the scanned-text
 rule strips. The next gap is context, not formats: rows where the same
 shape carries different types depending on the label before it.
 
+**Context over shape (P1q, 2026-10-15).** Two changes. The scanned-text
+clause now keeps a prefix that is part of an identifier ("ACCT-3637328949",
+"EMP-004521", "PT-30021" — joined by a hyphen or with no space) and strips
+only label words in front of it ("Account number:", "SSN:", "MRN:"); the
+clause's wording is now part of the conventions version, so changing it
+flags every row labelled under the old wording. And 40 contrast documents
+put the same shapes under different labels ("Credit card number: 4539 …" /
+"Account number: 4539…" / "Customer ID: 4539…", id-like plates next to
+employee numbers and MRNs) and list several ids on one line separated by
+commas — 65 passages, 146 cards, 145 accounts, 115 plates. Sonnet re-keyed
+both keys, labelled the new rows and relabelled every stale row through the
+review queue:
+
+| three seeds each | before (P1p) | after (P1q) |
+|---|---|---|
+| Gretel license_plate | 0.08 ± 0.04 | **0.46 ± 0.03** |
+| Gretel credit_card | 0.40 ± 0.01 | **0.57 ± 0.07** |
+| Gretel bank_account | 0.10 ± 0.02 | **0.23 ± 0.03** |
+| Gretel PII F1 (14 types) | 0.619 ± 0.011 | **0.660 ± 0.010** |
+| CoNLL people F1 | 0.678 ± 0.036 | 0.667 ± 0.012 |
+| scan / clean key | 0.866 / 0.971 | 0.878 / 0.965 |
+
+The model learned to read the label before an identifier: plates rose from
+near zero, cards and accounts by half again, with nothing else moving.
+Bank accounts are still the weakest mapped type (0.23).
+
 ## What the first run produced (2026-10-13)
 
 Everything below ran on one machine with local Ollama (gemma4) as the

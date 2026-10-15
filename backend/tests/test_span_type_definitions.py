@@ -8,6 +8,7 @@ import asyncio
 import json
 import time
 import unittest
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -452,6 +453,12 @@ class ConventionsVersionTests(unittest.TestCase):
         self.assertNotEqual(a, defs.conventions_version({"email": "an email address"}))
         self.assertNotEqual(a, defs.conventions_version({"email": "an email"}, True))
         self.assertIsNotNone(defs.conventions_version({}, True))
+        changed = None
+        with mock.patch.object(defs, "SCAN_TOLERANT_CLAUSE", "other wording"):
+            changed = defs.conventions_version({"email": "an email"}, True)
+        self.assertNotEqual(changed, defs.conventions_version({"email": "an email"}, True), "clause wording is part of the version")
+        with mock.patch.object(defs, "SCAN_TOLERANT_CLAUSE", "other wording"):
+            self.assertEqual(defs.conventions_version({"email": "an email"}), a, "without the scan flag the clause doesn't matter")
 
     def test_labeller_and_pin(self):
         self.assertEqual(defs.row_labeller({"relabelled_by": "cloud:anthropic:m"}), "cloud:anthropic:m")

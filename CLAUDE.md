@@ -1218,7 +1218,8 @@ runs real CPU inference). ~4 min locally.
   (`span_type_definitions_service.SCAN_TOLERANT_KEY`, `project_scan_tolerant`,
   `load_scan_tolerant`); `definitions_clause(types, defs, scan_tolerant=)`
   appends `SCAN_TOLERANT_CLAUSE` (a value broken by stray spaces / marks is one
-  span, no marks or label word at its edges) — passed by span synthesis, the
+  span, no marks or label word at its edges; a prefix that is part of the id —
+  ACCT-…, EMP-…, PT-… — stays; the clause text is part of `conventions_version`) — passed by span synthesis, the
   relabeller (all three paths) and the gold-LLM prompt. Decoding:
   `train_token_classification.ocr_tidy_spans` (trim `OCR_EDGE_MARKS`; join
   same-type neighbours whose gap ≤ `OCR_MAX_GAP` 3 chars of whitespace /
