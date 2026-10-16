@@ -505,6 +505,30 @@ type's recall and precision before → after along with its
 model card has a **Recall floors** table that shows whether each floor
 was met on validation.
 
+**A recall-floor tune, measured on the benchmarks (2026-10-16, run
+#117).** Floors of 0.9 on `person_name` and the compliance bundles' floors
+on everything else (PCI / HIPAA 0.95, GDPR / CCPA 0.9), with "apply the
+suggested recall bias" on. On the 156-row validation split nine floors
+were already met at threshold 0 and **ten were not reachable at any
+threshold or any bias in the grid** (address, bank_account, credit_card,
+diagnosis, health_plan_id, iban, medication, passport, phone, visit_date
+— their validation recall tops out at 0.82–0.94), so the tuner applied
+**no** recall bias and, for the floored types, dropped the per-type
+thresholds to 0 (validation micro F1 0.934 → 0.939, precision up on the
+eight types that kept a threshold). On the benchmarks that is a **loss**:
+CoNLL people unchanged (P 0.88 / R 0.59 — `person_name` never had a
+threshold), Gretel **F1 0.708 → 0.668, precision 0.680 → 0.615, recall
+0.740 → 0.732**. Recall rose by at most 0.02 on any type (credit_card
+0.81 → 0.83, phone 0.85 → 0.87) while precision fell by 0.2–0.3 on the
+same types (credit_card 0.67 → 0.40, phone 0.77 → 0.56, bank_account
+0.40 → 0.20), and medical_record_number lost recall (0.56 → 0.48) to its
+raised threshold. So no: recall did not rise more than precision fell —
+the missed spans on real text are not borderline tokens a lower bar
+would admit; the model doesn't see them at all. The validation-tuned
+thresholds were restored and the benchmarks re-scored under them. The
+lever for recall on these types is training text with those shapes, not
+decoding.
+
 ### Try it: the redact endpoint
 
 ```bash
