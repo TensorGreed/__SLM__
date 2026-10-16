@@ -255,6 +255,17 @@ def build_span_model_card(
             if block.get("written_by"):
                 lines.append(f"Reference spans written by `{block['written_by']}`.")
                 lines.append("")
+            review = block.get("review")
+            if isinstance(review, dict) and review.get("line"):
+                reviewed = review.get("reviewed_scores") or {}
+                scored = ""
+                if reviewed.get("rows") and reviewed.get("f1") is not None:
+                    scored = (
+                        f" On the checked rows: precision {_fmt(reviewed.get('precision'))} · recall "
+                        f"{_fmt(reviewed.get('recall'))} · F1 {_fmt(reviewed.get('f1'))} ({reviewed['rows']} texts)."
+                    )
+                lines.append(f"Human review: {review['line']}.{scored}")
+                lines.append("")
             lines.append(
                 f"Overall: precision {_fmt(block.get('precision'))} · recall {_fmt(block.get('recall'))} · F1 {_fmt(block.get('f1'))}"
             )
@@ -492,8 +503,27 @@ async def span_evaluations(db: AsyncSession, project_id: int, experiment_id: int
         }
         if name == "gold_test":
             block["written_by"] = _answer_key_source(project_id)
+            block["review"] = _answer_key_review_block(project_id, result)
         blocks.append(block)
     return blocks
+
+
+def _answer_key_review_block(project_id: int, result: EvalResult) -> dict[str, Any] | None:
+    """The model card's evidence of a human-checked answer key: the review
+    counts as a line + the eval's scores on the checked rows only."""
+    from app.services.gold_review_service import gold_path, load_rows, review_counts, review_line, split_scores
+
+    try:
+        rows = load_rows(gold_path(project_id, "gold_test"))
+    except Exception:  # noqa: BLE001
+        return None
+    counts = review_counts(rows)
+    line = review_line(counts)
+    if line is None:
+        return None
+    details = result.details if isinstance(result.details, dict) else {}
+    split = split_scores(details.get("row_scores"), rows, eval_at=result.created_at) or {}
+    return {**counts, "line": line, "reviewed_scores": split.get("reviewed_scores"), "stale": bool(split.get("stale"))}
 
 
 def _label_space(model_dir: Path) -> list[str]:

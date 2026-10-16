@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
-import { checkLiftAcrossSeeds, fetchEvalSummary, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
+import { answerKeyReviewText, checkLiftAcrossSeeds, fetchEvalSummary, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
 import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import RedactionTryBox from './RedactionTryBox';
 import SeedShipTable from './SeedShipTable';
@@ -473,6 +473,17 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         <p className="eval-summary__metric" data-testid="eval-summary-span-key">
                             <strong>Answer key</strong>
                             {summary.answer_key.written_by ? ` (written by ${summary.answer_key.written_by})` : ''}: {spanScoreText(summary.answer_key)}
+                        </p>
+                    )}
+                    {summary.answer_key?.review && (
+                        <p className="eval-summary__judge" data-testid="eval-summary-span-review">
+                            {answerKeyReviewText(summary.answer_key.review)}
+                            {' '}The checked rows are the score that cannot be the key's own mistake.
+                        </p>
+                    )}
+                    {summary.answer_key && !summary.answer_key.review && (
+                        <p className="eval-summary__judge" data-testid="eval-summary-span-review-none">
+                            Nobody has checked the answer key yet — a model wrote it, so this score inherits its mistakes. Check rows on the Answer Key tab.
                         </p>
                     )}
                     {summary.test && (

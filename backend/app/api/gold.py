@@ -26,6 +26,7 @@ from app.services.gold_service import (
     import_qa_pairs,
     lock_gold_dataset,
 )
+from app.services.gold_review_service import GoldReviewError, review_queue, set_review
 from app.services.gold_set_diagnostics_service import (
     compute_gold_set_diagnostics,
 )
@@ -629,6 +630,54 @@ async def delete_saved_llm_key(
     secret_provider, key_name = _PROVIDER_SECRET_MAP[provider]
     await delete_project_secret(db, project_id, secret_provider, key_name)
     return Response(status_code=204)
+
+
+# ── Answer-key review (P6 Trust) ───────────────────────────────────────
+
+
+class ReviewVerdictRequest(BaseModel):
+    dataset_type: Literal["gold_test", "gold_dev"] = "gold_test"
+    index: int = Field(ge=0)
+    key: str | None = None
+    verdict: Literal["accepted", "corrected", "rejected"] | None = None
+    corrected: dict | None = None
+    note: str = ""
+
+
+@router.get("/review")
+async def answer_key_review_queue(
+    project_id: int,
+    dataset_type: Literal["gold_test", "gold_dev"] = "gold_test",
+    experiment_id: int | None = None,
+    compare: bool = True,
+    db: AsyncSession = Depends(get_db),
+):
+    """The answer key as a human review queue: rows unreviewed-first, the
+    ones the project's latest span run disagrees with most at the top
+    (``agreement`` = strict span F1 between key and model; ``predicted``
+    = the model's spans). ``compare=false`` skips the model."""
+    try:
+        return await review_queue(db, project_id, dataset_type=dataset_type, experiment_id=experiment_id, compare=compare)
+    except GoldReviewError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.put("/review")
+async def answer_key_review_verdict(
+    project_id: int,
+    body: ReviewVerdictRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Record a reviewer's verdict on one row (``verdict`` null clears it
+    and restores the model's labels). A ``corrected`` verdict replaces the
+    row's answer fields (``entities`` validated against the text)."""
+    try:
+        return await set_review(
+            db, project_id, dataset_type=body.dataset_type, index=body.index, key=body.key,
+            verdict=body.verdict, corrected=body.corrected, note=body.note,
+        )
+    except GoldReviewError as exc:
+        raise HTTPException(400, str(exc))
 
 
 @router.get("/entries")

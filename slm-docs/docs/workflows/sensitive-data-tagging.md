@@ -169,6 +169,39 @@ dates), `bank_account` 0.32, `national_id` 0.59, `provider_name` 0.52
 (the two labellers disagree on those too), and names inside greetings
 (person_name recall 0.72).
 
+### Check the answer key yourself
+
+Every key above was written by a model, so a score against it inherits
+that model's mistakes — and the training labels came from the same
+family, so the two can agree on an error. The Answer Key tab (test set)
+now carries **Check the answer key yourself**: the key's rows, one by one,
+with the passage and its spans highlighted. Rows come **unreviewed
+first**, and among those the ones where the project's latest trained run
+**disagrees with the key most** (strict span F1 between the two — one of
+them is wrong, and a person decides which); green = in the key, orange =
+the model missed it, dashed = the model found something the key doesn't
+have. Three verdicts per row: **Accept** (the labels stand), **Fix**
+(edit the spans inline — select text in the passage to add one, or start
+from the model's spans — the original is kept so a cleared verdict
+restores it) and **Reject** (not a fair test: the row leaves every eval).
+Verdicts live on the gold rows themselves (`review` block in
+`gold/gold_test.jsonl`), so every reader scores the corrected labels, and a
+rejected row never reaches the scorer.
+
+The payoff is on the Eval tab: the answer-key line now says how many rows
+a person checked and re-totals the run's score **on the checked rows
+apart from the unchecked ones** — the checked score is the one that
+cannot be the key's own mistake. A correction or rejection newer than the
+eval flags it stale ("re-evaluate to score the corrected key"). The
+exported model card carries the same line under the answer-key
+evaluation ("Human review: 12 of 43 rows checked by a person (3
+corrected, 1 rejected). On the checked rows: …"). API: `GET
+/projects/{id}/gold/review` (queue; `?experiment_id=` picks the run to
+compare with, `compare=false` skips the model), `PUT
+/projects/{id}/gold/review` `{index, key, verdict, corrected?, note?}`
+(`verdict: null` clears). The model's spans are cached per run in
+`gold/review_predictions.json`, so reopening the queue is instant.
+
 ### One labelling convention for both labellers
 
 Two models can both be right and still disagree — is a date in a

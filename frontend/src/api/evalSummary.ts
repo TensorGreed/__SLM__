@@ -48,6 +48,51 @@ export interface SpanEvalBlock {
     by_regime?: SpanRegimeScore[];
     /** answer_key only: who wrote it (e.g. cloud:anthropic:claude-haiku-4-5…). */
     written_by?: string | null;
+    /** answer_key only: the human review of the key (null until a row was
+     *  checked) — counts, and this eval re-totalled over checked vs
+     *  unchecked rows. ``stale``: a correction / rejection is newer than
+     *  the eval, so re-evaluate to score the corrected key. */
+    review?: AnswerKeyReview | null;
+}
+
+export interface ReviewSplitScores {
+    precision: number | null;
+    recall: number | null;
+    f1: number | null;
+    rows: number;
+}
+
+export interface AnswerKeyReview {
+    total: number;
+    reviewed: number;
+    accepted: number;
+    corrected: number;
+    rejected: number;
+    unreviewed: number;
+    reviewed_scores: ReviewSplitScores | null;
+    unreviewed_scores: ReviewSplitScores | null;
+    stale: boolean;
+    changed_since_eval: number;
+}
+
+/** "12 of 43 rows checked by a person · F1 0.91 on the checked rows, 0.96
+ *  on the rest" (+ a re-evaluate note when the eval predates a change). */
+export function answerKeyReviewText(review: AnswerKeyReview): string {
+    const f = (v: number | null | undefined) => (typeof v === 'number' ? v.toFixed(2) : '—');
+    const parts: string[] = [];
+    if (review.corrected) parts.push(`${review.corrected} corrected`);
+    if (review.rejected) parts.push(`${review.rejected} rejected`);
+    let text = `${review.reviewed} of ${review.total} rows checked by a person${parts.length ? ` (${parts.join(', ')})` : ''}`;
+    const checked = review.reviewed_scores;
+    const rest = review.unreviewed_scores;
+    if (checked && checked.rows > 0 && checked.f1 != null) {
+        text += ` · F1 ${f(checked.f1)} on the ${checked.rows} checked row${checked.rows === 1 ? '' : 's'}`;
+        if (rest && rest.rows > 0 && rest.f1 != null) text += `, ${f(rest.f1)} on the ${rest.rows} unchecked`;
+    }
+    if (review.stale) {
+        text += ` · ${review.changed_since_eval} row${review.changed_since_eval === 1 ? '' : 's'} changed since this eval — re-evaluate to score the corrected key`;
+    }
+    return text + '.';
 }
 
 export interface EvalSummaryHeadline {

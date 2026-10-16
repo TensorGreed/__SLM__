@@ -1433,6 +1433,28 @@ runs real CPU inference). ~4 min locally.
   `message` (it used to show every 400 as UPSTREAM_ERROR) — tests should mock
   the real envelope. (Project 31's three 400s on 2026-10-14 were
   LLM_RESPONSE_COUNT_MISMATCH.)
+- **Answer-key review (P6 Trust)** (`services/gold_review_service.py`,
+  `GET/PUT /projects/{id}/gold/review`): a person checks the key row by row.
+  Verdicts live ON the gold row (`review` = {verdict accepted / corrected /
+  rejected, reviewed_at, note, original}); `corrected` replaces the answer
+  fields in place (span rows: `entities`, validated against the text, no
+  overlaps; other shapes: answer / label / summary) and keeps the model's
+  original so `verdict: null` restores it; `is_rejected` rows are dropped by
+  `evaluation_service._load_eval_rows` (never scored) and don't count in the
+  GOLD dataset's `record_count`. Queue order (`order_queue`): unreviewed
+  first, then lowest `row_agreement` between the key and the latest span
+  run's spans (`model_predictions`, cached per run in
+  `gold/review_predictions.json`); rows are identified by `text_key` (sha1 of
+  the text) — `_row_scores_for_pairing` now stores `inputs` (same hash) and
+  per-row `span_tp/fp/fn`, so `split_scores` re-totals a stored span eval
+  over checked vs unchecked rows (`stale` when a correction / rejection is
+  newer than the eval). Surfaces: `answer_key.review` on the span eval
+  summary (`EvalSummaryCard` line via `answerKeyReviewText`), the model
+  card's "Human review: …" line (`_answer_key_review_block`), and
+  `AnswerKeyReviewPanel` (Answer Key tab, test set): passage with key spans
+  (orange = model missed, dashed = model-only), Accept / Fix (inline span
+  editor, select text to add, "Use the model's spans") / Reject / Clear.
+  Tests: `tests/test_gold_review.py`, `AnswerKeyReviewPanel.test.tsx`.
 - **Answer key from a second model** (`services/span_relabel_service.py`,
   Job `span_relabel`, `POST /synthetic/relabel-answer-key` {split, backend,
   entity_types}): `relabel_split_as_answer_key` prompts the backend (synth

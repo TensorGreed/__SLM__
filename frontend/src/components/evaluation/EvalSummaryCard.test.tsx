@@ -80,6 +80,7 @@ describe('EvalSummaryCard', () => {
         apiMock.post.mockResolvedValue({ data: { started: true } });
         render(<EvalSummaryCard projectId={7} experimentId={59} />);
         expect(await screen.findByText('Span F1 0.84 against the answer key')).toBeInTheDocument();
+        expect(screen.getByTestId('eval-summary-span-review-none')).toHaveTextContent('Nobody has checked the answer key yet');
         expect(screen.getByTestId('eval-summary-span-key')).toHaveTextContent(
             'Answer key (written by cloud:anthropic:claude-haiku-4-5): precision 0.83 · recall 0.85 · F1 0.84 on 44 texts',
         );
@@ -495,5 +496,31 @@ describe('EvalPanel advanced disclosure', () => {
 
         expect(await screen.findByTestId('eval-summary')).toBeInTheDocument();
         expect(screen.getByRole('tablist', { name: 'Evaluation sections' })).toBeInTheDocument();
+    });
+});
+
+describe('EvalSummaryCard — answer-key review', () => {
+    it('scores the checked rows apart from the unchecked ones and flags a stale eval', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                kind: 'span_eval', project_id: 7, experiment_id: 59, verdict: 'evaluated', message: null, headline: null,
+                trained: { experiment_name: 'tc' },
+                answer_key: {
+                    eval_result_id: 2, dataset_name: 'gold_test', precision: 0.83, recall: 0.85, f1: 0.84, rows: 44, weakest_types: [],
+                    written_by: 'cloud:anthropic:claude-sonnet-5-5',
+                    review: {
+                        total: 44, reviewed: 12, accepted: 8, corrected: 3, rejected: 1, unreviewed: 32,
+                        reviewed_scores: { precision: 0.9, recall: 0.92, f1: 0.91, rows: 11 },
+                        unreviewed_scores: { precision: 0.8, recall: 0.82, f1: 0.81, rows: 32 },
+                        stale: true, changed_since_eval: 2,
+                    },
+                },
+                test: null, dataset_name: 'gold_test', evaluated_samples: 44, failed_count: 0, failures: [],
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={59} />);
+        const line = await screen.findByTestId('eval-summary-span-review');
+        expect(line).toHaveTextContent('12 of 44 rows checked by a person (3 corrected, 1 rejected) · F1 0.91 on the 11 checked rows, 0.81 on the 32 unchecked · 2 rows changed since this eval — re-evaluate to score the corrected key.');
+        expect(screen.queryByTestId('eval-summary-span-review-none')).not.toBeInTheDocument();
     });
 });

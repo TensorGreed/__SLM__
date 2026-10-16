@@ -366,6 +366,25 @@ def _answer_key_source(project_id: int) -> str | None:
     return None
 
 
+def _answer_key_review(project_id: int, key_result: EvalResult) -> dict[str, Any] | None:
+    """Human review of the answer key (``gold_review_service``): how many
+    rows a person checked, and the eval re-totalled over the checked vs
+    unchecked rows (``split_scores``) — the checked score is the one that
+    can't be the key's own mistake. None when nothing was reviewed."""
+    from app.services.gold_review_service import gold_path, load_rows, review_counts, split_scores
+
+    try:
+        rows = load_rows(gold_path(project_id, "gold_test"))
+    except Exception:  # noqa: BLE001
+        return None
+    counts = review_counts(rows)
+    if not counts.get("reviewed"):
+        return None
+    details = key_result.details if isinstance(key_result.details, dict) else {}
+    split = split_scores(details.get("row_scores"), rows, eval_at=key_result.created_at)
+    return split if split is not None else {**counts, "reviewed_scores": None, "unreviewed_scores": None, "stale": False, "changed_since_eval": 0}
+
+
 async def head_eval_summary(db: AsyncSession, project_id: int, experiment: Experiment) -> dict[str, Any] | None:
     """``kind="head_eval"`` for a classification head on an encoder base
     model: its own scores on the test examples — an encoder can't answer
@@ -443,6 +462,7 @@ async def span_eval_summary(db: AsyncSession, project_id: int, experiment: Exper
     answer_key = span_block(key_result, type_regimes) if key_result is not None else None
     if answer_key is not None:
         answer_key["written_by"] = _answer_key_source(project_id)
+        answer_key["review"] = _answer_key_review(project_id, key_result)
     test = span_block(test_result, type_regimes) if test_result is not None else None
     return {
         "kind": "span_eval",

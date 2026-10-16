@@ -12,6 +12,7 @@ import LlmGoldGeneratePanel from './LlmGoldGeneratePanel';
 import GoldEntryRowBody from './GoldEntryRowBody';
 import type { GoldRowRecipe } from './GoldEntryRowBody';
 import GoldEntryAddForm from './GoldEntryAddForm';
+import AnswerKeyReviewPanel from './AnswerKeyReviewPanel';
 import type { GoldAddPayload } from './GoldEntryAddForm';
 import { decodeFragmentGroups, decodeRowIds } from '../../utils/forecastActionRouter';
 import './GoldSetPanel.css';
@@ -587,6 +588,14 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                             </div>
                         )}
                     </div>
+                )}
+
+                {/* Human review of the answer key (P6): the final set is
+                    what every run is scored against, so a person checks
+                    it row by row — disagreement with the trained model
+                    first. Only for the test set with rows. */}
+                {datasetType === 'gold_test' && entries.length > 0 && (
+                    <AnswerKeyReviewPanel projectId={projectId} datasetType="gold_test" onChanged={fetchEntries} />
                 )}
 
                 {/* Active-filter banner: when filtered, surface how

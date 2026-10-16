@@ -29,6 +29,7 @@ from app.services.eval_task_handler_service import (
 )
 from app.services.record_normalization import canonicalize_record
 from app.services.answer_judge_service import JUDGE_METRIC
+from app.services.gold_review_service import is_rejected, text_key
 
 if TYPE_CHECKING:
     from app.services.answer_judge_service import ResolvedJudge
@@ -1007,7 +1008,9 @@ def _load_eval_rows(file_path: Path) -> list[dict]:
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(row, dict):
+            if isinstance(row, dict) and not is_rejected(row):
+                # A row a reviewer rejected (answer-key review) is not a
+                # fair test — it never reaches the scorer.
                 rows.append(row)
         return rows
 
@@ -2494,11 +2497,24 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
     f1: list[float | None] = []
     judge: list[float | None] = []
     correct: list[int] = []
+    # Row identity by INPUT text alone (``gold_review_service.text_key``),
+    # so a stored eval can be joined to the answer key's rows after a
+    # reviewer changed some references; and per-row span counts so the
+    # eval can be re-totalled over a subset (reviewed vs unreviewed).
+    inputs: list[str] = []
+    span_tp: list[int] = []
+    span_fp: list[int] = []
+    span_fn: list[int] = []
     for p in predictions:
         if not isinstance(p, dict):
             continue
         raw = f"{p.get('prompt', '')}\x00{p.get('reference', '')}"
         keys.append(hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:12])
+        inputs.append(text_key(str(p.get("structured_input") or p.get("input") or p.get("prompt") or "")))
+        if p.get("scoring_mode") == "span_set":
+            span_tp.append(len(p.get("row_matched_entities") or []))
+            span_fp.append(len(p.get("row_hallucinated_entities") or []))
+            span_fn.append(len(p.get("row_missed_entities") or []))
         row_f1 = p.get("row_f1")
         f1.append(float(row_f1) if isinstance(row_f1, (int, float)) and not isinstance(row_f1, bool) else None)
         row_judge = p.get("row_judge_score")
@@ -2506,9 +2522,11 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         correct.append(0 if _prediction_failed(p) else 1)
     if not keys:
         return None
-    scores: dict[str, Any] = {"keys": keys, "correct": correct}
+    scores: dict[str, Any] = {"keys": keys, "correct": correct, "inputs": inputs}
     if all(value is not None for value in f1):
         scores["f1"] = f1
+    if len(span_tp) == len(keys):
+        scores["span_tp"], scores["span_fp"], scores["span_fn"] = span_tp, span_fp, span_fn
     # Rows the judge couldn't score stay None; the pairing skips them.
     if any(value is not None for value in judge):
         scores[JUDGE_METRIC] = judge

@@ -186,6 +186,7 @@ session-start guidance.
 - `backend/app/services/gamification_service.py` — Lab Journal — per-project gamification progression service.
 - `backend/app/services/goal_service.py` — Arc H — End-goal contract + progress ledger.
 - `backend/app/services/gold_llm_service.py` — LLM-assisted gold-set generation across all supported recipes.
+- `backend/app/services/gold_review_service.py` — Human review of the answer key (P6 Trust).
 - `backend/app/services/gold_service.py` — Gold evaluation dataset service — create, import, and manage gold Q&A sets.
 - `backend/app/services/gold_set_diagnostics_service.py` — Gold-set diagnostics for V4 of the ML-native visualisations arc.
 - `backend/app/services/gold_workbench_service.py` — Gold-set annotation workbench service (priority.md P10).
@@ -455,6 +456,7 @@ session-start guidance.
 - `frontend/src/api/frontierComparison.ts` — Typed wrapper for the Track 1 Epic D SLM-vs-frontier benchmark report.
 - `frontend/src/api/gamification.ts` — Typed wrappers for the Lab Journal (gamification) API.
 - `frontend/src/api/goal.ts` — Arc H — Project end-goal contract + progress ledger client.
+- `frontend/src/api/goldReview.ts` — Human review of the answer key (P6 Trust) —
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
 - `frontend/src/api/llmSpend.ts` — _(no docstring)_
 - `frontend/src/api/planRefinement.ts` — _(no docstring)_
@@ -528,6 +530,7 @@ session-start guidance.
 - `frontend/src/components/dashboard/DemoProjectTiles.tsx` — DemoProjectTiles — entry-point tiles on the project list that seed a
 - `frontend/src/components/dashboard/PipelineProgress.tsx` — Linear progress tracker showing pipeline stage completion with percentage and status indicators.
 - `frontend/src/components/dashboard/ProjectCard.tsx` — Project summary card displaying status, description, stats, and pipeline-stage progress.
+- `frontend/src/components/data/AnswerKeyReviewPanel.tsx` — AnswerKeyReviewPanel — a person checks the answer key (P6 Trust).
 - `frontend/src/components/data/AutofixPreviewModal.tsx` — AutofixPreviewModal — D3.2 + D4 of the data-quality arc.
 - `frontend/src/components/data/CleaningPanel.tsx` — Panel for async batch document cleaning with progress tracking and quality scoring.
 - `frontend/src/components/data/ComplianceBundlePicker.tsx` — _(no docstring)_
@@ -777,6 +780,7 @@ session-start guidance.
 - `backend/tests/test_goal_service.py` — Tests for goal_service + the /goal/progress + /goal endpoints (Arc H).
 - `backend/tests/test_gold_add_per_recipe.py` — Endpoint tests for ``POST /api/projects/{id}/gold/add`` after the
 - `backend/tests/test_gold_llm_service.py` — Tests for the LLM-assisted gold-set generation path.
+- `backend/tests/test_gold_review.py` — Human review of the answer key (P6 Trust): verdicts recorded on the
 - `backend/tests/test_gold_set_diagnostics.py` — V4 of the ML-native visualisations arc — gold-set class balance
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
 - `backend/tests/test_heldout_dataset_resolution.py` — Held-out eval dataset resolution: aliases resolve by type priority.
@@ -1000,6 +1004,7 @@ session-start guidance.
 - `frontend/src/components/coach/CoachSuggestionTrace.test.tsx` — Arc 4 — Coach decision-trace disclosure.
 - `frontend/src/components/coach/CoachToggle.test.tsx` — _(no docstring)_
 - `frontend/src/components/dashboard/DemoProjectTiles.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/AnswerKeyReviewPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/AutofixPreviewModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/ComplianceBundlePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataHealthReportPanel.test.tsx` — _(no docstring)_
