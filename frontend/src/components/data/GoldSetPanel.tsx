@@ -181,6 +181,24 @@ interface GoldSetPanelProps {
 export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProps) {
     const [entries, setEntries] = useState<any[]>([]);
     const [datasetType, setDatasetType] = useState('gold_dev');
+    // A project whose answer key lives only in the test set (the span
+    // relabel writes gold_test) opened on an empty dev set and read "No
+    // answer-key entries yet". Switch once, on first load, when the dev
+    // set is empty and the test set is not.
+    const [autoSwitched, setAutoSwitched] = useState(false);
+    useEffect(() => {
+        if (autoSwitched || datasetType !== 'gold_dev') return;
+        let cancelled = false;
+        api.get(`/projects/${projectId}/gold/entries?dataset_type=gold_dev`)
+            .then(async (dev) => {
+                if (cancelled || (dev.data.entries || []).length > 0) return;
+                const test = await api.get(`/projects/${projectId}/gold/entries?dataset_type=gold_test`);
+                if (!cancelled && (test.data.entries || []).length > 0) setDatasetType('gold_test');
+            })
+            .catch(() => undefined)
+            .finally(() => { if (!cancelled) setAutoSwitched(true); });
+        return () => { cancelled = true; };
+    }, [projectId, datasetType, autoSwitched]);
     // Recipe id flows down to the LLM-generate panel so it can build
     // the right prompt shape + render per-recipe row previews. The
     // panel handles its own self-hiding for unsupported recipes.

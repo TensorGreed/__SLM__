@@ -2089,3 +2089,25 @@ describe('GoldSetPanel — trainability-forecast prefill (T4)', () => {
         expect(rowLine.textContent).toMatch(/\b1\b/);
     });
 });
+
+
+describe('GoldSetPanel — opens on the test set when the dev set is empty', () => {
+    it('switches to gold_test once and mounts the answer-key review', async () => {
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.includes('/gold/review')) {
+                return { data: { project_id: 31, dataset_type: 'gold_test', model_experiment_id: null, last_reviewed_at: null, total: 1, reviewed: 0, accepted: 0, corrected: 0, rejected: 0, unreviewed: 1, rows: [{ index: 0, key: 'k', text: 'Ada', entities: [], fields: {}, source: null, review: null, predicted: null, agreement: null }] } };
+            }
+            if (url.includes('dataset_type=gold_test')) {
+                return { data: { entries: [{ text: 'Ada', entities: [] }] } };
+            }
+            if (url.includes('/gold/entries')) {
+                return { data: { entries: [] } };
+            }
+            return { data: { selected_recipe: { recipe_id: 'span-extraction' } } };
+        });
+        renderPanel(<GoldSetPanel projectId={31} />);
+        await waitFor(() => expect((screen.getByRole('combobox', { name: '' }) as HTMLSelectElement).value).toBe('gold_test'));
+        expect(await screen.findByTestId('answer-key-review')).toBeInTheDocument();
+        expect(screen.queryByText('No answer-key entries yet')).not.toBeInTheDocument();
+    });
+});
