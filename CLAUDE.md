@@ -1443,8 +1443,11 @@ runs real CPU inference). ~4 min locally.
   `evaluation_service._load_eval_rows` (never scored) and don't count in the
   GOLD dataset's `record_count`. Queue order (`order_queue`): unreviewed
   first, then lowest `row_agreement` between the key and the latest span
-  run's spans (`model_predictions`, cached per run in
-  `gold/review_predictions.json`); rows are identified by `text_key` (sha1 of
+  run's spans (`model_predictions` → `latest_span_run_predictions(as_served=True)`
+  = `span_threshold_service.score_split_as_served`: the run's thresholds +
+  recall bias, the eval's decoding — plain decoding showed spans the served
+  model drops; cached per run in `gold/review_predictions.json`, stamped
+  `decoding: "served"`, older caches rebuilt); rows are identified by `text_key` (sha1 of
   the text) — `_row_scores_for_pairing` now stores `inputs` (same hash) and
   per-row `span_tp/fp/fn`, so `split_scores` re-totals a stored span eval
   over checked vs unchecked rows (`stale` when a correction / rejection is

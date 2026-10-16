@@ -160,7 +160,8 @@ class ApiTests(unittest.TestCase):
         self.assertIsNone(body["rows"][0]["agreement"])
 
     def test_queue_orders_by_disagreement_with_the_model(self):
-        async def fake(db, project_id, texts, experiment_id=None):
+        async def fake(db, project_id, texts, experiment_id=None, *, as_served=False):
+            self.assertTrue(as_served, "the queue compares with the served decoding (thresholds), like the eval")
             # Row 1: model misses the MRN (agreement 0.67); row 0 exact; row 2 exact (both empty).
             by_text = {
                 T1: ROWS[0]["entities"],
@@ -177,7 +178,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(body["rows"][0]["predicted"]), 1)
         # Cached: a second queue read doesn't call the model again.
         cache = json.loads((self.gold / svc.PREDICTIONS_CACHE).read_text())
-        self.assertEqual(cache["experiment_id"], 77)
+        self.assertEqual((cache["experiment_id"], cache["decoding"]), (77, "served"))
 
     def test_verdicts_land_on_the_row_and_in_the_dataset_count(self):
         key = self._queue()["rows"][1]["key"]

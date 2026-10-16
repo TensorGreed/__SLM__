@@ -46,6 +46,9 @@ VERDICTS = ("accepted", "corrected", "rejected")
 CORRECTABLE_FIELDS = ("entities", "answer", "label", "summary")
 GOLD_FILES = {"gold_test": "gold_test.jsonl", "gold_dev": "gold_dev.jsonl"}
 PREDICTIONS_CACHE = "review_predictions.json"
+# Cache stamp: predictions decoded under the run's thresholds; an older
+# cache (plain decoding) is ignored and rebuilt.
+PREDICTION_DECODING = "served"
 
 
 class GoldReviewError(ValueError):
@@ -264,27 +267,31 @@ async def model_predictions(
     db: AsyncSession, project_id: int, rows: list[dict[str, Any]], experiment_id: int | None,
 ) -> tuple[int | None, dict[str, list[dict[str, Any]]]]:
     """Spans the project's latest span run (or ``experiment_id``) predicts
-    for each row's text, keyed by ``text_key``; cached per run in
-    ``gold/review_predictions.json`` so reopening the queue doesn't re-run
-    the model. ``(None, {})`` without a span run."""
+    for each row's text, decoded AS SERVED (the run's tuned thresholds and
+    recall bias — the same decoding the eval scores, so "model disagrees"
+    here is a disagreement the score will count), keyed by ``text_key``;
+    cached per run in ``gold/review_predictions.json`` so reopening the
+    queue doesn't re-run the model. ``(None, {})`` without a span run."""
     from app.services.span_relabel_service import latest_span_run_predictions
 
     texts = [row_text(r) for r in rows]
     keys = [text_key(t) for t in texts]
     cache_path = settings.DATA_DIR / "projects" / str(project_id) / "gold" / PREDICTIONS_CACHE
     cache = _load_prediction_cache(cache_path)
-    cached_run = cache.get("experiment_id")
+    cached_run = cache.get("experiment_id") if cache.get("decoding") == PREDICTION_DECODING else None
     cached_items = cache.get("items") if isinstance(cache.get("items"), dict) else {}
     if cached_run is not None and (experiment_id is None or experiment_id == cached_run) and all(k in cached_items for k in keys):
         if experiment_id is not None or await _is_latest_span_run(db, project_id, int(cached_run)):
             return int(cached_run), {k: cached_items[k] for k in keys}
-    run_id, spans = await latest_span_run_predictions(db, project_id, texts, experiment_id)
+    run_id, spans = await latest_span_run_predictions(db, project_id, texts, experiment_id, as_served=True)
     if run_id is None or spans is None:
         return None, {}
     items = {k: s for k, s in zip(keys, spans)}
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps({"experiment_id": run_id, "items": items}, ensure_ascii=False), encoding="utf-8")
+        cache_path.write_text(
+            json.dumps({"experiment_id": run_id, "decoding": PREDICTION_DECODING, "items": items}, ensure_ascii=False), encoding="utf-8",
+        )
     except OSError:
         pass
     return run_id, items

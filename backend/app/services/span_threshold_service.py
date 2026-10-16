@@ -396,6 +396,23 @@ def _score_split(model_path: str, id2label: dict[int, str], texts: list[str], oc
     return _decode(texts, _score_tokens(model_path, texts), id2label, 0.0, ocr_tolerant)
 
 
+def score_split_as_served(model_path: str, id2label: dict[int, str], texts: list[str], ocr_tolerant: bool) -> Spans:
+    """Spans for ``texts`` decoded the way the eval, the redact endpoint
+    and the export decode them: under the model's tuned per-type
+    thresholds and recall bias (thresholds.json). Plain decoding
+    (``_score_split``) keeps spans the served model drops, so a comparison
+    with the answer key must use this one."""
+    _scripts_on_path()
+    from train_token_classification import decode_token_scores
+
+    thresholds = thresholds_for_decoding(model_path)
+    bias = recall_bias_for_decoding(model_path)
+    return decode_token_scores(
+        texts, _score_tokens(model_path, texts), id2label, with_scores=True,
+        thresholds=thresholds or None, recall_bias=bias, ocr_tolerant=ocr_tolerant,
+    )
+
+
 async def tune_run_thresholds(
     db: AsyncSession,
     project_id: int,

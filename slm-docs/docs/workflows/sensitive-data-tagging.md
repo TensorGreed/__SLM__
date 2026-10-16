@@ -200,7 +200,34 @@ corrected, 1 rejected). On the checked rows: …"). API: `GET
 compare with, `compare=false` skips the model), `PUT
 /projects/{id}/gold/review` `{index, key, verdict, corrected?, note?}`
 (`verdict: null` clears). The model's spans are cached per run in
-`gold/review_predictions.json`, so reopening the queue is instant.
+`gold/review_predictions.json`, so reopening the queue is instant. The
+model's spans are decoded **as served** — under the run's tuned
+thresholds and recall bias, the same decoding the eval scores — so a
+"model disagrees" row is a disagreement the score will count (plain
+decoding showed spans the served model drops, which sent the first
+version of this queue chasing a difference the eval could never see).
+
+What it found on project 31 (2026-10-16, run #117, the 43-row clean key
+written by Sonnet): the model disagreed with the key on **12 rows**, and
+a person went through them. **Eleven were the model's mistakes** — a
+transaction date tagged as `date_of_birth` (twice), a referral date as
+`visit_date`, a login handle as `person_name`, `mild steroid cream` as a
+`medication` (a class, not a drug), and five boundary differences on
+drug names (`Tamiflu` vs `Tamiflu, dosage 75mg`) where the key's reading
+stands. **One was the key's**: row 32 labels `4242424242424242` a
+`bank_account` where the convention says a card number is `credit_card`
+— corrected. Three undisputed rows were accepted on the way (15 verdicts
+in all). Re-evaluated, run #117 reads **F1 0.905 on the 15 checked rows
+and 1.00 on the 28 unchecked**, overall 0.968 — unchanged by the
+correction, because the served model doesn't tag that card number
+either (the error only moved from a false positive to a miss). Read the
+split for what it is: the checked rows were *chosen* because the model
+disagreed there, so the unchecked 1.00 is the agreement the queue
+started from, not a random-sample estimate; the number to trust is the
+0.905 on rows a person signed off, and the finding is that the key was
+right 11 times out of 12 — at least on the rows a different model could
+flag. Rows where both models are wrong the same way still pass unseen,
+which is what the independent benchmarks are for.
 
 ### One labelling convention for both labellers
 

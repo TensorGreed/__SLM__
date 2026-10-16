@@ -254,11 +254,13 @@ def usage_block(*llms: Any) -> list[dict[str, Any]]:
 
 
 async def latest_span_run_predictions(
-    db: AsyncSession, project_id: int, texts: list[str], experiment_id: int | None = None,
+    db: AsyncSession, project_id: int, texts: list[str], experiment_id: int | None = None, *, as_served: bool = False,
 ) -> tuple[int | None, list[list[dict[str, Any]]] | None]:
     """The project's newest completed token-classification run (or
     ``experiment_id``) tagging ``texts`` — (run id, spans per text); (None,
-    None) when the project has no such run."""
+    None) when the project has no such run. ``as_served`` decodes under the
+    run's tuned thresholds + recall bias (what the eval scores); the
+    default is plain decoding (the tiered relabel's comparison)."""
     import asyncio
 
     from sqlalchemy import desc
@@ -266,8 +268,10 @@ async def latest_span_run_predictions(
     from app.models.experiment import Experiment, ExperimentStatus
     from app.services.evaluation_service import _resolve_token_classifier_artifacts
     from app.services.post_training_eval_service import is_token_classification
-    from app.services.span_threshold_service import _score_split
+    from app.services.span_threshold_service import _score_split, score_split_as_served
     from app.services.span_type_definitions_service import load_scan_tolerant
+
+    scorer = score_split_as_served if as_served else _score_split
 
     if experiment_id is not None:
         candidates = [await db.get(Experiment, experiment_id)]
@@ -283,7 +287,7 @@ async def latest_span_run_predictions(
         if artifacts is None:
             continue
         spans = await asyncio.to_thread(
-            _score_split, artifacts["model_path"], artifacts["id2label"], texts, await load_scan_tolerant(db, project_id),
+            scorer, artifacts["model_path"], artifacts["id2label"], texts, await load_scan_tolerant(db, project_id),
         )
         return exp.id, spans
     return None, None
