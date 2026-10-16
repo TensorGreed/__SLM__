@@ -529,6 +529,42 @@ thresholds were restored and the benchmarks re-scored under them. The
 lever for recall on these types is training text with those shapes, not
 decoding.
 
+**Identifier-shapes round, run as lanes (2026-10-16).** Forty seeded
+documents (local model) asking for real-world address layouts, hospital
+MRN formats, licence plates as they appear in notices, and bank account
+numbers next to routing / reference numbers and same-shaped customer ids;
+72 passages, 409 Sonnet labels ($0.24: address 84, MRN 69, plate 57,
+bank_account 24, person_name 90). Re-split keeping the test rows, three
+seeds of #117's config, thresholds tuned on validation, seed picked by
+validation span F1 (#120, 0.923 vs 0.911 / 0.912). Scored on the
+benchmarks — a **null round with a regression**, confirmed by a fresh
+reviewer:
+
+| run | Gretel F1 | CoNLL F1 (R) | plate | bank | address | MRN |
+|---|---|---|---|---|---|---|
+| #117 (shipped) | 0.708 | 0.708 (0.59) | 0.54 | 0.58 | 0.63 | 0.66 |
+| #119 / #120 / #121 | 0.730 / 0.707 / 0.701 | 0.657 / 0.691 / 0.659 (0.52 / 0.57 / 0.54) | 0.59 / 0.57 / 0.57 | 0.42 / 0.28 / 0.35 | 0.64 / 0.63 / 0.63 | 0.69 / 0.67 / 0.66 |
+
+Gretel overall moved inside seed noise and not in one direction; the
+validation pick is flat (−0.001). CoNLL recall fell on all three seeds
+(0.59 → 0.52–0.57): the new documents added 90 names in letter and form
+contexts plus 27 clinicians (provider_name, deliberately *not*
+person_name) and diluted the news share, pushing the model toward names
+cued by a label word. Addresses and MRNs did not move (136 and 232
+reference spans resolve ~0.12 and ~0.09). Plates rose ~0.04 on all three
+seeds, but 55 spans cannot resolve that. bank_account got **worse the
+way the catch-all always does**: recall stayed 1.0 while the prediction
+count went from ~42 (#117) to 63–106 per seed — the seed asked for "the
+same digit shapes used as customer ids or order numbers" but delivered
+only 24 bank_account labels and no look-alike labels, so the model learned
+a broader net, and employee_id precision fell with it (0.92 → 0.61–0.83).
+#117 stays shipped; the 72 rows are accepted in `synthetic.jsonl`
+(`passage_labels:doc=752`) and can be retired from the review queue.
+Lesson: a 40-document mixed-type batch judged on 17- and 55-span
+benchmark types cannot resolve the effect it is after; build a ≥ 300-span
+reference for plates and accounts first, and seed negatives *with
+labels* for the look-alikes, or stop.
+
 ### Try it: the redact endpoint
 
 ```bash
