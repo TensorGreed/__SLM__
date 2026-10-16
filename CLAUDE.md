@@ -1458,6 +1458,22 @@ runs real CPU inference). ~4 min locally.
   (orange = model missed, dashed = model-only), Accept / Fix (inline span
   editor, select text to add, "Use the model's spans") / Reject / Clear.
   Tests: `tests/test_gold_review.py`, `AnswerKeyReviewPanel.test.tsx`.
+- **Answer-key sizing (P6)** (`services/span_eval_sizing_service.py`, pure):
+  per type, `spans_needed(f1, gap)` = ceil(8·p·(1−p)/gap²) reference spans for
+  a `DECISION_GAP` 0.05 F1 difference between two runs on the same key to
+  clear noise (paired rule, same as the documents flow's `target_test_rows`;
+  p = F1 clamped to [0.5, 0.95]); `detectable_gap(f1, support)` =
+  2·sqrt(2p(1−p)/n) is the gap the support it has can show; `size_types(
+  per_class)` → {gap, types (largest shortfall first: support, needed,
+  shortfall, detectable_gap, enough), short, enough, shortfall}; `sizing_line`.
+  Attached by `span_block` as `sizing` (Eval card `SpanSizingTable`: one line +
+  per-type table + link to the Synthetic tab), stated on the model card under
+  each evaluation, and read by `weak_entity_types` → `under_sampled`,
+  `sizing_gap`, `types_to_refine` (weak ∪ under-sampled, weak first; the
+  Refine button focuses these; `suggested_rows` counts them). New rows only
+  reach the key through a re-split WITHOUT keep_test + a re-key. Honest
+  numbers: at F1 0.8 a type needs 512 spans; project 31's key (≤ 37 per type)
+  can show ~0.10–0.95, never 0.05. Tests: `tests/test_span_eval_sizing.py`.
 - **Answer key from a second model** (`services/span_relabel_service.py`,
   Job `span_relabel`, `POST /synthetic/relabel-answer-key` {split, backend,
   entity_types}): `relabel_split_as_answer_key` prompts the backend (synth

@@ -524,3 +524,34 @@ describe('EvalSummaryCard — answer-key review', () => {
         expect(screen.queryByTestId('eval-summary-span-review-none')).not.toBeInTheDocument();
     });
 });
+
+describe('EvalSummaryCard — answer-key sizing', () => {
+    it('says which types can show a 0.05 difference, with a per-type table and a refine link', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                kind: 'span_eval', project_id: 7, experiment_id: 59, verdict: 'evaluated', message: null, headline: null,
+                trained: { experiment_name: 'tc' },
+                answer_key: {
+                    eval_result_id: 2, dataset_name: 'gold_test', precision: 0.83, recall: 0.85, f1: 0.84, rows: 44, weakest_types: [],
+                    sizing: {
+                        gap: 0.05, short: ['api_key', 'medication'], enough: ['email'], shortfall: 1202,
+                        types: [
+                            { type: 'api_key', support: 2, f1: 0.6667, needed: 712, shortfall: 710, detectable_gap: 0.9428, enough: false },
+                            { type: 'medication', support: 20, f1: 0.8, needed: 512, shortfall: 492, detectable_gap: 0.253, enough: false },
+                            { type: 'email', support: 600, f1: 1.0, needed: 152, shortfall: 0, detectable_gap: 0.0252, enough: true },
+                        ],
+                    },
+                },
+                test: null, dataset_name: 'gold_test', evaluated_samples: 44, failed_count: 0, failures: [],
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={59} />);
+        const block = await screen.findByTestId('eval-summary-span-sizing');
+        expect(block).toHaveTextContent('Can the answer key tell runs apart? 1 of 3 types have enough reference spans to show a 0.05 F1 difference; the other 2 can only show 0.94 or more — 1202 more spans short in all.');
+        expect(screen.getByTestId('eval-summary-sizing-refine')).toHaveAttribute('href', '/project/7/pipeline/synthetic');
+        expect(screen.queryByTestId('eval-summary-sizing-table')).not.toBeInTheDocument();
+        await userEvent.click(screen.getByTestId('eval-summary-sizing-toggle'));
+        expect(screen.getByTestId('eval-summary-sizing-api_key')).toHaveTextContent('api_key0.672712 (710 short)≥ 0.94');
+        expect(screen.getByTestId('eval-summary-sizing-email')).toHaveTextContent('email1.00600152≥ 0.03');
+    });
+});

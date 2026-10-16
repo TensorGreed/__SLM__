@@ -229,6 +229,43 @@ right 11 times out of 12 — at least on the rows a different model could
 flag. Rows where both models are wrong the same way still pass unseen,
 which is what the independent benchmarks are for.
 
+### Can the answer key tell two runs apart?
+
+A per-type F1 on a handful of reference spans moves by tenths between
+seeds, so "credit_card went 0.57 → 0.74" means little unless the key has
+the spans to back it. The span Eval card now sizes each type the way the
+documents→Q&A flow sizes its test split: for two runs scored on the
+*same* reference spans, a gap Δ in a type's F1 clears a 95% interval when
+the type has about `8·p·(1−p)/Δ²` reference spans (p = the type's F1 as
+the share of spans a run gets right, clamped to 0.5–0.95 so a perfect
+score on three spans claims nothing). At Δ = 0.05 that is **152 spans
+for a type at F1 0.95, 512 at 0.8, 800 at 0.5**. The card's line
+("*Can the answer key tell runs apart?*") says how many types have
+enough, and the per-type table shows each type's support, what it needs,
+the shortfall, and — the more useful number — the smallest difference
+its current support **can** show (`2·sqrt(2·p·(1−p)/n)`). The same
+sentence goes on the exported model card under each evaluation.
+
+On project 31's 43-row key (2026-10-16, run #117): **none of the 22 types
+can show a 0.05 difference**, and together they are 4,692 reference
+spans short. The best-supported types can show about 0.10 (person_name,
+37 spans; email 26; phone 25), medication 0.25 (20 spans), bank_account
+0.56 (5 spans), and api_key — 2 spans — 0.94. So every per-type movement
+reported in the rounds above sits inside what the key can see, except
+where it was confirmed on the Gretel or CoNLL benchmarks (thousands of
+spans); the overall F1, on 279 spans across all types, resolves about 0.04.
+
+**Refine weak types** on the Synthetic tab now targets the under-sampled
+types as well as the weak ones (`GET /synthetic/weak-types` →
+`under_sampled`, `types_to_refine`): the generated rows must contain
+them. Two things to know: they are *training* rows, and the project's
+split keeps the test rows, so new rows only reach the answer key through
+a re-split **without** "keep test" followed by a re-key — and at a 0.1
+test share, closing a 500-span shortfall on one type means thousands of
+rows containing it. The honest reading of the table is usually not
+"generate more" but "stop reading per-type deltas smaller than the gap
+it can show, and trust the benchmarks for those".
+
 ### One labelling convention for both labellers
 
 Two models can both be right and still disagree — is a date in a

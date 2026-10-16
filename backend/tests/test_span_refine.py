@@ -67,12 +67,16 @@ class WeakTypesTests(unittest.TestCase):
         exp_id, payload = asyncio.run(_seed())
         self.assertEqual(payload["experiment_id"], exp_id)
         self.assertEqual([t["type"] for t in payload["types"]], ["passport", "medication", "provider_name", "national_id"])
-        self.assertEqual(payload["suggested_rows"], 100)
+        # 4 weak types + email (10 reference spans, under-sampled) → 5 × 25.
+        self.assertEqual(payload["types_to_refine"], ["passport", "medication", "provider_name", "national_id", "email"])
+        self.assertEqual(payload["suggested_rows"], 125)
         self.assertEqual(payload["overall_f1"], 0.9)
         self.assertIn("email", payload["all_types"])
         strict = client.get(f"/api/projects/{pid}/synthetic/weak-types", params={"threshold": 0.5}).json()
         self.assertEqual([t["type"] for t in strict["types"]], ["passport"])
-        self.assertEqual(strict["suggested_rows"], 60)
+        # Only passport is weak at 0.5, but every type in this fixture has
+        # too few reference spans to show a 0.05 difference → 5 × 25.
+        self.assertEqual(strict["suggested_rows"], 125)
 
 
 if __name__ == "__main__":

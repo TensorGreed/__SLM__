@@ -173,6 +173,9 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
             'weak-types': {
                 eval_result_id: 74, experiment_id: 55, dataset_name: 'test', overall_f1: 0.9, suggested_rows: 100,
                 types: [{ type: 'passport', f1: 0.0 }, { type: 'medication', f1: 0.6 }, { type: 'provider_name', f1: 0.6667 }, { type: 'national_id', f1: 0.7619 }],
+                under_sampled: [{ type: 'passport', support: 3, needed: 800 }, { type: 'email', support: 10, needed: 152 }],
+                sizing_gap: 0.05,
+                types_to_refine: ['passport', 'medication', 'provider_name', 'national_id', 'email'],
                 all_types: ['email', 'passport', 'medication', 'provider_name', 'national_id'],
             },
             tasks: { task_id: 'task-span-9', task_kind: 'span', status: 'completed', target_rows: 100, rows_so_far: 100, batches_done: 9, batches_total: 9, rows: [{ text: 'x', entities: [] }], error: null },
@@ -188,13 +191,13 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
                 expect.objectContaining({
                     target_rows: 100,
                     entity_types: ['email', 'passport', 'medication', 'provider_name', 'national_id'],
-                    focus_types: ['passport', 'medication', 'provider_name', 'national_id'],
+                    focus_types: ['passport', 'medication', 'provider_name', 'national_id', 'email'],
                     use_all_chunks: true,
                     backend: 'ollama',
                 }),
             );
         });
-        expect(screen.getByTestId('synthetic-refine-info')).toHaveTextContent('Weak on run #55: passport (0.00), medication (0.60), provider_name (0.67), national_id (0.76) — generating 100 rows that must contain them; every other type in the list is still labelled.');
+        expect(screen.getByTestId('synthetic-refine-info')).toHaveTextContent('Weak on run #55: passport (0.00), medication (0.60), provider_name (0.67), national_id (0.76). Too few reference spans to show a 0.05 F1 difference: email (10 of 152). Generating 100 rows that must contain them; every other type in the list is still labelled. New rows reach the answer key through a re-split without “keep test” and a re-key.');
     });
 
     it('"Write answer key with this model" starts the span_relabel Job with the provider pin', async () => {

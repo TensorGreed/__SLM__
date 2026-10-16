@@ -48,11 +48,36 @@ export interface SpanEvalBlock {
     by_regime?: SpanRegimeScore[];
     /** answer_key only: who wrote it (e.g. cloud:anthropic:claude-haiku-4-5…). */
     written_by?: string | null;
+    /** Per type: can this eval's reference support show a `gap` F1
+     *  difference between runs? (`span_eval_sizing_service`). */
+    sizing?: SpanSizing | null;
     /** answer_key only: the human review of the key (null until a row was
      *  checked) — counts, and this eval re-totalled over checked vs
      *  unchecked rows. ``stale``: a correction / rejection is newer than
      *  the eval, so re-evaluate to score the corrected key. */
     review?: AnswerKeyReview | null;
+}
+
+export interface SpanSizingType {
+    type: string;
+    /** Reference spans (tp + fn) in this eval. */
+    support: number;
+    f1: number | null;
+    /** Spans needed for a `gap` difference to clear noise. */
+    needed: number;
+    shortfall: number;
+    /** The smallest F1 difference the current support can show. */
+    detectable_gap: number | null;
+    enough: boolean;
+}
+
+export interface SpanSizing {
+    gap: number;
+    /** Largest shortfall first; types with enough support last. */
+    types: SpanSizingType[];
+    short: string[];
+    enough: string[];
+    shortfall: number;
 }
 
 export interface ReviewSplitScores {

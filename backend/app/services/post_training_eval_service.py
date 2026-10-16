@@ -290,6 +290,7 @@ def span_block(result: Any, type_regimes: dict[str, list[str]] | None = None) ->
     when the project tags its types with compliance regimes, micro
     P / R / F1 per regime (``by_regime``, weakest recall first)."""
     from app.services.compliance_bundles_service import regime_scores
+    from app.services.span_eval_sizing_service import size_types
 
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
     per_class = metrics.get("per_class") if isinstance(metrics.get("per_class"), dict) else {}
@@ -310,6 +311,9 @@ def span_block(result: Any, type_regimes: dict[str, list[str]] | None = None) ->
         "rows": metrics.get("total") or metrics.get("evaluated_samples"),
         "weakest_types": weakest,
         "by_regime": regime_scores(per_class, type_regimes) if type_regimes else [],
+        # Per type: is there enough reference support to tell a
+        # DECISION_GAP F1 difference between runs from noise?
+        "sizing": size_types(per_class),
     }
 
 

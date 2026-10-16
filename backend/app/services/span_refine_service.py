@@ -85,8 +85,19 @@ async def weak_entity_types(db: AsyncSession, project_id: int, threshold: float 
             "all_types": [],
             "suggested_rows": 0,
         }
+    from app.services.span_eval_sizing_service import size_types
+
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
     weak = weak_types_from_metrics(metrics, threshold)
+    # Types the evaluation can't size a decision on: too few reference
+    # spans to show a DECISION_GAP difference between runs. A refine pass
+    # targets them too — more texts containing the type is the only way
+    # to a bigger support (the new rows reach the key through a re-split
+    # without keep_test + a re-key).
+    sizing = size_types(metrics.get("per_class") if isinstance(metrics.get("per_class"), dict) else {})
+    under = [r for r in sizing["types"] if not r["enough"]]
+    weak_names = [w["type"] for w in weak]
+    to_refine = weak_names + [r["type"] for r in under if r["type"] not in weak_names]
     return {
         "project_id": project_id,
         "threshold": threshold,
@@ -96,6 +107,9 @@ async def weak_entity_types(db: AsyncSession, project_id: int, threshold: float 
         "evaluated_at": result.created_at.isoformat() if result.created_at else None,
         "overall_f1": metrics.get("f1"),
         "types": weak,
+        "under_sampled": under,
+        "sizing_gap": sizing["gap"],
+        "types_to_refine": to_refine,
         "all_types": sorted((metrics.get("per_class") or {}).keys()),
-        "suggested_rows": max(MIN_REFINE_ROWS, min(MAX_REFINE_ROWS, ROWS_PER_WEAK_TYPE * len(weak))) if weak else 0,
+        "suggested_rows": max(MIN_REFINE_ROWS, min(MAX_REFINE_ROWS, ROWS_PER_WEAK_TYPE * len(to_refine))) if to_refine else 0,
     }

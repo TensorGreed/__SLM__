@@ -251,6 +251,7 @@ session-start guidance.
 - `backend/app/services/slice_definitions_service.py` — Quality-Lift phase 2, slice 1 — Project slice-definitions validator.
 - `backend/app/services/slice_evaluator_service.py` — Quality-Lift phase 2, slice 2 — Slice predicate evaluator + handler wrapper.
 - `backend/app/services/span_custom_patterns_service.py` — Custom infotypes: a span project's own identifier formats as regexes.
+- `backend/app/services/span_eval_sizing_service.py` — Is the answer key big enough to tell two runs apart, per type? (P6)
 - `backend/app/services/span_model_package_service.py` — Packaging for token-classification (span) models — Epic P5.
 - `backend/app/services/span_refine_service.py` — Refine weak entity types: read the latest span_set evaluation and name
 - `backend/app/services/span_relabel_service.py` — Answer key from a second model: relabel a split's texts without changing
@@ -950,6 +951,7 @@ session-start guidance.
 - `backend/tests/test_slice_evaluator_slice2.py` — Quality-Lift phase 2, slice 2 — slice predicate evaluator + handler wrapper.
 - `backend/tests/test_slice_gates_slice3.py` — Quality-Lift phase 2, slice 3 — Slice gate evaluator behaviors.
 - `backend/tests/test_span_custom_patterns.py` — Custom infotypes: a span project's own identifier formats as regexes —
+- `backend/tests/test_span_eval_sizing.py` — Per-type answer-key sizing (P6): how many reference spans a type needs
 - `backend/tests/test_span_eval_summary.py` — The eval summary of a token-classification run (kind="span_eval"): its
 - `backend/tests/test_span_packaging.py` — Epic P5 — packaging a span (token-classification) model:
 - `backend/tests/test_span_refine.py` — Refine weak types: the latest span_set evaluation names the types under

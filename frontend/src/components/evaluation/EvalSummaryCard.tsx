@@ -93,6 +93,61 @@ export function SpanRegimeTable({ block, onAnswerKey }: { block: SpanEvalBlock |
     );
 }
 
+/** span_eval: per type, whether the reference support can show a `gap`
+ *  F1 difference between runs — the shortfall, and the gap it CAN show. */
+export function SpanSizingTable({ block, onAnswerKey, projectId }: { block: SpanEvalBlock | null; onAnswerKey: boolean; projectId: number }) {
+    const [open, setOpen] = useState(false);
+    const sizing = block?.sizing;
+    if (!sizing || !sizing.types.length) return null;
+    const f = (v: number | null) => (typeof v === 'number' ? v.toFixed(2) : '—');
+    const short = sizing.types.filter((t) => !t.enough);
+    const coarse = short.length ? Math.max(...short.map((t) => t.detectable_gap ?? 1)) : null;
+    return (
+        <div className="eval-summary__sizing" data-testid="eval-summary-span-sizing">
+            <p className="eval-summary__judge">
+                <strong>Can {onAnswerKey ? 'the answer key' : 'the test examples'} tell runs apart?</strong>{' '}
+                {short.length === 0
+                    ? `Every type has enough reference spans to show a ${sizing.gap} F1 difference between runs.`
+                    : `${sizing.enough.length} of ${sizing.types.length} types have enough reference spans to show a ${sizing.gap} F1 difference; the other ${short.length} can only show ${f(coarse)} or more — ${sizing.shortfall} more spans short in all.`}
+                {short.length > 0 && (
+                    <>
+                        {' '}
+                        <a href={`/project/${projectId}/pipeline/synthetic`} data-testid="eval-summary-sizing-refine">Refine weak types</a> on the Synthetic tab now targets the under-sampled types too; new rows reach the key through a re-split without “keep test” and a re-key.
+                    </>
+                )}
+                {' '}
+                <button type="button" className="btn btn-link" onClick={() => setOpen((v) => !v)} data-testid="eval-summary-sizing-toggle">
+                    {open ? 'Hide per-type sizing' : 'Per-type sizing'}
+                </button>
+            </p>
+            {open && (
+                <table className="eval-summary__regime-table" data-testid="eval-summary-sizing-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Type</th>
+                            <th scope="col">F1</th>
+                            <th scope="col">Spans</th>
+                            <th scope="col">Needed for {sizing.gap}</th>
+                            <th scope="col">Can show</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {sizing.types.map((t) => (
+                            <tr key={t.type} data-testid={`eval-summary-sizing-${t.type}`} className={t.enough ? '' : 'eval-summary__sizing-short'}>
+                                <th scope="row">{t.type}</th>
+                                <td>{f(t.f1)}</td>
+                                <td>{t.support}</td>
+                                <td>{t.needed}{t.shortfall ? ` (${t.shortfall} short)` : ''}</td>
+                                <td>{t.detectable_gap != null ? `≥ ${f(t.detectable_gap)}` : '—'}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+        </div>
+    );
+}
+
 function headTitle(summary: EvalSummary): string {
     const acc = summary.head?.accuracy;
     const f1 = summary.head?.macro_f1;
@@ -500,6 +555,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                             . <em>Refine weak types</em> on the Synthetic tab targets them.
                         </p>
                     ) : null}
+                    <SpanSizingTable block={summary.answer_key ?? summary.test ?? null} onAnswerKey={Boolean(summary.answer_key)} projectId={projectId} />
                     <SpanRegimeTable block={summary.answer_key ?? summary.test ?? null} onAnswerKey={Boolean(summary.answer_key)} />
                     <RedactionTryBox projectId={projectId} experimentId={runId ?? null} />
                 </div>

@@ -648,7 +648,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     /** "Refine weak types": the latest span_set evaluation's types under
      *  F1 0.8 become the entity-type list, sampling from all passages, with
      *  the suggested row count — then the normal generate path runs. */
-    const [refineInfo, setRefineInfo] = useState<{ types: Array<{ type: string; f1: number }>; experiment_id: number | null; suggested_rows: number } | null>(null);
+    const [refineInfo, setRefineInfo] = useState<{ types: Array<{ type: string; f1: number }>; under_sampled?: Array<{ type: string; support: number; needed: number }>; sizing_gap?: number; experiment_id: number | null; suggested_rows: number } | null>(null);
     // A refine pass: the weak types each snippet must contain, while the
     // entity-type list stays the project's full vocabulary (so phones,
     // emails and names in those texts are still labelled).
@@ -661,17 +661,20 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
         setRefineLoading(true);
         try {
             const res = await api.get(`/projects/${projectId}/synthetic/weak-types`, { params: { threshold: 0.8 } });
-            const info = res.data as { types: Array<{ type: string; f1: number }>; all_types?: string[]; experiment_id: number | null; suggested_rows: number; eval_result_id: number | null };
+            const info = res.data as { types: Array<{ type: string; f1: number }>; under_sampled?: Array<{ type: string; support: number; needed: number }>; types_to_refine?: string[]; sizing_gap?: number; all_types?: string[]; experiment_id: number | null; suggested_rows: number; eval_result_id: number | null };
             setRefineInfo(info);
             if (!info.eval_result_id) {
                 toast.info('No span evaluation yet — train a run and evaluate it on the test examples first.', 5000);
                 return;
             }
-            if (!info.types.length) {
-                toast.success('Every entity type scored F1 ≥ 0.8 on the last evaluation — nothing to refine.', 5000);
+            // Weak types (under the F1 threshold) plus the under-sampled
+            // ones (too few reference spans to show a difference between
+            // runs) — the backend's `types_to_refine`, weak first.
+            const weak = info.types_to_refine?.length ? info.types_to_refine : info.types.map((t) => t.type);
+            if (!weak.length) {
+                toast.success('Every entity type scored F1 ≥ 0.8 on the last evaluation, with enough reference spans — nothing to refine.', 5000);
                 return;
             }
-            const weak = info.types.map((t) => t.type);
             const vocabulary = Array.from(new Set([...(info.all_types ?? []), ...parseEntityTypes(entityTypesInput), ...weak]));
             setEntityTypesInput(vocabulary.join(', '));
             setFocusTypes(weak);
@@ -1327,9 +1330,13 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                 />
                                 <SpanTypeDefinitionsEditor key={definitionsVersion} projectId={projectId} />
                                 <SpanAddTypeForm projectId={projectId} onTypeAdded={handleTypeAdded} />
-                                {refineInfo && refineInfo.types.length > 0 && (
+                                {refineInfo && (refineInfo.types.length > 0 || (refineInfo.under_sampled?.length ?? 0) > 0) && (
                                     <div className="form-hint" data-testid="synthetic-refine-info">
-                                        Weak on run #{refineInfo.experiment_id}: {refineInfo.types.map((t) => `${t.type} (${t.f1.toFixed(2)})`).join(', ')} — generating {refineInfo.suggested_rows} rows that must contain them; every other type in the list is still labelled.
+                                        {refineInfo.types.length > 0 && <>Weak on run #{refineInfo.experiment_id}: {refineInfo.types.map((t) => `${t.type} (${t.f1.toFixed(2)})`).join(', ')}. </>}
+                                        {(refineInfo.under_sampled?.length ?? 0) > 0 && (
+                                            <>Too few reference spans to show a {refineInfo.sizing_gap ?? 0.05} F1 difference: {refineInfo.under_sampled!.filter((u) => !refineInfo.types.some((t) => t.type === u.type)).map((u) => `${u.type} (${u.support} of ${u.needed})`).join(', ') || 'the weak types above'}. </>
+                                        )}
+                                        Generating {refineInfo.suggested_rows} rows that must contain them; every other type in the list is still labelled. New rows reach the answer key through a re-split without “keep test” and a re-key.
                                     </div>
                                 )}
                             </div>

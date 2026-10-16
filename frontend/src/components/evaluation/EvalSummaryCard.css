@@ -120,3 +120,8 @@
 /* Multi-seed run: ship one seed (SeedShipTable). */
 .eval-summary__seed-ship { margin-top: 0.75rem; }
 .eval-summary__seed-picked { color: var(--accent-primary, var(--text-primary)); font-weight: 600; }
+
+.eval-summary__sizing-short th,
+.eval-summary__sizing-short td {
+    color: var(--color-warning, #f0a020);
+}

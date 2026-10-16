@@ -26,6 +26,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.experiment import EvalResult, Experiment
+from app.services.span_eval_sizing_service import size_types, sizing_line
 
 THRESHOLDS_FILE = "thresholds.json"
 MODEL_CARD_FILE = "README.md"
@@ -271,6 +272,10 @@ def build_span_model_card(
             )
             lines.append("")
             per_type = block.get("per_type") or {}
+            sizing_text = sizing_line(size_types(per_type)) if per_type else None
+            if sizing_text:
+                lines.append(sizing_text)
+                lines.append("")
             if per_type:
                 lines.append("| Type | Precision | Recall | F1 | Gold spans |")
                 lines.append("|---|---|---|---|---|")
