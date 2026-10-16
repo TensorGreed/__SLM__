@@ -565,6 +565,47 @@ benchmark types cannot resolve the effect it is after; build a ≥ 300-span
 reference for plates and accounts first, and seed negatives *with
 labels* for the look-alikes, or stop.
 
+**Look-alike round (2026-10-16).** Reading #120's Gretel false positives
+against Gretel's own labels showed where the catch-all came from: 89
+wrong bank_account spans were MRNs 20, card numbers 19, device
+identifiers 15, SSNs 8, customer ids 7, routing numbers 4 — and most of
+those kinds had **no project type**, so the model filed them under the
+nearest digit-string type. The round gave every look-alike its own type
+(device_id, customer_id, routing_number, transaction_id, username,
+tax_id, licence_number — 30 types in all) with a definition that says
+what it is *not*, seeded 40 documents where each kind carries its label
+word and the same digit shapes recur across kinds, Sonnet-labelled them
+(62 passages, 589 spans, $0.26; device_id 67, customer_id 55,
+routing_number 40, username 35, transaction_id 93 — but license_plate 2,
+address 2), relabelled the test rows and both keys under the grown
+vocabulary ($0.25 + $0.13), and trained three seeds of #117's config.
+
+| run | Gretel P / R / F1 | CoNLL R / F1 | credit_card F1 | MRN F1 | employee_id P | plate R |
+|---|---|---|---|---|---|---|
+| #117 shipped | 0.680 / 0.740 / 0.708 | 0.59 / 0.708 | 0.74 | 0.66 | 0.92 | 0.65 |
+| #123 (validation pick) | 0.717 / 0.741 / 0.729 | 0.54 / 0.672 | 0.81 | 0.75 | 0.89 | 0.27 |
+| #124 | 0.708 / 0.763 / 0.735 | 0.58 / 0.714 | 0.79 | 0.74 | 0.70 | 0.38 |
+| #125 | 0.705 / 0.763 / 0.733 | 0.60 / 0.725 | 0.79 | 0.78 | 0.68 | 0.29 |
+
+**Mixed, not a win** (fresh reviewer's verdict, which the numbers bear
+out). The mechanism works where the look-alikes got labels: credit_card
+precision 0.67 → 0.82–0.90 and MRN F1 0.66 → 0.74–0.78 on all three
+seeds, Gretel overall +0.02–0.03 on all three. It fails where they
+didn't: **license_plate** collapsed (recall 0.65 → 0.27–0.38; 26 of 55
+plates now get nothing, 11 are read as national_id after a "License
+Plate:" label) because the seed carried 2 plate labels against 16
+`licence_number` labels defined as "not a vehicle plate"; **employee_id**
+precision fell (0.92 → 0.68–0.89) as customer_id / username / device_id
+absorbed ids Gretel calls employee ids. bank_account moved inside its
+17-span noise (P 0.38–0.57). Of the criteria set before the round only
+one seed met one of them, and the validation pick (#123) is the weakest
+seed on CoNLL. **#117 stays shipped**; the 30-type vocabulary stays (the
+credit_card / MRN gains show it works) but is unfinished: plates,
+addresses and licence numbers are below the 20-label floor. Two product
+notes: the seed pick reads the *pre-tune* validation F1 (#125 was best
+after tuning), and the rewritten answer key dropped the 15 human verdicts
+(backed up to `eval_tools/gold_test.reviewed-2026-10-16.jsonl`).
+
 ### Try it: the redact endpoint
 
 ```bash
