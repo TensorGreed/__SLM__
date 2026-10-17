@@ -120,6 +120,33 @@ class PureTests(unittest.TestCase):
         self.assertEqual(split["unreviewed_scores"]["rows"], 0)
         self.assertIsNone(svc.split_scores({"keys": ["x"]}, rows))
 
+    def test_carry_reviews_across_a_relabel(self):
+        old = [dict(r) for r in ROWS]
+        old[0] = svc.apply_review(old[0], verdict="accepted")                      # labels unchanged → carried
+        old[1] = svc.apply_review(old[1], verdict="corrected", corrected={"entities": [{"type": "person_name", "start": 8, "end": 17}]})
+        old[2] = svc.apply_review(old[2], verdict="rejected", note="not a fair test")
+        extra = {"text": "Email me at x@y.z.", "entities": [{"type": "email", "start": 12, "end": 17, "text": "x@y.z"}]}
+        old.append(svc.apply_review(extra, verdict="accepted"))
+        new = [
+            {"text": T1, "entities": list(ROWS[0]["entities"])},                                   # same labels
+            {"text": T2, "entities": list(ROWS[1]["entities"])},                                   # labeller re-added the MRN
+            {"text": T3, "entities": [{"type": "api_key", "start": 0, "end": 7, "text": "Nothing"}]},
+            {"text": extra["text"], "entities": []},                                               # labels changed
+        ]
+        out, stats = svc.carry_reviews(old, new)
+        self.assertEqual(stats, {"carried": 3, "dropped": 1, "accepted": 1, "corrected": 1, "rejected": 1})
+        self.assertEqual(out[0]["review"]["verdict"], "accepted")
+        # The correction wins; the new labeller's labels become the restorable original.
+        self.assertEqual(out[1]["review"]["verdict"], "corrected")
+        self.assertEqual([e["type"] for e in out[1]["entities"]], ["person_name"])
+        self.assertEqual(len(out[1]["review"]["original"]["entities"]), 2)
+        self.assertEqual(svc.apply_review(out[1], verdict=None)["entities"], ROWS[1]["entities"])
+        self.assertTrue(svc.is_rejected(out[2]))
+        self.assertEqual(out[2]["review"]["note"], "not a fair test")
+        self.assertIsNone(out[3].get("review"))
+        self.assertEqual(out[3]["previous_review"]["verdict"], "accepted")
+        self.assertEqual(out[3]["previous_review"]["entities"], extra["entities"])
+
     def test_review_line(self):
         self.assertIsNone(svc.review_line({"total": 3, "reviewed": 0}))
         self.assertEqual(

@@ -210,6 +210,9 @@ class RelabelSummary:
     targeting: dict[str, Any] | None = None
     # Message Batch report (``batch_info``) when the labels came through one.
     batch: dict[str, Any] | None = None
+    # Answer-key target: how the previous key's human verdicts were carried
+    # (``gold_review_service.carry_reviews`` stats).
+    reviews: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -233,6 +236,7 @@ class RelabelSummary:
             "targeting": self.targeting,
             "batch": self.batch,
             "via_batch": bool(self.batch),
+            "reviews": self.reviews,
         }
 
 
@@ -531,21 +535,28 @@ async def relabel_split_as_answer_key(
         )
 
     await report(0.92, f"Writing the answer key ({len(labelled)} rows)")
+    from app.services.gold_review_service import carry_reviews, is_rejected, load_rows as _load_gold_rows, write_rows as _write_gold_rows
+
     gold_dir = settings.DATA_DIR / "projects" / str(project_id) / "gold"
     gold_dir.mkdir(parents=True, exist_ok=True)
     path = gold_dir / "gold_test.jsonl"
     stamp = datetime.now(timezone.utc).isoformat()
     counts: Counter[str] = Counter()
-    with path.open("w", encoding="utf-8") as handle:
-        for source_index, spans in labelled:
-            counts.update(e["type"] for e in spans)
-            handle.write(json.dumps({
-                "text": texts[source_index],
-                "entities": spans,
-                "source": f"answer_key:{backend_label}",
-                "relabelled_from": split,
-                "created_at": stamp,
-            }, ensure_ascii=False) + "\n")
+    new_rows = []
+    for source_index, spans in labelled:
+        counts.update(e["type"] for e in spans)
+        new_rows.append({
+            "text": texts[source_index],
+            "entities": spans,
+            "source": f"answer_key:{backend_label}",
+            "relabelled_from": split,
+            "created_at": stamp,
+        })
+    # A person's verdicts on the previous key survive the rewrite
+    # (gold_review_service.carry_reviews): corrections win over the new
+    # labels, accepts carry when the labels are unchanged, rejects carry.
+    new_rows, review_stats = carry_reviews(_load_gold_rows(path), new_rows)
+    _write_gold_rows(path, new_rows)
 
     existing = (
         await db.execute(
@@ -557,7 +568,7 @@ async def relabel_split_as_answer_key(
         existing = Dataset(project_id=project_id, name="Answer key (test)", dataset_type=DatasetType.GOLD_TEST, description="")
         db.add(existing)
     existing.file_path = str(path)
-    existing.record_count = len(labelled)
+    existing.record_count = sum(1 for r in new_rows if not is_rejected(r))
     existing.description = f"Relabelled {split} split by {backend_label} on {stamp[:10]}"
     existing.metadata_ = {**(existing.metadata_ or {}), "source": "span_relabel", "backend": backend_label, "relabelled_from": split}
     await db.commit()
@@ -575,6 +586,13 @@ async def relabel_split_as_answer_key(
         summary.warnings.append(f"{failed_calls} text{'s' if failed_calls != 1 else ''} could not be labelled even alone and were skipped ({calls['made']} calls).")
     if len(labelled) < len(keep):
         summary.warnings.append(f"{len(keep) - len(labelled)} of {len(keep)} texts were not labelled.")
+    summary.reviews = review_stats
+    if review_stats["carried"] or review_stats["dropped"]:
+        summary.warnings.append(
+            f"Answer-key reviews: {review_stats['carried']} carried over "
+            f"({review_stats['corrected']} corrections kept over the new labels), "
+            f"{review_stats['dropped']} dropped because the labels changed (kept as previous_review)."
+        )
     await report(1.0, f"Answer key written: {len(labelled)} rows, {sum(counts.values())} entities")
     summary.usage = usage_block(llm)
     summary.batch = batch_info(llm)

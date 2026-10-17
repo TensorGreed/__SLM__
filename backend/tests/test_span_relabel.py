@@ -61,6 +61,50 @@ class FakeLabeller:
         ]})
 
 
+class RelabelCarriesReviewsTests(unittest.TestCase):
+    def test_reviews_on_the_previous_key_survive_the_rewrite(self):
+        from app.services import gold_review_service as review
+
+        pid = client.post("/api/projects", json={"name": f"relabel-rv-{time.time_ns()}", "description": "x"}).json()["id"]
+        base = settings.DATA_DIR / "projects" / str(pid)
+        (base / "prepared").mkdir(parents=True, exist_ok=True)
+        (base / "gold").mkdir(parents=True, exist_ok=True)
+        (base / "prepared" / "test.jsonl").write_text(json.dumps({"text": T1, "entities": []}) + "\n" + json.dumps({"text": T2, "entities": []}) + "\n")
+        # The previous key: T1 accepted with exactly the labels the fake will return; T2 rejected.
+        prev = [
+            review.apply_review({"text": T1, "entities": [
+                {"type": "person_name", "start": 5, "end": 17, "text": "Ada Lovelace"},
+                {"type": "email", "start": 21, "end": 37, "text": "ada@example.test"},
+                {"type": "credit_card", "start": 49, "end": 68, "text": "4242 4242 4242 4242"},
+            ]}, verdict="accepted"),
+            review.apply_review({"text": T2, "entities": []}, verdict="rejected", note="template text"),
+        ]
+        review.write_rows(base / "gold" / "gold_test.jsonl", prev)
+
+        async def _go():
+            async with async_session_factory() as db:
+                return await svc.relabel_split_as_answer_key(
+                    db, pid, split="test", backend_override=FakeLabeller(),
+                    entity_types=["person_name", "email", "credit_card", "medical_record_number", "provider_name", "diagnosis"],
+                )
+
+        summary = asyncio.run(_go())
+        self.assertEqual(summary.reviews, {"carried": 2, "dropped": 0, "accepted": 1, "corrected": 0, "rejected": 1})
+        rows = review.load_rows(base / "gold" / "gold_test.jsonl")
+        self.assertEqual(rows[0]["review"]["verdict"], "accepted")
+        self.assertTrue(review.is_rejected(rows[1]))
+        self.assertTrue(any("reviews: 2 carried" in w for w in summary.warnings), summary.warnings)
+        from app.models.dataset import Dataset, DatasetType
+
+        async def _count():
+            from sqlalchemy import select
+
+            async with async_session_factory() as db:
+                return (await db.execute(select(Dataset.record_count).where(Dataset.project_id == pid, Dataset.dataset_type == DatasetType.GOLD_TEST))).scalar_one()
+
+        self.assertEqual(asyncio.run(_count()), 1, "the rejected row does not count")
+
+
 class RelabelTests(unittest.TestCase):
     def setUp(self):
         FakeLabeller.prompts = []

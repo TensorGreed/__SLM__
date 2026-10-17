@@ -8,9 +8,13 @@ recorded on the validation split during training. Test examples, the answer
 key and external benchmarks are never read: they are what the shipped model
 is reported on, and picking on them would make that report optimistic.
 
-Default metric per task type (first one any child has):
+Default metric per task type (the first one EVERY child has; if none is
+shared by all, the first any child has):
 
-* ``token_classification`` → validation span F1 (``task_metrics.span_set.f1``)
+* ``token_classification`` → validation span F1 with the run's tuned
+  thresholds (``thresholds.json`` → ``tuned.micro_f1_after``, when tuned on
+  the validation split) — the decoding the model is served with — else the
+  trainer's argmax validation span F1 (``task_metrics.span_set.f1``)
 * ``classification`` → validation macro-F1, else accuracy
 * anything else → lowest validation loss (``final_eval_loss``)
 
@@ -40,6 +44,7 @@ SELECTION_KEY = "seed_selection"
 
 # metric id → (label, higher_is_better)
 VALIDATION_METRICS: dict[str, tuple[str, bool]] = {
+    "span_f1_tuned": ("span F1 (tuned thresholds)", True),
     "span_f1": ("span F1", True),
     "macro_f1": ("macro-F1", True),
     "accuracy": ("accuracy", True),
@@ -47,7 +52,7 @@ VALIDATION_METRICS: dict[str, tuple[str, bool]] = {
 }
 
 _TASK_METRIC_ORDER: dict[str, list[str]] = {
-    "token_classification": ["span_f1", "eval_loss"],
+    "token_classification": ["span_f1_tuned", "span_f1", "eval_loss"],
     "classification": ["macro_f1", "accuracy", "eval_loss"],
 }
 _DEFAULT_ORDER = ["eval_loss"]
@@ -62,11 +67,19 @@ def _num(value: Any) -> float | None:
     return value if value == value else None  # NaN → None
 
 
-def validation_values(report: dict[str, Any] | None, fallback_eval_loss: Any = None) -> dict[str, float]:
+def validation_values(
+    report: dict[str, Any] | None, fallback_eval_loss: Any = None, thresholds: dict[str, Any] | None = None,
+) -> dict[str, float]:
     """The validation-split numbers a training report recorded, by metric id.
-    Only validation keys are read (never a test or benchmark score)."""
+    Only validation keys are read (never a test or benchmark score).
+    ``thresholds``: the run's thresholds.json — its ``tuned.micro_f1_after``
+    counts as ``span_f1_tuned`` only when the tune ran on the validation
+    split (a tune on another split would be a leak)."""
     report = report if isinstance(report, dict) else {}
     out: dict[str, float] = {}
+    tuned = thresholds.get("tuned") if isinstance(thresholds, dict) and isinstance(thresholds.get("tuned"), dict) else {}
+    if tuned.get("split", "val") == "val" and _num(tuned.get("micro_f1_after")) is not None:
+        out["span_f1_tuned"] = _num(tuned.get("micro_f1_after"))  # type: ignore[assignment]
     task_metrics = report.get("task_metrics") if isinstance(report.get("task_metrics"), dict) else {}
     span = task_metrics.get("span_set") if isinstance(task_metrics.get("span_set"), dict) else {}
     if _num(span.get("f1")) is not None:
@@ -107,9 +120,11 @@ def pick_seed(
         raise ValueError(f"Unknown validation metric {metric!r}; one of {', '.join(VALIDATION_METRICS)}")
     if metric is None:
         order = metric_order(task_type)
+        # A metric every child has, so no seed is excluded for not having
+        # been tuned; else the first any child has.
         metric = next(
-            (m for m in order if any(m in (c.get("values") or {}) for c in children)),
-            order[0],
+            (m for m in order if children and all(m in (c.get("values") or {}) for c in children)),
+            next((m for m in order if any(m in (c.get("values") or {}) for c in children)), order[0]),
         )
     label, higher = VALIDATION_METRICS[metric]
 
@@ -183,6 +198,18 @@ def _read_report(exp: Experiment) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _read_thresholds(exp: Experiment) -> dict[str, Any] | None:
+    """The child's ``model/thresholds.json`` (None when absent)."""
+    if not exp.output_dir:
+        return None
+    from app.services.span_model_package_service import read_thresholds
+
+    try:
+        return read_thresholds(Path(exp.output_dir).expanduser() / "model")
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def load_leader(db: AsyncSession, project_id: int, leader_id: int) -> Experiment:
     from app.services.post_training_eval_service import is_seed_group_leader
 
@@ -217,7 +244,7 @@ async def seed_group_pick(
         rows.append({
             "experiment_id": child.id,
             "seed_value": child.seed_value,
-            "values": validation_values(report, child.final_eval_loss),
+            "values": validation_values(report, child.final_eval_loss, _read_thresholds(child)),
         })
     if task_type is None:
         cfg = leader.config if isinstance(leader.config, dict) else {}

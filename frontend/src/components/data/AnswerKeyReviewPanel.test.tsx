@@ -66,6 +66,12 @@ describe('AnswerKeyReviewPanel', () => {
         expect(screen.getByText(/run #117 disagrees with the key come first/)).toBeInTheDocument();
     });
 
+    it('flags a row whose earlier verdict a relabel could not carry', async () => {
+        apiMock.get.mockResolvedValue({ data: { ...QUEUE, rows: [{ ...QUEUE.rows[1], previous_review: { verdict: 'accepted', reviewed_at: 'x', note: '', reason: 'the labels changed in a relabel' } }] } });
+        render(<AnswerKeyReviewPanel projectId={31} />);
+        expect(await screen.findByTestId('akr-previous-0')).toHaveTextContent('Previously accepted with different labels (the labels changed in a relabel) — check it again.');
+    });
+
     it('accept sends the verdict and moves the row out of the pending list', async () => {
         apiMock.put.mockResolvedValue({
             data: {

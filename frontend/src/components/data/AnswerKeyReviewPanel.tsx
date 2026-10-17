@@ -199,6 +199,11 @@ export default function AnswerKeyReviewPanel({ projectId, datasetType = 'gold_te
                                 {agreementText(row)}
                             </span>
                         </div>
+                        {row.previous_review && !row.review && (
+                            <div className="akr__legend" data-testid={`akr-previous-${row.index}`}>
+                                Previously {row.previous_review.verdict} with different labels{row.previous_review.reason ? ` (${row.previous_review.reason})` : ''} — check it again.
+                            </div>
+                        )}
                         {row.entities !== null ? (
                             <PassageView
                                 row={row}

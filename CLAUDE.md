@@ -745,7 +745,11 @@ runs real CPU inference). ~4 min locally.
   3 seeds" on `EvalSummaryCard`).
   **Ship the best seed** (`services/seed_selection_service.py`, `api/seed_groups.py`):
   `pick_seed` (pure) picks a group's child by a **validation** metric from each
-  child's `training_report.json` only (`validation_values`: token_classification →
+  child's `training_report.json` (+ its `model/thresholds.json`) only
+  (`validation_values(report, loss, thresholds)`: token_classification →
+  `span_f1_tuned` = `thresholds.json` `tuned.micro_f1_after` when the tune ran
+  on val (the served decoding; the auto metric is the first one EVERY child
+  has, so an untuned seed drops the group to `span_f1`), then
   `task_metrics.span_set.f1`, classification → `final_eval_macro_f1` else
   `final_eval_accuracy`, else lowest `final_eval_loss`; ties → lower run id; a
   child without the metric is listed, never picked) — never test / answer key /
@@ -1454,6 +1458,14 @@ runs real CPU inference). ~4 min locally.
   newer than the eval). Surfaces: `answer_key.review` on the span eval
   summary (`EvalSummaryCard` line via `answerKeyReviewText`), the model
   card's "Human review: …" line (`_answer_key_review_block`), and
+  **Reviews survive a relabel**: `relabel_split_as_answer_key` runs
+  `gold_review_service.carry_reviews(old_rows, new_rows)` (pure, pairs by
+  text) before writing — corrected → the reviewer's entities win and
+  `review.original` becomes the new labels; accepted → carried only when the
+  span set is unchanged, else kept as `previous_review` on the row; rejected
+  → carried; `RelabelSummary.reviews` {carried, dropped, …} + a warning line;
+  record_count skips rejected rows. Tests in `test_gold_review` +
+  `test_span_relabel`.
   `AnswerKeyReviewPanel` (Answer Key tab, test set): passage with key spans
   (orange = model missed, dashed = model-only), Accept / Fix (inline span
   editor, select text to add, "Use the model's spans") / Reject / Clear.

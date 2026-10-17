@@ -149,7 +149,7 @@ Ties go to the lower run id. A seed without the metric in its training report is
 
 **Ship this seed** runs the normal export of the picked seed (Hugging Face format) and records the choice on the group's leader run. The export says how the seed was chosen, for example "Picked seed 43 (run #102) of 3 by validation span F1 (higher is better; values: seed 42 0.81, seed 43 0.84, seed 44 0.82)". That sentence appears in `manifest.json` (`seed_selection`, with every seed's value), in `RELEASE_NOTES.md`, and, for a span tagger, as a **Seed selection** line in the model card. A later export of the same seed carries it too.
 
-API: `GET /api/projects/{id}/seed-groups/{leader_id}/pick` (add `?metric=span_f1|macro_f1|accuracy|eval_loss` to override the default) and `POST /api/projects/{id}/seed-groups/{leader_id}/ship` with `{"export_format": "huggingface", "metric": null, "run_smoke_tests": true}`. The response includes the export's id, status and output path.
+API: `GET /api/projects/{id}/seed-groups/{leader_id}/pick` (add `?metric=span_f1_tuned|span_f1|macro_f1|accuracy|eval_loss` to override the default; for a span tagger the default is the validation span F1 **with each seed's tuned thresholds** — `thresholds.json` → `tuned.micro_f1_after`, the decoding the model is served with — when every seed was tuned on the validation split, else the trainer's argmax validation F1) and `POST /api/projects/{id}/seed-groups/{leader_id}/ship` with `{"export_format": "huggingface", "metric": null, "run_smoke_tests": true}`. The response includes the export's id, status and output path.
 
 ### Reason codes you might hit
 

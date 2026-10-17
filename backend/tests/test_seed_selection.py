@@ -60,6 +60,30 @@ class PickSeedTests(unittest.TestCase):
         self.assertIn("highest validation span F1", out["rule"])
         self.assertIn("answer key", out["rule"])
 
+    def test_tuned_span_f1_wins_when_every_seed_was_tuned(self):
+        # The pre-tune argmax F1 would pick 10; the served (tuned) decoding picks 11.
+        out = pick_seed(
+            [_child(10, 42, span_f1=0.91, span_f1_tuned=0.931), _child(11, 43, span_f1=0.90, span_f1_tuned=0.937), _child(12, 44, span_f1=0.905, span_f1_tuned=0.933)],
+            task_type="token_classification",
+        )
+        self.assertEqual(out["metric_id"], "span_f1_tuned")
+        self.assertEqual(out["picked_experiment_id"], 11)
+        self.assertIn("span F1 (tuned thresholds)", out["rule"])
+
+    def test_untuned_seed_falls_back_to_the_metric_every_seed_has(self):
+        out = pick_seed(
+            [_child(10, 42, span_f1=0.91, span_f1_tuned=0.931), _child(11, 43, span_f1=0.90)],
+            task_type="token_classification",
+        )
+        self.assertEqual(out["metric_id"], "span_f1")
+        self.assertEqual(out["picked_experiment_id"], 10)
+
+    def test_validation_values_read_tuned_f1_only_from_a_val_tune(self):
+        report = {"task_metrics": {"span_set": {"f1": 0.9}}}
+        self.assertEqual(validation_values(report, None, {"tuned": {"split": "val", "micro_f1_after": 0.93}})["span_f1_tuned"], 0.93)
+        self.assertNotIn("span_f1_tuned", validation_values(report, None, {"tuned": {"split": "train", "micro_f1_after": 0.99}}))
+        self.assertNotIn("span_f1_tuned", validation_values(report, None, None))
+
     def test_classification_macro_f1_then_accuracy(self):
         out = pick_seed([_child(1, 1, macro_f1=0.6, accuracy=0.9), _child(2, 2, macro_f1=0.7, accuracy=0.8)], task_type="classification")
         self.assertEqual((out["metric_id"], out["picked_experiment_id"]), ("macro_f1", 2))

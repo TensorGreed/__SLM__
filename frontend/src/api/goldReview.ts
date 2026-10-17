@@ -38,6 +38,8 @@ export interface ReviewQueueRow {
     fields: Record<string, string>;
     source: string | null;
     review: RowReview | null;
+    /** A verdict a relabel could not carry because the labels changed. */
+    previous_review?: { verdict: ReviewVerdict; reviewed_at: string; note: string; entities?: ReviewSpan[] | null; reason?: string } | null;
     /** The trained model's spans for this text (null without a span run). */
     predicted: ReviewSpan[] | null;
     /** Strict span F1 between key and model; null when either is missing. */

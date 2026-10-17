@@ -602,9 +602,14 @@ one seed met one of them, and the validation pick (#123) is the weakest
 seed on CoNLL. **#117 stays shipped**; the 30-type vocabulary stays (the
 credit_card / MRN gains show it works) but is unfinished: plates,
 addresses and licence numbers are below the 20-label floor. Two product
-notes: the seed pick reads the *pre-tune* validation F1 (#125 was best
-after tuning), and the rewritten answer key dropped the 15 human verdicts
-(backed up to `eval_tools/gold_test.reviewed-2026-10-16.jsonl`).
+gaps this exposed, both fixed the same day: the seed pick read the
+*pre-tune* validation F1 (#125 was best after tuning) — it now picks on
+the validation F1 under each seed's tuned thresholds when every seed was
+tuned (`span_f1_tuned`); and rewriting the answer key dropped the 15
+human verdicts — a relabel now carries them: corrections win over the
+new labels, accepts carry when the labels are unchanged, rejects carry,
+and an accept whose labels changed is kept on the row as
+`previous_review` (the bell reports carried / dropped counts).
 
 ### Try it: the redact endpoint
 

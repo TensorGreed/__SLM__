@@ -230,6 +230,71 @@ def apply_review(
     return out
 
 
+# ── Carrying reviews across a relabel ──────────────────────────────────
+
+
+def _span_set(entities: Any) -> set[tuple[str, int, int]]:
+    return {(str(e.get("type")), int(e.get("start")), int(e.get("end"))) for e in (entities or []) if isinstance(e, dict)}
+
+
+def carry_reviews(old_rows: list[dict[str, Any]], new_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Pure. A relabel rewrites the answer key; a person's verdicts must
+    not vanish with it. Rows pair by text (``row_key``). Per old review:
+
+    - ``rejected`` → carried (the text is still not a fair test).
+    - ``corrected`` → the reviewer's labels WIN over the new labeller's:
+      the new row takes the corrected entities, and ``review.original``
+      becomes the new labeller's labels (so a clear restores them).
+    - ``accepted`` and the new labels equal the accepted ones → carried.
+    - ``accepted`` but the new labels differ → the verdict no longer
+      applies; it is kept on the row as ``previous_review`` (with the
+      labels it approved) and the row is unreviewed again.
+
+    Returns the new rows (copies) and ``{carried, dropped, accepted,
+    corrected, rejected, previous}``."""
+    by_key = {row_key(r): r for r in old_rows if review_of(r) is not None}
+    out: list[dict[str, Any]] = []
+    stats = {"carried": 0, "dropped": 0, "accepted": 0, "corrected": 0, "rejected": 0}
+    for row in new_rows:
+        new = dict(row)
+        old = by_key.get(row_key(row))
+        review = review_of(old) if old is not None else None
+        if review is None:
+            out.append(new)
+            continue
+        verdict = str(review["verdict"])
+        carried = dict(review)
+        carried["carried_at"] = _utcnow()
+        if verdict == "rejected":
+            new[REVIEW_KEY] = carried
+            stats["carried"] += 1; stats["rejected"] += 1
+        elif verdict == "corrected":
+            original = {}
+            for field in CORRECTABLE_FIELDS:
+                if field in (review.get("original") or {}) and field in old:
+                    original[field] = new.get(field)
+                    new[field] = old[field]
+            carried["original"] = original
+            new[REVIEW_KEY] = carried
+            stats["carried"] += 1; stats["corrected"] += 1
+        elif "entities" in old and _span_set(old.get("entities")) == _span_set(new.get("entities")):
+            new[REVIEW_KEY] = carried
+            stats["carried"] += 1; stats["accepted"] += 1
+        elif "entities" not in old and all(old.get(f) == new.get(f) for f in ("answer", "label", "summary")):
+            new[REVIEW_KEY] = carried
+            stats["carried"] += 1; stats["accepted"] += 1
+        else:
+            new["previous_review"] = {
+                **{k: review.get(k) for k in ("verdict", "reviewed_at", "reviewed_by", "note")},
+                "entities": old.get("entities"),
+                "dropped_at": _utcnow(),
+                "reason": "the labels changed in a relabel",
+            }
+            stats["dropped"] += 1
+        out.append(new)
+    return out, stats
+
+
 # ── Queue ──────────────────────────────────────────────────────────────
 
 
@@ -345,6 +410,8 @@ async def review_queue(
             "fields": _answer_fields(row),
             "source": row.get("source"),
             "review": review_of(row),
+            # A verdict a relabel could not carry (the labels changed).
+            "previous_review": row.get("previous_review") if isinstance(row.get("previous_review"), dict) else None,
             "predicted": pred,
             "agreement": round(row_agreement(ents, pred), 4) if ents is not None and pred is not None else None,
         }
