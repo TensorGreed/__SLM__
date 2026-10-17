@@ -570,3 +570,33 @@
     margin: 4px 0 0 0;
     padding-left: 1.2rem;
 }
+
+/* Publish to Hugging Face (expanded export row) */
+.export-hub-publish {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+.export-hub-publish__form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.export-hub-publish__form input[type='text'] {
+  min-width: 220px;
+}
+.export-hub-publish__private {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.export-hub-publish__hint {
+  flex-basis: 100%;
+  color: var(--text-tertiary);
+}
+.export-hub-publish__done a {
+  font-weight: 600;
+}

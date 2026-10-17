@@ -192,6 +192,7 @@ session-start guidance.
 - `backend/app/services/gold_workbench_service.py` — Gold-set annotation workbench service (priority.md P10).
 - `backend/app/services/gradient_checkpointing_policy.py` — Whether to recompute activations in the backward pass
 - `backend/app/services/hardware_service.py` — Hardware recommender service mapping target devices to model and compression profiles.
+- `backend/app/services/hub_publish_service.py` — Publish a completed Hugging Face-format export to the Hugging Face Hub.
 - `backend/app/services/hyperparameter_sweep_service.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/app/services/ingestion_service.py` — Data Ingestion service — handles file uploads, parsing, and storage.
 - `backend/app/services/job_service.py` — Shared Celery job helpers for status and cancellation.
@@ -785,6 +786,7 @@ session-start guidance.
 - `backend/tests/test_gold_set_diagnostics.py` — V4 of the ML-native visualisations arc — gold-set class balance
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
 - `backend/tests/test_heldout_dataset_resolution.py` — Held-out eval dataset resolution: aliases resolve by type priority.
+- `backend/tests/test_hub_publish.py` — Publish an export to the Hugging Face Hub: the pure front-matter helper,
 - `backend/tests/test_hyperparameter_sweep.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
 - `backend/tests/test_label_noise_slice1.py` — Quality-Lift phase 4 slice 1 — Label-noise scan service + endpoints.

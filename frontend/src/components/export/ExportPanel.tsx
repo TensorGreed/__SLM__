@@ -15,6 +15,14 @@ interface ExperimentOption {
     status: string;
 }
 
+export interface HubPublishRecord {
+    repo_id: string;
+    url: string;
+    private: boolean;
+    commit?: string | null;
+    published_at?: string;
+}
+
 interface ExportRecord {
     id: number;
     export_format?: string;
@@ -22,6 +30,7 @@ interface ExportRecord {
     quantization?: string | null;
     status: string;
     output_path?: string;
+    hub_publish?: HubPublishRecord | null;
     file_size_bytes?: number | null;
     manifest?: Record<string, unknown>;
     created_at?: string;
@@ -440,6 +449,32 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
     const [isExporting, setIsExporting] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
     const [statusMessage, setStatusMessage] = useState('');
+    const [hubRepoIds, setHubRepoIds] = useState<Record<number, string>>({});
+    const [hubPrivate, setHubPrivate] = useState<Record<number, boolean>>({});
+    const [publishingExportId, setPublishingExportId] = useState<number | null>(null);
+
+    const handlePublishHub = async (exp: ExportRecord) => {
+        const repoId = String(hubRepoIds[exp.id] || '').trim();
+        if (!repoId.includes('/')) {
+            setStatusMessage('Enter the Hugging Face repo as owner/name.');
+            return;
+        }
+        setPublishingExportId(exp.id);
+        setStatusMessage('');
+        try {
+            const res = await api.post<HubPublishRecord>(`/projects/${projectId}/export/${exp.id}/publish-hub`, {
+                repo_id: repoId,
+                private: Boolean(hubPrivate[exp.id]),
+            });
+            setExportsList((prev) => prev.map((e) => (e.id === exp.id ? { ...e, hub_publish: res.data } : e)));
+            setStatusMessage(`Published export ${exp.id} to ${res.data.url}${res.data.private ? ' (private)' : ''}.`);
+        } catch (err: unknown) {
+            const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+            setStatusMessage(`Publish failed: ${detail || (err as Error)?.message || 'unknown error'}`);
+        } finally {
+            setPublishingExportId(null);
+        }
+    };
 
     const [expandedIds, setExpandedIds] = useState<number[]>([]);
     const [copyState, setCopyState] = useState<Record<string, boolean>>({});
@@ -1635,6 +1670,46 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                                                 </button>
                                                             </div>
                                                         </div>
+
+                                                        {String(exp.export_format || exp.format || '').toLowerCase() === 'huggingface' && exp.status === 'completed' && (
+                                                            <div className="export-hub-publish" data-testid={`export-hub-publish-${exp.id}`} onClick={(e) => e.stopPropagation()}>
+                                                                {exp.hub_publish ? (
+                                                                    <div className="export-hub-publish__done">
+                                                                        Published to{' '}
+                                                                        <a href={exp.hub_publish.url} target="_blank" rel="noreferrer">{exp.hub_publish.repo_id}</a>
+                                                                        {exp.hub_publish.private ? ' (private)' : ''}
+                                                                        {exp.hub_publish.commit ? ` · commit ${String(exp.hub_publish.commit).slice(0, 7)}` : ''}
+                                                                        {' · '}
+                                                                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handlePublishHub({ ...exp, hub_publish: null })} disabled={publishingExportId === exp.id}>
+                                                                            Publish again
+                                                                        </button>
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="export-hub-publish__form">
+                                                                        <label htmlFor={`hub-repo-${exp.id}`}>Hugging Face repo</label>
+                                                                        <input
+                                                                            id={`hub-repo-${exp.id}`}
+                                                                            type="text"
+                                                                            placeholder="owner/model-name"
+                                                                            value={hubRepoIds[exp.id] || ''}
+                                                                            onChange={(e) => setHubRepoIds((prev) => ({ ...prev, [exp.id]: e.target.value }))}
+                                                                        />
+                                                                        <label className="export-hub-publish__private">
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                checked={Boolean(hubPrivate[exp.id])}
+                                                                                onChange={(e) => setHubPrivate((prev) => ({ ...prev, [exp.id]: e.target.checked }))}
+                                                                            />{' '}
+                                                                            private
+                                                                        </label>
+                                                                        <button type="button" className="btn btn-primary btn-sm" onClick={() => void handlePublishHub(exp)} disabled={publishingExportId === exp.id}>
+                                                                            {publishingExportId === exp.id ? 'Publishing…' : 'Publish to Hugging Face'}
+                                                                        </button>
+                                                                        <span className="export-hub-publish__hint">Uploads model/ (weights, tokenizer, model card, thresholds) and the manifest; uses the server's HF_TOKEN or login.</span>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
 
                                                         {exp.output_path && (
                                                             <div style={{ marginBottom: 16, fontSize: '0.8rem', color: 'var(--color-info)' }}>

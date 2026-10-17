@@ -52,6 +52,14 @@ class ExportRunRequest(BaseModel):
     run_smoke_tests: bool = True
 
 
+class ExportPublishHubRequest(BaseModel):
+    repo_id: str
+    private: bool = False
+    token: str | None = None
+    license: str | None = "mit"
+    commit_message: str | None = None
+
+
 class ExportDeploymentValidateRequest(BaseModel):
     deployment_targets: list[str] | None = None
     run_smoke_tests: bool = True
@@ -142,6 +150,37 @@ async def run(
         }
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.post("/{export_id}/publish-hub")
+async def publish_hub(
+    project_id: int,
+    export_id: int,
+    req: ExportPublishHubRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Publish a completed Hugging Face-format export to the Hugging Face
+    Hub (model/ as the repo root, manifest + release notes under brewslm/).
+    The token is used for this call only, never stored."""
+    from app.services.hub_publish_service import HubPublishError, publish_export_to_hub
+
+    try:
+        return await publish_export_to_hub(
+            db,
+            project_id,
+            export_id,
+            repo_id=req.repo_id,
+            private=req.private,
+            token=req.token,
+            license=req.license,
+            commit_message=req.commit_message,
+        )
+    except HubPublishError as e:
+        raise HTTPException(400, str(e))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:  # noqa: BLE001 — hub/network errors, reported as-is
+        raise HTTPException(502, f"Hugging Face Hub refused the publish: {e}")
 
 
 @router.get("/deployment-targets")
@@ -326,6 +365,7 @@ async def list_all(
             "quantization": e.quantization,
             "output_path": e.output_path,
             "run_id": (e.manifest or {}).get("run_id"),
+            "hub_publish": (e.manifest or {}).get("hub_publish"),
             "file_size_bytes": e.file_size_bytes,
             "created_at": e.created_at.isoformat(),
             "completed_at": e.completed_at.isoformat() if e.completed_at else None,

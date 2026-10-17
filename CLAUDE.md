@@ -765,6 +765,18 @@ runs real CPU inference). ~4 min locally.
   card "Seed selection" line (`build_span_model_card(seed_selection=)`). Summary
   flag `seed_group_leader` → `SeedShipTable` on `EvalSummaryCard`. Tests:
   `tests/test_seed_selection.py`, `SeedShipTable.test.tsx`.
+- **Publish to the Hugging Face Hub** (`services/hub_publish_service.py`, `POST
+  /projects/{id}/export/{export_id}/publish-hub` {repo_id, private, token?, license,
+  commit_message}): a COMPLETED huggingface-format export's `model/` becomes the
+  repo root (`upload_folder`), `manifest.json` + `RELEASE_NOTES.md` go under
+  `brewslm/`; `card_with_hub_metadata` (pure) adds `license` / `language` to the
+  card's front matter only when absent; token = request > `HF_TOKEN` > the
+  `huggingface-cli login` cache, never stored; the record lands on the export
+  manifest as `hub_publish` (disk + DB; the list route returns it). `api=` is
+  injectable (tests use a fake HfApi, never the network — `tests/test_hub_publish.py`).
+  UI: the expanded Export-History row of a HF export (`ExportPanel`,
+  `data-testid="export-hub-publish-<id>"`). Project 31's tagger: repo
+  `TensorGreed/brewslm-sensitive-data-tagger` (see the workflow doc for which export).
 - **Reroute-to-RAG** — `rag_project_service.clone_project_for_rag()`
   creates a sibling project with `runtime_config.rag_first=True`. The
   playground uses base model + retrieval (no LoRA).

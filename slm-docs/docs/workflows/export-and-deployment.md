@@ -153,6 +153,17 @@ API: `GET /api/projects/{id}/seed-groups/{leader_id}/pick` (add `?metric=span_f1
 
 **A span seed with no evaluation is evaluated first.** A span tagger's model card states its evaluation and human-review evidence from the picked run's own evaluations, and a seed child has none until it is lift-checked (the watcher checks the group's leader, not each child). Ship runs the span lift check on the picked seed when it has no evaluation on record — the test examples and, if there is one, the answer key — before exporting, and the response carries it as `evaluated_before_ship` (`null` when the seed already had one). Send `"evaluate_if_missing": false` to refuse instead: the API answers 409 naming the run and the lift-check call to make, and records nothing.
 
+### Publishing to the Hugging Face Hub
+
+A completed Hugging Face-format export can be pushed to the Hub as a model repo. In **Export History**, expand the export and fill in the repo as `owner/model-name` (tick *private* to keep it unlisted), then **Publish to Hugging Face**. What goes up:
+
+- the export's `model/` folder as the repo root: weights, tokenizer, `README.md` (the model card the export wrote, with `license: mit` and `language: en` added to its front matter when the card has neither), and for a span tagger `thresholds.json` + `label_space.json`;
+- `brewslm/manifest.json` and `brewslm/RELEASE_NOTES.md`, so the run id, seed selection and every transform travel with the model.
+
+The server's token is used (`HF_TOKEN`, or the `huggingface-cli login` cache); the request may carry one instead, and it is never stored. The publication is recorded on the export's manifest as `hub_publish` (repo id, URL, commit, time) and the row shows the link afterwards; publishing again to the same repo makes a new commit.
+
+API: `POST /api/projects/{id}/export/{export_id}/publish-hub` with `{"repo_id": "owner/name", "private": false, "token": null, "license": "mit", "commit_message": null}` → the `hub_publish` record. 400 for a bad repo id, a missing token, or an export that is not a completed Hugging Face export; 502 when the Hub refuses the upload.
+
 ### Reason codes you might hit
 
 | Code | Means |

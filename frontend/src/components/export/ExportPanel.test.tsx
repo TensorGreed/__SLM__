@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -498,3 +498,48 @@ describe('ExportPanel serve run flow', () => {
     expect(await screen.findByText(/xcodebuild -scheme ReferenceApp/i)).toBeInTheDocument();
   });
 });
+
+describe('ExportPanel publish to Hugging Face', () => {
+  beforeEach(() => {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url.includes('/training/experiments')) return { data: [{ id: 1, name: 'exp-1', status: 'completed' }] };
+      if (url.includes('/export/list')) {
+        return {
+          data: [
+            { id: 36, format: 'huggingface', status: 'completed', output_path: '/data/exports/31/36', created_at: '2026-10-17T13:56:24Z', hub_publish: null },
+            { id: 35, format: 'gguf', status: 'completed', output_path: '/data/exports/31/35', created_at: '2026-10-17T11:10:26Z', hub_publish: null },
+          ],
+        };
+      }
+      if (url.includes('/registry/models')) return { data: { models: [] } };
+      if (url.includes('/export/deployment-targets')) return { data: { default_target_ids: [], targets: [] } };
+      return { data: {} };
+    });
+    apiMock.post.mockReset();
+  });
+
+  it('publishes a completed Hugging Face export and shows the repo link', async () => {
+    apiMock.post.mockResolvedValue({
+      data: { repo_id: 'me/tagger', url: 'https://huggingface.co/me/tagger', private: false, commit: 'abc1234567' },
+    });
+    render(<ExportPanel projectId={31} />);
+    const row = await screen.findByText('HUGGINGFACE');
+    await userEvent.click(row);
+    const form = await screen.findByTestId('export-hub-publish-36');
+    await userEvent.type(within(form).getByPlaceholderText('owner/model-name'), 'me/tagger');
+    await userEvent.click(within(form).getByRole('button', { name: 'Publish to Hugging Face' }));
+    await waitFor(() => {
+      expect(apiMock.post).toHaveBeenCalledWith('/projects/31/export/36/publish-hub', { repo_id: 'me/tagger', private: false });
+    });
+    expect(await within(form).findByRole('link', { name: 'me/tagger' })).toHaveAttribute('href', 'https://huggingface.co/me/tagger');
+    expect(screen.getByText(/Published export 36 to https:\/\/huggingface.co\/me\/tagger/)).toBeTruthy();
+  });
+
+  it('offers no publish form on a GGUF export', async () => {
+    render(<ExportPanel projectId={31} />);
+    await userEvent.click(await screen.findByText('GGUF'));
+    await screen.findByText('Manifest and Output Path');
+    expect(screen.queryByTestId('export-hub-publish-35')).toBeNull();
+  });
+});
+
