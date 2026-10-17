@@ -646,6 +646,41 @@ stop seeding plate / staff-id rounds — restore prose-name recall first
 with a document of unlabelled-prose names (headlines, results tables,
 bylines), then re-evaluate.
 
+**Prose-names round (2026-10-16): the one that worked.** The look-alike
+rounds had cost CoNLL person recall (0.59 → 0.52–0.55) because every
+seeded document put names inside labelled fields. This round seeded 40
+documents of names with **no label word** — all-caps headlines, wire
+results tables ("5. Korneilus Hole ( Norway ) 23.87"), bylines and
+datelines, surname-only quotes — with teams, companies and places as the
+non-name contrast (73 passages, 483 person_name spans, $0.26). One
+labelling error caught before training: Sonnet had tagged 36 dateline
+dates as date_of_birth against the convention; removed. Three seeds of
+#117's config, picked on tuned validation F1 (#131, 0.951 vs 0.944 /
+0.947 — a spread inside seed noise, so the rule picks but cannot rank).
+
+| run | Gretel P / R / F1 | CoNLL P / R / F1 | credit_card F1 | MRN F1 | national_id F1 | plate F1 | bank_account P |
+|---|---|---|---|---|---|---|---|
+| #117 shipped | 0.680 / 0.740 / 0.708 | 0.883 / 0.590 / 0.708 | 0.74 | 0.66 | 0.67 | 0.54 | 0.40 |
+| #131 (tuned pick) | 0.717 / 0.784 / 0.749 | 0.866 / 0.620 / 0.723 | 0.80 | 0.76 | 0.81 | 0.64 | 0.30 |
+| #132 | 0.732 / 0.775 / 0.753 | 0.927 / 0.687 / 0.789 | 0.85 | 0.73 | 0.80 | 0.65 | 0.35 |
+| #133 | 0.759 / 0.767 / 0.763 | 0.906 / 0.699 / 0.789 | 0.87 | 0.72 | 0.81 | 0.57 | 0.55 |
+
+**Every criterion set before the round passes on all three seeds**:
+CoNLL recall 0.62–0.70 (≥ 0.59), Gretel F1 0.749–0.763 (≥ 0.74), and the
+look-alike gains kept (credit_card, MRN, national_id, phone, ip, email
+all up three-for-three). The prose-names document restored exactly the
+recall it was meant to, and undid nothing. Still unresolved, and not
+measurable on their supports: bank_account (17 spans, precision 0.30–0.55
+— #131 over-fires on account-like numbers), license_plate (55 spans,
+0.57–0.65), health_plan_id (2), api_key (7). The fresh reviewer's call:
+**replace #117 with #131** — Gretel +0.04, CoNLL recall +0.03, the
+identifier types up, at the cost of CoNLL precision −0.017 and
+bank_account precision on 17 spans. On the pick: #131 is the weakest of
+the three on the benchmarks (CoNLL F1 0.723 vs 0.789 / 0.789), but
+choosing #132 or #133 on that basis would be picking on the test set and
+make every reported number optimistic; the honest ship is the rule's
+pick, with the note that the rule's metric did not separate the seeds.
+
 ### Try it: the redact endpoint
 
 ```bash
