@@ -469,6 +469,26 @@ runs real CPU inference). ~4 min locally.
   `/pipeline/eval#anchor` → its tab. ProjectPlaygroundPage deleted; the
   compare page kept as an embeddable component. Tests:
   `EvalPanel.workflows.test.tsx`, `ProjectResultsPage.test.tsx`.
+  **Data = five steps (Epic U phase U4, 2026-10-17)** — `pages/ProjectDataPage.tsx`:
+  Sources / Prepare / Labels / Generate / Split (`?step=<tab>`), each = the
+  old panel in `layout="stepper"` (short form on top + a
+  `components/shared/DetailsDrawer` of lazy sections, `?open=<id>`) plus the
+  page's `extraDetails` (the former Data Studio panels, mapped per step; the
+  annotation job list = `AnnotateListView embedded` under Labels). The five
+  panels keep `layout="classic"` (unchanged tree) and in stepper mode gate
+  with `stepper`; their secondary blocks became consts (`docsSection`,
+  `entriesCard`, `overviewView` / `adaptersView` / `splitView`) reused by
+  both layouts. Labels adds `TaskShapeCard` (own fetch of `/task-shape`) and,
+  for span projects (`isSpanProject`: recipe `scoring_mode: span_set` OR
+  runtime_config span definitions / custom patterns / compliance bundles —
+  project 31's snapshot still says qa-sft), `LabellingConventionsCard`
+  (bundles + definitions + add-type). Retired with redirects: `/data-studio`
+  (+ `#section` → `DATA_OPEN_BY_STUDIO_SECTION`), `/annotate` (the labeler
+  `/annotate/:job_id` stays), `/pipeline/<tab>#synth-review-queue|#label-noise-review`
+  → their Details section (`DATA_OPEN_BY_HASH`). ProjectDataStudioPage and
+  the coach rail panel are gone; `dataStudioTargetPath` maps the studio
+  panels' `onOpenTarget` targets. Tests: `DataPanels.stepper.test.tsx`,
+  `ProjectDataPage.test.tsx`, `DetailsDrawer.test.tsx`.
   **The Coach** (`components/coach/Coach.tsx`, mounted once in
   `ProjectWorkspaceLayout`) stays the guidance bar on the four stage pages:
   stage + %, next step (`utils/flowGuide.getRecommendedAction`; "on target"

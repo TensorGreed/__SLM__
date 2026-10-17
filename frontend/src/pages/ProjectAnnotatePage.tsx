@@ -229,7 +229,7 @@ function CreateJobForm({
     );
 }
 
-function AnnotateListView({ projectId }: { projectId: number }) {
+export function AnnotateListView({ projectId, embedded = false }: { projectId: number; embedded?: boolean }) {
     const [jobs, setJobs] = useState<LabelJob[] | null>(null);
     const [error, setError] = useState<string>('');
 
@@ -265,8 +265,8 @@ function AnnotateListView({ projectId }: { projectId: number }) {
     };
 
     return (
-        <div className="page-container">
-            <h2>Annotation</h2>
+        <div className={embedded ? 'annotate-embedded' : 'page-container'}>
+            {!embedded && <h2>Annotation</h2>}
             <p style={{ color: 'var(--text-secondary)', marginTop: 0 }}>
                 Define label jobs and label rows by hand. Each job tracks
                 its own task shape, label set, and reviewer queue.

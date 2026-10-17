@@ -53,6 +53,31 @@ export const TRAIN_OPEN_BY_LEGACY_PATH: Record<string, string> = {
     '/adapter-studio': 'adapters',
 };
 
+/** Data steps' Details sections and where the retired Data Studio sections
+ *  and the annotation list landed (Epic U phase U4). */
+export const DATA_OPEN_BY_STUDIO_SECTION: Record<string, { step: TabKey; open: string }> = {
+    overview: { step: 'data', open: 'overview' },
+    sources: { step: 'data', open: 'sources' },
+    assist: { step: 'data', open: 'assist' },
+    mapping: { step: 'dataprep', open: 'mapping' },
+    domain: { step: 'cleaning', open: 'domain' },
+    'quality-safety': { step: 'cleaning', open: 'quality' },
+    'gold-set': { step: 'goldset', open: 'workbench' },
+    'review-queue': { step: 'goldset', open: 'review-queue' },
+    'synthetic-playbooks': { step: 'synthetic', open: 'playbook-center' },
+    'synthetic-recommendations': { step: 'synthetic', open: 'recommendations' },
+    'synthetic-quality': { step: 'synthetic', open: 'quality' },
+    'prepare-dataset': { step: 'dataprep', open: 'prepare' },
+    'dataset-versions': { step: 'dataprep', open: 'versions' },
+};
+
+/** ``/project/7/data?step=goldset&open=annotation``. */
+export function dataStepPath(projectId: number, tab: TabKey, open?: string | null, extraSearch?: string): string {
+    const params = new URLSearchParams(extraSearch ?? '');
+    if (open) params.set('open', open);
+    return stagePath(projectId, tab, params.toString());
+}
+
 /** Results workflows (``/results?tab=<id>``, Epic U phase U3). */
 export const RESULTS_TABS = ['verdict', 'failures', 'compare', 'try'] as const;
 export type ResultsTab = (typeof RESULTS_TABS)[number];
@@ -60,6 +85,14 @@ export type ResultsTab = (typeof RESULTS_TABS)[number];
 export function isResultsTab(value: string | null | undefined): value is ResultsTab {
     return !!value && (RESULTS_TABS as readonly string[]).includes(value);
 }
+
+/** Anchors inside the old data tabs that now live in a Details section. */
+const DATA_OPEN_BY_HASH: Record<string, string> = {
+    '#synth-review-queue': 'review-queue',
+    '#label-noise-review': 'label-noise',
+    '#seed-documents': '',
+    '#split': '',
+};
 
 /** Anchors the Coach, the bell and the panels used on the eval tab. */
 export const RESULTS_TAB_BY_HASH: Record<string, ResultsTab> = {
@@ -92,7 +125,7 @@ const TRAIN_OPEN_BY_HASH: Record<string, string> = {
 export const STEP_LABEL: Record<TabKey, string> = {
     data: 'Sources',
     cleaning: 'Prepare',
-    goldset: 'Answer key',
+    goldset: 'Labels',
     synthetic: 'Generate',
     dataprep: 'Split',
     tokenization: 'Tokenization',
@@ -182,7 +215,17 @@ export function legacyRedirectPath(projectId: number, pathname: string, search =
             const resultsTab = RESULTS_TAB_BY_HASH[hash];
             return (resultsTab ? resultsPath(projectId, resultsTab, search) : stagePath(projectId, tab, search)) + hash;
         }
+        const open = DATA_OPEN_BY_HASH[hash];
+        if (open) return dataStepPath(projectId, tab, open, search) + hash;
         return stagePath(projectId, tab, search) + hash;
+    }
+    if (clean === '/data-studio') {
+        const section = hash.replace(/^#/, '').trim().toLowerCase().replace(/_/g, '-');
+        const landing = DATA_OPEN_BY_STUDIO_SECTION[section];
+        return landing ? dataStepPath(projectId, landing.step, landing.open, search) : stagePath(projectId, 'data', search);
+    }
+    if (clean === '/annotate') {
+        return dataStepPath(projectId, 'goldset', 'annotation', search) + hash;
     }
     if (clean === '/eval/compare') {
         return resultsPath(projectId, 'compare', search) + hash;

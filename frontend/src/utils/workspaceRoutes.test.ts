@@ -32,7 +32,9 @@ describe('workspaceRoutes', () => {
         expect(legacyRedirectPath(7, '/project/7/pipeline')).toBe('/project/7/data');
         expect(legacyRedirectPath(7, '/project/7/pipeline/data', '?import=auto')).toBe('/project/7/data?import=auto');
         expect(legacyRedirectPath(7, '/project/7/pipeline/synthetic', '?focus_synth_source=x', '#synth-review-queue'))
-            .toBe('/project/7/data?focus_synth_source=x&step=synthetic#synth-review-queue');
+            .toBe('/project/7/data?focus_synth_source=x&open=review-queue&step=synthetic#synth-review-queue');
+        expect(legacyRedirectPath(7, '/project/7/pipeline/cleaning', '', '#label-noise-review'))
+            .toBe('/project/7/data?open=label-noise&step=cleaning#label-noise-review');
         expect(legacyRedirectPath(7, '/project/7/pipeline/training')).toBe('/project/7/train');
         expect(legacyRedirectPath(7, '/project/7/pipeline/tokenization')).toBe('/project/7/train?open=tokenization');
         expect(legacyRedirectPath(7, '/project/7/pipeline/nope')).toBe('/project/7/data');
@@ -58,5 +60,12 @@ describe('workspaceRoutes', () => {
         expect(legacyRedirectPath(7, '/project/7/pipeline/eval', '', '#external-benchmarks')).toBe('/project/7/results?tab=compare#external-benchmarks');
         expect(legacyRedirectPath(7, '/project/7/eval/compare', '?a=1&b=2')).toBe('/project/7/results?a=1&b=2&tab=compare');
         expect(legacyRedirectPath(7, '/project/7/playground', '?run=5')).toBe('/project/7/results?run=5&tab=try');
+    });
+
+    it('folds Data Studio sections and the annotation list into the Data steps (U4)', () => {
+        expect(legacyRedirectPath(7, '/project/7/data-studio')).toBe('/project/7/data');
+        expect(legacyRedirectPath(7, '/project/7/data-studio', '', '#dataset-versions')).toBe('/project/7/data?open=versions&step=dataprep');
+        expect(legacyRedirectPath(7, '/project/7/data-studio', '', '#review_queue')).toBe('/project/7/data?open=review-queue&step=goldset');
+        expect(legacyRedirectPath(7, '/project/7/annotate')).toBe('/project/7/data?open=annotation&step=goldset');
     });
 });

@@ -94,10 +94,10 @@ Notice the **`reason_code` is required** on `error` / `critical` severities. The
 |---|---|
 | Stage 1 Ingestion | **Data** → **Sources** |
 | Stage 2 Cleaning | **Data** → **Prepare** |
-| Stage 3 Answer key | **Data** → **Answer key** |
+| Stage 3 Answer key | **Data** → **Labels** (answer key card; task shape and labelling conventions sit above it) |
 | Stage 4 Synthetic | **Data** → **Generate** |
 | Stage 5 Dataset prep | **Data** → **Split** |
-| Stage 6 Adapter preview | **Data** → **Split** (adapter preview) |
+| Stage 6 Adapter preview | **Data** → **Split** → Details → *Adapter preview* |
 | Stage 7 Tokenization | **Train** → **More options** → *Tokenization* |
 | Stage 8 Training | **Train** (the form, then **Train** → **Launch**; *Plan and gaps*, *Base model registry*, *Task type* under **More options**); Autopilot Planner under **Settings** |
 | Stage 9 Evaluation | **Results** (tabs: Verdict, Failures, Compare, Try it) |

@@ -436,6 +436,9 @@ textarea::placeholder {
 
 .main-content {
   flex: 1;
+  /* A flex item defaults to min-width: auto (its content width), so one wide
+     table used to push every card past the viewport. Let it shrink. */
+  min-width: 0;
   margin-left: var(--sidebar-width);
   padding-top: var(--topbar-height);
 }

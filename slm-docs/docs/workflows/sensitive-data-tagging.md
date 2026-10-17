@@ -26,7 +26,7 @@ Create a project (any name; the brief can say "detect sensitive data in
 support tickets and clinical notes"). On **Data** → **Sources** the first card,
 *No documents yet? Write sample documents*, asks a generation model —
 your local Ollama model first; a cloud model only if you pin one under
-Synthetic → backends — to write realistic, **invented** documents:
+**Data** → **Generate** → backend — to write realistic, **invented** documents:
 
 - *What the documents must contain*: the kinds of data, in your words —
   "card numbers (Visa / Mastercard / Amex formats), expiry dates, CVV,
@@ -51,7 +51,7 @@ made up; the model is told so, and the file is marked by its source.
 
 On **Data** → **Generate**, with the project's task shape set to span
 extraction (the `span-extraction` recipe — pick it from the recipe picker
-or let the task-shape card confirm it), the span generator takes your
+or let the *Task shape* card on **Data** → **Labels** confirm it), the span generator takes your
 passages and a list of **entity types** — the canonical ones plus your
 custom ones, e.g. `credit_card, card_expiry, cvv, iban, bank_account,
 person_name, email, phone, address, date_of_birth, national_id, passport,
@@ -173,7 +173,7 @@ dates), `bank_account` 0.32, `national_id` 0.59, `provider_name` 0.52
 
 Every key above was written by a model, so a score against it inherits
 that model's mistakes — and the training labels came from the same
-family, so the two can agree on an error. The **Data** → **Answer key** step (test set)
+family, so the two can agree on an error. The **Data** → **Labels** step (test set; *Entries and human review* in Details)
 now carries **Check the answer key yourself**: the key's rows, one by one,
 with the passage and its spans highlighted. Rows come **unreviewed
 first**, and among those the ones where the project's latest trained run
@@ -271,7 +271,7 @@ it can show, and trust the benchmarks for those".
 Two models can both be right and still disagree — is a date in a
 clinical note a date of birth or a visit date, is `GB29 NWBK …` a bank
 account or an IBAN, is "Dr. Chen" a person or a provider? **Labelling
-conventions** (**Data** → **Generate** step, span mode) is one line per type — what
+conventions** (**Data** → **Labels** step, span projects only) is one line per type — what
 counts and what doesn't — stored on the project
 (`GET/PUT /synthetic/type-definitions`, with suggested starting wording
 for common type names). Both the model that writes the training labels
@@ -315,7 +315,7 @@ HIPAA counts) and **CCPA personal information**. They are plain data
 (`compliance_bundles_service.BUILTIN_BUNDLES`), not special handlers:
 any type can carry any tag.
 
-**Compliance bundles** (**Data** → **Generate** step, span mode, next to *Labelling
+**Compliance bundles** (**Data** → **Labels** step, span projects only, inside *Labelling
 conventions*) — tick bundles, **Apply bundles**:
 
 - the bundle's types are added to the *Entity types* list;
@@ -350,7 +350,7 @@ SSN, card, IP, API key, ISO / US dates. Your organisation's own
 identifiers (an employee id like `EMP-48213`, a ticket reference, an
 internal account format) are just as regular, and a regex catches them
 with exact offsets where a labelling model may miss one or misplace its
-edges. **Add a type** (**Data** → **Generate** step, span mode, under the labelling
+edges. **Add a type** (**Data** → **Labels** step, span projects only, under the labelling
 conventions) does it in one place:
 
 1. a **name** (normalised like the conventions: lower-case, spaces → `_`),
@@ -1075,7 +1075,7 @@ clean. The weakest types on scans are now `provider_name` (0.29 on 82
 spans), `visit_date` and `credit_card` — names and dates OCR splits
 across lines, and card numbers whose digits it confuses.
 
-**Scanned-text mode** (**Data** → **Generate** step → *Labelling conventions* →
+**Scanned-text mode** (**Data** → **Labels** step → *Labelling conventions* →
 "Texts come from scanned documents (OCR)"; the API is
 `PUT /synthetic/type-definitions {"scan_tolerant": true}`). Two things change:
 
@@ -1124,7 +1124,7 @@ the model never finds, not their edges.
   credit_card about half the time in training (89 of 178 left blank) and
   almost always in the keys — so the model found 14 of 26 on the scans.
   The fix: say so in the definition, and add a custom pattern
-  (**Data** → **Generate** step → *Add a type* → pattern
+  (**Data** → **Labels** step → *Add a type* → pattern
   `(?:(?<=ending in )|(?<=last four digits )|…)\d{4}\b` for credit_card,
   flag i), whose regex pass labelled 175 more in the saved rows.
   Run #71 then finds 25 of 26 on the scans and 14 of 15 on the clean key.
@@ -1172,7 +1172,7 @@ the rows labelled under it.
 **Groups labelled under older conventions.** Every labeller now stamps
 the rows it writes with the version of the conventions it was given (a
 short hash of the definitions and the scanned-text flag). The **Data** → **Generate**
-step's review queue compares each source group with the project's current
+step's review queue (Details → *Review queue*) compares each source group with the project's current
 version and lists the groups labelled under an older one, or before
 versions were recorded, at the top of the queue (an "older conventions"
 badge marks them in the accepted list too). Each has **Relabel under

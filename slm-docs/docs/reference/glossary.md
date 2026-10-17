@@ -18,7 +18,7 @@ The rows you write (or approve) with the correct answer, so BrewSLM can score th
 - **Practice answer key**: rows you score against while you iterate. API name: `gold_dev` (`DatasetType.GOLD_DEV`), stored at `data/projects/{id}/gold/gold_dev.jsonl`.
 - **Final answer key**: the rows you keep untouched for the final grade. API name: `gold_test` (`DatasetType.GOLD_TEST`).
 
-The **Answer key** step (**Data** → **Answer key**) edits it; the answer key is never a default training source. API name: *gold set* (`/api/projects/{id}/gold/...`, the gold workbench routes). See [Gold set](#gold-set) for the two editing surfaces.
+The **Gold Evaluation Dataset** card on **Data** → **Labels** edits it; the answer key is never a default training source. API name: *gold set* (`/api/projects/{id}/gold/...`, the gold workbench routes). See [Gold set](#gold-set) for the two editing surfaces.
 
 ## Artifact
 
@@ -105,15 +105,15 @@ The API name for **pass/fail rules** (see [Pass/fail rules](#passfail-rules)): r
 
 The API name for the **[answer key](#answer-key)**: the ground-truth labelled set you trust for evaluation. Two parallel surfaces:
 
-- **Gold workbench** (**Data** → **Answer key**, workbench) — sampling + reviewer-queue
+- **Gold workbench** (**Data** → **Labels** → Details → *Answer-key workbench*) — sampling + reviewer-queue
   flow with versioned `draft → locked` state machine. DB-backed
   (`GoldSetRow` / `GoldSetVersion`). Best for hand-labelling at scale.
-- **Answer key step** (**Data** → **Answer key**) — direct row CRUD + LLM-assisted
+- **Answer-key card** (**Data** → **Labels**, plus the *Entries and human review* Details section) — direct row CRUD + LLM-assisted
   generation. JSONL-backed on disk at `data/projects/{id}/gold/gold_dev.jsonl`.
   Best for bootstrapping a small set fast.
 
 Both surfaces share the same on-disk JSONL — workbench rows materialize
-into it, Answer key step rows append to it. The evaluator reads either path.
+into it, answer-key card rows append to it. The evaluator reads either path.
 See [Evaluation + remediation](../workflows/evaluation-and-remediation.md).
 
 ## Train ↔ gold leakage
@@ -141,7 +141,7 @@ exactly which rows leaked, from which split, and the source row they matched.
 
 ### Fixing leakage from the report
 
-Both leakage signals have an action button on the **Data** → **Split** step (where the
+Both leakage signals have an action button on the **Data** → **Split** step's *Data health and leakage* Details section (where the
 report is shown):
 
 - **`leakage.split_overlap` → "Re-split with dedup".** This is safely
@@ -329,7 +329,7 @@ Modules are listed in `settings.DATASET_MAPPER_PLUGIN_MODULES` and imported at a
 
 ## Saved mapping (dataset import)
 
-A persisted `(locator, mapper_id, field_map, drop_reasons)` tuple under a user-chosen name. Created via the "Save this mapping" card on the import wizard's Preview step; re-runs go through the **Saved mappings** panel on the **Data** → **Sources** step. Re-runs use the same `run_import` code path as a fresh import, so they emit the same audit [run event](#run-event) (`stage=ingestion`, `reason_code=dataset_import_run`) plus a `config_id` link in the payload. `last_run_at` and `last_run_accepted` columns on the config row track the most recent re-run's timestamp and row count for at-a-glance status. Backed by the `dataset_import_configs` table; API: `POST /api/projects/{id}/dataset-import/configs` (create) → `POST /api/projects/{id}/dataset-import/configs/{cfg_id}/run` (re-run).
+A persisted `(locator, mapper_id, field_map, drop_reasons)` tuple under a user-chosen name. Created via the "Save this mapping" card on the import wizard's Preview step; re-runs go through the *Saved import mappings* Details section on the **Data** → **Sources** step. Re-runs use the same `run_import` code path as a fresh import, so they emit the same audit [run event](#run-event) (`stage=ingestion`, `reason_code=dataset_import_run`) plus a `config_id` link in the payload. `last_run_at` and `last_run_accepted` columns on the config row track the most recent re-run's timestamp and row count for at-a-glance status. Backed by the `dataset_import_configs` table; API: `POST /api/projects/{id}/dataset-import/configs` (create) → `POST /api/projects/{id}/dataset-import/configs/{cfg_id}/run` (re-run).
 
 ## Scoring mode
 
@@ -337,7 +337,7 @@ Sub-mode of a task handler that picks the metric shape without changing which ha
 
 ## Schema introspection
 
-The dataset-import pipeline's column sniffer + shape detector + mapping proposer. Reads ~20 sample rows from any registered [source connector](#source-connector-dataset-import), classifies each column by content (`text_like`, `categorical`, `bio_tag_list`, `entity_list_json`, `chat_messages`, `tokens_list`, `numeric`, `boolean`, `path_like`), and proposes the best-fit [target mapper](#target-mapper-dataset-import) + field map with a confidence score and rationale. Drives the `--auto` flag on the dataset-import CLI and the import-wizard UI (Pipeline → Data → "Import dataset (auto-mapping)"); never silently auto-picks — the user confirms either by passing `--auto` (when confidence ≥ the [Confidence threshold](#confidence-threshold-dataset-import)), by passing `--force` under it, or by accepting the proposal in the wizard's Map step. CLI: `python -m app.cli.dataset_import introspect --locator <prefix:rest>`.
+The dataset-import pipeline's column sniffer + shape detector + mapping proposer. Reads ~20 sample rows from any registered [source connector](#source-connector-dataset-import), classifies each column by content (`text_like`, `categorical`, `bio_tag_list`, `entity_list_json`, `chat_messages`, `tokens_list`, `numeric`, `boolean`, `path_like`), and proposes the best-fit [target mapper](#target-mapper-dataset-import) + field map with a confidence score and rationale. Drives the `--auto` flag on the dataset-import CLI and the import-wizard UI (**Data** → **Sources** → "Import dataset"); never silently auto-picks — the user confirms either by passing `--auto` (when confidence ≥ the [Confidence threshold](#confidence-threshold-dataset-import)), by passing `--force` under it, or by accepting the proposal in the wizard's Map step. CLI: `python -m app.cli.dataset_import introspect --locator <prefix:rest>`.
 
 Optional [LLM-assisted mapping](#llm-assisted-mapping) mode is gated behind `DATASET_IMPORT_LLM_ASSIST_ENABLED`; pass `--llm-assist` on the CLI / `llm_assist: true` in the API body to opt in per-call.
 

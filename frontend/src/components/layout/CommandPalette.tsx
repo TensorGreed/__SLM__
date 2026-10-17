@@ -97,8 +97,10 @@ function buildItems(
     }
 
     const tools: Array<[string, string, string, ReactNode]> = [
-        ['Data Studio', `${base}/data-studio`, 'Data', <ClipboardList size={14} />],
-        ['Annotation', `${base}/annotate`, 'Data', <PenSquare size={14} />],
+        ['Sources', `${base}/data`, 'Data', <ClipboardList size={14} />],
+        ['Labels and answer key', `${base}/data?step=goldset`, 'Data', <PenSquare size={14} />],
+        ['Annotation jobs', `${base}/data?step=goldset&open=annotation`, 'Data', <PenSquare size={14} />],
+        ['Split and versions', `${base}/data?step=dataprep`, 'Data', <ClipboardList size={14} />],
         ['Plan and gaps', `${base}/train?open=plan`, 'Train', <Settings2 size={14} />],
         ['Base model registry', `${base}/train?open=models`, 'Train', <Boxes size={14} />],
         ['Task type', `${base}/train?open=task`, 'Train', <BookOpen size={14} />],

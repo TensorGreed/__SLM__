@@ -26,11 +26,6 @@ vi.mock('../stores/projectStore', () => ({
         selector({ setActiveTab: setActiveTabMock }),
 }));
 
-vi.mock('../components/data/IngestionPanel', () => panel('panel-ingestion', 'Ingestion'));
-vi.mock('../components/data/CleaningPanel', () => panel('panel-cleaning', 'Cleaning'));
-vi.mock('../components/data/GoldSetPanel', () => panel('panel-goldset', 'Answer key'));
-vi.mock('../components/data/SyntheticPanel', () => panel('panel-synthetic', 'Synthetic'));
-vi.mock('../components/data/DatasetPrepPanel', () => panel('panel-dataprep', 'Split'));
 vi.mock('../components/compression/CompressionPanel', () => panel('panel-compression', 'Compression'));
 vi.mock('../components/export/ExportPanel', () => panel('panel-export', 'Export'));
 
@@ -41,7 +36,7 @@ function LocationProbe() {
     return <div data-testid="location">{location.pathname + location.search}</div>;
 }
 
-function renderAt(path: string, destination: 'data' | 'ship') {
+function renderAt(path: string, destination: 'ship') {
     return render(
         <MemoryRouter initialEntries={[path]}>
             <Routes>
@@ -65,18 +60,16 @@ describe('ProjectStagePage', () => {
         contextState.pipelineStatus = null;
     });
 
-    it('renders the first step of Data by default and the step bar', () => {
-        renderAt('/project/77/data', 'data');
-        expect(screen.getByTestId('panel-ingestion')).toBeInTheDocument();
-        expect(screen.getAllByRole('tab')).toHaveLength(5);
-        expect(screen.getByTestId('stage-step-data')).toHaveAttribute('aria-selected', 'true');
+    it('renders the first step of Ship by default and the step bar', () => {
+        renderAt('/project/77/ship', 'ship');
+        expect(screen.getByTestId('panel-compression')).toBeInTheDocument();
+        expect(screen.getAllByRole('tab')).toHaveLength(2);
+        expect(screen.getByTestId('stage-step-compression')).toHaveAttribute('aria-selected', 'true');
     });
 
-    it('picks the step from ?step= and ignores a step of another destination', () => {
-        renderAt('/project/77/data?step=goldset', 'data');
-        expect(screen.getByTestId('panel-goldset')).toBeInTheDocument();
-        renderAt('/project/77/data?step=training', 'data');
-        expect(screen.getAllByTestId('panel-ingestion').length).toBeGreaterThan(0);
+    it('ignores a step of another destination', () => {
+        renderAt('/project/77/ship?step=training', 'ship');
+        expect(screen.getByTestId('panel-compression')).toBeInTheDocument();
     });
 
     it('navigates between steps with the step bar', async () => {

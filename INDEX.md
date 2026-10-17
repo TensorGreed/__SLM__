@@ -490,7 +490,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectAdapterStudioPage.tsx` — Free-form schema explorer page for mapping custom JSON payloads to adapter-compatible structures.
 - `frontend/src/pages/ProjectAnnotatePage.tsx` — Annotation workspace (Story 1.2).
 - `frontend/src/pages/ProjectAutopilotPage.tsx` — Autopilot Planner page (priority.md P6).
-- `frontend/src/pages/ProjectDataStudioPage.tsx` — Data preparation hub page with multi-panel visualization for ingestion through export stages.
+- `frontend/src/pages/ProjectDataPage.tsx` — Data — the workspace's data destination (Epic U, phase U4).
 - `frontend/src/pages/ProjectDeploymentsPage.tsx` — ProjectDeploymentsPage — Deployment Assistant (priority.md P30).
 - `frontend/src/pages/ProjectDomainPacksPage.tsx` — Page for assigning reusable domain pack policy bundles and hook defaults to projects.
 - `frontend/src/pages/ProjectDomainPage.tsx` — Combined domain pack + profile manager page for preprocessing, validation, and defaults.
@@ -558,6 +558,7 @@ session-start guidance.
 - `frontend/src/components/data/GoldSetPanel.tsx` — Panel for adding and managing trusted evaluation examples in gold dev and test datasets.
 - `frontend/src/components/data/IngestionPanel.tsx` — Panel for ingesting data from files, Hugging Face, Kaggle, and URLs with validation and EDA.
 - `frontend/src/components/data/LabelNoiseReviewPanel.tsx` — Quality-Lift phase 4 slice 3 — Label-noise review surface.
+- `frontend/src/components/data/LabellingConventionsCard.tsx` — Labels step — the labelling conventions of a span project (Epic U phase
 - `frontend/src/components/data/LlmGoldGeneratePanel.tsx` — LlmGoldGeneratePanel — generate gold-set Q&A pairs using a flagship
 - `frontend/src/components/data/LlmSpendCard.tsx` — _(no docstring)_
 - `frontend/src/components/data/PlaybookPickerPanel.tsx` — PlaybookPickerPanel — USER-SUCCESS Epic 2.
@@ -568,6 +569,7 @@ session-start guidance.
 - `frontend/src/components/data/SpanTypeDefinitionsEditor.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.tsx` — SynthReviewQueue — USER-SUCCESS Epic 2b.
 - `frontend/src/components/data/SyntheticPanel.tsx` — Panel for generating synthetic training data with playbook selection, batch async support, and review queue.
+- `frontend/src/components/data/TaskShapeCard.tsx` — Labels step — the task shape (Epic U phase U4): what the rows look like
 - `frontend/src/components/data/TaskShapeConfirmCard.tsx` — "What kind of task is this?" — shows the unified detector's best guess
 - `frontend/src/components/deployment/DeployabilityScoreCard.tsx` — DeployabilityScoreCard — readiness report (priority.md P30, P28).
 - `frontend/src/components/deployment/DeployedVersionsList.tsx` — DeployedVersionsList — served-versions table for the deployment page
@@ -630,6 +632,7 @@ session-start guidance.
 - `frontend/src/components/projects/ApproachChip.tsx` — Decision-engine chip (Theme 7).
 - `frontend/src/components/projects/ProjectTemplateGallery.tsx` — Project-template gallery — surfaces every available template on
 - `frontend/src/components/shared/CommandSnippet.tsx` — CommandSnippet — collapsed "Show as CLI / API" disclosure rendered
+- `frontend/src/components/shared/DetailsDrawer.tsx` — "Details" — the collapsed drawer under a step's short form (Epic U phase
 - `frontend/src/components/shared/EmptyState.tsx` — EmptyState — shared component for "this page has no data yet" surfaces.
 - `frontend/src/components/shared/ErrorPanel.tsx` — Shared error rendering component (Diagnostics Intervention A).
 - `frontend/src/components/shared/HealthCheckButton.tsx` — HealthCheckButton — Diagnostics Intervention C.
@@ -1004,6 +1007,7 @@ session-start guidance.
 - `frontend/src/components/data/AutofixPreviewModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/ComplianceBundlePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataHealthReportPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataPanels.stepper.test.tsx` — Epic U phase U4: each data panel in ``layout="stepper"`` keeps its short
 - `frontend/src/components/data/DataStudioAssistPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataStudioCoachRailPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataStudioDatasetVersionsPanel.test.tsx` — _(no docstring)_
@@ -1094,6 +1098,7 @@ session-start guidance.
 - `frontend/src/components/pipeline/WorkflowRunMonitor.test.tsx` — _(no docstring)_
 - `frontend/src/components/projects/ProjectTemplateGallery.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/CommandSnippet.test.tsx` — _(no docstring)_
+- `frontend/src/components/shared/DetailsDrawer.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/EmptyState.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/ErrorPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/HealthCheckModal.test.tsx` — _(no docstring)_
@@ -1129,7 +1134,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectAdapterStudioPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectAutopilotPage.prefill.test.tsx` — Newbie UX Phase 3.1 — pre-fill the Autopilot intent textarea from the
 - `frontend/src/pages/ProjectAutopilotPage.test.tsx` — _(no docstring)_
-- `frontend/src/pages/ProjectDataStudioPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectDataPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectDeploymentsPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectEvalComparePage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectExtensionStudioPage.test.tsx` — _(no docstring)_

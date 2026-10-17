@@ -450,7 +450,7 @@ always contains PII. Production text often *doesn't* — and models
 trained only on positive examples over-predict. Three ways to add
 negatives:
 
-- **Option A — Empty-entities batches**: in the Synthetic page, paste
+- **Option A — Empty-entities batches**: on **Data** → **Generate**, paste
   source text manually (don't auto-sample) using corporate / technical
   language that lacks PII (`"Q3 revenue grew 12%. Engineering velocity
   improved after we adopted feature flags."`). Generate 200 rows, then
@@ -461,7 +461,7 @@ negatives:
   NOT person_name), `"Order SKU 4012-887-1100 ships Friday"` (SKU, not
   credit_card), `"Server IP 999.999.999.999 returned a 500"` (invalid
   IP). Hand-label so only genuine PII gets tagged.
-- **Option C — Annotation UI**: create a `span` label job, seed from
+- **Option C — Annotation jobs**: on **Data** → **Labels** → Details → *Annotation jobs*, create a `span` label job, seed from
   cleaned chunks, hand-label 100–200 rows paying special attention to
   what should NOT be tagged, then click
   **📤 Promote to synthetic** ([Story 1.6](https://github.com/anugram/__SLM__/blob/main/backend/app/services/annotation/promotion.py)).

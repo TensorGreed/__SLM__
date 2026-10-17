@@ -16,8 +16,18 @@ import SpanAddTypeForm from './SpanAddTypeForm';
 import SpanTypeDefinitionsEditor from './SpanTypeDefinitionsEditor';
 import ComplianceBundlePicker from './ComplianceBundlePicker';
 import LlmSpendCard from './LlmSpendCard';
+import DetailsDrawer, { type DetailSection } from '../shared/DetailsDrawer';
 
-interface SyntheticPanelProps { projectId: number; onNextStep?: () => void; }
+interface SyntheticPanelProps {
+    projectId: number;
+    onNextStep?: () => void;
+    /** Epic U phase U4: ``stepper`` = a short form + a Details drawer. */
+    layout?: 'classic' | 'stepper';
+    /** Stepper: extra Details sections appended after the panel's own. */
+    extraDetails?: DetailSection[];
+    /** Stepper: the Details section to open (``?open=``). */
+    openSection?: string | null;
+}
 
 // Mirror the backend's MAX_TOTAL_ROWS / PER_BATCH_* caps so the form
 // can decide whether to switch to the batched async endpoint vs. the
@@ -130,7 +140,8 @@ const LEGACY_PROVIDER_PRESETS: Record<string, { apiUrl: string; defaultModel: st
     },
 };
 
-export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanelProps) {
+export default function SyntheticPanel({ projectId, onNextStep , layout = 'classic', extraDetails = [], openSection = null }: SyntheticPanelProps) {
+    const stepper = layout === 'stepper';
     type Provider = 'ollama' | 'openai' | 'deepseek' | 'anthropic' | 'custom';
     const [provider, setProvider] = useState<Provider>('ollama');
     const [generationMode, setGenerationMode] = useState<GenerationMode>('qa');
@@ -984,6 +995,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
 
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
+            {!stepper && (<>
             <PlaybookPickerPanel projectId={projectId} />
             <div ref={reviewQueueRef} id="synth-review-queue">
                 <SynthReviewQueue
@@ -992,6 +1004,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 />
             </div>
             <LlmSpendCard projectId={projectId} />
+            </>)}
             <div className="card">
                 <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>🧪 Synthetic Data Generation</h3>
                 {prefillSourceStage && (
@@ -1762,6 +1775,40 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 </div>
             )}
 
+            {stepper && (
+                <DetailsDrawer
+                    testId="data-details"
+                    openSection={openSection}
+                    sections={[
+                        {
+                            id: 'playbooks',
+                            title: 'Playbooks',
+                            hint: 'recipe-aware generation playbooks',
+                            render: () => <PlaybookPickerPanel projectId={projectId} />,
+                        },
+                        {
+                            id: 'review-queue',
+                            title: 'Review queue',
+                            hint: 'generated rows waiting for accept / reject',
+                            render: () => (
+            <div ref={reviewQueueRef} id="synth-review-queue">
+                <SynthReviewQueue
+                    projectId={projectId}
+                    focusSource={focusSynthSource}
+                />
+            </div>
+                            ),
+                        },
+                        {
+                            id: 'spend',
+                            title: 'Spend and budget',
+                            hint: 'cloud model usage this month',
+                            render: () => <LlmSpendCard projectId={projectId} />,
+                        },
+                        ...extraDetails,
+                    ]}
+                />
+            )}
             {onNextStep && (
                 <StepFooter
                     currentStep="Synthetic Generation"

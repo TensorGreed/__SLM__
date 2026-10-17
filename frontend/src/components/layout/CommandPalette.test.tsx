@@ -40,8 +40,8 @@ describe('CommandPalette', () => {
         expect(screen.getByText('Workspace')).toBeInTheDocument();
         expect(screen.getByText('Overview')).toBeInTheDocument();
         // A few well-known actions.
-        expect(screen.getByText('Data Studio')).toBeInTheDocument();
-        expect(screen.getByText('Annotation')).toBeInTheDocument();
+        expect(screen.getByText('Sources')).toBeInTheDocument();
+        expect(screen.getByText('Annotation jobs')).toBeInTheDocument();
         expect(screen.getByText('Observability')).toBeInTheDocument();
     });
 
@@ -75,7 +75,7 @@ describe('CommandPalette', () => {
             'observ',
         );
         expect(screen.getByText('Observability')).toBeInTheDocument();
-        expect(screen.queryByText('Data Studio')).not.toBeInTheDocument();
+        expect(screen.queryByText('Annotation jobs')).not.toBeInTheDocument();
     });
 
     it('shows the empty state when nothing matches', async () => {
@@ -133,6 +133,6 @@ describe('CommandPalette', () => {
         await user.keyboard('{Meta>}k{/Meta}');
         await screen.findByRole('dialog');
         expect(screen.getByText('Back to projects')).toBeInTheDocument();
-        expect(screen.queryByText('Data Studio')).not.toBeInTheDocument();
+        expect(screen.queryByText('Annotation jobs')).not.toBeInTheDocument();
     });
 });

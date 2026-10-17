@@ -16,6 +16,7 @@ import AnswerKeyReviewPanel from './AnswerKeyReviewPanel';
 import type { GoldAddPayload } from './GoldEntryAddForm';
 import { decodeFragmentGroups, decodeRowIds } from '../../utils/forecastActionRouter';
 import './GoldSetPanel.css';
+import DetailsDrawer, { type DetailSection } from '../shared/DetailsDrawer';
 
 
 /** Recipes the LLM-assisted gold-gen panel handles. Mirrors
@@ -175,10 +176,17 @@ function normalizeEntryForRecipe(
 
 interface GoldSetPanelProps {
     projectId: number;
+    /** Epic U phase U4: ``stepper`` = a short form + a Details drawer. */
+    layout?: 'classic' | 'stepper';
+    /** Stepper: extra Details sections appended after the panel's own. */
+    extraDetails?: DetailSection[];
+    /** Stepper: the Details section to open (``?open=``). */
+    openSection?: string | null;
     onNextStep?: () => void;
 }
 
-export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProps) {
+export default function GoldSetPanel({ projectId, onNextStep , layout = 'classic', extraDetails = [], openSection = null }: GoldSetPanelProps) {
+    const stepper = layout === 'stepper';
     const [entries, setEntries] = useState<any[]>([]);
     const [datasetType, setDatasetType] = useState('gold_dev');
     // A project whose answer key lives only in the test set (the span
@@ -397,65 +405,7 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
         await api.post(`/projects/${projectId}/gold/lock?dataset_type=${datasetType}`);
     };
 
-    return (
-        <div className="gold-panel animate-fade-in">
-            <div className="card">
-                <div className="gold-header">
-                    <h3>Gold Evaluation Dataset</h3>
-                    <div className="gold-controls">
-                        <select className="input" value={datasetType} onChange={e => setDatasetType(e.target.value)} style={{ width: 'auto' }}>
-                            <option value="gold_dev">Dev Set</option>
-                            <option value="gold_test">Test Set</option>
-                        </select>
-                        <button className="btn btn-secondary" onClick={handleLock}>🔒 Lock</button>
-                    </div>
-                </div>
-
-
-                {/* V4 ML-native viz — class-balance bars + class-similarity
-                    heatmap. Renders the actionable shape of the gold set so
-                    "imbalanced" or "redundant" reads as a chart rather than
-                    a number in a Coach suggestion. Self-fetches on mount;
-                    silent for non-classification recipes. */}
-                <GoldSetDiagnosticsPanel projectId={projectId} />
-
-                {recipeId && SUPPORTED_LLM_GOLD_RECIPES.has(recipeId) && (
-                    <LlmGoldGeneratePanel
-                        projectId={projectId}
-                        datasetType={datasetType}
-                        recipeId={recipeId as GoldRowRecipe}
-                        onRowsSaved={fetchEntries}
-                    />
-                )}
-
-                {/* Per-recipe add form. Hidden entirely when no
-                    recipe is set — the row shape is undecided so a
-                    Q/A form would mislead the user. Recipe narrowing
-                    matches GoldEntryRowBody's: anything unsupported
-                    or null hides the form. */}
-                {recipeId && SUPPORTED_LLM_GOLD_RECIPES.has(recipeId) ? (
-                    <GoldEntryAddForm
-                        recipeId={recipeId as GoldRowRecipe}
-                        knownLabels={knownClassificationLabels}
-                        knownSpanTypes={knownSpanTypes}
-                        onAdd={handleAddRow}
-                    />
-                ) : (
-                    <div
-                        data-testid="gold-add-form-hidden-hint"
-                        style={{
-                            padding: 'var(--space-md)',
-                            color: 'var(--text-tertiary)',
-                            fontSize: '0.9rem',
-                        }}
-                    >
-                        Choose a task type (Data tab → task type picker) to
-                        unlock manual gold-row entry. The form's
-                        fields depend on the task type.
-                    </div>
-                )}
-            </div>
-
+    const entriesCard = (
             <div className="card">
                 <div
                     className="gold-header"
@@ -704,7 +654,83 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                     )}
                 </div>
             </div>
+    );
 
+    return (
+        <div className="gold-panel animate-fade-in">
+            <div className="card">
+                <div className="gold-header">
+                    <h3>Gold Evaluation Dataset</h3>
+                    <div className="gold-controls">
+                        <select className="input" value={datasetType} onChange={e => setDatasetType(e.target.value)} style={{ width: 'auto' }}>
+                            <option value="gold_dev">Dev Set</option>
+                            <option value="gold_test">Test Set</option>
+                        </select>
+                        <button className="btn btn-secondary" onClick={handleLock}>🔒 Lock</button>
+                    </div>
+                </div>
+
+
+                {/* V4 ML-native viz — class-balance bars + class-similarity
+                    heatmap. Renders the actionable shape of the gold set so
+                    "imbalanced" or "redundant" reads as a chart rather than
+                    a number in a Coach suggestion. Self-fetches on mount;
+                    silent for non-classification recipes. */}
+                <GoldSetDiagnosticsPanel projectId={projectId} />
+
+                {recipeId && SUPPORTED_LLM_GOLD_RECIPES.has(recipeId) && (
+                    <LlmGoldGeneratePanel
+                        projectId={projectId}
+                        datasetType={datasetType}
+                        recipeId={recipeId as GoldRowRecipe}
+                        onRowsSaved={fetchEntries}
+                    />
+                )}
+
+                {/* Per-recipe add form. Hidden entirely when no
+                    recipe is set — the row shape is undecided so a
+                    Q/A form would mislead the user. Recipe narrowing
+                    matches GoldEntryRowBody's: anything unsupported
+                    or null hides the form. */}
+                {recipeId && SUPPORTED_LLM_GOLD_RECIPES.has(recipeId) ? (
+                    <GoldEntryAddForm
+                        recipeId={recipeId as GoldRowRecipe}
+                        knownLabels={knownClassificationLabels}
+                        knownSpanTypes={knownSpanTypes}
+                        onAdd={handleAddRow}
+                    />
+                ) : (
+                    <div
+                        data-testid="gold-add-form-hidden-hint"
+                        style={{
+                            padding: 'var(--space-md)',
+                            color: 'var(--text-tertiary)',
+                            fontSize: '0.9rem',
+                        }}
+                    >
+                        Choose a task type (Data tab → task type picker) to
+                        unlock manual gold-row entry. The form's
+                        fields depend on the task type.
+                    </div>
+                )}
+            </div>
+
+            {!stepper && entriesCard}
+            {stepper && (
+                <DetailsDrawer
+                    testId="data-details"
+                    openSection={openSection}
+                    sections={[
+                        {
+                            id: 'entries',
+                            title: 'Entries and human review',
+                            hint: entries.length ? `${entries.length} row${entries.length === 1 ? '' : 's'}` : 'no rows yet',
+                            render: () => entriesCard,
+                        },
+                        ...extraDetails,
+                    ]}
+                />
+            )}
             {onNextStep && (
                 <StepFooter
                     currentStep="Gold Dataset"

@@ -5,14 +5,14 @@ title: Data ingestion + cleaning + prep
 
 # Data ingestion + cleaning + prep
 
-Stages 1, 2, 4, and 5 of the [pipeline](pipeline-overview.md) all live under the **Data** destination (Sources, Prepare, Answer key, Generate, Split). This page narrates the upstream flow from raw files to prepared, deduped, split records.
+Stages 1, 2, 4, and 5 of the [pipeline](pipeline-overview.md) all live under the **Data** destination (Sources, Prepare, Labels, Generate, Split). Each step is a short form with a collapsed **Details** drawer underneath; Details sections load only when opened (`?open=<section-id>`). This page narrates the upstream flow from raw files to prepared, deduped, split records.
 
 ## Step 1 — Ingestion
 
 :::important Two import paths — pick the right one
 There are **two different things** on the **Data** → **Sources** step, and they land your rows in **different places**:
 
-- **Upload / Add source** (this section) → your rows become **raw training data** (`RawDocument`, `dataset_type=RAW`). **This is the path for your own labelled dataset** (e.g. a `{text, label}` JSONL for a classifier). It feeds the later steps (**Prepare** / **Answer key** / **Split** / **Train**).
+- **Upload / Add source** (this section) → your rows become **raw training data** (`RawDocument`, `dataset_type=RAW`). **This is the path for your own labelled dataset** (e.g. a `{text, label}` JSONL for a classifier). It feeds the later steps (**Prepare** / **Labels** / **Split** / **Train**).
 - **Import dataset (auto-mapping)** wizard (covered [below](#generic-dataset-import-pipeline-sources--mappers)) → mapped rows go to the project's **synthetic** dataset (pending review). It's for **augmenting** an existing dataset with an external/HF source, **not** for your primary training data.
 
 If you run your own data through the *Import dataset* wizard, it lands in *synthetic* (not RAW), no raw source exists, and the later steps have nothing to work on. Use **Upload** for your training data. (If the import wizard opens by itself, close it and use **Upload** if you're bringing your own labelled file.)
@@ -93,7 +93,7 @@ This wizard writes accepted rows to the project's **synthetic** dataset (pending
 2. **Map** — column signatures table (detected type + confidence per column), ranked-hypothesis dropdown pre-selected to the top proposal, free-form rationale, and a JSON field-map editor you can override before previewing. A red banner blocks low-confidence proposals until you tick "I've reviewed the proposal — proceed anyway."
 3. **Preview & Confirm** — accepted-row sample + rejected breakdown grouped by reason; tick reasons to bulk-drop them before commit (counts are preserved in the result for audit). Final *Import* button writes the rows to the project's synthetic dataset and surfaces the `written_path`.
 
-A "Save this mapping" card on the Preview step persists the current locator + mapper + field_map + drop_reasons under a name you choose. Saved mappings appear at the top of the **Data** → **Sources** step in a **Saved mappings** panel; each row gets a **Re-run** button that re-imports against the (potentially refreshed) source without going back through the wizard, plus a **Delete** action. Re-runs bump `last_run_at` and `last_run_accepted` so the panel shows the latest yield at a glance.
+A "Save this mapping" card on the Preview step persists the current locator + mapper + field_map + drop_reasons under a name you choose. Saved mappings appear in the **Saved import mappings** Details section of the **Data** → **Sources** step (`?open=mappings`); each row gets a **Re-run** button that re-imports against the (potentially refreshed) source without going back through the wizard, plus a **Delete** action. Re-runs bump `last_run_at` and `last_run_accepted` so the panel shows the latest yield at a glance.
 
 Every dataset-import run — interactive or re-run from a saved mapping — emits a [run event](../reference/glossary.md#run-event) with `stage=ingestion` and `reason_code=dataset_import_run` (`dataset_import_failed` on errors), carrying the source, locator, mapper, accepted/rejected row counts, `written_path`, and `config_id` if it came from a saved mapping. The Observability page surfaces these automatically — the audit log is just RunEvents you can already filter.
 
@@ -169,7 +169,7 @@ BrewSLM needs to know what your data is *for*: question answering, classificatio
 **Where you see it:**
 
 - In the **Import dataset** wizard, right after upload or introspection.
-- On **Dataset Prep**, for data that came in through document upload and cleaning.
+- On **Data** → **Labels** (the *Task shape* card), for data that came in through document upload and cleaning.
 
 The card reads, for example, "Looks like **Question answering** (92% confident)", followed by the reasons. **Yes, it's …** confirms it, and **Something else…** lets you pick from the full list. When the guess is uncertain (below 80%, or two shapes are close) the card says so, rather than guessing silently.
 
@@ -200,7 +200,7 @@ Row files are cleaned row by row, so their columns are preserved. Documents are 
 
 ### UI
 
-**Data** → **Prepare** → **Run cleaning**. The result card shows rows before / after, dedup ratio, and PII findings.
+**Data** → **Prepare** → **Clean All Documents**. The *Cleaning results* Details section shows rows before / after, dedup ratio, and PII findings.
 
 ### CLI
 
@@ -287,12 +287,12 @@ Joins cleaned + synthetic rows (if any), runs the chosen adapter, splits train/v
 The split form **hydrates from the active prepared version** on open: if the project has already been prepared, the stratify/disjoint field, ratios, seed, and chat template default to the config that produced the current splits (read from `prepared/manifest.json`) rather than empty fields — so a re-run reproduces the active split unless you change something. A "♻️ Reusing the active prepared version's split config" hint names which fields were filled. Edit any field to override. **Keep the current N test examples** (`keep_test: true`) keeps the active test split exactly and re-divides only train / validation — rows with the same text as a test row never move into training — so a run trained after you add data is scored on the same rows as the run before (the manifest's `keep_test` block reports what was kept and excluded).
 
 :::note Canonical split-config key
-`prepared/manifest.json` carries the split config under **`resolved_split_config`** (`{train_ratio, val_ratio, test_ratio, seed, chat_template}`) — the same shape the split API response returns. This is the canonical key readers should use (the split-form hydration and the "Re-split with dedup" inheritance both read it). The older top-level `seed`/`chat_template` and `ratios: {train, val, test}` fields are still written for back-compat; manifests prepared before `resolved_split_config` was persisted fall back to those and pick up the canonical key on their next Prepare. The manifest also reflects the **activated** version, not just the latest run — activating an older version via the Dataset Versions panel restores its `manifest.json` over the active file.
+`prepared/manifest.json` carries the split config under **`resolved_split_config`** (`{train_ratio, val_ratio, test_ratio, seed, chat_template}`) — the same shape the split API response returns. This is the canonical key readers should use (the split-form hydration and the "Re-split with dedup" inheritance both read it). The older top-level `seed`/`chat_template` and `ratios: {train, val, test}` fields are still written for back-compat; manifests prepared before `resolved_split_config` was persisted fall back to those and pick up the canonical key on their next Prepare. The manifest also reflects the **activated** version, not just the latest run — activating an older version via the *Dataset versions* Details section of **Data** → **Split** restores its `manifest.json` over the active file.
 :::
 
 ### Data Health Report (D1+D2 of the data-quality arc)
 
-The **Data** → **Split** step opens with an aggregated **Data Health Report** at the top — a single panel that pulls every data-quality signal scattered across the platform (ingestion, cleaning, shape vs task type, classification balance) into one traffic-light scorecard. Backed by `GET /api/projects/{id}/data-health`.
+The **Data** → **Split** step's **Data health and leakage** Details section (`?step=dataprep&open=health`) holds an aggregated **Data Health Report** — a single panel that pulls every data-quality signal scattered across the platform (ingestion, cleaning, shape vs task type, classification balance) into one traffic-light scorecard. Backed by `GET /api/projects/{id}/data-health`.
 
 Each signal row carries:
 
@@ -417,7 +417,7 @@ Reading the overlay:
 
 ## Quality checklist
 
-Before kicking off training, verify on the **Data** → **Split** step:
+Before kicking off training, verify on the **Data** → **Split** step (the form and its *Data health and leakage* and *Dataset versions* Details):
 
 1. No empty prompts/targets (the prep stage rejects these; the count appears in `stats.json`).
 2. Train / val splits are non-overlapping (the seeded shuffle guarantees this).

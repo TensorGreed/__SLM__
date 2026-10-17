@@ -5,7 +5,7 @@ import ProjectOverviewPage from './pages/ProjectOverviewPage';
 import ProjectStagePage from './pages/ProjectStagePage';
 import ProjectSettingsPage from './pages/ProjectSettingsPage';
 import LegacyRouteRedirect from './components/layout/LegacyRouteRedirect';
-import ProjectDataStudioPage from './pages/ProjectDataStudioPage';
+import ProjectDataPage from './pages/ProjectDataPage';
 import ProjectDomainPage from './pages/ProjectDomainPage';
 import ProjectDomainPacksPage from './pages/ProjectDomainPacksPage';
 import ProjectDomainProfilesPage from './pages/ProjectDomainProfilesPage';
@@ -38,7 +38,7 @@ function App() {
             <Route path="/manifest/import" element={<ProjectManifestPage />} />
             <Route path="/project/:id" element={<ProjectWorkspaceLayout />}>
               <Route index element={<ProjectOverviewPage />} />
-              <Route path="data" element={<ProjectStagePage destination="data" />} />
+              <Route path="data" element={<ProjectDataPage />} />
               <Route path="train" element={<ProjectTrainPage />} />
               <Route path="results" element={<ProjectResultsPage />} />
               <Route path="ship" element={<ProjectStagePage destination="ship" />} />
@@ -48,7 +48,9 @@ function App() {
               <Route path="wizard" element={<LegacyRouteRedirect />} />
               <Route path="pipeline" element={<LegacyRouteRedirect />} />
               <Route path="pipeline/:tabKey" element={<LegacyRouteRedirect />} />
-              <Route path="data-studio" element={<ProjectDataStudioPage />} />
+              {/* Folded into Data (Epic U phase U4); the labeler keeps its own page. */}
+              <Route path="data-studio" element={<LegacyRouteRedirect />} />
+              <Route path="annotate" element={<LegacyRouteRedirect />} />
               <Route path="workflow" element={<ProjectWorkflowPage />} />
               <Route path="domain" element={<ProjectDomainPage />} />
               <Route path="domain/packs" element={<ProjectDomainPacksPage />} />
@@ -67,7 +69,6 @@ function App() {
               <Route path="deployments" element={<ProjectDeploymentsPage />} />
               <Route path="observability" element={<ProjectObservabilityPage />} />
               <Route path="extensions" element={<ProjectExtensionStudioPage />} />
-              <Route path="annotate" element={<ProjectAnnotatePage />} />
               <Route path="annotate/:job_id" element={<ProjectAnnotatePage />} />
             </Route>
           </>

@@ -54,7 +54,7 @@ exact-match eval on the test examples (the `test` split) as a background job (th
 when it's done). Real training runs are evaluated against the base model
 automatically when they finish.
 
-Test examples always means the prepared test split from Dataset Prep. The final
+Test examples always means the prepared test split from **Data** → **Split**. The final
 answer key (`gold_test`) is used only when the project has no prepared split, so the base model and
 the fine-tuned model are always scored on the same rows.
 
@@ -73,7 +73,7 @@ The **answer key** (API name: *gold set*) is the ground-truth labelled set you t
 
 ### UI
 
-**Data** → **Answer key** → **Sample N rows**. Pick a strategy:
+**Data** → **Labels** → Details → *Answer-key workbench* → **Sample N rows**. Pick a strategy:
 
 | Strategy | When |
 |---|---|
@@ -87,7 +87,7 @@ A locked answer-key version is **immutable**. New rows make a new version.
 
 ### Answer-key diagnostics (V4 ML-native viz)
 
-The **Data** → **Answer key** step renders a `GoldSetDiagnosticsPanel` above the entry list whenever the answer key has at least a few classification rows. Two complementary views from a single `GET /api/projects/{id}/gold/diagnostics` call:
+The **Data** → **Labels** step's *Entries and human review* Details section renders a `GoldSetDiagnosticsPanel` above the entry list whenever the answer key has at least a few classification rows. Two complementary views from a single `GET /api/projects/{id}/gold/diagnostics` call:
 
 - **Class-balance bars** — one row per label sorted descending. The bar shows share-of-total; a dashed line at **15%** marks the same imbalance floor Coach Mode's `class_imbalance` signal fires below, so a bar dropping under the line previews exactly what'll be flagged at training time. Classes below the floor turn red. Header reports total rows, class count, and Shannon entropy.
 - **Class-similarity heatmap** — rows × cols = labels. Each cell is the mean pairwise Jaccard between a sample of rows from each class (default 12 per class):
@@ -125,7 +125,7 @@ curl -X POST http://localhost:8000/api/projects/1/gold-sets/1/submit
 
 ## Step 1b — Or: build the answer key with a cloud LLM {#step-1b--or-build-the-gold-set-with-a-cloud-llm}
 
-**Data** → **Answer key** (the older view next to the workbench) carries an
+The **Gold Evaluation Dataset** card on **Data** → **Labels** (the workbench is in its *Answer-key workbench* Details section) carries an
 LLM-assisted path that works across all four task types: **qa-sft**,
 **classification**, **span-extraction**, **summarization**. Use it when:
 

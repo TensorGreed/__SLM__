@@ -64,7 +64,7 @@ Overview                  → current stage, next step, latest run, shipped mode
 Data     (/data)          steps (?step=...):
 │   ├── Sources           → ingestion
 │   ├── Prepare           → cleaning       (?step=cleaning)
-│   ├── Answer key        → gold_set       (?step=goldset)
+│   ├── Labels            → gold_set       (?step=goldset)
 │   ├── Generate          → synthetic      (?step=synthetic)
 │   └── Split             → dataset_prep   (?step=dataprep)
 Train    (/train)         → one form (no steps) + the runs list below it
@@ -82,7 +82,17 @@ Settings (/settings)      → tips switch, beginner flag, manifest export,
                             Adapter Studio, Extension Studio
 ```
 
-Related tools are linked from each page's header: Data Studio and Annotation from **Data**; the base model registry, task type, pipeline presets, Adapter Studio and tokenization live under **Train** → **More options**; the four evaluation workflows (Verdict, Failures, Compare, Try it) as tabs on **Results**; Deployments and Observability from **Ship**. Old `/pipeline/<tab>` URLs redirect to the matching destination and step.
+Data Studio (`/data-studio`) and the Annotation list (`/annotate`) were retired on 2026-10-17: each **Data** step is a short form with a collapsed **Details** drawer whose sections load only when opened (`?open=<section-id>`), and the old pages' panels live there (table below). Related tools are linked from each page's header: the base model registry, task type, pipeline presets, Adapter Studio and tokenization live under **Train** → **More options**; the four evaluation workflows (Verdict, Failures, Compare, Try it) as tabs on **Results**; Deployments and Observability from **Ship**. Old `/pipeline/<tab>` URLs redirect to the matching destination and step; `/data-studio#<section>` redirects to the step and Details section below, and `/annotate` to **Labels** → *Annotation jobs*.
+
+### Data steps and their Details sections
+
+| Step (`?step=`) | The form on top | Details sections (`?open=`) |
+|---|---|---|
+| **Sources** (`data`) | Seed documents card, *Import dataset* (the import wizard), Upload | `documents` Ingested documents, `mappings` Saved import mappings, `readiness` Readiness, `eda` Exploratory analysis, `overview` Readiness overview, `sources` Sources summary, `assist` Assist |
+| **Prepare** (`cleaning`) | Cleaning configuration + *Clean All Documents* | `results` Cleaning results, `errors` Cleaning errors, `label-noise` Label-noise review, `quality` Quality and safety, `domain` Domain detection |
+| **Labels** (`goldset`) | Task shape card, Labelling conventions (span projects only), Gold Evaluation Dataset (answer key) card | `entries` Entries and human review, `workbench` Answer-key workbench, `review-queue` Review queue, `annotation` Annotation jobs (the keyboard labeler keeps its own page at `/annotate/<job_id>`) |
+| **Generate** (`synthetic`) | Synthetic Data Generation form (modes, backend, count, Refine weak types, relabel / answer-key tools) | `playbooks` Playbooks, `review-queue` Review queue (synthetic), `spend` Spend and budget, `playbook-center` Playbook center, `recommendations` Recommendations, `quality` Synthetic quality |
+| **Split** (`dataprep`) | Train / Val / Test split form (ratios, keep the test examples, stratify, dedup) | `health` Data health and leakage, `preview` Preview, schema and semantics, `adapters` Adapter preview, `mapping` Schema mapping, `prepare` Prepare checklist, `versions` Dataset versions |
 
 ## When to use which surface
 

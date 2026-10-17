@@ -8,9 +8,16 @@ import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import LabelNoiseReviewPanel from './LabelNoiseReviewPanel';
 import './CleaningPanel.css';
+import DetailsDrawer, { type DetailSection } from '../shared/DetailsDrawer';
 
 interface CleaningPanelProps {
     projectId: number;
+    /** Epic U phase U4: ``stepper`` = a short form + a Details drawer. */
+    layout?: 'classic' | 'stepper';
+    /** Stepper: extra Details sections appended after the panel's own. */
+    extraDetails?: DetailSection[];
+    /** Stepper: the Details section to open (``?open=``). */
+    openSection?: string | null;
     onNextStep?: () => void;
 }
 
@@ -84,7 +91,8 @@ function extractErrorMessage(error: unknown): string {
     return 'Operation failed';
 }
 
-export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelProps) {
+export default function CleaningPanel({ projectId, onNextStep , layout = 'classic', extraDetails = [], openSection = null }: CleaningPanelProps) {
+    const stepper = layout === 'stepper';
     const [documents, setDocuments] = useState<DocToClean[]>([]);
     const [chunkSize, setChunkSize] = useState(1000);
     const [redactPii, setRedactPii] = useState(true);
@@ -230,6 +238,7 @@ export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelPr
                 )}
             </div>
 
+            {!stepper && (<>
             {cleaningResults.length > 0 && (
                 <div className="card">
                     <h3>Cleaning Results</h3>
@@ -251,7 +260,6 @@ export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelPr
                     </div>
                 </div>
             )}
-
             {cleaningErrors.length > 0 && (
                 <div className="card">
                     <h3>Cleaning Errors</h3>
@@ -269,18 +277,77 @@ export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelPr
                     </div>
                 </div>
             )}
-
-            {/* Quality-Lift phase 4 slice 3 — Label-noise review surface.
-                Anchored at #label-noise-review so the Coach nudges + Data
-                Studio card click-throughs land here. The panel is
-                self-managing: it reads the optional ``scan_id`` query
-                param and falls back to /latest, renders its own empty /
-                clean / suspects states, and persists actions through the
-                slice 1 endpoint. */}
             <div id="label-noise-review">
                 <LabelNoiseReviewPanel projectId={projectId} scanId={scanIdForPanel} />
             </div>
-
+            </>)}
+            {stepper && (
+                <DetailsDrawer
+                    testId="data-details"
+                    openSection={openSection}
+                    sections={[
+                        {
+                            id: 'results',
+                            title: 'Cleaning results',
+                            hint: cleaningResults.length ? `${cleaningResults.length} document${cleaningResults.length === 1 ? '' : 's'} cleaned` : 'nothing cleaned yet',
+                            render: () => (cleaningResults.length > 0 ? (
+                <div className="card">
+                    <h3>Cleaning Results</h3>
+                    <div className="results-grid">
+                        {cleaningResults.map((r, i) => (
+                            <div key={i} className="result-card">
+                                <div className="result-header">
+                                    <span className="badge badge-success">Doc #{r.document_id}</span>
+                                    <span className="quality-score">Quality: {(r.quality_score * 100).toFixed(0)}%</span>
+                                </div>
+                                <div className="result-stats">
+                                    <div><strong>{r.chunk_count}</strong> chunks</div>
+                                    <div><strong>{r.pii_findings?.length || 0}</strong> PII found</div>
+                                    <div><strong>{r.toxicity_findings?.length || 0}</strong> toxicity spans</div>
+                                    <div>{r.original_chars?.toLocaleString()} → {r.cleaned_chars?.toLocaleString()} chars</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                            ) : <p className="form-hint">Nothing cleaned yet.</p>),
+                        },
+                        {
+                            id: 'errors',
+                            title: 'Cleaning errors',
+                            hint: cleaningErrors.length ? String(cleaningErrors.length) : 'none',
+                            render: () => (cleaningErrors.length > 0 ? (
+                <div className="card">
+                    <h3>Cleaning Errors</h3>
+                    <div className="results-grid">
+                        {cleaningErrors.map((err) => (
+                            <div key={`${err.document_id}-${err.error}`} className="result-card">
+                                <div className="result-header">
+                                    <span className="badge badge-error">Doc #{err.document_id}</span>
+                                </div>
+                                <div className="result-stats">
+                                    <div>{err.error}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                            ) : <p className="form-hint">No errors.</p>),
+                        },
+                        {
+                            id: 'label-noise',
+                            title: 'Label-noise review',
+                            hint: 'rows whose labels look wrong',
+                            render: () => (
+            <div id="label-noise-review">
+                <LabelNoiseReviewPanel projectId={projectId} scanId={scanIdForPanel} />
+            </div>
+                            ),
+                        },
+                        ...extraDetails,
+                    ]}
+                />
+            )}
             {onNextStep && (
                 <StepFooter
                     currentStep="Data Cleaning"

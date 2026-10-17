@@ -9,11 +9,6 @@
 import { useMemo } from 'react';
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 
-import IngestionPanel from '../components/data/IngestionPanel';
-import CleaningPanel from '../components/data/CleaningPanel';
-import GoldSetPanel from '../components/data/GoldSetPanel';
-import SyntheticPanel from '../components/data/SyntheticPanel';
-import DatasetPrepPanel from '../components/data/DatasetPrepPanel';
 import CompressionPanel from '../components/compression/CompressionPanel';
 import ExportPanel from '../components/export/ExportPanel';
 import api from '../api/client';
@@ -29,8 +24,8 @@ import {
     type StageDestination,
 } from '../utils/workspaceRoutes';
 
-/** Train (U2) and Results (U3) are their own pages. */
-type PanelDestination = Exclude<StageDestination, 'train' | 'results'>;
+/** Train (U2), Results (U3) and Data (U4) are their own pages; Ship is next. */
+type PanelDestination = Exclude<StageDestination, 'train' | 'results' | 'data'>;
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectStagePage.css';
 
@@ -48,7 +43,6 @@ const TAB_TARGET_STAGE: Record<TabKey, string> = {
 };
 
 const DESTINATION_BLURB: Record<PanelDestination, string> = {
-    data: 'Bring data in, prepare it, write the answer key, generate more, and split it.',
     ship: 'Package the model, publish it, and deploy it.',
 };
 
@@ -59,10 +53,6 @@ interface RelatedLink {
 
 /** Pages that belong to a destination but are not steps yet (moved in U2–U5). */
 const RELATED_LINKS: Record<PanelDestination, RelatedLink[]> = {
-    data: [
-        { label: 'Data Studio', path: 'data-studio' },
-        { label: 'Annotation', path: 'annotate' },
-    ],
     ship: [
         { label: 'Deployments', path: 'deployments' },
         { label: 'Observability', path: 'observability' },
@@ -108,16 +98,6 @@ export default function ProjectStagePage({ destination }: ProjectStagePageProps)
 
     const renderStep = () => {
         switch (step) {
-            case 'data':
-                return <IngestionPanel projectId={projectId} onNextStep={goToNextTab} />;
-            case 'cleaning':
-                return <CleaningPanel projectId={projectId} onNextStep={goToNextTab} />;
-            case 'goldset':
-                return <GoldSetPanel projectId={projectId} onNextStep={goToNextTab} />;
-            case 'synthetic':
-                return <SyntheticPanel projectId={projectId} onNextStep={goToNextTab} />;
-            case 'dataprep':
-                return <DatasetPrepPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'compression':
                 return <CompressionPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'export':

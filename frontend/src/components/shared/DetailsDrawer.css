@@ -1,0 +1,67 @@
+/* Details drawer — Epic U phase U4. */
+
+.details-drawer__toggle {
+    width: 100%;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--text-primary);
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+}
+
+.details-drawer__toggle small {
+    font-weight: 400;
+    color: var(--text-tertiary);
+}
+
+.details-drawer__sections {
+    margin-top: var(--space-md);
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border-muted);
+}
+
+.details-drawer__section-toggle {
+    width: 100%;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--border-muted);
+    padding: var(--space-sm) 0;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+}
+
+.details-drawer__section-toggle:hover {
+    color: var(--color-primary);
+}
+
+.details-drawer__section-toggle small {
+    font-weight: 400;
+    color: var(--text-tertiary);
+}
+
+.details-drawer__section.is-open .details-drawer__section-toggle {
+    border-bottom: none;
+}
+
+.details-drawer__body {
+    padding: var(--space-sm) 0 var(--space-lg);
+    border-bottom: 1px solid var(--border-muted);
+}
+
+.details-drawer__body .workspace-page,
+.details-drawer__body .page-container {
+    padding: 0;
+}

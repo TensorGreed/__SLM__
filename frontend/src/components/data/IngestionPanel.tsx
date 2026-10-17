@@ -17,9 +17,16 @@ import DocumentSampleAccordion from './DocumentSampleAccordion';
 import SavedMappingsPanel from './SavedMappingsPanel';
 import './IngestionPanel.css';
 import SeedDocumentsCard from './SeedDocumentsCard';
+import DetailsDrawer, { type DetailSection } from '../shared/DetailsDrawer';
 
 interface IngestionPanelProps {
     projectId: number;
+    /** Epic U phase U4: ``stepper`` = a short form + a Details drawer. */
+    layout?: 'classic' | 'stepper';
+    /** Stepper: extra Details sections appended after the panel's own. */
+    extraDetails?: DetailSection[];
+    /** Stepper: the Details section to open (``?open=``). */
+    openSection?: string | null;
     onNextStep?: () => void;
 }
 
@@ -123,7 +130,8 @@ function extractErrorMessage(error: unknown): string {
     return 'Operation failed';
 }
 
-export default function IngestionPanel({ projectId, onNextStep }: IngestionPanelProps) {
+export default function IngestionPanel({ projectId, onNextStep , layout = 'classic', extraDetails = [], openSection = null }: IngestionPanelProps) {
+    const stepper = layout === 'stepper';
     const [documents, setDocuments] = useState<RawDocument[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
@@ -615,9 +623,131 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
         },
     };
 
+    const docsSection = (
+            <div className="docs-section">
+                <div className="docs-header">
+                    <h3 className="docs-title">Ingested Documents</h3>
+                    <span className="docs-count badge badge-accent">{documents.length}</span>
+                </div>
+
+
+                {isLoading ? (
+                    <div className="docs-loading">
+                        {[1, 2, 3].map((i) => (
+                            <div key={i} className="skeleton" style={{ height: 56, marginBottom: 8, borderRadius: 10 }} />
+                        ))}
+                    </div>
+                ) : documents.length === 0 ? (
+                    <EmptyState
+                        title="No documents yet"
+                        description="Upload a CSV / JSONL / Parquet file, or import from HuggingFace, Kaggle, or a URL using the form above. Aim for 100–500 high-quality rows for a first iteration."
+                        docsHref="http://localhost:3001/docs/workflows/data-ingestion"
+                    />
+                ) : (
+                    <div className="docs-table-container">
+                        <table className="docs-table">
+                            <thead>
+                                <tr>
+                                    <th style={{ width: 32 }}></th>
+                                    <th>Filename</th>
+                                    <th>Source</th>
+                                    <th>Type</th>
+                                    <th>Size</th>
+                                    <th>Status</th>
+                                    <th>Date</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {documents.map((doc) => {
+                                    const isExpanded = expandedDocIds.has(doc.id);
+                                    return (
+                                        <Fragment key={doc.id}>
+                                            <tr className="doc-row">
+                                                <td>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-ghost btn-sm"
+                                                        onClick={() => toggleDocExpanded(doc.id)}
+                                                        aria-expanded={isExpanded ? 'true' : 'false'}
+                                                        aria-label={
+                                                            isExpanded
+                                                                ? `Hide sample for ${doc.filename}`
+                                                                : `Show 10 random rows from ${doc.filename}`
+                                                        }
+                                                        title="Preview 10 random rows"
+                                                        data-testid={`expand-doc-${doc.id}`}
+                                                    >
+                                                        {isExpanded ? '▼' : '▶'}
+                                                    </button>
+                                                </td>
+                                                <td className="doc-name">
+                                                    {doc.filename}
+                                                    {doc.structured && (
+                                                        <div className="form-hint" data-testid={`doc-structured-${doc.id}`}>
+                                                            Row file{doc.row_count ? ` · ${doc.row_count} rows` : ''} — columns kept for training
+                                                        </div>
+                                                    )}
+                                                    {doc.status === 'error' && doc.error && (
+                                                        <div className="form-hint-warning" role="alert" data-testid={`doc-error-${doc.id}`}>
+                                                            {doc.error}
+                                                        </div>
+                                                    )}
+                                                </td>
+                                                <td>
+                                                    <span className="badge badge-info" style={{ fontSize: 10 }}>
+                                                        {doc.source || 'upload'}
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span className="badge badge-accent">{doc.file_type}</span>
+                                                </td>
+                                                <td className="doc-size">{formatSize(doc.file_size_bytes)}</td>
+                                                <td>
+                                                    <span className={`badge ${statusBadgeClass(doc.status)}`}>{doc.status}</span>
+                                                </td>
+                                                <td className="doc-date">{new Date(doc.ingested_at).toLocaleDateString()}</td>
+                                                <td className="doc-actions">
+                                                    {doc.status === 'pending' && (
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-ghost btn-sm"
+                                                            onClick={() => void handleProcess(doc.id)}
+                                                            title="Process"
+                                                        >
+                                                            ⚙️
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-ghost btn-sm"
+                                                        onClick={() => void handleDelete(doc.id)}
+                                                        title="Delete"
+                                                    >
+                                                        🗑️
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                            {isExpanded && (
+                                                <DocumentSampleAccordion
+                                                    projectId={projectId}
+                                                    documentId={doc.id}
+                                                    colSpan={8}
+                                                />
+                                            )}
+                                        </Fragment>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+    );
+
     return (
         <div className="ingestion-panel animate-fade-in">
-            <ReadinessPanel projectId={projectId} />
+            {!stepper && <ReadinessPanel projectId={projectId} />}
 
             {/* No corpus yet: a generation model writes sample documents for
                 the domain; they go through parse → clean like an upload. */}
@@ -626,6 +756,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
             {/* Phase G: saved mappings panel — only renders when at
                 least one config exists for the project. Re-run / delete
                 live alongside the new-import CTA below. */}
+{!stepper && (
             <SavedMappingsPanel
                 projectId={projectId}
                 refreshKey={savedMappingsRefreshKey}
@@ -634,6 +765,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                 }}
             />
 
+            )}
             {/* Phase F: generic dataset-import pipeline. Parallel route
                 to the legacy file-format upload tabs below — auto-
                 detects the task shape and lands rows in the project's
@@ -1018,130 +1150,52 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                 </div>
             )}
 
-            {documents.length > 0 && (
-                <EDADashboard projectId={projectId} />
+            {!stepper && documents.length > 0 && <EDADashboard projectId={projectId} />}
+
+            {!stepper && docsSection}
+
+            {stepper && (
+                <DetailsDrawer
+                    testId="data-details"
+                    openSection={openSection}
+                    sections={[
+                        {
+                            id: 'documents',
+                            title: 'Ingested documents',
+                            hint: documents.length ? String(documents.length) : 'none yet',
+                            render: () => docsSection,
+                        },
+                        {
+                            id: 'mappings',
+                            title: 'Saved import mappings',
+                            hint: 're-run or delete a saved mapping',
+                            render: () => (
+            <SavedMappingsPanel
+                projectId={projectId}
+                refreshKey={savedMappingsRefreshKey}
+                onRunComplete={() => {
+                    void fetchDocs();
+                }}
+            />
+
+                            ),
+                        },
+                        {
+                            id: 'readiness',
+                            title: 'Readiness',
+                            hint: 'what the data needs before training',
+                            render: () => <ReadinessPanel projectId={projectId} />,
+                        },
+                        {
+                            id: 'eda',
+                            title: 'Exploratory analysis',
+                            hint: 'distributions over the ingested documents',
+                            render: () => (documents.length > 0 ? <EDADashboard projectId={projectId} /> : <p className="form-hint">Ingest something first.</p>),
+                        },
+                        ...extraDetails,
+                    ]}
+                />
             )}
-
-            <div className="docs-section">
-                <div className="docs-header">
-                    <h3 className="docs-title">Ingested Documents</h3>
-                    <span className="docs-count badge badge-accent">{documents.length}</span>
-                </div>
-
-
-                {isLoading ? (
-                    <div className="docs-loading">
-                        {[1, 2, 3].map((i) => (
-                            <div key={i} className="skeleton" style={{ height: 56, marginBottom: 8, borderRadius: 10 }} />
-                        ))}
-                    </div>
-                ) : documents.length === 0 ? (
-                    <EmptyState
-                        title="No documents yet"
-                        description="Upload a CSV / JSONL / Parquet file, or import from HuggingFace, Kaggle, or a URL using the form above. Aim for 100–500 high-quality rows for a first iteration."
-                        docsHref="http://localhost:3001/docs/workflows/data-ingestion"
-                    />
-                ) : (
-                    <div className="docs-table-container">
-                        <table className="docs-table">
-                            <thead>
-                                <tr>
-                                    <th style={{ width: 32 }}></th>
-                                    <th>Filename</th>
-                                    <th>Source</th>
-                                    <th>Type</th>
-                                    <th>Size</th>
-                                    <th>Status</th>
-                                    <th>Date</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {documents.map((doc) => {
-                                    const isExpanded = expandedDocIds.has(doc.id);
-                                    return (
-                                        <Fragment key={doc.id}>
-                                            <tr className="doc-row">
-                                                <td>
-                                                    <button
-                                                        type="button"
-                                                        className="btn btn-ghost btn-sm"
-                                                        onClick={() => toggleDocExpanded(doc.id)}
-                                                        aria-expanded={isExpanded ? 'true' : 'false'}
-                                                        aria-label={
-                                                            isExpanded
-                                                                ? `Hide sample for ${doc.filename}`
-                                                                : `Show 10 random rows from ${doc.filename}`
-                                                        }
-                                                        title="Preview 10 random rows"
-                                                        data-testid={`expand-doc-${doc.id}`}
-                                                    >
-                                                        {isExpanded ? '▼' : '▶'}
-                                                    </button>
-                                                </td>
-                                                <td className="doc-name">
-                                                    {doc.filename}
-                                                    {doc.structured && (
-                                                        <div className="form-hint" data-testid={`doc-structured-${doc.id}`}>
-                                                            Row file{doc.row_count ? ` · ${doc.row_count} rows` : ''} — columns kept for training
-                                                        </div>
-                                                    )}
-                                                    {doc.status === 'error' && doc.error && (
-                                                        <div className="form-hint-warning" role="alert" data-testid={`doc-error-${doc.id}`}>
-                                                            {doc.error}
-                                                        </div>
-                                                    )}
-                                                </td>
-                                                <td>
-                                                    <span className="badge badge-info" style={{ fontSize: 10 }}>
-                                                        {doc.source || 'upload'}
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <span className="badge badge-accent">{doc.file_type}</span>
-                                                </td>
-                                                <td className="doc-size">{formatSize(doc.file_size_bytes)}</td>
-                                                <td>
-                                                    <span className={`badge ${statusBadgeClass(doc.status)}`}>{doc.status}</span>
-                                                </td>
-                                                <td className="doc-date">{new Date(doc.ingested_at).toLocaleDateString()}</td>
-                                                <td className="doc-actions">
-                                                    {doc.status === 'pending' && (
-                                                        <button
-                                                            type="button"
-                                                            className="btn btn-ghost btn-sm"
-                                                            onClick={() => void handleProcess(doc.id)}
-                                                            title="Process"
-                                                        >
-                                                            ⚙️
-                                                        </button>
-                                                    )}
-                                                    <button
-                                                        type="button"
-                                                        className="btn btn-ghost btn-sm"
-                                                        onClick={() => void handleDelete(doc.id)}
-                                                        title="Delete"
-                                                    >
-                                                        🗑️
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                            {isExpanded && (
-                                                <DocumentSampleAccordion
-                                                    projectId={projectId}
-                                                    documentId={doc.id}
-                                                    colSpan={8}
-                                                />
-                                            )}
-                                        </Fragment>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </div>
-
             {onNextStep && (
                 <StepFooter
                     currentStep="Data Ingestion"

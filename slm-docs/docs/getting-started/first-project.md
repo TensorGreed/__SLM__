@@ -39,7 +39,7 @@ Aim for 100–500 high-quality rows for a first iteration. Tiny datasets are fin
 
 ### UI
 
-**Data** → **Sources** → **Add source** → **Upload CSV**. Pick `tickets.csv`. The Dataset Structure Explorer auto-profiles the file: row count, columns, sample values. Click **Continue**.
+**Data** → **Sources** → **Add source** → **Upload CSV**. Pick `tickets.csv`. The Dataset Structure Explorer (Details → *Exploratory analysis*) auto-profiles the file: row count, columns, sample values. Click **Continue**.
 
 ### CLI
 
@@ -66,7 +66,7 @@ The cleaning stage normalises text, dedups, and runs a PII scan. The defaults fr
 
 ### UI
 
-**Data** → **Prepare** → **Run cleaning**. The page shows row counts before / after, the PII findings (if any), and the dedup ratio.
+**Data** → **Prepare** → **Clean All Documents**. The *Cleaning results* Details section shows row counts before / after, the PII findings (if any), and the dedup ratio.
 
 ### CLI
 
@@ -90,7 +90,7 @@ The answer key (API name: *gold set*) is the ground-truth eval set. The workbenc
 
 ### UI
 
-**Data** → **Answer key** → **Sample 100 rows (stratified)**. Each row has a textarea — paste the correct answer and approve. Submit; the answer-key version locks (draft → locked).
+**Data** → **Labels** → Details → *Answer-key workbench* → **Sample 100 rows (stratified)**. Each row has a textarea — paste the correct answer and approve. Submit; the answer-key version locks (draft → locked).
 
 ### CLI
 

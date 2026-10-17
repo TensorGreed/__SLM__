@@ -12,9 +12,16 @@ import { toast } from '../../stores/toastStore';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 import './DataHealthReportPanel.css';
 import './DatasetPrepPanel.css';
+import DetailsDrawer, { type DetailSection } from '../shared/DetailsDrawer';
 
 interface DatasetPrepPanelProps {
     projectId: number;
+    /** Epic U phase U4: ``stepper`` = a short form + a Details drawer. */
+    layout?: 'classic' | 'stepper';
+    /** Stepper: extra Details sections appended after the panel's own. */
+    extraDetails?: DetailSection[];
+    /** Stepper: the Details section to open (``?open=``). */
+    openSection?: string | null;
     onNextStep: () => void | Promise<void>;
 }
 
@@ -328,7 +335,8 @@ function asPercent(value: unknown): string {
     return `${(numberValue * 100).toFixed(1)}%`;
 }
 
-export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepPanelProps) {
+export default function DatasetPrepPanel({ projectId, onNextStep , layout = 'classic', extraDetails = [], openSection = null }: DatasetPrepPanelProps) {
+    const stepper = layout === 'stepper';
     const [activeView, setActiveView] = useState<DatasetPrepView>('overview');
 
     // Preview state
@@ -1119,59 +1127,8 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         item?.suggested_field_mapping && Object.keys(item.suggested_field_mapping).length > 0
     ));
 
-    return (
-        <div className="dataprep-panel">
-            {/* D1+D2 of the data-quality arc — aggregated Data Health
-                Report. Mounted at the top of dataset prep because by this
-                point ingestion + cleaning + recipe selection have run, so
-                every signal is computable. The user reads "here's what's
-                wrong before you train" before scrolling to the per-split
-                tables below. */}
-            {taskShape?.detection && (
-                <TaskShapeConfirmCard
-                    key={taskShape.confirmed?.task_profile || 'unconfirmed'}
-                    projectId={projectId}
-                    detection={taskShape.detection}
-                    catalog={taskShape.catalog}
-                    confirmedLabel={taskShape.confirmed?.label ?? null}
-                    onConfirmed={() => {
-                        void loadAdapterPreference();
-                        void loadTaskShape();
-                    }}
-                />
-            )}
-            <DataHealthReportPanel
-                key={healthRefreshKey}
-                projectId={projectId}
-                onSignalAction={handleHealthSignalAction}
-            />
-
-            <div className="dp-view-tabs">
-                <button
-                    type="button"
-                    className={`dp-view-tab ${activeView === 'overview' ? 'active' : ''}`}
-                    onClick={() => setActiveView('overview')}
-                >
-                    Overview
-                </button>
-                <button
-                    type="button"
-                    className={`dp-view-tab ${activeView === 'adapters' ? 'active' : ''}`}
-                    onClick={() => setActiveView('adapters')}
-                >
-                    Adapter Lab
-                </button>
-                <button
-                    type="button"
-                    className={`dp-view-tab ${activeView === 'split' ? 'active' : ''}`}
-                    onClick={() => setActiveView('split')}
-                >
-                    Split
-                </button>
-            </div>
-
-            {activeView === 'overview' && (
-                <>
+    const overviewView = (
+        <>
             {/* ── Preview Section ──────────────────────────────── */}
             <div className="dp-section">
                 <h3><span className="icon">👁️</span> Dataset Preview</h3>
@@ -1443,11 +1400,10 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                     </>
                 )}
             </div>
-                </>
-            )}
-
-            {/* ── Adapter Preview Section ──────────────────────── */}
-            {activeView === 'adapters' && (
+        </>
+    );
+    const adaptersView = (
+        <>
             <div className="dp-section">
                 <h3><span className="icon">🧩</span> Adapter Preview</h3>
                 <div className="dp-info">
@@ -1742,10 +1698,10 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                     </>
                 )}
             </div>
-            )}
-
-            {/* ── Split Section ─────────────────────────────────── */}
-            {activeView === 'split' && (
+        </>
+    );
+    const splitView = (
+        <>
             <div className="dp-section" ref={splitSectionRef}>
                 <h3><span className="icon">✂️</span> Train / Val / Test Split</h3>
                 <div className="dp-info">
@@ -2144,7 +2100,97 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                     </div>
                 )}
             </div>
+        </>
+    );
+
+    return (
+        <div className="dataprep-panel">
+            {/* D1+D2 of the data-quality arc — aggregated Data Health
+                Report. Mounted at the top of dataset prep because by this
+                point ingestion + cleaning + recipe selection have run, so
+                every signal is computable. The user reads "here's what's
+                wrong before you train" before scrolling to the per-split
+                tables below. */}
+            {!stepper && (<>
+            {taskShape?.detection && (
+                <TaskShapeConfirmCard
+                    key={taskShape.confirmed?.task_profile || 'unconfirmed'}
+                    projectId={projectId}
+                    detection={taskShape.detection}
+                    catalog={taskShape.catalog}
+                    confirmedLabel={taskShape.confirmed?.label ?? null}
+                    onConfirmed={() => {
+                        void loadAdapterPreference();
+                        void loadTaskShape();
+                    }}
+                />
             )}
+            <DataHealthReportPanel
+                key={healthRefreshKey}
+                projectId={projectId}
+                onSignalAction={handleHealthSignalAction}
+            />
+            <div className="dp-view-tabs">
+                <button
+                    type="button"
+                    className={`dp-view-tab ${activeView === 'overview' ? 'active' : ''}`}
+                    onClick={() => setActiveView('overview')}
+                >
+                    Overview
+                </button>
+                <button
+                    type="button"
+                    className={`dp-view-tab ${activeView === 'adapters' ? 'active' : ''}`}
+                    onClick={() => setActiveView('adapters')}
+                >
+                    Adapter Lab
+                </button>
+                <button
+                    type="button"
+                    className={`dp-view-tab ${activeView === 'split' ? 'active' : ''}`}
+                    onClick={() => setActiveView('split')}
+                >
+                    Split
+                </button>
+            </div>
+            {activeView === 'overview' && overviewView}
+            {activeView === 'adapters' && adaptersView}
+            {activeView === 'split' && splitView}
+            </>)}
+            {stepper && (<>
+            {splitView}
+                <DetailsDrawer
+                    testId="data-details"
+                    openSection={openSection}
+                    sections={[
+                        {
+                            id: 'health',
+                            title: 'Data health and leakage',
+                            hint: 'duplicates, gold leakage, split overlap, label balance',
+                            render: () => (
+            <DataHealthReportPanel
+                key={healthRefreshKey}
+                projectId={projectId}
+                onSignalAction={handleHealthSignalAction}
+            />
+                            ),
+                        },
+                        {
+                            id: 'preview',
+                            title: 'Preview, schema and semantics',
+                            hint: 'the combined rows, field profile, semantic signals',
+                            render: () => overviewView,
+                        },
+                        {
+                            id: 'adapters',
+                            title: 'Adapter preview',
+                            hint: 'how rows map onto the training format',
+                            render: () => adaptersView,
+                        },
+                        ...extraDetails,
+                    ]}
+                />
+            </>)}
 
             <StepFooter
                 currentStep="Dataset Preparation"
