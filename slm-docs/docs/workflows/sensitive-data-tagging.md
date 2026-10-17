@@ -611,6 +611,41 @@ new labels, accepts carry when the labels are unchanged, rejects carry,
 and an accept whose labels changed is kept on the row as
 `previous_review` (the bell reports carried / dropped counts).
 
+**Look-alike round 2: plates and staff-id contrasts (2026-10-16).** A
+second seeded document (40 documents, 69 passages, 590 Sonnet spans,
+$0.27) with at least two licence plates per document in the formats real
+notices use (122 plate labels) and employee-id / customer-id / username
+triples sharing letter-digit shapes (78 / 89 / 68), plus passports and
+national ids as the dashed look-alikes. Three seeds of #117's config,
+picked by **tuned** validation F1 this time (#127, 0.945 vs 0.943 / 0.944
+— a near tie; the pre-tune pick would have been #129).
+
+| run | Gretel P / R / F1 | CoNLL R / F1 | plate P / R | employee_id P | credit_card F1 | MRN F1 |
+|---|---|---|---|---|---|---|
+| #117 shipped | 0.680 / 0.740 / 0.708 | 0.59 / 0.708 | 0.46 / 0.65 | 0.92 | 0.74 | 0.66 |
+| #127 (tuned pick) | 0.744 / 0.774 / 0.759 | 0.55 / 0.681 | 0.64 / 0.42 | 1.00 | 0.84 | 0.76 |
+| #128 | 0.725 / 0.757 / 0.741 | 0.52 / 0.669 | 0.75 / 0.38 | 0.75 | 0.86 | 0.76 |
+| #129 | 0.732 / 0.769 / 0.750 | 0.52 / 0.649 | 0.65 / 0.64 | 0.79 | 0.84 | 0.71 |
+
+**Still mixed; #117 stays.** Gretel is now clearly better on all three
+seeds (+0.03 to +0.05 F1, precision +0.05 to +0.06; credit_card +0.10 to
++0.13, MRN +0.05 to +0.10, national_id +0.06 to +0.15), employee_id
+precision is partly back (0.75–1.00) and plate precision is up (0.46 →
+0.64–0.75). But plate **recall** came back in only one seed (0.64; the
+others 0.38–0.42 — after 122 labelled plates, so the remaining misses are
+Gretel's plate formats, not volume), and **CoNLL recall fell for the
+third round running** (0.59 → 0.52–0.55, all three seeds, below the 0.57
+floor set before the round): each look-alike document adds ~100 names in
+forms and notices, so bare headline capitals and "Name ( Country ) time"
+results lines — the same CoNLL failures #117 has — get rarer in training.
+For a PII tagger, missing 6% more people in prose is the worse failure,
+so the trade is refused. The fresh reviewer's two notes: pick on per-type
+validation stability rather than the macro mean when seeds tie (the
+0.002 gap decided nothing, and #127 is the worst plate-recall seed); and
+stop seeding plate / staff-id rounds — restore prose-name recall first
+with a document of unlabelled-prose names (headlines, results tables,
+bylines), then re-evaluate.
+
 ### Try it: the redact endpoint
 
 ```bash
