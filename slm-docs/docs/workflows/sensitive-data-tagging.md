@@ -727,7 +727,7 @@ picked on tuned validation F1 (0.9496 / 0.9468 / 0.9486 → #135):
 | run | Gretel P / R / F1 | CoNLL P / R / F1 | bank_account P / R (FPs) | employee_id P / R | credit_card | MRN | national_id | plate | scan / clean key |
 |---|---|---|---|---|---|---|---|---|---|
 | #131 (shipped until this round) | 0.717 / 0.784 / 0.749 | 0.866 / 0.620 / 0.723 | 0.30 / 1.00 (41) | 0.89 / 0.66 | 0.80 | 0.76 | 0.81 | 0.64 | 0.866 / 0.967 |
-| #135 (tuned pick, **shipped**, export 36) | 0.743 / 0.797 / 0.769 | 0.899 / 0.645 / 0.751 | 0.71 / 1.00 (7) | 0.80 / 0.76 | 0.89 | 0.77 | 0.81 | 0.59 | 0.859 / 0.965 |
+| #135 (tuned pick, shipped as export 36 until the scrub below) | 0.743 / 0.797 / 0.769 | 0.899 / 0.645 / 0.751 | 0.71 / 1.00 (7) | 0.80 / 0.76 | 0.89 | 0.77 | 0.81 | 0.59 | 0.859 / 0.965 |
 | #136 | 0.755 / 0.777 / 0.766 | 0.850 / 0.614 / 0.713 | 0.62 / 0.88 (9) | 0.85 / 0.73 | 0.84 | 0.73 | 0.76 | 0.63 | 0.863 / 0.970 |
 | #137 | 0.750 / 0.803 / 0.776 | 0.814 / 0.578 / 0.676 | 0.49 / 1.00 (18) | 0.81 / 0.76 | 0.87 | 0.78 | 0.79 | 0.60 | 0.867 / 0.965 |
 
@@ -748,7 +748,7 @@ unlabelled) — under our convention the ceiling on this benchmark is ~0.85,
 and #135 is near it. The fresh reviewer's call: **ship #135 over #131** —
 only the pick clears every bar set before the round, and the regressions
 it carries are the data's (shared by its siblings), not the seed's.
-**Shipped the same day: #135 = export 36**, via
+**Shipped the same day: #135 = export 36** (superseded by #143 below), via
 `POST /api/projects/31/seed-groups/134/ship {"export_format":"huggingface"}`.
 This time one call was enough: #135 had no evaluation on record, so ship
 ran the span lift check itself first (test examples F1 0.963, answer key
@@ -762,6 +762,95 @@ Picked seed 45 (run #135) of 3 by validation span F1 (tuned thresholds)
 small negative-example document for employee_id (logins, house numbers and
 customer ids beside staff ids) plus plates in prose; bank_account needs no
 more data.
+
+**Benchmark contamination, found and scrubbed (2026-10-17).** While reading
+the next seed document, the lane noticed the local seeder had copied the
+prompt's example values verbatim — and many of those examples had been lifted
+from Gretel's own rows when the prompts were written from the confusion lists.
+A scan of every training row against Gretel's gold values found **32 distinct
+values in 591 places across 248 rows** (the employee id `G-82727-I` 57 times,
+`KS40540825` 93, the plate shapes `X077-0102-227-0` / `B19-0947-371-68`, the
+street names of three Gretel addresses …), from the look-alike rounds, the
+contrast round and the new document. Every occurrence was replaced with an
+invented value of the same length and character classes (offsets unchanged,
+the 44 test rows untouched), and the shipped config was retrained on the
+scrubbed data as a control:
+
+| run | Gretel P / R / F1 | CoNLL-400 F1 | CoNLL-large F1 | employee_id P / R | plate F1 | bank_account P |
+|---|---|---|---|---|---|---|
+| #135 shipped (export 36, before the scrub) | 0.743 / 0.797 / 0.769 | 0.751 | 0.816 | 0.80 / 0.76 | 0.59 | 0.71 |
+| #139 control | 0.731 / 0.781 / 0.755 | 0.724 | 0.787 | 0.54 / 0.77 | 0.64 | 0.65 |
+| #140 control | 0.748 / 0.792 / 0.770 | 0.741 | 0.776 | 0.82 / 0.72 | 0.68 | 0.59 |
+| #141 control (tuned pick) | 0.736 / 0.797 / 0.766 | 0.700 | 0.795 | 0.70 / 0.80 | 0.70 | 0.52 |
+
+The leak bought #135 little overall (Gretel F1 within 0.01 of the clean
+seeds, inside seed spread) but its employee_id figure was partly memorised
+(F1 0.78 vs 0.63–0.77 clean, mostly precision), and the clean seeds read
+0.02–0.04 lower on the large CoNLL slice. Lesson for the product: seed
+prompts must never carry benchmark values, and a benchmark import should
+scan the training rows for its gold values the way the leakage filter
+already scans for whole rows.
+
+**A larger CoNLL slice (2026-10-17).** The 400-sentence CoNLL test slice
+resolves ~0.07 F1, so most CoNLL moves above were noise. Benchmark 198 =
+the CoNLL-2003 *validation* split, 2,000 sentences (the import cap), 1,169
+person spans, 0 leakage; it resolves ~0.03: #117 0.772, #131 0.823, #135
+0.816 — #117 → #131 was real (+0.05), #131 → #135 a tie, and #135's +0.03
+on the small slice was seed luck, as the three-seed mean had said.
+
+**employee_id / license_plate negative-example round (2026-10-17).** Doc
+757: 40 documents (fleet inspections, towing notices, rental agreements,
+insurance claims, helpdesk logs, access-request forms, chat transcripts,
+JSON audit logs, incident reports, courier notes, accident reports, crew
+rotas) with staff ids beside the same shapes as customer ids, logins,
+incident / audit / case / work-order ids, part numbers and flight numbers;
+plates in prose in many formats beside VINs, National Insurance numbers,
+SSNs, postcodes, phone and tracking numbers, driving-licence numbers. 75
+passages, Sonnet-labelled (885 spans, $0.58); the hand audit fixed 40
+(19 VINs typed device_id deleted, 6 dateline dates typed date_of_birth, 9
+staff ids with no staff cue, `user_id` values retyped username, …), then the
+scrub above. Three seeds of #135's config on the scrubbed data with the
+document, tuned, pick by tuned validation F1 → **#143**:
+
+| run | Gretel P / R / F1 | CoNLL-400 P / R / F1 | CoNLL-large P / R / F1 | employee_id P / R | plate F1 | bank_account P | credit_card | MRN | national_id | scan / clean key |
+|---|---|---|---|---|---|---|---|---|---|---|
+| #141 control pick | 0.736 / 0.797 / 0.766 | 0.874 / 0.584 / 0.700 | 0.934 / 0.692 / 0.795 | 0.70 / 0.80 | 0.70 | 0.52 | 0.89 | 0.76 | 0.77 | 0.867 / 0.970 |
+| **#143 (tuned pick, shipped, export 37)** | 0.756 / 0.800 / 0.778 | 0.929 / 0.705 / 0.801 | 0.931 / 0.741 / 0.825 | 0.95 / 0.70 | 0.69 | 0.50 | 0.90 | 0.78 | 0.86 | 0.863 / 0.970 |
+| #144 | 0.745 / 0.775 / 0.760 | 0.876 / 0.681 / 0.766 | 0.931 / 0.724 / 0.814 | 0.94 / 0.70 | 0.66 | 0.68 | 0.87 | 0.77 | 0.79 | 0.869 / 0.965 |
+| #145 | 0.773 / 0.791 / 0.782 | 0.915 / 0.645 / 0.756 | 0.951 / 0.723 / 0.821 | 0.69 / 0.80 | 0.77 | 0.80 | 0.86 | 0.75 | 0.84 | 0.869 / 0.963 |
+
+Against the clean control, seed by seed: employee_id precision 0.54 / 0.82
+/ 0.70 → 0.95 / 0.94 / 0.69 (two seeds up ~0.2, none down — the data's
+gain; recall slipped 0.77 / 0.72 / 0.80 → 0.70 / 0.70 / 0.80), plates
++0.05 / −0.02 / +0.07 (mixed sign — noise; the pick's plate false positives
+are still NI numbers, MRNs and postcodes), and an unplanned real gain on the
+large CoNLL slice, 0.787 / 0.776 / 0.795 → 0.825 / 0.814 / 0.821 (same sign
+on all three, mean +0.034 ≥ the 0.03 the slice resolves — the document's
+114 person names in forms and prose). Keys flat; bank_account precision
+0.65 / 0.59 / 0.52 → 0.50 / 0.68 / 0.80 is 17-span noise. The fresh
+reviewer's call: **ship #143** — clean, ties or beats #135 on every
+resolvable benchmark, loses nothing above noise; and no further round —
+seed-to-seed swings on identical data (employee_id F1 0.63–0.80) exceed
+anything 103 / 55 / 17 spans can resolve.
+
+**Shipped and published (2026-10-17): #143, export 37 →
+[huggingface.co/TensorGreed/brewslm-sensitive-data-tagger](https://huggingface.co/TensorGreed/brewslm-sensitive-data-tagger).**
+`POST /api/projects/31/seed-groups/142/ship` lift-checked #143 itself (test
+examples F1 0.969, answer key 0.970, 44 texts) and wrote the card with the
+seed-selection line, *Human review: 11 of 44 rows checked (1 corrected);
+on the checked rows F1 0.92*, and all three benchmarks (CoNLL-400 0.93 /
+0.70 / 0.80, CoNLL-large 0.93 / 0.74 / 0.83, Gretel 0.76 / 0.80 / 0.78).
+Two lines were added to the card's Limitations by hand before publishing:
+the Gretel per-type picture against the previous export (employee_id
+recall −0.06, bank_account precision −0.21, precision +0.15, plates +0.10,
+what the plate false positives still are) and the contamination note. Then
+`POST /api/projects/31/export/37/publish-hub {"repo_id":
+"TensorGreed/brewslm-sensitive-data-tagger"}` ([how it works](export-and-deployment.md#publishing-to-the-hugging-face-hub))
+uploaded `model/` as the repo root and the manifest + release notes under
+`brewslm/`; the card's front matter gained `license: mit` and `language:
+en`. Checked from the Hub with the plain `transformers` pipeline
+(`stride=128`): `employee_id` EMP204711 0.99, `credit_card` 1.00,
+`license_plate` KA 05 MJ 4567 0.73, `phone` 1.00, `email` 0.99.
 
 ### Try it: the redact endpoint
 
@@ -1354,40 +1443,43 @@ matter most for a redaction tool: card numbers and bank accounts (PCI) gain
 2026-10-17; #107 (export 32) remains the alternative where plates matter
 more.
 
-**The shipped model (2026-10-17): #135, export 36.** Five more data rounds
+**The shipped model (2026-10-17): #143, export 37, published on the Hugging
+Face Hub as `TensorGreed/brewslm-sensitive-data-tagger`.** Six data rounds
 after #117 (identifier shapes, two look-alike rounds, prose names, the
-bank_account / employee_id contrasts — all above) added seven look-alike
-types, 483 unlabelled-context names and 67 passages of cued identifiers;
-the prose-names round's pick (#131) replaced #117 in the morning, and the
-contrast round's pick replaced #131 the same afternoon:
+bank_account / employee_id contrasts, the employee_id / plate negative
+examples — all above), a benchmark-contamination scrub, and a larger CoNLL
+slice. Three ships in one day: #131 replaced #117 in the morning, #135
+replaced #131 after the contrast round, and #143 — the first model trained
+on scrubbed data — replaced #135 in the afternoon:
 
-| | #117 (export 33) | #131 (export 35) | #135 (export 36, shipped) |
-|---|---|---|---|
-| Gretel PII P / R / F1 | 0.680 / 0.740 / 0.708 | 0.717 / 0.784 / 0.749 | 0.743 / 0.797 / 0.769 |
-| CoNLL people P / R / F1 | 0.883 / 0.590 / 0.708 | 0.866 / 0.620 / 0.723 | 0.899 / 0.645 / 0.751 |
-| scan / clean key F1 (v5, 30 types) | 0.852 / 0.962 | 0.866 / 0.967 | 0.859 / 0.965 |
-| answer key F1 (checked rows) | 0.968 on 43 texts (15 checked: 0.905) | 0.967 on 44 texts (11 checked: 0.92) | 0.965 on 44 texts (11 checked: 0.91) |
-| Gretel credit_card | 0.74 | 0.80 | 0.89 |
-| Gretel medical_record_number | 0.66 | 0.76 | 0.77 |
-| Gretel national_id | 0.67 | 0.81 | 0.81 |
-| Gretel license_plate | 0.54 | 0.64 | 0.59 |
-| Gretel employee_id P / R | — | 0.89 / 0.66 | 0.80 / 0.76 |
-| Gretel bank_account precision (17 spans) | 0.40 | 0.30 | 0.71 |
+| | #117 (export 33) | #131 (export 35) | #135 (export 36, pre-scrub) | #143 (export 37, shipped) |
+|---|---|---|---|---|
+| Gretel PII P / R / F1 | 0.680 / 0.740 / 0.708 | 0.717 / 0.784 / 0.749 | 0.743 / 0.797 / 0.769 | 0.756 / 0.800 / 0.778 |
+| CoNLL people, 400 sentences | 0.883 / 0.590 / 0.708 | 0.866 / 0.620 / 0.723 | 0.899 / 0.645 / 0.751 | 0.929 / 0.705 / 0.801 |
+| CoNLL people, 2,000 sentences (1,169 spans) | 0.936 / 0.658 / 0.772 | 0.944 / 0.730 / 0.823 | 0.936 / 0.723 / 0.816 | 0.931 / 0.741 / 0.825 |
+| scan / clean key F1 (v5, 30 types) | 0.852 / 0.962 | 0.866 / 0.967 | 0.859 / 0.965 | 0.863 / 0.970 |
+| answer key F1 (checked rows) | 0.968 on 43 texts (15 checked: 0.905) | 0.967 on 44 (11 checked: 0.92) | 0.965 on 44 (11 checked: 0.91) | 0.970 on 44 (11 checked: 0.92) |
+| Gretel credit_card | 0.74 | 0.80 | 0.89 | 0.90 |
+| Gretel medical_record_number | 0.66 | 0.76 | 0.77 | 0.78 |
+| Gretel national_id | 0.67 | 0.81 | 0.81 | 0.86 |
+| Gretel license_plate | 0.54 | 0.64 | 0.59 | 0.69 |
+| Gretel employee_id P / R | — | 0.89 / 0.66 | 0.80 / 0.76 | 0.95 / 0.70 |
+| Gretel bank_account precision (17 spans) | 0.40 | 0.30 | 0.71 | 0.50 |
 
-#117 → #131: Gretel +0.04 F1, CoNLL recall +0.03 at −0.017 precision, the
-identifier types up 0.06–0.15, bank_account precision the one loud loss.
-#131 → #135: Gretel +0.02 F1, bank_account false positives 41 → 7,
-credit_card +0.09, employee_id recall +0.10; paid for with employee_id
-precision −0.09, license_plate −0.05 (≈ 3 spans) and national_id recall
-−0.07, all shared by #135's sibling seeds, so they are the contrast data's
-cost, not the seed's. #135's CoNLL +0.03 is seed luck (three-seed mean
-0.713). The #117 answer-key figure is a different key (re-written under the
-30-type vocabulary; 11 of the 15 verdicts carried over), so only the scan /
-clean rows compare like for like on the own data — and those keys can
-resolve ~0.04 overall, not per type; #135's −0.007 on the scan key is
-inside that. That closes the training work for this project: from the first
-span model (CoNLL F1 0.21, a scan F1 of 0.59) to Gretel 0.77 and CoNLL 0.75
-on independent data, with every pick made on validation alone.
+Only the large CoNLL slice (~0.03) and, overall, Gretel (~0.04) resolve
+anything; the per-type Gretel numbers are directional. On what resolves:
+#117 → #131 real on CoNLL (+0.05) and Gretel (+0.04); #131 → #135 → #143
+ties on CoNLL-large, Gretel +0.03 across the two steps. #135's employee_id
+and bank_account figures were measured with Gretel values in its training
+rows and are overstated; #143's are clean. The #117 answer-key figure is a
+different key (re-written under the 30-type vocabulary; 11 of the 15
+verdicts carried over), so only the scan / clean rows compare like for
+like on the own data — and those keys resolve ~0.04 overall, not per type.
+That closes the training work for this project for now (the user's call:
+today's numbers are satisfactory; revisit later): from the first span
+model (CoNLL F1 0.21, a scan F1 of 0.59) to Gretel 0.78 and CoNLL 0.80 /
+0.83 on independent, uncontaminated data, with every pick made on
+validation alone.
 
 ## What it costs to relabel
 
