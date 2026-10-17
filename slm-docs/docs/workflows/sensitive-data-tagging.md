@@ -661,7 +661,7 @@ dates as date_of_birth against the convention; removed. Three seeds of
 | run | Gretel P / R / F1 | CoNLL P / R / F1 | credit_card F1 | MRN F1 | national_id F1 | plate F1 | bank_account P |
 |---|---|---|---|---|---|---|---|
 | #117 (shipped until 2026-10-17) | 0.680 / 0.740 / 0.708 | 0.883 / 0.590 / 0.708 | 0.74 | 0.66 | 0.67 | 0.54 | 0.40 |
-| #131 (tuned pick, **shipped**) | 0.717 / 0.784 / 0.749 | 0.866 / 0.620 / 0.723 | 0.80 | 0.76 | 0.81 | 0.64 | 0.30 |
+| #131 (tuned pick, shipped until the contrast round below) | 0.717 / 0.784 / 0.749 | 0.866 / 0.620 / 0.723 | 0.80 | 0.76 | 0.81 | 0.64 | 0.30 |
 | #132 | 0.732 / 0.775 / 0.753 | 0.927 / 0.687 / 0.789 | 0.85 | 0.73 | 0.80 | 0.65 | 0.35 |
 | #133 | 0.759 / 0.767 / 0.763 | 0.906 / 0.699 / 0.789 | 0.87 | 0.72 | 0.81 | 0.57 | 0.55 |
 
@@ -726,8 +726,8 @@ picked on tuned validation F1 (0.9496 / 0.9468 / 0.9486 → #135):
 
 | run | Gretel P / R / F1 | CoNLL P / R / F1 | bank_account P / R (FPs) | employee_id P / R | credit_card | MRN | national_id | plate | scan / clean key |
 |---|---|---|---|---|---|---|---|---|---|
-| #131 shipped | 0.717 / 0.784 / 0.749 | 0.866 / 0.620 / 0.723 | 0.30 / 1.00 (41) | 0.89 / 0.66 | 0.80 | 0.76 | 0.81 | 0.64 | 0.866 / 0.967 |
-| #135 (tuned pick) | 0.743 / 0.797 / 0.769 | 0.899 / 0.645 / 0.751 | 0.71 / 1.00 (7) | 0.80 / 0.76 | 0.89 | 0.77 | 0.81 | 0.59 | 0.859 / 0.965 |
+| #131 (shipped until this round) | 0.717 / 0.784 / 0.749 | 0.866 / 0.620 / 0.723 | 0.30 / 1.00 (41) | 0.89 / 0.66 | 0.80 | 0.76 | 0.81 | 0.64 | 0.866 / 0.967 |
+| #135 (tuned pick, **shipped**, export 36) | 0.743 / 0.797 / 0.769 | 0.899 / 0.645 / 0.751 | 0.71 / 1.00 (7) | 0.80 / 0.76 | 0.89 | 0.77 | 0.81 | 0.59 | 0.859 / 0.965 |
 | #136 | 0.755 / 0.777 / 0.766 | 0.850 / 0.614 / 0.713 | 0.62 / 0.88 (9) | 0.85 / 0.73 | 0.84 | 0.73 | 0.76 | 0.63 | 0.863 / 0.970 |
 | #137 | 0.750 / 0.803 / 0.776 | 0.814 / 0.578 / 0.676 | 0.49 / 1.00 (18) | 0.81 / 0.76 | 0.87 | 0.78 | 0.79 | 0.60 | 0.867 / 0.965 |
 
@@ -747,10 +747,21 @@ remaining bank_account errors, 3–4 are the benchmark's own convention (an
 unlabelled) — under our convention the ceiling on this benchmark is ~0.85,
 and #135 is near it. The fresh reviewer's call: **ship #135 over #131** —
 only the pick clears every bar set before the round, and the regressions
-it carries are the data's (shared by its siblings), not the seed's. Not
-shipped yet. If another round: a small negative-example document for
-employee_id (logins, house numbers and customer ids beside staff ids) plus
-plates in prose; bank_account needs no more data.
+it carries are the data's (shared by its siblings), not the seed's.
+**Shipped the same day: #135 = export 36**, via
+`POST /api/projects/31/seed-groups/134/ship {"export_format":"huggingface"}`.
+This time one call was enough: #135 had no evaluation on record, so ship
+ran the span lift check itself first (test examples F1 0.963, answer key
+0.965, both 44 texts; the response reports it as `evaluated_before_ship`)
+and the card came out complete on the first export — *Seed selection:
+Picked seed 45 (run #135) of 3 by validation span F1 (tuned thresholds)
+(… seed 45 0.9496, seed 46 0.9468, seed 47 0.9486)*, *Human review: 11 of
+44 rows checked by a person (1 corrected). On the checked rows: precision
+0.89 · recall 0.92 · F1 0.91 (11 texts)*, and the External benchmarks table
+(CoNLL 0.90 / 0.64 / 0.75, Gretel 0.74 / 0.80 / 0.77). If another round: a
+small negative-example document for employee_id (logins, house numbers and
+customer ids beside staff ids) plus plates in prose; bank_account needs no
+more data.
 
 ### Try it: the redact endpoint
 
@@ -1343,33 +1354,40 @@ matter most for a redaction tool: card numbers and bank accounts (PCI) gain
 2026-10-17; #107 (export 32) remains the alternative where plates matter
 more.
 
-**The shipped model (2026-10-17): #131, export 35.** Four more data rounds
-after #117 (identifier shapes, two look-alike rounds, prose names — all
-above) added seven look-alike types and 483 unlabelled-context names; the
-prose-names round was the first where every seed passed every criterion,
-and its rule's pick replaced #117:
+**The shipped model (2026-10-17): #135, export 36.** Five more data rounds
+after #117 (identifier shapes, two look-alike rounds, prose names, the
+bank_account / employee_id contrasts — all above) added seven look-alike
+types, 483 unlabelled-context names and 67 passages of cued identifiers;
+the prose-names round's pick (#131) replaced #117 in the morning, and the
+contrast round's pick replaced #131 the same afternoon:
 
-| | #117 (export 33) | #131 (export 35, shipped) |
-|---|---|---|
-| Gretel PII P / R / F1 | 0.680 / 0.740 / 0.708 | 0.717 / 0.784 / 0.749 |
-| CoNLL people P / R / F1 | 0.883 / 0.590 / 0.708 | 0.866 / 0.620 / 0.723 |
-| scan / clean key F1 (v5, 30 types) | 0.852 / 0.962 | 0.866 / 0.967 |
-| answer key F1 (checked rows) | 0.968 on 43 texts (15 checked: 0.905) | 0.967 on 44 texts (11 checked: 0.92) |
-| Gretel credit_card | 0.74 | 0.80 |
-| Gretel medical_record_number | 0.66 | 0.76 |
-| Gretel national_id | 0.67 | 0.81 |
-| Gretel license_plate | 0.54 | 0.64 |
-| Gretel bank_account precision (17 spans) | 0.40 | 0.30 |
+| | #117 (export 33) | #131 (export 35) | #135 (export 36, shipped) |
+|---|---|---|---|
+| Gretel PII P / R / F1 | 0.680 / 0.740 / 0.708 | 0.717 / 0.784 / 0.749 | 0.743 / 0.797 / 0.769 |
+| CoNLL people P / R / F1 | 0.883 / 0.590 / 0.708 | 0.866 / 0.620 / 0.723 | 0.899 / 0.645 / 0.751 |
+| scan / clean key F1 (v5, 30 types) | 0.852 / 0.962 | 0.866 / 0.967 | 0.859 / 0.965 |
+| answer key F1 (checked rows) | 0.968 on 43 texts (15 checked: 0.905) | 0.967 on 44 texts (11 checked: 0.92) | 0.965 on 44 texts (11 checked: 0.91) |
+| Gretel credit_card | 0.74 | 0.80 | 0.89 |
+| Gretel medical_record_number | 0.66 | 0.76 | 0.77 |
+| Gretel national_id | 0.67 | 0.81 | 0.81 |
+| Gretel license_plate | 0.54 | 0.64 | 0.59 |
+| Gretel employee_id P / R | — | 0.89 / 0.66 | 0.80 / 0.76 |
+| Gretel bank_account precision (17 spans) | 0.40 | 0.30 | 0.71 |
 
-Gretel +0.04 F1, CoNLL recall +0.03 at −0.017 precision, the identifier
-types up 0.06–0.15; bank_account precision is the one loud loss and sits
-on 17 spans. The two answer-key figures are different keys (the key was
-re-written under the 30-type vocabulary between the two, and 11 of the 15
-verdicts carried over), so only the scan / clean rows compare like for like
-on the own data — and those keys can resolve ~0.04 overall, not per type. That closes the training work for
-this project: from the first span model (CoNLL F1 0.21, a scan F1 of 0.59)
-to Gretel 0.75 and CoNLL 0.72 on independent data, with the pick made on
-validation alone.
+#117 → #131: Gretel +0.04 F1, CoNLL recall +0.03 at −0.017 precision, the
+identifier types up 0.06–0.15, bank_account precision the one loud loss.
+#131 → #135: Gretel +0.02 F1, bank_account false positives 41 → 7,
+credit_card +0.09, employee_id recall +0.10; paid for with employee_id
+precision −0.09, license_plate −0.05 (≈ 3 spans) and national_id recall
+−0.07, all shared by #135's sibling seeds, so they are the contrast data's
+cost, not the seed's. #135's CoNLL +0.03 is seed luck (three-seed mean
+0.713). The #117 answer-key figure is a different key (re-written under the
+30-type vocabulary; 11 of the 15 verdicts carried over), so only the scan /
+clean rows compare like for like on the own data — and those keys can
+resolve ~0.04 overall, not per type; #135's −0.007 on the scan key is
+inside that. That closes the training work for this project: from the first
+span model (CoNLL F1 0.21, a scan F1 of 0.59) to Gretel 0.77 and CoNLL 0.75
+on independent data, with every pick made on validation alone.
 
 ## What it costs to relabel
 
