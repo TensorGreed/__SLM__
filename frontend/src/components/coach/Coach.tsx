@@ -8,9 +8,9 @@
  *   - where you are (stage + progress) and the single next step,
  *   - a short tip + walkthrough video for the tab you're on,
  *   - the rule-based suggestions for this stage (``GET /coach/{stage}``),
- *   - a link to the full plan (the project home: quickstart + checklist).
+ *   - a link back to the Overview (next step, nudges, full plan).
  *
- * Off when Coach Mode is toggled off for the project (top-bar toggle).
+ * Off when inline tips are switched off for the project (Settings).
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -53,8 +53,11 @@ function writeFlag(key: string): void {
 export default function Coach({ projectId, project, pipelineStatus }: CoachProps) {
     const location = useLocation();
     const navigate = useNavigate();
-    const { isOn } = useCoachMode(projectId, project.beginner_mode);
-    const { tab, stage } = useMemo(() => coachLocationFor(location.pathname), [location.pathname]);
+    const { isOn } = useCoachMode(projectId);
+    const { tab, stage } = useMemo(
+        () => coachLocationFor(location.pathname, location.search),
+        [location.pathname, location.search],
+    );
     const next = useMemo(
         () => getRecommendedAction(projectId, project, pipelineStatus),
         [projectId, project, pipelineStatus],
@@ -65,13 +68,18 @@ export default function Coach({ projectId, project, pipelineStatus }: CoachProps
         setTipDismissed(tab ? readFlag(tipKey(projectId, tab)) : true);
     }, [projectId, tab]);
 
-    // The project home IS the Coach's full view.
-    if (!isOn || location.pathname.endsWith('/guide')) {
+    // The Overview carries its own next step + nudges; Settings holds the switch.
+    const onOverview = /^\/project\/\d+\/?$/.test(location.pathname);
+    const onSettings = /\/settings(\/|$)/.test(location.pathname);
+    if (!isOn || onOverview || onSettings) {
         return null;
     }
 
     const currentStage = pipelineStatus?.current_stage || project.pipeline_stage;
-    const onNextTarget = location.pathname.startsWith(next.path.split('?')[0]);
+    // "On target" = same destination AND same step (``/data`` vs ``/data?step=cleaning``).
+    const nextUrl = new URL(next.path, 'http://brewslm.local');
+    const onNextTarget = location.pathname === nextUrl.pathname
+        && (new URLSearchParams(location.search).get('step') ?? null) === (nextUrl.searchParams.get('step') ?? null);
     const tip = tab ? TAB_TIP[tab] : null;
 
     return (
@@ -100,10 +108,10 @@ export default function Coach({ projectId, project, pipelineStatus }: CoachProps
                     <button
                         type="button"
                         className="btn btn-ghost btn-sm"
-                        onClick={() => navigate(`/project/${projectId}/guide`)}
+                        onClick={() => navigate(`/project/${projectId}`)}
                         data-testid="coach-plan"
                     >
-                        Full plan
+                        Overview
                     </button>
                 </span>
             </div>

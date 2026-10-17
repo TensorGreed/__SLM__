@@ -20,7 +20,7 @@ Optional. Quantises / prunes the trained checkpoint to fit a target's weight bud
 
 ### UI
 
-Pipeline → **Compression**. Pick the **Training run** (only completed runs are listed); the model path fills in automatically. Then choose the format and bit width. The job is queued, and its status shows on the timeline.
+**Ship** → **Compression**. Pick the **Training run** (only completed runs are listed); the model path fills in automatically. Then choose the format and bit width. The job is queued, and its status shows on the timeline.
 
 - **LoRA runs just work.** A LoRA run saves only an adapter. Compression detects that and merges it into its base model (the one recorded in `adapter_config.json`) before converting.
 - **Outputs are filed per run.** Anything converted from a run's weights lands in `data/projects/<id>/compressed/exp-<run>/`. Export reads that folder, which is why picking the run matters.
@@ -71,7 +71,7 @@ Builds the **deployable artifact bundle** for a target. The export job wraps wei
 
 ### UI
 
-Pipeline → **Export** → **New export**. Pick:
+**Ship** → **Export** → **New export**. Pick:
 
 - **Source** — experiment + checkpoint (or compressed artifact from above).
 - **Target profile** — see table above.
@@ -137,7 +137,7 @@ exports/project-1/export-19/
 
 ### Shipping one seed of a multi-seed run
 
-A multi-seed run (*Seeds* in the training config, or **Check across 3 seeds** on the Eval summary) trains the same recipe N times. The lift check reports the group; to ship you need one model. On the Eval summary card of a multi-seed run, the **Ship one seed** table lists every seed: its run id, its **validation** metric, and its test score when the lift check has one. The seed to ship is picked by the validation metric only:
+A multi-seed run (*Seeds* in the training config, or **Check across 3 seeds** on the Results summary) trains the same recipe N times. The lift check reports the group; to ship you need one model. On the Eval summary card of a multi-seed run, the **Ship one seed** table lists every seed: its run id, its **validation** metric, and its test score when the lift check has one. The seed to ship is picked by the validation metric only:
 
 | Task type | Picked by |
 |---|---|
@@ -176,7 +176,7 @@ API: `POST /api/projects/{id}/export/{export_id}/publish-hub` with `{"repo_id": 
 
 ## Optimization recommendations
 
-Before exporting, the Optimize panel (Pipeline → Export → **Recommend**) ranks candidate target configurations by latency / memory / quality tradeoff. The result is labelled with **provenance**:
+Before exporting, the Optimize panel (Ship → Export → **Recommend**) ranks candidate target configurations by latency / memory / quality tradeoff. The result is labelled with **provenance**:
 
 | Provenance | Means |
 |---|---|

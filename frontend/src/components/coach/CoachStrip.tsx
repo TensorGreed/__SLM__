@@ -33,7 +33,7 @@ function visibleFor(suggestion: CoachSuggestion, beginnerMode: boolean): boolean
 }
 
 export default function CoachStrip({ projectId, stage, beginnerMode = false, maxVisible }: CoachStripProps) {
-    const { isOn, isReady } = useCoachMode(projectId, beginnerMode);
+    const { isOn, isReady } = useCoachMode(projectId);
     const [suggestions, setSuggestions] = useState<CoachSuggestion[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);

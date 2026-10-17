@@ -20,7 +20,7 @@ flowchart LR
   api --> data[("DATA_DIR<br/>artifacts, exports, bundles")]
 ```
 
-- **Frontend** is a Vite + React app served on port 5173 in dev. Cmd-K palette, sidebar, every workspace page.
+- **Frontend** is a Vite + React app served on port 5173 in dev. Cmd-K palette, the six-destination sidebar, every workspace page.
 - **API** is a FastAPI app on port 8000. Every `/api/*` route is documented in [API surface](../reference/api-surface.md) and the live Swagger UI at `/api/docs`.
 - **CLI** (`backend/scripts/brewslm.py`) is a thin HTTP client over the API. Everything you can do in the UI you can do here — see [CLI reference](../reference/cli.md).
 - **DB** is SQLite by default for local work; Postgres in production. SQLAlchemy + Alembic for migrations.
@@ -126,4 +126,4 @@ data/               # DATA_DIR (projects, exports, bundles, scaffolds)
 
 - [Projects + artifacts](projects-and-artifacts.md) — the data model behind every API call.
 - [Pipeline stages](pipeline-stages.md) — what each stage produces.
-- [Beginner mode](beginner-mode.md) — what gets hidden, why, and how to leave it.
+- [Beginner mode](beginner-mode.md) — what the flag changes and where to switch it.

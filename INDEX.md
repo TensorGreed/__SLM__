@@ -52,7 +52,6 @@ session-start guidance.
 - `backend/app/api/export.py` — Export API routes.
 - `backend/app/api/extensions.py` — Extensions API — plugin contract validators + scaffold generator
 - `backend/app/api/flows.py` — Guided flows — several pipeline steps chained as one background Job.
-- `backend/app/api/gamification.py` — Lab Journal API — per-project progression state + achievement catalog.
 - `backend/app/api/gold.py` — Gold evaluation dataset API routes.
 - `backend/app/api/gold_workbench.py` — Gold-set annotation workbench API routes (priority.md P10).
 - `backend/app/api/hardware.py` — Hardware Recommender API routes.
@@ -182,8 +181,6 @@ session-start guidance.
 - `backend/app/services/external_benchmark_service.py` — External benchmarks: score a project's runs on a labelled set someone
 - `backend/app/services/failure_cluster_service.py` — P12 — Failure-cluster service.
 - `backend/app/services/frontier_comparison_service.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
-- `backend/app/services/gamification/achievements.py` — Declarative achievement catalog (Lab Journal).
-- `backend/app/services/gamification_service.py` — Lab Journal — per-project gamification progression service.
 - `backend/app/services/goal_service.py` — Arc H — End-goal contract + progress ledger.
 - `backend/app/services/gold_llm_service.py` — LLM-assisted gold-set generation across all supported recipes.
 - `backend/app/services/gold_review_service.py` — Human review of the answer key (P6 Trust).
@@ -456,7 +453,6 @@ session-start guidance.
 - `frontend/src/api/experimentCompare.ts` — Typed client for the eval-aware experiment comparison endpoint (E3).
 - `frontend/src/api/flows.ts` — Guided flows — several pipeline steps chained as one background Job.
 - `frontend/src/api/frontierComparison.ts` — Typed wrapper for the Track 1 Epic D SLM-vs-frontier benchmark report.
-- `frontend/src/api/gamification.ts` — Typed wrappers for the Lab Journal (gamification) API.
 - `frontend/src/api/goal.ts` — Arc H — Project end-goal contract + progress ledger client.
 - `frontend/src/api/goldReview.ts` — Human review of the answer key (P6 Trust) —
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
@@ -483,11 +479,11 @@ session-start guidance.
 
 ## Frontend · Zustand stores
 
-- `frontend/src/stores/coachModeStore.ts` — Zustand store for per-project Coach Mode toggle with XP-gated defaults and localStorage persistence.
+- `frontend/src/stores/coachModeStore.ts` — Zustand store for the per-project "inline tips" switch (the Coach),
 - `frontend/src/stores/glossaryStore.ts` — Zustand store for glossary entries with lazy loading and case-insensitive term lookup.
 - `frontend/src/stores/jobsStore.ts` — Global jobs store (Hardening Phase H1).
 - `frontend/src/stores/projectStore.ts` — Zustand store for the active project, pipeline status, project list, and CRUD operations.
-- `frontend/src/stores/toastStore.ts` — Zustand store for toast notifications with optional achievement payload and auto-dismiss timers.
+- `frontend/src/stores/toastStore.ts` — Zustand store for toast notifications with auto-dismiss timers.
 
 ## Frontend · Pages
 
@@ -501,19 +497,19 @@ session-start guidance.
 - `frontend/src/pages/ProjectDomainProfilesPage.tsx` — Page for editing task schemas, quality gates, and domain-specific deployment checks.
 - `frontend/src/pages/ProjectEvalComparePage.tsx` — Side-by-side eval comparison page (E3).
 - `frontend/src/pages/ProjectExtensionStudioPage.tsx` — ProjectExtensionStudioPage — Extension Studio for Wave H power users
-- `frontend/src/pages/ProjectGuidePage.tsx` — Progress guide page with achievement tracking and recommended next actions for pipeline advancement.
 - `frontend/src/pages/ProjectListPage.tsx` — Dashboard page for creating, browsing, filtering, and deleting projects with approach recommendation.
 - `frontend/src/pages/ProjectManifestPage.tsx` — ProjectManifestPage — Pipeline-as-Code import / validate / diff / apply
 - `frontend/src/pages/ProjectModelsPage.tsx` — Searchable model catalog page with compatibility scoring, hardware requirements, and training mode filters.
 - `frontend/src/pages/ProjectObservabilityPage.tsx` — ProjectObservabilityPage — Run Timeline + Failure Analysis +
-- `frontend/src/pages/ProjectPipelinePage.tsx` — Multi-tab workflow orchestrator page spanning data ingestion through model export.
+- `frontend/src/pages/ProjectOverviewPage.tsx` — Project Overview — the workspace's landing page (Epic U, phase U1).
 - `frontend/src/pages/ProjectPlaygroundPage.tsx` — Prompt testing page against local or runtime adapters with response feedback logging.
 - `frontend/src/pages/ProjectRecipePickerPage.tsx` — ProjectRecipePickerPage — standalone task-shape recipe picker.
 - `frontend/src/pages/ProjectRecipesPage.tsx` — Pipeline recipe catalog page for applying, configuring, and monitoring template-based workflows.
+- `frontend/src/pages/ProjectSettingsPage.tsx` — Project Settings — the workspace's long tail (Epic U, phase U1).
+- `frontend/src/pages/ProjectStagePage.tsx` — A stage destination of the workspace — Data, Train, Results or Ship
 - `frontend/src/pages/ProjectTrainingConfigPage.tsx` — Dedicated training configuration page with essentials and advanced toggle modes.
-- `frontend/src/pages/ProjectWizardPage.tsx` — Autopilot planning assistant page for configuration recommendations and intent clarification.
 - `frontend/src/pages/ProjectWorkflowPage.tsx` — Visual workflow builder page for DAG editing, execution monitoring, and stage orchestration.
-- `frontend/src/pages/ProjectWorkspaceLayout.tsx` — Root layout for project workspace providing routing context, sidebar, topbar, and command palette.
+- `frontend/src/pages/ProjectWorkspaceLayout.tsx` — Root layout for the project workspace: sidebar (six destinations), top
 - `frontend/src/pages/SSOLoginPage.tsx` — Authentication page supporting SSO integration and local username/password login.
 
 ## Frontend · Components (by domain)
@@ -527,7 +523,6 @@ session-start guidance.
 - `frontend/src/components/coach/CoachStrip.tsx` — Per-panel Coach Mode strip (USER-SUCCESS Epic 4 Phase 1).
 - `frontend/src/components/coach/CoachSuggestion.tsx` — One Coach Mode suggestion card with a click-to-execute action
 - `frontend/src/components/coach/CoachSuggestionTrace.tsx` — Decision-trace disclosure for a Coach suggestion (Arc 4).
-- `frontend/src/components/coach/CoachToggle.tsx` — TopBar toggle for Coach Mode (USER-SUCCESS Epic 4 Phase 1).
 - `frontend/src/components/compression/CompressionPanel.tsx` — Model quantization UI with format selection, ONNX/GGUF conversion, and benchmark reporting.
 - `frontend/src/components/dashboard/DemoProjectTiles.tsx` — DemoProjectTiles — entry-point tiles on the project list that seed a
 - `frontend/src/components/dashboard/PipelineProgress.tsx` — Linear progress tracker showing pipeline stage completion with percentage and status indicators.
@@ -612,15 +607,13 @@ session-start guidance.
 - `frontend/src/components/extensions/ScaffoldForm.tsx` — ScaffoldForm — generate a contract-valid plugin scaffold from the
 - `frontend/src/components/extensions/ScaffoldPreview.tsx` — ScaffoldPreview — display the generated scaffold files inline with
 - `frontend/src/components/extensions/ValidatePanel.tsx` — ValidatePanel — run the P37 contract suite against a module path
-- `frontend/src/components/gamification/AchievementToast.tsx` — Terminal-glow achievement / level-up toast for the Lab Journal.
-- `frontend/src/components/gamification/LabJournalDrawer.tsx` — Right-side overlay drawer that surfaces the full Lab Journal.
-- `frontend/src/components/gamification/ProgressChip.tsx` — Inline TopBar chip showing the project's current level + XP.
 - `frontend/src/components/guide/QuickstartCard.tsx` — Quickstart card (Theme 1 Epic 4).
 - `frontend/src/components/layout/BrandMark.tsx` — BrandMark — BrewSLM logo glyph.
 - `frontend/src/components/layout/CommandPalette.tsx` — CommandPalette — global Cmd-K / Ctrl-K palette for fast navigation.
+- `frontend/src/components/layout/LegacyRouteRedirect.tsx` — Redirects a retired workspace URL (``/guide``, ``/wizard``,
 - `frontend/src/components/layout/NotificationBell.tsx` — NotificationBell — Hardening Phase H1.
 - `frontend/src/components/layout/ParentProjectBackChip.tsx` — ParentProjectBackChip — USER-SUCCESS Epic 7 Phase 7d.
-- `frontend/src/components/layout/ProjectSidebar.tsx` — Collapsible navigation hub with pipeline tabs, settings, and command-palette access.
+- `frontend/src/components/layout/ProjectSidebar.tsx` — The workspace sidebar — six destinations (Epic U, phase U1):
 - `frontend/src/components/layout/TopBar.tsx` — Header with user menu, runtime settings editor, documentation link, and notification bell.
 - `frontend/src/components/layout/TrainingKillSwitch.tsx` — Kill-switch action that surfaces in the NotificationBell when a
 - `frontend/src/components/layout/TrainingLossSparkline.tsx` — Inline live-loss sparkline for the NotificationBell training row.
@@ -648,7 +641,7 @@ session-start guidance.
 - `frontend/src/components/shared/StepFooter.tsx` — Footer bar with completion badge and conditional next-step navigation button.
 - `frontend/src/components/shared/Term.tsx` — Glossary popover component providing beginner/advanced terminology with definitions.
 - `frontend/src/components/shared/TerminalConsole.tsx` — Console viewer with auto-scroll and error highlighting for streaming runner output.
-- `frontend/src/components/shared/Toast.tsx` — Toast notification renderer with achievement support and auto-dismiss capability.
+- `frontend/src/components/shared/Toast.tsx` — Toast notification renderer with auto-dismiss capability.
 - `frontend/src/components/training/AlignmentScaffoldPanel.tsx` — DPO/alignment recipe resolver and dataset quality validator.
 - `frontend/src/components/training/ArchetypeComparisonPanel.tsx` — ArchetypeComparisonPanel — USER-SUCCESS Epic 8 Phase 8b.
 - `frontend/src/components/training/ChatPlaygroundPanel.tsx` — Interactive prompt session manager supporting multiple inference backends and providers.
@@ -777,7 +770,6 @@ session-start guidance.
 - `backend/tests/test_failure_cluster_handler_drilldown.py` — Arc 2 — failure-cluster drill-down backend pass-through.
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_frontier_comparison.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
-- `backend/tests/test_gamification_service.py` — Gamification (Lab Journal) progression service.
 - `backend/tests/test_generic_intake.py` — Generic intake (Wave 2a): any file a newcomer brings lands correctly.
 - `backend/tests/test_goal_service.py` — Tests for goal_service + the /goal/progress + /goal endpoints (Arc H).
 - `backend/tests/test_gold_add_per_recipe.py` — Endpoint tests for ``POST /api/projects/{id}/gold/add`` after the
@@ -1006,7 +998,6 @@ session-start guidance.
 - `frontend/src/components/coach/CoachStrip.test.tsx` — _(no docstring)_
 - `frontend/src/components/coach/CoachSuggestion.test.tsx` — _(no docstring)_
 - `frontend/src/components/coach/CoachSuggestionTrace.test.tsx` — Arc 4 — Coach decision-trace disclosure.
-- `frontend/src/components/coach/CoachToggle.test.tsx` — _(no docstring)_
 - `frontend/src/components/dashboard/DemoProjectTiles.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/AnswerKeyReviewPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/AutofixPreviewModal.test.tsx` — _(no docstring)_
@@ -1085,8 +1076,6 @@ session-start guidance.
 - `frontend/src/components/evaluation/retrievalLabel.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalSplit.test.ts` — _(no docstring)_
 - `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
-- `frontend/src/components/gamification/AchievementToast.test.tsx` — CRT achievement toast contract.
-- `frontend/src/components/gamification/ProgressChip.test.tsx` — ProgressChip + LabJournalDrawer contract.
 - `frontend/src/components/guide/QuickstartCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/CommandPalette.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/NotificationBell.test.tsx` — NotificationBell tests (Hardening Phase H1).
@@ -1144,14 +1133,16 @@ session-start guidance.
 - `frontend/src/pages/ProjectManifestPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectModelsPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectObservabilityPage.test.tsx` — _(no docstring)_
-- `frontend/src/pages/ProjectPipelinePage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectOverviewPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectRecipePickerPage.test.tsx` — _(no docstring)_
-- `frontend/src/pages/ProjectWizardPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectSettingsPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectStagePage.test.tsx` — _(no docstring)_
 - `frontend/src/stores/coachModeStore.test.ts` — _(no docstring)_
 - `frontend/src/stores/jobsStore.test.ts` — Tests for the bell's up-trend counter
 - `frontend/src/utils/apiError.test.ts` — _(no docstring)_
 - `frontend/src/utils/clusterFixRouter.test.ts` — _(no docstring)_
 - `frontend/src/utils/forecastActionRouter.test.ts` — _(no docstring)_
+- `frontend/src/utils/workspaceRoutes.test.ts` — _(no docstring)_
 
 ---
 _Regenerate: `python scripts/regenerate_index.py`. A missing description means the file lacks a header docstring.

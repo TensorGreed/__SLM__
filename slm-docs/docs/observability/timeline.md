@@ -31,7 +31,7 @@ Each tree node shows:
 
 ### UI
 
-**Training rail → Observability** → top section.
+**Ship** → **Observability** → top section.
 
 Filter bar:
 

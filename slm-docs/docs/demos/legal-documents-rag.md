@@ -37,7 +37,7 @@ repo's demo assets as `docs-demo/videos/20-legal-rag-vs-sft/final_captioned.mp4`
 
 ## 1. Documents → Q&A → trained model, as one job
 
-The Training tab's **Turn your documents into a Q&A assistant** card runs
+The **Train** → **Training** step's **Turn your documents into a Q&A assistant** card runs
 the whole path as one job: a local model writes three question → answer
 pairs per passage for training and one different question per passage for
 the answer key; the pairs are split into train / validation / test examples;
@@ -132,7 +132,7 @@ choosing anything:
 | documents → Q&A flow (sized) | 150 passages → 450 pairs + **145 answer-key rows** (5 dropped as not quotable: 4 unsupported, 1 pointed at the passage), split 356 / 44 / 46, 28 min |
 | pre-training gate (staged sweep, judged, 46 test examples) | the sweep switched to **top-3 over 600-char passages** (0.58 vs 0.48 for the cleaning's own; 10 rows better, 3 worse) and read **promising**: 21 / 11 / 14 → training went ahead. Retrieval found the answer in 40 of 46 rows; of the 14 wrong, 6 missed / 8 misread |
 | fine-tune (run #49, judged on the same 46 rows) | **1 / 6 / 39**, 0.03 → 0.09, within noise (token F1 says 0.12 → 0.34) |
-| Coach, Eval tab | "Retrieval over your documents beats the fine-tune (**0.58 vs 0.09** judged)" → one-click reroute |
+| Coach, Results page | "Retrieval over your documents beats the fine-tune (**0.58 vs 0.09** judged)" → one-click reroute |
 | RAG sibling (#30), its automatic sweep | kept top-3 · 600-char passages at 0.58; base alone 0.03 → 0.58, 31 rows better, 1 worse; plain top-3 and 1200-char passages now *worse* beyond noise |
 | playground, sibling | "The head of a government institution must retain a record of the use of personal information, and that record forms part of the personal information to which it is attached." — 30 s on first load |
 
@@ -212,7 +212,7 @@ the answer the fine-tune never learned.
    (chunk size 900). The tables use base model Qwen2.5-1.5B-Instruct (set
    it on the project, or keep the task type's default); the flow uses the
    first reachable local generation model unless you pick one.
-2. Training tab → **Build a Q&A assistant from these documents** (needs a
+2. **Train** → **Training** → **Build a Q&A assistant from these documents** (needs a
    local generation model — Ollama with a non-thinking chat model, or
    thinking turned off; gemma4 works).
 3. Start the backend with a judge: `EVAL_JUDGE_BACKEND=ollama:gemma4:12b`
@@ -222,5 +222,5 @@ the answer the fine-tune never learned.
 4. Advanced evaluation → Auto-RAG comparison → **Run** on *Base model +
    document passages*; or on the CLI
    `python scripts/auto_rag_ab.py --project <id> --base-only --corpus documents --sweep-retrieval`.
-5. Coach (Eval tab) → **Reroute to RAG**. The sibling's check and sweep
+5. Coach (Results page) → **Reroute to RAG**. The sibling's check and sweep
    run on their own; the playground answers from passages.

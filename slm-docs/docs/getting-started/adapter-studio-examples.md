@@ -7,7 +7,7 @@ title: Adapter examples
 
 A data adapter is the translation layer between **your raw row shape** and **BrewSLM's canonical record**. This page shows the most common shapes with the recommended adapter, field mapping, and the UI / CLI / API entry points.
 
-The Adapter Studio (Training rail; hidden in beginner mode) is where you tune adapters by hand. For most projects the built-in adapters work — `auto` detects the right one from a sample.
+The Adapter Studio (**Settings** → **Adapter Studio**) is where you tune adapters by hand. For most projects the built-in adapters work — `auto` detects the right one from a sample.
 
 ## Pattern 1 — Tabular Q&A (CSV / TSV)
 
@@ -30,7 +30,7 @@ question,answer
 
 ### UI
 
-Pipeline → **Dataset prep** → **Adapter preview**. Pick `qa-pair`. The preview pane shows 5 mapped rows. Click **Save adapter**.
+**Data** → **Split** → **Adapter preview**. Pick `qa-pair`. The preview pane shows 5 mapped rows. Click **Save adapter**.
 
 ### CLI
 
@@ -69,7 +69,7 @@ curl -X POST http://localhost:8000/api/projects/1/data-adapter/preview \
 
 ### UI
 
-Pipeline → **Dataset prep** → **Auto-detect adapter**. With nested data, `auto` usually proposes `structured-extraction`; accept or pick from the dropdown.
+**Data** → **Split** → **Auto-detect adapter**. With nested data, `auto` usually proposes `structured-extraction`; accept or pick from the dropdown.
 
 ### CLI
 
@@ -112,7 +112,7 @@ The chat template gets selected from the base model's metadata — `Qwen2.5-Inst
 
 ### UI
 
-Pipeline → **Dataset prep** → adapter dropdown → `chat-messages`. Preview shows the rendered chat template for sample row 1.
+**Data** → **Split** → adapter dropdown → `chat-messages`. Preview shows the rendered chat template for sample row 1.
 
 ### CLI
 
@@ -151,7 +151,7 @@ curl -X POST http://localhost:8000/api/projects/1/data-adapter/preview \
 
 ### UI
 
-Pipeline → **Dataset prep** → `preference-pair`. Then in **Training Configurations**, pick training mode `dpo` or `orpo` — the Resolved Defaults panel surfaces the matching trainer.
+**Data** → **Split** → `preference-pair`. Then in **Training Configurations**, pick training mode `dpo` or `orpo` — the Resolved Defaults panel surfaces the matching trainer.
 
 ### CLI
 

@@ -5,11 +5,11 @@ title: Pipeline stages
 
 # Pipeline stages
 
-BrewSLM's pipeline has **11 canonical stages**, defined once in `app/models/run_event.py` and consumed by the readiness service, the timeline, the workflow runner, and the sidebar. Each stage corresponds to:
+BrewSLM's pipeline has **11 canonical stages**, defined once in `app/models/run_event.py` and consumed by the readiness service, the timeline, the workflow runner, and the workspace pages. Each stage corresponds to:
 
 - One service module (`app/services/*_service.py`).
 - One API resource (`/api/projects/{id}/<stage>/...`).
-- A tab in the workspace sidebar (under **Pipeline** rail).
+- A step on one of the workspace pages (**Data**, **Train**, **Results**, **Ship**).
 - A `stage` value on every `RunEvent` it emits.
 
 ## The 11 stages
@@ -36,7 +36,7 @@ Plus three cross-cutting "virtual" stages used by RunEvents only:
 
 ## Stage ordering + unlocks
 
-Stages unlock progressively in beginner mode. The readiness service (`readiness_service.py`) decides what's runnable based on what artifacts exist:
+Stages become runnable progressively (no page is ever locked). The readiness service (`readiness_service.py`) decides what's runnable based on what artifacts exist:
 
 ```mermaid
 flowchart LR
@@ -50,7 +50,7 @@ flowchart LR
   trained -- yes --> n4[All stages]
 ```
 
-In the sidebar (Pipeline rail), stages you can't run yet are dim-greyed and disabled. Stages that completed show a green dot; in-progress shows a black dot.
+The Coach bar points at the next step that can run; pages are never disabled.
 
 ## Emit pattern
 
@@ -90,19 +90,25 @@ Notice the **`reason_code` is required** on `error` / `critical` severities. The
 
 ## Stage → page in the UI
 
-| Stage | Sidebar entry |
+| Stage | Where |
 |---|---|
-| Stages 1–7 | **Pipeline** rail → that stage's tab. |
-| Stage 8 Training | **Training** rail → Configurations / Models / Adapter Studio / Autopilot Planner. |
-| Stage 9 Evaluation | **Pipeline** rail → Eval tab, or **Training** rail → Playground. |
-| Stage 10 Compression | **Pipeline** rail → Compression tab. |
-| Stage 11 Export | **Pipeline** rail → Export tab, or **Training** rail → Deployments. |
-| `deployment` | **Training** rail → Deployments + Observability. |
-| `autopilot` | **Training** rail → Autopilot (beginners) / Autopilot Planner (beginner mode off). |
-| `system` | **Training** rail → Observability (timeline filter `stage=system`). |
+| Stage 1 Ingestion | **Data** → **Sources** |
+| Stage 2 Cleaning | **Data** → **Prepare** |
+| Stage 3 Answer key | **Data** → **Answer key** |
+| Stage 4 Synthetic | **Data** → **Generate** |
+| Stage 5 Dataset prep | **Data** → **Split** |
+| Stage 6 Adapter preview | **Data** → **Split** (adapter preview) |
+| Stage 7 Tokenization | **Train** → **Tokenization** |
+| Stage 8 Training | **Train** → **Training** (header links: Training configuration, Base model registry, Task type); Adapter Studio and Autopilot Planner under **Settings** |
+| Stage 9 Evaluation | **Results** (header links: Playground, Compare runs) |
+| Stage 10 Compression | **Ship** → **Compression** |
+| Stage 11 Export | **Ship** → **Export** |
+| `deployment` | **Ship** (header links: Deployments, Observability) |
+| `autopilot` | **Settings** → **Autopilot Planner** |
+| `system` | **Ship** → **Observability** (timeline filter `stage=system`) |
 
 ## Next
 
-- [Beginner mode](beginner-mode.md) — what gets hidden.
+- [Beginner mode](beginner-mode.md) — what the flag changes.
 - [Pipeline overview](../workflows/pipeline-overview.md) — per-stage walkthroughs.
 - [Run events](../observability/run-events.md) — the canonical log every stage writes to.

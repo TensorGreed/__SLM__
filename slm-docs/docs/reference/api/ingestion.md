@@ -313,7 +313,7 @@ Process (parse) an ingested document to extract text.
 
 Return ``n`` random rows from a RawDocument's source file.
 
-Used by the Data tab's accordion preview so a user who imported
+Used by the **Data** → **Sources** step's accordion preview so a user who imported
 100K rows from HuggingFace can eyeball what's actually in the
 dataset without leaving the page. Supports JSONL, JSON arrays,
 CSV, TSV, and plain-text files; everything else returns

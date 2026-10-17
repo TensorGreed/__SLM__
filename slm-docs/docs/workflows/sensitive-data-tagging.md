@@ -23,7 +23,7 @@ and a way to train for *exact offsets*.
 ## 1. A project with no documents → "Write sample documents"
 
 Create a project (any name; the brief can say "detect sensitive data in
-support tickets and clinical notes"). On the **Data** tab the first card,
+support tickets and clinical notes"). On **Data** → **Sources** the first card,
 *No documents yet? Write sample documents*, asks a generation model —
 your local Ollama model first; a cloud model only if you pin one under
 Synthetic → backends — to write realistic, **invented** documents:
@@ -49,7 +49,7 @@ made up; the model is told so, and the file is marked by its source.
 
 ## 2. Label them → the span synthesiser
 
-On the **Synthetic** tab, with the project's task shape set to span
+On **Data** → **Generate**, with the project's task shape set to span
 extraction (the `span-extraction` recipe — pick it from the recipe picker
 or let the task-shape card confirm it), the span generator takes your
 passages and a list of **entity types** — the canonical ones plus your
@@ -95,7 +95,7 @@ the row count (≈1500 example-passes, 3–20 epochs) unless you set them.
 
 ## 4. Evaluate → refine → re-train
 
-**Evaluate this run** on the Eval tab (it also runs by itself after
+**Evaluate this run** on the Results page (it also runs by itself after
 training) scores a token-classification run *on its own* — there is no
 base-model comparison, because its base is an encoder with an untrained
 head. The card reads "Span F1 0.85 against the answer key": the answer
@@ -108,7 +108,7 @@ the usual one: precision / recall / F1 overall, **per type** (where the
 model is weak), and per row the entities *matched*, *missed* and
 *hallucinated* — with the model's output beside the key. Weak types are
 the refine loop, and it is one button: **Refine weak types** on the
-Synthetic tab (span mode) reads the latest span evaluation, names every
+**Data** → **Generate** step (span mode) reads the latest span evaluation, names every
 type under F1 0.8 with its score ("Weak on run #55: passport (0.00),
 medication (0.60), …"), and starts the span generator restricted to
 those types, sampling from all passages, with a row count sized to how
@@ -118,7 +118,7 @@ rows, re-split, re-train; the Eval summary compares the runs.
 ### An answer key the teacher didn't write
 
 Every number above scores the model against labels the *same* local
-teacher wrote. **Write answer key with this model** (Synthetic tab, span
+teacher wrote. **Write answer key with this model** (**Data** → **Generate** step, span
 mode) hands the test split's texts — unchanged — to the provider and
 model selected in the panel (a cloud pin such as
 `cloud:anthropic:claude-haiku-4-5-20251001` with the project's saved key,
@@ -128,7 +128,7 @@ offset from the entity text, and keeps the result as the project's
 `span_relabel`). The bell reports rows, entities and the **agreement
 between the old labels and the new key** (strict span F1, per type) —
 the share of "error" that was ever the student's. Then evaluate the run
-against `gold_test` on the Eval tab: the per-type scores are now judged
+against `gold_test` on the Results page: the per-type scores are now judged
 by a second opinion. Cost: one call per six texts; a 44-row test split
 is eight Haiku calls.
 
@@ -173,7 +173,7 @@ dates), `bank_account` 0.32, `national_id` 0.59, `provider_name` 0.52
 
 Every key above was written by a model, so a score against it inherits
 that model's mistakes — and the training labels came from the same
-family, so the two can agree on an error. The Answer Key tab (test set)
+family, so the two can agree on an error. The **Data** → **Answer key** step (test set)
 now carries **Check the answer key yourself**: the key's rows, one by one,
 with the passage and its spans highlighted. Rows come **unreviewed
 first**, and among those the ones where the project's latest trained run
@@ -188,7 +188,7 @@ Verdicts live on the gold rows themselves (`review` block in
 `gold/gold_test.jsonl`), so every reader scores the corrected labels, and a
 rejected row never reaches the scorer.
 
-The payoff is on the Eval tab: the answer-key line now says how many rows
+The payoff is on the Results page: the answer-key line now says how many rows
 a person checked and re-totals the run's score **on the checked rows
 apart from the unchecked ones** — the checked score is the one that
 cannot be the key's own mistake. A correction or rejection newer than the
@@ -255,7 +255,7 @@ reported in the rounds above sits inside what the key can see, except
 where it was confirmed on the Gretel or CoNLL benchmarks (thousands of
 spans); the overall F1, on 279 spans across all types, resolves about 0.04.
 
-**Refine weak types** on the Synthetic tab now targets the under-sampled
+**Refine weak types** on the **Data** → **Generate** step now targets the under-sampled
 types as well as the weak ones (`GET /synthetic/weak-types` →
 `under_sampled`, `types_to_refine`): the generated rows must contain
 them. Two things to know: they are *training* rows, and the project's
@@ -271,7 +271,7 @@ it can show, and trust the benchmarks for those".
 Two models can both be right and still disagree — is a date in a
 clinical note a date of birth or a visit date, is `GB29 NWBK …` a bank
 account or an IBAN, is "Dr. Chen" a person or a provider? **Labelling
-conventions** (Synthetic tab, span mode) is one line per type — what
+conventions** (**Data** → **Generate** step, span mode) is one line per type — what
 counts and what doesn't — stored on the project
 (`GET/PUT /synthetic/type-definitions`, with suggested starting wording
 for common type names). Both the model that writes the training labels
@@ -315,7 +315,7 @@ HIPAA counts) and **CCPA personal information**. They are plain data
 (`compliance_bundles_service.BUILTIN_BUNDLES`), not special handlers:
 any type can carry any tag.
 
-**Compliance bundles** (Synthetic tab, span mode, next to *Labelling
+**Compliance bundles** (**Data** → **Generate** step, span mode, next to *Labelling
 conventions*) — tick bundles, **Apply bundles**:
 
 - the bundle's types are added to the *Entity types* list;
@@ -335,7 +335,7 @@ State lives in `runtime_config["compliance"]`
 `{bundle_ids, remove_bundle_ids}`, `PUT .../compliance/type-regimes`
 `{type_regimes}`.
 
-**By regime** — once types are tagged, the span evaluation (Eval tab,
+**By regime** — once types are tagged, the span evaluation (Results page,
 and the Job result after training) adds a table: per regime, micro
 precision / **recall** / F1 summed from each type's true positives,
 false positives and misses, weakest recall first, with "*N* of *M*
@@ -350,7 +350,7 @@ SSN, card, IP, API key, ISO / US dates. Your organisation's own
 identifiers (an employee id like `EMP-48213`, a ticket reference, an
 internal account format) are just as regular, and a regex catches them
 with exact offsets where a labelling model may miss one or misplace its
-edges. **Add a type** (Synthetic tab, span mode, under the labelling
+edges. **Add a type** (**Data** → **Generate** step, span mode, under the labelling
 conventions) does it in one place:
 
 1. a **name** (normalised like the conventions: lower-case, spaces → `_`),
@@ -865,7 +865,7 @@ curl -X POST localhost:8000/api/projects/31/redact \
 / `min_score`, the redacted `text`, and `offsets` mapping each span in
 the input to its replacement in the output. `experiment_id` picks a run
 (default: the newest completed span run); `min_score` / `recall_bias`
-override the run's `thresholds.json` for that call. The Eval tab's span
+override the run's `thresholds.json` for that call. The Results page's span
 summary has a **Try redaction** box over the same endpoint, with a
 recall-bias slider. The model stays loaded between calls (one model in
 memory at a time).
@@ -909,7 +909,7 @@ Three pieces, all in the UI:
    (`layout: "paged"`). Each document is split into pages, and header
    and footer lines are inserted by code — letterheads, "CONFIDENTIAL",
    "Page 2 of 5", "- 2 -", print dates — varied per document.
-2. **Label document passages with *model*** (Synthetic tab, span mode;
+2. **Label document passages with *model*** (**Data** → **Generate** step, span mode;
    `POST /synthetic/relabel-answer-key {target: "passages",
    document_id}`). The span generator *rewrites* passages into new
    snippets, which drops the layout; this labels the passages **as
@@ -941,7 +941,7 @@ footers.)
 
 ### Whole documents as training rows, and OCR noise
 
-**Label whole documents with *model*** (Synthetic tab; `target:
+**Label whole documents with *model*** (**Data** → **Generate** step; `target:
 "documents"`, `max_chars` default 4000) makes each training row a run of
 whole paragraphs of one document — on paged sample documents, a whole
 multi-page document with its page lines, usually longer than one
@@ -1075,7 +1075,7 @@ clean. The weakest types on scans are now `provider_name` (0.29 on 82
 spans), `visit_date` and `credit_card` — names and dates OCR splits
 across lines, and card numbers whose digits it confuses.
 
-**Scanned-text mode** (Synthetic tab → *Labelling conventions* →
+**Scanned-text mode** (**Data** → **Generate** step → *Labelling conventions* →
 "Texts come from scanned documents (OCR)"; the API is
 `PUT /synthetic/type-definitions {"scan_tolerant": true}`). Two things change:
 
@@ -1124,7 +1124,7 @@ the model never finds, not their edges.
   credit_card about half the time in training (89 of 178 left blank) and
   almost always in the keys — so the model found 14 of 26 on the scans.
   The fix: say so in the definition, and add a custom pattern
-  (Synthetic tab → *Add a type* → pattern
+  (**Data** → **Generate** step → *Add a type* → pattern
   `(?:(?<=ending in )|(?<=last four digits )|…)\d{4}\b` for credit_card,
   flag i), whose regex pass labelled 175 more in the saved rows.
   Run #71 then finds 25 of 26 on the scans and 14 of 15 on the clean key.
@@ -1171,8 +1171,8 @@ the rows labelled under it.
 
 **Groups labelled under older conventions.** Every labeller now stamps
 the rows it writes with the version of the conventions it was given (a
-short hash of the definitions and the scanned-text flag). The Synthetic
-tab's review queue compares each source group with the project's current
+short hash of the definitions and the scanned-text flag). The **Data** → **Generate**
+step's review queue compares each source group with the project's current
 version and lists the groups labelled under an older one, or before
 versions were recorded, at the top of the queue (an "older conventions"
 badge marks them in the accepted list too). Each has **Relabel under
@@ -1570,7 +1570,7 @@ is a sentence here and a commit in the log.
 Local only: the seed documents (60 docs ≈ 20 min on a 12B Ollama model),
 the span rows (≈3 s per passage), training (a few minutes on a GPU; the
 encoder is small), the evaluation (seconds). Cloud: only what you choose
-to send — the answer key, or a judge pass — and the Synthetic tab's
+to send — the answer key, or a judge pass — and the **Data** → **Generate** step's
 backend picker shows the model name on every row it wrote.
 
 **Batch relabels at half price.** A relabel that can wait — the answer

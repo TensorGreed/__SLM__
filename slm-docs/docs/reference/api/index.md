@@ -39,7 +39,6 @@ This section is auto-generated from the FastAPI OpenAPI spec. For curated narrat
 | [Export](export.md) | 15 |
 | [Extensions](extensions.md) | 4 |
 | [FailureClusters](failureclusters.md) | 2 |
-| [Gamification](gamification.md) | 2 |
 | [Gold Dataset](gold-dataset.md) | 4 |
 | [Gold Set Workbench](gold-set-workbench.md) | 4 |
 | [Hardware](hardware.md) | 2 |

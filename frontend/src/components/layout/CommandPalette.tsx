@@ -23,8 +23,9 @@ import {
     Bot,
     Boxes,
     ClipboardList,
+    Database,
     FileCode,
-    FolderTree,
+    FlaskConical,
     Home,
     Layers,
     PenSquare,
@@ -35,6 +36,8 @@ import {
     Sparkles,
     Workflow,
 } from 'lucide-react';
+
+import { DESTINATION_LABEL, projectPath, type Destination } from '../../utils/workspaceRoutes';
 
 import { OPEN_COMMAND_PALETTE_EVENT } from './commandPaletteBridge';
 import './CommandPalette.css';
@@ -50,14 +53,21 @@ interface CommandItem {
 
 interface Props {
     projectId: number | null;
-    beginnerMode?: boolean;
 }
 
 const KEY_OPEN = 'k';
 
+const DESTINATION_ICON: Record<Destination, ReactNode> = {
+    overview: <Home size={14} />,
+    data: <Database size={14} />,
+    train: <FlaskConical size={14} />,
+    results: <Sparkles size={14} />,
+    ship: <Rocket size={14} />,
+    settings: <Settings2 size={14} />,
+};
+
 function buildItems(
     projectId: number | null,
-    beginnerMode: boolean,
     navigate: ReturnType<typeof useNavigate>,
 ): CommandItem[] {
     const items: CommandItem[] = [];
@@ -74,110 +84,39 @@ function buildItems(
     if (projectId == null) return items;
     const base = `/project/${projectId}`;
 
-    const pipelineItems: Array<[string, string, ReactNode]> = [
-        ['Pipeline Runs', `${base}/pipeline/data`, <FolderTree size={14} />],
-        ['Data Studio', `${base}/data-studio`, <ClipboardList size={14} />],
-        ['Annotation', `${base}/annotate`, <PenSquare size={14} />],
-    ];
-
-    for (const [label, path, icon] of pipelineItems) {
+    for (const destination of ['overview', 'data', 'train', 'results', 'ship', 'settings'] as Destination[]) {
+        const path = projectPath(projectId, destination);
         items.push({
             id: path,
-            label,
+            label: DESTINATION_LABEL[destination],
             hint: path,
-            section: 'Data Pipeline',
-            icon,
+            section: 'Workspace',
+            icon: DESTINATION_ICON[destination],
             onSelect: () => navigate(path),
         });
     }
 
-    const trainingItems: Array<[string, string, ReactNode]> = [
-        ['Training Configurations', `${base}/training-config`, <Settings2 size={14} />],
-        ['Base Model Registry', `${base}/models`, <Boxes size={14} />],
-        ['Playground', `${base}/playground`, <Bot size={14} />],
-        ['Deployments', `${base}/deployments`, <Rocket size={14} />],
-        ['Observability', `${base}/observability`, <Activity size={14} />],
-        ['Autopilot', `${base}/wizard`, <Sparkles size={14} />],
+    const tools: Array<[string, string, string, ReactNode]> = [
+        ['Data Studio', `${base}/data-studio`, 'Data', <ClipboardList size={14} />],
+        ['Annotation', `${base}/annotate`, 'Data', <PenSquare size={14} />],
+        ['Training configuration', `${base}/training-config`, 'Train', <Settings2 size={14} />],
+        ['Base model registry', `${base}/models`, 'Train', <Boxes size={14} />],
+        ['Task type', `${base}/recipe-picker`, 'Train', <BookOpen size={14} />],
+        ['Playground', `${base}/playground`, 'Results', <Bot size={14} />],
+        ['Compare runs', `${base}/eval/compare`, 'Results', <Sparkles size={14} />],
+        ['Deployments', `${base}/deployments`, 'Ship', <Rocket size={14} />],
+        ['Observability', `${base}/observability`, 'Ship', <Activity size={14} />],
+        ['Autopilot Planner', `${base}/autopilot`, 'Settings', <ClipboardList size={14} />],
+        ['Workflow Builder', `${base}/workflow`, 'Settings', <Workflow size={14} />],
+        ['Pipeline presets', `${base}/recipes`, 'Settings', <BookOpen size={14} />],
+        ['Pipeline as Code', `${base}/manifest`, 'Settings', <FileCode size={14} />],
+        ['Domain Packs', `${base}/domain/packs`, 'Settings', <Boxes size={14} />],
+        ['Domain Profiles', `${base}/domain/profiles`, 'Settings', <Layers size={14} />],
+        ['Adapter Studio', `${base}/adapter-studio`, 'Settings', <Boxes size={14} />],
+        ['Extension Studio', `${base}/extensions`, 'Settings', <Puzzle size={14} />],
     ];
-
-    for (const [label, path, icon] of trainingItems) {
-        items.push({
-            id: path,
-            label,
-            hint: path,
-            section: 'Training',
-            icon,
-            onSelect: () => navigate(path),
-        });
-    }
-
-    if (!beginnerMode) {
-        items.push({
-            id: `${base}/autopilot`,
-            label: 'Autopilot Planner',
-            hint: `${base}/autopilot`,
-            section: 'Training',
-            icon: <ClipboardList size={14} />,
-            onSelect: () => navigate(`${base}/autopilot`),
-        });
-        items.push({
-            id: `${base}/adapter-studio`,
-            label: 'Adapter Studio',
-            hint: `${base}/adapter-studio`,
-            section: 'Training',
-            icon: <Boxes size={14} />,
-            onSelect: () => navigate(`${base}/adapter-studio`),
-        });
-        items.push({
-            id: `${base}/extensions`,
-            label: 'Extension Studio',
-            hint: `${base}/extensions`,
-            section: 'Training',
-            icon: <Puzzle size={14} />,
-            onSelect: () => navigate(`${base}/extensions`),
-        });
-        items.push(
-            {
-                id: `${base}/workflow`,
-                label: 'Workflow Builder',
-                hint: `${base}/workflow`,
-                section: 'Automation',
-                icon: <Workflow size={14} />,
-                onSelect: () => navigate(`${base}/workflow`),
-            },
-            {
-                id: `${base}/recipes`,
-                label: 'Pipeline presets',
-                hint: `${base}/recipes`,
-                section: 'Automation',
-                icon: <BookOpen size={14} />,
-                onSelect: () => navigate(`${base}/recipes`),
-            },
-            {
-                id: `${base}/manifest`,
-                label: 'Pipeline as Code',
-                hint: `${base}/manifest`,
-                section: 'Automation',
-                icon: <FileCode size={14} />,
-                onSelect: () => navigate(`${base}/manifest`),
-            },
-            {
-                id: `${base}/domain/packs`,
-                label: 'Domain Packs',
-                hint: `${base}/domain/packs`,
-                section: 'Domain',
-                icon: <Boxes size={14} />,
-                onSelect: () => navigate(`${base}/domain/packs`),
-            },
-            {
-                id: `${base}/domain/profiles`,
-                label: 'Domain Profiles',
-                hint: `${base}/domain/profiles`,
-                section: 'Domain',
-                icon: <Layers size={14} />,
-                onSelect: () => navigate(`${base}/domain/profiles`),
-            },
-        );
+    for (const [label, path, section, icon] of tools) {
+        items.push({ id: path, label, hint: path, section, icon, onSelect: () => navigate(path) });
     }
 
     return items;
@@ -205,7 +144,7 @@ function groupBySection(items: CommandItem[]): Array<[string, CommandItem[]]> {
     return order.map((section) => [section, map.get(section)!]);
 }
 
-export default function CommandPalette({ projectId, beginnerMode = false }: Props) {
+export default function CommandPalette({ projectId }: Props) {
     const navigate = useNavigate();
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState('');
@@ -214,8 +153,8 @@ export default function CommandPalette({ projectId, beginnerMode = false }: Prop
     const listRef = useRef<HTMLDivElement | null>(null);
 
     const items = useMemo(
-        () => buildItems(projectId, beginnerMode, navigate),
-        [projectId, beginnerMode, navigate],
+        () => buildItems(projectId, navigate),
+        [projectId, navigate],
     );
     const filtered = useMemo(() => filterItems(items, query), [items, query]);
     const grouped = useMemo(() => groupBySection(filtered), [filtered]);

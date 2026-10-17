@@ -13,7 +13,7 @@ key, so you can see whether the model holds up on text it never resembled.
 Works for **classification**, **span (entity) tagging**, **Q&A** and
 **summarization** projects.
 
-## Add one (Eval tab → External benchmarks → + Add a benchmark)
+## Add one (Results page → External benchmarks → + Add a benchmark)
 
 1. **Source** — a Hugging Face dataset, `hf:<dataset>[:<split>[:<revision>]]`
    (e.g. `hf:Yelp/yelp_review_full:test`), or upload a CSV / JSONL / Parquet

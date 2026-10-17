@@ -60,7 +60,7 @@ run.
 ## 3 · Measure quality retained
 
 After both the student and a **teacher baseline run** have eval results on the
-same eval set, the Eval tab's *Distillation quality retained* panel shows
+same eval set, the Results page's *Distillation quality retained* panel shows
 `quality_retained = student / teacher` per metric (and per slice when available):
 
 ```bash
@@ -78,8 +78,8 @@ model or judge calls. A headline like `81% retained` tells you at a glance how
 much of the teacher you kept at a fraction of the size.
 
 > The panel **self-hides** on runs that weren't distilled (and when no teacher
-> is set), so it only appears where it's meaningful — it won't clutter the Eval
-> tab of an ordinary SFT project.
+> is set), so it only appears where it's meaningful — it won't clutter the Results
+> page of an ordinary SFT project.
 
 ## See also
 

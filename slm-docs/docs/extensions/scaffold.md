@@ -24,7 +24,7 @@ The module file already calls `register_data_adapters(register)` with sensible d
 
 ### UI
 
-**Training rail → Extension Studio → Generate scaffold** card.
+**Settings** → **Extension Studio** → Generate scaffold** card.
 
 Pick a kind (the four buttons across the top), fill in:
 

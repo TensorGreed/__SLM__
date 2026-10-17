@@ -49,7 +49,6 @@ describe('Coach (the one guidance surface)', () => {
         _resetCoachModeStoreForTests();
         apiMock.get.mockReset();
         apiMock.get.mockImplementation(async (url: string) => {
-            if (url.endsWith('/gamification')) return { data: { level: 9 } }; // "senior" user
             if (url.endsWith('/coach/data')) {
                 return {
                     data: {
@@ -70,7 +69,7 @@ describe('Coach (the one guidance surface)', () => {
     });
 
     it('shows where you are, the next step, a tab tip, the video and stage suggestions', async () => {
-        renderAt('/project/7/pipeline/data');
+        renderAt('/project/7/data');
         expect(screen.getByTestId('coach-where').textContent).toContain('0% done');
         // Beginner projects never get sent to (hidden) domain packs first.
         expect(screen.getByTestId('coach-next').textContent).toContain('Import source data');
@@ -81,31 +80,39 @@ describe('Coach (the one guidance surface)', () => {
         expect(await screen.findByText('Only 12 rows')).toBeInTheDocument();
     });
 
-    it('is on by default for beginner projects even for a high-level user', () => {
-        renderAt('/project/7/pipeline/data');
+    it('is on by default for every project', () => {
+        renderAt('/project/7/data');
         expect(screen.getByTestId('coach-bar')).toBeInTheDocument();
     });
 
     it('offers Continue off-target and remembers a dismissed tip', async () => {
         const user = userEvent.setup();
-        const { unmount } = renderAt('/project/7/pipeline/cleaning');
+        const { unmount } = renderAt('/project/7/data?step=cleaning');
         expect(screen.getByTestId('coach-continue')).toBeInTheDocument();
         await user.click(screen.getByRole('button', { name: 'Dismiss tip' }));
         expect(screen.queryByTestId('coach-tip')).toBeNull();
         unmount();
-        renderAt('/project/7/pipeline/cleaning');
+        renderAt('/project/7/data?step=cleaning');
         expect(screen.queryByTestId('coach-tip')).toBeNull();
     });
 
-    it('stays out of the way on the plan page and when switched off', async () => {
-        renderAt('/project/7/guide');
+    it('stays out of the way on the Overview, on Settings and when switched off', async () => {
+        renderAt('/project/7');
+        expect(screen.queryByTestId('coach-bar')).toBeNull();
+        renderAt('/project/7/settings');
         expect(screen.queryByTestId('coach-bar')).toBeNull();
         useCoachModeStore.getState().setOverride(7, 'off');
-        renderAt('/project/7/pipeline/data');
+        renderAt('/project/7/data');
         await waitFor(() => expect(screen.queryByTestId('coach-bar')).toBeNull());
     });
 
     it('maps workspace URLs to the tab + coach stage', () => {
+        expect(coachLocationFor('/project/1/data', '?step=goldset')).toEqual({ tab: 'goldset', stage: 'gold_set' });
+        expect(coachLocationFor('/project/1/data')).toEqual({ tab: 'data', stage: 'data' });
+        expect(coachLocationFor('/project/1/train')).toEqual({ tab: 'tokenization', stage: null });
+        expect(coachLocationFor('/project/1/train', '?step=training')).toEqual({ tab: 'training', stage: 'training' });
+        expect(coachLocationFor('/project/1/results')).toEqual({ tab: 'eval', stage: 'eval' });
+        expect(coachLocationFor('/project/1/ship', '?step=export')).toEqual({ tab: 'export', stage: 'export' });
         expect(coachLocationFor('/project/1/pipeline/goldset')).toEqual({ tab: 'goldset', stage: 'gold_set' });
         expect(coachLocationFor('/project/1/pipeline/dataprep')).toEqual({ tab: 'dataprep', stage: 'dataprep' });
         expect(coachLocationFor('/project/1/pipeline/synthetic')).toEqual({ tab: 'synthetic', stage: 'synthetic' });
@@ -117,7 +124,6 @@ describe('Coach (the one guidance surface)', () => {
 
     it('shows the top suggestion, hides beginner-hidden targets, and expands on request', async () => {
         apiMock.get.mockImplementation(async (url: string) => {
-            if (url.endsWith('/gamification')) return { data: { level: 1 } };
             if (url.endsWith('/coach/data')) {
                 const nav = (label: string, target: string) => ({ kind: 'navigate', label, params: { target } });
                 return {
@@ -134,7 +140,7 @@ describe('Coach (the one guidance surface)', () => {
             return { data: {} };
         });
         const user = userEvent.setup();
-        renderAt('/project/7/pipeline/data');
+        renderAt('/project/7/data');
         expect(await screen.findByText('First fix')).toBeInTheDocument();
         expect(screen.queryByText('Second fix')).toBeNull();
         await user.click(screen.getByTestId('coach-strip-data-more'));

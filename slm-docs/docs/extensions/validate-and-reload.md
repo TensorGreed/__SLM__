@@ -204,7 +204,7 @@ The standard inner loop:
 1. Edit `my_csv_adapter.py`.
 2. `brewslm extensions validate --kind adapter --module my_csv_adapter` (catches structural mistakes before runtime).
 3. `brewslm extensions reload --kind adapter` (re-imports + re-registers).
-4. Use the plugin (e.g. run the pipeline's adapter preview tab).
+4. Use the plugin (e.g. run the adapter preview under **Data** → **Split**).
 5. Goto 1.
 
 Or, in the Extension Studio UI: edit → Validate → Reload, all in one tab.

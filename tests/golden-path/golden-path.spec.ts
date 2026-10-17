@@ -32,7 +32,7 @@ const ADMIN = 'admin';
 const ADMIN_KEY = 'sk-mock-admin-key';
 const SAMPLE_TILE = 'Open the Demo · Support FAQ starter project';
 
-test('golden path: login → sample → beginner pipeline → train completes', async ({ page }) => {
+test('golden path: login → sample → workspace renders → train completes', async ({ page }) => {
   const tileAria = SAMPLE_TILE;
   // ── 1. Login as the bootstrap admin (global project access) ──────────
   await page.goto('/login');
@@ -58,14 +58,14 @@ test('golden path: login → sample → beginner pipeline → train completes', 
   const projectId = Number(page.url().match(/\/project\/(\d+)/)![1]);
   expect(projectId).toBeGreaterThan(0);
 
-  // ── 3. Beginner-mode pipeline renders with the golden-path stages ────
-  // Sample projects launch in beginner mode; assert the core path stages
-  // are present (the linear data → train → eval → export spine). The
-  // pipeline stages render as buttons with emoji labels.
-  await expect(page.getByRole('button', { name: '📂 Data' }).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: '🔬 Training' }).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: '📊 Evaluation' }).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: '🚀 Export' }).first()).toBeVisible();
+  // ── 3. The workspace renders: Overview + the six destinations ────────
+  // A sample project lands on the Overview; the sidebar carries the linear
+  // data → train → results → ship spine (Epic U phase U1).
+  await expect(page.getByTestId('overview-page')).toBeVisible({ timeout: 20_000 });
+  for (const destination of ['overview', 'data', 'train', 'results', 'ship', 'settings']) {
+    await expect(page.getByTestId(`nav-${destination}`)).toBeVisible();
+  }
+  await expect(page.getByTestId('overview-next')).toBeVisible();
 
   // ── 4. Train on the simulate runtime, assert the run completes ───────
   const api = `/api/projects/${projectId}`;

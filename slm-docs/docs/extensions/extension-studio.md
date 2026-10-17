@@ -5,11 +5,11 @@ title: Extension Studio (UI)
 
 # Extension Studio
 
-A workspace page that wraps the three extension operations — list, [scaffold](scaffold.md), [validate + reload](validate-and-reload.md) — into one surface. **Hidden by default in [beginner mode](../concepts/beginner-mode.md)** because the four plugin contracts assume you already understand the platform.
+A workspace page that wraps the three extension operations — list, [scaffold](scaffold.md), [validate + reload](validate-and-reload.md) — into one surface. Lives under **Settings**, out of the main path, because the four plugin contracts assume you already understand the platform.
 
 ## Where it lives
 
-`/project/:id/extensions`. Sidebar entry under the Training rail (Puzzle icon). Beginner mode hides this entry from the sidebar; the URL still works if you navigate directly or use Cmd-K.
+`/project/:id/extensions`. Open it from **Settings** → **Extension Studio**, or with Cmd-K.
 
 ## Layout
 
@@ -102,7 +102,7 @@ After a reload, the per-kind reload badges in the left column update. If any kin
 
 - **Not a plugin marketplace.** It generates scaffolds + validates them; finding / installing third-party plugins is a separate concern (pip install + add to settings).
 - **Not a runtime monitor.** Once a plugin is registered, you observe it via the [Run Timeline](../observability/timeline.md) — the Extension Studio is a build-time surface.
-- **Not in beginner mode.** Beginners shouldn't be wiring plugin contracts; the Cmd-K palette filters this action out too.
+- **Not on the main path.** Beginners shouldn't need to wire plugin contracts, so it sits under **Settings** rather than in the sidebar.
 
 ## Next
 

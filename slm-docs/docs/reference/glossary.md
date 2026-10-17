@@ -18,7 +18,7 @@ The rows you write (or approve) with the correct answer, so BrewSLM can score th
 - **Practice answer key**: rows you score against while you iterate. API name: `gold_dev` (`DatasetType.GOLD_DEV`), stored at `data/projects/{id}/gold/gold_dev.jsonl`.
 - **Final answer key**: the rows you keep untouched for the final grade. API name: `gold_test` (`DatasetType.GOLD_TEST`).
 
-The **Answer Key** tab (Pipeline) edits it; the answer key is never a default training source. API name: *gold set* (`/api/projects/{id}/gold/...`, the gold workbench routes). See [Gold set](#gold-set) for the two editing surfaces.
+The **Answer key** step (**Data** → **Answer key**) edits it; the answer key is never a default training source. API name: *gold set* (`/api/projects/{id}/gold/...`, the gold workbench routes). See [Gold set](#gold-set) for the two editing surfaces.
 
 ## Artifact
 
@@ -34,11 +34,11 @@ The pretrained model you fine-tune from. Registered in the Universal Base Model 
 
 ## Beginner mode
 
-Per-project flag that hides advanced UI surfaces (Adapter Studio, Extension Studio, Workflow Builder, Pipeline presets, Pipeline-as-Code, Domain Packs, Domain Profiles). Backend behaviour unchanged. See [Beginner mode](../concepts/beginner-mode.md).
+Per-project flag (**Settings** → **Start advanced sections collapsed**) that only decides whether advanced sections of a page, such as **Advanced evaluation**, start collapsed. It hides no navigation. Backend behaviour unchanged. See [Beginner mode](../concepts/beginner-mode.md).
 
 ## Built-in checks
 
-Checks BrewSLM writes for you, so a model is also graded against something you didn't author: robustness, refusing unsafe or unsupported requests, not over-refusing, and handling empty input. Shown in the **Built-in checks** panel on the Eval tab (under **Advanced evaluation**). API name: *probe pack* (`/api/projects/{id}/probe-pack`, metric `probe_pass_rate`). See [Probe pack](#probe-pack-held-out-platform-authored).
+Checks BrewSLM writes for you, so a model is also graded against something you didn't author: robustness, refusing unsafe or unsupported requests, not over-refusing, and handling empty input. Shown in the **Built-in checks** panel on the Results page (under **Advanced evaluation**). API name: *probe pack* (`/api/projects/{id}/probe-pack`, metric `probe_pass_rate`). See [Probe pack](#probe-pack-held-out-platform-authored).
 
 ## Checkpoint
 
@@ -105,15 +105,15 @@ The API name for **pass/fail rules** (see [Pass/fail rules](#passfail-rules)): r
 
 The API name for the **[answer key](#answer-key)**: the ground-truth labelled set you trust for evaluation. Two parallel surfaces:
 
-- **Gold workbench** (Pipeline → Gold workbench) — sampling + reviewer-queue
+- **Gold workbench** (**Data** → **Answer key**, workbench) — sampling + reviewer-queue
   flow with versioned `draft → locked` state machine. DB-backed
   (`GoldSetRow` / `GoldSetVersion`). Best for hand-labelling at scale.
-- **Answer Key tab** (Pipeline → Answer Key) — direct row CRUD + LLM-assisted
+- **Answer key step** (**Data** → **Answer key**) — direct row CRUD + LLM-assisted
   generation. JSONL-backed on disk at `data/projects/{id}/gold/gold_dev.jsonl`.
   Best for bootstrapping a small set fast.
 
 Both surfaces share the same on-disk JSONL — workbench rows materialize
-into it, Answer Key tab rows append to it. The evaluator reads either path.
+into it, Answer key step rows append to it. The evaluator reads either path.
 See [Evaluation + remediation](../workflows/evaluation-and-remediation.md).
 
 ## Train ↔ gold leakage
@@ -141,7 +141,7 @@ exactly which rows leaked, from which split, and the source row they matched.
 
 ### Fixing leakage from the report
 
-Both leakage signals have an action button on the Dataset Prep tab (where the
+Both leakage signals have an action button on the **Data** → **Split** step (where the
 report is shown):
 
 - **`leakage.split_overlap` → "Re-split with dedup".** This is safely
@@ -183,7 +183,7 @@ domain's labels or answers, every probe checks a **property** that must hold for
   handled gracefully (`handles_degenerate_gracefully`).
 
 Packs are keyed by task profile (classification, instruction_sft, rag_qa,
-structured_extraction, summarization) and viewable on the eval tab. When you run
+structured_extraction, summarization) and viewable on the Results page. When you run
 an evaluation, the pack runs against the trained model, scores each property,
 and folds an independent `probe_pass_rate` into the eval metrics beside your
 answer-key pass-rate — the **Built-in checks** panel flips from "Assembled · not yet graded" to a real
@@ -255,7 +255,7 @@ Provenance label meaning the value came from a heuristic. Same page.
 
 ## Pass/fail rules
 
-The thresholds a model must meet on its eval metrics before it counts as passing or may be promoted (e.g. "exact match ≥ 0.7"). Required rules block; optional rules allow degradation within tolerance. The set of rules a project uses is its **pass/fail rule set**. Shown as **Pass/fail rules** on the Eval tab and the scorecard. API names: *gate* (a single rule; `gate_id`, `min_probe_pass_rate`, …), *gate policy*, and *eval pack* (the rule set, `slm.evaluation-pack/v2`). See [Eval pack](#eval-pack) and [Gate policy](#gate-policy).
+The thresholds a model must meet on its eval metrics before it counts as passing or may be promoted (e.g. "exact match ≥ 0.7"). Required rules block; optional rules allow degradation within tolerance. The set of rules a project uses is its **pass/fail rule set**. Shown as **Pass/fail rules** on the Results page and the scorecard. API names: *gate* (a single rule; `gate_id`, `min_probe_pass_rate`, …), *gate policy*, and *eval pack* (the rule set, `slm.evaluation-pack/v2`). See [Eval pack](#eval-pack) and [Gate policy](#gate-policy).
 
 ## Plugin contract
 
@@ -267,7 +267,7 @@ A named bundle of defaults you apply as a starting point. The UI uses three kind
 
 - **Domain preset**: domain defaults (model family, adapter, gates, target, safety reminders) picked at project creation. API name: *starter pack*.
 - **Training preset**: a named bundle of training hyperparameters (learning rate, epochs, LoRA settings, …) applied on the Training Config page (**Training preset** → **Apply preset**). API name: training *recipe*.
-- **Pipeline preset**: an end-to-end composition of domain defaults, workflow template, training preset, dataset adapter and eval pack (**Pipeline presets** page: **Preview preset** / **Apply preset** / **Apply + Run Workflow**). Hidden in beginner mode. API name: pipeline *recipe*.
+- **Pipeline preset**: an end-to-end composition of domain defaults, workflow template, training preset, dataset adapter and eval pack (**Pipeline presets** page: **Preview preset** / **Apply preset** / **Apply + Run Workflow**). Lives under **Settings**. API name: pipeline *recipe*.
 
 See [Recipe](#recipe) for the API routes.
 
@@ -329,7 +329,7 @@ Modules are listed in `settings.DATASET_MAPPER_PLUGIN_MODULES` and imported at a
 
 ## Saved mapping (dataset import)
 
-A persisted `(locator, mapper_id, field_map, drop_reasons)` tuple under a user-chosen name. Created via the "Save this mapping" card on the import wizard's Preview step; re-runs go through the **Saved mappings** panel on the Data tab. Re-runs use the same `run_import` code path as a fresh import, so they emit the same audit [run event](#run-event) (`stage=ingestion`, `reason_code=dataset_import_run`) plus a `config_id` link in the payload. `last_run_at` and `last_run_accepted` columns on the config row track the most recent re-run's timestamp and row count for at-a-glance status. Backed by the `dataset_import_configs` table; API: `POST /api/projects/{id}/dataset-import/configs` (create) → `POST /api/projects/{id}/dataset-import/configs/{cfg_id}/run` (re-run).
+A persisted `(locator, mapper_id, field_map, drop_reasons)` tuple under a user-chosen name. Created via the "Save this mapping" card on the import wizard's Preview step; re-runs go through the **Saved mappings** panel on the **Data** → **Sources** step. Re-runs use the same `run_import` code path as a fresh import, so they emit the same audit [run event](#run-event) (`stage=ingestion`, `reason_code=dataset_import_run`) plus a `config_id` link in the payload. `last_run_at` and `last_run_accepted` columns on the config row track the most recent re-run's timestamp and row count for at-a-glance status. Backed by the `dataset_import_configs` table; API: `POST /api/projects/{id}/dataset-import/configs` (create) → `POST /api/projects/{id}/dataset-import/configs/{cfg_id}/run` (re-run).
 
 ## Scoring mode
 
@@ -421,7 +421,7 @@ One inference observation pushed to BrewSLM by your serving runtime (status, lat
 
 ## Test examples
 
-The prepared **test** split from Dataset Prep: rows held back from training so the model is scored on examples it never saw. "Better than base?" on the Eval tab compares the base model and the fine-tuned model on the same test examples. The eval dataset alias `test` always means these rows; the final answer key is used only when the project has no prepared split. API name: the `test` split / `DatasetType.TEST` (`prepared/test.jsonl`), "held-out" in older API docs.
+The prepared **test** split from **Data** → **Split**: rows held back from training so the model is scored on examples it never saw. "Better than base?" on the Results page compares the base model and the fine-tuned model on the same test examples. The eval dataset alias `test` always means these rows; the final answer key is used only when the project has no prepared split. API name: the `test` split / `DatasetType.TEST` (`prepared/test.jsonl`), "held-out" in older API docs.
 
 ## Trainability forecast
 

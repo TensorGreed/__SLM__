@@ -402,19 +402,39 @@ runs real CPU inference). ~4 min locally.
   ProjectTemplateGallery under "Or start from a sample project"); manifest
   import is a link in the create dialog's Advanced section. Magic Create's UI
   and FirstRunCheatSheet are gone (the `/projects/magic-create` API remains).
-  Every path navigates to `/project/{id}` (index → `pipeline/data`).
+  Every path navigates to `/project/{id}` (the Overview).
+  **Workspace IA (Epic U phase U1, 2026-10-17)** — `utils/workspaceRoutes.ts`
+  is the one map: six destinations `Overview` (`/project/{id}`,
+  `ProjectOverviewPage`: stage, next step, latest run via
+  `/evaluation/summary`, shipped export + Hub link via `/export/list`, ≤ 3
+  Coach nudges, collapsed "Full plan" = checklist + QuickstartCard), `Data` /
+  `Train` / `Results` / `Ship` (`ProjectStagePage destination=…`: the old
+  pipeline tabs as steps, `?step=<tab>`, `STEPS_BY_DESTINATION`, header
+  "related" links to the tool pages not folded in yet) and `Settings`
+  (`ProjectSettingsPage`: inline-tips switch, beginner flag = "start advanced
+  sections collapsed", manifest export, links to Automation / Domain /
+  Studios). Sidebar = `ProjectSidebar` (six `NavLink`s, `data-testid="nav-<dest>"`,
+  ⌘K hint, collapse); nothing is hidden by beginner mode any more. Retired:
+  `/guide`, `/wizard` (the guided Autopilot page; Planner stays at
+  `/autopilot`), `/pipeline/:tab`, ProjectPipelinePage, ProgressChip,
+  CoachToggle, all gamification (frontend `components/gamification`, backend
+  `api/gamification.py` + service; the `projects.gamification` column stays,
+  unused). `LegacyRouteRedirect` + `legacyRedirectPath` send old URLs to the
+  new ones with search + hash kept — the bell, `CoachSuggestion`
+  `NAVIGATE_TARGET_URLS`, docs and demo specs still emit `/pipeline/<tab>`
+  until U6 rewrites them; new code uses `stagePath(projectId, tab)` /
+  `projectPath(projectId, dest)` (flowGuide already does).
   **The Coach** (`components/coach/Coach.tsx`, mounted once in
-  `ProjectWorkspaceLayout`) is the single guidance surface: stage + %, next
-  step (`utils/flowGuide.getRecommendedAction`, skips hidden domain-pack step
-  in beginner mode; ingestion → `?import=auto`), per-tab tip
-  (`coachContext.TAB_TIP`, dismiss key `brewslm.coach.tip.<id>.<tab>`),
-  TabVideoLink, and `CoachStrip` for the route's stage (`coachLocationFor`).
-  Hidden on `/guide`, which is the Coach's "Full plan" page (QuickstartCard,
-  checklist + Lab Journal stamps, beginner toggle). Removed: GettingStartedWizard,
-  GuidedLearningRail, WorkspaceFlowHint, per-panel CoachStrip mounts, pipeline
-  header Guide/Guided Setup buttons. `useCoachMode(projectId, beginnerMode)`:
-  beginner projects default on; else gamification level < 5. Sidebar: one
-  "Autopilot" (`/wizard`); "Autopilot Planner" (`/autopilot`) advanced-only.
+  `ProjectWorkspaceLayout`) stays the guidance bar on the four stage pages:
+  stage + %, next step (`utils/flowGuide.getRecommendedAction`; "on target"
+  compares destination AND step), per-tab tip (`coachContext.TAB_TIP`,
+  dismiss key `brewslm.coach.tip.<id>.<tab>`), TabVideoLink, `CoachStrip`
+  for the route's stage (`coachLocationFor(pathname, search)` understands
+  `/data?step=…` and the legacy form). Hidden on Overview and Settings; its
+  button goes back to the Overview. `useCoachMode(projectId)`: on by default
+  for every project (`COACH_DEFAULT_ON`), per-project override in
+  `coachModeStore` (localStorage), switched from Settings. U6 turns the bar
+  into inline notices.
 - **Synthetic data** — two paths: (a) modern `synth_playbook_service`
   with recipe-aware playbooks + per-row `review_status="pending"`;
   (b) legacy `synthetic_service` with task framework + bridge to Jobs.

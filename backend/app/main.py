@@ -38,7 +38,6 @@ from app.api.synthetic import router as synthetic_router
 from app.api.compliance import router as compliance_router
 from app.api.llm_spend import budget_router as llm_budget_router
 from app.api.llm_spend import router as llm_spend_router
-from app.api.gamification import router as gamification_router
 from app.api.coach import router as coach_router
 from app.api.curriculum import router as curriculum_router
 from app.api.jobs import router as jobs_router
@@ -391,7 +390,6 @@ app.include_router(synthetic_router, prefix="/api", dependencies=API_DEPENDENCIE
 app.include_router(compliance_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(llm_spend_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(llm_budget_router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(gamification_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(coach_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(curriculum_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(jobs_router, prefix="/api", dependencies=API_DEPENDENCIES)

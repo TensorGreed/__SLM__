@@ -72,7 +72,7 @@ sudo sysctl -p
 **Fix**: choose one —
 
 - **Redact at source** — strip PII from your dataset before re-uploading.
-- **Relax the block** — edit the active domain pack's `data_quality.pii_policy` to `warn` instead of `block`. (Hidden in beginner mode; see [Domain packs](../workflows/pipeline-overview.md).)
+- **Relax the block** — edit the active domain pack's `data_quality.pii_policy` to `warn` instead of `block`. (Under **Settings** → **Domain Packs**; see [Domain packs](../workflows/pipeline-overview.md).)
 - **Synthetic substitution** — let the cleaning hook replace PII tokens with placeholders.
 
 ### `cleaning_outlier_threshold_exceeded`

@@ -4,9 +4,9 @@
  * rule-based suggestions from ``GET /coach/{stage}``).
  */
 
-import { PIPELINE_TABS } from '../../types';
 import type { TabKey } from '../../types';
 import type { CoachStage } from '../../api/coach';
+import { isTabKey, resolveStep, type StageDestination } from '../../utils/workspaceRoutes';
 
 export const TAB_TIP: Record<TabKey, string> = {
     data: 'This is where your raw examples live. Import a CSV or launch a sample dataset to get started.',
@@ -20,8 +20,6 @@ export const TAB_TIP: Record<TabKey, string> = {
     compression: 'Shrink the model (quantize / distill) so it fits your deployment target.',
     export: 'Package the finished model for download or deployment. You made it!',
 };
-
-const TAB_KEYS = new Set<string>(PIPELINE_TABS.map((tab) => tab.key));
 
 const COACH_STAGE_BY_TAB: Partial<Record<TabKey, CoachStage>> = {
     data: 'data',
@@ -39,11 +37,19 @@ export interface CoachLocation {
     stage: CoachStage | null;
 }
 
-/** Map a workspace URL to the tab + Coach stage it belongs to. */
-export function coachLocationFor(pathname: string): CoachLocation {
+/** Map a workspace URL to the tab + Coach stage it belongs to. Accepts the
+ *  destinations (``/data?step=cleaning``, ``/train``, ``/results``, ``/ship``)
+ *  and the retired ``/pipeline/<tab>`` form. */
+export function coachLocationFor(pathname: string, search = ''): CoachLocation {
     const pipeline = pathname.match(/\/pipeline\/([^/?#]+)/);
-    if (pipeline && TAB_KEYS.has(pipeline[1])) {
-        const tab = pipeline[1] as TabKey;
+    if (pipeline && isTabKey(pipeline[1])) {
+        const tab = pipeline[1];
+        return { tab, stage: COACH_STAGE_BY_TAB[tab] ?? null };
+    }
+    const destination = pathname.match(/\/project\/\d+\/(data|train|results|ship)(\/|$)/);
+    if (destination) {
+        const step = new URLSearchParams(search).get('step');
+        const tab = resolveStep(destination[1] as StageDestination, step);
         return { tab, stage: COACH_STAGE_BY_TAB[tab] ?? null };
     }
     if (/\/training-config(\/|$)/.test(pathname)) {

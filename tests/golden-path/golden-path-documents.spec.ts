@@ -78,8 +78,8 @@ test('golden path (documents): upload → flow card → gate verdict on the card
     headers: authHeaders, data: { document_id: docId, chunk_size: 320, chunk_overlap: 0 },
   })).ok()).toBeTruthy();
 
-  // ── 3. The Training tab offers the flow ──────────────────────────────
-  await page.goto(`/project/${projectId}/pipeline/training`);
+  // ── 3. Train → Training offers the flow ──────────────────────────────
+  await page.goto(`/project/${projectId}/train?step=training`);
   const card = page.getByTestId('documents-qa-flow');
   await expect(card).toBeVisible({ timeout: 30_000 });
   await expect(card).toContainText('Turn your documents into a Q&A assistant');

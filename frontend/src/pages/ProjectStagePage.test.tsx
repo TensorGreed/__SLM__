@@ -1,0 +1,111 @@
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { contextState, setActiveTabMock, panel } = vi.hoisted(() => ({
+    contextState: { projectId: 77, pipelineStatus: null as unknown },
+    setActiveTabMock: vi.fn(),
+    panel: (id: string, text: string) => ({ default: () => <section data-testid={id}>{text}</section> }),
+}));
+
+vi.mock('react-router-dom', async () => {
+    const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+    return {
+        ...actual,
+        useOutletContext: () => ({
+            projectId: contextState.projectId,
+            pipelineStatus: contextState.pipelineStatus,
+            refreshPipelineStatus: vi.fn(),
+        }),
+    };
+});
+
+vi.mock('../stores/projectStore', () => ({
+    useProjectStore: (selector: (s: { setActiveTab: typeof setActiveTabMock }) => unknown) =>
+        selector({ setActiveTab: setActiveTabMock }),
+}));
+
+vi.mock('../components/data/IngestionPanel', () => panel('panel-ingestion', 'Ingestion'));
+vi.mock('../components/data/CleaningPanel', () => panel('panel-cleaning', 'Cleaning'));
+vi.mock('../components/data/GoldSetPanel', () => panel('panel-goldset', 'Answer key'));
+vi.mock('../components/data/SyntheticPanel', () => panel('panel-synthetic', 'Synthetic'));
+vi.mock('../components/data/DatasetPrepPanel', () => panel('panel-dataprep', 'Split'));
+vi.mock('../components/training/TokenizationPanel', () => panel('panel-tokenization', 'Tokenization'));
+vi.mock('../components/training/TrainingPanel', () => panel('panel-training', 'Training'));
+vi.mock('../components/training/DocumentsQaFlowCard', () => panel('panel-docs-qa', 'Docs QA'));
+vi.mock('../components/evaluation/EvalPanel', () => panel('panel-eval', 'Eval'));
+vi.mock('../components/compression/CompressionPanel', () => panel('panel-compression', 'Compression'));
+vi.mock('../components/export/ExportPanel', () => panel('panel-export', 'Export'));
+
+import ProjectStagePage from './ProjectStagePage';
+
+function LocationProbe() {
+    const location = useLocation();
+    return <div data-testid="location">{location.pathname + location.search}</div>;
+}
+
+function renderAt(path: string, destination: 'data' | 'train' | 'results' | 'ship') {
+    return render(
+        <MemoryRouter initialEntries={[path]}>
+            <Routes>
+                <Route
+                    path="/project/:id/*"
+                    element={
+                        <>
+                            <ProjectStagePage destination={destination} />
+                            <LocationProbe />
+                        </>
+                    }
+                />
+            </Routes>
+        </MemoryRouter>,
+    );
+}
+
+describe('ProjectStagePage', () => {
+    beforeEach(() => {
+        setActiveTabMock.mockReset();
+        contextState.pipelineStatus = null;
+    });
+
+    it('renders the first step of Data by default and the step bar', () => {
+        renderAt('/project/77/data', 'data');
+        expect(screen.getByTestId('panel-ingestion')).toBeInTheDocument();
+        expect(screen.getAllByRole('tab')).toHaveLength(5);
+        expect(screen.getByTestId('stage-step-data')).toHaveAttribute('aria-selected', 'true');
+    });
+
+    it('picks the step from ?step= and ignores a step of another destination', () => {
+        renderAt('/project/77/data?step=goldset', 'data');
+        expect(screen.getByTestId('panel-goldset')).toBeInTheDocument();
+        renderAt('/project/77/data?step=training', 'data');
+        expect(screen.getAllByTestId('panel-ingestion').length).toBeGreaterThan(0);
+    });
+
+    it('navigates between steps with the step bar', async () => {
+        const user = userEvent.setup();
+        renderAt('/project/77/ship', 'ship');
+        expect(screen.getByTestId('panel-compression')).toBeInTheDocument();
+        await user.click(screen.getByTestId('stage-step-export'));
+        expect(screen.getByTestId('location')).toHaveTextContent('/project/77/ship?step=export');
+        expect(setActiveTabMock).toHaveBeenCalledWith('export');
+    });
+
+    it('Results has a single step and no step bar, and shows the pass/fail rules', () => {
+        contextState.pipelineStatus = {
+            current_stage: 'evaluation',
+            auto_gate: { experiment_id: 9, pack_id: 'auto', passed: false, failed_gate_ids: ['f1'], missing_required_metrics: [], captured_at: null },
+        };
+        renderAt('/project/77/results', 'results');
+        expect(screen.getByTestId('panel-eval')).toBeInTheDocument();
+        expect(screen.queryByRole('tab')).toBeNull();
+        expect(screen.getByText('Failed required rules: f1')).toBeInTheDocument();
+    });
+
+    it('Train renders the training step with the documents flow card', () => {
+        renderAt('/project/77/train?step=training', 'train');
+        expect(screen.getByTestId('panel-training')).toBeInTheDocument();
+        expect(screen.getByTestId('panel-docs-qa')).toBeInTheDocument();
+    });
+});

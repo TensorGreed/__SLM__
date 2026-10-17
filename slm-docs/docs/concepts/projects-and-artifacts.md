@@ -7,23 +7,38 @@ title: Projects + artifacts
 
 ## Project = scope boundary
 
-Every API request goes through a project. The project is what authorization checks against (when auth is enabled), what manifests describe, what `DATA_DIR/projects/{id}/` collects on disk, and what the sidebar's "Project" badge shows.
+Every API request goes through a project. The project is what authorization checks against (when auth is enabled), what manifests describe, what `DATA_DIR/projects/{id}/` collects on disk, and what the workspace header shows.
 
 | Property | What it controls |
 |---|---|
 | `id` | Numeric primary key, used in every `/api/projects/{id}/...` route. |
 | `name` | Human-readable label, shown in the sidebar and the project list. |
 | `status` | `active` / `archived`. Archived projects are hidden from new work. |
-| `beginner_mode` | Hides advanced surfaces in the UI. See [Beginner mode](beginner-mode.md). |
+| `beginner_mode` | Starts advanced sections collapsed in the UI (hides nothing). See [Beginner mode](beginner-mode.md). |
 | `domain_pack_id`, `domain_profile_id` | Active domain overlay (see [Domain Packs](../workflows/pipeline-overview.md)). |
 | `active_domain_blueprint_version` | Pinned project-plan (domain blueprint) version for reproducibility. |
 | `created_at`, `updated_at` | Standard timestamps. |
+
+## Workspace layout
+
+Inside a project the sidebar has six destinations, and every page is always reachable (URLs are under `/project/<id>`):
+
+| Destination | What it holds | Steps |
+|---|---|---|
+| **Overview** (landing page) | Current stage, the one next step, the latest run and its verdict, the shipped model (with its Hugging Face link when published), suggestions, a collapsed **Full plan** | none |
+| **Data** (`/data`) | Everything before training: upload, import, clean, answer key, synthetic rows, splits. Header links: Data Studio, Annotation | Sources, Prepare, Answer key, Generate, Split |
+| **Train** (`/train`) | Tokenization and training runs. Header links: Training configuration, Base model registry, Task type | Tokenization, Training |
+| **Results** (`/results`) | Evaluation: lift vs base, pass/fail rules, failures. Header links: Playground, Compare runs | none |
+| **Ship** (`/ship`) | Compression, export, Export History, Model Registry, publish to the Hub. Header links: Deployments, Observability | Compression, Export |
+| **Settings** (`/settings`) | Inline-tips switch, beginner flag, manifest export, and the advanced tools (Autopilot Planner, Workflow Builder, Pipeline presets, Pipeline as Code, Domain Packs/Profiles, Adapter Studio, Extension Studio) | none |
+
+The Coach bar appears at the top of Data, Train, Results and Ship. The Cmd-K palette lists the six destinations plus every tool page. Old `/guide`, `/wizard` and `/pipeline/<tab>` URLs redirect to the new locations.
 
 ## Create a project
 
 ### UI
 
-Navigate to the project list (root `/`) → click **New Project**. The wizard asks for a name, an optional starter template (general / support / legal), and whether to start in beginner mode. Submit and you land on the workspace.
+Navigate to the project list (root `/`) → click **New Project**. The dialog asks for a name (or a brief describing what the model should do), an optional starter template (general / support / legal), and whether to start with advanced sections collapsed (beginner mode). Submit and you land on the project's **Overview**.
 
 ### CLI
 
@@ -115,5 +130,5 @@ See [Training](../workflows/training.md) for the full workflow.
 ## Next
 
 - [Pipeline stages](pipeline-stages.md) — what each stage produces.
-- [Beginner mode](beginner-mode.md) — what gets hidden in the UI.
+- [Beginner mode](beginner-mode.md) — what the flag changes in the UI.
 - [Run events](../observability/run-events.md) — the unified observability log.

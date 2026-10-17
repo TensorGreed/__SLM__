@@ -23,7 +23,7 @@ A plan is **not** a deployment yet. It's a structured pre-flight that surfaces b
 
 ### UI
 
-1. Open **Deployments** under the Training rail.
+1. Open **Ship** → **Deployments**.
 2. Click **New deployment**.
 3. Pick a source checkpoint and a target profile from the dropdowns.
 4. Review the auto-generated plan:

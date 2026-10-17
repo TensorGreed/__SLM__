@@ -1,10 +1,9 @@
 /**
- * Toast notification renderer with achievement support and auto-dismiss capability.
+ * Toast notification renderer with auto-dismiss capability.
  */
 
 import { useState } from 'react';
 import { useToastStore, type ToastMessage } from '../../stores/toastStore';
-import AchievementToast from '../gamification/AchievementToast';
 import './Toast.css';
 
 const ICONS: Record<string, string> = {
@@ -17,12 +16,6 @@ const ICONS: Record<string, string> = {
 const ToastItem = ({ toast }: { toast: ToastMessage }) => {
     const removeToast = useToastStore(s => s.removeToast);
     const [isRemoving, setIsRemoving] = useState(false);
-
-    // Gamification toasts get their own CRT-styled renderer. Standard
-    // pill style stays for success / error / info / warning.
-    if (toast.type === 'achievement') {
-        return <AchievementToast toast={toast} />;
-    }
 
     const handleClose = () => {
         setIsRemoving(true);

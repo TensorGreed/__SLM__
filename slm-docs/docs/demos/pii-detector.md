@@ -28,7 +28,7 @@ land in a fully-seeded project:
   per-class precision / recall / F1 per entity type (the
   compliance-grade signal) alongside JSON validity and schema
   compliance. No further config needed.
-- **Pre-filled Autopilot brief** — open the Autopilot tab and click
+- **Pre-filled Autopilot brief** — open **Settings** → **Autopilot Planner** and click
   Preview Plan; the brief is already in the textarea.
 - **Adapter preset**: `structured-extraction` data adapter, mapped to
   `text → entities_json`.
@@ -36,7 +36,7 @@ land in a fully-seeded project:
   optimised for recall over latency since false negatives leak PII.
 - **Sample Predictions card** shows the entity-by-entity breakdown
   per row (matched / missed / hallucinated) so failure modes are
-  visible without leaving the Evaluation tab.
+  visible without leaving the Results page.
 
 ## Entity types covered
 
@@ -184,7 +184,7 @@ gate fails, deployment promotion is blocked.
 
 ### Sample Predictions card
 
-The Evaluation tab's Sample Predictions card swaps into entity-level
+The Results page's Sample Predictions card swaps into entity-level
 mode automatically when `scoring_mode: span_set` is detected on the
 preview rows:
 
@@ -216,7 +216,7 @@ the eval scores against — no schema-translation step needed.
 
 **Walkthrough:**
 
-1. Pipeline → **Synthetic**. The page auto-switches to
+1. **Data** → **Generate**. The page auto-switches to
    `span_extraction` mode when the project's task profile is
    `structured_extraction`.
 2. Pick a teacher model. **`qwen2.5:7b-instruct-q4_K_M`** or
@@ -487,7 +487,7 @@ Roughly doubles training time but worth it on the first pass.
 ### Medium impact: training schedule
 
 - **Epochs**: 3 is too few for 2k rows. Bump to `5` or `6`. Watch
-  the eval_loss curve in the Observability tab — stop when it plateaus.
+  the eval_loss curve on the **Ship** → **Observability** page — stop when it plateaus.
 - **Learning rate**: `2e-4` is aggressive for small datasets. If you
   see loss spikes in the training log, drop to `1e-4`.
 
@@ -594,7 +594,7 @@ brewslm demo seed pii-detector
 # 4. Run eval on the gold set
 brewslm eval run --project pii-detector --dataset gold_dev --eval-type f1
 
-# 5. Inspect the metrics on the Evaluation tab. The headline you
+# 5. Inspect the metrics on the Results page. The headline you
 #    care about is `per_class.<type>.recall` — overall F1 hides
 #    which type is weak.
 #       - credit_card recall ≥ 0.99 → shippable

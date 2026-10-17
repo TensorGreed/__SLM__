@@ -5,17 +5,17 @@ title: Data ingestion + cleaning + prep
 
 # Data ingestion + cleaning + prep
 
-Stages 1, 2, 4, and 5 of the [pipeline](pipeline-overview.md) all live under the same Pipeline rail tabs. This page narrates the upstream flow from raw files to prepared, deduped, split records.
+Stages 1, 2, 4, and 5 of the [pipeline](pipeline-overview.md) all live under the **Data** destination (Sources, Prepare, Answer key, Generate, Split). This page narrates the upstream flow from raw files to prepared, deduped, split records.
 
 ## Step 1 — Ingestion
 
 :::important Two import paths — pick the right one
-There are **two different things** on the Data tab, and they land your rows in **different places**:
+There are **two different things** on the **Data** → **Sources** step, and they land your rows in **different places**:
 
-- **Upload / Add source** (this section) → your rows become **raw training data** (`RawDocument`, `dataset_type=RAW`). **This is the path for your own labelled dataset** (e.g. a `{text, label}` JSONL for a classifier). It advances the pipeline so the Cleaning / Answer Key / Dataset Prep / Training tabs unlock.
+- **Upload / Add source** (this section) → your rows become **raw training data** (`RawDocument`, `dataset_type=RAW`). **This is the path for your own labelled dataset** (e.g. a `{text, label}` JSONL for a classifier). It feeds the later steps (**Prepare** / **Answer key** / **Split** / **Train**).
 - **Import dataset (auto-mapping)** wizard (covered [below](#generic-dataset-import-pipeline-sources--mappers)) → mapped rows go to the project's **synthetic** dataset (pending review). It's for **augmenting** an existing dataset with an external/HF source, **not** for your primary training data.
 
-If you run your own data through the *Import dataset* wizard, it lands in *synthetic* (not RAW), no raw source exists, and the downstream tabs stay disabled. Use **Upload** for your training data. (The guided "Start" button auto-opens the *Import* wizard — close it and use **Upload** if you're bringing your own labelled file.)
+If you run your own data through the *Import dataset* wizard, it lands in *synthetic* (not RAW), no raw source exists, and the later steps have nothing to work on. Use **Upload** for your training data. (If the import wizard opens by itself, close it and use **Upload** if you're bringing your own labelled file.)
 :::
 
 ### What it does
@@ -34,7 +34,7 @@ Details that apply to both:
 
 ### UI
 
-Pipeline → **Data** → **Add source**. Pick the source type. For CSV/JSONL, drag the file; for HuggingFace, paste `org/dataset`; for URLs, enter a fetchable URL. The Dataset Structure Explorer profiles the file inline.
+**Data** → **Sources** → **Add source**. Pick the source type. For CSV/JSONL, drag the file; for HuggingFace, paste `org/dataset`; for URLs, enter a fetchable URL. The Dataset Structure Explorer profiles the file inline.
 
 ### CLI
 
@@ -87,13 +87,13 @@ This wizard writes accepted rows to the project's **synthetic** dataset (pending
 
 #### Via the UI
 
-Pipeline → **Data** → **Import dataset (auto-mapping)** opens a 3-step wizard:
+**Data** → **Sources** → **Import dataset (auto-mapping)** opens a 3-step wizard:
 
 1. **Source** — **upload a file from your computer** (CSV, TSV, `.xlsx`, JSON, JSONL or Parquet, in any encoding). It's staged under `projects/{id}/imports/` and read immediately. Alternatively, pick `file` / `jsonl` / `csv` / `hf` / `kaggle` and enter a locator (`file:` reads any row format already on the server). Source-specific helper text shows the format; gated-dataset auth gets a banner reminding you to set env vars or save secrets under Project → Secrets first.
 2. **Map** — column signatures table (detected type + confidence per column), ranked-hypothesis dropdown pre-selected to the top proposal, free-form rationale, and a JSON field-map editor you can override before previewing. A red banner blocks low-confidence proposals until you tick "I've reviewed the proposal — proceed anyway."
 3. **Preview & Confirm** — accepted-row sample + rejected breakdown grouped by reason; tick reasons to bulk-drop them before commit (counts are preserved in the result for audit). Final *Import* button writes the rows to the project's synthetic dataset and surfaces the `written_path`.
 
-A "Save this mapping" card on the Preview step persists the current locator + mapper + field_map + drop_reasons under a name you choose. Saved mappings appear at the top of the Data tab in a **Saved mappings** panel; each row gets a **Re-run** button that re-imports against the (potentially refreshed) source without going back through the wizard, plus a **Delete** action. Re-runs bump `last_run_at` and `last_run_accepted` so the panel shows the latest yield at a glance.
+A "Save this mapping" card on the Preview step persists the current locator + mapper + field_map + drop_reasons under a name you choose. Saved mappings appear at the top of the **Data** → **Sources** step in a **Saved mappings** panel; each row gets a **Re-run** button that re-imports against the (potentially refreshed) source without going back through the wizard, plus a **Delete** action. Re-runs bump `last_run_at` and `last_run_accepted` so the panel shows the latest yield at a glance.
 
 Every dataset-import run — interactive or re-run from a saved mapping — emits a [run event](../reference/glossary.md#run-event) with `stage=ingestion` and `reason_code=dataset_import_run` (`dataset_import_failed` on errors), carrying the source, locator, mapper, accepted/rejected row counts, `written_path`, and `config_id` if it came from a saved mapping. The Observability page surfaces these automatically — the audit log is just RunEvents you can already filter.
 
@@ -192,7 +192,7 @@ The card reads, for example, "Looks like **Question answering** (92% confident)"
 
 Normalises text, deduplicates rows, runs a PII scan, applies your domain pack's data-quality overlay. Emits a new `DatasetVersion` rather than mutating the ingested rows.
 
-**No documents yet?** The Data tab's first card, *Write sample documents*, has a generation model (your local Ollama model first; a cloud model only when pinned) write realistic, invented documents in the genres you name, containing what you say they must contain (one per line for genres; count and length are yours). The model is also told to vary surface forms — numbers with spaces, dashes or none, identifiers in each locale's own format, a person's name inside a greeting or signature as well as in the body — so the passages don't all look alike. They are ingested as one text file (`seed-documents-<time>.txt`, source `seed_documents`) and cleaned into passages, as a Job the bell tracks — everything after that is the same as for an upload. **Scanned PDFs** are OCR'd during ingestion when the server has `tesseract` and `pdftoppm` (`apt install tesseract-ocr poppler-utils`): pages without a text layer are rendered at 300 dpi and read by tesseract, so a fully scanned PDF and the scanned pages of a mixed one both come through. Without the tools, the upload fails with a message saying what to install. `BREWSLM_OCR=0` disables it; `BREWSLM_OCR_LANG` (tesseract codes joined by `+`, default `eng`) and `BREWSLM_OCR_DPI` tune it. OCR text keeps its errors — check the extracted text before relying on it.
+**No documents yet?** The **Data** → **Sources** step's first card, *Write sample documents*, has a generation model (your local Ollama model first; a cloud model only when pinned) write realistic, invented documents in the genres you name, containing what you say they must contain (one per line for genres; count and length are yours). The model is also told to vary surface forms — numbers with spaces, dashes or none, identifiers in each locale's own format, a person's name inside a greeting or signature as well as in the body — so the passages don't all look alike. They are ingested as one text file (`seed-documents-<time>.txt`, source `seed_documents`) and cleaned into passages, as a Job the bell tracks — everything after that is the same as for an upload. **Scanned PDFs** are OCR'd during ingestion when the server has `tesseract` and `pdftoppm` (`apt install tesseract-ocr poppler-utils`): pages without a text layer are rendered at 300 dpi and read by tesseract, so a fully scanned PDF and the scanned pages of a mixed one both come through. Without the tools, the upload fails with a message saying what to install. `BREWSLM_OCR=0` disables it; `BREWSLM_OCR_LANG` (tesseract codes joined by `+`, default `eng`) and `BREWSLM_OCR_DPI` tune it. OCR text keeps its errors — check the extracted text before relying on it.
 
 Pick a **Layout**: *Plain text*, *Multi-page, with headers and footers*, or *Scanned (OCR'd) multi-page* (`layout: "scanned"`: the pages are typeset, degraded like a scan into an image-only PDF and OCR'd on ingestion — for training a model that reads scans; needs tesseract). **Multi-page, with headers and footers** (`layout: "paged"`, `words_per_page`) to split each document into pages with invented header / footer lines — letterheads, "Page 2 of 5", confidentiality lines, print dates — so a model trained on them learns that page furniture is not data. `POST /api/projects/{id}/flows/seed-documents` `{kinds, genres, count, words, layout?, words_per_page?, backend?}`; defaults at `GET …/seed-documents/defaults`. The walkthrough that starts from nothing is [Sensitive-data tagging from zero](sensitive-data-tagging.md).
 
@@ -200,7 +200,7 @@ Row files are cleaned row by row, so their columns are preserved. Documents are 
 
 ### UI
 
-Pipeline → **Cleaning** → **Run cleaning**. The result card shows rows before / after, dedup ratio, and PII findings.
+**Data** → **Prepare** → **Run cleaning**. The result card shows rows before / after, dedup ratio, and PII findings.
 
 ### CLI
 
@@ -229,7 +229,7 @@ If your dataset is small (< a few hundred rows), the synthetic stage can use an 
 
 ### UI
 
-Pipeline → **Synthetic** → **Generate N rows**. Pick the seed dataset, target count, and LLM (defaults to an inexpensive small model). Review samples before merging.
+**Data** → **Generate** → **Generate N rows**. Pick the seed dataset, target count, and LLM (defaults to an inexpensive small model). Review samples before merging.
 
 ### CLI
 
@@ -257,7 +257,7 @@ Local models (Ollama, a teacher on your own machine or LAN) cost nothing and are
 - **Playground chats** with a cloud OpenAI-compatible endpoint (any API URL that is not this machine or your LAN) are logged as `playground_chat`, chat and streaming alike, and the reply carries `llm_cost`. A stream asks the provider for its token counts (`stream_options.include_usage`). If the provider sends none, the tokens are estimated at about four characters per token, and the log entry and the spend tally (`estimated_operations`) say so. Ollama, llama.cpp, the mock runtime and chatting with a trained run in-process are free and not logged. A logging failure never fails a chat.
 - **Prompt caching**: the instructions that repeat on every call (judge rules, labelling conventions, the span-synthesis types and rules, the documents → Q&A instructions) go to Anthropic as a cached block, billed at a tenth of the input price on a cache hit. A block shorter than the model's minimum cacheable length (about 1,000–4,000 tokens depending on the model) is simply sent uncached, so short prompts cost what they did before.
 
-The **Cloud LLM spend (last 30 days)** card on the Synthetic tab totals it per project: tokens, the estimated dollars, a row per model, and a line per kind of operation. The dollar figure is a **list-price estimate** from `llm_pricing` (override a family's price with `LLM_PRICES_JSON`, e.g. `{"sonnet": [3, 15]}`); your provider's invoice is the truth.
+The **Cloud LLM spend (last 30 days)** card on the **Data** → **Generate** step totals it per project: tokens, the estimated dollars, a row per model, and a line per kind of operation. The dollar figure is a **list-price estimate** from `llm_pricing` (override a family's price with `LLM_PRICES_JSON`, e.g. `{"sonnet": [3, 15]}`); your provider's invoice is the truth.
 
 ```sh
 curl http://localhost:8000/api/projects/1/llm-spend?days=30
@@ -292,7 +292,7 @@ The split form **hydrates from the active prepared version** on open: if the pro
 
 ### Data Health Report (D1+D2 of the data-quality arc)
 
-The Data Prep tab opens with an aggregated **Data Health Report** at the top — a single panel that pulls every data-quality signal scattered across the platform (ingestion, cleaning, shape vs task type, classification balance) into one traffic-light scorecard. Backed by `GET /api/projects/{id}/data-health`.
+The **Data** → **Split** step opens with an aggregated **Data Health Report** at the top — a single panel that pulls every data-quality signal scattered across the platform (ingestion, cleaning, shape vs task type, classification balance) into one traffic-light scorecard. Backed by `GET /api/projects/{id}/data-health`.
 
 Each signal row carries:
 
@@ -344,7 +344,7 @@ Further fixes (drop-low-quality docs, truncation, row drops) follow the same pre
 
 ### UI
 
-Pipeline → **Data prep** → **Run prep**. Settings:
+**Data** → **Split** → **Run prep**. Settings:
 
 - **Adapter** — defaults to the project default (`auto` if you haven't pinned one). See [Adapter examples](../getting-started/adapter-studio-examples.md).
 - **Train / val / test split** — default 80/10/10.
@@ -406,7 +406,7 @@ brewslm dataset tokenize --project 1 --dataset tickets_v1 --base-model 12
 
 ### Token-length distribution across splits (V3 ML-native viz)
 
-The Tokenization tab lands on the **TokenLengthDistributionPanel** before the single-split deep-dive: a grouped histogram with one bar per `(bucket, split)` so train / validation / test render on the same axis. Backed by `POST /api/projects/{id}/tokenization/analyze-splits`, which orchestrates the existing single-split analyze across all three splits in one call.
+The **Train** → **Tokenization** step lands on the **TokenLengthDistributionPanel** before the single-split deep-dive: a grouped histogram with one bar per `(bucket, split)` so train / validation / test render on the same axis. Backed by `POST /api/projects/{id}/tokenization/analyze-splits`, which orchestrates the existing single-split analyze across all three splits in one call.
 
 Reading the overlay:
 
@@ -417,7 +417,7 @@ Reading the overlay:
 
 ## Quality checklist
 
-Before kicking off training, verify on the Dataset Prep tab:
+Before kicking off training, verify on the **Data** → **Split** step:
 
 1. No empty prompts/targets (the prep stage rejects these; the count appears in `stats.json`).
 2. Train / val splits are non-overlapping (the seeded shuffle guarantees this).

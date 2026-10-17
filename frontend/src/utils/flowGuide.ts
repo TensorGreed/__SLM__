@@ -1,4 +1,5 @@
 import type { PipelineStage, PipelineStatusResponse, Project } from '../types';
+import { projectPath, stagePath } from './workspaceRoutes';
 
 export interface RecommendedAction {
     path: string;
@@ -69,38 +70,38 @@ export function getRecommendedAction(
         case 'ingestion':
             return {
                 // ?import=auto opens the import wizard on arrival.
-                path: `/project/${projectId}/pipeline/data?import=auto`,
+                path: stagePath(projectId, 'data', 'import=auto'),
                 title: 'Import source data',
                 description: 'Upload files or import from a remote dataset source.',
             };
         case 'cleaning':
             return {
-                path: `/project/${projectId}/pipeline/cleaning`,
+                path: stagePath(projectId, 'cleaning'),
                 title: 'Clean raw documents',
                 description: 'Run cleaning rules and inspect rejected/error records.',
             };
         case 'gold_set':
             return {
-                path: `/project/${projectId}/pipeline/goldset`,
+                path: stagePath(projectId, 'goldset'),
                 title: 'Build gold evaluation set',
                 description: 'Create trusted QA pairs to benchmark quality.',
             };
         case 'synthetic':
             return {
-                path: `/project/${projectId}/pipeline/synthetic`,
+                path: stagePath(projectId, 'synthetic'),
                 title: 'Generate synthetic examples',
                 description: 'Expand coverage with teacher-generated Q&A if needed.',
             };
         case 'dataset_prep':
         case 'data_adapter_preview':
             return {
-                path: `/project/${projectId}/pipeline/dataprep`,
+                path: stagePath(projectId, 'dataprep'),
                 title: 'Prepare train/val/test splits',
                 description: 'Normalize records into the training format your model expects.',
             };
         case 'tokenization':
             return {
-                path: `/project/${projectId}/pipeline/tokenization`,
+                path: stagePath(projectId, 'tokenization'),
                 title: 'Validate tokenization',
                 description: 'Check sequence lengths and truncation before training.',
             };
@@ -113,25 +114,25 @@ export function getRecommendedAction(
                 };
             }
             return {
-                path: `/project/${projectId}/pipeline/training`,
+                path: stagePath(projectId, 'training'),
                 title: 'Run and monitor training',
                 description: 'Start a training run and track live metrics/logs.',
             };
         case 'evaluation':
             return {
-                path: `/project/${projectId}/pipeline/eval`,
+                path: stagePath(projectId, 'eval'),
                 title: 'Evaluate model quality',
                 description: 'Run the eval and check which pass/fail rules passed.',
             };
         case 'compression':
             return {
-                path: `/project/${projectId}/pipeline/compression`,
+                path: stagePath(projectId, 'compression'),
                 title: 'Compress and quantize artifacts',
                 description: 'Generate smaller deployment variants (LoRA merge/quantization).',
             };
         case 'export':
             return {
-                path: `/project/${projectId}/pipeline/export`,
+                path: stagePath(projectId, 'export'),
                 title: 'Export deployment model',
                 description: 'Produce serving-ready outputs (HF, GGUF, ONNX as available).',
             };
@@ -143,9 +144,9 @@ export function getRecommendedAction(
             };
         default:
             return {
-                path: `/project/${projectId}/guide`,
-                title: 'Open project guide',
-                description: 'Review the recommended flow and continue from the right step.',
+                path: projectPath(projectId),
+                title: 'Open the overview',
+                description: 'See where the project is and continue from the right step.',
             };
     }
 }

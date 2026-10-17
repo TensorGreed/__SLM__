@@ -27,32 +27,8 @@ import CoachStrip from './CoachStrip';
 import { _resetCoachModeStoreForTests, useCoachModeStore } from '../../stores/coachModeStore';
 
 
-function newbieProgressionResponse() {
-    return {
-        data: {
-            xp_balance: 50,
-            level: 1,
-            level_title: 'Intern',
-            xp_into_level: 50,
-            xp_to_next_level: 50,
-            achievements_unlocked: [],
-            milestones: {},
-            recent_unlocks: [],
-            counters: {
-                base_models_trained: [],
-                import_sources_used: [],
-                successful_training_runs: 0,
-            },
-        },
-    };
-}
-
-
 function installGetRouter(coachStageResponse: any) {
     apiMock.get.mockImplementation(async (url: string) => {
-        if (url.includes('/gamification')) {
-            return newbieProgressionResponse();
-        }
         if (url.includes('/coach/')) {
             return coachStageResponse;
         }
@@ -77,8 +53,7 @@ describe('CoachStrip', () => {
         // renders content.
         useCoachModeStore.getState().setOverride(1, 'off');
         const { container } = render(<CoachStrip projectId={1} stage="data" />);
-        // Give the gamification fetch a beat to land — even after
-        // that, the strip must stay empty.
+        // Even after a beat the strip must stay empty.
         await new Promise((r) => setTimeout(r, 20));
         expect(container.firstChild).toBeNull();
     });
@@ -771,12 +746,7 @@ describe('CoachStrip', () => {
     });
 
     it('shows an error fallback when the coach endpoint fails', async () => {
-        apiMock.get.mockImplementation(async (url: string) => {
-            if (url.includes('/gamification')) {
-                return newbieProgressionResponse();
-            }
-            return Promise.reject({ response: { status: 500, data: { detail: 'boom' } } });
-        });
+        apiMock.get.mockImplementation(async () => Promise.reject({ response: { status: 500, data: { detail: 'boom' } } }));
         render(<CoachStrip projectId={1} stage="data" />);
         await waitFor(() => {
             expect(screen.getByTestId('coach-strip-data').textContent).toMatch(/unavailable/i);

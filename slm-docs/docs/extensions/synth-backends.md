@@ -64,7 +64,7 @@ Should return something like:
 }
 ```
 
-In the UI, the **Synthetic** tab's playbook panel will now show a **Backend** dropdown next to "Target rows". The dropdown is hidden when fewer than two backends are available (single-backend installs don't see clutter).
+In the UI, the **Data** → **Generate** playbook panel will now show a **Backend** dropdown next to "Target rows". The dropdown is hidden when fewer than two backends are available (single-backend installs don't see clutter).
 
 Each option that actually honors the playbook's `response_schema` (`nemo`, `vllm`) is suffixed with **· schema-aware** in the dropdown text. When the active selection is schema-aware, a green **✓ schema-aware** chip appears next to the picker. The `/backends` endpoint returns a `schema_aware: bool` per entry so the frontend can render the badge without hard-coding backend names.
 
@@ -148,13 +148,13 @@ To pin one of the power-user backends as the default, leave `OLLAMA_HOST` pointi
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Backend picker missing on the Synthetic tab | Only one backend reachable | Confirm `NEMO_API_URL` is set + the NIM responds to `GET /v1/models`. |
+| Backend picker missing on the **Data** → **Generate** step | Only one backend reachable | Confirm `NEMO_API_URL` is set + the NIM responds to `GET /v1/models`. |
 | `NEMO_API_URL is not set` error on generate | Env var not loaded into the Python process | Restart the backend after editing `.env`. |
 | `NEMO_DEFAULT_MODEL is not set` error | Required env var missing | Set the model id and restart. |
 | `HTTP 401 — check NEMO_API_KEY` | Endpoint requires auth | Add `NEMO_API_KEY=<bearer-token>` to `.env`. |
 | `HTTP 404 — is 'meta/llama-3.1-70b-instruct' loaded on this NIM?` | Model id doesn't match what the NIM serves | Hit `GET $NEMO_API_URL/v1/models` and use one of the listed model ids. |
 | `NeMo timed out after 600s` | Large prompts / underpowered GPU | Lower `target_count` in the playbook UI, bump `NEMO_TIMEOUT_SECONDS`, or pick a smaller model. |
-| Generated rows "disappear" after a successful run | They went to the **synth review queue** with `review_status="pending"` — gated out of training until you accept them | Open the Synthetic tab's review queue and accept/reject the rows. |
+| Generated rows "disappear" after a successful run | They went to the **synth review queue** with `review_status="pending"` — gated out of training until you accept them | Open the **Data** → **Generate** step's review queue and accept/reject the rows. |
 | vLLM returns `HTTP 400 — vLLM rejected the JSON Schema` | The playbook's `response_schema()` used a feature vLLM's structured-outputs backend doesn't support (e.g. `$ref`, complex `oneOf`) | Simplify the schema in the playbook's `response_schema(ctx)` method — keep it to plain `type`, `properties`, `required`, `enum`. |
 | vLLM serves but throughput is awful | Default block size / dtype suboptimal for your card | Pass `--dtype auto --max-num-batched-tokens 8192` (or bf16 on Hopper / SM 89+); see vLLM's perf-tuning docs. |
 

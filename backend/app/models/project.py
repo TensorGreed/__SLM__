@@ -97,9 +97,8 @@ class Project(Base):
             "auto_cancel": True
         }
     )
-    # Gamification progression state (Lab Journal). Nullable so
-    # existing projects round-trip unchanged; the service
-    # materializes the canonical empty shape on first read.
+    # UNUSED since 2026-10-17 (gamification / Lab Journal removed). Column kept
+    # so no migration is needed; nothing reads or writes it.
     gamification: Mapped[dict | None] = mapped_column(
         JSON,
         default=None,

@@ -5,6 +5,10 @@ title: Newbie Autopilot
 
 # Newbie Autopilot
 
+:::note The guided Autopilot page was retired on 2026-10-17
+The beginner "Autopilot" page (`/wizard`: goal → data → safe plan → train → chat) is gone, and `/wizard` now redirects to the project **Overview**. What replaces it: the brief-driven **+ New Project** dialog on the project list (describe what the model should do; BrewSLM sets up the task type and base model), the Coach bar's single next step on each page, and the advanced **Autopilot Planner** described below, now under **Settings** → **Autopilot Planner** (`/project/<id>/autopilot`).
+:::
+
 Autopilot v3 takes a plain-language brief and proposes a full pipeline plan: adapter, base model, training preset, pass/fail rules (eval pack), target profile. Every decision is **labelled with provenance** (`measured` vs `estimated`) and written to a persisted decision log so you can audit what it did and why.
 
 It's the fastest way to get from "I have an idea" to "the model is training", and the safest way to iterate without forgetting what changed between runs.
@@ -40,7 +44,7 @@ Two-phase by design. **Plan** is read-only and cheap; **Run** acts on the snapsh
 
 ### UI
 
-Training rail → **Autopilot Planner**. The Planner is hidden in beginner mode, which is on by default for new projects. Beginners get **Autopilot** instead: goal → data → safe plan → train → chat.
+**Settings** → **Autopilot Planner**. It is available whatever the beginner-mode flag says.
 
 1. Top input: paste a brief in plain English. *"Support FAQ tone, concise, never hallucinate beyond dataset, deploy on vLLM."*
 2. Click **Plan**. The planner returns:

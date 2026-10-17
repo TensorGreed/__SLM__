@@ -1,349 +1,70 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 
-const { apiMock } = vi.hoisted(() => ({
-    apiMock: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
-}));
-
-vi.mock('../../api/client', () => ({
-    default: apiMock,
-}));
-
 import ProjectSidebar from './ProjectSidebar';
-import type { PipelineStatusResponse, PipelineStage, Project } from '../../types';
-import { useProjectStore } from '../../stores/projectStore';
-
-const STAGES: PipelineStage[] = [
-  'ingestion',
-  'cleaning',
-  'gold_set',
-  'synthetic',
-  'dataset_prep',
-  'data_adapter_preview',
-  'tokenization',
-  'training',
-  'evaluation',
-  'compression',
-  'export',
-  'completed',
-];
-
-const PIPELINE_STATUS: PipelineStatusResponse = {
-  project_id: 1,
-  current_stage: 'training',
-  progress_percent: 64,
-  stages: STAGES.map((stage, index) => ({
-    stage,
-    display_name: stage,
-    index,
-    status: index < 7 ? 'completed' : stage === 'training' ? 'active' : 'pending',
-  })),
-};
 
 function LocationProbe() {
-  const location = useLocation();
-  return <div data-testid="location">{location.pathname}</div>;
+    const location = useLocation();
+    return <div data-testid="location">{location.pathname}</div>;
 }
 
-function renderSidebar(
-    initialEntries: Array<string | { pathname: string; state?: unknown }>,
-    opts: { beginnerMode?: boolean } = {},
-) {
-  return render(
-    <MemoryRouter initialEntries={initialEntries}>
-      <Routes>
-        <Route
-          path="/project/:id/*"
-          element={
-            <>
-              <ProjectSidebar
-                projectId={1}
-                projectName="Demo"
-                pipelineStatus={PIPELINE_STATUS}
-                beginnerMode={opts.beginnerMode}
-              />
-              <LocationProbe />
-            </>
-          }
-        />
-      </Routes>
-    </MemoryRouter>,
-  );
+function renderSidebar(initialPath: string) {
+    return render(
+        <MemoryRouter initialEntries={[initialPath]}>
+            <Routes>
+                <Route
+                    path="/project/:id/*"
+                    element={
+                        <>
+                            <ProjectSidebar projectId={1} projectName="Demo" />
+                            <LocationProbe />
+                        </>
+                    }
+                />
+            </Routes>
+        </MemoryRouter>,
+    );
 }
 
-describe('ProjectSidebar nav matrix', () => {
-  it.each([
-    ['/project/1/guide', undefined, 'Runs and Stages'],
-    ['/project/1/wizard', undefined, 'Runs and Stages'],
-    ['/project/1/wizard', { sidebarRail: 'training' }, 'Model Configuration'],
-    ['/project/1/pipeline/data', undefined, 'Runs and Stages'],
-    ['/project/1/data-studio', undefined, 'Runs and Stages'],
-    ['/project/1/pipeline/training', undefined, 'Model Configuration'],
-    ['/project/1/training-config', undefined, 'Model Configuration'],
-    ['/project/1/playground', undefined, 'Model Configuration'],
-    ['/project/1/workflow', undefined, 'Presets and Flows'],
-    ['/project/1/recipes', undefined, 'Presets and Flows'],
-    ['/project/1/domain', undefined, 'Packs and Profiles'],
-    ['/project/1/domain/packs', undefined, 'Packs and Profiles'],
-    ['/project/1/domain/profiles', undefined, 'Packs and Profiles'],
-  ])('maps %s to expected rail heading', (pathname, state, heading) => {
-    renderSidebar([{ pathname, state }]);
-    expect(screen.getByText(String(heading))).toBeInTheDocument();
-  });
-
-  it('keeps training context when clicking Autopilot from training-config', async () => {
-    const user = userEvent.setup();
-    renderSidebar(['/project/1/training-config']);
-
-    await user.click(screen.getByRole('button', { name: 'Autopilot' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/project/1/wizard');
-    expect(screen.getByText('Model Configuration')).toBeInTheDocument();
-  });
-
-  it('surfaces Playground as a panel item under the Training rail', async () => {
-    const user = userEvent.setup();
-    renderSidebar(['/project/1/training-config']);
-
-    await user.click(screen.getByRole('button', { name: 'Playground' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/project/1/playground');
-    expect(screen.getByText('Model Configuration')).toBeInTheDocument();
-  });
-
-  it('surfaces Data Studio as a Data Pipeline panel item', async () => {
-    const user = userEvent.setup();
-    renderSidebar(['/project/1/pipeline/data']);
-
-    await user.click(screen.getByRole('button', { name: 'Data Studio' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/project/1/data-studio');
-    expect(screen.getByText('Runs and Stages')).toBeInTheDocument();
-  });
-});
-
-describe('ProjectSidebar beginner-mode hiding', () => {
-  beforeEach(() => {
-    apiMock.put.mockReset();
-  });
-
-  it('hides Automation + Domain rails when beginner mode is on', () => {
-    renderSidebar(['/project/1/pipeline/data'], { beginnerMode: true });
-    expect(screen.queryByRole('button', { name: 'Automation' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Domain' })).not.toBeInTheDocument();
-    // Core rails still present.
-    expect(screen.getByRole('button', { name: 'Pipeline' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Training' })).toBeInTheDocument();
-  });
-
-  it('shows Automation + Domain rails when beginner mode is off', () => {
-    renderSidebar(['/project/1/pipeline/data'], { beginnerMode: false });
-    expect(screen.getByRole('button', { name: 'Automation' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Domain' })).toBeInTheDocument();
-  });
-
-  it('hides Adapter Studio in training panel when beginner mode is on', () => {
-    renderSidebar(['/project/1/training-config'], { beginnerMode: true });
-    expect(screen.queryByRole('button', { name: 'Adapter Studio' })).not.toBeInTheDocument();
-    // One Autopilot entry for beginners; the operator planner is advanced-only.
-    expect(screen.getByRole('button', { name: 'Autopilot' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Autopilot Planner' })).not.toBeInTheDocument();
-  });
-
-  it('hides Extension Studio under Training when beginner mode is on (priority.md P40)', () => {
-    renderSidebar(['/project/1/training-config'], { beginnerMode: true });
-    expect(
-      screen.queryByRole('button', { name: 'Extension Studio' }),
-    ).not.toBeInTheDocument();
-  });
-
-  it('shows Extension Studio under Training when beginner mode is off (priority.md P40)', () => {
-    renderSidebar(['/project/1/training-config'], { beginnerMode: false });
-    expect(
-      screen.getByRole('button', { name: 'Extension Studio' }),
-    ).toBeInTheDocument();
-  });
-
-  it('hides workflow + pipeline-recipes panel entries even on deep-link', () => {
-    renderSidebar(['/project/1/workflow'], { beginnerMode: true });
-    expect(screen.queryByRole('button', { name: 'Workflow Builder' })).not.toBeInTheDocument();
-    // The entry was relabeled "Recipes" → "Pipeline recipes" → "Pipeline presets" to
-    // disambiguate from the task type (qa-sft, classification,
-    // …) which is set via in-page CTAs + Coach Mode + the standalone
-    // /recipe-picker page. A user looking for "set my recipe" should
-    // NOT land on this pipeline-DAG page (it doesn't populate
-    // Project.selected_recipe).
-    expect(screen.queryByRole('button', { name: 'Pipeline presets' })).not.toBeInTheDocument();
-  });
-
-  it('shows Pipeline as Code under Automation when beginner mode is off', () => {
-    renderSidebar(['/project/1/workflow'], { beginnerMode: false });
-    expect(screen.getByRole('button', { name: 'Pipeline as Code' })).toBeInTheDocument();
-  });
-
-  it('hides Pipeline as Code when beginner mode is on', () => {
-    renderSidebar(['/project/1/workflow'], { beginnerMode: true });
-    expect(screen.queryByRole('button', { name: 'Pipeline as Code' })).not.toBeInTheDocument();
-  });
-
-  it('hides domain panel entries even on deep-link', () => {
-    renderSidebar(['/project/1/domain/packs'], { beginnerMode: true });
-    expect(screen.queryByRole('button', { name: 'Domain Packs' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Domain Profiles' })).not.toBeInTheDocument();
-  });
-
-  it('shows the beginner-mode badge and leave button', () => {
-    renderSidebar(['/project/1/guide'], { beginnerMode: true });
-    expect(screen.getByRole('note', { name: /Beginner mode active/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Leave beginner mode/i })).toBeInTheDocument();
-  });
-
-  it('leave-beginner button PUTs beginner_mode=false after confirm', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    const updatedProject: Project = {
-      id: 1,
-      name: 'Demo',
-      description: null,
-      status: 'active',
-      pipeline_stage: 'training',
-      base_model_name: null,
-      domain_pack_id: null,
-      domain_profile_id: null,
-      beginner_mode: false,
-      created_at: '2026-04-23T00:00:00Z',
-      updated_at: '2026-04-23T00:00:00Z',
-    };
-    apiMock.put.mockResolvedValue({ data: updatedProject });
-
-    const user = userEvent.setup();
-    renderSidebar(['/project/1/guide'], { beginnerMode: true });
-
-    await user.click(screen.getByRole('button', { name: /Leave beginner mode/i }));
-    await waitFor(() => {
-      expect(apiMock.put).toHaveBeenCalledWith('/projects/1', { beginner_mode: false });
+describe('ProjectSidebar (six destinations)', () => {
+    it('lists exactly Overview, Data, Train, Results, Ship and Settings', () => {
+        renderSidebar('/project/1');
+        const nav = screen.getByRole('navigation', { name: 'Workspace' });
+        const labels = Array.from(nav.querySelectorAll('a')).map((a) => a.textContent?.trim());
+        expect(labels).toEqual(['Overview', 'Data', 'Train', 'Results', 'Ship', 'Settings']);
     });
-    expect(useProjectStore.getState().activeProject).toEqual(updatedProject);
-    confirmSpy.mockRestore();
-  });
 
-  it('leave-beginner is cancelled if confirm returns false', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    const user = userEvent.setup();
-    renderSidebar(['/project/1/guide'], { beginnerMode: true });
-
-    await user.click(screen.getByRole('button', { name: /Leave beginner mode/i }));
-    expect(apiMock.put).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
-  });
-
-  it('surfaces errors from the leave-beginner call', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    apiMock.put.mockRejectedValue({ response: { data: { detail: 'db is down' } } });
-
-    const user = userEvent.setup();
-    renderSidebar(['/project/1/guide'], { beginnerMode: true });
-
-    await user.click(screen.getByRole('button', { name: /Leave beginner mode/i }));
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/db is down/);
-    confirmSpy.mockRestore();
-  });
-
-  it('shows Enter beginner mode button when beginner mode is off and hides Leave button', () => {
-    renderSidebar(['/project/1/pipeline/data'], { beginnerMode: false });
-    expect(screen.getByRole('button', { name: /Enter beginner mode/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Leave beginner mode/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('note', { name: /Beginner mode active/i })).not.toBeInTheDocument();
-  });
-
-  it('enter-beginner button PUTs beginner_mode=true after confirm', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    const updatedProject: Project = {
-      id: 1,
-      name: 'Demo',
-      description: null,
-      status: 'active',
-      pipeline_stage: 'training',
-      base_model_name: null,
-      domain_pack_id: null,
-      domain_profile_id: null,
-      beginner_mode: true,
-      created_at: '2026-04-23T00:00:00Z',
-      updated_at: '2026-04-23T00:00:00Z',
-    };
-    apiMock.put.mockResolvedValue({ data: updatedProject });
-
-    const user = userEvent.setup();
-    renderSidebar(['/project/1/pipeline/data'], { beginnerMode: false });
-
-    await user.click(screen.getByRole('button', { name: /Enter beginner mode/i }));
-    await waitFor(() => {
-      expect(apiMock.put).toHaveBeenCalledWith('/projects/1', { beginner_mode: true });
+    it.each([
+        ['/project/1', 'nav-overview'],
+        ['/project/1/data?step=cleaning', 'nav-data'],
+        ['/project/1/train', 'nav-train'],
+        ['/project/1/results', 'nav-results'],
+        ['/project/1/ship', 'nav-ship'],
+        ['/project/1/settings', 'nav-settings'],
+    ])('marks the destination of %s active', (path, testId) => {
+        renderSidebar(path);
+        expect(screen.getByTestId(testId)).toHaveClass('active');
+        expect(screen.getAllByRole('link').filter((a) => a.classList.contains('active'))).toHaveLength(1);
     });
-    confirmSpy.mockRestore();
-  });
-});
 
-afterEach(() => {
-  useProjectStore.setState({ activeProject: null, pipelineStatus: null });
-  try {
-    window.localStorage.removeItem('brewslm_sidebar_collapsed');
-  } catch {
-    // ignore
-  }
-  document.body.classList.remove('sidebar-collapsed');
-});
+    it('does not mark Overview active on a stage page', () => {
+        renderSidebar('/project/1/train');
+        expect(screen.getByTestId('nav-overview')).not.toHaveClass('active');
+    });
 
-describe('ProjectSidebar collapse', () => {
-  it('starts expanded by default and renders the collapse toggle', () => {
-    renderSidebar(['/project/1/training-config']);
-    expect(
-      screen.getByRole('button', { name: /Collapse sidebar/i }),
-    ).toBeInTheDocument();
-    // Brand wordmark visible (both the SVG title and the wordmark span).
-    expect(screen.getAllByText('BrewSLM').length).toBeGreaterThanOrEqual(1);
-  });
+    it('navigates to a destination on click', async () => {
+        const user = userEvent.setup();
+        renderSidebar('/project/1');
+        await user.click(screen.getByTestId('nav-ship'));
+        expect(screen.getByTestId('location')).toHaveTextContent('/project/1/ship');
+    });
 
-  it('clicking the toggle adds the sidebar-collapsed body class', async () => {
-    const user = userEvent.setup();
-    renderSidebar(['/project/1/training-config']);
-
-    await user.click(screen.getByRole('button', { name: /Collapse sidebar/i }));
-    expect(document.body.classList.contains('sidebar-collapsed')).toBe(true);
-    // Toggle button label flips.
-    expect(
-      screen.getByRole('button', { name: /Expand sidebar/i }),
-    ).toBeInTheDocument();
-  });
-
-  it('persists collapsed state in localStorage', async () => {
-    const user = userEvent.setup();
-    renderSidebar(['/project/1/training-config']);
-
-    await user.click(screen.getByRole('button', { name: /Collapse sidebar/i }));
-    expect(window.localStorage.getItem('brewslm_sidebar_collapsed')).toBe('1');
-
-    await user.click(screen.getByRole('button', { name: /Expand sidebar/i }));
-    expect(window.localStorage.getItem('brewslm_sidebar_collapsed')).toBe('0');
-  });
-
-  it('reads the persisted collapsed state on mount', () => {
-    window.localStorage.setItem('brewslm_sidebar_collapsed', '1');
-    renderSidebar(['/project/1/training-config']);
-    expect(document.body.classList.contains('sidebar-collapsed')).toBe(true);
-    expect(
-      screen.getByRole('button', { name: /Expand sidebar/i }),
-    ).toBeInTheDocument();
-  });
-
-  it('Cmd-B toggles the sidebar', async () => {
-    const user = userEvent.setup();
-    renderSidebar(['/project/1/training-config']);
-    expect(document.body.classList.contains('sidebar-collapsed')).toBe(false);
-
-    await user.keyboard('{Meta>}b{/Meta}');
-    expect(document.body.classList.contains('sidebar-collapsed')).toBe(true);
-
-    await user.keyboard('{Meta>}b{/Meta}');
-    expect(document.body.classList.contains('sidebar-collapsed')).toBe(false);
-  });
+    it('has no beginner-mode block and no stage links', () => {
+        renderSidebar('/project/1/data');
+        expect(screen.queryByText(/beginner mode/i)).toBeNull();
+        expect(screen.queryByRole('link', { name: 'Cleaning' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Pipeline' })).toBeNull();
+    });
 });

@@ -68,7 +68,7 @@ Now this site is live at `http://localhost:3001`. The `?` icon in the app's TopB
 
 ### UI
 
-Click **New Project** on the project list. The wizard asks for a name, template (`general` / `support` / `legal`), and whether to start in **beginner mode** (recommended for a first project). Submit.
+Click **New Project** on the project list. The dialog asks for a name, template (`general` / `support` / `legal`), and whether to start with advanced sections collapsed (**beginner mode**, recommended for a first project). Submit.
 
 ### CLI
 
@@ -84,16 +84,16 @@ curl -X POST http://localhost:8000/api/projects \
   -d '{"name": "Quickstart", "template": "general"}'
 ```
 
-You should now see the project in the sidebar.
+You should now land on the project's **Overview**.
 
 ## 6. Run the autopilot one-click flow
 
-The fastest path to a trained model is the **Autopilot** — describe what you want, accept the plan, click run.
+The fastest path to a trained model is the **Autopilot Planner** — describe what you want, accept the plan, click run.
 
 ### UI
 
 1. Open your project workspace.
-2. Click **Autopilot Planner** in the Training rail. New projects start in beginner mode, which hides the Planner: click **Leave beginner mode** in the sidebar footer first, or use **Autopilot** (the guided five-step version) instead.
+2. Open **Settings** → **Autopilot Planner**. (For a first project you can also describe your goal in the **+ New Project** dialog and let BrewSLM set up the task type and base model.)
 3. Type a brief: *"Build a small Q&A assistant from a CSV of FAQ rows."*
 4. Click **Plan**. The planner shows the proposed dataset adapter, base model, training preset, and target profile.
 5. Review the **provenance** column — `measured` vs `estimated` per component.
@@ -130,7 +130,7 @@ curl -X POST http://localhost:8000/api/projects/1/autopilot/run \
 
 ### UI
 
-The Autopilot Planner page switches to live mode when training starts. You see loss curves, per-step telemetry, and a **stop / pause / resume** control. When it finishes, the **Eval** tab fires automatically.
+The Autopilot Planner page switches to live mode when training starts. You see loss curves, per-step telemetry, and a **stop / pause / resume** control. When it finishes, the **Results** page fires automatically.
 
 ### CLI
 
@@ -150,7 +150,7 @@ curl http://localhost:8000/api/run-events/run/exp-1
 
 Once training is done:
 
-- **Models** under the Training rail lists the new checkpoint + its eval pass rate.
+- **Model Registry** (under **Ship** → **Export**) lists the new checkpoint + its eval pass rate.
 - **Observability** shows the full [Run Timeline](../observability/timeline.md) for the autopilot session → training → eval tree.
 - **Deployments** (still empty) is where you'd next [plan + smoke + promote](../deployment/plan.md) the checkpoint.
 

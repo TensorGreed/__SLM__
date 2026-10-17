@@ -1,0 +1,108 @@
+/* Project Overview — Epic U phase U1. */
+
+.overview-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.overview-kicker {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    margin-bottom: var(--space-xs);
+}
+
+.overview-hero {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) 2fr;
+    gap: var(--space-xl);
+    align-items: start;
+}
+
+.overview-hero__where strong {
+    font-size: var(--font-size-lg);
+}
+
+.overview-hero__next p {
+    margin: 0 0 var(--space-md);
+    color: var(--text-secondary);
+}
+
+.overview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: var(--space-lg);
+}
+
+.overview-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    align-items: flex-start;
+}
+
+.overview-card p {
+    margin: 0 0 var(--space-sm);
+    color: var(--text-secondary);
+}
+
+.overview-muted {
+    color: var(--text-tertiary);
+}
+
+.overview-nudges {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.overview-plan__toggle {
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+}
+
+.overview-plan__body {
+    margin-top: var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.overview-plan__steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.overview-plan__step {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    padding: 4px 0;
+    font-size: var(--font-size-sm);
+}
+
+.overview-plan__steps li.is-done .overview-plan__step {
+    color: var(--text-secondary);
+}
+
+@media (max-width: 760px) {
+    .overview-hero {
+        grid-template-columns: 1fr;
+    }
+}

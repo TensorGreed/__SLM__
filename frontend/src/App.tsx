@@ -1,7 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import ProjectListPage from './pages/ProjectListPage';
 import ProjectWorkspaceLayout from './pages/ProjectWorkspaceLayout';
-import ProjectPipelinePage from './pages/ProjectPipelinePage';
+import ProjectOverviewPage from './pages/ProjectOverviewPage';
+import ProjectStagePage from './pages/ProjectStagePage';
+import ProjectSettingsPage from './pages/ProjectSettingsPage';
+import LegacyRouteRedirect from './components/layout/LegacyRouteRedirect';
 import ProjectDataStudioPage from './pages/ProjectDataStudioPage';
 import ProjectDomainPage from './pages/ProjectDomainPage';
 import ProjectDomainPacksPage from './pages/ProjectDomainPacksPage';
@@ -12,8 +15,6 @@ import ProjectRecipePickerPage from './pages/ProjectRecipePickerPage';
 import ProjectTrainingConfigPage from './pages/ProjectTrainingConfigPage';
 import ProjectEvalComparePage from './pages/ProjectEvalComparePage';
 import ProjectPlaygroundPage from './pages/ProjectPlaygroundPage';
-import ProjectGuidePage from './pages/ProjectGuidePage';
-import ProjectWizardPage from './pages/ProjectWizardPage';
 import ProjectModelsPage from './pages/ProjectModelsPage';
 import ProjectAdapterStudioPage from './pages/ProjectAdapterStudioPage';
 import ProjectAutopilotPage from './pages/ProjectAutopilotPage';
@@ -41,11 +42,17 @@ function App() {
             <Route path="/" element={<ProjectListPage />} />
             <Route path="/manifest/import" element={<ProjectManifestPage />} />
             <Route path="/project/:id" element={<ProjectWorkspaceLayout />}>
-              <Route index element={<Navigate to="pipeline/data" replace />} />
-              <Route path="guide" element={<ProjectGuidePage />} />
-              <Route path="wizard" element={<ProjectWizardPage />} />
-              <Route path="pipeline" element={<Navigate to="data" replace />} />
-              <Route path="pipeline/:tabKey" element={<ProjectPipelinePage />} />
+              <Route index element={<ProjectOverviewPage />} />
+              <Route path="data" element={<ProjectStagePage destination="data" />} />
+              <Route path="train" element={<ProjectStagePage destination="train" />} />
+              <Route path="results" element={<ProjectStagePage destination="results" />} />
+              <Route path="ship" element={<ProjectStagePage destination="ship" />} />
+              <Route path="settings" element={<ProjectSettingsPage />} />
+              {/* Retired URLs (Epic U phase U1): /guide, /wizard, /pipeline/<tab>. */}
+              <Route path="guide" element={<LegacyRouteRedirect />} />
+              <Route path="wizard" element={<LegacyRouteRedirect />} />
+              <Route path="pipeline" element={<LegacyRouteRedirect />} />
+              <Route path="pipeline/:tabKey" element={<LegacyRouteRedirect />} />
               <Route path="data-studio" element={<ProjectDataStudioPage />} />
               <Route path="workflow" element={<ProjectWorkflowPage />} />
               <Route path="domain" element={<ProjectDomainPage />} />

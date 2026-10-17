@@ -1,0 +1,109 @@
+/* Stage destinations (Data / Train / Results / Ship) — Epic U phase U1. */
+
+.stage-page__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+}
+
+.stage-page__related {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+}
+
+.stage-page__steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-lg);
+}
+
+.stage-page__step {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: 6px 12px 6px 8px;
+    border: 1px solid var(--border-default);
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+}
+
+.stage-page__step:hover {
+    color: var(--text-primary);
+    border-color: var(--text-tertiary);
+}
+
+.stage-page__step.is-active {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border-color: var(--color-primary);
+}
+
+.stage-page__step-index {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--bg-tertiary);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.stage-page__step.is-active .stage-page__step-index {
+    background: var(--color-primary);
+    color: var(--bg-primary);
+}
+
+.stage-page__content {
+    animation: fadeIn 0.2s ease-out;
+}
+
+.stage-page__stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.stage-page__gate {
+    margin-bottom: var(--space-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.stage-page__gate-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.stage-page__gate-head h3 {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+}
+
+.stage-page__gate-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.stage-page__gate-warn {
+    font-size: var(--font-size-sm);
+    color: var(--color-warning);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--color-warning);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm) var(--space-md);
+}

@@ -5,7 +5,7 @@ title: Pipeline overview
 
 # Pipeline overview
 
-BrewSLM's pipeline is **11 canonical stages**, defined once in `app/models/run_event.py` and used everywhere — the sidebar tabs, the readiness service, the timeline view, every `RunEvent`'s `stage` field.
+BrewSLM's pipeline is **11 canonical stages**, defined once in `app/models/run_event.py` and used everywhere — the workspace steps, the readiness service, the timeline view, every `RunEvent`'s `stage` field.
 
 For the conceptual primer see [Concepts → Pipeline stages](../concepts/pipeline-stages.md). This page is the practical map: where each stage lives, what it produces, and what the next page should be.
 
@@ -40,11 +40,11 @@ flowchart LR
 
 A typical project does 3–5 iteration loops before its first deployment. The platform's job is to make those loops cheap (training manifest replay, pass/fail rule reuse, autopilot suggestions) — not to discourage them.
 
-## When stages unlock
+## What each stage needs
 
-Beginner mode gates stage tabs by **what artifacts already exist**. The Pipeline rail in the sidebar dims and disables any stage that can't yet run.
+Steps are never locked in the UI: every page is reachable at any time. A stage can only *produce* something once its inputs exist, and the Coach bar points at the next step that can run.
 
-| To unlock | You need |
+| Stage | Needs |
 |---|---|
 | Cleaning | At least one ingested document. |
 | Answer key / Synthetic | A cleaned dataset. |
@@ -53,31 +53,34 @@ Beginner mode gates stage tabs by **what artifacts already exist**. The Pipeline
 | Evaluation | A completed training run + an answer key + pass/fail rules (eval pack). |
 | Compression / Export | A trained checkpoint. |
 
-The unlock logic is the same one the [readiness service](../reliability/common-blockers.md) reports on for `brewslm doctor`.
+The same logic is what the [readiness service](../reliability/common-blockers.md) reports on for `brewslm doctor`.
 
 ## Where each stage lives in the UI
 
+The project sidebar has six destinations, nothing else:
+
 ```
-Sidebar
-├── Pipeline rail       (stages 1–7, 9–11)
-│   ├── Data            → ingestion
-│   ├── Cleaning        → cleaning
-│   ├── Answer Key      → gold_set
-│   ├── Synthetic       → synthetic
-│   ├── Data prep       → dataset_prep
-│   ├── Tokenization    → tokenization
-│   ├── Eval            → evaluation
-│   ├── Compression     → compression
-│   └── Export          → export
-└── Training rail       (stage 8 + adjacent)
-    ├── Configurations  → training config
-    ├── Models          → base model registry
-    ├── Adapter Studio  → adapter overrides (hidden in beginner mode)
-    ├── Autopilot       → planner v3
-    ├── Playground      → quick interactive try-out
-    ├── Deployments     → see Deployment section
-    └── Observability   → timeline + clusters + bundles
+Overview                  → current stage, next step, latest run, shipped model
+Data     (/data)          steps (?step=...):
+│   ├── Sources           → ingestion
+│   ├── Prepare           → cleaning       (?step=cleaning)
+│   ├── Answer key        → gold_set       (?step=goldset)
+│   ├── Generate          → synthetic      (?step=synthetic)
+│   └── Split             → dataset_prep   (?step=dataprep)
+Train    (/train)
+│   ├── Tokenization      → tokenization
+│   └── Training          → training       (?step=training; the runs list)
+Results  (/results)       → evaluation
+Ship     (/ship)
+│   ├── Compression       → compression
+│   └── Export            → export         (?step=export)
+Settings (/settings)      → tips switch, beginner flag, manifest export,
+                            Autopilot Planner, Workflow Builder, Pipeline presets,
+                            Pipeline as Code, Domain Packs/Profiles,
+                            Adapter Studio, Extension Studio
 ```
+
+Related tools are linked from each page's header: Data Studio and Annotation from **Data**; Training configuration, Base model registry and Task type from **Train**; Playground and Compare runs from **Results**; Deployments and Observability from **Ship**. Old `/pipeline/<tab>` URLs redirect to the matching destination and step.
 
 ## When to use which surface
 
@@ -85,7 +88,7 @@ Stage execution can happen on any of three surfaces. They write to the same unde
 
 | You want to | UI | CLI | API |
 |---|---|---|---|
-| Explore a new dataset interactively | ✅ Pipeline tabs | — | — |
+| Explore a new dataset interactively | ✅ The workspace pages | — | — |
 | Re-run a known-good config in CI | — | ✅ `brewslm train rerun` | ✅ `POST /api/projects/{id}/experiments/rerun` |
 | Integrate with your data warehouse | — | — | ✅ `POST /api/projects/{id}/datasets/upload` |
 | Demo to a stakeholder | ✅ The UI shows progress | — | — |

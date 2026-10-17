@@ -15,7 +15,7 @@ You have a CSV of resolved support tickets (~500 rows) with columns `question` a
 
 ### UI
 
-Click **New Project** on the project list. Name it `Support FAQ`, template `support`, beginner mode on. Submit.
+Click **New Project** on the project list. Name it `Support FAQ`, template `support`, beginner mode on (advanced sections start collapsed). Submit.
 
 ### CLI
 
@@ -39,7 +39,7 @@ Aim for 100–500 high-quality rows for a first iteration. Tiny datasets are fin
 
 ### UI
 
-Pipeline rail → **Data** → **Add source** → **Upload CSV**. Pick `tickets.csv`. The Dataset Structure Explorer auto-profiles the file: row count, columns, sample values. Click **Continue**.
+**Data** → **Sources** → **Add source** → **Upload CSV**. Pick `tickets.csv`. The Dataset Structure Explorer auto-profiles the file: row count, columns, sample values. Click **Continue**.
 
 ### CLI
 
@@ -58,7 +58,7 @@ curl -X POST http://localhost:8000/api/projects/1/datasets/upload \
   -F name=tickets_v1
 ```
 
-You should see the dataset appear in the Pipeline → Data tab with `status=ingested`.
+You should see the dataset appear under **Data** → **Sources** with `status=ingested`.
 
 ## Step 3 — Clean
 
@@ -66,7 +66,7 @@ The cleaning stage normalises text, dedups, and runs a PII scan. The defaults fr
 
 ### UI
 
-Pipeline rail → **Cleaning** → **Run cleaning**. The page shows row counts before / after, the PII findings (if any), and the dedup ratio.
+**Data** → **Prepare** → **Run cleaning**. The page shows row counts before / after, the PII findings (if any), and the dedup ratio.
 
 ### CLI
 
@@ -90,7 +90,7 @@ The answer key (API name: *gold set*) is the ground-truth eval set. The workbenc
 
 ### UI
 
-Pipeline rail → **Answer Key** → **Sample 100 rows (stratified)**. Each row has a textarea — paste the correct answer and approve. Submit; the answer-key version locks (draft → locked).
+**Data** → **Answer key** → **Sample 100 rows (stratified)**. Each row has a textarea — paste the correct answer and approve. Submit; the answer-key version locks (draft → locked).
 
 ### CLI
 
@@ -114,7 +114,7 @@ The Base Model Registry lists candidates with **measured compatibility** for you
 
 ### UI
 
-Training rail → **Base Model Registry**. Filter `family=qwen`, `context >= 4096`, `license=permissive`. Click **Validate for project** on a candidate — surfaces tokenizer / chat-template / runtime warnings. Click **Set as default** when you find one you like (e.g. `Qwen2.5-1.5B-Instruct`).
+**Train** → **Base model registry**. Filter `family=qwen`, `context >= 4096`, `license=permissive`. Click **Validate for project** on a candidate — surfaces tokenizer / chat-template / runtime warnings. Click **Set as default** when you find one you like (e.g. `Qwen2.5-1.5B-Instruct`).
 
 ### CLI
 
@@ -133,11 +133,11 @@ curl -X POST http://localhost:8000/api/projects/1/models/12/validate
 
 ## Step 6 — Train
 
-For a first project, let the Autopilot pick the training preset. It chooses between safe-SFT, LoRA-fast, and a small full-fine-tune based on dataset size + base model.
+For a first project, let the Autopilot Planner pick the training preset. It chooses between safe-SFT, LoRA-fast, and a small full-fine-tune based on dataset size + base model.
 
 ### UI
 
-Training rail → **Autopilot Planner** (visible once beginner mode is off; beginners use **Autopilot**, the guided five-step version) → describe the goal in plain English: *"Support FAQ tone, concise answers, no hallucinations beyond the dataset."* → **Plan** → **One-click run**. The page swaps to live mode.
+**Settings** → **Autopilot Planner** → describe the goal in plain English: *"Support FAQ tone, concise answers, no hallucinations beyond the dataset."* → **Plan** → **One-click run**. The page swaps to live mode.
 
 ### CLI
 
@@ -162,11 +162,11 @@ Watch the loss curve. Cost + provenance show in the Resolved Defaults panel — 
 
 ## Step 7 — Evaluate
 
-Once training finishes, the Eval stage kicks off automatically (Autopilot path) or you trigger it.
+Once training finishes, the Eval stage kicks off automatically (Autopilot Planner path) or you trigger it.
 
 ### UI
 
-Pipeline rail → **Eval** → **Run evaluation**. Each pass/fail rule (exact match, LLM-judge, safety) lands as a row with pass / fail and its metric. The **Failure Clusters** card below groups errors by reason code — click one to see exemplars.
+**Results** → **Run evaluation**. Each pass/fail rule (exact match, LLM-judge, safety) lands as a row with pass / fail and its metric. The **Failure Clusters** card below groups errors by reason code — click one to see exemplars.
 
 ### CLI
 
@@ -191,7 +191,7 @@ When eval passes, export for the target.
 
 ### UI
 
-Pipeline rail → **Export** → **New export** → target `vllm_server` → format `huggingface`. Click **Run export**. Artifact lands under `DATA_DIR/exports/`.
+**Ship** → **Export** → **New export** → target `vllm_server` → format `huggingface`. Click **Run export**. Artifact lands under `DATA_DIR/exports/`.
 
 ### CLI
 

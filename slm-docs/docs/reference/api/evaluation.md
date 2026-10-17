@@ -207,7 +207,7 @@ Content type: `application/json` — `HeldoutEvalRunRequest`
 **Get Sft Lift Summary**
 
 Compute the baseline → trained lift summary for this project.
-Used by the Eval tab's "Did SFT help?" panel. Returns
+Used by the Results page's "Did SFT help?" panel. Returns
 `status="no_baseline"` / `"no_trained"` / `"no_overlap"` when
 the comparison can't be built — never 404 unless the project is
 missing — so the UI can render an informative fallback.
@@ -483,7 +483,7 @@ Content type: `application/json` — `ActiveLearningPromoteRequest`
 
 Propose up to `max_rows` failed eval rows for the given
 experiment, ranked by failure severity. Used by the
-'Add these N examples to improve most' panel on the Eval tab.
+'Add these N examples to improve most' panel on the Results page.
 
 **Parameters**
 
@@ -544,7 +544,7 @@ cluster / project isn't found. 400 for everything else.
 **Explain Failure Cluster Endpoint**
 
 Generate (or return cached) a one-line LLM-judge explanation
-for a failure cluster. Used by the Eval tab's
+for a failure cluster. Used by the Results page's
 `FailureClustersPanel` when the user expands a cluster.
 
 Returns 200 with `status="judge_unavailable"` when no judge

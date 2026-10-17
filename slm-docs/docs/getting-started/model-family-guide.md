@@ -51,7 +51,7 @@ The default. If you're not sure, start here.
 
 ### UI
 
-1. Project workspace → Training rail → **Base Model Registry**.
+1. Project workspace → **Train** → **Base model registry**.
 2. Filter by:
    - **Family** — pick from the table above.
    - **License** — `permissive` (MIT / Apache 2.0) vs `restricted` (Llama community, etc.). Beginner mode hides restricted models by default.

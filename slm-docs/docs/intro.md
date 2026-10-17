@@ -43,7 +43,7 @@ The platform has grown well beyond pipeline-as-a-website. Recent waves added:
 - **Measured over guessed.** If a number can come from real observation (a completed run, a smoke test, a telemetry window), it does — labelled with `provenance: "measured"`. Estimates carry `provenance: "estimated"` so you can tell them apart.
 - **Reason codes everywhere.** Every error / critical event carries a stable `reason_code` from a single taxonomy. Failure clustering, support bundles, and audit logs all pivot on it.
 - **Reproducibility by manifest.** Every training run gets an immutable manifest that's enough to re-run it. Pipelines export to / apply from `brewslm.yaml`.
-- **Beginner mode is real.** Advanced surfaces (Workflow Builder, Domain Packs, Adapter Studio, Extension Studio) are hidden by default for new users and can be revealed any time.
+- **Beginner mode is real.** Advanced tools (Workflow Builder, Domain Packs, Adapter Studio, Extension Studio) live under **Settings**, out of the main path, and advanced sections start collapsed for new projects.
 
 ## Documentation surface
 

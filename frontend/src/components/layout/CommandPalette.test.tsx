@@ -8,7 +8,6 @@ import { openCommandPalette } from './commandPaletteBridge';
 
 function renderPalette(
     projectId: number | null = 7,
-    beginnerMode = false,
     initialPath = '/project/7/training-config',
 ) {
     return render(
@@ -18,10 +17,7 @@ function renderPalette(
                     path="*"
                     element={
                         <>
-                            <CommandPalette
-                                projectId={projectId}
-                                beginnerMode={beginnerMode}
-                            />
+                            <CommandPalette projectId={projectId} />
                             <span data-testid="loc">{initialPath}</span>
                         </>
                     }
@@ -41,10 +37,9 @@ describe('CommandPalette', () => {
         ).toBeInTheDocument();
         // Multiple sections.
         expect(screen.getByText('Navigation')).toBeInTheDocument();
-        expect(screen.getByText('Data Pipeline')).toBeInTheDocument();
-        expect(screen.getByText('Training')).toBeInTheDocument();
+        expect(screen.getByText('Workspace')).toBeInTheDocument();
+        expect(screen.getByText('Overview')).toBeInTheDocument();
         // A few well-known actions.
-        expect(screen.getByText('Pipeline Runs')).toBeInTheDocument();
         expect(screen.getByText('Data Studio')).toBeInTheDocument();
         expect(screen.getByText('Annotation')).toBeInTheDocument();
         expect(screen.getByText('Observability')).toBeInTheDocument();
@@ -59,19 +54,15 @@ describe('CommandPalette', () => {
         ).toBeInTheDocument();
     });
 
-    it('hides beginner-only actions when beginnerMode is true', async () => {
-        renderPalette(7, true);
+    it('offers every tool regardless of beginner mode (nothing is hidden since Epic U)', async () => {
+        renderPalette(7);
         const user = userEvent.setup();
         await user.keyboard('{Meta>}k{/Meta}');
         await screen.findByRole('dialog');
-        // Always visible.
-        expect(screen.getByText('Pipeline Runs')).toBeInTheDocument();
-        expect(screen.getByText('Data Studio')).toBeInTheDocument();
-        // Hidden when beginner.
-        expect(screen.queryByText('Adapter Studio')).not.toBeInTheDocument();
-        expect(screen.queryByText('Extension Studio')).not.toBeInTheDocument();
-        expect(screen.queryByText('Workflow Builder')).not.toBeInTheDocument();
-        expect(screen.queryByText('Domain Packs')).not.toBeInTheDocument();
+        expect(screen.getByText('Adapter Studio')).toBeInTheDocument();
+        expect(screen.getByText('Extension Studio')).toBeInTheDocument();
+        expect(screen.getByText('Workflow Builder')).toBeInTheDocument();
+        expect(screen.getByText('Domain Packs')).toBeInTheDocument();
     });
 
     it('filters by substring match', async () => {
@@ -84,7 +75,7 @@ describe('CommandPalette', () => {
             'observ',
         );
         expect(screen.getByText('Observability')).toBeInTheDocument();
-        expect(screen.queryByText('Pipeline Runs')).not.toBeInTheDocument();
+        expect(screen.queryByText('Data Studio')).not.toBeInTheDocument();
     });
 
     it('shows the empty state when nothing matches', async () => {
@@ -142,6 +133,6 @@ describe('CommandPalette', () => {
         await user.keyboard('{Meta>}k{/Meta}');
         await screen.findByRole('dialog');
         expect(screen.getByText('Back to projects')).toBeInTheDocument();
-        expect(screen.queryByText('Pipeline Runs')).not.toBeInTheDocument();
+        expect(screen.queryByText('Data Studio')).not.toBeInTheDocument();
     });
 });
