@@ -18,6 +18,7 @@ import time
 import unittest
 import uuid
 from pathlib import Path
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -288,6 +289,80 @@ class SeedGroupEndpointTests(unittest.TestCase):
             manifest = json.loads((run_dir / "manifest.json").read_text())
             self.assertEqual(manifest["seed_selection"]["metric_id"], "eval_loss")
             self.assertFalse((run_dir / "model" / "README.md").exists())
+
+    def test_ship_span_seed_without_evaluation_runs_the_lift_check_first(self):
+        """A seed child has no EvalResult until lift-checked (the leader is
+        what the watcher checks) — project 31's first ship of #131 (export
+        34) came out with a card that had no Evaluation / Human-review
+        section. Ship evaluates the picked child first."""
+        calls: list[int] = []
+
+        async def fake_span_eval(db, *, project_id, experiment, report=None):
+            calls.append(experiment.id)
+            db.add(EvalResult(
+                experiment_id=experiment.id, dataset_name="test", eval_type="f1",
+                metrics={"f1": 0.8, "precision": 0.8, "recall": 0.8, "total": 5, "scoring_mode": "span_set",
+                         "per_class": {"phone": {"precision": 0.8, "recall": 0.8, "f1": 0.8, "tp": 4, "fp": 1, "fn": 1}}},
+            ))
+            await db.commit()
+            return {"kind": "span_eval", "experiment_id": experiment.id, "test": {"f1": 0.8}, "answer_key": None}
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch(
+            "app.services.post_training_eval_service.run_span_evaluation", fake_span_eval
+        ):
+            pid = _new_project()
+            leader, ids = _seed_group(pid, Path(tmp), task_type="token_classification", reports=[
+                {"task_metrics": {"span_set": {"f1": 0.70}}},
+                {"task_metrics": {"span_set": {"f1": 0.80}}},
+            ], evals=False)
+            resp = client.post(f"/api/projects/{pid}/seed-groups/{leader}/ship", json={"run_smoke_tests": False})
+            self.assertEqual(resp.status_code, 201, resp.text)
+            body = resp.json()
+            self.assertEqual(calls, [ids[1]], "only the picked child is evaluated")
+            self.assertEqual(body["evaluated_before_ship"]["ran"], True)
+            self.assertEqual(body["evaluated_before_ship"]["kind"], "span_eval")
+            export = body["export"]
+            self.assertEqual(export["status"], "completed", export)
+            card = (Path(export["output_path"]) / f"run-{export['run_id']}" / "model" / "README.md").read_text()
+            self.assertIn("## Evaluation", card, "the card reads the evaluation the ship just ran")
+            self.assertIn("**Seed selection:**", card)
+
+    def test_ship_span_seed_with_evaluation_does_not_re_evaluate(self):
+        async def fake_span_eval(db, *, project_id, experiment, report=None):
+            raise AssertionError("must not evaluate a child that already has an EvalResult")
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch(
+            "app.services.post_training_eval_service.run_span_evaluation", fake_span_eval
+        ):
+            pid = _new_project()
+            leader, _ = _seed_group(pid, Path(tmp), task_type="token_classification", reports=[
+                {"task_metrics": {"span_set": {"f1": 0.70}}},
+            ])
+            resp = client.post(f"/api/projects/{pid}/seed-groups/{leader}/ship", json={"run_smoke_tests": False})
+            self.assertEqual(resp.status_code, 201, resp.text)
+            self.assertIsNone(resp.json()["evaluated_before_ship"])
+
+    def test_ship_span_seed_without_evaluation_is_409_when_opted_out(self):
+        async def fake_span_eval(db, *, project_id, experiment, report=None):
+            raise AssertionError("evaluate_if_missing=false must not evaluate")
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch(
+            "app.services.post_training_eval_service.run_span_evaluation", fake_span_eval
+        ):
+            pid = _new_project()
+            leader, ids = _seed_group(pid, Path(tmp), task_type="token_classification", reports=[
+                {"task_metrics": {"span_set": {"f1": 0.70}}},
+            ], evals=False)
+            resp = client.post(
+                f"/api/projects/{pid}/seed-groups/{leader}/ship",
+                json={"run_smoke_tests": False, "evaluate_if_missing": False},
+            )
+            self.assertEqual(resp.status_code, 409, resp.text)
+            body = resp.json()
+            self.assertIn(f"Run #{ids[0]} has no evaluation on record", body["detail"])
+            self.assertIn("lift-check", body["detail"], "the hint names the lift check")
+            self.assertIsNone(client.get(f"/api/projects/{pid}/seed-groups/{leader}/pick").json()["recorded"],
+                              "a refused ship records nothing")
 
     def test_ship_without_any_metric_is_400(self):
         with tempfile.TemporaryDirectory() as tmp:

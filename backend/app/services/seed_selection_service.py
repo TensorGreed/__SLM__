@@ -38,7 +38,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.experiment import Experiment
+from app.models.experiment import EvalResult, Experiment
 
 SELECTION_KEY = "seed_selection"
 
@@ -268,6 +268,50 @@ async def record_selection(db: AsyncSession, leader: Experiment, pick: dict[str,
     leader.config = cfg
     await db.flush()
     return selection
+
+
+class SeedNotEvaluated(Exception):
+    """The picked seed has no evaluation on record and the caller asked not
+    to run one — the export would ship a card without evidence."""
+
+    def __init__(self, project_id: int, experiment_id: int) -> None:
+        self.project_id = project_id
+        self.experiment_id = experiment_id
+        super().__init__(
+            f"Run #{experiment_id} has no evaluation on record, so its model card would carry no "
+            f"evaluation or human-review evidence. Run the lift check first "
+            f"(POST /api/projects/{project_id}/evaluation/summary/lift-check "
+            f'{{"experiment_id": {experiment_id}}}, or "Evaluate this run" on the Eval tab), '
+            "or ship with evaluate_if_missing=true to run it before exporting."
+        )
+
+
+async def has_eval_result(db: AsyncSession, experiment_id: int) -> bool:
+    row = (
+        await db.execute(select(EvalResult.id).where(EvalResult.experiment_id == experiment_id).limit(1))
+    ).scalar_one_or_none()
+    return row is not None
+
+
+async def evaluate_before_ship(
+    db: AsyncSession, project_id: int, child: Experiment, *, evaluate_if_missing: bool = True
+) -> dict[str, Any] | None:
+    """A span tagger's model card states the evaluation and human-review
+    evidence from the picked child's EvalResults — and a seed child has none
+    until it is lift-checked (the group's leader is what the watcher checks).
+    When the picked child has no EvalResult: run the span lift check inline
+    (test examples + answer key) and return its result, or raise
+    ``SeedNotEvaluated`` when ``evaluate_if_missing`` is False. None when the
+    child already has evidence or isn't a span run (other cards don't read
+    EvalResults)."""
+    from app.services.post_training_eval_service import is_token_classification, run_span_evaluation
+
+    if not is_token_classification(child) or await has_eval_result(db, child.id):
+        return None
+    if not evaluate_if_missing:
+        raise SeedNotEvaluated(project_id, child.id)
+    result = await run_span_evaluation(db, project_id=project_id, experiment=child)
+    return {"ran": True, **(result if isinstance(result, dict) else {})}
 
 
 async def selection_for_experiment(db: AsyncSession, experiment: Experiment) -> dict[str, Any] | None:

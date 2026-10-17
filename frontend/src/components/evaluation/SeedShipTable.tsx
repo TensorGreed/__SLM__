@@ -128,6 +128,7 @@ export default function SeedShipTable({ projectId, leaderId, seeds }: SeedShipTa
                     {shipped.picked_seed_value ?? '?'} (run #{shipped.picked_experiment_id})
                     {shipped.export.output_path ? <> · <code>{shipped.export.output_path}</code></> : null}
                     {shipped.export.error ? ` — ${shipped.export.error}` : ''}
+                    {shipped.evaluated_before_ship?.ran ? ' · evaluated first (it had no evaluation on record)' : ''}
                     {' '}· <a href={`/project/${projectId}/pipeline/export`} data-testid="seed-ship-export-link">Open Export →</a>
                 </p>
             )}

@@ -39,6 +39,8 @@ export interface ShipSeedResponse {
     picked_experiment_id: number;
     picked_seed_value: number | null;
     selection: SeedSelection;
+    /** The span lift check the ship ran first because the picked seed had no evaluation on record; null otherwise. */
+    evaluated_before_ship: { ran: boolean; kind?: string } | null;
     export: {
         id: number;
         experiment_id: number;

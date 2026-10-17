@@ -755,8 +755,12 @@ runs real CPU inference). ~4 min locally.
   child without the metric is listed, never picked) — never test / answer key /
   benchmarks. `GET /projects/{id}/seed-groups/{leader}/pick` (`?metric=` override;
   `recorded` = last selection), `POST .../ship` {export_format=huggingface, metric,
-  run_smoke_tests} → `record_selection` on the leader's `config["seed_selection"]`
-  + `create_export`/`run_export` of the child. `run_export` reads
+  run_smoke_tests, evaluate_if_missing} → `evaluate_before_ship` (a span child
+  with no EvalResult is lift-checked inline first — the card reads its
+  evidence from EvalResults and a seed child has none until then; False →
+  409 `SeedNotEvaluated` with the lift-check hint; response
+  `evaluated_before_ship`) → `record_selection` on the leader's
+  `config["seed_selection"]` + `create_export`/`run_export` of the child. `run_export` reads
   `selection_for_experiment` → manifest `seed_selection`, RELEASE_NOTES line, span
   card "Seed selection" line (`build_span_model_card(seed_selection=)`). Summary
   flag `seed_group_leader` → `SeedShipTable` on `EvalSummaryCard`. Tests:

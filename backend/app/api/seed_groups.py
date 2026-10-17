@@ -20,6 +20,11 @@ class ShipSeedRequest(BaseModel):
     # A validation metric id to pick by instead of the task default.
     metric: str | None = None
     run_smoke_tests: bool = True
+    # A span tagger's model card reads its evaluation + human-review evidence
+    # from the picked child's EvalResults, and a seed child has none until it
+    # is lift-checked. True: run the span lift check inline first when it is
+    # missing. False: refuse with 409 instead.
+    evaluate_if_missing: bool = True
 
 
 async def _pick(db: AsyncSession, project_id: int, leader_id: int, metric: str | None) -> dict[str, Any]:
@@ -54,7 +59,11 @@ async def ship(
     """Record the pick on the group's leader, then run the normal export of
     the picked child (Hugging Face by default). The export's manifest,
     release notes and — for a span tagger — model card say which seed was
-    picked, out of how many, by which validation metric and values."""
+    picked, out of how many, by which validation metric and values. A span
+    child with no evaluation on record is lift-checked first (test examples
+    + answer key), so the card carries that evidence; ``evaluate_if_missing``
+    false turns that into a 409."""
+    from app.models.experiment import Experiment
     from app.services.export_service import create_export, run_export
 
     body = req or ShipSeedRequest()
@@ -67,6 +76,13 @@ async def ship(
             "nothing to pick by.",
         )
     leader = await seeds.load_leader(db, project_id, leader_id)
+    child = await db.get(Experiment, int(picked_id))
+    try:
+        evaluated = await seeds.evaluate_before_ship(
+            db, project_id, child, evaluate_if_missing=bool(body.evaluate_if_missing)
+        )
+    except seeds.SeedNotEvaluated as exc:
+        raise HTTPException(409, str(exc)) from exc
     export = await create_export(db, project_id, picked_id, body.export_format, body.quantization)
     selection = await seeds.record_selection(
         db, leader, result, export_id=export.id, export_format=body.export_format.value
@@ -79,6 +95,8 @@ async def ship(
         "picked_experiment_id": picked_id,
         "picked_seed_value": result.get("picked_seed_value"),
         "selection": {**selection, "text": seeds.selection_text(selection)},
+        # The span lift check run for this ship (None: evidence already existed / not a span run).
+        "evaluated_before_ship": evaluated,
         "export": {
             "id": export.id,
             "experiment_id": export.experiment_id,
