@@ -11,23 +11,48 @@ Stage 8 of the [pipeline](pipeline-overview.md). BrewSLM treats training as a **
 
 | Want | Surface |
 |---|---|
-| Pick a training preset + model interactively, see resolved defaults | UI → **Train** → **Training configuration** |
+| Fill in the form and train (base model, task, seeds) | UI → **Train** → **Train** button, then **Launch** |
+| Pick a training preset, see resolved defaults, tweak a config knob | UI → **Train** → **More options** → *Training presets* / *Model and hyperparameters* |
 | Reproduce a known-good run | UI / CLI → `train rerun --experiment N` |
 | Brief in plain English, accept the plan | UI / CLI → Autopilot → [Newbie autopilot](newbie-autopilot.md) |
-| Tweak one config knob | UI → Training Configurations → edit + **Apply + start** |
 
 ## Start a fresh run
 
 ### UI
 
-**Train** → **Training configuration**.
+**Train** (`/project/<id>/train`) is a single form page with no steps. The form is prefilled from the latest run's config, or from the project's base model when there is no run yet.
 
-1. Pick a **Training preset** from the dropdown and click **Apply preset** (the API and CLI call these *recipes*). Training presets are pre-tuned config bundles: `safe-balanced-sft`, `lora-fast`, `classification`, `seq2seq`, etc. The picker shows their key knobs at a glance.
-2. **Base model** — defaults to the project default; override here.
-3. **Training mode** — `sft` / `dpo` / `orpo` / `classification` / `seq2seq` / `distillation` (filtered to what the preset + model support). `distillation` trains against captured teacher logits — see [Distillation](distillation.md).
-4. **Resolved defaults panel** below shows every field that will be applied with provenance (`recipe` / `domain_pack` / `model_metadata` / `default`).
-5. **Cost estimate card** — gpu_hours, USD, CO2, provenance, confidence band. Pulled from real history when available; estimated otherwise. See [Measured vs estimated](../reliability/measured-vs-estimated.md).
-6. Click **Preflight**. If green, click **Start training**.
+**Page one** asks only:
+
+1. **Base model** — a text field plus **Browse**, which opens the *Base model registry* section.
+2. **Task** — read-only, prefilled from the project's task type, with **Change**.
+3. **Seeds** — *One run* or *Three seeds — pick the best by validation*.
+4. **Run name** — optional; blank names the run after the date (e.g. `run-2026-10-17-1830`).
+5. **Readiness line** — the capability preflight, run on load and whenever the base model changes. It reads "Ready to train.", "Ready to train, 2 warnings." or "N blocking issues." with the issues listed and a **Fix** button that opens the *Checks* section; **Check again** re-runs it.
+6. **Train** (labelled "Train 3 seeds" for three seeds) creates the run and opens the launch confirmation: the resolved config and the estimate (gpu_hours, USD, CO2, provenance, confidence band; pulled from real history when available, estimated otherwise — see [Measured vs estimated](../reliability/measured-vs-estimated.md)). **Launch** starts it.
+
+**More options** (collapsed by default) holds everything else, each as a collapsible section that loads only when opened:
+
+| Section | What is in it |
+|---|---|
+| *Model and hyperparameters* | Epochs, batch size, learning rate, OCR-noise copies (token classification), the model recommender and benchmark sweep |
+| *LoRA and advanced training* | PEFT, precision, OOM retry, curriculum, alignment, observability |
+| *Seeds* | Base seed, explicit list, parallel dispatch |
+| *Checks* | Data readiness, effective config (the resolved defaults with provenance: `recipe` / `domain_pack` / `model_metadata` / `default`), preflight + plan |
+| *Cloud burst* | Cloud burst planning |
+| *Training presets* | Preset config patch (the API and CLI call these *recipes*: `safe-balanced-sft`, `lora-fast`, `classification`, `seq2seq`, …), hardware auto-tuner, runtime defaults |
+| *Plan and gaps* | Plan refinement, config gaps, trainability forecast, archetype comparison, alignment scaffold |
+| *Base model registry* | Browse and validate base models |
+| *Task type* | Change the project's task type |
+| *Pipeline presets* | End-to-end pipeline presets |
+| *Adapter Studio* | Dataset adapters |
+| *Tokenization* | Token-length distributions and tokenization |
+
+A section opens from the URL: `/train?open=<id>` with ids `model`, `lora`, `seeds`, `checks`, `cloud`, `presets`, `plan`, `models`, `task`, `pipeline-presets`, `adapters`, `tokenization`. The retired `/training-config`, `/models`, `/recipe-picker`, `/recipes`, `/adapter-studio` and `/pipeline/tokenization` URLs redirect into the matching section.
+
+The **training mode** (`sft` / `dpo` / `orpo` / `classification` / `seq2seq` / `distillation`, filtered to what the preset + model support) is set in the config sections; `distillation` trains against captured teacher logits — see [Distillation](distillation.md).
+
+The **Runs** list (live loss, kill switch, compare, dashboard) sits below the form on the same page.
 
 ### CLI
 
@@ -104,7 +129,7 @@ Continued pretraining teaches the model your domain's language. To make it *answ
 
 ## Only have documents, but want a Q&A assistant?
 
-Continued pretraining teaches the model your documents' language; it does not make it *answer questions*, and there is nothing to score it against. For that you need question→answer pairs to train on and an answer key to measure with. The **Turn your documents into a Q&A assistant** card on the **Train** → **Training** step (the Coach suggests it on a documents-only project) does the whole chain as one background job:
+Continued pretraining teaches the model your documents' language; it does not make it *answer questions*, and there is nothing to score it against. For that you need question→answer pairs to train on and an answer key to measure with. The **Turn your documents into a Q&A assistant** card on the **Train** page (the Coach suggests it on a documents-only project) does the whole chain as one background job:
 
 1. **Generates question→answer pairs** from your cleaned document passages with the synthetic-data model (a local Ollama model, a configured teacher endpoint, or a cloud model): three pairs per passage by default, each answerable from that passage alone, for up to 60 passages. They land in the **Data** → **Generate** step's review queue as accepted rows (source `documents_qa_flow`), so you can still reject or purge any.
 2. **Keeps an answer key**: for every passage, one *different* question the training pairs don't ask, saved to the practice answer key (source `documents_qa_flow`).
@@ -114,7 +139,7 @@ Continued pretraining teaches the model your documents' language; it does not ma
 
 **The answer key must be quotable.** The evaluation question each passage yields becomes an answer-key row that a reader *with the passage in front of it* is scored against — so it is held to a stricter standard than the training pairs. The prompt asks for a question that stands on its own (never "this subsection" or "the passage"), an answer that is the passage's own complete statement of the fact (not a selection from a list, not a summary, nothing the passage doesn't say), and never a question built on a chunk's cut-off first or last fragment. Behind the prompt a deterministic gate drops what slips through: a question that points at the passage ("the passage mentions…", "mentioned above", "this subsection") or an answer whose content words are mostly absent from the passage (`EVAL_ANSWER_SUPPORT_MIN` 0.7). Dropped keys are counted by reason on the flow's result (`eval_rejected`), shown on the card and said in a warning; the passage still contributes its training pairs. Why: on the legal case the retrieval judge put 10 of 17 wrong answers down to the reader although the passage held the answer — and reading those ten, four were the key's fault (a reference that misread its passage, a question only answerable with the passage's own framing, a reference that picked two items from a list of four), two were built on a cut-off sentence at a chunk boundary, and four were genuine misreads. A key a reader can't quote measures the key, not the model.
 
-**Token classification (spans with exact offsets).** For span-extraction rows (`{text, entities: [{type, start, end, text}]}`) the **Train** → **Training** step's *task type* offers **Token classification**: an encoder base model (`microsoft/deberta-v3-base`, `bert-base-cased`) with a token-classification head trained on BIO labels derived from the character spans, so offsets at inference come from the tokenizer's offset mapping — exact by construction — rather than from a language model writing JSON. The run saves a plain Hugging Face model (`model/` + tokenizer + `label_space.json`), reports per-epoch span precision / recall / F1 (strict type + start + end — the `span_set` scorer's match) with a per-type breakdown in `training_report.json`, and the held-out evaluation tags the test rows with the head (no generation) so the span_set report reads as usual. **Evaluate this run** (and the automatic check after training) scores such a run on its own — no base-model lift, since its base is an untrained head — on the test examples and, when the project has one, on the answer key written by a second model; the Eval card leads with the answer key. Epochs auto-size to the row count unless set. Rows whose entity text doesn't match `text[start:end]`, or that overlap, are dropped from training, never learned wrong. A text longer than `max_seq_length` tokens is trained, validated, predicted and evaluated in **overlapping windows** (`window_stride`, default a quarter of the window; a token's label comes from the window where it is most central), and the report's `windowing` block says how many rows needed more than one; the saved tokenizer's `model_max_length` is the window, so `pipeline(..., stride=128)` windows the exported model the same way. **OCR-noise copies** (`ocr_noise_augment_rate` up to 0.3, `ocr_noise_augment_copies` 1–5; Power Tools) adds length-preserving look-alike-character copies of the training rows (offsets unchanged; validation / test untouched; counted by auto-epochs) — for documents that come from scans; the report's `augmentation` block says how many rows were added. The end-to-end walkthrough is [Sensitive-data tagging from zero](sensitive-data-tagging.md).
+**Token classification (spans with exact offsets).** For span-extraction rows (`{text, entities: [{type, start, end, text}]}`) the **Train** page's *Task type* section (**More options** → *Task type*) offers **Token classification**: an encoder base model (`microsoft/deberta-v3-base`, `bert-base-cased`) with a token-classification head trained on BIO labels derived from the character spans, so offsets at inference come from the tokenizer's offset mapping — exact by construction — rather than from a language model writing JSON. The run saves a plain Hugging Face model (`model/` + tokenizer + `label_space.json`), reports per-epoch span precision / recall / F1 (strict type + start + end — the `span_set` scorer's match) with a per-type breakdown in `training_report.json`, and the held-out evaluation tags the test rows with the head (no generation) so the span_set report reads as usual. **Evaluate this run** (and the automatic check after training) scores such a run on its own — no base-model lift, since its base is an untrained head — on the test examples and, when the project has one, on the answer key written by a second model; the Eval card leads with the answer key. Epochs auto-size to the row count unless set. Rows whose entity text doesn't match `text[start:end]`, or that overlap, are dropped from training, never learned wrong. A text longer than `max_seq_length` tokens is trained, validated, predicted and evaluated in **overlapping windows** (`window_stride`, default a quarter of the window; a token's label comes from the window where it is most central), and the report's `windowing` block says how many rows needed more than one; the saved tokenizer's `model_max_length` is the window, so `pipeline(..., stride=128)` windows the exported model the same way. **OCR-noise copies** (`ocr_noise_augment_rate` up to 0.3, `ocr_noise_augment_copies` 1–5; **More options** → *Model and hyperparameters*) adds length-preserving look-alike-character copies of the training rows (offsets unchanged; validation / test untouched; counted by auto-epochs) — for documents that come from scans; the report's `augmentation` block says how many rows were added. The end-to-end walkthrough is [Sensitive-data tagging from zero](sensitive-data-tagging.md).
 
 **Refine passes label the whole vocabulary.** A span-synthesis request has two lists: `entity_types`, the project's vocabulary (every entity of these types in a snippet is labelled, by the teacher and by the regex pass), and `focus_types`, what each snippet must contain — a refine pass for weak types sets the focus, never shrinks the vocabulary (shrinking it taught a model that the phones and emails in refine rows were nothing). Rows already generated under a shrunken list are repaired by **Regex pass over saved rows** (`POST /synthetic/spans/regex-augment`): deterministic, idempotent, adds the well-defined types (email / phone / card / IP / …) where they're missing and reports what it added.
 
@@ -182,14 +207,14 @@ Checkpoints live in a local registry at `backend/data/pretrained_checkpoints/<na
 
 **Where you see it.** The resolution is surfaced as a **Starting weights** line so you always know which weights a run used:
 
-- *Before launch* — applying a training preset (or running preflight) shows a Starting-weights chip in the Training Config setup, and a **Starting Weights** row in the advanced **Resolved Defaults** panel. The `/recipes/resolve`, `/experiments/effective-config`, and `/experiments/preflight` responses all carry a `warm_start` preview block.
+- *Before launch* — applying a training preset (or running preflight) shows a Starting-weights chip on the Train form, and a **Starting Weights** row in the *Checks* section's effective config. The `/recipes/resolve`, `/experiments/effective-config`, and `/experiments/preflight` responses all carry a `warm_start` preview block.
 - *After launch* — the **Why this plan** panel's Strategy section shows it for the active run, and the captured **run manifest** records it under `warm_start` (lifted out of the transient `_runtime` block because *which weights a run used* is reproducibility-relevant provenance).
 
 > **Status:** the registry, recipe field, resolution, and UI/manifest surfacing are wired and tested. The warm-start **trainer** (`backend/scripts/train_warmstart_checkpoint.py`) resolves a license-audited corpus for the checkpoint's `task_shape` (Dolly-15k, CC BY-SA 3.0, sliced by category), enforces a permissive-license gate, full-fine-tunes the base, runs an identity-swap fairness spot-check, and flips the manifest to `status: "available"` with training + fairness provenance. Run it with `python scripts/train_warmstart_checkpoint.py --checkpoint qa-base-135m` (add `--smoke` for a tiny synthetic-corpus dry run). **`qa-base-135m`, `classifier-base-135m`, and `ner-base-135m` are trained and available** (weights are gitignored; regenerate locally with the script); `sql-base-135m` stays `planned` until a text-to-SQL corpus is wired. Scaling the corpus beyond the Dolly slices and publishing under `TensorGreed/` is follow-up work.
 
 ## Model + hyperparameter bake-off (Pareto)
 
-Two complementary sweeps help you pick a config, both surfaced in the Training Config **Power Tools** tab as a quality-vs-cost **Pareto** scatter (frontier points highlighted + connected, dominated configs dimmed):
+Two complementary sweeps help you pick a config, both surfaced in **Train** → **More options** → *Model and hyperparameters* as a quality-vs-cost **Pareto** scatter (frontier points highlighted + connected, dominated configs dimmed):
 
 - **Model bake-off** — a fast *heuristic* sweep across candidate base models (`…/training/model-selection/benchmark-sweep`), comparing estimated quality vs latency/VRAM/size. The `ParetoComparisonPanel` lets you toggle the cost axis and **promote the winner** to the project's base model in one click.
 - **Hyperparameter grid bake-off** — a real sweep where **each grid cell is a normal `Experiment`**. Give it a set of LoRA ranks and learning rates (e.g. ranks `8, 16`, LRs `2e-4, 3e-4`); the platform materializes one experiment per cell under a shared `sweep_id`, trains each through the normal path (so all preflight / eval / gate machinery applies), and the `HyperparameterSweepPanel` plots **quality vs the chosen cost axis** as cells finish. Quality is the cell's eval pass-rate when available, else derived from eval/train loss. The **cost axis is user-pickable** (radio above the scatter):
@@ -247,7 +272,7 @@ Legacy fallback: `get_sweep_pareto` and `list_project_sweeps` still honour the o
 
 ## Trainability forecast
 
-The **trainability forecast** runs *before* preflight, on the Training Config page. It looks at the project's task type + answer key + base model and predicts whether the upcoming run is likely to clear the default pass/fail rules (Auto-Gates). Advisory only — it never blocks the run; if the verdict is amber/red the Train button just relabels to "Train anyway".
+The **trainability forecast** runs *before* preflight, in the *Plan and gaps* section (**Train** → **More options**). It looks at the project's task type + answer key + base model and predicts whether the upcoming run is likely to clear the default pass/fail rules (Auto-Gates). Advisory only — it never blocks the run; if the verdict is amber/red the Train button just relabels to "Train anyway".
 
 ### Task-type-agnostic signals (always run)
 
@@ -277,7 +302,7 @@ Suggested actions on every signal map to one of `synth_augment` / `synth_balance
 
 ### Snapshot history + sparkline
 
-Every cache-miss compute writes one row to `training_forecast_snapshots`. The Training Config panel reads `GET /api/projects/{id}/training/forecast/history?limit=10` and renders a sparkline above the signal list — `confidence_pct` on the y-axis (fixed [0, 100] so the shape is comparable across sessions) with a coloured dot per snapshot (green = `likely_pass`, amber = `borderline`, red = `likely_fail`). Hover a dot to see its verdict + signal severities at the time of compute.
+Every cache-miss compute writes one row to `training_forecast_snapshots`. The *Plan and gaps* section reads `GET /api/projects/{id}/training/forecast/history?limit=10` and renders a sparkline above the signal list — `confidence_pct` on the y-axis (fixed [0, 100] so the shape is comparable across sessions) with a coloured dot per snapshot (green = `likely_pass`, amber = `borderline`, red = `likely_fail`). Hover a dot to see its verdict + signal severities at the time of compute.
 
 ### Calibration (admin)
 
@@ -311,7 +336,7 @@ The preflight endpoint catches the common "this won't work" cases **before** the
 | Capability check fail | Model doesn't support the requested training mode (e.g. `dpo` on a base model with no chat template). |
 | VRAM over budget | Model + batch size + context exceeds estimated VRAM for the target. |
 
-The UI's Resolved Defaults panel surfaces each blocker with the actionable fix.
+The Train form's readiness line lists each blocker (**Fix** opens the *Checks* section) with the actionable fix.
 
 ## Reproducibility — the manifest
 
@@ -343,7 +368,7 @@ The single fastest path to a reproducible run.
 
 ### UI
 
-**Train** → **Training** (the runs list) → click an experiment row → **Rerun**. The manifest is replayed verbatim into a new experiment id.
+**Train** → **Runs** (below the form) → click an experiment row → **Rerun**. The manifest is replayed verbatim into a new experiment id.
 
 ### CLI
 
@@ -390,7 +415,7 @@ The clone gets its own manifest. Both parent + clone manifests are queryable.
 
 While a run is in flight:
 
-- **UI** — Training Configurations page swaps to live mode: loss curves, per-step metrics, GPU memory, telemetry, stop / pause / resume buttons.
+- **UI** — the Runs list on the Train page shows live mode: loss curves, per-step metrics, GPU memory, telemetry, stop / pause / resume buttons.
 - **CLI** — `brewslm logs tail --project 1 --run-id exp-42` streams events.
 - **API** — `GET /api/run-events/run/exp-42`.
 

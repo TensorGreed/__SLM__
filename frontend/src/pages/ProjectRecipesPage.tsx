@@ -64,7 +64,12 @@ function stateUpdatedAt(state: Record<string, unknown> | null | undefined): stri
     return typeof raw === 'string' ? raw : '';
 }
 
-export default function ProjectRecipesPage() {
+interface ProjectRecipesPageProps {
+    /** Rendered inside the Train form: compact header. */
+    embedded?: boolean;
+}
+
+export default function ProjectRecipesPage({ embedded = false }: ProjectRecipesPageProps = {}) {
     const navigate = useNavigate();
     const { projectId, refreshPipelineStatus } = useOutletContext<ProjectWorkspaceContextValue>();
     const fetchProject = useProjectStore((state) => state.fetchProject);
@@ -430,9 +435,9 @@ export default function ProjectRecipesPage() {
 
     return (
         <div className="pipeline-recipes-page workspace-page">
-            <div className="card pipeline-recipes-header">
+            <div className={`card pipeline-recipes-header ${embedded ? 'pipeline-recipes-header--embedded' : ''}`}>
                 <div>
-                    <h3>Pipeline Presets</h3>
+                    {!embedded && <h3>Pipeline Presets</h3>}
                     <p className="pipeline-recipes-subtitle">
                         Apply end-to-end presets that wire domain defaults, workflow template, training preset,
                         dataset adapter preset, and evaluation pack.

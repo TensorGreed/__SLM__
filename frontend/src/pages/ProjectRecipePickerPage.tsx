@@ -51,7 +51,14 @@ function extractErrorMessage(err: unknown, fallback: string): string {
 }
 
 
-export default function ProjectRecipePickerPage() {
+interface ProjectRecipePickerPageProps {
+    /** Rendered inside the Train form: compact header. */
+    embedded?: boolean;
+    /** Where to land after applying (the page reloads so the project refetches). */
+    returnTo?: string;
+}
+
+export default function ProjectRecipePickerPage({ embedded = false, returnTo: returnToProp }: ProjectRecipePickerPageProps = {}) {
     const { projectId, project } =
         useOutletContext<ProjectWorkspaceContextValue>();
     const [searchParams] = useSearchParams();
@@ -68,8 +75,9 @@ export default function ProjectRecipePickerPage() {
     const returnTo = useMemo(() => {
         const raw = searchParams.get('return_to');
         if (raw && raw.startsWith('/')) return raw;
-        return `/project/${projectId}/pipeline/data`;
-    }, [searchParams, projectId]);
+        if (returnToProp) return returnToProp;
+        return `/project/${projectId}/train?open=task`;
+    }, [searchParams, projectId, returnToProp]);
 
     const currentRecipeId = useMemo(() => {
         const snapshot = project?.selected_recipe;
@@ -139,7 +147,7 @@ export default function ProjectRecipePickerPage() {
             }}
         >
             <header>
-                <h1 style={{ margin: 0 }}>Choose a task type for this project</h1>
+                {!embedded && <h1 style={{ margin: 0 }}>Choose a task type for this project</h1>}
                 <p
                     style={{
                         margin: 'var(--space-xs) 0 0',

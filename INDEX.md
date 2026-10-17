@@ -507,7 +507,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectRecipesPage.tsx` — Pipeline recipe catalog page for applying, configuring, and monitoring template-based workflows.
 - `frontend/src/pages/ProjectSettingsPage.tsx` — Project Settings — the workspace's long tail (Epic U, phase U1).
 - `frontend/src/pages/ProjectStagePage.tsx` — A stage destination of the workspace — Data, Train, Results or Ship
-- `frontend/src/pages/ProjectTrainingConfigPage.tsx` — Dedicated training configuration page with essentials and advanced toggle modes.
+- `frontend/src/pages/ProjectTrainPage.tsx` — Train — the workspace's training destination (Epic U, phase U2).
 - `frontend/src/pages/ProjectWorkflowPage.tsx` — Visual workflow builder page for DAG editing, execution monitoring, and stage orchestration.
 - `frontend/src/pages/ProjectWorkspaceLayout.tsx` — Root layout for the project workspace: sidebar (six destinations), top
 - `frontend/src/pages/SSOLoginPage.tsx` — Authentication page supporting SSO integration and local username/password login.
@@ -662,6 +662,7 @@ session-start guidance.
 - `frontend/src/components/training/TokenLengthDistributionPanel.tsx` — TokenLengthDistributionPanel — V3 of the ML-native visualisations arc.
 - `frontend/src/components/training/TokenizationPanel.tsx` — Token distribution analyzer with histogram and sequence-length statistics.
 - `frontend/src/components/training/TrainAnywayButton.tsx` — TrainAnywayButton — USER-SUCCESS Epic 1 supplement.
+- `frontend/src/components/training/TrainForm.tsx` — The Train form (Epic U, phase U2) — "an insurance form": page one asks
 - `frontend/src/components/training/TrainabilityForecastPanel.tsx` — TrainabilityForecastPanel — USER-SUCCESS Epic 1.
 - `frontend/src/components/training/TrainingAdvancedPeftSection.tsx` — Advanced & PEFT column (Power): LoRA, precision, OOM retry, alignment
 - `frontend/src/components/training/TrainingConfigGapsPanel.tsx` — TrainingConfigGapsPanel — Coach-stage-2 phase 1.
@@ -1111,10 +1112,12 @@ session-start guidance.
 - `frontend/src/components/training/PreRunConfirmModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TokenLengthDistributionPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainAnywayButton.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/TrainForm.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainabilityForecastPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingConfigGapsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingConfigPatchPreviewModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingPanel.back.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/TrainingPanel.form.test.tsx` — The Train form layout (Epic U phase U2): readiness from the preflight,
 - `frontend/src/components/training/TrainingPanel.multiSeed.test.tsx` — Quality-Lift phase 7 slice 3 — MultiSeedConfigSection tests.
 - `frontend/src/components/training/TrainingPanel.ocrNoise.test.tsx` — Token classification: the "OCR-noise copies" control (Power Tools tab)
 - `frontend/src/components/training/TrainingPanel.test.tsx` — _(no docstring)_
@@ -1137,6 +1140,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectRecipePickerPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectSettingsPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectStagePage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectTrainPage.test.tsx` — _(no docstring)_
 - `frontend/src/stores/coachModeStore.test.ts` — _(no docstring)_
 - `frontend/src/stores/jobsStore.test.ts` — Tests for the bell's up-trend counter
 - `frontend/src/utils/apiError.test.ts` — _(no docstring)_

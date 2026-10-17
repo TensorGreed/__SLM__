@@ -30,9 +30,36 @@ export const DESTINATION_ORDER: Destination[] = ['overview', 'data', 'train', 'r
 /** Which old tabs each stage destination carries as steps, in order. */
 export const STEPS_BY_DESTINATION: Record<StageDestination, TabKey[]> = {
     data: ['data', 'cleaning', 'goldset', 'synthetic', 'dataprep'],
-    train: ['tokenization', 'training'],
+    // Train is a form (U2): one step; tokenization is a More-options section.
+    train: ['training'],
     results: ['eval'],
     ship: ['compression', 'export'],
+};
+
+/** ``/project/7/train?open=plan`` — a Train More-options section. */
+export function trainSectionPath(projectId: number, section: string, extraSearch?: string): string {
+    const params = new URLSearchParams(extraSearch ?? '');
+    params.set('open', section);
+    return `${projectPath(projectId, 'train')}?${params.toString()}`;
+}
+
+/** Train's More-options sections (``/train?open=<id>``) and the retired
+ *  pages that redirect to them. */
+export const TRAIN_OPEN_BY_LEGACY_PATH: Record<string, string> = {
+    '/training-config': 'plan',
+    '/models': 'models',
+    '/recipe-picker': 'task',
+    '/recipes': 'pipeline-presets',
+    '/adapter-studio': 'adapters',
+};
+
+/** Anchors the Coach and the gap panels used on /training-config. */
+const TRAIN_OPEN_BY_HASH: Record<string, string> = {
+    '#base-model': 'model',
+    '#multi-seed': 'seeds',
+    '#training-config-gaps-panel': 'plan',
+    '#archetype-comparison-panel': 'plan',
+    '#checkpoints-panel': 'plan',
 };
 
 /** Short step labels (the old tab labels, no emoji). */
@@ -82,7 +109,9 @@ export function projectPath(projectId: number, destination: Destination = 'overv
 export function stagePath(projectId: number, tab: TabKey, extraSearch?: string): string {
     const destination = destinationForTab(tab);
     const params = new URLSearchParams(extraSearch ?? '');
-    if (STEPS_BY_DESTINATION[destination][0] !== tab) {
+    if (tab === 'tokenization') {
+        params.set('open', 'tokenization');
+    } else if (STEPS_BY_DESTINATION[destination][0] !== tab) {
         params.set('step', tab);
     }
     const query = params.toString();
@@ -124,6 +153,15 @@ export function legacyRedirectPath(projectId: number, pathname: string, search =
         const tab = pipeline[1];
         if (!isTabKey(tab)) return projectPath(projectId, 'data');
         return stagePath(projectId, tab, search) + hash;
+    }
+    const trainSection = TRAIN_OPEN_BY_LEGACY_PATH[clean];
+    if (trainSection) {
+        const params = new URLSearchParams(search);
+        params.delete('return_to');
+        const section = params.get('expand_multi_seed') === '1'
+            ? 'seeds'
+            : TRAIN_OPEN_BY_HASH[hash] ?? trainSection;
+        return trainSectionPath(projectId, section, params.toString()) + (hash && !TRAIN_OPEN_BY_HASH[hash] ? hash : '');
     }
     return null;
 }

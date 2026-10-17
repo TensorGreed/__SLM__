@@ -14,9 +14,6 @@ import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
 import DatasetPrepPanel from '../components/data/DatasetPrepPanel';
-import TokenizationPanel from '../components/training/TokenizationPanel';
-import TrainingPanel from '../components/training/TrainingPanel';
-import DocumentsQaFlowCard from '../components/training/DocumentsQaFlowCard';
 import EvalPanel from '../components/evaluation/EvalPanel';
 import CompressionPanel from '../components/compression/CompressionPanel';
 import ExportPanel from '../components/export/ExportPanel';
@@ -32,6 +29,9 @@ import {
     STEPS_BY_DESTINATION,
     type StageDestination,
 } from '../utils/workspaceRoutes';
+
+/** Train is its own page (ProjectTrainPage) since U2. */
+type PanelDestination = Exclude<StageDestination, 'train'>;
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectStagePage.css';
 
@@ -48,9 +48,8 @@ const TAB_TARGET_STAGE: Record<TabKey, string> = {
     export: 'export',
 };
 
-const DESTINATION_BLURB: Record<StageDestination, string> = {
+const DESTINATION_BLURB: Record<PanelDestination, string> = {
     data: 'Bring data in, prepare it, write the answer key, generate more, and split it.',
-    train: 'Pick a base model and train. Runs and live metrics stay here.',
     results: 'Did it work, where does it fail, and how do runs compare.',
     ship: 'Package the model, publish it, and deploy it.',
 };
@@ -61,15 +60,10 @@ interface RelatedLink {
 }
 
 /** Pages that belong to a destination but are not steps yet (moved in U2–U5). */
-const RELATED_LINKS: Record<StageDestination, RelatedLink[]> = {
+const RELATED_LINKS: Record<PanelDestination, RelatedLink[]> = {
     data: [
         { label: 'Data Studio', path: 'data-studio' },
         { label: 'Annotation', path: 'annotate' },
-    ],
-    train: [
-        { label: 'Training configuration', path: 'training-config' },
-        { label: 'Base model registry', path: 'models' },
-        { label: 'Task type', path: 'recipe-picker' },
     ],
     results: [
         { label: 'Playground', path: 'playground' },
@@ -82,7 +76,7 @@ const RELATED_LINKS: Record<StageDestination, RelatedLink[]> = {
 };
 
 interface ProjectStagePageProps {
-    destination: StageDestination;
+    destination: PanelDestination;
 }
 
 export default function ProjectStagePage({ destination }: ProjectStagePageProps) {
@@ -131,20 +125,6 @@ export default function ProjectStagePage({ destination }: ProjectStagePageProps)
                 return <SyntheticPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'dataprep':
                 return <DatasetPrepPanel projectId={projectId} onNextStep={goToNextTab} />;
-            case 'tokenization':
-                return <TokenizationPanel projectId={projectId} onNextStep={goToNextTab} />;
-            case 'training':
-                return (
-                    <div className="stage-page__stack">
-                        <DocumentsQaFlowCard projectId={projectId} />
-                        <TrainingPanel
-                            projectId={projectId}
-                            onNextStep={goToNextTab}
-                            title="Training runs"
-                            hideCreateControls
-                        />
-                    </div>
-                );
             case 'eval':
                 return <EvalPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'compression':

@@ -472,9 +472,8 @@ precision by 5–10 F1 on adversarial gold without hurting recall.
 
 ### High impact: LoRA capacity (one config change)
 
-The Essentials wizard hides PEFT controls. Switch to **Advanced** mode
-(toggle in the page header) — you'll get a 4th tab: **Power Tools** →
-**Advanced & PEFT** section. Two changes that typically lift span-task
+The Train form's first page hides PEFT controls. Open **More options** →
+**LoRA and advanced training**. Two changes that typically lift span-task
 F1 by 5–15 points:
 
 - **Rank (r)**: `8 → 16` (or `32` if you have VRAM headroom on the GB10)
@@ -688,10 +687,10 @@ trigger the read-side reconciler, or restart the API server.
 ### Recommender suggests `microsoft/phi-2` instead of Qwen
 
 Known UI default (the wizard's `baseModel` state initializes to
-`microsoft/phi-2`). On the **Config** tab, explicitly type
-`Qwen/Qwen2.5-1.5B-Instruct` into the **Base Model** field and click
-**Introspect Model** to verify (`architecture: Qwen2ForCausalLM`,
-`hidden_size: 1536`). The Review tab then carries the correct value.
+`microsoft/phi-2`). On the **Train** form, explicitly type
+`Qwen/Qwen2.5-1.5B-Instruct` into the **Base model** field and check
+the readiness line (or **More options** → *Model and hyperparameters*) to verify (`architecture: Qwen2ForCausalLM`,
+`hidden_size: 1536`). The launch confirmation then carries the correct value.
 
 ## What's not in the demo (yet)
 

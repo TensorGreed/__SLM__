@@ -976,7 +976,7 @@ wasn't in the training data; that is the next lever.
 
 ### Training for OCR'd text: noisy copies
 
-**OCR-noise copies** (Training config → Advanced → Power Tools, shown for
+**OCR-noise copies** (Train → More options → Model and hyperparameters, shown for
 token classification; `ocr_noise_augment_rate` 0.05 / 0.1 / 0.2 and
 `ocr_noise_augment_copies` 1–3) adds copies of every training row with
 look-alike characters swapped at a rate drawn up to that level. The swaps

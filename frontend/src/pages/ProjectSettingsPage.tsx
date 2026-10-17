@@ -28,7 +28,7 @@ const TOOL_GROUPS: Array<{ title: string; links: ToolLink[] }> = [
         links: [
             { label: 'Autopilot Planner', path: 'autopilot', hint: 'Plan diffs, repair preview, rollback.' },
             { label: 'Workflow Builder', path: 'workflow', hint: 'Compose and run pipeline graphs.' },
-            { label: 'Pipeline presets', path: 'recipes', hint: 'End-to-end pipeline compositions.' },
+            { label: 'Pipeline presets', path: 'train?open=pipeline-presets', hint: 'End-to-end pipeline compositions (under Train).' },
             { label: 'Pipeline as Code', path: 'manifest', hint: 'The project as a brewslm.yaml manifest.' },
         ],
     },
@@ -42,7 +42,7 @@ const TOOL_GROUPS: Array<{ title: string; links: ToolLink[] }> = [
     {
         title: 'Studios',
         links: [
-            { label: 'Adapter Studio', path: 'adapter-studio', hint: 'Data adapter contracts.' },
+            { label: 'Adapter Studio', path: 'train?open=adapters', hint: 'Data adapter contracts (under Train).' },
             { label: 'Extension Studio', path: 'extensions', hint: 'Runtime and pack plugins.' },
         ],
     },

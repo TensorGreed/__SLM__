@@ -1,0 +1,186 @@
+/* The Train form — Epic U phase U2. */
+
+.train-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.train-form__page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.train-form__row {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: var(--space-md);
+    align-items: center;
+}
+
+.train-form__label {
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.train-form__control {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.train-form__control .input {
+    flex: 1;
+    max-width: 520px;
+}
+
+.train-form__control--static {
+    flex-wrap: wrap;
+    min-height: 32px;
+}
+
+.train-form__radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: var(--space-md);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+}
+
+.train-form__radio small {
+    color: var(--text-tertiary);
+}
+
+.train-form__muted {
+    color: var(--text-tertiary);
+    font-size: var(--font-size-sm);
+}
+
+.train-form__readiness {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.train-form__readiness-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--text-tertiary);
+    flex: none;
+}
+
+.train-form__readiness--checking .train-form__readiness-dot {
+    background: var(--color-info, #3b82f6);
+    animation: train-form-pulse 1.2s ease-in-out infinite;
+}
+
+.train-form__readiness--ready .train-form__readiness-dot {
+    background: var(--color-success, #16a34a);
+}
+
+.train-form__readiness--blocked .train-form__readiness-dot,
+.train-form__readiness--error .train-form__readiness-dot {
+    background: var(--color-error, #dc2626);
+}
+
+.train-form__readiness-text {
+    flex: 1;
+}
+
+.train-form__issues {
+    margin: 0;
+    padding-left: var(--space-lg);
+    color: var(--color-error, #dc2626);
+    font-size: var(--font-size-sm);
+}
+
+.train-form__actions {
+    display: flex;
+    gap: var(--space-sm);
+    align-items: center;
+}
+
+.train-form__more-toggle {
+    width: 100%;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--text-primary);
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+}
+
+.train-form__more-toggle small {
+    font-weight: 400;
+    color: var(--text-tertiary);
+}
+
+.train-form__sections {
+    margin-top: var(--space-md);
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border-muted);
+}
+
+.train-form__section-toggle {
+    width: 100%;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--border-muted);
+    padding: var(--space-sm) 0;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+}
+
+.train-form__section-toggle:hover {
+    color: var(--color-primary);
+}
+
+.train-form__section-toggle small {
+    font-weight: 400;
+    color: var(--text-tertiary);
+}
+
+.train-form__section.is-open .train-form__section-toggle {
+    border-bottom: none;
+}
+
+.train-form__section-body {
+    padding: var(--space-sm) 0 var(--space-lg);
+    border-bottom: 1px solid var(--border-muted);
+}
+
+.train-form__section-body .workspace-page {
+    padding: 0;
+}
+
+@keyframes train-form-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
+@media (max-width: 760px) {
+    .train-form__row {
+        grid-template-columns: 1fr;
+        gap: var(--space-xs);
+    }
+}

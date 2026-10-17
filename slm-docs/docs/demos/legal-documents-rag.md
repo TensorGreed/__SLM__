@@ -37,7 +37,7 @@ repo's demo assets as `docs-demo/videos/20-legal-rag-vs-sft/final_captioned.mp4`
 
 ## 1. Documents → Q&A → trained model, as one job
 
-The **Train** → **Training** step's **Turn your documents into a Q&A assistant** card runs
+The **Train** page's **Turn your documents into a Q&A assistant** card runs
 the whole path as one job: a local model writes three question → answer
 pairs per passage for training and one different question per passage for
 the answer key; the pairs are split into train / validation / test examples;
@@ -212,7 +212,7 @@ the answer the fine-tune never learned.
    (chunk size 900). The tables use base model Qwen2.5-1.5B-Instruct (set
    it on the project, or keep the task type's default); the flow uses the
    first reachable local generation model unless you pick one.
-2. **Train** → **Training** → **Build a Q&A assistant from these documents** (needs a
+2. **Train** → **Build a Q&A assistant from these documents** (needs a
    local generation model — Ollama with a non-thinking chat model, or
    thinking turned off; gemma4 works).
 3. Start the backend with a judge: `EVAL_JUDGE_BACKEND=ollama:gemma4:12b`

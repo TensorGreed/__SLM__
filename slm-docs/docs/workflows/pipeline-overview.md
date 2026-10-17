@@ -67,9 +67,10 @@ Data     (/data)          steps (?step=...):
 │   ├── Answer key        → gold_set       (?step=goldset)
 │   ├── Generate          → synthetic      (?step=synthetic)
 │   └── Split             → dataset_prep   (?step=dataprep)
-Train    (/train)
-│   ├── Tokenization      → tokenization
-│   └── Training          → training       (?step=training; the runs list)
+Train    (/train)         → one form (no steps) + the runs list below it
+│   └── More options      → ?open=<id>: model, lora, seeds, checks, cloud,
+│                           presets, plan, models, task, pipeline-presets,
+│                           adapters, tokenization
 Results  (/results)       → evaluation
 Ship     (/ship)
 │   ├── Compression       → compression
@@ -80,7 +81,7 @@ Settings (/settings)      → tips switch, beginner flag, manifest export,
                             Adapter Studio, Extension Studio
 ```
 
-Related tools are linked from each page's header: Data Studio and Annotation from **Data**; Training configuration, Base model registry and Task type from **Train**; Playground and Compare runs from **Results**; Deployments and Observability from **Ship**. Old `/pipeline/<tab>` URLs redirect to the matching destination and step.
+Related tools are linked from each page's header: Data Studio and Annotation from **Data**; the base model registry, task type, pipeline presets, Adapter Studio and tokenization live under **Train** → **More options**; Playground and Compare runs from **Results**; Deployments and Observability from **Ship**. Old `/pipeline/<tab>` URLs redirect to the matching destination and step.
 
 ## When to use which surface
 

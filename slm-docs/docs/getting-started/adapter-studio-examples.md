@@ -7,7 +7,7 @@ title: Adapter examples
 
 A data adapter is the translation layer between **your raw row shape** and **BrewSLM's canonical record**. This page shows the most common shapes with the recommended adapter, field mapping, and the UI / CLI / API entry points.
 
-The Adapter Studio (**Settings** → **Adapter Studio**) is where you tune adapters by hand. For most projects the built-in adapters work — `auto` detects the right one from a sample.
+The Adapter Studio (**Train** → **More options** → *Adapter Studio*; **Settings** links to it too) is where you tune adapters by hand. For most projects the built-in adapters work — `auto` detects the right one from a sample.
 
 ## Pattern 1 — Tabular Q&A (CSV / TSV)
 
@@ -151,7 +151,7 @@ curl -X POST http://localhost:8000/api/projects/1/data-adapter/preview \
 
 ### UI
 
-**Data** → **Split** → `preference-pair`. Then in **Training Configurations**, pick training mode `dpo` or `orpo` — the Resolved Defaults panel surfaces the matching trainer.
+**Data** → **Split** → `preference-pair`. Then on **Train**, pick training mode `dpo` or `orpo` (**More options** → *Training presets*) — the *Checks* section surfaces the matching trainer.
 
 ### CLI
 

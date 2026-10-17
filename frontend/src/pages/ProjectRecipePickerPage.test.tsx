@@ -223,7 +223,7 @@ describe('ProjectRecipePickerPage', () => {
         // External URL was rejected; fell back to the default
         // in-project path.
         expect(window.location.assign).toHaveBeenCalledWith(
-            '/project/1/pipeline/data',
+            '/project/1/train?open=task',
         );
     });
 

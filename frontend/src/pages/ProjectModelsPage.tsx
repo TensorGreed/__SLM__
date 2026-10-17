@@ -81,7 +81,12 @@ interface ValidateResponse {
   recommended_next_actions: string[];
 }
 
-export default function ProjectModelsPage() {
+interface ProjectModelsPageProps {
+  /** Rendered inside the Train form: no page header. */
+  embedded?: boolean;
+}
+
+export default function ProjectModelsPage({ embedded = false }: ProjectModelsPageProps = {}) {
   const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
   const [rows, setRows] = useState<BaseModelRecord[]>([]);
   const [recommendations, setRecommendations] = useState<CompatibilityRow[]>([]);
@@ -174,6 +179,10 @@ export default function ProjectModelsPage() {
         base_model_name: model.source_ref || model.display_name,
       });
       setStatusMessage(`Selected '${model.display_name}' as project base model.`);
+      // The Train form listens for this and fills its base-model field.
+      window.dispatchEvent(new CustomEvent('brewslm:apply-recommended-base-model', {
+        detail: { recommendedBaseModel: model.source_ref || model.display_name },
+      }));
     } catch (err) {
       setError(errorDetail(err, 'Failed to set base model.'));
     }
@@ -184,14 +193,16 @@ export default function ProjectModelsPage() {
 
   return (
     <div className="workspace-page model-registry-page">
-      <section className="workspace-page-header">
-        <div>
-          <h2 className="workspace-page-title">Universal Base Model Registry</h2>
-          <p className="workspace-page-subtitle">
-            Import and inspect base models, then validate compatibility with your project plan, dataset adapter, runtime, and target.
-          </p>
-        </div>
-      </section>
+      {!embedded && (
+        <section className="workspace-page-header">
+          <div>
+            <h2 className="workspace-page-title">Universal Base Model Registry</h2>
+            <p className="workspace-page-subtitle">
+              Import and inspect base models, then validate compatibility with your project plan, dataset adapter, runtime, and target.
+            </p>
+          </div>
+        </section>
+      )}
 
       <section className="card model-registry-filters">
         <div className="model-filter-grid">

@@ -266,8 +266,8 @@ Formal Protocol interface for one of four plugin kinds (data_adapter, training_r
 A named bundle of defaults you apply as a starting point. The UI uses three kinds:
 
 - **Domain preset**: domain defaults (model family, adapter, gates, target, safety reminders) picked at project creation. API name: *starter pack*.
-- **Training preset**: a named bundle of training hyperparameters (learning rate, epochs, LoRA settings, …) applied on the Training Config page (**Training preset** → **Apply preset**). API name: training *recipe*.
-- **Pipeline preset**: an end-to-end composition of domain defaults, workflow template, training preset, dataset adapter and eval pack (**Pipeline presets** page: **Preview preset** / **Apply preset** / **Apply + Run Workflow**). Lives under **Settings**. API name: pipeline *recipe*.
+- **Training preset**: a named bundle of training hyperparameters (learning rate, epochs, LoRA settings, …) applied in **Train** → **More options** → *Training presets*. API name: training *recipe*.
+- **Pipeline preset**: an end-to-end composition of domain defaults, workflow template, training preset, dataset adapter and eval pack (**Train** → **More options** → *Pipeline presets*: **Preview preset** / **Apply preset** / **Apply + Run Workflow**; linked from **Settings**). API name: pipeline *recipe*.
 
 See [Recipe](#recipe) for the API routes.
 
@@ -425,7 +425,7 @@ The prepared **test** split from **Data** → **Split**: rows held back from tra
 
 ## Trainability forecast
 
-Pre-training "will this clear the pass/fail rules?" prediction shown above the Preflight button on the Training Config page. Combines task-type-agnostic signals (row count, answer-key diversity, rule-pass probability heuristic) with per-task-type signals dispatched by `task_profile`. Classification adds class-imbalance, per-class minimums, label-vocab fragmentation, and single-class dominance. Span-extraction adds span-offset validity, entity-type coverage, and negative-example presence. Summarization adds summary/document length-ratio outlier detection. Advisory only — never blocks training; the Train button shifts to "Train anyway" when the verdict is amber/red. A snapshot of every cache-miss compute is persisted to `training_forecast_snapshots` and surfaced as a sparkline + verdict-delta strip above the signal list so the user can see whether their last edit moved the needle (60-day retention). See [Training workflow](../workflows/training.md#trainability-forecast).
+Pre-training "will this clear the pass/fail rules?" prediction shown in **Train** → **More options** → *Plan and gaps*. Combines task-type-agnostic signals (row count, answer-key diversity, rule-pass probability heuristic) with per-task-type signals dispatched by `task_profile`. Classification adds class-imbalance, per-class minimums, label-vocab fragmentation, and single-class dominance. Span-extraction adds span-offset validity, entity-type coverage, and negative-example presence. Summarization adds summary/document length-ratio outlier detection. Advisory only — never blocks training; the Train button shifts to "Train anyway" when the verdict is amber/red. A snapshot of every cache-miss compute is persisted to `training_forecast_snapshots` and surfaced as a sparkline + verdict-delta strip above the signal list so the user can see whether their last edit moved the needle (60-day retention). See [Training workflow](../workflows/training.md#trainability-forecast).
 
 ## Training mode
 

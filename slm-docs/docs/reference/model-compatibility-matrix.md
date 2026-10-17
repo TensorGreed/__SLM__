@@ -101,7 +101,7 @@ Re-run validate after each fix and watch the score + reason codes shift.
 
 ### UI
 
-**Train** → **Base model registry** → click a model row → **Compatibility** tab. Shows every check + pass/fail + provenance.
+**Train** → **More options** → *Base model registry* → click a model row → **Compatibility** tab. Shows every check + pass/fail + provenance.
 
 ### CLI
 

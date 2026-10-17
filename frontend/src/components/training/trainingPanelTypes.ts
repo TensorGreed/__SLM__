@@ -11,6 +11,26 @@ export interface TrainingPanelProps {
   hideExperimentList?: boolean;
   forceCreateVisible?: boolean;
   setupMode?: 'essentials' | 'advanced';
+  /** ``form`` = the Train form (Epic U phase U2): page one + More options +
+   *  the runs list. ``classic`` = the setup-tabs workspace. */
+  layout?: 'classic' | 'form';
+  /** Form layout: extra More-options sections rendered after the panel's own. */
+  moreOptions?: TrainFormSection[];
+  /** Form layout: the section to open on mount (``?open=``). */
+  openSection?: string | null;
+  /** Form layout: the project's task shape, shown read-only on page one. */
+  taskShapeLabel?: string;
+  /** Form layout: the base model to start from when the project has no run yet. */
+  defaultBaseModel?: string | null;
+  /** Form layout: rendered between the form and the runs list (flow cards). */
+  afterForm?: import('react').ReactNode;
+}
+
+export interface TrainFormSection {
+  id: string;
+  title: string;
+  hint?: string;
+  render: () => import('react').ReactNode;
 }
 
 // The stored experiment config is the full TrainingConfig dump plus

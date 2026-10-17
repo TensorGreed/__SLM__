@@ -109,8 +109,8 @@ describe('Coach (the one guidance surface)', () => {
     it('maps workspace URLs to the tab + coach stage', () => {
         expect(coachLocationFor('/project/1/data', '?step=goldset')).toEqual({ tab: 'goldset', stage: 'gold_set' });
         expect(coachLocationFor('/project/1/data')).toEqual({ tab: 'data', stage: 'data' });
-        expect(coachLocationFor('/project/1/train')).toEqual({ tab: 'tokenization', stage: null });
-        expect(coachLocationFor('/project/1/train', '?step=training')).toEqual({ tab: 'training', stage: 'training' });
+        expect(coachLocationFor('/project/1/train')).toEqual({ tab: 'training', stage: 'training' });
+        expect(coachLocationFor('/project/1/train', '?open=tokenization')).toEqual({ tab: 'training', stage: 'training' });
         expect(coachLocationFor('/project/1/results')).toEqual({ tab: 'eval', stage: 'eval' });
         expect(coachLocationFor('/project/1/ship', '?step=export')).toEqual({ tab: 'export', stage: 'export' });
         expect(coachLocationFor('/project/1/pipeline/goldset')).toEqual({ tab: 'goldset', stage: 'gold_set' });

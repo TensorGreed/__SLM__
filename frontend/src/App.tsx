@@ -10,13 +10,9 @@ import ProjectDomainPage from './pages/ProjectDomainPage';
 import ProjectDomainPacksPage from './pages/ProjectDomainPacksPage';
 import ProjectDomainProfilesPage from './pages/ProjectDomainProfilesPage';
 import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
-import ProjectRecipesPage from './pages/ProjectRecipesPage';
-import ProjectRecipePickerPage from './pages/ProjectRecipePickerPage';
-import ProjectTrainingConfigPage from './pages/ProjectTrainingConfigPage';
+import ProjectTrainPage from './pages/ProjectTrainPage';
 import ProjectEvalComparePage from './pages/ProjectEvalComparePage';
 import ProjectPlaygroundPage from './pages/ProjectPlaygroundPage';
-import ProjectModelsPage from './pages/ProjectModelsPage';
-import ProjectAdapterStudioPage from './pages/ProjectAdapterStudioPage';
 import ProjectAutopilotPage from './pages/ProjectAutopilotPage';
 import ProjectManifestPage from './pages/ProjectManifestPage';
 import ProjectDeploymentsPage from './pages/ProjectDeploymentsPage';
@@ -44,7 +40,7 @@ function App() {
             <Route path="/project/:id" element={<ProjectWorkspaceLayout />}>
               <Route index element={<ProjectOverviewPage />} />
               <Route path="data" element={<ProjectStagePage destination="data" />} />
-              <Route path="train" element={<ProjectStagePage destination="train" />} />
+              <Route path="train" element={<ProjectTrainPage />} />
               <Route path="results" element={<ProjectStagePage destination="results" />} />
               <Route path="ship" element={<ProjectStagePage destination="ship" />} />
               <Route path="settings" element={<ProjectSettingsPage />} />
@@ -58,12 +54,13 @@ function App() {
               <Route path="domain" element={<ProjectDomainPage />} />
               <Route path="domain/packs" element={<ProjectDomainPacksPage />} />
               <Route path="domain/profiles" element={<ProjectDomainProfilesPage />} />
-              <Route path="recipes" element={<ProjectRecipesPage />} />
-              <Route path="recipe-picker" element={<ProjectRecipePickerPage />} />
-              <Route path="training-config" element={<ProjectTrainingConfigPage />} />
+              {/* Folded into Train (Epic U phase U2). */}
+              <Route path="recipes" element={<LegacyRouteRedirect />} />
+              <Route path="recipe-picker" element={<LegacyRouteRedirect />} />
+              <Route path="training-config" element={<LegacyRouteRedirect />} />
+              <Route path="models" element={<LegacyRouteRedirect />} />
+              <Route path="adapter-studio" element={<LegacyRouteRedirect />} />
               <Route path="eval/compare" element={<ProjectEvalComparePage />} />
-              <Route path="models" element={<ProjectModelsPage />} />
-              <Route path="adapter-studio" element={<ProjectAdapterStudioPage />} />
               <Route path="autopilot" element={<ProjectAutopilotPage />} />
               <Route path="manifest" element={<ProjectManifestPage />} />
               <Route path="deployments" element={<ProjectDeploymentsPage />} />

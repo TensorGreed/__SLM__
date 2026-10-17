@@ -14,8 +14,8 @@ export const TAB_TIP: Record<TabKey, string> = {
     goldset: 'Build a small, trusted answer key. Evaluation scores your model against it, so the quality here matters most.',
     synthetic: 'Short on data? Generate more examples from a playbook that matches your task shape.',
     dataprep: 'Split your data into train / validation / test sets the trainer can consume.',
-    tokenization: 'See how your text becomes tokens — catch truncation and out-of-vocabulary surprises before you train.',
-    training: 'Pick a base model and hyperparameters on the Training Config page, then launch a run. Live metrics appear here.',
+    tokenization: 'See how your text becomes tokens — catch truncation and out-of-vocabulary surprises before you train (Train → More options → Tokenization).',
+    training: 'Check the base model and task, pick one run or three seeds, and press Train. Everything else waits under More options; runs and live metrics stay below.',
     eval: 'Score the trained model against your answer key and the built-in checks — honest numbers, pass/fail rules that can fail.',
     compression: 'Shrink the model (quantize / distill) so it fits your deployment target.',
     export: 'Package the finished model for download or deployment. You made it!',
@@ -52,7 +52,7 @@ export function coachLocationFor(pathname: string, search = ''): CoachLocation {
         const tab = resolveStep(destination[1] as StageDestination, step);
         return { tab, stage: COACH_STAGE_BY_TAB[tab] ?? null };
     }
-    if (/\/training-config(\/|$)/.test(pathname)) {
+    if (/\/(training-config|train)(\/|$)/.test(pathname)) {
         return { tab: 'training', stage: 'training' };
     }
     if (/\/data-studio(\/|$)/.test(pathname)) {

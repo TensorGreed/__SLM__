@@ -424,6 +424,30 @@ runs real CPU inference). ~4 min locally.
   `NAVIGATE_TARGET_URLS`, docs and demo specs still emit `/pipeline/<tab>`
   until U6 rewrites them; new code uses `stagePath(projectId, tab)` /
   `projectPath(projectId, dest)` (flowGuide already does).
+  **Train = the form (Epic U phase U2, 2026-10-17)** — `pages/ProjectTrainPage.tsx`
+  mounts `TrainingPanel layout="form"`: `components/training/TrainForm.tsx`
+  (presentational; page one = base model + Browse, task shape read-only +
+  Change, seeds radio 1 / 3, run name, readiness line, one Train button;
+  "More options" = collapsible sections rendered only while open, `?open=<id>`
+  / `openNonce` opens one) + the runs list below. The panel's form branch (before
+  the classic `return`) builds its own sections (`model`, `lora`, `seeds`,
+  `checks`, `cloud`, `presets`) from the same state as the classic setup tabs
+  and appends `moreOptions` from the page (`plan` = the former
+  /training-config panels, `models` = ProjectModelsPage, `task` =
+  ProjectRecipePickerPage, `pipeline-presets` = ProjectRecipesPage,
+  `adapters` = ProjectAdapterStudioPage, `tokenization` — those four pages
+  take `embedded` and render inside the form; `afterForm` holds the
+  documents→Q&A card). Readiness = `runPreflightPreview` on mount and 600 ms
+  after a base-model change; Train = `handleCreate(name || run-<date>)` →
+  `PreRunConfirmModal` → `handleStart`. Prefill: after the runs list loads,
+  the latest non-baseline run's config via `applySuggestedConfig` + its
+  `base_model` column, else `project.base_model_name`. Retired routes
+  `/training-config` (+ `#base-model`, `?expand_multi_seed=1`, the gaps /
+  archetype anchors), `/models`, `/recipe-picker`, `/recipes`,
+  `/adapter-studio`, `/pipeline/tokenization` redirect into
+  `trainSectionPath(projectId, id)` (`workspaceRoutes.TRAIN_OPEN_BY_LEGACY_PATH`);
+  Train has no step bar (`STEPS_BY_DESTINATION.train = ['training']`). Tests:
+  `TrainForm.test.tsx`, `TrainingPanel.form.test.tsx`, `ProjectTrainPage.test.tsx`.
   **The Coach** (`components/coach/Coach.tsx`, mounted once in
   `ProjectWorkspaceLayout`) stays the guidance bar on the four stage pages:
   stage + %, next step (`utils/flowGuide.getRecommendedAction`; "on target"

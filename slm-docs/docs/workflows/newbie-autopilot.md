@@ -148,7 +148,7 @@ The snapshot captures: project plan, dataset state, pass/fail rules (eval pack),
 
 - **You already have a known-good training manifest.** Just `brewslm train rerun --experiment <id>` instead.
 - **You're iterating on a single knob.** Edit the training preset directly; autopilot adds noise.
-- **You're past the first iteration and want to test a specific hypothesis** ("what if we scale to 4B?"). Use the Training Configurations page.
+- **You're past the first iteration and want to test a specific hypothesis** ("what if we scale to 4B?"). Use the Train form (and its **More options** sections).
 
 Autopilot pays off on first / second iterations and when something blocks you. After that, the manifest replay loop is faster.
 

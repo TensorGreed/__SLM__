@@ -24,6 +24,7 @@ import TrainingValidationSection from './TrainingValidationSection';
 import TrainingAdvancedPeftSection from './TrainingAdvancedPeftSection';
 import TrainingModelEssentialsSection from './TrainingModelEssentialsSection';
 import TrainingMultiSeedSection from './TrainingMultiSeedSection';
+import TrainForm, { type TrainReadiness } from './TrainForm';
 import { useTrainingConfigForm } from './useTrainingConfigForm';
 import PreRunConfirmModal from './PreRunConfirmModal';
 import { buildWsUrl } from '../../utils/ws';
@@ -87,8 +88,21 @@ export default function TrainingPanel({
   hideExperimentList = false,
   forceCreateVisible = false,
   setupMode = 'advanced',
+  layout = 'classic',
+  moreOptions = [],
+  openSection = null,
+  taskShapeLabel = 'Not set',
+  defaultBaseModel = null,
+  afterForm = null,
 }: TrainingPanelProps) {
+  const isFormLayout = layout === 'form';
+  // Which More-options section the form should open (Browse / Change task /
+  // Fix); the nonce re-opens an already-open section.
+  const [formOpen, setFormOpen] = useState<{ id: string | null; nonce: number }>({ id: openSection, nonce: 0 });
+  const [formCreating, setFormCreating] = useState(false);
+  const openFormSection = (id: string) => setFormOpen((prev) => ({ id, nonce: prev.nonce + 1 }));
   const [experiments, setExperiments] = useState<Experiment[]>([]);
+  const [experimentsLoaded, setExperimentsLoaded] = useState(false);
   // Subscribe to the jobs store so each in-flight experiment row
   // can render a live-loss sparkline + kill switch inline (mirrors
   // the bell). The store polls /api/jobs/active every 4s while any
@@ -1281,6 +1295,7 @@ export default function TrainingPanel({
     const res = await api.get(`/projects/${projectId}/training/experiments`);
     const rows: Experiment[] = res.data || [];
     setExperiments(rows);
+    setExperimentsLoaded(true);
     // Functional update: refresh only the run that is open *now*. Reading
     // the closed-over ``activeExperiment`` re-opened a run the user had just
     // left via "Back to Experiments" (it still held the stale value).
@@ -1698,15 +1713,16 @@ export default function TrainingPanel({
     return () => window.clearInterval(interval);
   }, [activeExperimentKey, projectId]);
 
-  const handleCreate = async () => {
-    if (!name.trim()) return;
+  const handleCreate = async (nameOverride?: string): Promise<Experiment | null> => {
+    const runName = (nameOverride ?? name).trim();
+    if (!runName) return null;
     setTrainingError(null);
     setTrainingWarnings([]);
 
     const config = buildTrainingConfigPayload();
 
     try {
-      const res = await api.post<Experiment>(`/projects/${projectId}/training/experiments`, { name, config });
+      const res = await api.post<Experiment>(`/projects/${projectId}/training/experiments`, { name: runName, config });
       const created = res.data;
       setExperiments((prev) => [created, ...prev]);
       setLastCreateSummary({
@@ -1735,10 +1751,55 @@ export default function TrainingPanel({
       setPreflightPlanError('');
       setRecipeResolveError('');
       setTouchedConfig(untouchedConfig());
+      return created;
     } catch (err) {
       setTrainingError(parseErrorEnvelope(err));
+      return null;
     }
   };
+
+  /** The form's Train button: create the run (named after the date when the
+   *  field is blank) and open the launch confirmation. */
+  const handleTrainFromForm = async () => {
+    if (formCreating) return;
+    setFormCreating(true);
+    try {
+      const stamp = new Date().toISOString().slice(0, 16).replace('T', '-').replace(':', '');
+      const created = await handleCreate(name.trim() || `run-${stamp}`);
+      if (created) setPendingStartExperiment(created);
+    } finally {
+      setFormCreating(false);
+    }
+  };
+
+  // Form layout: prefill from the latest run's config (what the user trained
+  // last is the best default), else the project's base model. Once per
+  // project, after the runs list has loaded (the stored config carries no
+  // base_model — that is a column on the run — so both are applied).
+  const [formPrefilledFor, setFormPrefilledFor] = useState<number | null>(null);
+  useEffect(() => {
+    if (!isFormLayout || !experimentsLoaded || formPrefilledFor === projectId) return;
+    const latest = experiments.find((exp) => exp.config && typeof exp.config === 'object' && !exp.config.is_baseline);
+    if (latest?.config) {
+      applySuggestedConfig(latest.config as Record<string, unknown>);
+      if (latest.base_model) setBaseModel(latest.base_model);
+    } else if (defaultBaseModel) {
+      setBaseModel(defaultBaseModel);
+    }
+    setFormPrefilledFor(projectId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFormLayout, experimentsLoaded, experiments, defaultBaseModel, projectId, formPrefilledFor]);
+
+  // Form layout: check readiness on mount and whenever the base model changes
+  // (debounced — the defaults land asynchronously and typing is bursty).
+  useEffect(() => {
+    if (!isFormLayout) return;
+    const timer = window.setTimeout(() => {
+      void runPreflightPreview();
+    }, 600);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFormLayout, baseModel, projectId]);
 
   const handleStart = async (experimentId: number) => {
     setTrainingError(null);
@@ -1878,6 +1939,279 @@ export default function TrainingPanel({
         onRefreshVibe={(experimentId) => void loadVibeTimeline(experimentId)}
         onSelectVibe={setVibeSelectedIndex}
       />
+    );
+  }
+
+  if (isFormLayout) {
+    const readiness: TrainReadiness = preflightPreviewLoading
+      ? { state: 'checking', errors: [], warnings: [] }
+      : preflightPreviewError
+        ? { state: 'error', errors: [], warnings: [], message: preflightPreviewError }
+        : preflightPreview
+          ? {
+              state: preflightPreview.ok ? 'ready' : 'blocked',
+              errors: preflightPreview.errors ?? [],
+              warnings: preflightPreview.warnings ?? [],
+            }
+          : { state: 'idle', errors: [], warnings: [] };
+
+    const presetsSection = (
+      <div className="training-form-presets">
+        <div className="form-group">
+          <label className="form-label">Training preset</label>
+          <div className="form-inline-actions">
+            <select
+              className="input training-recipe-select"
+              value={selectedRecipeId}
+              onChange={(e) => setSelectedRecipeId(e.target.value)}
+              data-testid="train-form-preset"
+            >
+              <option value="">Select preset</option>
+              {trainingRecipes.map((recipe) => (
+                <option key={recipe.recipe_id} value={recipe.recipe_id}>
+                  {recipe.display_name}
+                </option>
+              ))}
+            </select>
+            <button
+              className="btn btn-secondary"
+              onClick={() => void applySelectedRecipe()}
+              disabled={recipeResolveLoading || !selectedRecipeId}
+            >
+              {recipeResolveLoading ? 'Applying...' : 'Apply preset'}
+            </button>
+            <button className="btn btn-secondary" onClick={() => setShowHardwareModal(true)} title="Optimize settings for target hardware">
+              Hardware auto-tuner
+            </button>
+          </div>
+          <div className="form-hint">
+            A training preset applies a domain-agnostic config patch, then runtime/profile defaults and preflight.
+          </div>
+          {recipeResolveError && (
+            <div className="training-alert training-alert--warning training-alert--tight">{recipeResolveError}</div>
+          )}
+        </div>
+        <label className="form-label form-label-inline">
+          <input type="checkbox" checked={useProfileDefaults} onChange={(e) => setUseProfileDefaults(e.target.checked)} />
+          Use domain runtime defaults for untouched fields
+        </label>
+      </div>
+    );
+
+    const ownSections = [
+      {
+        id: 'model',
+        title: 'Model and hyperparameters',
+        hint: 'epochs, batch size, learning rate, OCR-noise copies, the model recommender',
+        render: () => (
+          <div className="training-config-grid training-config-grid--essentials">
+            <TrainingModelEssentialsSection
+              form={configForm}
+              applyBenchmarkWinner={applyBenchmarkWinner}
+              applyModelSelectionChoice={applyModelSelectionChoice}
+              applyModelWizardRecommendation={applyModelWizardRecommendation}
+              baseModelIntrospection={baseModelIntrospection}
+              baseModelIntrospectionError={baseModelIntrospectionError}
+              baseModelIntrospectionLoading={baseModelIntrospectionLoading}
+              benchmarkError={benchmarkError}
+              benchmarkHistory={benchmarkHistory}
+              benchmarkLoading={benchmarkLoading}
+              benchmarkResult={benchmarkResult}
+              buildTrainingConfigPayload={buildTrainingConfigPayload}
+              introspectBaseModel={introspectBaseModel}
+              isAlignmentMode={isAlignmentMode}
+              projectId={projectId}
+              runModelBenchmarkSweep={runModelBenchmarkSweep}
+              runModelWizard={runModelWizard}
+              runtimeCatalog={runtimeCatalog}
+              runtimeCatalogError={runtimeCatalogError}
+              selectedRuntimeModalities={selectedRuntimeModalities}
+              selectedRuntimeModalitiesDeclared={selectedRuntimeModalitiesDeclared}
+              selectedRuntimeSpec={selectedRuntimeSpec}
+              setWizardPrimaryLanguage={setWizardPrimaryLanguage}
+              setWizardTargetDevice={setWizardTargetDevice}
+              setWizardTaskProfile={setWizardTaskProfile}
+              setWizardVramGb={setWizardVramGb}
+              showSetupConfig
+              showSetupPower
+              wizardError={wizardError}
+              wizardLoading={wizardLoading}
+              wizardPrimaryLanguage={wizardPrimaryLanguage}
+              wizardResult={wizardResult}
+              wizardTargetDevice={wizardTargetDevice}
+              wizardTaskProfile={wizardTaskProfile}
+              wizardVramGb={wizardVramGb}
+            />
+          </div>
+        ),
+      },
+      {
+        id: 'lora',
+        title: 'LoRA and advanced training',
+        hint: 'PEFT, precision, OOM retry, curriculum, alignment, observability',
+        render: () => (
+          <div className="training-config-grid training-config-grid--essentials">
+            <TrainingAdvancedPeftSection form={configForm} isAlignmentMode={isAlignmentMode} />
+          </div>
+        ),
+      },
+      {
+        id: 'seeds',
+        title: 'Seeds',
+        hint: 'base seed, explicit seed list, parallel dispatch',
+        render: () => <TrainingMultiSeedSection form={configForm} />,
+      },
+      {
+        id: 'checks',
+        title: 'Checks',
+        hint: 'data readiness, the effective config, preflight and its plan',
+        render: () => (
+          <>
+            <ReadinessPanel projectId={projectId} />
+            <TrainingValidationSection
+              projectId={projectId}
+              effectivePreview={effectivePreview}
+              effectivePreviewLoading={effectivePreviewLoading}
+              effectivePreviewError={effectivePreviewError}
+              preflightPreview={preflightPreview}
+              preflightPreviewLoading={preflightPreviewLoading}
+              preflightPreviewError={preflightPreviewError}
+              preflightPlan={preflightPlan}
+              preflightPlanLoading={preflightPlanLoading}
+              preflightPlanError={preflightPlanError}
+              preferredPlanProfile={preferredPlanProfile}
+              preflightContractDetails={preflightContractDetails}
+              modelSelectionSummary={modelSelectionSummary}
+              onPreviewEffectiveConfig={() => void previewEffectiveConfig()}
+              onRunPreflightPreview={() => void runPreflightPreview()}
+              onRunPreflightPlan={() => void runPreflightPlan()}
+              onApplyPlanSuggestion={applyPlanSuggestion}
+            />
+          </>
+        ),
+      },
+      {
+        id: 'cloud',
+        title: 'Cloud burst',
+        hint: 'plan and run the job on rented GPUs',
+        render: () => <CloudBurstPlanningSection key={projectId} projectId={projectId} />,
+      },
+      {
+        id: 'presets',
+        title: 'Training presets',
+        hint: 'a preset config patch, the hardware auto-tuner, runtime defaults',
+        render: () => presetsSection,
+      },
+    ];
+
+    const notices = (
+      <>
+        {trainingError && (
+          <ErrorPanel envelope={trainingError} onDismiss={() => setTrainingError(null)} testIdPrefix="training-error-bottom" />
+        )}
+        {trainingWarnings.length > 0 && (
+          <div className="training-alert training-alert--warning">Preflight warnings: {trainingWarnings.join(' | ')}</div>
+        )}
+        {effectivePreview?.warm_start && (
+          <div className={`training-warm-start training-warm-start--${effectivePreview.warm_start.source === 'checkpoint' ? 'warm' : 'cold'}`}>
+            <strong>Starting weights:</strong>{' '}
+            {effectivePreview.warm_start.source === 'checkpoint'
+              ? effectivePreview.warm_start.checkpoint_name || effectivePreview.warm_start.manifest?.display_name || 'warm start'
+              : 'base model (cold start)'}
+            {' — '}
+            {describeWarmStartReason(effectivePreview.warm_start.reason)}
+          </div>
+        )}
+      </>
+    );
+
+    return (
+      <div className="animate-fade-in training-panel-stack">
+        <TrainForm
+          runName={name}
+          onRunNameChange={setName}
+          baseModel={baseModel}
+          onBaseModelChange={setBaseModel}
+          onBrowseModels={() => openFormSection('models')}
+          taskShapeLabel={`${taskShapeLabel} · ${taskType}`}
+          onChangeTaskShape={() => openFormSection('task')}
+          numSeeds={numSeeds}
+          onNumSeedsChange={(value) => {
+            setNumSeeds(value);
+            setTouchedConfig((prev) => ({ ...prev, num_seeds: true }));
+          }}
+          readiness={readiness}
+          onCheckAgain={() => void runPreflightPreview()}
+          onFix={() => openFormSection('checks')}
+          onTrain={() => void handleTrainFromForm()}
+          trainDisabled={!baseModel.trim() || readiness.state === 'checking'}
+          trainBusy={formCreating}
+          sections={[...ownSections, ...moreOptions]}
+          openSection={formOpen.id}
+          openNonce={formOpen.nonce}
+          notices={notices}
+        />
+
+        {afterForm}
+
+        {canViewRuns && (
+          <div className="card">
+            <div className="training-panel-head">
+              <h3 className="training-panel-title">{title}</h3>
+            </div>
+            <TrainingRunsList
+              hideCreateControls
+              experiments={experiments}
+              jobByExperimentId={jobByExperimentId}
+              selectedForCompare={selectedForCompare}
+              handleBulkArchiveFailed={handleBulkArchiveFailed}
+              handleDeleteExperiment={handleDeleteExperiment}
+              handleResetExperiment={handleResetExperiment}
+              setPendingStartExperiment={setPendingStartExperiment}
+              setShowCompare={setShowCompare}
+              toggleCompareSelection={toggleCompareSelection}
+              viewDashboard={viewDashboard}
+            />
+          </div>
+        )}
+
+        {onNextStep && !hideStepFooter && (
+          <StepFooter
+            currentStep="Training"
+            nextStep="Results"
+            nextStepIcon="📊"
+            isComplete={experiments.some((e) => e.status === 'completed')}
+            hint="Start and complete a run to proceed"
+            onNext={onNextStep}
+          />
+        )}
+
+        {showHardwareModal && (
+          <HardwareRecommenderModal onClose={() => setShowHardwareModal(false)} onApply={handleApplyHardwareRecommendation} />
+        )}
+
+        {pendingStartExperiment && (
+          <PreRunConfirmModal
+            projectId={projectId}
+            config={
+              pendingStartExperiment.config && typeof pendingStartExperiment.config === 'object'
+                ? (pendingStartExperiment.config as Record<string, unknown>)
+                : {}
+            }
+            baseModel={pendingStartExperiment.base_model}
+            targetProfileId={
+              (pendingStartExperiment.config as Record<string, unknown> | null | undefined)?.['target_profile_id'] as string | undefined
+            }
+            onCancel={() => setPendingStartExperiment(null)}
+            onConfirm={() => {
+              const expId = pendingStartExperiment.id;
+              setPendingStartExperiment(null);
+              void handleStart(expId);
+            }}
+            confirmLabel="Launch"
+          />
+        )}
+      </div>
     );
   }
 
@@ -2384,7 +2718,7 @@ export default function TrainingPanel({
                 <button className="btn btn-secondary" onClick={goToPreviousSetupTab}>
                   Back
                 </button>
-                <button className="btn btn-primary" onClick={handleCreate}>Create Experiment</button>
+                <button className="btn btn-primary" onClick={() => void handleCreate()}>Create Experiment</button>
                 {!forceCreateVisible && (
                   <button
                     className="btn btn-secondary"

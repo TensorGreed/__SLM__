@@ -114,7 +114,7 @@ The Base Model Registry lists candidates with **measured compatibility** for you
 
 ### UI
 
-**Train** → **Base model registry**. Filter `family=qwen`, `context >= 4096`, `license=permissive`. Click **Validate for project** on a candidate — surfaces tokenizer / chat-template / runtime warnings. Click **Set as default** when you find one you like (e.g. `Qwen2.5-1.5B-Instruct`).
+**Train** → **More options** → *Base model registry* (or **Browse** next to the base model field). Filter `family=qwen`, `context >= 4096`, `license=permissive`. Click **Validate for project** on a candidate — surfaces tokenizer / chat-template / runtime warnings. Click **Set as default** when you find one you like (e.g. `Qwen2.5-1.5B-Instruct`).
 
 ### CLI
 
@@ -138,6 +138,8 @@ For a first project, let the Autopilot Planner pick the training preset. It choo
 ### UI
 
 **Settings** → **Autopilot Planner** → describe the goal in plain English: *"Support FAQ tone, concise answers, no hallucinations beyond the dataset."* → **Plan** → **One-click run**. The page swaps to live mode.
+
+To train by hand instead, open **Train**: confirm the **Base model** and **Task**, choose *One run* or *Three seeds*, then click **Train** and **Launch**. The readiness line tells you what to fix first.
 
 ### CLI
 

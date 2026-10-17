@@ -406,7 +406,7 @@ brewslm dataset tokenize --project 1 --dataset tickets_v1 --base-model 12
 
 ### Token-length distribution across splits (V3 ML-native viz)
 
-The **Train** → **Tokenization** step lands on the **TokenLengthDistributionPanel** before the single-split deep-dive: a grouped histogram with one bar per `(bucket, split)` so train / validation / test render on the same axis. Backed by `POST /api/projects/{id}/tokenization/analyze-splits`, which orchestrates the existing single-split analyze across all three splits in one call.
+**Train** → **More options** → *Tokenization* lands on the **TokenLengthDistributionPanel** before the single-split deep-dive: a grouped histogram with one bar per `(bucket, split)` so train / validation / test render on the same axis. Backed by `POST /api/projects/{id}/tokenization/analyze-splits`, which orchestrates the existing single-split analyze across all three splits in one call.
 
 Reading the overlay:
 

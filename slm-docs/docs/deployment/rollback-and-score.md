@@ -59,7 +59,7 @@ If your previous version is itself broken (e.g., the regression came from upstre
 
 1. **Block traffic** at your serving layer.
 2. Generate a **[support bundle](../observability/support-bundles.md)** to forward to whoever owns the upstream component.
-3. Pick a known-good checkpoint from the [Models page](../workflows/training.md) and promote a fresh deployment from there.
+3. Pick a known-good checkpoint from the [model registry](../workflows/training.md) and promote a fresh deployment from there.
 
 ## Deployability score
 

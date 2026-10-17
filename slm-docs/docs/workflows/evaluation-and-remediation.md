@@ -283,7 +283,7 @@ curl -X POST http://localhost:8000/api/projects/1/evaluation/pack-scaffold \
 
 ## Catch problems before training: trainability forecast
 
-The answer key is also the input to the **trainability forecast** (Training Config page). The forecast runs the same task-type-aware signal sweep on the answer key *before* training so you can patch the data shape upfront instead of waiting for the eval to surface it. Signals overlap with the failure clusters below (per-class starvation, label-vocab drift, span-offset rot, summary/doc mismatch) but trigger at design time, not post-mortem. See [Training → Trainability forecast](training.md#trainability-forecast) for the full signal list.
+The answer key is also the input to the **trainability forecast** (**Train** → **More options** → *Plan and gaps*). The forecast runs the same task-type-aware signal sweep on the answer key *before* training so you can patch the data shape upfront instead of waiting for the eval to surface it. Signals overlap with the failure clusters below (per-class starvation, label-vocab drift, span-offset rot, summary/doc mismatch) but trigger at design time, not post-mortem. See [Training → Trainability forecast](training.md#trainability-forecast) for the full signal list.
 
 ## Fix-in-answer-key deep links
 

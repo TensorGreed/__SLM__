@@ -1,5 +1,5 @@
 import type { PipelineStage, PipelineStatusResponse, Project } from '../types';
-import { projectPath, stagePath } from './workspaceRoutes';
+import { projectPath, stagePath, trainSectionPath } from './workspaceRoutes';
 
 export interface RecommendedAction {
     path: string;
@@ -108,7 +108,7 @@ export function getRecommendedAction(
         case 'training':
             if (!project.base_model_name) {
                 return {
-                    path: `/project/${projectId}/training-config`,
+                    path: trainSectionPath(projectId, 'model'),
                     title: 'Configure model and hyperparameters',
                     description: 'Pick base model, runtime profile, and training preset.',
                 };
@@ -138,7 +138,7 @@ export function getRecommendedAction(
             };
         case 'completed':
             return {
-                path: `/project/${projectId}/recipes`,
+                path: trainSectionPath(projectId, 'pipeline-presets'),
                 title: 'Automate repeated runs',
                 description: 'Apply pipeline presets for repeatable experiments.',
             };

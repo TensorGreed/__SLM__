@@ -31,9 +31,6 @@ vi.mock('../components/data/CleaningPanel', () => panel('panel-cleaning', 'Clean
 vi.mock('../components/data/GoldSetPanel', () => panel('panel-goldset', 'Answer key'));
 vi.mock('../components/data/SyntheticPanel', () => panel('panel-synthetic', 'Synthetic'));
 vi.mock('../components/data/DatasetPrepPanel', () => panel('panel-dataprep', 'Split'));
-vi.mock('../components/training/TokenizationPanel', () => panel('panel-tokenization', 'Tokenization'));
-vi.mock('../components/training/TrainingPanel', () => panel('panel-training', 'Training'));
-vi.mock('../components/training/DocumentsQaFlowCard', () => panel('panel-docs-qa', 'Docs QA'));
 vi.mock('../components/evaluation/EvalPanel', () => panel('panel-eval', 'Eval'));
 vi.mock('../components/compression/CompressionPanel', () => panel('panel-compression', 'Compression'));
 vi.mock('../components/export/ExportPanel', () => panel('panel-export', 'Export'));
@@ -45,7 +42,7 @@ function LocationProbe() {
     return <div data-testid="location">{location.pathname + location.search}</div>;
 }
 
-function renderAt(path: string, destination: 'data' | 'train' | 'results' | 'ship') {
+function renderAt(path: string, destination: 'data' | 'results' | 'ship') {
     return render(
         <MemoryRouter initialEntries={[path]}>
             <Routes>
@@ -101,11 +98,5 @@ describe('ProjectStagePage', () => {
         expect(screen.getByTestId('panel-eval')).toBeInTheDocument();
         expect(screen.queryByRole('tab')).toBeNull();
         expect(screen.getByText('Failed required rules: f1')).toBeInTheDocument();
-    });
-
-    it('Train renders the training step with the documents flow card', () => {
-        renderAt('/project/77/train?step=training', 'train');
-        expect(screen.getByTestId('panel-training')).toBeInTheDocument();
-        expect(screen.getByTestId('panel-docs-qa')).toBeInTheDocument();
     });
 });

@@ -45,7 +45,12 @@ function parseJsonObject(text: string): AnyObj {
   return parsed as AnyObj;
 }
 
-export default function ProjectAdapterStudioPage() {
+interface ProjectAdapterStudioPageProps {
+  /** Rendered inside the Train form: no page header. */
+  embedded?: boolean;
+}
+
+export default function ProjectAdapterStudioPage({ embedded = false }: ProjectAdapterStudioPageProps = {}) {
   const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
 
   const [sourceType, setSourceType] = useState('project_dataset');
@@ -252,14 +257,16 @@ export default function ProjectAdapterStudioPage() {
 
   return (
     <div className="workspace-page adapter-studio-page">
-      <section className="workspace-page-header">
-        <div>
-          <h2 className="workspace-page-title">Dataset Structure Explorer and Adapter Studio</h2>
-          <p className="workspace-page-subtitle">
-            Profile schemas, map fields visually, preview transformed rows, and version reusable adapters without writing Python.
-          </p>
-        </div>
-      </section>
+      {!embedded && (
+        <section className="workspace-page-header">
+          <div>
+            <h2 className="workspace-page-title">Dataset Structure Explorer and Adapter Studio</h2>
+            <p className="workspace-page-subtitle">
+              Profile schemas, map fields visually, preview transformed rows, and version reusable adapters without writing Python.
+            </p>
+          </div>
+        </section>
+      )}
 
       <section className="card studio-source-panel">
         <h3>Source</h3>
