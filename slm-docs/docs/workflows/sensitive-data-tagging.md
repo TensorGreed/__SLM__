@@ -660,8 +660,8 @@ dates as date_of_birth against the convention; removed. Three seeds of
 
 | run | Gretel P / R / F1 | CoNLL P / R / F1 | credit_card F1 | MRN F1 | national_id F1 | plate F1 | bank_account P |
 |---|---|---|---|---|---|---|---|
-| #117 shipped | 0.680 / 0.740 / 0.708 | 0.883 / 0.590 / 0.708 | 0.74 | 0.66 | 0.67 | 0.54 | 0.40 |
-| #131 (tuned pick) | 0.717 / 0.784 / 0.749 | 0.866 / 0.620 / 0.723 | 0.80 | 0.76 | 0.81 | 0.64 | 0.30 |
+| #117 (shipped until 2026-10-17) | 0.680 / 0.740 / 0.708 | 0.883 / 0.590 / 0.708 | 0.74 | 0.66 | 0.67 | 0.54 | 0.40 |
+| #131 (tuned pick, **shipped**) | 0.717 / 0.784 / 0.749 | 0.866 / 0.620 / 0.723 | 0.80 | 0.76 | 0.81 | 0.64 | 0.30 |
 | #132 | 0.732 / 0.775 / 0.753 | 0.927 / 0.687 / 0.789 | 0.85 | 0.73 | 0.80 | 0.65 | 0.35 |
 | #133 | 0.759 / 0.767 / 0.763 | 0.906 / 0.699 / 0.789 | 0.87 | 0.72 | 0.81 | 0.57 | 0.55 |
 
@@ -680,6 +680,23 @@ the three on the benchmarks (CoNLL F1 0.723 vs 0.789 / 0.789), but
 choosing #132 or #133 on that basis would be picking on the test set and
 make every reported number optimistic; the honest ship is the rule's
 pick, with the note that the rule's metric did not separate the seeds.
+
+**Shipped (2026-10-17): #131, export 35.** One call,
+`POST /api/projects/31/seed-groups/130/ship {"export_format":"huggingface"}`,
+records the pick on the group's leader and runs the Hugging Face export of
+the picked child. The first attempt (export 34) came out with the seed-
+selection line and the benchmark table but **no Evaluation section and no
+"Human review" line**: a seed child is never lift-checked by itself (the
+group's leader is), so #131 had no span evaluation on record, and the model
+card only states evidence that exists. *Evaluate this run* on #131 (the
+lift-check Job: test examples + answer key, both 44 texts) and a second ship
+produced export 35, whose card now reads, in order: *Seed selection: Picked
+seed 45 (run #131) of 3 by validation span F1 (tuned thresholds) …*; the
+answer-key evaluation with *Human review: 11 of 44 rows checked by a person
+(1 corrected). On the checked rows: precision 0.90 · recall 0.94 · F1 0.92
+(11 texts)*; and the External benchmarks table (CoNLL 0.87 / 0.62 / 0.72,
+Gretel 0.72 / 0.78 / 0.75). Lesson for the product: ship after the lift
+check, or the card is thinner than the model deserves.
 
 ### Try it: the redact endpoint
 
@@ -1268,10 +1285,37 @@ validation span F1 and exported with *Ship this seed*:
 
 Overall the round is a tie within seed noise, but it moves the types that
 matter most for a redaction tool: card numbers and bank accounts (PCI) gain
-~0.2, plates lose ~0.15. Run #117 (export 33) is the shipped model; #107
-(export 32) remains the alternative where plates matter more. That closes
-the training work for this project: from the first span model (CoNLL F1
-0.21, a scan F1 of 0.59) to Gretel 0.71 and CoNLL 0.71 on independent data.
+~0.2, plates lose ~0.15. Run #117 (export 33) was the shipped model until
+2026-10-17; #107 (export 32) remains the alternative where plates matter
+more.
+
+**The shipped model (2026-10-17): #131, export 35.** Four more data rounds
+after #117 (identifier shapes, two look-alike rounds, prose names — all
+above) added seven look-alike types and 483 unlabelled-context names; the
+prose-names round was the first where every seed passed every criterion,
+and its rule's pick replaced #117:
+
+| | #117 (export 33) | #131 (export 35, shipped) |
+|---|---|---|
+| Gretel PII P / R / F1 | 0.680 / 0.740 / 0.708 | 0.717 / 0.784 / 0.749 |
+| CoNLL people P / R / F1 | 0.883 / 0.590 / 0.708 | 0.866 / 0.620 / 0.723 |
+| scan / clean key F1 (v5, 30 types) | 0.852 / 0.962 | 0.866 / 0.967 |
+| answer key F1 (checked rows) | 0.968 on 43 texts (15 checked: 0.905) | 0.967 on 44 texts (11 checked: 0.92) |
+| Gretel credit_card | 0.74 | 0.80 |
+| Gretel medical_record_number | 0.66 | 0.76 |
+| Gretel national_id | 0.67 | 0.81 |
+| Gretel license_plate | 0.54 | 0.64 |
+| Gretel bank_account precision (17 spans) | 0.40 | 0.30 |
+
+Gretel +0.04 F1, CoNLL recall +0.03 at −0.017 precision, the identifier
+types up 0.06–0.15; bank_account precision is the one loud loss and sits
+on 17 spans. The two answer-key figures are different keys (the key was
+re-written under the 30-type vocabulary between the two, and 11 of the 15
+verdicts carried over), so only the scan / clean rows compare like for like
+on the own data — and those keys can resolve ~0.04 overall, not per type. That closes the training work for
+this project: from the first span model (CoNLL F1 0.21, a scan F1 of 0.59)
+to Gretel 0.75 and CoNLL 0.72 on independent data, with the pick made on
+validation alone.
 
 ## What it costs to relabel
 
