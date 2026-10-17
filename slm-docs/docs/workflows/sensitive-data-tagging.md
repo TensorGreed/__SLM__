@@ -696,7 +696,61 @@ answer-key evaluation with *Human review: 11 of 44 rows checked by a person
 (1 corrected). On the checked rows: precision 0.90 · recall 0.94 · F1 0.92
 (11 texts)*; and the External benchmarks table (CoNLL 0.87 / 0.62 / 0.72,
 Gretel 0.72 / 0.78 / 0.75). Lesson for the product: ship after the lift
-check, or the card is thinner than the model deserves.
+check, or the card is thinner than the model deserves. (Fixed the same day:
+*Ship this seed* now runs the lift check on a seed with no evaluation first.)
+
+**bank_account / employee_id contrast round (2026-10-17).** The loudest
+remaining gap was bank_account precision 0.30 on Gretel (17 spans, recall
+1.0: 16 right, 41 wrong). Measuring what #131 actually called a bank
+account (`eval_tools/bench_confusions.py`, which lists a run's false
+positives on a benchmark by what they really were) showed the pattern: 20
+unlabelled ids (routing / ABA / SWIFT numbers, a tracking number, a payment
+id, device identifiers, Unix timestamps, customer ids), 10 card numbers
+with no "card" cue ("Payment: 3588…", "Shipper:", "Order ID:"), 8 MRNs. A
+long bare number was a bank account by default — the training rows had 445
+bank_account spans, a third of them in one "Account Numbers: A99999999999,"
+shape, and only 44 routing numbers. employee_id (P 0.89 / R 0.66) missed
+bare ids in Gretel's shapes (G-82727-I, Mr-44381, Q4896704) even after
+"Employee ID:". So: one document of **contrasts, each with its own cue** —
+40 statements, payroll forms, wire confirmations, HR / IT inventories,
+incident reports, logistics notices, billing, loyalty letters, JSON / XML
+logs, loan letters, rotas; every account next to a routing number, a card,
+a tracking / order / device / batch / timestamp / customer / MRN id, and
+staff ids in the Gretel shapes beside the same shapes as incident, audit,
+part and flight ids. 67 passages, Sonnet-labelled (840 spans, $0.45): 143
+bank_account, 115 routing_number, 107 transaction_id, 155 employee_id, 54
+ticket_id, 50 customer_id. Hand audit before training fixed 36 labels (17
+batch numbers labelled transaction_id, 7 dateline dates as date_of_birth, 8
+"account ending in 4471" as credit_card, …). Three seeds of #131's config,
+picked on tuned validation F1 (0.9496 / 0.9468 / 0.9486 → #135):
+
+| run | Gretel P / R / F1 | CoNLL P / R / F1 | bank_account P / R (FPs) | employee_id P / R | credit_card | MRN | national_id | plate | scan / clean key |
+|---|---|---|---|---|---|---|---|---|---|
+| #131 shipped | 0.717 / 0.784 / 0.749 | 0.866 / 0.620 / 0.723 | 0.30 / 1.00 (41) | 0.89 / 0.66 | 0.80 | 0.76 | 0.81 | 0.64 | 0.866 / 0.967 |
+| #135 (tuned pick) | 0.743 / 0.797 / 0.769 | 0.899 / 0.645 / 0.751 | 0.71 / 1.00 (7) | 0.80 / 0.76 | 0.89 | 0.77 | 0.81 | 0.59 | 0.859 / 0.965 |
+| #136 | 0.755 / 0.777 / 0.766 | 0.850 / 0.614 / 0.713 | 0.62 / 0.88 (9) | 0.85 / 0.73 | 0.84 | 0.73 | 0.76 | 0.63 | 0.863 / 0.970 |
+| #137 | 0.750 / 0.803 / 0.776 | 0.814 / 0.578 / 0.676 | 0.49 / 1.00 (18) | 0.81 / 0.76 | 0.87 | 0.78 | 0.79 | 0.60 | 0.867 / 0.965 |
+
+The targeted effect is real on every seed: bank_account false positives 41
+→ 7 / 9 / 18 (a count over 500 texts, beyond noise even though it varies
+2.5× by seed), the ten cue-less card numbers gone everywhere (credit_card
+precision 0.78 → 0.94–0.97), employee_id recall 0.66 → 0.73–0.76, Gretel F1
++0.02–0.03 on all three. What it cost, also on every seed: employee_id
+precision 0.89 → 0.80–0.85 (new *fragment* predictions — the first subword
+of logins and street numbers next to staff ids; the 14 username rows in
+the document are the likely cause), license_plate 0.64 → 0.59–0.63 (≈ 3 of
+55 spans, same-signed everywhere), national_id recall 0.79 → 0.71–0.75.
+CoNLL: #135's 0.751 is seed luck — the three-seed mean (0.713) equals #131's
+0.723 within a spread of 0.075. Own keys unchanged. Of the pick's 7
+remaining bank_account errors, 3–4 are the benchmark's own convention (an
+"Account Number: 3833…" it calls a card, an account after a SWIFT it leaves
+unlabelled) — under our convention the ceiling on this benchmark is ~0.85,
+and #135 is near it. The fresh reviewer's call: **ship #135 over #131** —
+only the pick clears every bar set before the round, and the regressions
+it carries are the data's (shared by its siblings), not the seed's. Not
+shipped yet. If another round: a small negative-example document for
+employee_id (logins, house numbers and customer ids beside staff ids) plus
+plates in prose; bank_account needs no more data.
 
 ### Try it: the redact endpoint
 
