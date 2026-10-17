@@ -71,7 +71,8 @@ Train    (/train)         → one form (no steps) + the runs list below it
 │   └── More options      → ?open=<id>: model, lora, seeds, checks, cloud,
 │                           presets, plan, models, task, pipeline-presets,
 │                           adapters, tokenization
-Results  (/results)       → evaluation
+Results  (/results)       → evaluation, four tabs: Verdict, Failures,
+                            Compare, Try it (?tab=verdict|failures|compare|try)
 Ship     (/ship)
 │   ├── Compression       → compression
 │   └── Export            → export         (?step=export)
@@ -81,7 +82,7 @@ Settings (/settings)      → tips switch, beginner flag, manifest export,
                             Adapter Studio, Extension Studio
 ```
 
-Related tools are linked from each page's header: Data Studio and Annotation from **Data**; the base model registry, task type, pipeline presets, Adapter Studio and tokenization live under **Train** → **More options**; Playground and Compare runs from **Results**; Deployments and Observability from **Ship**. Old `/pipeline/<tab>` URLs redirect to the matching destination and step.
+Related tools are linked from each page's header: Data Studio and Annotation from **Data**; the base model registry, task type, pipeline presets, Adapter Studio and tokenization live under **Train** → **More options**; the four evaluation workflows (Verdict, Failures, Compare, Try it) as tabs on **Results**; Deployments and Observability from **Ship**. Old `/pipeline/<tab>` URLs redirect to the matching destination and step.
 
 ## When to use which surface
 

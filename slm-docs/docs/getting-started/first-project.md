@@ -168,7 +168,7 @@ Once training finishes, the Eval stage kicks off automatically (Autopilot Planne
 
 ### UI
 
-**Results** → **Run evaluation**. Each pass/fail rule (exact match, LLM-judge, safety) lands as a row with pass / fail and its metric. The **Failure Clusters** card below groups errors by reason code — click one to see exemplars.
+**Results** → **Verdict** → **Evaluate**. Each pass/fail rule (exact match, LLM-judge, safety) lands as a row with pass / fail and its metric. The **Failures** tab groups errors by reason code — click one to see exemplars.
 
 ### CLI
 

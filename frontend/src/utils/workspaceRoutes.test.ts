@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { legacyRedirectPath, nextTab, resolveStep, stagePath, trainSectionPath } from './workspaceRoutes';
+import { legacyRedirectPath, nextTab, resolveStep, resultsPath, stagePath, trainSectionPath } from './workspaceRoutes';
 
 describe('workspaceRoutes', () => {
     it('builds the canonical stage URL, omitting step for the first step', () => {
@@ -36,7 +36,7 @@ describe('workspaceRoutes', () => {
         expect(legacyRedirectPath(7, '/project/7/pipeline/training')).toBe('/project/7/train');
         expect(legacyRedirectPath(7, '/project/7/pipeline/tokenization')).toBe('/project/7/train?open=tokenization');
         expect(legacyRedirectPath(7, '/project/7/pipeline/nope')).toBe('/project/7/data');
-        expect(legacyRedirectPath(7, '/project/7/playground')).toBeNull();
+        expect(legacyRedirectPath(7, '/project/7/deployments')).toBeNull();
     });
 
     it('folds the retired training pages into Train sections (U2)', () => {
@@ -49,5 +49,14 @@ describe('workspaceRoutes', () => {
         expect(legacyRedirectPath(7, '/project/7/recipe-picker', '?return_to=%2Fproject%2F7%2Fdata')).toBe('/project/7/train?open=task');
         expect(legacyRedirectPath(7, '/project/7/recipes')).toBe('/project/7/train?open=pipeline-presets');
         expect(legacyRedirectPath(7, '/project/7/adapter-studio')).toBe('/project/7/train?open=adapters');
+    });
+
+    it('folds eval anchors, eval/compare and the playground into Results (U3)', () => {
+        expect(resultsPath(7, 'failures')).toBe('/project/7/results?tab=failures');
+        expect(legacyRedirectPath(7, '/project/7/pipeline/eval')).toBe('/project/7/results');
+        expect(legacyRedirectPath(7, '/project/7/pipeline/eval', '', '#probe-pack-panel')).toBe('/project/7/results?tab=failures#probe-pack-panel');
+        expect(legacyRedirectPath(7, '/project/7/pipeline/eval', '', '#external-benchmarks')).toBe('/project/7/results?tab=compare#external-benchmarks');
+        expect(legacyRedirectPath(7, '/project/7/eval/compare', '?a=1&b=2')).toBe('/project/7/results?a=1&b=2&tab=compare');
+        expect(legacyRedirectPath(7, '/project/7/playground', '?run=5')).toBe('/project/7/results?run=5&tab=try');
     });
 });

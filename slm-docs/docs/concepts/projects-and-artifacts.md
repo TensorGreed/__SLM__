@@ -28,7 +28,7 @@ Inside a project the sidebar has six destinations, and every page is always reac
 | **Overview** (landing page) | Current stage, the one next step, the latest run and its verdict, the shipped model (with its Hugging Face link when published), suggestions, a collapsed **Full plan** | none |
 | **Data** (`/data`) | Everything before training: upload, import, clean, answer key, synthetic rows, splits. Header links: Data Studio, Annotation | Sources, Prepare, Answer key, Generate, Split |
 | **Train** (`/train`) | One form page: base model, task, seeds, run name, readiness line and a **Train** button, with the runs list below. **More options** holds *Model and hyperparameters*, *LoRA and advanced training*, *Seeds*, *Checks*, *Cloud burst*, *Training presets*, *Plan and gaps*, *Base model registry*, *Task type*, *Pipeline presets*, *Adapter Studio*, *Tokenization* | none |
-| **Results** (`/results`) | Evaluation: lift vs base, pass/fail rules, failures. Header links: Playground, Compare runs | none |
+| **Results** (`/results`) | Evaluation in four tabs: **Verdict** (did it work: lift vs base, pass/fail rules), **Failures** (where it fails), **Compare** (runs side by side, benchmarks), **Try it** (the prompt playground and redaction box) | none |
 | **Ship** (`/ship`) | Compression, export, Export History, Model Registry, publish to the Hub. Header links: Deployments, Observability | Compression, Export |
 | **Settings** (`/settings`) | Inline-tips switch, beginner flag, manifest export, and the advanced tools (Autopilot Planner, Workflow Builder, Pipeline presets, Pipeline as Code, Domain Packs/Profiles, Adapter Studio, Extension Studio) | none |
 

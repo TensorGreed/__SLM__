@@ -14,7 +14,6 @@ import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
 import DatasetPrepPanel from '../components/data/DatasetPrepPanel';
-import EvalPanel from '../components/evaluation/EvalPanel';
 import CompressionPanel from '../components/compression/CompressionPanel';
 import ExportPanel from '../components/export/ExportPanel';
 import api from '../api/client';
@@ -30,8 +29,8 @@ import {
     type StageDestination,
 } from '../utils/workspaceRoutes';
 
-/** Train is its own page (ProjectTrainPage) since U2. */
-type PanelDestination = Exclude<StageDestination, 'train'>;
+/** Train (U2) and Results (U3) are their own pages. */
+type PanelDestination = Exclude<StageDestination, 'train' | 'results'>;
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectStagePage.css';
 
@@ -50,7 +49,6 @@ const TAB_TARGET_STAGE: Record<TabKey, string> = {
 
 const DESTINATION_BLURB: Record<PanelDestination, string> = {
     data: 'Bring data in, prepare it, write the answer key, generate more, and split it.',
-    results: 'Did it work, where does it fail, and how do runs compare.',
     ship: 'Package the model, publish it, and deploy it.',
 };
 
@@ -64,10 +62,6 @@ const RELATED_LINKS: Record<PanelDestination, RelatedLink[]> = {
     data: [
         { label: 'Data Studio', path: 'data-studio' },
         { label: 'Annotation', path: 'annotate' },
-    ],
-    results: [
-        { label: 'Playground', path: 'playground' },
-        { label: 'Compare runs', path: 'eval/compare' },
     ],
     ship: [
         { label: 'Deployments', path: 'deployments' },
@@ -87,7 +81,6 @@ export default function ProjectStagePage({ destination }: ProjectStagePageProps)
 
     const steps = STEPS_BY_DESTINATION[destination];
     const step = useMemo(() => resolveStep(destination, searchParams.get('step')), [destination, searchParams]);
-    const autoGate = destination === 'results' ? pipelineStatus?.auto_gate ?? null : null;
 
     const goToStep = (tab: TabKey) => {
         setActiveTab(tab);
@@ -125,8 +118,6 @@ export default function ProjectStagePage({ destination }: ProjectStagePageProps)
                 return <SyntheticPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'dataprep':
                 return <DatasetPrepPanel projectId={projectId} onNextStep={goToNextTab} />;
-            case 'eval':
-                return <EvalPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'compression':
                 return <CompressionPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'export':
@@ -156,30 +147,6 @@ export default function ProjectStagePage({ destination }: ProjectStagePageProps)
                     ))}
                 </nav>
             </section>
-
-            {autoGate && (
-                <div className="card stage-page__gate">
-                    <div className="stage-page__gate-head">
-                        <h3>Pass/fail rules</h3>
-                        <span className={`badge ${autoGate.passed ? 'badge-success' : 'badge-error'}`}>
-                            {autoGate.passed ? 'PASS' : 'FAIL'}
-                        </span>
-                    </div>
-                    <div className="stage-page__gate-meta">
-                        <span>Run <strong>#{autoGate.experiment_id}</strong></span>
-                        <span>Rule set <strong>{autoGate.pack_id || 'auto'}</strong></span>
-                        {autoGate.captured_at && (
-                            <span>Checked <strong>{new Date(autoGate.captured_at).toLocaleString()}</strong></span>
-                        )}
-                    </div>
-                    {autoGate.failed_gate_ids.length > 0 && (
-                        <div className="stage-page__gate-warn">Failed required rules: {autoGate.failed_gate_ids.join(', ')}</div>
-                    )}
-                    {autoGate.missing_required_metrics.length > 0 && (
-                        <div className="stage-page__gate-warn">Missing required metrics: {autoGate.missing_required_metrics.join(', ')}</div>
-                    )}
-                </div>
-            )}
 
             {steps.length > 1 && (
                 <div className="stage-page__steps" role="tablist" aria-label={`${DESTINATION_LABEL[destination]} steps`}>

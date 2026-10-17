@@ -180,11 +180,11 @@ describe('ProjectEvalComparePage', () => {
         expect(apiMock.post.mock.calls[0][0]).toBe(
             '/projects/5/training/runs/11/rerun-from-manifest',
         );
-        // Toast announces the new experiment id; nav lands on training-config.
+        // Toast announces the new experiment id; nav lands on Train → Plan and gaps.
         expect(toastMock.success).toHaveBeenCalledWith(
             expect.stringContaining('99'),
         );
-        expect(navigateMock).toHaveBeenCalledWith('/project/5/training-config');
+        expect(navigateMock).toHaveBeenCalledWith('/project/5/train?open=plan');
     });
 
     it('shows a manifest-missing toast when rerun returns 404 manifest_not_captured', async () => {

@@ -5,7 +5,7 @@ title: Beginner mode
 
 # Beginner mode
 
-BrewSLM has a per-project **beginner mode** flag. Since 2026-10-17 it **hides nothing**: the sidebar always shows the same six destinations (Overview, Data, Train, Results, Ship, Settings) and every page is reachable. The flag only decides whether *advanced sections* inside a page, such as **Advanced evaluation** on **Results**, start collapsed. In the Settings page it is labelled **Start advanced sections collapsed**.
+BrewSLM has a per-project **beginner mode** flag. Since 2026-10-17 it **hides nothing**: the sidebar always shows the same six destinations (Overview, Data, Train, Results, Ship, Settings) and every page is reachable. The flag only decides whether *advanced sections* inside a page, start collapsed (Results has none). In the Settings page it is labelled **Start advanced sections collapsed**.
 
 Nothing in the backend changes and every endpoint stays callable; it is purely a UX default.
 
@@ -33,7 +33,7 @@ Nothing is hidden or locked. Pages that used to be "advanced only" now live unde
 | Where | What |
 |---|---|
 | **Settings** | Autopilot Planner (plan diffs, repair preview, rollback), Workflow Builder, Pipeline presets, Pipeline as Code (manifest), Domain Packs, Domain Profiles, Adapter Studio, Extension Studio, manifest export |
-| **Results** | **Advanced evaluation** starts collapsed when the flag is on, open when it is off |
+| **Results** | Nothing. All four tabs (Verdict, Failures, Compare, Try it) look the same with the flag on or off |
 | Other advanced sections | Start collapsed when the flag is on |
 
 All of these are also reachable by URL and from the Cmd-K palette, which lists the six destinations plus every tool page.

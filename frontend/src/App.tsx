@@ -11,8 +11,7 @@ import ProjectDomainPacksPage from './pages/ProjectDomainPacksPage';
 import ProjectDomainProfilesPage from './pages/ProjectDomainProfilesPage';
 import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
 import ProjectTrainPage from './pages/ProjectTrainPage';
-import ProjectEvalComparePage from './pages/ProjectEvalComparePage';
-import ProjectPlaygroundPage from './pages/ProjectPlaygroundPage';
+import ProjectResultsPage from './pages/ProjectResultsPage';
 import ProjectAutopilotPage from './pages/ProjectAutopilotPage';
 import ProjectManifestPage from './pages/ProjectManifestPage';
 import ProjectDeploymentsPage from './pages/ProjectDeploymentsPage';
@@ -41,7 +40,7 @@ function App() {
               <Route index element={<ProjectOverviewPage />} />
               <Route path="data" element={<ProjectStagePage destination="data" />} />
               <Route path="train" element={<ProjectTrainPage />} />
-              <Route path="results" element={<ProjectStagePage destination="results" />} />
+              <Route path="results" element={<ProjectResultsPage />} />
               <Route path="ship" element={<ProjectStagePage destination="ship" />} />
               <Route path="settings" element={<ProjectSettingsPage />} />
               {/* Retired URLs (Epic U phase U1): /guide, /wizard, /pipeline/<tab>. */}
@@ -60,7 +59,9 @@ function App() {
               <Route path="training-config" element={<LegacyRouteRedirect />} />
               <Route path="models" element={<LegacyRouteRedirect />} />
               <Route path="adapter-studio" element={<LegacyRouteRedirect />} />
-              <Route path="eval/compare" element={<ProjectEvalComparePage />} />
+              {/* Folded into Results (Epic U phase U3). */}
+              <Route path="eval/compare" element={<LegacyRouteRedirect />} />
+              <Route path="playground" element={<LegacyRouteRedirect />} />
               <Route path="autopilot" element={<ProjectAutopilotPage />} />
               <Route path="manifest" element={<ProjectManifestPage />} />
               <Route path="deployments" element={<ProjectDeploymentsPage />} />
@@ -68,7 +69,6 @@ function App() {
               <Route path="extensions" element={<ProjectExtensionStudioPage />} />
               <Route path="annotate" element={<ProjectAnnotatePage />} />
               <Route path="annotate/:job_id" element={<ProjectAnnotatePage />} />
-              <Route path="playground" element={<ProjectPlaygroundPage />} />
             </Route>
           </>
         ) : (

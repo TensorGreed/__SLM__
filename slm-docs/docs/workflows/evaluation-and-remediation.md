@@ -22,9 +22,22 @@ The UI uses plain names for eval data; the API, CLI and file names keep the tech
 
 See the [glossary](../reference/glossary.md#answer-key) for each term.
 
-## The default view: one summary card
+## The Results page: four workflows
 
-The Results page opens on a single card that answers three questions for the
+**Results** (`/project/{id}/results`) is organised by the question you are asking, as four tabs (`?tab=verdict|failures|compare|try`). One evaluation panel sits underneath and keeps the selected run when you switch tabs. Nothing is hidden behind a toggle, and the beginner flag changes nothing here.
+
+| Tab | Question | What it holds |
+|---|---|---|
+| **Verdict** | Did it work? | The pass/fail rules result (when the pipeline has one), the summary card, the **Run** picker, **Evaluate** and **Compare to #N**, the multi-seed badge, the SFT lift panel, the quality scorecard |
+| **Failures** | Where does it fail? | Eval gaps, built-in checks, the **Pass/fail rules** card, the remediation planner, per-slice metrics, custom checks, failure clusters, active learning, the reroute recommendation, suggested answer-key rows, classification charts, the failing rows, and collapsed **Answer-key review** and **Answer-key workbench** sections |
+| **Compare** | How does it stack up? | Side-by-side run comparison (when `?a=&b=` are set), external benchmarks, the frontier comparison, the auto-RAG comparison, the student/teacher comparison |
+| **Try it** | What does it say? | The prompt playground, and **Redact a text** for an evaluated span-tagging run |
+
+Old links still work: `/eval/compare?a=&b=` opens **Compare** with that pair, `/playground` opens **Try it**, and `/pipeline/eval#<anchor>` opens the tab that holds the anchor.
+
+## Verdict: one summary card
+
+The **Verdict** tab opens on a single card that answers three questions for the
 selected run (the latest trained run is picked for you):
 
 1. **Is it better than the base model?** — verdict: *better*, *worse*, *no
@@ -45,10 +58,7 @@ Test examples always means the prepared test split from Dataset Prep. The final
 answer key (`gold_test`) is used only when the project has no prepared split, so the base model and
 the fine-tuned model are always scored on the same rows.
 
-Everything else — pass/fail rules and the scorecard, built-in and custom checks, failure
-clusters, remediation, and the comparison panels — sits under **Advanced
-evaluation**. It is collapsed by default for beginner projects and open for
-everyone else.
+Everything else sits on the other tabs: pass/fail rules and the scorecard stay on **Verdict**; built-in and custom checks, failure clusters and remediation are on **Failures**; the comparison panels are on **Compare**.
 
 API: `GET /api/projects/{id}/evaluation/summary?experiment_id=` returns
 `verdict`, `headline` (`metric_id`, `baseline_value`, `trained_value`,
@@ -257,7 +267,7 @@ curl -X POST http://localhost:8000/api/projects/1/gold/add \
 
 ## Pass/fail rules scaffold (task-type-aware starter)
 
-If your project doesn't yet have a preferred pass/fail rule set (eval pack), the Results page surfaces a **Scaffolded pass/fail rule set** panel under the pack picker. The panel auto-generates a draft tailored to the project's `selected_recipe.recipe_id`:
+If your project doesn't yet have a preferred pass/fail rule set (eval pack), the **Failures** tab surfaces a **Scaffolded pass/fail rule set** panel under the rule set picker in the **Pass/fail rules** card. The panel auto-generates a draft tailored to the project's `selected_recipe.recipe_id`:
 
 | Task type | Metrics | Pass/fail rules (gates) |
 |---|---|---|
@@ -287,11 +297,11 @@ The answer key is also the input to the **trainability forecast** (**Train** →
 
 ## Fix-in-answer-key deep links
 
-When you expand a failure-cluster card on the Results page, a **Fix in answer key** button next to the cluster-augment control deep-links into the answer-key workbench with the LLM-gen panel pre-configured: `distribution.hallucination_traps` defaults to 5 and the focus textarea is prefilled with a one-line summary of the cluster's failure pattern (reason code + classifier explanation). The destination panel shows a dismissible "Generating traps for cluster X" banner so you can verify what was prefilled before clicking Generate. Non-qa-sft recipes still get the focus hint; the trap distribution UI is qa-sft-only.
+When you expand a failure-cluster card on the **Failures** tab, a **Fix in answer key** button next to the cluster-augment control deep-links into the answer-key workbench with the LLM-gen panel pre-configured: `distribution.hallucination_traps` defaults to 5 and the focus textarea is prefilled with a one-line summary of the cluster's failure pattern (reason code + classifier explanation). The destination panel shows a dismissible "Generating traps for cluster X" banner so you can verify what was prefilled before clicking Generate. Non-qa-sft recipes still get the focus hint; the trap distribution UI is qa-sft-only.
 
 ## Eval comparison + "Fix the gap" rollback
 
-When you've run eval against two experiments in the same project, the Results page shows a **Compare to #\<id\>** button that deep-links into a side-by-side comparison page at `/project/{id}/eval/compare?a=<exp>&b=<exp>`. The page renders:
+When you've run eval against two experiments in the same project, the **Verdict** tab shows a **Compare to #\<id\>** button that opens **Compare** with the pair (`/project/{id}/results?tab=compare&a=<exp>&b=<exp>`). The side-by-side view on top of that tab renders:
 
 - Two side cards with pass-rate badges and a winner marker.
 - A metric-delta table with regressions sorted to the top (direction-coded against `higher_is_better` so `eval_loss` is graded inverted).
@@ -302,7 +312,7 @@ When B regressed, a red **Fix the gap** banner offers a one-click "Rerun experim
 
 ## SLM-vs-frontier benchmark report
 
-The Results page also answers the production buying question — *"is my cheap local model good enough vs. just calling gpt-4o-mini?"* — as an honest report: **"Your model is X% as good as gpt-4o-mini at Y% of the cost and Z× the latency."** with a per-metric table behind it.
+The **Compare** tab also answers the production buying question — *"is my cheap local model good enough vs. just calling gpt-4o-mini?"* — as an honest report: **"Your model is X% as good as gpt-4o-mini at Y% of the cost and Z× the latency."** with a per-metric table behind it.
 
 - **Quality** is a pure ratio over stored eval results — `slm / frontier` per shared metric — and needs a **frontier baseline run**: the frontier model evaluated on the *same* eval set. Resolve it via `?frontier_run_id=`, the experiment's `config.frontier_baseline_run_id`, or the eval pack. Without one the quality block soft-falls-back to `no_frontier_eval` (the report **never fabricates** a quality number), and the per-metric table marks where the SLM is `behind`, not only where it wins.
 - **Cost + latency** are labeled by provenance. Frontier figures come from a small **published-reference table** (gpt-4o-mini / gpt-4o / claude-3.5-haiku public pricing + typical latency, `as_of`-stamped). SLM figures are `estimated` from the project's latest model-benchmark sweep (throughput → $/1M tokens at the GPU hourly rate; latency from the same sweep). No sweep yet → the SLM side is `unavailable` with a CTA, never guessed.
@@ -312,7 +322,7 @@ The Results page also answers the production buying question — *"is my cheap l
 
 ## Suggested answer-key rows: drift-triggered hallucination-trap refresh (admin opt-in)
 
-Projects can opt into automatic hallucination-trap refresh from the **Suggested answer-key rows** panel under the Results page (API name: *drift traps*). When auto-refresh is off, the panel shows an opt-in banner with a one-click "Enable auto-refresh" button; when it's on, a status chip surfaces the per-refresh trap count and a "Disable" link. Either way, the panel's "Generate now" button always works — it hits the manual `POST /drift/refresh-traps` endpoint and reloads the queue.
+Projects can opt into automatic hallucination-trap refresh from the **Suggested answer-key rows** panel on the **Failures** tab of Results (API name: *drift traps*). When auto-refresh is off, the panel shows an opt-in banner with a one-click "Enable auto-refresh" button; when it's on, a status chip surfaces the per-refresh trap count and a "Disable" link. Either way, the panel's "Generate now" button always works — it hits the manual `POST /drift/refresh-traps` endpoint and reloads the queue.
 
 Each pending row carries the cluster pattern (`reason_code`) that motivated it plus a task-type-shaped preview of the trap. Per-row Accept and Reject buttons triage in place: accepting appends the row to the final answer key (`gold_test.jsonl`); rejecting marks the row in the audit trail. Switch the status filter to **Accepted**, **Rejected**, or **All (audit)** to see triaged rows after the fact.
 
@@ -365,7 +375,7 @@ After every **real** training run completes, BrewSLM queues a `post_training_lif
 
 1. **Evaluates the base model.** It runs the un-fine-tuned base model on the test examples (the `test` split) (up to 100 rows, greedy decoding). The result is cached per base model, and it's reused until `prepared/test.jsonl` changes.
 2. **Evaluates your run.** It runs the fine-tuned checkpoint on the same split with the same settings.
-3. **Reports the lift.** It reports the headline metric, for example `exact_match: 0.10 → 0.80 (better than base)`. The **Did SFT help?** panel on the Results page shows the full comparison for the selected run. It always compares against the baseline for **that run's base model**, never another model's. The Results page's summary card also says how solid that lift is: how many test examples fine-tuning helped, hurt, or left unchanged compared with the base model, and the 95% range for the average per-row change. If the range includes zero, the card's title becomes "Ahead of the base model — but within noise" instead of "Better than the base model"; with fewer than 5 paired rows it adds "too few rows to be sure". A gain beyond row-to-row noise still carries a reminder that it is one training run. This needs per-row scores from both evals, which are kept from now on (headline metrics `f1`, `exact_match`, `accuracy`); a base-model result recorded before that is re-evaluated once, and older run results show no note until they are re-evaluated. The bell's result line and the Coach's Export suggestion follow the same verdict: a change within noise reads `f1: 0.106 → 0.136 (within noise · 14 rows better, 6 worse)` in the bell instead of "better than base", and on **Ship** → **Export** the Coach says the model "isn't clearly different from its base model" rather than calling it a win or a downgrade. Under **Advanced evaluation**, each metric row in the **Did SFT help?** panel carries the same check ("within noise · 14 rows better, 6 worse"), and a difference the rows can't back up is not coloured green or red. The Auto-RAG comparison's bell line qualifies its lift the same way.
+3. **Reports the lift.** It reports the headline metric, for example `exact_match: 0.10 → 0.80 (better than base)`. The **Did SFT help?** panel on the **Verdict** tab shows the full comparison for the selected run. It always compares against the baseline for **that run's base model**, never another model's. The Results page's summary card also says how solid that lift is: how many test examples fine-tuning helped, hurt, or left unchanged compared with the base model, and the 95% range for the average per-row change. If the range includes zero, the card's title becomes "Ahead of the base model — but within noise" instead of "Better than the base model"; with fewer than 5 paired rows it adds "too few rows to be sure". A gain beyond row-to-row noise still carries a reminder that it is one training run. This needs per-row scores from both evals, which are kept from now on (headline metrics `f1`, `exact_match`, `accuracy`); a base-model result recorded before that is re-evaluated once, and older run results show no note until they are re-evaluated. The bell's result line and the Coach's Export suggestion follow the same verdict: a change within noise reads `f1: 0.106 → 0.136 (within noise · 14 rows better, 6 worse)` in the bell instead of "better than base", and on **Ship** → **Export** the Coach says the model "isn't clearly different from its base model" rather than calling it a win or a downgrade. On the **Verdict** tab, each metric row in the **Did SFT help?** panel carries the same check ("within noise · 14 rows better, 6 worse"), and a difference the rows can't back up is not coloured green or red. The Auto-RAG comparison's bell line qualifies its lift the same way.
 
 **Long answers: "is the answer right?", not word overlap.** Exact match and token F1 suit labels and short spans. On paragraph-length answers (statutes, policies, manuals) they measure wording: a correct paraphrase scores low and a fluent wrong answer that reuses the question's words scores high. For generative tasks (Q&A, RAG Q&A, instruction, summarization) whose answer-key answers are at least 8 words long (median), the held-out eval also asks a **judge model** to grade every answer against the answer key — *correct* (1), *partial* (0.5: some key facts, or an unsupported claim) or *wrong* (0: contradicts, answers something else, empty) — on the facts, not the style. The mean is the `judge_correct` metric, shown as **judge: answer correct** and used as the headline whenever both the base and the fine-tuned eval have it; the summary card adds "Judged by ollama:gemma4:12b: 6 correct, 5 partial, 8 wrong of 19 answers" and each listed failure carries the judge's verdict and one-line reason. The row evidence (helped / hurt, within noise) pairs the judge scores the same way it pairs F1. F1 is still computed and listed below.
 
@@ -388,12 +398,12 @@ API: `GET /api/projects/{id}/evaluation/sft-lift-summary?experiment_id=<run>` pi
 
 ### UI
 
-**Results** → **Run evaluation**. Pick the trained experiment + pass/fail rule set (eval pack). Click **Start**. The page fills with:
+**Results** → **Verdict**. Pick the trained run in the **Run** picker, open **Evaluate** (the **+ Evaluate on test examples** form), pick the pass/fail rule set (eval pack) and click **Start**. The tabs fill with:
 
 - **Pass/fail rule row per metric** — pass / fail + score.
 - **Classification breakdown** — for classification eval results, a per-class P/R/F1 bar chart (sorted by F1 ascending — the worst class lands at the top, the row the user actually needs to look at) plus a confusion-matrix heatmap (gold rows × predicted columns, diagonal green, off-diagonal red, intensity scaled by row share). An `unparsed` column appears whenever the model emitted a label outside the candidate set — distinct visual treatment so "wrong known class" and "emitted gibberish" don't read the same. See `ClassificationChartsPanel`.
-- **Failure cluster card** below — folds errors by `(reason_code, signature)`.
-- **Remediation suggestions card** — per cluster, what to try next.
+- **Failure cluster card** on the **Failures** tab — folds errors by `(reason_code, signature)`.
+- **Remediation suggestions card** (also on **Failures**) — per cluster, what to try next.
 
 ### CLI
 
@@ -461,7 +471,7 @@ When you have two candidate runs, the comparison view is the right surface.
 
 ### UI
 
-**Results** → **Compare** → pick experiment A + B. The page renders metric deltas, gate pass / fail per pack, side-by-side failure clusters, and a recommendation ("A wins" / "B wins" / "too close").
+**Results** → **Compare** → pick run A + B (or click **Compare to #N** on **Verdict**). The tab renders metric deltas, gate pass / fail per pack, side-by-side failure clusters, and a recommendation ("A wins" / "B wins" / "too close").
 
 ### CLI
 

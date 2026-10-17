@@ -53,6 +53,32 @@ export const TRAIN_OPEN_BY_LEGACY_PATH: Record<string, string> = {
     '/adapter-studio': 'adapters',
 };
 
+/** Results workflows (``/results?tab=<id>``, Epic U phase U3). */
+export const RESULTS_TABS = ['verdict', 'failures', 'compare', 'try'] as const;
+export type ResultsTab = (typeof RESULTS_TABS)[number];
+
+export function isResultsTab(value: string | null | undefined): value is ResultsTab {
+    return !!value && (RESULTS_TABS as readonly string[]).includes(value);
+}
+
+/** Anchors the Coach, the bell and the panels used on the eval tab. */
+export const RESULTS_TAB_BY_HASH: Record<string, ResultsTab> = {
+    '#eval-gaps-panel': 'failures',
+    '#probe-pack-panel': 'failures',
+    '#reroute-recommendation-panel': 'failures',
+    '#eval-pack-editor': 'failures',
+    '#failure-clusters-panel': 'failures',
+    '#external-benchmarks': 'compare',
+    '#experiment-scorecard': 'verdict',
+};
+
+/** ``/project/7/results?tab=failures`` (+ extra query). */
+export function resultsPath(projectId: number, tab: ResultsTab, extraSearch?: string): string {
+    const params = new URLSearchParams(extraSearch ?? '');
+    params.set('tab', tab);
+    return `${projectPath(projectId, 'results')}?${params.toString()}`;
+}
+
 /** Anchors the Coach and the gap panels used on /training-config. */
 const TRAIN_OPEN_BY_HASH: Record<string, string> = {
     '#base-model': 'model',
@@ -152,7 +178,17 @@ export function legacyRedirectPath(projectId: number, pathname: string, search =
     if (pipeline) {
         const tab = pipeline[1];
         if (!isTabKey(tab)) return projectPath(projectId, 'data');
+        if (tab === 'eval') {
+            const resultsTab = RESULTS_TAB_BY_HASH[hash];
+            return (resultsTab ? resultsPath(projectId, resultsTab, search) : stagePath(projectId, tab, search)) + hash;
+        }
         return stagePath(projectId, tab, search) + hash;
+    }
+    if (clean === '/eval/compare') {
+        return resultsPath(projectId, 'compare', search) + hash;
+    }
+    if (clean === '/playground') {
+        return resultsPath(projectId, 'try', search) + hash;
     }
     const trainSection = TRAIN_OPEN_BY_LEGACY_PATH[clean];
     if (trainSection) {

@@ -34,11 +34,11 @@ The pretrained model you fine-tune from. Registered in the Universal Base Model 
 
 ## Beginner mode
 
-Per-project flag (**Settings** → **Start advanced sections collapsed**) that only decides whether advanced sections of a page, such as **Advanced evaluation**, start collapsed. It hides no navigation. Backend behaviour unchanged. See [Beginner mode](../concepts/beginner-mode.md).
+Per-project flag (**Settings** → **Start advanced sections collapsed**) that only decides whether some advanced sections of a page start collapsed. It hides no navigation, and it hides nothing on **Results**. Backend behaviour unchanged. See [Beginner mode](../concepts/beginner-mode.md).
 
 ## Built-in checks
 
-Checks BrewSLM writes for you, so a model is also graded against something you didn't author: robustness, refusing unsafe or unsupported requests, not over-refusing, and handling empty input. Shown in the **Built-in checks** panel on the Results page (under **Advanced evaluation**). API name: *probe pack* (`/api/projects/{id}/probe-pack`, metric `probe_pass_rate`). See [Probe pack](#probe-pack-held-out-platform-authored).
+Checks BrewSLM writes for you, so a model is also graded against something you didn't author: robustness, refusing unsafe or unsupported requests, not over-refusing, and handling empty input. Shown in the **Built-in checks** panel on the **Failures** tab of Results. API name: *probe pack* (`/api/projects/{id}/probe-pack`, metric `probe_pass_rate`). See [Probe pack](#probe-pack-held-out-platform-authored).
 
 ## Checkpoint
 
@@ -62,7 +62,7 @@ A version pin on a plugin contract, e.g. `slm.data_adapter/v3`. A plugin declari
 
 ## Custom checks
 
-Checks you write yourself: CheckList-style invariance (INV), directional (DIR) and minimum-functionality (MFT) tests that run on every evaluation and can be gated per slice. Shown as **Custom checks** under **Advanced evaluation**. API name: *behavioral tests* (`behavioral_tests` in the eval pack, `behavioral.*` metric ids).
+Checks you write yourself: CheckList-style invariance (INV), directional (DIR) and minimum-functionality (MFT) tests that run on every evaluation and can be gated per slice. Shown as **Custom checks** on the **Failures** tab of Results. API name: *behavioral tests* (`behavioral_tests` in the eval pack, `behavioral.*` metric ids).
 
 ## Decision log
 
@@ -255,7 +255,7 @@ Provenance label meaning the value came from a heuristic. Same page.
 
 ## Pass/fail rules
 
-The thresholds a model must meet on its eval metrics before it counts as passing or may be promoted (e.g. "exact match ≥ 0.7"). Required rules block; optional rules allow degradation within tolerance. The set of rules a project uses is its **pass/fail rule set**. Shown as **Pass/fail rules** on the Results page and the scorecard. API names: *gate* (a single rule; `gate_id`, `min_probe_pass_rate`, …), *gate policy*, and *eval pack* (the rule set, `slm.evaluation-pack/v2`). See [Eval pack](#eval-pack) and [Gate policy](#gate-policy).
+The thresholds a model must meet on its eval metrics before it counts as passing or may be promoted (e.g. "exact match ≥ 0.7"). Required rules block; optional rules allow degradation within tolerance. The set of rules a project uses is its **pass/fail rule set**. Shown as **Pass/fail rules** on the Failures tab of Results and the scorecard. API names: *gate* (a single rule; `gate_id`, `min_probe_pass_rate`, …), *gate policy*, and *eval pack* (the rule set, `slm.evaluation-pack/v2`). See [Eval pack](#eval-pack) and [Gate policy](#gate-policy).
 
 ## Plugin contract
 
@@ -384,7 +384,7 @@ Autopilot mode that refuses to take any fallback path; surfaces every blocker ve
 
 ## Suggested answer-key rows
 
-Fresh "the right answer is *I don't know*" rows BrewSLM drafts after a drift check, aimed at the failure patterns your recent evals showed. You accept or reject each one; accepted rows join your answer key. Shown as **Suggested answer-key rows** under **Advanced evaluation**. API name: *drift traps* (`/api/projects/{id}/drift/...`, the drift review queue). See [Hallucination trap](#hallucination-trap).
+Fresh "the right answer is *I don't know*" rows BrewSLM drafts after a drift check, aimed at the failure patterns your recent evals showed. You accept or reject each one; accepted rows join your answer key. Shown as **Suggested answer-key rows** on the **Failures** tab of Results. API name: *drift traps* (`/api/projects/{id}/drift/...`, the drift review queue). See [Hallucination trap](#hallucination-trap).
 
 ## Support bundle
 

@@ -33,11 +33,20 @@ import ProbePackPanel from './ProbePackPanel';
 import EvalSummaryCard from './EvalSummaryCard';
 import './EvalPanel.css';
 import ExternalBenchmarksPanel from './ExternalBenchmarksPanel';
+import RedactionTryBox from './RedactionTryBox';
+import AnswerKeyReviewPanel from '../data/AnswerKeyReviewPanel';
+import { projectPath } from '../../utils/workspaceRoutes';
 
 type EvalSubTab = 'runs' | 'workbench';
 
+/** Results workflows (Epic U phase U3). ``null`` = the one-page layout. */
+export type EvalWorkflow = 'verdict' | 'failures' | 'compare' | 'try';
+
 interface EvalPanelProps {
     projectId: number;
+    /** Render only the blocks of one workflow; the panel stays mounted across
+     *  tab switches so the selected run and its results persist. */
+    workflow?: EvalWorkflow | null;
     onNextStep?: () => void;
 }
 
@@ -409,8 +418,10 @@ function getErrorMessage(error: unknown): string {
     return 'Failed to run evaluation';
 }
 
-export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
+export default function EvalPanel({ projectId, onNextStep, workflow = null }: EvalPanelProps) {
     const navigate = useNavigate();
+    const workflows = workflow != null;
+    const wf = (name: EvalWorkflow) => workflow == null || workflow === name;
     const [experiments, setExperiments] = useState<ExperimentSummary[]>([]);
     const [selectedExp, setSelectedExp] = useState<number | null>(null);
     const [evalResults, setEvalResults] = useState<EvalResult[]>([]);
@@ -1004,20 +1015,21 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
 
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
-            {subTab === 'runs' && (
+            {subTab === 'runs' && wf('verdict') && (
                 <EvalSummaryCard
                     projectId={projectId}
                     experimentId={selectedExp}
                     refreshToken={evalResults.length}
+                    hideTryBox={workflows}
                     onResolved={(expId) => {
                         if (selectedExp == null) void loadResults(expId);
                     }}
                 />
             )}
-            {subTab === 'runs' && <ExternalBenchmarksPanel projectId={projectId} experimentId={selectedExp} />}
+            {subTab === 'runs' && wf('compare') && <ExternalBenchmarksPanel projectId={projectId} experimentId={selectedExp} />}
             {subTab === 'runs' && (<>
             <div className="card">
-                <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Select Experiment / Model</h3>
+                <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>{workflows ? 'Run' : 'Select Experiment / Model'}</h3>
                 {loadingExperiments ? (
                     <div className="empty-state">
                         <div className="empty-state-icon">⏳</div>
@@ -1050,6 +1062,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 </div>
             )}
             </>)}
+            {!workflows && (
             <button
                 type="button"
                 className="btn btn-secondary eval-advanced-toggle"
@@ -1063,8 +1076,20 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
             >
                 {advancedOpen ? '▾ Hide advanced evaluation' : '▸ Advanced evaluation (pass/fail rules, built-in checks, custom checks, failure clusters, comparisons)'}
             </button>
-            {advancedOpen && (<>
-            <EvalGapsPanel projectId={projectId} />
+            )}
+            {wf('try') && workflows && (
+                <div className="card" data-testid="eval-try-redact">
+                    <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-sm)' }}>Redact a text</h3>
+                    {selectedExp && evalResults.some((r) => (r.metrics as { scoring_mode?: string | null } | null)?.scoring_mode === 'span_set') ? (
+                        <RedactionTryBox projectId={projectId} experimentId={selectedExp} />
+                    ) : (
+                        <p className="eval-pack-note">Available for a span-tagging run once it has been evaluated.</p>
+                    )}
+                </div>
+            )}
+            {(advancedOpen || workflows) && (<>
+            {wf('failures') && <EvalGapsPanel projectId={projectId} />}
+            {wf('failures') && (
             <ProbePackPanel
                 projectId={projectId}
                 onOpenRun={(expId) => {
@@ -1078,6 +1103,8 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     }, 0);
                 }}
             />
+            )}
+            {!workflows && (
             <div className="eval-subtab-switch" role="tablist" aria-label="Evaluation sections">
                 <button
                     type="button"
@@ -1098,12 +1125,25 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     Workbench
                 </button>
             </div>
+            )}
             {subTab === 'workbench' && <GoldSetWorkbenchPanel projectId={projectId} />}
+            {workflows && wf('failures') && (
+                <details className="card eval-collapsible" data-testid="eval-answer-key-review">
+                    <summary>Answer-key review — check the key row by row</summary>
+                    <AnswerKeyReviewPanel projectId={projectId} />
+                </details>
+            )}
+            {workflows && wf('failures') && (
+                <details className="card eval-collapsible" data-testid="eval-workbench">
+                    <summary>Answer-key workbench — suggested rows, coverage, authoring</summary>
+                    <GoldSetWorkbenchPanel projectId={projectId} />
+                </details>
+            )}
             {subTab === 'runs' && (<>
 
-            {selectedExp && (
+            {selectedExp && wf('verdict') && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <h2 style={{ fontSize: 'var(--font-size-lg)', margin: 0 }}>Evaluation Suite</h2>
+                    <h2 style={{ fontSize: 'var(--font-size-lg)', margin: 0 }}>{workflows ? 'Evaluate' : 'Evaluation Suite'}</h2>
                     <div style={{ display: 'flex', gap: 8 }}>
                         {experiments.length >= 2 && (() => {
                             // E3 — quick deep-link to the side-by-side eval compare page.
@@ -1126,7 +1166,9 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                     data-testid="eval-panel-compare-to-prior"
                                     onClick={() =>
                                         navigate(
-                                            `/project/${projectId}/eval/compare?a=${prior.id}&b=${selectedExp}`,
+                                            workflows
+                                                ? `${projectPath(projectId, 'results')}?tab=compare&a=${prior.id}&b=${selectedExp}`
+                                                : `/project/${projectId}/eval/compare?a=${prior.id}&b=${selectedExp}`,
                                         )
                                     }
                                     title={`Side-by-side eval comparison: ${prior.name} → currently selected`}
@@ -1142,7 +1184,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 </div>
             )}
 
-            {selectedExp && (
+            {selectedExp && wf('failures') && (
                 <div className="card eval-pack-card" id="eval-pack-editor">
                     <div className="eval-pack-header">
                         <div>
@@ -1312,7 +1354,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 </div>
             )}
 
-            {selectedExp && (
+            {selectedExp && wf('failures') && (
                 <div className="card eval-pack-card">
                     <div className="eval-pack-header">
                         <div>
@@ -1525,7 +1567,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 </div>
             )}
 
-            {showRunForm && (
+            {showRunForm && wf('verdict') && (
                 <div className="card" style={{ border: '1px solid var(--color-primary)' }}>
                     <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Evaluate on test examples</h3>
                     <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 'var(--space-lg)' }}>
@@ -1782,7 +1824,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 per-seed breakdown; this is the result-header
                 surface (phase 1's mean ± std promise visible at a
                 glance, not just inside failing gates). */}
-            {evalResults
+            {wf('verdict') && evalResults
                 .filter((r) => r.is_aggregate && r.seed_group_id)
                 .map((r) => (
                     <AggregateRunBadge
@@ -1804,7 +1846,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 silent when neither slice_definitions nor per_slice
                 payload exist (caller flips ``showEmptyStateWhenNoSlices``
                 if they want a nudge). */}
-            {evalResults
+            {wf('failures') && evalResults
                 .filter((r) => {
                     const ps = (r.metrics as Record<string, unknown>)?.['per_slice'];
                     return typeof ps === 'object' && ps !== null;
@@ -1826,7 +1868,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 table here is the *test catalog* view (every test,
                 gated or not). One table per EvalResult that carries a
                 behavioral block; silent on rows without it. */}
-            {evalResults
+            {wf('failures') && evalResults
                 .filter((r) => {
                     const b = (r.metrics as Record<string, unknown>)?.['behavioral'];
                     return typeof b === 'object' && b !== null;
@@ -1838,13 +1880,13 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     />
                 ))}
 
-            {selectedExp && (
+            {selectedExp && wf('verdict') && (
                 <div id="experiment-scorecard">
                     <ScorecardPanel projectId={projectId} experimentId={selectedExp} />
                 </div>
             )}
 
-            {selectedExp && evalResults.length > 0 && (
+            {selectedExp && evalResults.length > 0 && wf('failures') && (
                 <FailureClustersPanel
                     projectId={projectId}
                     evalResults={evalResults.map((r) => ({
@@ -1856,7 +1898,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 />
             )}
 
-            {selectedExp && evalResults.length > 0 && (
+            {selectedExp && evalResults.length > 0 && wf('failures') && (
                 <ActiveLearningPanel
                     projectId={projectId}
                     experimentId={selectedExp}
@@ -1864,7 +1906,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 />
             )}
 
-            {selectedExp && evalResults.length > 0 && (
+            {selectedExp && evalResults.length > 0 && wf('verdict') && (
                 <SftLiftPanel
                     projectId={projectId}
                     experimentId={selectedExp}
@@ -1872,7 +1914,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 />
             )}
 
-            {selectedExp && evalResults.length > 0 && (
+            {selectedExp && evalResults.length > 0 && wf('compare') && (
                 <StudentTeacherComparisonPanel
                     projectId={projectId}
                     experimentId={selectedExp}
@@ -1883,7 +1925,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
 
             {/* Epic D — honest SLM-vs-frontier report (X% as good as gpt-4o-mini */}
             {/* at Y% cost, Z× latency). Self-hides on 4xx/5xx. */}
-            {selectedExp && evalResults.length > 0 && (
+            {selectedExp && evalResults.length > 0 && wf('compare') && (
                 <FrontierComparisonPanel
                     projectId={projectId}
                     experimentId={selectedExp}
@@ -1895,24 +1937,26 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
             {/* on stay_the_course / 404 / 400. Sits above the */}
             {/* AutoRagComparisonPanel so the approach-pivot signal is */}
             {/* the first thing the user reads on a failing eval. */}
+            {wf('failures') && (
             <RerouteRecommendationPanel
                 projectId={projectId}
                 evalResultId={evalResults[0]?.id ?? null}
             />
+            )}
 
             {/* Phase 9d — auto-RAG with-vs-without comparison. Renders */}
             {/* only for QA-SFT projects (the panel itself self-hides */}
             {/* when the recipe is ineligible via a 400 from the API). */}
-            <AutoRagComparisonPanel projectId={projectId} />
+            {wf('compare') && <AutoRagComparisonPanel projectId={projectId} />}
 
             {/* E4 — drift-trap review queue. Mounted under the runs */}
             {/* sub-tab; self-fetches its own state + recipe so it doesn't */}
             {/* depend on selectedExp. Opt-in banner explains how to */}
             {/* enable auto-refresh; manual Generate-now always works. */}
-            <DriftReviewQueuePanel projectId={projectId} />
+            {wf('failures') && <DriftReviewQueuePanel projectId={projectId} />}
 
 
-            {latestInference && (
+            {latestInference && wf('verdict') && (
                 <div className="card" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 'var(--space-md)' }}>
                     <div>
                         <div style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>Runtime</div>
@@ -1933,7 +1977,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 </div>
             )}
 
-            {selectedExp && evalResults.length > 0 && (
+            {selectedExp && evalResults.length > 0 && wf('failures') && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: 'var(--space-xl)' }}>
                     <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
                         <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Skill Radar (LLM Judge)</h3>
@@ -2018,7 +2062,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 </div>
             )}
 
-            {samplePredictionsResult?.metrics?.schema_mismatch && (
+            {samplePredictionsResult?.metrics?.schema_mismatch && wf('failures') && (
                 <div
                     className="card"
                     data-testid="eval-schema-mismatch-banner"
@@ -2091,7 +2135,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 </div>
             )}
 
-            {samplePredictions.length > 0 && (
+            {samplePredictions.length > 0 && wf('failures') && (
                 <div className="card eval-sample-predictions">
                     <h3>
                         Sample predictions

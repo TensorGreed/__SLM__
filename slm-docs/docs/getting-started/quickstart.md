@@ -130,7 +130,7 @@ curl -X POST http://localhost:8000/api/projects/1/autopilot/run \
 
 ### UI
 
-The Autopilot Planner page switches to live mode when training starts. You see loss curves, per-step telemetry, and a **stop / pause / resume** control. When it finishes, the **Results** page fires automatically.
+The Autopilot Planner page switches to live mode when training starts. You see loss curves, per-step telemetry, and a **stop / pause / resume** control. When it finishes, open **Results** (the **Verdict** tab) to see whether it beat the base model.
 
 ### CLI
 

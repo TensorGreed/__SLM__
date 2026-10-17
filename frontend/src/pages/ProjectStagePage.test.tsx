@@ -31,7 +31,6 @@ vi.mock('../components/data/CleaningPanel', () => panel('panel-cleaning', 'Clean
 vi.mock('../components/data/GoldSetPanel', () => panel('panel-goldset', 'Answer key'));
 vi.mock('../components/data/SyntheticPanel', () => panel('panel-synthetic', 'Synthetic'));
 vi.mock('../components/data/DatasetPrepPanel', () => panel('panel-dataprep', 'Split'));
-vi.mock('../components/evaluation/EvalPanel', () => panel('panel-eval', 'Eval'));
 vi.mock('../components/compression/CompressionPanel', () => panel('panel-compression', 'Compression'));
 vi.mock('../components/export/ExportPanel', () => panel('panel-export', 'Export'));
 
@@ -42,7 +41,7 @@ function LocationProbe() {
     return <div data-testid="location">{location.pathname + location.search}</div>;
 }
 
-function renderAt(path: string, destination: 'data' | 'results' | 'ship') {
+function renderAt(path: string, destination: 'data' | 'ship') {
     return render(
         <MemoryRouter initialEntries={[path]}>
             <Routes>
@@ -87,16 +86,5 @@ describe('ProjectStagePage', () => {
         await user.click(screen.getByTestId('stage-step-export'));
         expect(screen.getByTestId('location')).toHaveTextContent('/project/77/ship?step=export');
         expect(setActiveTabMock).toHaveBeenCalledWith('export');
-    });
-
-    it('Results has a single step and no step bar, and shows the pass/fail rules', () => {
-        contextState.pipelineStatus = {
-            current_stage: 'evaluation',
-            auto_gate: { experiment_id: 9, pack_id: 'auto', passed: false, failed_gate_ids: ['f1'], missing_required_metrics: [], captured_at: null },
-        };
-        renderAt('/project/77/results', 'results');
-        expect(screen.getByTestId('panel-eval')).toBeInTheDocument();
-        expect(screen.queryByRole('tab')).toBeNull();
-        expect(screen.getByText('Failed required rules: f1')).toBeInTheDocument();
     });
 });

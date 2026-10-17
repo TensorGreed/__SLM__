@@ -1,0 +1,96 @@
+/* Results — Epic U phase U3. */
+
+.results-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.results-page__tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    border-bottom: 1px solid var(--border-muted);
+}
+
+.results-page__tab {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: var(--space-sm) var(--space-md);
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    margin-bottom: -1px;
+}
+
+.results-page__tab small {
+    font-weight: 400;
+    color: var(--text-tertiary);
+}
+
+.results-page__tab:hover {
+    color: var(--text-primary);
+}
+
+.results-page__tab.is-active {
+    color: var(--text-primary);
+    border-bottom-color: var(--color-primary);
+}
+
+.results-page__note {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.results-page__gate {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.results-page__gate-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.results-page__gate-head h3 {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+}
+
+.results-page__gate-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.results-page__gate-warn {
+    font-size: var(--font-size-sm);
+    color: var(--color-warning);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--color-warning);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm) var(--space-md);
+}
+
+/* Collapsed authoring sections under Failures (answer-key review, workbench). */
+.eval-collapsible > summary {
+    cursor: pointer;
+    font-weight: 500;
+    font-size: var(--font-size-sm);
+}
+
+.eval-collapsible[open] > summary {
+    margin-bottom: var(--space-md);
+}

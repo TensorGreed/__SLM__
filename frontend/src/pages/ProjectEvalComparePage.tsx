@@ -29,6 +29,7 @@ import {
 } from '../api/experimentCompare';
 import { toast } from '../stores/toastStore';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
+import { trainSectionPath } from '../utils/workspaceRoutes';
 import './ProjectEvalComparePage.css';
 
 
@@ -60,7 +61,12 @@ function formatDelta(value: number | null, asPct: boolean): string {
 }
 
 
-export default function ProjectEvalComparePage() {
+interface ProjectEvalComparePageProps {
+    /** Rendered inside Results → Compare: no page header. */
+    embedded?: boolean;
+}
+
+export default function ProjectEvalComparePage({ embedded = false }: ProjectEvalComparePageProps = {}) {
     const navigate = useNavigate();
     const location = useLocation();
     const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
@@ -119,7 +125,7 @@ export default function ProjectEvalComparePage() {
                 description: `Rerun of exp ${winnerId} via E3 comparison "Fix the gap" CTA.`,
             });
             toast.success(`Rollback launched as experiment #${exp.id}.`);
-            navigate(`/project/${projectId}/training-config`);
+            navigate(trainSectionPath(projectId, 'plan'));
         } catch (err: any) {
             const detail = err?.response?.data?.detail;
             if (detail === 'manifest_not_captured') {
@@ -154,6 +160,7 @@ export default function ProjectEvalComparePage() {
 
     return (
         <div className="workspace-page eval-compare" data-testid="eval-compare">
+            {!embedded && (
             <header className="eval-compare__header">
                 <h2 className="workspace-page-title">Experiment comparison</h2>
                 <p className="workspace-page-subtitle">
@@ -162,6 +169,7 @@ export default function ProjectEvalComparePage() {
                     winner's config when B is worse.
                 </p>
             </header>
+            )}
 
             <section className="eval-compare__summary" data-testid="eval-compare-summary">
                 <SideCard label="A" side={data.a} winner={data.winner === 'a'} />

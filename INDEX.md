@@ -502,9 +502,9 @@ session-start guidance.
 - `frontend/src/pages/ProjectModelsPage.tsx` — Searchable model catalog page with compatibility scoring, hardware requirements, and training mode filters.
 - `frontend/src/pages/ProjectObservabilityPage.tsx` — ProjectObservabilityPage — Run Timeline + Failure Analysis +
 - `frontend/src/pages/ProjectOverviewPage.tsx` — Project Overview — the workspace's landing page (Epic U, phase U1).
-- `frontend/src/pages/ProjectPlaygroundPage.tsx` — Prompt testing page against local or runtime adapters with response feedback logging.
 - `frontend/src/pages/ProjectRecipePickerPage.tsx` — ProjectRecipePickerPage — standalone task-shape recipe picker.
 - `frontend/src/pages/ProjectRecipesPage.tsx` — Pipeline recipe catalog page for applying, configuring, and monitoring template-based workflows.
+- `frontend/src/pages/ProjectResultsPage.tsx` — Results — the workspace's evaluation destination (Epic U, phase U3).
 - `frontend/src/pages/ProjectSettingsPage.tsx` — Project Settings — the workspace's long tail (Epic U, phase U1).
 - `frontend/src/pages/ProjectStagePage.tsx` — A stage destination of the workspace — Data, Train, Results or Ship
 - `frontend/src/pages/ProjectTrainPage.tsx` — Train — the workspace's training destination (Epic U, phase U2).
@@ -1058,6 +1058,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPanel.rag.test.tsx` — Phase 5.3.5 — Sample Predictions card with RAG (grounded QA) enrichment.
 - `frontend/src/components/evaluation/EvalPanel.spanset.test.tsx` — Phase 5.3.4b — Sample Predictions card in span_set scoring mode.
 - `frontend/src/components/evaluation/EvalPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/EvalPanel.workflows.test.tsx` — Results workflows (Epic U phase U3): the one-page panel splits by
 - `frontend/src/components/evaluation/EvalSummaryCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ExternalBenchmarksPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/FailureClustersPanel.test.tsx` — _(no docstring)_
@@ -1138,6 +1139,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectObservabilityPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectOverviewPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectRecipePickerPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectResultsPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectSettingsPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectStagePage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectTrainPage.test.tsx` — _(no docstring)_

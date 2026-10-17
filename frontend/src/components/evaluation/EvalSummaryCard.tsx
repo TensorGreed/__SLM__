@@ -33,6 +33,8 @@ interface EvalSummaryCardProps {
     /** Called with the run the server summarised (the latest trained run
      *  when ``experimentId`` is null) so the panel can select it. */
     onResolved?: (experimentId: number) => void;
+    /** Results → Try it renders the redaction box itself. */
+    hideTryBox?: boolean;
 }
 
 const VERDICT_TEXT: Record<string, { title: string; tone: string }> = {
@@ -213,7 +215,7 @@ function errorText(err: unknown): string {
     return typeof detail === 'string' && detail ? detail : 'Could not start the evaluation.';
 }
 
-export default function EvalSummaryCard({ projectId, experimentId, refreshToken, onResolved }: EvalSummaryCardProps) {
+export default function EvalSummaryCard({ projectId, experimentId, refreshToken, onResolved , hideTryBox = false }: EvalSummaryCardProps) {
     const [summary, setSummary] = useState<EvalSummary | null>(null);
     const [loading, setLoading] = useState(true);
     const [starting, setStarting] = useState(false);
@@ -557,7 +559,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     ) : null}
                     <SpanSizingTable block={summary.answer_key ?? summary.test ?? null} onAnswerKey={Boolean(summary.answer_key)} projectId={projectId} />
                     <SpanRegimeTable block={summary.answer_key ?? summary.test ?? null} onAnswerKey={Boolean(summary.answer_key)} />
-                    <RedactionTryBox projectId={projectId} experimentId={runId ?? null} />
+                    {!hideTryBox && <RedactionTryBox projectId={projectId} experimentId={runId ?? null} />}
                 </div>
             )}
             {summary.message && <p className="eval-summary__message">{summary.message}</p>}

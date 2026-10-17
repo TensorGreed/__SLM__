@@ -100,7 +100,7 @@ Notice the **`reason_code` is required** on `error` / `critical` severities. The
 | Stage 6 Adapter preview | **Data** → **Split** (adapter preview) |
 | Stage 7 Tokenization | **Train** → **More options** → *Tokenization* |
 | Stage 8 Training | **Train** (the form, then **Train** → **Launch**; *Plan and gaps*, *Base model registry*, *Task type* under **More options**); Autopilot Planner under **Settings** |
-| Stage 9 Evaluation | **Results** (header links: Playground, Compare runs) |
+| Stage 9 Evaluation | **Results** (tabs: Verdict, Failures, Compare, Try it) |
 | Stage 10 Compression | **Ship** → **Compression** |
 | Stage 11 Export | **Ship** → **Export** |
 | `deployment` | **Ship** (header links: Deployments, Observability) |

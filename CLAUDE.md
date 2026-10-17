@@ -448,6 +448,27 @@ runs real CPU inference). ~4 min locally.
   `trainSectionPath(projectId, id)` (`workspaceRoutes.TRAIN_OPEN_BY_LEGACY_PATH`);
   Train has no step bar (`STEPS_BY_DESTINATION.train = ['training']`). Tests:
   `TrainForm.test.tsx`, `TrainingPanel.form.test.tsx`, `ProjectTrainPage.test.tsx`.
+  **Results = four workflows (Epic U phase U3, 2026-10-17)** —
+  `pages/ProjectResultsPage.tsx`: tabs Verdict / Failures / Compare / Try it
+  (`?tab=`, `workspaceRoutes.RESULTS_TABS`; `resolveResultsTab(search, hash)`
+  maps the old eval anchors via `RESULTS_TAB_BY_HASH`), one
+  `<EvalPanel workflow={tab}>` kept mounted across tabs (the selected run and
+  its results persist). `EvalPanel` gates its blocks with `wf('<workflow>')`
+  (`workflow` null = the old one-page layout the older tests still mount, with
+  the Advanced toggle and the runs/workbench sub-tabs): Verdict = summary card
+  (`hideTryBox`), run picker, Evaluate form, aggregate badge, SftLiftPanel,
+  ScorecardPanel, inference card; Failures = EvalGaps, ProbePack, the rule-set
+  card, the remediation planner, slices, behavioral table, clusters, active
+  learning, reroute, drift queue, charts, schema banner, failure rows, plus
+  collapsed `<details>` for AnswerKeyReviewPanel and GoldSetWorkbenchPanel;
+  Compare = ExternalBenchmarksPanel, Frontier, AutoRag, StudentTeacher (+ the
+  page mounts `ProjectEvalComparePage embedded` when `?a&b`); Try it = the
+  page mounts `ChatPlaygroundPanel` and the panel renders `RedactionTryBox`
+  for a span run. Retired with redirects: `/eval/compare` →
+  `resultsPath(id, 'compare', search)`, `/playground` → `try`,
+  `/pipeline/eval#anchor` → its tab. ProjectPlaygroundPage deleted; the
+  compare page kept as an embeddable component. Tests:
+  `EvalPanel.workflows.test.tsx`, `ProjectResultsPage.test.tsx`.
   **The Coach** (`components/coach/Coach.tsx`, mounted once in
   `ProjectWorkspaceLayout`) stays the guidance bar on the four stage pages:
   stage + %, next step (`utils/flowGuide.getRecommendedAction`; "on target"

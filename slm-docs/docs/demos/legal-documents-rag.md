@@ -80,7 +80,7 @@ verdict instead of the F1 one; F1 stays listed below it.
 
 ## 4. What got the facts right — retrieval over the passages
 
-Under **Advanced evaluation → Auto-RAG comparison**, the third card scores
+Under **Results → Compare → Auto-RAG comparison**, the third card scores
 the untouched base model answering from the project's **document passages**
 (retrieved per question, with an instruction to cite them or say it doesn't
 know), judged, on the same 19 test examples:
@@ -111,7 +111,7 @@ setting, which the playground serves. The sibling's Eval summary reads
 served: top-3 + reranker ms-marco-MiniLM-L-6-v2 — chosen by the judge over
 top-3 (0.61), top-5 (0.53), top-5 + reranker (0.66)".
 
-In the playground, *"Who must retain a record of the use of personal
+In the playground (**Results → Try it**), *"Who must retain a record of the use of personal
 information, and what does that record form part of?"* gets the section 9
 answer, cited from the passage it came from, with no fine-tuning.
 
@@ -219,7 +219,7 @@ the answer the fine-tune never learned.
    (or any reachable local model; the first Ollama model is picked by
    default). The lift check judges automatically; **Re-run lift check**
    re-scores an older run.
-4. Advanced evaluation → Auto-RAG comparison → **Run** on *Base model +
+4. Results → Compare → Auto-RAG comparison → **Run** on *Base model +
    document passages*; or on the CLI
    `python scripts/auto_rag_ab.py --project <id> --base-only --corpus documents --sweep-retrieval`.
 5. Coach (Results page) → **Reroute to RAG**. The sibling's check and sweep
