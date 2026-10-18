@@ -176,16 +176,18 @@ a structured output. Same word, very different feature.
 🔗 Code: https://github.com/TensorGreed/__SLM__
 📺 Channel: https://www.youtube.com/@TensorGreed
 
+Re-recorded 2026-10-18 on the six-destination workspace, awaiting upload.
+
 Chapters:
 00:00 Intro
-00:18 Data · Sources
-00:32 Prepare (PII disambiguation)
-00:53 Labels (answer key)
-01:04 Generate (span mode)
-01:25 Split (span set)
-01:40 Train · Tokenization
-01:49 Train · LoRA for spans
-02:08 Results & wrap
+00:25 Data · Sources
+00:44 Prepare (PII disambiguation)
+01:08 Labels (answer key)
+01:29 Generate (span mode)
+01:50 Split (span set)
+02:11 Train · Tokenization
+02:25 Train · LoRA for spans
+02:48 Results & wrap
 
 #PII #SpanExtraction #SmallLanguageModel #FineTuning #LLM
 ```
@@ -222,16 +224,18 @@ for a small mobile footprint.
 🔗 Code: https://github.com/TensorGreed/__SLM__
 📺 Channel: https://www.youtube.com/@TensorGreed
 
+Re-recorded 2026-10-18 on the six-destination workspace, awaiting upload.
+
 Chapters:
 00:00 Intro
-00:14 Data · Sources (10/10/10 balance)
-00:32 Data · Labels (70/65/65 distribution)
-00:50 Data · Split
-01:06 Train · Tokenization (mobile target)
-01:20 Train · LoRA (mobile_cpu)
-01:36 Results
-01:49 Ship · Compress & export (ONNX path)
-02:07 Wrap
+00:20 Data · Sources (10/10/10 balance)
+00:39 Data · Labels (70/65/65 distribution)
+00:59 Data · Split
+01:14 Train · Tokenization (mobile target)
+01:29 Train · LoRA (mobile_cpu)
+01:47 Results
+02:00 Ship · Compress & export (ONNX path)
+02:22 Wrap
 
 #SentimentAnalysis #SmallLanguageModel #ONNX #FineTuning #LLM
 ```
@@ -267,13 +271,15 @@ seeded samples (videos 3–5).
 🔗 Code: https://github.com/TensorGreed/__SLM__
 📺 Channel: https://www.youtube.com/@TensorGreed
 
+Re-recorded 2026-10-18 on the six-destination workspace, awaiting upload.
+
 Chapters:
 00:00 Intro
 00:12 New project flow
-00:23 Empty data tab
-00:33 Upload CSV
-00:52 Rows imported
-01:11 Wrap
+00:30 Empty data tab
+00:52 Upload CSV
+01:16 Rows imported
+01:39 Wrap
 
 #BYOData #SmallLanguageModel #FineTuning #BrewSLM #LLM
 ```
@@ -311,12 +317,12 @@ fires end-to-end, not the quality of THIS model.
 📺 Channel: https://www.youtube.com/@TensorGreed
 
 Chapters:
-00:00 Intro
-00:17 Training Config recap
-00:34 Kickoff (API)
-00:46 Watching status: running
-00:59 Completed with metrics
-01:16 Wrap
+00:00 Train form
+00:40 More options (hyperparameters, LoRA)
+01:15 Kickoff (API)
+01:43 Watching status: running
+02:04 Run dashboard with metrics
+02:40 Wrap
 
 #FineTuning #LoRA #Celery #SmallLanguageModel #LLMTraining
 ```
@@ -334,18 +340,18 @@ LoRA fine tuning, Celery worker LLM, train SmolLM, fine tune 135M model, PEFT tu
 
 **Title**
 ```
-Evaluate a Fine-Tuned SLM Against a 200-Row Gold Set
+Evaluate a Fine-Tuned SLM Against a 200-Row Answer Key
 ```
 
 **Description**
 ```
 Score the trained model from the previous video against the
-support-faq gold set. Twenty samples through the model, scored
+support-faq practice answer key. Twenty samples through the model, scored
 against expected answers, aggregated. Real exact-match and
 token-level F1 numbers. Real predictions in a side-by-side card.
 
 Honest result: exact match lands at zero. F1 is in the low tens
-of percent. The Auto-Gate fails on both required gates. That's
+of percent. The pass/fail rules fail on both required rules. That's
 the right outcome for a 135M-param model trained on 16 rows —
 the loop closing is what matters, not the score.
 
@@ -356,12 +362,12 @@ instruction_sft task profile dispatches to the QA handler.
 📺 Channel: https://www.youtube.com/@TensorGreed
 
 Chapters:
-00:00 Intro
-00:11 Eval setup
-00:29 Kickoff (POST /run-heldout)
-00:38 Running eval on gold_dev
-00:52 Results: Auto-Gate & predictions
-01:08 Wrap
+00:00 Results · Verdict
+00:28 Evaluate form (answer key)
+01:02 Kickoff (API)
+01:28 Scoring the practice answer key
+01:44 Pass/fail rules, scorecard & predictions
+02:17 Wrap
 
 #LLMEvaluation #FineTuning #GoldSet #SmallLanguageModel #LLM
 ```
@@ -400,13 +406,13 @@ reproducing this.
 📺 Channel: https://www.youtube.com/@TensorGreed
 
 Chapters:
-00:00 Intro
-00:15 Compression form
-00:31 Merge LoRA + quantize
-00:49 GGUF on disk (105 MB)
-01:03 Export tab
-01:18 Export registered
-01:31 Wrap
+00:00 Ship · Package
+00:33 Options · Compress first
+00:56 Merge LoRA + quantize
+01:22 GGUF on disk (105 MB)
+01:51 New export form
+02:09 Export registered (Releases)
+02:31 Wrap
 
 #GGUF #LoRAMerge #ModelCompression #llamacpp #SmallLanguageModel
 ```
@@ -446,12 +452,12 @@ That's the value proposition this 8-episode runtime arc proves.
 📺 Channel: https://www.youtube.com/@TensorGreed
 
 Chapters:
-00:00 Intro
-00:12 Ollama create from GGUF
-00:29 Playground config
-00:45 Send prompt
-00:58 Model responds
-01:14 Series wrap
+00:00 Results · Try it
+00:25 Ollama create from GGUF
+00:51 Playground config
+01:20 Send prompt
+01:40 Model responds
+02:02 Series wrap
 
 #Ollama #FineTunedLLM #SmallLanguageModel #LLMServing #LocalLLM
 ```

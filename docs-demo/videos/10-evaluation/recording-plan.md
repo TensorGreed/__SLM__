@@ -1,5 +1,7 @@
 # Video 10 — Evaluation · Recording Plan
 
+> **2026-10-18**: the narrated spec `tests/demo-recordings/10-evaluation-narrated.spec.ts` was ported to the Epic U workspace (Results · Verdict and Failures; no `/pipeline/` URLs). It writes `tts/audio/v10-preroll.json`. Older prose below uses the retired names (gold set, Auto-Gate); today they read *answer key* and *pass/fail rules*.
+
 Status: **shipped 2026-05-20**. Second runtime-dependent video.
 Scores the V09 trained checkpoint against the support-faq
 `gold_dev` dataset (200 hand-labelled rows, never seen during
@@ -12,7 +14,7 @@ match / token-F1 numbers.
 
 Demonstrate the eval loop closing: a trained checkpoint scored
 against held-out gold returns aggregate metrics + per-sample
-predictions, the result is persisted, the Auto-Gate panel updates
+predictions, the result is persisted, the pass/fail rules card updates
 to PASS or FAIL based on the configured thresholds. Honest result:
 exact-match is 0 and F1 is in the low tens of percent — the loop
 works, the model is just too small to score well.
@@ -44,7 +46,7 @@ training loop complete and wants to know "how well did it do?"
 | Field | Value | Why |
 |---|---|---|
 | `experiment_id` | resolved at runtime from `v09-narrated-run` | Skip-friendly lookup so the spec doesn't hard-code an id. |
-| `dataset_name` | `gold_dev` | The 200-row hand-labelled gold set (vs `test` which is the 2-row held-out split). |
+| `dataset_name` | `gold_dev` | The 200-row hand-labelled practice answer key (vs `test`, the held-out test examples). |
 | `eval_type` | `exact_match` | Simplest scorer. Returns both `exact_match` and `f1` in the metrics blob anyway. `llm_judge` would be more realistic for SFT but adds Ollama latency. |
 | `max_samples` | `20` | Wall time scales linearly. 20 fits inside the watching-section audio (~13s) plus model-load (~1s). |
 | `max_new_tokens` | `64` | Support FAQ answers are short. Limits gen latency. |
@@ -54,9 +56,9 @@ training loop complete and wants to know "how well did it do?"
 
 1. Backend + frontend running.
 2. Logged in as **admin**.
-3. Seeded support-faq project opened.
+3. Seeded support-faq project opened; browser at `/project/<id>/results?tab=verdict`.
 4. V09 experiment exists with status=completed.
-5. Evaluation tab loaded. May show 0 prior results for this
+5. Results · Verdict loaded. May show 0 prior results for this
    experiment or 1 from a dry-run depending on lifecycle. The
    dry-run for V10 was cleaned up before recording.
 
@@ -64,19 +66,21 @@ training loop complete and wants to know "how well did it do?"
 
 | # | Section | Audio (s) | What happens on screen |
 |---|---|---:|---|
-| 1 | Cold open | 11.61 | Evaluation tab loaded; "Run at least one evaluation" hint visible |
-| 2 | Setup recap | 17.41 | Hold on eval tab |
+| 1 | Cold open | 11.61 | `/results?tab=verdict`: workflow tabs, the summary card |
+| 2 | Setup recap | 17.41 | **+ Evaluate on test examples** opens the form: *Practice answer key*, *Exact Match* |
 | 3 | Kickoff | 9.56 | Spec fires `POST /evaluation/run-heldout` (non-blocking) |
-| 4 | Watching | 13.48 | Spec awaits the eval promise; refresh + click eval tab |
-| 5 | Results | 16.73 | Auto-Gate panel renders with PASS/FAIL + metrics; experiment selector shows v09-narrated-run |
-| 6 | Wrap | 7.85 | Hand-off to Video 11 (compression + export) |
+| 4 | Watching | 13.48 | Spec awaits the eval promise; reloads `/results?tab=verdict` |
+| 5 | Results | 16.73 | **Pass/fail rules** card (PASS/FAIL), the scorecard; then `?tab=failures` → sample predictions |
+| 6 | Wrap | 7.85 | Hold on the sample predictions; hand-off to Video 11 (compression + export) |
+
+Durations above are from the 2026-05 take; the narration was rewritten
+2026-10-18 (~365 words, ~2:37 estimated) and the audio must be regenerated.
 
 Total audio: **76.6s**. Final muxed video: **1:17**.
 
 ## Why API kickoff over UI
 
-Same reasoning as V09: the eval form has a `/workbench` surface
-with many controls, and the API path is the canonical entry point
+Same reasoning as V09: the Evaluate form has a dozen controls, and the API path is the canonical entry point
 used by Autopilot + scripts + CI. The spec POSTs to
 `run-heldout` directly. The UI's polling then reflects the new
 result without any form selectors needed.
@@ -88,7 +92,7 @@ result without any form selectors needed.
 | `exact_match` | 0.0 | No verbatim matches across 20 samples; expected for a 135M-param model with 16 train rows. |
 | `f1` (token-level) | 0.1217 | Some token overlap with gold answers. |
 | `pass_rate` | 0.1217 | Headline number the gate threshold compares against. |
-| Auto-Gate | **FAIL** | Failed required gates: `min_exact_match`, `min_f1` (both well below threshold). |
+| Pass/fail rules | **FAIL** | Failed required gates: `min_exact_match`, `min_f1` (both well below threshold). |
 | Eval pack | `evalpack.general.default` | Default platform pack; configurable per project. |
 | Inference latency | ~620ms/sample | bf16, cuda, transformers backend. ~100 tokens/sec throughput. |
 
@@ -122,7 +126,7 @@ for support-faq.
 |---|---|---|
 | `experiment_id` not found | V09 wasn't run or was deleted | Run `09-training-run-narrated.spec.ts` first |
 | Eval timeout | Model load fails / disk full / dataset empty | Check `data/projects/<id>/experiments/<exp_id>/` and backend logs |
-| Auto-Gate green | Either the gate thresholds are too loose or the model genuinely is good | Inspect the gate config under the project's `gate_policy` JSON column |
+| Pass/fail rules green | Either the gate thresholds are too loose or the model genuinely is good | Inspect the gate config under the project's `gate_policy` JSON column |
 | `f1` significantly different from 0.12 | The trained checkpoint differs; expected if V09 ran with different config | Acceptable — the narration is hedged for this |
 
 ## Open questions parked for later

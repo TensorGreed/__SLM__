@@ -38,6 +38,10 @@ const SCREENSHOT_DIR = 'docs-demo/screenshots';
 
 // ── pacing ──────────────────────────────────────────────────────────────
 
+// DEMO_STRICT_BEATS=1 (a check run, not a recording): a beat whose element is
+// missing fails the run instead of logging a warning and holding on nothing.
+const STRICT_BEATS = process.env.DEMO_STRICT_BEATS === '1';
+
 async function padTo(page: Page, sectionStartMs: number, sectionDurationSeconds: number) {
     const remaining = sectionDurationSeconds * 1000 - (Date.now() - sectionStartMs);
     if (remaining > 0) await page.waitForTimeout(remaining);
@@ -103,7 +107,10 @@ async function spotlight(page: Page, selector: string, holdMs: number) {
     } catch {
         shown = false;
     }
-    if (!shown) console.warn(`[spotlight] no element for ${selector}`);
+    if (!shown) {
+        if (STRICT_BEATS) throw new Error(`[spotlight] no element for ${selector}`);
+        console.warn(`[spotlight] no element for ${selector}`);
+    }
     await page.waitForTimeout(Math.max(300, holdMs - 1000));
     try {
         await page.evaluate(clearSpotlightInPage);
@@ -129,6 +136,9 @@ async function openDetails(page: Page, sectionId: string, testId = 'data-details
         await page.waitForTimeout(400);
     }
     const section = page.locator(`[data-testid="${testId}-section-${sectionId}"]`);
+    if (STRICT_BEATS && (await section.count()) === 0) {
+        throw new Error(`[openDetails] no ${testId} section "${sectionId}"`);
+    }
     if ((await section.count()) > 0 && (await section.getAttribute('aria-expanded')) !== 'true') {
         await section.click();
         await page.waitForTimeout(600);
@@ -170,6 +180,7 @@ async function tabBeat(
 
 test('Video 04 — PII Detector workspace narrated', async ({ page }) => {
     test.setTimeout(12 * 60_000);
+    const testStart = Date.now();
 
     // Pre-roll: log in, launch the sample (not narrated).
     await page.goto('/login');
@@ -182,6 +193,12 @@ test('Video 04 — PII Detector workspace narrated', async ({ page }) => {
     await expect(page.locator('[data-testid="overview-page"]')).toBeVisible();
     const projectId = (page.url().match(/\/project\/(\d+)/) ?? [])[1] ?? '';
     expect(projectId).not.toBe('');
+
+    // The narration starts here; the recorder trims the pre-roll by this offset.
+    fs.writeFileSync(
+        path.resolve(__dirname, '../../tts/audio/v04-preroll.json'),
+        JSON.stringify({ preroll_seconds: (Date.now() - testStart) / 1000 }),
+    );
 
     // ── Section: cold open (the Overview) ────────────────────────────
     let sectionStart = Date.now();

@@ -35,6 +35,10 @@ const SCREENSHOT_DIR = 'docs-demo/screenshots';
 
 // ── pacing ──────────────────────────────────────────────────────────────
 
+// DEMO_STRICT_BEATS=1 (a check run, not a recording): a beat whose element is
+// missing fails the run instead of logging a warning and holding on nothing.
+const STRICT_BEATS = process.env.DEMO_STRICT_BEATS === '1';
+
 async function padTo(page: Page, sectionStartMs: number, sectionDurationSeconds: number) {
     const remaining = sectionDurationSeconds * 1000 - (Date.now() - sectionStartMs);
     if (remaining > 0) await page.waitForTimeout(remaining);
@@ -100,7 +104,10 @@ async function spotlight(page: Page, selector: string, holdMs: number) {
     } catch {
         shown = false;
     }
-    if (!shown) console.warn(`[spotlight] no element for ${selector}`);
+    if (!shown) {
+        if (STRICT_BEATS) throw new Error(`[spotlight] no element for ${selector}`);
+        console.warn(`[spotlight] no element for ${selector}`);
+    }
     await page.waitForTimeout(Math.max(300, holdMs - 1000));
     try {
         await page.evaluate(clearSpotlightInPage);
@@ -126,6 +133,9 @@ async function openDetails(page: Page, sectionId: string, testId = 'data-details
         await page.waitForTimeout(400);
     }
     const section = page.locator(`[data-testid="${testId}-section-${sectionId}"]`);
+    if (STRICT_BEATS && (await section.count()) === 0) {
+        throw new Error(`[openDetails] no ${testId} section "${sectionId}"`);
+    }
     if ((await section.count()) > 0 && (await section.getAttribute('aria-expanded')) !== 'true') {
         await section.click();
         await page.waitForTimeout(600);
@@ -167,12 +177,13 @@ async function tabBeat(
 
 test('Video 06 — BYO Custom Samples narrated', async ({ page, request }) => {
     test.setTimeout(10 * 60_000);
+    const testStart = Date.now();
 
     expect(fs.existsSync(CSV_PATH), 'BYO sample CSV required').toBeTruthy();
     const projectName = `BYO Coffee Shop FAQ ${Date.now() % 100000}`;
 
     // JWT for the API-driven upload later.
-    const loginResp = await request.post('http://localhost:8000/api/auth/local/login', {
+    const loginResp = await request.post('/api/auth/local/login', {
         data: { username: 'admin', password: 'sk-mock-admin-key' },
     });
     expect(loginResp.ok()).toBeTruthy();
@@ -186,6 +197,12 @@ test('Video 06 — BYO Custom Samples narrated', async ({ page, request }) => {
     await page.getByRole('button', { name: /^Sign in$/ }).click();
     await page.waitForURL((url) => url.pathname === '/', { timeout: 15_000 });
     await page.waitForTimeout(1000);
+
+    // The narration starts here; the recorder trims the pre-roll by this offset.
+    fs.writeFileSync(
+        path.resolve(__dirname, '../../tts/audio/v06-preroll.json'),
+        JSON.stringify({ preroll_seconds: (Date.now() - testStart) / 1000 }),
+    );
 
     // ── Section: cold open (the project list) ────────────────────────
     let sectionStart = Date.now();
@@ -236,7 +253,7 @@ test('Video 06 — BYO Custom Samples narrated', async ({ page, request }) => {
     // API-driven multipart upload — the call the upload zone makes.
     const csvBuffer = fs.readFileSync(CSV_PATH);
     const uploadResp = await request.post(
-        `http://localhost:8000/api/projects/${projectId}/ingestion/upload-batch`,
+        `/api/projects/${projectId}/ingestion/upload-batch`,
         {
             headers: authHeader,
             multipart: {
@@ -250,14 +267,14 @@ test('Video 06 — BYO Custom Samples narrated', async ({ page, request }) => {
 
     // Process the document so the CSV rows are extracted.
     const docsResp = await request.get(
-        `http://localhost:8000/api/projects/${projectId}/ingestion/documents`,
+        `/api/projects/${projectId}/ingestion/documents`,
         { headers: authHeader },
     );
     const docsData = await docsResp.json();
     const docs = Array.isArray(docsData) ? docsData : (docsData.documents ?? docsData.items ?? []);
     if (docs.length > 0) {
         await request.post(
-            `http://localhost:8000/api/projects/${projectId}/ingestion/documents/${docs[0].id}/process`,
+            `/api/projects/${projectId}/ingestion/documents/${docs[0].id}/process`,
             { headers: authHeader, data: {} },
         );
     }

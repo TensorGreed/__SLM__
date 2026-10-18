@@ -72,28 +72,28 @@ tts/Orpheus-FastAPI/.venv/bin/python tts/generate_narration.py
 # count (~2.6 words/s is normal; Orpheus occasionally truncates or loops —
 # each section is retried once) and a total outside the 2–4 minute band.
 
-# 2. Re-record the Playwright video, re-timed to the audio
-npx playwright test 02-brewslm-quickstart-narrated.spec.ts --project chromium
+# 2. Boot a scratch stack — never record against the dev stack (a recording
+#    launches sample projects; the dev DB would collect them). Fresh DB per video.
+docs-demo/scripts/ffmpeg/scratch-stack.sh down; docs-demo/scripts/ffmpeg/scratch-stack.sh up
+#    videos 10–12 evaluate / compress / chat with a trained run, which needs
+#    real weights: `scratch-stack.sh up --real` (own Celery worker, real train.py)
 
-# 3. Concatenate the WAVs + mux onto the video
-FFMPEG=$(./tts/Orpheus-FastAPI/.venv/bin/python -c \
-    "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())")
-VIDEO="test-results/02-brewslm-quickstart-narrated-Video-02-—-narrated-take-chromium/video.webm"
-
-$FFMPEG -y -f concat -safe 0 -i tts/audio/concat-v02.txt -c copy \
-    tts/audio/v02-narration.wav
-
-# mux video + audio
-$FFMPEG -y -i "$VIDEO" -i tts/audio/v02-narration.wav \
-    -c:v libx264 -preset slow -crf 20 \
-    -c:a aac -b:a 192k \
-    -map 0:v:0 -map 1:a:0 -shortest \
-    docs-demo/recordings/raw/02-brewslm-quickstart-narrated.mp4
+# 3. Record + mux: playwright on the scratch frontend (DEMO_BASE_URL, default
+#    http://localhost:5176), concat the WAVs, trim the pre-roll the spec wrote
+#    to tts/audio/vNN-preroll.json, mux → docs-demo/recordings/raw/<slug>-narrated.mp4
+docs-demo/scripts/ffmpeg/record-narrated.sh 02
 ```
 
-The older `generate_v04_narration.py` … `generate_v14_narration.py` still
-post to the :5005 bridge; port them to `narration_tts.generate_video` when
-they are next re-recorded.
+Before a recording, a check run fails on any beat whose element is missing
+(a recording only logs `[spotlight] no element …` and holds on nothing):
+
+```bash
+DEMO_BASE_URL=http://localhost:5176 DEMO_STRICT_BEATS=1 \
+  npx playwright test tests/demo-recordings/04-pii-detector-pipeline-narrated.spec.ts --project chromium
+```
+
+Every generator (`generate_narration.py` for 02, `generate_v03` … `generate_v14`)
+uses `narration_tts.generate_video`; none needs the :5005 bridge.
 
 ## Editing narration
 

@@ -1,5 +1,7 @@
 # Video 12 — Final Model Usage · Recording Plan
 
+> **2026-10-18**: the narrated spec `tests/demo-recordings/12-final-model-usage-narrated.spec.ts` was ported to the Epic U workspace: the playground is **Results · Try it** (`/project/<id>/results?tab=try`), not `/playground`. The GGUF path derives from the project id (override `V12_GGUF_PATH`). It writes `tts/audio/v12-preroll.json`. Older prose below uses the retired names.
+
 Status: **shipped 2026-05-20**. Closes the runtime arc. Loads V11's
 GGUF artifact into Ollama and sends a real prompt through the
 BrewSLM Playground UI. The trained model responds end-to-end.
@@ -37,6 +39,7 @@ Ollama indexes the existing bytes (no copy, no quantization re-
 run), so registration takes ~0.2s.
 
 The recording itself drives the Playground UI:
+- Open **Results → Try it** (`/project/<id>/results?tab=try`)
 - Provider: `OpenAI-Compatible / Ollama`
 - Model: `slm-supportfaq` (the Ollama alias just created)
 - Prompt: "How do I reset my password?"
@@ -65,12 +68,15 @@ The dry-run produced:
 
 | # | Section | Audio (s) | On-screen |
 |---|---|---:|---|
-| 1 | Cold open | 12.97 | Playground tab, empty messages area |
-| 2 | Ollama register | 16.90 | Hold on Playground; narration explains the `ollama create` step that the spec ran in pre-roll |
+| 1 | Cold open | 12.97 | Results · Try it, empty messages area |
+| 2 | Ollama register | 16.90 | Playground settings spotlit; narration explains the `ollama create` step that the spec ran in pre-roll |
 | 3 | Playground setup | 16.04 | Provider dropdown → OpenAI-Compatible; Model input → `slm-supportfaq` |
 | 4 | Send prompt | 12.71 | Type "How do I reset my password?"; click Send |
 | 5 | Response | 16.30 | Streamed response renders in messages area |
 | 6 | Wrap | 21.50 | Series-closing summary; hand-off message |
+
+Durations above are from the 2026-05 take; the narration was rewritten
+2026-10-18 (~352 words, ~2:31 estimated) and the audio must be regenerated.
 
 ## Honest about the response quality
 

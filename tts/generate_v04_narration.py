@@ -1,28 +1,29 @@
 """Generate per-section narration WAV files for Video 04 — PII Detector.
 
-Same Orpheus-FastAPI/Ollama setup as Videos 02/03. The key beat is
+Audio comes straight from Ollama + SNAC via
+``tts/narration_tts.generate_video`` (same as Videos 02/03). The key beat is
 Section 3 (Cleaning) — the on-screen disambiguation between
 cleaning-time PII redaction (regex) and the PII Detector model task
 (span extraction). Two product features share the name "PII"; the
 narration has to make the contrast obvious.
 
-Outputs:
-  tts/audio/v04-section-<NN>-<slug>.wav    — per-section audio
-  tts/audio/v04-durations.json             — per-section durations
+Outputs (tts/audio/):
+  v04-section-<NN>-<slug>.wav   — per-section audio
+  v04-durations.json            — duration per section + total (the spec reads it)
+  concat-v04.txt                — ffmpeg concat list for the mux
+
+Usage:
+  tts/Orpheus-FastAPI/.venv/bin/python tts/generate_v04_narration.py
+  tts/Orpheus-FastAPI/.venv/bin/python tts/generate_v04_narration.py --only <section-slug>
 """
 from __future__ import annotations
 
-import json
-import time
-import wave
+import sys
 from pathlib import Path
 
-import requests
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-TTS_URL = "http://127.0.0.1:5005/v1/audio/speech"
-VOICE = "leo"  # series consistency
-OUT_DIR = Path(__file__).parent / "audio"
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+from tts.narration_tts import VOICE, generate_video, parse_only  # noqa: E402
 
 SECTIONS: list[tuple[str, str, str]] = [
     (
@@ -123,44 +124,8 @@ SECTIONS: list[tuple[str, str, str]] = [
 ]
 
 
-def wav_duration_seconds(path: Path) -> float:
-    with wave.open(str(path), "rb") as w:
-        return w.getnframes() / float(w.getframerate())
-
-
 def main() -> None:
-    durations: dict[str, float] = {}
-    total_inference = 0.0
-    for slug, key, text in SECTIONS:
-        out = OUT_DIR / f"v04-section-{slug}.wav"
-        print(f"[{slug}] -> {len(text)} chars …", end="", flush=True)
-        t0 = time.time()
-        resp = requests.post(
-            TTS_URL,
-            json={
-                "model": "orpheus",
-                "input": text,
-                "voice": VOICE,
-                "response_format": "wav",
-            },
-            timeout=600,
-        )
-        elapsed = time.time() - t0
-        total_inference += elapsed
-        resp.raise_for_status()
-        out.write_bytes(resp.content)
-        dur = wav_duration_seconds(out)
-        durations[key] = dur
-        print(f" {dur:.2f}s audio in {elapsed:.1f}s wall")
-
-    durations["__total_audio__"] = sum(
-        v for k, v in durations.items() if not k.startswith("__")
-    )
-    durations["__total_inference_wall__"] = total_inference
-    (OUT_DIR / "v04-durations.json").write_text(json.dumps(durations, indent=2))
-    print()
-    print(f"Total audio: {durations['__total_audio__']:.1f}s")
-    print(f"Total inference: {total_inference:.1f}s")
+    generate_video("v04", SECTIONS, voice=VOICE, only=parse_only(sys.argv[1:]))
 
 
 if __name__ == "__main__":

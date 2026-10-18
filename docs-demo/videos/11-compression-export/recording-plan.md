@@ -1,5 +1,7 @@
 # Video 11 — Compression + Export · Recording Plan
 
+> **2026-10-18**: the narrated spec `tests/demo-recordings/11-compression-export-narrated.spec.ts` was ported to the Epic U workspace: compression and export are both on `/project/<id>/ship` (Package stage); no separate Compression or Export tab. It writes `tts/audio/v11-preroll.json`. Older prose below uses the retired tab names.
+
 Status: **shipped 2026-05-20**. Third runtime-dependent video. Takes
 Video 09's trained LoRA adapter, merges it into the SmolLM2-135M
 base, quantizes the merged checkpoint to GGUF Q4_K_M using
@@ -71,17 +73,20 @@ running back-to-back.
 
 | # | Section | Audio (s) | On-screen |
 |---|---|---:|---|
-| 1 | Cold open | 15.79 | Compression tab loaded |
-| 2 | Compression setup | 15.53 | Form filled in: Model Path, Bits=4, Format=GGUF, LoRA Adapter Path |
+| 1 | Cold open | 15.79 | `/project/<id>/ship` (Package stage): stage steps, *New export* card, Options drawer |
+| 2 | Compression setup | 15.53 | **Options → Compress first**: *Training run* picker fills Model Path + LoRA Adapter Path; Bits, Format |
 | 3 | Compress run | 17.75 | API fires merge → quantize sequentially |
-| 4 | Compression result | 14.34 | Tab content; narration carries the size numbers |
-| 5 | Export create | 14.76 | Export tab loaded with Experiment / Format / Quantization + Deployment Targets |
-| 6 | Export run | 12.89 | Export executes via API; tab refreshes to show new export row |
-| 7 | Wrap | 11.86 | Hand off to Video 12 |
+| 4 | Compression result | 14.34 | Section stays open; narration carries the size numbers |
+| 5 | Export create | 14.76 | *New export* card: run + Format = GGUF selected |
+| 6 | Export run | 12.89 | Export executes via API; reload `/ship?stage=package`; **Releases** + exports table show the new row |
+| 7 | Wrap | 11.86 | Hold on **Releases**; hand off to Video 12 |
+
+Durations above are from the 2026-05 take; the narration was rewritten
+2026-10-18 (~399 words, ~2:52 estimated) and the audio must be regenerated.
 
 ## Why API kickoff over UI
 
-Same reasoning as V09 and V10: the Compression UI form has nine
+Same reasoning as V09 and V10: the Compression form (under Ship · Package → Options) has nine
 inputs spread across three columns. Drives via API instead. The
 Compression Logs / Result cards in the UI only populate when the
 panel itself fires the API, but the result is on disk regardless;

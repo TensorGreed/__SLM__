@@ -588,10 +588,18 @@ runs real CPU inference). ~4 min locally.
   workspace via `tests/demo-recordings/0{2,3}-*-narrated.spec.ts` +
   `tts/narration_tts.py` (Orpheus through Ollama, no FastAPI bridge);
   outputs under `docs-demo/recordings/` (gitignored), upload is manual.
-  Specs 04–06 (PII detector, sentiment, bring-your-own samples) are ported
-  to the workspace too (2026-10-18; narration text in `tts/generate_v0{4,5,6}_narration.py`
-  rewritten, audio + `*-durations.json` NOT regenerated, not re-recorded);
-  09–14 still script `/pipeline/<tab>`. API reference pages
+  Every narrated spec (02–06, 09–12, 14) is on the workspace and every
+  generator uses `narration_tts.generate_video`. **Record only against a
+  scratch stack**: `docs-demo/scripts/ffmpeg/scratch-stack.sh up` (backend
+  :8031 + vite :5176 on a fresh `/tmp/brewslm-demo-stack` DB, auth on,
+  simulated training; `up --real` adds its own Celery worker on Redis DBs 4/5
+  for real `train.py` — videos 10–12 need real weights) → `record-narrated.sh NN`
+  (playwright on `DEMO_BASE_URL`, default :5176; `playwright.config.ts` reads
+  it) → concat → trim the pre-roll each spec writes to `tts/audio/vNN-preroll.json`
+  → `docs-demo/recordings/raw/<slug>-narrated.mp4`. `DEMO_STRICT_BEATS=1`
+  makes a check run fail on a missing beat element (a recording only warns).
+  Specs call the API by relative `/api/…` (never `localhost:8000`). 04–06
+  re-recorded 2026-10-18 (awaiting upload). API reference pages
   (`slm-docs/docs/reference/api/`) are regenerated per `slm-docs/scripts/README.md`
   (dump with DATABASE_URL/DATA_DIR on a scratch DB, then `npx docusaurus build`).
 - **Synthetic data** — two paths: (a) modern `synth_playbook_service`

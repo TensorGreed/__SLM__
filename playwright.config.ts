@@ -7,7 +7,8 @@ export default defineConfig({
     timeout: 10_000,
   },
   use: {
-    baseURL: 'http://localhost:5173',
+    // DEMO_BASE_URL points a recording at a scratch stack (docs-demo/scripts/ffmpeg/scratch-stack.sh).
+    baseURL: process.env.DEMO_BASE_URL || 'http://localhost:5173',
     viewport: { width: 1440, height: 900 },
     video: {
       mode: 'on',

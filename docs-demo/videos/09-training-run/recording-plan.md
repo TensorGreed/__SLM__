@@ -1,5 +1,7 @@
 # Video 09 — Training Run · Recording Plan
 
+> **2026-10-18**: the narrated spec `tests/demo-recordings/09-training-run-narrated.spec.ts` was ported to the Epic U workspace (Train form + Runs list; no `/pipeline/` or `/training-config` URLs). It writes `tts/audio/v09-preroll.json`. The tab and panel names in older prose below describe the retired layout.
+
 Status: **shipped 2026-05-20**. First runtime-dependent video in
 the series. The training experiment in this recording is a real
 Celery-dispatched run on the support-faq sample (16 train rows × 2
@@ -16,7 +18,7 @@ and the dataset has 16 rows, so the final loss will be high.
 ## Audience
 
 Intermediate. Assumes the viewer watched Videos 02 and 03 and is
-already familiar with the Training tab and Training Config page.
+already familiar with the Train page (the form and its More options).
 
 ## Final length
 
@@ -63,21 +65,24 @@ target modules `q_proj, v_proj`).
 2. Logged in as **admin**.
 3. Seeded support-faq project (id varies per DB; pre-roll captures
    the id from the URL).
-4. Training tab loaded with **no in-progress experiments**. The
-   Playwright spec deletes prior dry-run experiments before
-   recording, so the runs list starts empty.
+4. Browser at `/project/<id>/train` with **no in-progress experiments**.
+   The Playwright spec deletes prior dry-run experiments before
+   recording, so the Runs list starts empty.
 
 ## Recording arc (6 sections, audio durations from
 `tts/audio/v09-durations.json`)
 
 | # | Section | Audio (s) | What happens on screen |
 |---|---|---:|---|
-| 1 | Cold open | 17.15 | Training tab, empty runs list visible |
-| 2 | Config recap | 17.58 | Navigate to `/training-config`; click Advanced |
-| 3 | Kickoff | 12.12 | Back to Training tab; spec POSTs the experiment + start endpoint; page reloads to show "running" |
-| 4 | Watching | 12.80 | Status visible; spec polls API every 2s until `completed`; UI re-renders to completed status |
-| 5 | Results | 17.24 | Completed experiment row visible with final eval loss |
-| 6 | Wrap | 8.87 | Hand-off to Video 10 (evaluation) |
+| 1 | Cold open | 17.15 | `/project/<id>/train`: the form (base model, readiness line, Train) and the empty **Runs** card |
+| 2 | Config recap | 17.58 | Same page: **More options** → *Model and hyperparameters*, *LoRA and advanced training* |
+| 3 | Kickoff | 12.12 | Spec POSTs the experiment + start endpoint; page reloads to show the run "running" in **Runs** |
+| 4 | Watching | 12.80 | Status visible; spec polls API every 2s until `completed`; reload lands the completed badge |
+| 5 | Results | 17.24 | Row's **Dashboard** button: epoch counter, training / eval loss |
+| 6 | Wrap | 8.87 | **Back to Experiments**; hand-off to Video 10 (evaluation) |
+
+Durations above are from the 2026-05 take; the narration was rewritten
+2026-10-18 (~411 words, ~2:57 estimated) and the audio must be regenerated.
 
 Total audio: **85.8s**. Final muxed video: **1:25.76**.
 
@@ -96,10 +101,11 @@ is the canonical entry point used by Autopilot, by the CLI, and by
 external integrations, so it's a more durable selector for the
 recording than the form's DOM.
 
-The TrainingPanel UI polls the experiments list (every ~3s) and
-re-renders to show the new experiment, then transitions through
-running → completed. The viewer sees the same lifecycle they'd see
-if they'd clicked through the form themselves.
+The Runs list loads once on mount (only an opened run's dashboard polls
+its status), so the spec reloads the page after the start call and
+again once the API reports `completed`. The viewer sees the same
+lifecycle they'd see if they'd pressed Train themselves — which asks
+for a confirmation, then does the same create + start.
 
 ## What's visible on the "completed" frame
 
@@ -108,9 +114,7 @@ if they'd clicked through the form themselves.
 | `training-experiment-item` row with name `v09-narrated-run` | ✓ |
 | Status badge "COMPLETED" | ✓ |
 | Base model `HuggingFaceTB/SmolLM2-135M-Instruct` in row meta | ✓ |
-| Auto-Gate panel showing **FAIL** with "Missing required: memory: train_metrics_..." | ✓ — Story 1.5 data-shape gate detects we haven't run eval yet; narration mentions this is normal |
-| Pipeline Progress at training stage 60% | ✓ |
-| "Training Complete" footer banner | ✓ |
+| Run dashboard (**Dashboard** button): epoch counter, training loss, eval loss | ✓ |
 
 ## Things to not say
 

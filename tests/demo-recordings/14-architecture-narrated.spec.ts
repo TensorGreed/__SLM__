@@ -5,17 +5,13 @@ import * as path from 'path';
 // Video 14 — Architecture, narrated.
 //
 // Companion slide video to V01. Same shape: static HTML deck loaded
-// via file://, slides driven by window.showSlide(n).
+// via file://, slides driven by window.showSlide(n). No app screens, so
+// nothing here depends on the workspace layout; the deck was updated to
+// name the workspace pages instead of "pipeline tabs".
 
-const DURATIONS_PATH = path.resolve(
-    __dirname,
-    '../../tts/audio/v14-durations.json',
-);
+const DURATIONS_PATH = path.resolve(__dirname, '../../tts/audio/v14-durations.json');
 
-const SLIDE_DECK_PATH = path.resolve(
-    __dirname,
-    '../../docs-demo/slides/v14-architecture.html',
-);
+const SLIDE_DECK_PATH = path.resolve(__dirname, '../../docs-demo/slides/v14-architecture.html');
 
 type Durations = {
     title: number;
@@ -37,10 +33,7 @@ async function padTo(
     if (remaining > 0) await page.waitForTimeout(remaining);
 }
 
-async function showSlide(
-    page: import('@playwright/test').Page,
-    n: number,
-) {
+async function showSlide(page: import('@playwright/test').Page, n: number) {
     await page.evaluate((slideNum) => {
         // @ts-expect-error window.showSlide is defined in the deck.
         window.showSlide(slideNum);
@@ -50,9 +43,16 @@ async function showSlide(
 
 test('Video 14 — Architecture narrated', async ({ page }) => {
     test.setTimeout(10 * 60_000);
+    const testStart = Date.now();
     await page.goto(`file://${SLIDE_DECK_PATH}`);
     await page.waitForLoadState('domcontentloaded');
     await showSlide(page, 1);
+
+    // The narration starts here; the recorder trims the pre-roll by this offset.
+    fs.writeFileSync(
+        path.resolve(__dirname, '../../tts/audio/v14-preroll.json'),
+        JSON.stringify({ preroll_seconds: (Date.now() - testStart) / 1000 }),
+    );
 
     let sectionStart = Date.now();
     await padTo(page, sectionStart, dur.title);

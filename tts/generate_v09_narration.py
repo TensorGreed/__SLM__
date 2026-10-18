@@ -1,126 +1,105 @@
 """Generate per-section narration WAV files for Video 09 — Training Run.
 
-First runtime-dependent video in the series. Captures an actual
-training experiment running on the support-faq sample: SmolLM2-135M,
-two epochs, sixteen training steps. Runtime is real Celery via
-`builtin.external_celery`; takes ~12 seconds on GB10.
+First runtime-dependent video: a real training run on the support-faq
+sample (SmolLM2-135M, two epochs, sixteen steps, about twelve seconds on
+the GB10) through the real worker, shown on the Train page.
 
-Outputs:
-  tts/audio/v09-section-<NN>-<slug>.wav    — per-section audio
-  tts/audio/v09-durations.json             — per-section durations
+Sections map 1:1 to the sections of
+tests/demo-recordings/09-training-run-narrated.spec.ts (the spec reads
+``v09-durations.json`` by section key). Audio comes straight from
+Ollama + SNAC via ``tts/narration_tts.synthesize_checked``. Output:
+
+  tts/audio/v09-section-<NN>-<slug>.wav   — per-section audio
+  tts/audio/v09-durations.json            — duration per section + total
+  tts/audio/concat-v09.txt                — ffmpeg concat list for the mux
+
+Usage:
+  tts/Orpheus-FastAPI/.venv/bin/python tts/generate_v09_narration.py
+  tts/Orpheus-FastAPI/.venv/bin/python tts/generate_v09_narration.py --only 05-results
+
+The spoken text is mirrored (with stage directions) in
+docs-demo/scripts/narration/09-training-run.md — edit both in the same commit.
+Rewritten 2026-10-18 for the Epic U workspace.
 """
 from __future__ import annotations
 
-import json
-import time
-import wave
+import sys
 from pathlib import Path
 
-import requests
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-TTS_URL = "http://127.0.0.1:5005/v1/audio/speech"
-VOICE = "leo"
-OUT_DIR = Path(__file__).parent / "audio"
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+from tts.narration_tts import VOICE, generate_video, parse_only  # noqa: E402
 
+# (wav slug, durations key, spoken text). Tone rules from tts/README.md: no
+# literal API keys, env var names, REST paths, file extensions or adapter ids.
 SECTIONS: list[tuple[str, str, str]] = [
     (
         "01-cold-open",
         "cold_open",
-        "Now we actually train. The first four videos walked the "
-        "surfaces. This one launches a real training run on the "
-        "support FAQ sample. Small model — a hundred and thirty-"
-        "five million parameters — two epochs over sixteen prepared "
-        "rows. Real Celery worker, real loss curve, real artifact "
-        "on disk at the end.",
+        "Now we actually train. The first videos walked the workspace. This "
+        "one launches a real training run on the Support FAQ sample. This "
+        "is the Train page, and it is one form. A base model — here a "
+        "hundred and thirty-five million parameter model, small enough to "
+        "train in seconds. A readiness line that says whether the project "
+        "can train right now. A Train button. And below, the Runs list, "
+        "where every run and its live metrics stay. A real worker, a real "
+        "loss curve, and a real checkpoint on disk at the end.",
     ),
     (
         "02-config-recap",
         "config_recap",
-        "Quick recap of the Training Config page. Essentials view "
-        "covers what you'd touch first — base model, epochs, batch "
-        "size, learning rate. Flip to Advanced and you get the "
-        "parameter-efficient training controls: low-rank adaptation "
-        "rank, target modules, optimizer. Defaults are tuned for "
-        "this hardware.",
+        "Before we launch, a quick look behind More options. Model and "
+        "hyperparameters holds what you would touch first: epochs, batch "
+        "size, and learning rate. LoRA and advanced training holds the "
+        "parameter-efficient controls — the adapter's rank, which layers it "
+        "targets, the optimizer, and the numeric precision. The defaults "
+        "are tuned for this hardware, and the form sizes the number of "
+        "epochs to your row count by itself. For this recording I pin two "
+        "epochs, so the run is short and repeatable.",
     ),
     (
         "03-kickoff",
         "kickoff",
-        "Back to the Training tab. I'm creating a new experiment "
-        "and starting it. The Playwright spec uses the API for the "
-        "create-and-start sequence so the recording stays "
-        "deterministic. Either way, the worker queues the job and "
-        "the runtime takes over.",
+        "Now the run. To keep the recording repeatable I create and start "
+        "it through the API, with a fixed configuration: two epochs, batch "
+        "size two. Pressing Train does the same thing. It asks you to "
+        "confirm, creates the run, and hands it to the worker. Reload the "
+        "page, and the new run sits at the top of the Runs list, queued and "
+        "then running.",
     ),
     (
         "04-watching",
         "watching",
-        "Status is running. Sixteen training steps total — each "
-        "step does a forward pass, a backward pass, an optimizer "
-        "step. The loss should drop across the run. On this "
-        "hardware the whole thing finishes in about twelve seconds. "
-        "Refresh the table.",
+        "Status is running. Sixteen training steps in total. Each step is a "
+        "forward pass, a backward pass, and an optimizer step, and the loss "
+        "should come down across the run. On this hardware the whole thing "
+        "finishes in about twelve seconds. Reload the list, and the badge "
+        "flips to completed.",
     ),
     (
         "05-results",
         "results",
-        "Completed. Two epochs, sixteen steps, final evaluation "
-        "loss around five. The loss number is high because the "
-        "model is tiny and the dataset has sixteen rows. The point "
-        "isn't the loss number — the point is the loop completed "
-        "end to end, and we now have a checkpoint on disk ready "
-        "for evaluation.",
+        "Completed. Open the run's dashboard and you get the epoch counter, "
+        "the training loss, and the evaluation loss. The final evaluation "
+        "loss lands around five. That number is high, because the model is "
+        "tiny and the dataset has sixteen rows, and it is a loss, not an "
+        "accuracy. It tells us nothing yet about the answers. What matters "
+        "is that the loop completed end to end, and there is now a "
+        "checkpoint on disk, ready to be scored on the Results page.",
     ),
     (
         "06-wrap",
         "wrap",
-        "That's the training loop. Next video scores this "
-        "experiment against the two-hundred-row gold set and "
-        "tells us how often the model actually got the answer "
-        "right.",
+        "That is the training loop. One form, a run in the list, a "
+        "dashboard with the metrics. The next video scores this run against "
+        "the practice answer key, and tells us how often the model actually "
+        "got the answer right.",
     ),
 ]
 
 
-def wav_duration_seconds(path: Path) -> float:
-    with wave.open(str(path), "rb") as w:
-        return w.getnframes() / float(w.getframerate())
-
-
 def main() -> None:
-    durations: dict[str, float] = {}
-    total_inference = 0.0
-    for slug, key, text in SECTIONS:
-        out = OUT_DIR / f"v09-section-{slug}.wav"
-        print(f"[{slug}] -> {len(text)} chars …", end="", flush=True)
-        t0 = time.time()
-        resp = requests.post(
-            TTS_URL,
-            json={
-                "model": "orpheus",
-                "input": text,
-                "voice": VOICE,
-                "response_format": "wav",
-            },
-            timeout=600,
-        )
-        elapsed = time.time() - t0
-        total_inference += elapsed
-        resp.raise_for_status()
-        out.write_bytes(resp.content)
-        dur = wav_duration_seconds(out)
-        durations[key] = dur
-        print(f" {dur:.2f}s audio in {elapsed:.1f}s wall")
-
-    durations["__total_audio__"] = sum(
-        v for k, v in durations.items() if not k.startswith("__")
-    )
-    durations["__total_inference_wall__"] = total_inference
-    (OUT_DIR / "v09-durations.json").write_text(json.dumps(durations, indent=2))
-    print()
-    print(f"Total audio: {durations['__total_audio__']:.1f}s")
-    print(f"Total inference: {total_inference:.1f}s")
+    generate_video("v09", SECTIONS, voice=VOICE, only=parse_only(sys.argv[1:]))
 
 
 if __name__ == "__main__":

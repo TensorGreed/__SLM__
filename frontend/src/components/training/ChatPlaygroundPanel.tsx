@@ -1134,7 +1134,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
       <div className="playground-settings">
         <div className="form-group">
           <label className="form-label">Provider</label>
-          <select className="input" value={provider} onChange={(e) => setProvider(e.target.value as PlaygroundProvider)}>
+          <select className="input" value={provider} onChange={(e) => setProvider(e.target.value as PlaygroundProvider)} data-testid="playground-provider">
             {providerSpecs.length > 0 ? (
               providerSpecs.map((spec) => (
                 <option key={spec.provider} value={spec.provider}>
@@ -1179,7 +1179,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
         ) : (
         <div className="form-group">
           <label className="form-label">Model</label>
-          <input className="input" value={modelName} onChange={(e) => setModelName(e.target.value)} list="playground-models" />
+          <input className="input" value={modelName} onChange={(e) => setModelName(e.target.value)} list="playground-models" data-testid="playground-model" />
           <datalist id="playground-models">
             {modelOptions.map((item) => (
               <option key={`${item.source}:${item.model_name}`} value={item.model_name}>
