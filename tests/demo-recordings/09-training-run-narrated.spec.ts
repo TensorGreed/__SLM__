@@ -257,6 +257,9 @@ test('Video 09 — Training Run narrated', async ({ page }) => {
     });
     expect(createResp.ok()).toBeTruthy();
     const expId = (await createResp.json()).id as number;
+    // The automatic lift check adds a baseline run above this one when training
+    // completes, so every beat targets this run by id, never the first row.
+    const runItem = `[data-testid="training-run-${expId}"]`;
     const startResp = await page.request.post(`/api/projects/${projectId}/training/experiments/${expId}/start`, {
         headers: authHeader,
         data: {},
@@ -265,14 +268,14 @@ test('Video 09 — Training Run narrated', async ({ page }) => {
 
     await page.reload();
     await expect(page.locator('[data-testid="train-form"]')).toBeVisible({ timeout: 20_000 });
-    await page.locator('.training-experiment-item').first().waitFor({ state: 'visible', timeout: 20_000 });
+    await page.locator(runItem).waitFor({ state: 'visible', timeout: 20_000 });
     await screenshot(page, 'v09-training-running', true);
-    await spotlight(page, '.training-experiment-item', remainingMs(sectionStart, dur.kickoff));
+    await spotlight(page, runItem, remainingMs(sectionStart, dur.kickoff));
     await padTo(page, sectionStart, dur.kickoff);
 
     // ── Section: watching — status until completed ───────────────────
     sectionStart = Date.now();
-    await spotlight(page, '.training-experiment-item', Math.min(4000, remainingMs(sectionStart, dur.watching) / 2));
+    await spotlight(page, runItem, Math.min(4000, remainingMs(sectionStart, dur.watching) / 2));
     const deadlineMs = sectionStart + dur.watching * 1000 + 60_000; // slack for a slower box
     let finalStatus = 'unknown';
     while (Date.now() < deadlineMs) {
@@ -289,13 +292,13 @@ test('Video 09 — Training Run narrated', async ({ page }) => {
     expect(finalStatus).toBe('completed');
     // The Runs list is loaded once; reload so the row shows the final badge.
     await page.reload();
-    await page.locator('.training-experiment-item').first().waitFor({ state: 'visible', timeout: 20_000 });
-    await spotlight(page, '.training-experiment-item', remainingMs(sectionStart, dur.watching));
+    await page.locator(runItem).waitFor({ state: 'visible', timeout: 20_000 });
+    await spotlight(page, runItem, remainingMs(sectionStart, dur.watching));
     await padTo(page, sectionStart, dur.watching);
 
     // ── Section: results (the run's dashboard) ───────────────────────
     sectionStart = Date.now();
-    await page.locator('.training-experiment-item').first().getByRole('button', { name: /^Dashboard$/ }).click();
+    await page.locator(runItem).getByRole('button', { name: /^Dashboard$/ }).click();
     await expect(page.locator('.metrics-grid')).toBeVisible({ timeout: 20_000 });
     await page.waitForTimeout(1200);
     await screenshot(page, 'v09-training-completed', true);
@@ -308,7 +311,7 @@ test('Video 09 — Training Run narrated', async ({ page }) => {
     // ── Section: wrap (back to the Runs list) ────────────────────────
     sectionStart = Date.now();
     await page.getByRole('button', { name: /Back to Experiments/ }).click();
-    await page.locator('.training-experiment-item').first().waitFor({ state: 'visible', timeout: 15_000 });
-    await spotlight(page, '.training-experiment-item', remainingMs(sectionStart, dur.wrap));
+    await page.locator(runItem).waitFor({ state: 'visible', timeout: 15_000 });
+    await spotlight(page, runItem, remainingMs(sectionStart, dur.wrap));
     await padTo(page, sectionStart, dur.wrap);
 });

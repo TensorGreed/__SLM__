@@ -89,6 +89,7 @@ export default function TrainingRunsList({
             <div
               key={exp.id}
               className="training-experiment-item"
+              data-testid={`training-run-${exp.id}`}
             >
               <div className="training-experiment-main">
                 <input

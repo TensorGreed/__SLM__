@@ -65,11 +65,12 @@ Playwright logs in as `admin`, clicks the **Demo · Support FAQ** tile, lands on
 
 **On screen**: spotlight the run row; the spec polls the status endpoint every 2 s until `completed`, then reloads so the badge flips.
 
-> Status is running. Sixteen training steps in total. Each step is a
-> forward pass, a backward pass, and an optimizer step, and the loss
+> Status is running. A hundred and eight training rows, two epochs at a
+> batch size of two: a hundred and eight optimizer steps. Each step is a
+> forward pass, a backward pass, and a weight update, and the loss
 > should come down across the run. On this hardware the whole thing
-> finishes in about twelve seconds. Reload the list, and the badge flips
-> to completed.
+> takes about ten seconds. Reload the list, and the badge flips to
+> completed.
 
 ## Section 5 — Results, the run's dashboard (~02:04)
 
@@ -77,11 +78,11 @@ Playwright logs in as `admin`, clicks the **Demo · Support FAQ** tile, lands on
 
 > Completed. Open the run's dashboard and you get the epoch counter, the
 > training loss, and the evaluation loss. The final evaluation loss
-> lands around five. That number is high, because the model is tiny and
-> the dataset has sixteen rows, and it is a loss, not an accuracy. It
-> tells us nothing yet about the answers. What matters is that the loop
-> completed end to end, and there is now a checkpoint on disk, ready to
-> be scored on the Results page.
+> lands around three. That is still high: the model is tiny, the run was
+> ten seconds long, and it is a loss, not an accuracy. It tells us
+> nothing yet about the answers. What matters is that the loop completed
+> end to end, and there is now a checkpoint on disk, ready to be scored
+> on the Results page.
 
 ## Section 6 — Wrap (~02:40)
 

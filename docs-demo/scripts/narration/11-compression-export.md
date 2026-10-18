@@ -54,8 +54,8 @@ Playwright logs in as `admin`, launches the sample, finds `v09-narrated-run`, cl
 > into the base model and produce a full half-precision checkpoint. Then
 > quantize: llama dot c-p-p converts that checkpoint to GGUF and
 > crunches it down to four bits. I fire both through the API to keep the
-> recording repeatable. The whole pipeline takes about twenty seconds on
-> this hardware.
+> recording repeatable. Each step takes about four seconds on this
+> hardware.
 
 ## Section 4 — Compression result (~01:22)
 

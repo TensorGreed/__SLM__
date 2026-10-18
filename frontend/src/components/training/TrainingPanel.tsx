@@ -1352,6 +1352,36 @@ export default function TrainingPanel({
     return () => window.clearInterval(interval);
   }, [activeExperimentKey, projectId]);
 
+  // A run that is not streaming (completed, failed, cancelled) gets its metric
+  // history from its checkpoint rows — the websocket only opens while running,
+  // so a finished run's dashboard used to show empty epoch / loss tiles.
+  useEffect(() => {
+    if (!activeExperiment || activeExperiment.status === 'running') {
+      return;
+    }
+    const experimentId = activeExperiment.id;
+    let cancelled = false;
+    api
+      .get(`/projects/${projectId}/training/runs/${experimentId}/checkpoints`)
+      .then((res) => {
+        if (cancelled) return;
+        const rows: TrainingMetric[] = Array.isArray(res.data?.checkpoints) ? res.data.checkpoints : [];
+        setMetrics(
+          rows.map((row) => ({
+            experiment_id: experimentId,
+            epoch: row.epoch,
+            step: row.step,
+            train_loss: row.train_loss,
+            eval_loss: row.eval_loss,
+          })),
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeExperimentKey, projectId]);
+
   useEffect(() => {
     if (!activeExperiment || activeExperiment.status !== 'running') {
       return;
@@ -1611,8 +1641,10 @@ export default function TrainingPanel({
   };
 
   const viewDashboard = (exp: Experiment) => {
+    // Re-opening the same run keeps its metrics: the effects that load them
+    // only re-fire when the run (or its status) changes.
+    if (activeExperiment?.id !== exp.id) setMetrics([]);
     setActiveExperiment(exp);
-    setMetrics([]);
     setTrainingLogs([]);
     setTaskState('');
     setTrainingWarnings([]);

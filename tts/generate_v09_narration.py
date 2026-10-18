@@ -70,22 +70,24 @@ SECTIONS: list[tuple[str, str, str]] = [
     (
         "04-watching",
         "watching",
-        "Status is running. Sixteen training steps in total. Each step is a "
-        "forward pass, a backward pass, and an optimizer step, and the loss "
-        "should come down across the run. On this hardware the whole thing "
-        "finishes in about twelve seconds. Reload the list, and the badge "
-        "flips to completed.",
+        "Status is running. A hundred and eight training rows, two "
+        "epochs at a batch size of two: a hundred and eight optimizer "
+        "steps. Each step is a forward pass, a backward pass, and a "
+        "weight update, and the loss should come down across the run. "
+        "On this hardware the whole thing takes about ten seconds. "
+        "Reload the list, and the badge flips to completed.",
     ),
     (
         "05-results",
         "results",
-        "Completed. Open the run's dashboard and you get the epoch counter, "
-        "the training loss, and the evaluation loss. The final evaluation "
-        "loss lands around five. That number is high, because the model is "
-        "tiny and the dataset has sixteen rows, and it is a loss, not an "
-        "accuracy. It tells us nothing yet about the answers. What matters "
-        "is that the loop completed end to end, and there is now a "
-        "checkpoint on disk, ready to be scored on the Results page.",
+        "Completed. Open the run's dashboard and you get the epoch "
+        "counter, the training loss, and the evaluation loss. The final "
+        "evaluation loss lands around three. That is still high: the "
+        "model is tiny, the run was ten seconds long, and it is a loss, "
+        "not an accuracy. It tells us nothing yet about the answers. "
+        "What matters is that the loop completed end to end, and there "
+        "is now a checkpoint on disk, ready to be scored on the Results "
+        "page.",
     ),
     (
         "06-wrap",

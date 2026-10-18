@@ -212,7 +212,7 @@ Sentiment Classifier with a Small Language Model — Mobile CPU Target
 ```
 Train a three-way sentiment classifier (positive / neutral /
 negative) sized for mobile CPU inference. Thirty source rows
-balanced 10/10/10 across classes, a 200-row gold set with a slight
+balanced 10/10/10 across classes, a 200-row answer key with a slight
 positive skew (70/65/65), and an ONNX-INT8 export path for on-
 device deployment.
 
@@ -253,20 +253,21 @@ sentiment analysis LLM, sentiment classifier fine tuning, three way classificati
 
 **Title**
 ```
-Bring Your Own Data: Train an SLM on Your Own CSV in 90 Seconds
+Bring Your Own Data: Train an SLM on Your Own CSV in Two Minutes
 ```
 
 **Description**
 ```
-The three official demos are useful for learning the platform, but
+The three sample projects are useful for learning the platform, but
 the real point is to use your own dataset. This video shows the
-shortest path from a CSV on your laptop to a project ready for
-the rest of the pipeline.
+shortest path from a CSV on your laptop to a project ready for the
+rest of the pipeline.
 
-Six-row coffee-shop FAQ as a stand-in for "your data." Create a
-new project, upload the CSV, the file lands in ingestion. From
-there the project goes through the same pipeline you saw on the
-seeded samples (videos 3–5).
+A six-row coffee-shop FAQ stands in for "your data." Create a new
+project from a one-line brief, open Data, upload the CSV, and the
+rows land under Sources with their columns kept. From there the
+project follows the same steps you saw on the samples (videos 3–5):
+Prepare, Labels, Generate, Split, then Train, Results and Ship.
 
 🔗 Code: https://github.com/TensorGreed/__SLM__
 📺 Channel: https://www.youtube.com/@TensorGreed
@@ -281,7 +282,7 @@ Chapters:
 01:16 Rows imported
 01:39 Wrap
 
-#BYOData #SmallLanguageModel #FineTuning #BrewSLM #LLM
+#BringYourOwnData #SmallLanguageModel #FineTuning #LLM #LocalAI
 ```
 
 **Tags**
@@ -297,34 +298,37 @@ bring your own data, BYO data LLM, train LLM on own CSV, custom dataset fine tun
 
 **Title**
 ```
-Train a 135M LoRA in 12 Seconds — Real Celery, Real LoRA, Local GPU
+Train a 135M LoRA in 10 Seconds — Real Celery, Real LoRA, Local GPU
 ```
 
 **Description**
 ```
-Launch a real training experiment. Tiny model (135M parameters),
-two epochs, sixteen steps total. Celery worker on the local box,
-PyTorch + transformers + PEFT under the hood. Twelve seconds wall
-time on a GB10.
+Launch a real training run on the Support FAQ sample. Tiny base
+model (SmolLM2, 135M parameters), 108 training rows, two epochs at
+batch size two: 108 optimizer steps. A Celery worker on the local box
+runs PyTorch + transformers + PEFT. About ten seconds of training on
+an NVIDIA GB10.
 
-Not a simulated training loop. The output is a real LoRA adapter
-on disk at data/projects/.../model/adapter_model.safetensors.
-Final eval loss lands around 5 — high, because the dataset has
-16 rows and the model has 135M params. The point is that the loop
-fires end-to-end, not the quality of THIS model.
+Not a simulated loop: the output is a real LoRA adapter on disk, and
+the run's dashboard shows the epoch counter, the loss curve and the
+final losses (train 2.67, eval 3.10 in this take). Those are losses,
+not accuracy, and still high: the point is that the loop runs end to
+end. Video 8 scores the answers.
 
 🔗 Code: https://github.com/TensorGreed/__SLM__
 📺 Channel: https://www.youtube.com/@TensorGreed
 
+Re-recorded 2026-10-18 on the six-destination workspace, awaiting upload.
+
 Chapters:
 00:00 Train form
-00:40 More options (hyperparameters, LoRA)
-01:15 Kickoff (API)
-01:43 Watching status: running
-02:04 Run dashboard with metrics
-02:40 Wrap
+00:31 More options (hyperparameters, LoRA)
+01:01 Kickoff (API)
+01:21 Watching status: running
+01:42 Run dashboard with metrics
+02:08 Wrap
 
-#FineTuning #LoRA #Celery #SmallLanguageModel #LLMTraining
+#LoRA #FineTuning #SmallLanguageModel #PyTorch #LocalAI
 ```
 
 **Tags**
@@ -340,36 +344,37 @@ LoRA fine tuning, Celery worker LLM, train SmolLM, fine tune 135M model, PEFT tu
 
 **Title**
 ```
-Evaluate a Fine-Tuned SLM Against a 200-Row Answer Key
+Evaluate a Fine-Tuned SLM Against Its Answer Key — Honest Numbers
 ```
 
 **Description**
 ```
-Score the trained model from the previous video against the
-support-faq practice answer key. Twenty samples through the model, scored
-against expected answers, aggregated. Real exact-match and
-token-level F1 numbers. Real predictions in a side-by-side card.
+Score the run from the previous video against the Support FAQ
+practice answer key (200 hand-written answers the model never trained
+on). Twenty samples, greedy decoding, at most 64 new tokens each;
+about ten seconds on a GB10.
 
-Honest result: exact match lands at zero. F1 is in the low tens
-of percent. The pass/fail rules fail on both required rules. That's
-the right outcome for a 135M-param model trained on 16 rows —
-the loop closing is what matters, not the score.
-
-Resolves a real open question for the platform: the
-instruction_sft task profile dispatches to the QA handler.
+Honest result: exact match 0, token F1 0.24. The pass/fail rules fail
+on both required rules, and the scorecard says by how much. The
+Failures tab puts each question next to the expected answer and what
+the model actually said: that is where you start reading. A 135M model
+after ten seconds of training is not a product; the loop closing is
+the point.
 
 🔗 Code: https://github.com/TensorGreed/__SLM__
 📺 Channel: https://www.youtube.com/@TensorGreed
 
+Re-recorded 2026-10-18 on the six-destination workspace, awaiting upload.
+
 Chapters:
 00:00 Results · Verdict
-00:28 Evaluate form (answer key)
-01:02 Kickoff (API)
-01:28 Scoring the practice answer key
-01:44 Pass/fail rules, scorecard & predictions
-02:17 Wrap
+00:19 Evaluate form (answer key)
+00:46 Kickoff (API)
+01:07 Scoring the practice answer key
+01:20 Pass/fail rules, scorecard & predictions
+01:47 Wrap
 
-#LLMEvaluation #FineTuning #GoldSet #SmallLanguageModel #LLM
+#ModelEvaluation #LLMEval #SmallLanguageModel #FineTuning #HonestMetrics
 ```
 
 **Tags**
@@ -385,36 +390,37 @@ LLM evaluation, fine tuned model evaluation, gold set scoring, exact match scori
 
 **Title**
 ```
-Compress an SLM to a 105 MB GGUF — Merge LoRA + llama.cpp Quantize
+Compress an SLM to a 101 MB GGUF — Merge LoRA + llama.cpp Quantize
 ```
 
 **Description**
 ```
-Take a trained LoRA adapter and turn it into a quantized GGUF
-artifact that Ollama can serve. Two steps. First merge the adapter
-into the base model, producing a 256 MB half-precision checkpoint.
-Then quantize via llama.cpp's quantize binary down to 4-bit Q4_K_M
-— roughly 105 MB. Twelve seconds plus five seconds on a GB10.
+Turn the trained LoRA adapter into a quantized GGUF that Ollama can
+serve, from Ship → Package → Options → Compress first. Two steps:
+merge the adapter into the base model (a ~260 MB half-precision
+checkpoint), then quantize with llama.cpp to 4-bit: a 101 MB GGUF.
+Each step takes about four seconds on a GB10.
 
-Surfaces two real bugs that get fixed in this commit: a venv-
-symlink-resolution issue in quantize.py that broke the
-transformers import, and a missing sentencepiece dependency in
-the backend venv. Both flagged in the recording plan for anyone
-reproducing this.
+Then the New export form registers the artifact against the run and
+the Releases list shows its status. In this take the export's
+validation fails, and the video shows that rather than hiding it:
+whatever the status says is the truth.
 
 🔗 Code: https://github.com/TensorGreed/__SLM__
 📺 Channel: https://www.youtube.com/@TensorGreed
 
+Re-recorded 2026-10-18 on the six-destination workspace, awaiting upload.
+
 Chapters:
 00:00 Ship · Package
-00:33 Options · Compress first
-00:56 Merge LoRA + quantize
-01:22 GGUF on disk (105 MB)
-01:51 New export form
-02:09 Export registered (Releases)
-02:31 Wrap
+00:23 Options · Compress first
+00:43 Merge LoRA + quantize
+01:04 GGUF on disk (101 MB)
+01:28 New export form
+01:42 Export registered (Releases)
+02:01 Wrap
 
-#GGUF #LoRAMerge #ModelCompression #llamacpp #SmallLanguageModel
+#GGUF #Quantization #llamacpp #SmallLanguageModel #Ollama
 ```
 
 **Tags**
@@ -435,31 +441,33 @@ Serve a Fine-Tuned SLM with Ollama — Closing the Loop
 
 **Description**
 ```
-The compressed GGUF from the previous video gets loaded into
-Ollama and answers a prompt through the OpenAI-compatible API.
-End-to-end loop closes here: we trained the model, we evaluated
-it, we compressed it, and now we serve it.
+The 101 MB GGUF from the previous video is registered with Ollama
+and answers a prompt in Results → Try it, through the
+OpenAI-compatible API. Trained, evaluated, compressed, served: the
+loop closes here.
 
-Real response from the trained model. Format is correct (numbered
-support-ticket steps). Substance is generic — the 135M-param model
-trained on 16 rows hasn't seen this company's actual password-
-reset flow. Honest about what works and what doesn't.
-
-Same loop scales to bigger samples, more rows, bigger base models.
-That's the value proposition this 8-episode runtime arc proves.
+Asked how to reset a password, the model sends you to Settings →
+Security, which is exactly what the training tickets say. Then it
+drifts: the tickets describe an emailed link that lasts 15 minutes,
+and the model invents its own steps and a 30-day expiry. Half right
+and confidently worded, which is what the evaluation's 0.24 F1 was
+saying. Same loop, bigger data and bigger base models, is how you get
+past that.
 
 🔗 Code: https://github.com/TensorGreed/__SLM__
 📺 Channel: https://www.youtube.com/@TensorGreed
 
+Re-recorded 2026-10-18 on the six-destination workspace, awaiting upload.
+
 Chapters:
 00:00 Results · Try it
-00:25 Ollama create from GGUF
-00:51 Playground config
-01:20 Send prompt
-01:40 Model responds
-02:02 Series wrap
+00:20 Ollama create from GGUF
+00:41 Playground config
+01:04 Send prompt
+01:19 Model responds
+01:41 Series wrap
 
-#Ollama #FineTunedLLM #SmallLanguageModel #LLMServing #LocalLLM
+#Ollama #LocalLLM #SmallLanguageModel #FineTuning #GGUF
 ```
 
 **Tags**
@@ -494,13 +502,15 @@ your own local-first AI workspace.
 🔗 Code: https://github.com/TensorGreed/__SLM__
 📺 Channel: https://www.youtube.com/@TensorGreed
 
+Re-recorded 2026-10-18, awaiting upload.
+
 Chapters:
 00:00 Intro
-00:06 The stack: 5 processes
-00:30 Data flow: ingest → serve
-00:51 Where things run
-01:13 Trust boundaries
-01:34 Wrap
+00:13 The stack: 5 processes
+00:42 Data flow: ingest → serve
+01:07 Where things run
+01:36 Trust boundaries
+02:00 Wrap
 
 #SystemDesign #AIArchitecture #LocalAI #BrewSLM #MachineLearning
 ```

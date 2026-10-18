@@ -68,20 +68,21 @@ SECTIONS: list[tuple[str, str, str]] = [
         "04-watching",
         "watching",
         "The evaluation loads the trained checkpoint once, generates an "
-        "answer for each sample, scores each one, and aggregates. On this "
-        "hardware that is about twenty seconds for twenty samples. Reload "
-        "Verdict, and the card reads the new result.",
+        "answer for each sample, scores each one, and aggregates. On "
+        "this hardware that is about ten seconds for twenty samples. "
+        "Reload Verdict, and the card reads the new result.",
     ),
     (
         "05-results",
         "results",
-        "Done. Exact match is zero. The model is too small to produce "
-        "verbatim matches yet. F1 is in the low tens of percent: some word "
-        "overlap with the expected answers, and nowhere near production "
-        "quality. The pass/fail rules fail, honestly, and the scorecard "
-        "shows which rule failed and by how much. Then Failures: the sample "
-        "predictions, each question next to the expected answer and what "
-        "the model actually said. That is where you would start reading.",
+        "Done. Exact match is zero. The model is too small to reproduce "
+        "an expected answer word for word. F1 is around a quarter: real "
+        "word overlap with the expected answers, and nowhere near "
+        "production quality. The pass/fail rules fail, honestly, and "
+        "the scorecard shows which rule failed and by how much. Then "
+        "Failures: the sample predictions, each question next to the "
+        "expected answer and what the model actually said. That is "
+        "where you would start reading.",
     ),
     (
         "06-wrap",

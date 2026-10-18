@@ -65,20 +65,20 @@ Playwright logs in as `admin`, launches the Support FAQ sample, checks that `v09
 
 > The evaluation loads the trained checkpoint once, generates an answer
 > for each sample, scores each one, and aggregates. On this hardware
-> that is about twenty seconds for twenty samples. Reload Verdict, and
-> the card reads the new result.
+> that is about ten seconds for twenty samples. Reload Verdict, and the
+> card reads the new result.
 
 ## Section 5 — Results (~01:44)
 
 **On screen**: Verdict: spotlight the **Pass/fail rules** card, then the scorecard; then the **Failures** tab and the sample predictions.
 
-> Done. Exact match is zero. The model is too small to produce verbatim
-> matches yet. F1 is in the low tens of percent: some word overlap with
-> the expected answers, and nowhere near production quality. The
-> pass/fail rules fail, honestly, and the scorecard shows which rule
-> failed and by how much. Then Failures: the sample predictions, each
-> question next to the expected answer and what the model actually said.
-> That is where you would start reading.
+> Done. Exact match is zero. The model is too small to reproduce an
+> expected answer word for word. F1 is around a quarter: real word
+> overlap with the expected answers, and nowhere near production
+> quality. The pass/fail rules fail, honestly, and the scorecard shows
+> which rule failed and by how much. Then Failures: the sample
+> predictions, each question next to the expected answer and what the
+> model actually said. That is where you would start reading.
 
 ## Section 6 — Wrap (~02:17)
 
@@ -95,5 +95,5 @@ Playwright logs in as `admin`, launches the Support FAQ sample, checks that `v09
 
 - Don't claim the model passes: the pass/fail rules fail and the screen says so.
 - Say exact match / F1 / pass rate as English words.
-- Don't promise a specific score; exact match 0, F1 in the low tens of percent.
+- Don't promise a specific score; the 2026-10-18 take read exact match 0, F1 0.24 on 20 samples.
 - The summary card picks the latest completed run; the video assumes Video 09's run is the newest.

@@ -598,8 +598,17 @@ runs real CPU inference). ~4 min locally.
   it) → concat → trim the pre-roll each spec writes to `tts/audio/vNN-preroll.json`
   → `docs-demo/recordings/raw/<slug>-narrated.mp4`. `DEMO_STRICT_BEATS=1`
   makes a check run fail on a missing beat element (a recording only warns).
-  Specs call the API by relative `/api/…` (never `localhost:8000`). 04–06
-  re-recorded 2026-10-18 (awaiting upload). API reference pages
+  Specs call the API by relative `/api/…` (never `localhost:8000`). 02–06,
+  09–12 and 14 re-recorded 2026-10-18 (awaiting upload; paste-ready sheet
+  `docs-demo/youtube/upload-2026-10-18.md`, thumbnails from
+  `docs-demo/youtube/thumbnails-source.html` via `youtube-thumbnails.spec.ts`).
+  Narration that quotes a number (steps, seconds, F1, MB, what the model
+  replied) must be re-read against the recorded run — the 09–12 scripts had
+  carried an older take's figures. 09–12 run in order on ONE `up --real`
+  stack (10 scores 09's run, 11 compresses it, 12 serves 11's GGUF and
+  re-registers the host Ollama alias `slm-supportfaq`). The auto lift check
+  adds a baseline run above the trained one, so specs target a run by
+  `data-testid="training-run-<id>"`, never the first row. API reference pages
   (`slm-docs/docs/reference/api/`) are regenerated per `slm-docs/scripts/README.md`
   (dump with DATABASE_URL/DATA_DIR on a scratch DB, then `npx docusaurus build`).
 - **Synthetic data** — two paths: (a) modern `synth_playbook_service`
@@ -978,7 +987,10 @@ runs real CPU inference). ~4 min locally.
   Sections: `TrainingModelEssentialsSection` / `TrainingMultiSeedSection` /
   `TrainingAdvancedPeftSection` (config columns), `TrainingValidationSection`
   (preflight), `CloudBurstPlanningSection` (owns its state; `key={projectId}`),
-  `TrainingRunView` (one run), `TrainingRunsList`. Add new config fields to the
+  `TrainingRunView` (one run), `TrainingRunsList`. A run that isn't running loads its
+  metric history from `GET /training/runs/{id}/checkpoints` (the websocket
+  only opens while running; a finished run's dashboard used to show empty
+  tiles). Add new config fields to the
   hook, not as panel `useState`.
   **LoRA targets default to `"auto"`** (`services/lora_target_policy.py`,
   resolved in `train.py` from the loaded model's real parameter count):

@@ -60,20 +60,21 @@ Playwright logs in as `admin`, launches the sample, stages the GGUF (`V12_GGUF_P
 
 **On screen**: type *How do I reset my password?*, click **Send**; spotlight the composer.
 
-> Now the prompt. I will ask the kind of question the training set
-> covered: how to reset a password. The model has seen sixteen rows of
-> customer support tickets. That is not enough to be excellent, but it
-> is enough to produce the right shape of answer.
+> Now the prompt. I will ask a question the training set covered: how to
+> reset a password. The model has seen a hundred and eight customer
+> support tickets, a few of them about exactly this. That is not enough
+> to be excellent, but it is enough to see what it learned.
 
 ## Section 5 — Response (~01:40)
 
 **On screen**: wait for the assistant message and the end of the reply; spotlight it.
 
-> And there it is. A coherent, numbered, support-ticket style answer. It
-> is not grounded in this company's real password reset flow, because
-> the model has never seen one. But the format is right, the tone is
-> right, and the loop fired end to end on a hundred megabytes of
-> quantized weights.
+> And there it is. It sends you to Settings, then Security, which is
+> exactly where the training tickets point. Then it drifts. The tickets
+> describe an emailed link that lasts fifteen minutes, and the model
+> invents its own steps and a thirty-day expiry. Half right, confidently
+> worded, which is what the evaluation's quarter F1 was telling us. And
+> it all runs on a hundred megabytes of quantized weights.
 
 ## Section 6 — Wrap (~02:02)
 

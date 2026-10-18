@@ -1132,6 +1132,7 @@ session-start guidance.
 - `frontend/src/components/training/TrainingConfigGapsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingConfigPatchPreviewModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingPanel.back.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/TrainingPanel.finishedRun.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingPanel.form.test.tsx` — The Train form layout (Epic U phase U2): readiness from the preflight,
 - `frontend/src/components/training/TrainingPanel.multiSeed.test.tsx` — Quality-Lift phase 7 slice 3 — MultiSeedConfigSection tests.
 - `frontend/src/components/training/TrainingPanel.ocrNoise.test.tsx` — Token classification: the "OCR-noise copies" control (More options -> model)

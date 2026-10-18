@@ -56,12 +56,13 @@ SECTIONS: list[tuple[str, str, str]] = [
     (
         "03-compress-run",
         "compress_run",
-        "Now the two steps. First, merge the adapter: the trained changes "
-        "fold into the base model and produce a full half-precision "
-        "checkpoint. Then quantize: llama dot c-p-p converts that "
-        "checkpoint to GGUF and crunches it down to four bits. I fire both "
-        "through the API to keep the recording repeatable. The whole "
-        "pipeline takes about twenty seconds on this hardware.",
+        "Now the two steps. First, merge the adapter: the trained "
+        "changes fold into the base model and produce a full "
+        "half-precision checkpoint. Then quantize: llama dot c-p-p "
+        "converts that checkpoint to GGUF and crunches it down to four "
+        "bits. I fire both through the API to keep the recording "
+        "repeatable. Each step takes about four seconds on this "
+        "hardware.",
     ),
     (
         "04-compression-result",
