@@ -432,7 +432,7 @@ curl "http://localhost:8000/api/projects/1/eval/17/remediation"
 
 ## Step 4 — Inspect failure clusters
 
-The eval-stage failure clusters (P12) live separately from the cross-stage [failure clusters](../observability/failure-clusters.md) on the Observability page. They're scoped to a single eval result and group prediction failures by signature.
+The eval-stage failure clusters (P12) live separately from the cross-stage [failure clusters](../observability/failure-clusters.md) in **Ship** → **Monitor**. They're scoped to a single eval result and group prediction failures by signature.
 
 ### Common cluster patterns
 

@@ -93,7 +93,7 @@ The API name for a project's **pass/fail rule set** (see [Pass/fail rules](#pass
 A group of error events folded on `(stage, reason_code, signature)`. The signature normalises away timestamps / ids / digit runs so similar errors collapse into one row. Two flavours:
 
 - **Eval-stage clusters** — per-prediction failures inside one eval result.
-- **Cross-stage clusters** — project-wide event clusters in the Observability page.
+- **Cross-stage clusters** — project-wide event clusters in **Ship** → **Monitor**.
 
 See [Failure clusters](../observability/failure-clusters.md).
 
@@ -243,7 +243,7 @@ Immutable JSON snapshot of every input that produced a training run. Replay re-c
 
 ## Manifest (project) / brewslm.yaml
 
-Human-readable YAML representation of the whole project — datasets, adapters, recipes, eval packs, target profile. Round-trips via `brewslm manifest export/apply`. See [Pipeline-as-Code](../workflows/pipeline-overview.md).
+Human-readable YAML representation of the whole project — datasets, adapters, recipes, eval packs, target profile. Round-trips via `brewslm manifest export/apply`; in the UI it is **Ship** → **Package** → **Options** → *Project manifest (Pipeline as Code)*. See [Pipeline-as-Code](../workflows/pipeline-overview.md).
 
 ## Measured
 

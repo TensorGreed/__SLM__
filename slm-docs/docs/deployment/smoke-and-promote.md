@@ -34,7 +34,7 @@ Smoke runs your selected prompts (defaults to 5 random rows from your active eva
 
 ### UI
 
-On the Deployments page → New deployment → after plan, **Run smoke test** appears. Click; the table fills in row-by-row as each prompt completes. A green check on a row means "passed gate"; red is "failed".
+On **Ship** → **Deploy** → New deployment → after plan, **Run smoke test** appears. Click; the table fills in row-by-row as each prompt completes. A green check on a row means "passed gate"; red is "failed".
 
 ### CLI
 
@@ -74,7 +74,7 @@ Returns:
 
 ### UI
 
-Smoke-passed deployment → **Promote** button (top right of the Deployments detail). A confirm dialog summarizes:
+Smoke-passed deployment → **Promote** button (top right of the deployment detail). A confirm dialog summarizes:
 
 - What's being demoted (the previous `active` deployment, if any).
 - What's being promoted (this one).
@@ -107,7 +107,7 @@ For deployments that smoke poorly OR that you decided not to ship:
 
 ### UI
 
-Deployments detail → **Reject**. Reason required. The deployment is archived; no traffic ever sees it.
+Deployment detail (**Ship** → **Deploy**) → **Reject**. Reason required. The deployment is archived; no traffic ever sees it.
 
 ### CLI
 

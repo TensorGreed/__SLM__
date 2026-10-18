@@ -193,7 +193,7 @@ When eval passes, export for the target.
 
 ### UI
 
-**Ship** → **Export** → **New export** → target `vllm_server` → format `huggingface`. Click **Run export**. Artifact lands under `DATA_DIR/exports/`.
+**Ship** → **Package** → **New export** → target `vllm_server` → format `huggingface`. Click **Run export**. Artifact lands under `DATA_DIR/exports/`.
 
 ### CLI
 

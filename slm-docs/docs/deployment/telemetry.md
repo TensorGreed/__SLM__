@@ -5,7 +5,7 @@ title: Post-deploy telemetry
 
 # Post-deploy telemetry
 
-Once a deployment is `active`, BrewSLM collects inference metrics so you can answer: *is it serving well right now?* Telemetry is push or pull, computed over a rolling window, and surfaced in the [Run Timeline](../observability/timeline.md), the Deployments page, and the [Deployability score](rollback-and-score.md).
+Once a deployment is `active`, BrewSLM collects inference metrics so you can answer: *is it serving well right now?* Telemetry is push or pull, computed over a rolling window, and surfaced in the [Run Timeline](../observability/timeline.md), the Deployment Assistant (**Ship** → **Deploy**), and the [Deployability score](rollback-and-score.md).
 
 ## What's measured
 
@@ -47,7 +47,7 @@ Sample shape:
 
 ### UI
 
-The UI doesn't push samples directly — your serving runtime does. The Deployments detail page **reads** the rolling window every 10 seconds while open.
+The UI doesn't push samples directly — your serving runtime does. The Deployment Assistant **reads** the rolling window every 10 seconds while open.
 
 ### CLI
 

@@ -80,7 +80,12 @@ function groupActionsByTarget(actions: ManifestApplyAction[]): Record<string, Ma
     return groups;
 }
 
-export default function ProjectManifestPage() {
+interface ProjectManifestPageProps {
+    /** Rendered inside Ship → Package: no page header. */
+    embedded?: boolean;
+}
+
+export default function ProjectManifestPage({ embedded = false }: ProjectManifestPageProps = {}) {
     const params = useParams();
     const navigate = useNavigate();
     const workspace = useOutletContext<ProjectWorkspaceContextValue | null>();
@@ -264,6 +269,7 @@ export default function ProjectManifestPage() {
 
     return (
         <div className="workspace-page manifest-page">
+            {!embedded && (
             <section className="workspace-page-header">
                 <div>
                     <h2 className="workspace-page-title">Pipeline as Code</h2>
@@ -276,6 +282,7 @@ export default function ProjectManifestPage() {
                     <ManifestExportButton projectId={projectId} projectName={projectName} />
                 )}
             </section>
+            )}
 
             {!isNewProjectFlow && projectId != null && projectName && (
                 <ManifestSummaryCard projectId={projectId} projectName={projectName} />

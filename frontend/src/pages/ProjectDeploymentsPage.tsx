@@ -57,7 +57,12 @@ function pickPreferredDeployment(
     return versions[0]?.id ?? null;
 }
 
-export default function ProjectDeploymentsPage() {
+interface ProjectDeploymentsPageProps {
+    /** Rendered inside Ship → Deploy: no page header. */
+    embedded?: boolean;
+}
+
+export default function ProjectDeploymentsPage({ embedded = false }: ProjectDeploymentsPageProps = {}) {
     const params = useParams();
     const workspace = useOutletContext<ProjectWorkspaceContextValue | null>();
     const routeProjectId = params.id ? Number.parseInt(params.id, 10) : null;
@@ -118,6 +123,7 @@ export default function ProjectDeploymentsPage() {
 
     return (
         <div className="workspace-page deployments-page">
+            {!embedded && (
             <section className="workspace-page-header">
                 <div>
                     <h2 className="workspace-page-title">Deployment Assistant</h2>
@@ -132,6 +138,7 @@ export default function ProjectDeploymentsPage() {
                     <span className="badge badge-warning">pending: {counts.pending}</span>
                 </div>
             </section>
+            )}
 
             {error && (
                 <div className="deployment-status is-error" role="alert">

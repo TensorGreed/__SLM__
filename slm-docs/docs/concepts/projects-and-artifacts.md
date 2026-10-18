@@ -29,8 +29,8 @@ Inside a project the sidebar has six destinations, and every page is always reac
 | **Data** (`/data`) | Everything before training, as five steps. Each step is a short form on top and a collapsed **Details** drawer underneath (its sections load only when opened; `?open=<section-id>` opens one). **Sources**: seed documents, import dataset, upload. **Prepare**: cleaning. **Labels**: task shape, labelling conventions (span projects), answer key. **Generate**: synthetic data. **Split**: train / val / test. The old Data Studio and Annotation pages are retired; their panels are Details sections of these steps | Sources, Prepare, Labels, Generate, Split |
 | **Train** (`/train`) | One form page: base model, task, seeds, run name, readiness line and a **Train** button, with the runs list below. **More options** holds *Model and hyperparameters*, *LoRA and advanced training*, *Seeds*, *Checks*, *Cloud burst*, *Training presets*, *Plan and gaps*, *Base model registry*, *Task type*, *Pipeline presets*, *Adapter Studio*, *Tokenization* | none |
 | **Results** (`/results`) | Evaluation in four tabs: **Verdict** (did it work: lift vs base, pass/fail rules), **Failures** (where it fails), **Compare** (runs side by side, benchmarks), **Try it** (the prompt playground and redaction box) | none |
-| **Ship** (`/ship`) | Compression, export, Export History, Model Registry, publish to the Hub. Header links: Deployments, Observability | Compression, Export |
-| **Settings** (`/settings`) | Inline-tips switch, beginner flag, manifest export, and the advanced tools (Autopilot Planner, Workflow Builder, Pipeline presets, Pipeline as Code, Domain Packs/Profiles, Adapter Studio, Extension Studio) | none |
+| **Ship** (`/ship?stage=`) | One flow, four stages in a step bar. **Package** (`package`): the seed picker when the latest run is a multi-seed group, the New export form, the **Releases** list (Exports and Registered models), and an **Options** drawer with *Compress first* and *Project manifest (Pipeline as Code)*. **Publish** (`publish`): push a Hugging Face export to the Hub. **Deploy** (`deploy`): serve plans and the Deployment Assistant. **Monitor** (`monitor`): run timeline, failure clusters, support bundles | none |
+| **Settings** (`/settings`) | Inline-tips switch, beginner flag, manifest export, and the advanced tools (Autopilot Planner, Workflow Builder, Pipeline presets, Domain Packs/Profiles, Adapter Studio, Extension Studio; Pipeline as Code links into Ship) | none |
 
 The Coach bar appears at the top of Data, Train, Results and Ship. The Cmd-K palette lists the six destinations plus every tool page. Old `/guide`, `/wizard` and `/pipeline/<tab>` URLs redirect to the new locations.
 
@@ -89,8 +89,8 @@ The workspace doesn't surface every artifact directly — they're plumbing. Wher
 
 - **Models page** lists checkpoints (`checkpoints` table).
 - **Eval Compare** drawer shows eval_results.
-- **Deployments page** lists deployment versions (which point at checkpoints).
-- **Observability → Support bundle** packages selected sections of the registry into one zip for hand-off.
+- **Ship → Deploy** lists deployment versions (which point at checkpoints).
+- **Ship → Monitor → Support bundle** packages selected sections of the registry into one zip for hand-off.
 
 ### CLI
 

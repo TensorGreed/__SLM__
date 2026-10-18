@@ -22,7 +22,7 @@ A typical workflow runs drift weekly + after any infra change. Drift is also che
 
 ### UI
 
-Deployments detail → **Drift check** tab → **Run check now**. A modal asks which answer key (by its gold-set dataset id) + how many prompts (default: all). Click **Start**.
+**Ship** → **Deploy** → deployment detail → **Drift check** tab → **Run check now**. A modal asks which answer key (by its gold-set dataset id) + how many prompts (default: all). Click **Start**.
 
 Results stream in row by row. The summary card at top shows:
 

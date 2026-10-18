@@ -101,11 +101,11 @@ Notice the **`reason_code` is required** on `error` / `critical` severities. The
 | Stage 7 Tokenization | **Train** → **More options** → *Tokenization* |
 | Stage 8 Training | **Train** (the form, then **Train** → **Launch**; *Plan and gaps*, *Base model registry*, *Task type* under **More options**); Autopilot Planner under **Settings** |
 | Stage 9 Evaluation | **Results** (tabs: Verdict, Failures, Compare, Try it) |
-| Stage 10 Compression | **Ship** → **Compression** |
-| Stage 11 Export | **Ship** → **Export** |
-| `deployment` | **Ship** (header links: Deployments, Observability) |
+| Stage 10 Compression | **Ship** → **Package** → **Options** → *Compress first* |
+| Stage 11 Export | **Ship** → **Package** → **New export** (then **Publish** for the Hub) |
+| `deployment` | **Ship** → **Deploy** (and **Monitor**) |
 | `autopilot` | **Settings** → **Autopilot Planner** |
-| `system` | **Ship** → **Observability** (timeline filter `stage=system`) |
+| `system` | **Ship** → **Monitor** (timeline filter `stage=system`) |
 
 ## Next
 

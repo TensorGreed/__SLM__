@@ -31,7 +31,7 @@ Each tree node shows:
 
 ### UI
 
-**Ship** → **Observability** → top section.
+**Ship** → **Monitor** → top section.
 
 Filter bar:
 

@@ -10,19 +10,21 @@ describe('workspaceRoutes', () => {
         expect(stagePath(7, 'tokenization')).toBe('/project/7/train?open=tokenization');
         expect(trainSectionPath(7, 'plan')).toBe('/project/7/train?open=plan');
         expect(stagePath(7, 'eval')).toBe('/project/7/results');
-        expect(stagePath(7, 'export')).toBe('/project/7/ship?step=export');
+        expect(stagePath(7, 'export')).toBe('/project/7/ship');
+        expect(stagePath(7, 'compression')).toBe('/project/7/ship?open=compress');
         expect(stagePath(7, 'data', 'import=auto')).toBe('/project/7/data?import=auto');
     });
 
     it('resolves a step inside its destination only', () => {
         expect(resolveStep('data', 'goldset')).toBe('goldset');
         expect(resolveStep('data', 'training')).toBe('data');
-        expect(resolveStep('ship', null)).toBe('compression');
+        expect(resolveStep('ship', null)).toBe('export');
     });
 
     it('walks the pipeline order across destinations', () => {
         expect(nextTab('dataprep')).toBe('training');
         expect(nextTab('training')).toBe('eval');
+        expect(nextTab('eval')).toBe('export');
         expect(nextTab('export')).toBeNull();
     });
 
@@ -38,7 +40,7 @@ describe('workspaceRoutes', () => {
         expect(legacyRedirectPath(7, '/project/7/pipeline/training')).toBe('/project/7/train');
         expect(legacyRedirectPath(7, '/project/7/pipeline/tokenization')).toBe('/project/7/train?open=tokenization');
         expect(legacyRedirectPath(7, '/project/7/pipeline/nope')).toBe('/project/7/data');
-        expect(legacyRedirectPath(7, '/project/7/deployments')).toBeNull();
+        expect(legacyRedirectPath(7, '/project/7/extensions')).toBeNull();
     });
 
     it('folds the retired training pages into Train sections (U2)', () => {
@@ -67,5 +69,13 @@ describe('workspaceRoutes', () => {
         expect(legacyRedirectPath(7, '/project/7/data-studio', '', '#dataset-versions')).toBe('/project/7/data?open=versions&step=dataprep');
         expect(legacyRedirectPath(7, '/project/7/data-studio', '', '#review_queue')).toBe('/project/7/data?open=review-queue&step=goldset');
         expect(legacyRedirectPath(7, '/project/7/annotate')).toBe('/project/7/data?open=annotation&step=goldset');
+    });
+
+    it('folds deployments, observability and the manifest into Ship (U5)', () => {
+        expect(legacyRedirectPath(7, '/project/7/deployments')).toBe('/project/7/ship?stage=deploy');
+        expect(legacyRedirectPath(7, '/project/7/observability', '', '#failure-clusters')).toBe('/project/7/ship?stage=monitor#failure-clusters');
+        expect(legacyRedirectPath(7, '/project/7/manifest')).toBe('/project/7/ship?open=manifest&stage=package');
+        expect(legacyRedirectPath(7, '/project/7/pipeline/compression')).toBe('/project/7/ship?open=compress');
+        expect(legacyRedirectPath(7, '/project/7/pipeline/export')).toBe('/project/7/ship');
     });
 });

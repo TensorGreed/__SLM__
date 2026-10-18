@@ -489,6 +489,26 @@ runs real CPU inference). ~4 min locally.
   the coach rail panel are gone; `dataStudioTargetPath` maps the studio
   panels' `onOpenTarget` targets. Tests: `DataPanels.stepper.test.tsx`,
   `ProjectDataPage.test.tsx`, `DetailsDrawer.test.tsx`.
+  **Ship = one flow (Epic U phase U5, 2026-10-17)** — `pages/ProjectShipPage.tsx`:
+  stages Package / Publish / Deploy / Monitor (`?stage=`, `workspaceRoutes.SHIP_STAGES`,
+  `shipPath`), one `<ExportPanel stage>` kept mounted (plans and the releases
+  list persist). `ExportPanel` gates with `st('<stage>')` (`stage` null = the
+  old one-page layout the older tests mount): Package = the export form ("New
+  export"), a **Releases** header card + the exports table ("Exports") + the
+  registered models table; Publish = a card with one Hub-publish row per
+  completed HF export (same `handlePublishHub` / `hubRepoIds`; the row form
+  stays in the classic layout only); Deploy = the serve / deploy plan cards
+  (also shown on Package since they are requested there). The page adds
+  `SeedPickCard` (the summary's `seed_group_leader` → `SeedShipTable`) and an
+  Options `DetailsDrawer` (`compress` = CompressionPanel, `manifest` =
+  ProjectManifestPage embedded) on Package, `ProjectDeploymentsPage embedded`
+  on Deploy, `ProjectObservabilityPage embedded` on Monitor. Retired with
+  redirects: `/pipeline/compression` → `?open=compress`, `/pipeline/export`,
+  `/deployments` → deploy, `/observability` → monitor (hash kept), `/manifest`
+  → package + manifest (`/manifest/import` for new projects stays).
+  `STEPS_BY_DESTINATION.ship = ['export']`; ProjectStagePage is deleted (its
+  CSS lives on as `pages/stagePage.css`, shared by Data and Ship). Tests:
+  `ExportPanel.stages.test.tsx`, `ProjectShipPage.test.tsx`.
   **The Coach** (`components/coach/Coach.tsx`, mounted once in
   `ProjectWorkspaceLayout`) stays the guidance bar on the four stage pages:
   stage + %, next step (`utils/flowGuide.getRecommendedAction`; "on target"

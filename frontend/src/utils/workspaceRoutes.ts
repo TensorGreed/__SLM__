@@ -33,8 +33,24 @@ export const STEPS_BY_DESTINATION: Record<StageDestination, TabKey[]> = {
     // Train is a form (U2): one step; tokenization is a More-options section.
     train: ['training'],
     results: ['eval'],
-    ship: ['compression', 'export'],
+    // Ship is a flow (U5): one step; compression is an option inside Package.
+    ship: ['export'],
 };
+
+/** Ship stages (``/ship?stage=<id>``, Epic U phase U5). */
+export const SHIP_STAGES = ['package', 'publish', 'deploy', 'monitor'] as const;
+export type ShipStageId = (typeof SHIP_STAGES)[number];
+
+export function isShipStage(value: string | null | undefined): value is ShipStageId {
+    return !!value && (SHIP_STAGES as readonly string[]).includes(value);
+}
+
+/** ``/project/7/ship?stage=deploy`` (+ extra query). */
+export function shipPath(projectId: number, stageId: ShipStageId, extraSearch?: string): string {
+    const params = new URLSearchParams(extraSearch ?? '');
+    params.set('stage', stageId);
+    return `${projectPath(projectId, 'ship')}?${params.toString()}`;
+}
 
 /** ``/project/7/train?open=plan`` — a Train More-options section. */
 export function trainSectionPath(projectId: number, section: string, extraSearch?: string): string {
@@ -170,6 +186,8 @@ export function stagePath(projectId: number, tab: TabKey, extraSearch?: string):
     const params = new URLSearchParams(extraSearch ?? '');
     if (tab === 'tokenization') {
         params.set('open', 'tokenization');
+    } else if (tab === 'compression') {
+        params.set('open', 'compress');
     } else if (STEPS_BY_DESTINATION[destination][0] !== tab) {
         params.set('step', tab);
     }
@@ -226,6 +244,17 @@ export function legacyRedirectPath(projectId: number, pathname: string, search =
     }
     if (clean === '/annotate') {
         return dataStepPath(projectId, 'goldset', 'annotation', search) + hash;
+    }
+    if (clean === '/deployments') {
+        return shipPath(projectId, 'deploy', search) + hash;
+    }
+    if (clean === '/observability') {
+        return shipPath(projectId, 'monitor', search) + hash;
+    }
+    if (clean === '/manifest') {
+        const params = new URLSearchParams(search);
+        params.set('open', 'manifest');
+        return shipPath(projectId, 'package', params.toString()) + hash;
     }
     if (clean === '/eval/compare') {
         return resultsPath(projectId, 'compare', search) + hash;

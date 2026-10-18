@@ -5,7 +5,7 @@ title: Export + deployment
 
 # Export + deployment
 
-Stages 10 (compression) and 11 (export) of the [pipeline](pipeline-overview.md). This page covers the artifact production side; once you have an export, the [Deployment](../deployment/plan.md) section handles plan → smoke → promote → telemetry.
+Stages 10 (compression) and 11 (export) of the [pipeline](pipeline-overview.md). On the **Ship** page they are one flow with four stages in a step bar: **Package** (compress, export, the Releases list), **Publish** (the Hugging Face Hub), **Deploy** and **Monitor** (`/project/<id>/ship?stage=package|publish|deploy|monitor`). This page covers the artifact production side; once you have an export, the [Deployment](../deployment/plan.md) section handles plan → smoke → promote → telemetry.
 
 ## Compression
 
@@ -20,7 +20,7 @@ Optional. Quantises / prunes the trained checkpoint to fit a target's weight bud
 
 ### UI
 
-**Ship** → **Compression**. Pick the **Training run** (only completed runs are listed); the model path fills in automatically. Then choose the format and bit width. The job is queued, and its status shows on the timeline.
+**Ship** → **Package** → **Options** → **Compress first** (the old Compression tab; `/pipeline/compression` now redirects there). Pick the **Training run** (only completed runs are listed); the model path fills in automatically. Then choose the format and bit width. The job is queued, and its status shows on the timeline.
 
 - **LoRA runs just work.** A LoRA run saves only an adapter. Compression detects that and merges it into its base model (the one recorded in `adapter_config.json`) before converting.
 - **Outputs are filed per run.** Anything converted from a run's weights lands in `data/projects/<id>/compressed/exp-<run>/`. Export reads that folder, which is why picking the run matters.
@@ -71,7 +71,7 @@ Builds the **deployable artifact bundle** for a target. The export job wraps wei
 
 ### UI
 
-**Ship** → **Export** → **New export**. Pick:
+**Ship** → **Package** → **New export** (`/pipeline/export` now redirects to Package). Pick:
 
 - **Source** — experiment + checkpoint (or compressed artifact from above).
 - **Target profile** — see table above.
@@ -137,7 +137,7 @@ exports/project-1/export-19/
 
 ### Shipping one seed of a multi-seed run
 
-A multi-seed run (*Seeds* in the training config, or **Check across 3 seeds** on the Results summary) trains the same recipe N times. The lift check reports the group; to ship you need one model. On the Eval summary card of a multi-seed run, the **Ship one seed** table lists every seed: its run id, its **validation** metric, and its test score when the lift check has one. The seed to ship is picked by the validation metric only:
+A multi-seed run (*Seeds* in the training config, or **Check across 3 seeds** on the Results summary) trains the same recipe N times. The lift check reports the group; to ship you need one model. When the latest run is a multi-seed group, **Ship** → **Package** opens with a **Pick the seed to ship** card (the seed table also appears on the Results summary card of a multi-seed run). The table lists every seed: its run id, its **validation** metric, and its test score when the lift check has one. The seed to ship is picked by the validation metric only:
 
 | Task type | Picked by |
 |---|---|
@@ -155,12 +155,12 @@ API: `GET /api/projects/{id}/seed-groups/{leader_id}/pick` (add `?metric=span_f1
 
 ### Publishing to the Hugging Face Hub
 
-A completed Hugging Face-format export can be pushed to the Hub as a model repo. In **Export History**, expand the export and fill in the repo as `owner/model-name` (tick *private* to keep it unlisted), then **Publish to Hugging Face**. What goes up:
+A completed Hugging Face-format export can be pushed to the Hub as a model repo. Open **Ship** → **Publish**: there is one row per completed Hugging Face export. Fill in the repo as `owner/model-name` (tick *private* to keep it unlisted), then **Publish to Hugging Face**. What goes up:
 
 - the export's `model/` folder as the repo root: weights, tokenizer, `README.md` (the model card the export wrote, with `license: mit` and `language: en` added to its front matter when the card has neither), and for a span tagger `thresholds.json` + `label_space.json`;
 - `brewslm/manifest.json` and `brewslm/RELEASE_NOTES.md`, so the run id, seed selection and every transform travel with the model.
 
-The server's token is used (`HF_TOKEN`, or the `huggingface-cli login` cache); the request may carry one instead, and it is never stored. The publication is recorded on the export's manifest as `hub_publish` (repo id, URL, commit, time) and the row shows the link afterwards; publishing again to the same repo makes a new commit.
+The server's token is used (`HF_TOKEN`, or the `huggingface-cli login` cache); the request may carry one instead, and it is never stored. The publication is recorded on the export's manifest as `hub_publish` (repo id, URL, commit, time) and the row shows the repo link and commit afterwards; publishing again to the same repo makes a new commit.
 
 API: `POST /api/projects/{id}/export/{export_id}/publish-hub` with `{"repo_id": "owner/name", "private": false, "token": null, "license": "mit", "commit_message": null}` → the `hub_publish` record. 400 for a bad repo id, a missing token, or an export that is not a completed Hugging Face export; 502 when the Hub refuses the upload.
 
@@ -170,13 +170,13 @@ API: `POST /api/projects/{id}/export/{export_id}/publish-hub` with `{"repo_id": 
 |---|---|
 | `export_run_failed` | Generic export failure — read the timeline. |
 | `export_artifact_missing` | Source checkpoint / tokenizer missing. |
-| "No GGUF artifact for run #N" | This run has no converted file yet. Open Compression, pick run #N, convert it, then export again. |
+| "No GGUF artifact for run #N" | This run has no converted file yet. Open **Ship** → **Package** → **Options** → **Compress first**, pick run #N, convert it, then export again. |
 | "…is a LoRA adapter and merging it into … failed" | The base model couldn't be loaded (offline without a cache, or torch/peft missing in the backend). |
 | `export_quantization_failed` | Mid-export quantisation step failed (when target requires INT8/Q4). |
 
 ## Optimization recommendations
 
-Before exporting, the Optimize panel (Ship → Export → **Recommend**) ranks candidate target configurations by latency / memory / quality tradeoff. The result is labelled with **provenance**:
+Before exporting, the Optimize panel (Ship → Package → **Recommend**) ranks candidate target configurations by latency / memory / quality tradeoff. The result is labelled with **provenance**:
 
 | Provenance | Means |
 |---|---|

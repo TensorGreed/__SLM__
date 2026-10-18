@@ -256,7 +256,7 @@ The inconclusive verdict also surfaces as a **Coach Mode** card on the training 
 - Severity `warning`.
 - Title: *"Sweep inconclusive — N/M cells, none cleared gate"*.
 - Body that names the top-3 failed gates with cell counts (e.g. *"Gate(s) missed: acc_gte_0.8 (4 cells), f1_gte_0.7 (1 cell)"*) so the user can tell whether one gate dominates or the failure spreads across many.
-- A `navigate` action pointing at the `failure-clusters-panel` target — the front-end routes that to `/project/{id}/observability#failure-clusters` (the `id="failure-clusters"` anchor on the FailureClusterList section is the one this deep-link targets).
+- A `navigate` action pointing at the `failure-clusters-panel` target — the front-end routes that to `/project/{id}/ship?stage=monitor#failure-clusters` (the old `/observability` URL redirects there) (the `id="failure-clusters"` anchor on the FailureClusterList section is the one this deep-link targets).
 
 The card stays silent on `promote` (the sweep panel already celebrates the winner) and on `pending` (premature). The dedicated `_inconclusive_sweep_nudge` helper reads the first row from the `sweeps` table ordered by `created_at desc` — a single index lookup rather than the legacy scan-every-experiment-then-decode-config breadcrumb pattern.
 
@@ -470,7 +470,7 @@ Every N steps the runtime saves a checkpoint. The browser lets you promote a non
 
 ### UI
 
-**Ship** → **Export** → **Model Registry** → click the experiment row → **Checkpoints** drawer. Each row has actions:
+**Ship** → **Package** → **Releases** → **Registered models** → click the experiment row → **Checkpoints** drawer. Each row has actions:
 
 - **Promote** — mark this checkpoint as the run's `final` (replaces what eval will use).
 - **Resume from** — kick off a continuation from this step.

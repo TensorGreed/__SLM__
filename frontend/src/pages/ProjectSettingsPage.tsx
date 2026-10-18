@@ -29,7 +29,7 @@ const TOOL_GROUPS: Array<{ title: string; links: ToolLink[] }> = [
             { label: 'Autopilot Planner', path: 'autopilot', hint: 'Plan diffs, repair preview, rollback.' },
             { label: 'Workflow Builder', path: 'workflow', hint: 'Compose and run pipeline graphs.' },
             { label: 'Pipeline presets', path: 'train?open=pipeline-presets', hint: 'End-to-end pipeline compositions (under Train).' },
-            { label: 'Pipeline as Code', path: 'manifest', hint: 'The project as a brewslm.yaml manifest.' },
+            { label: 'Pipeline as Code', path: 'ship?stage=package&open=manifest', hint: 'The project as a brewslm.yaml manifest (under Ship).' },
         ],
     },
     {

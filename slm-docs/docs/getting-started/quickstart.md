@@ -150,9 +150,9 @@ curl http://localhost:8000/api/run-events/run/exp-1
 
 Once training is done:
 
-- **Model Registry** (under **Ship** → **Export**) lists the new checkpoint + its eval pass rate.
-- **Observability** shows the full [Run Timeline](../observability/timeline.md) for the autopilot session → training → eval tree.
-- **Deployments** (still empty) is where you'd next [plan + smoke + promote](../deployment/plan.md) the checkpoint.
+- **Registered models** (under **Ship** → **Package** → **Releases**) lists the new checkpoint + its eval pass rate.
+- **Ship** → **Monitor** shows the full [Run Timeline](../observability/timeline.md) for the autopilot session → training → eval tree.
+- **Ship** → **Deploy** (still empty) is where you'd next [plan + smoke + promote](../deployment/plan.md) the checkpoint.
 
 ## What you just did
 

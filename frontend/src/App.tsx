@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import ProjectListPage from './pages/ProjectListPage';
 import ProjectWorkspaceLayout from './pages/ProjectWorkspaceLayout';
 import ProjectOverviewPage from './pages/ProjectOverviewPage';
-import ProjectStagePage from './pages/ProjectStagePage';
+import ProjectShipPage from './pages/ProjectShipPage';
 import ProjectSettingsPage from './pages/ProjectSettingsPage';
 import LegacyRouteRedirect from './components/layout/LegacyRouteRedirect';
 import ProjectDataPage from './pages/ProjectDataPage';
@@ -14,8 +14,6 @@ import ProjectTrainPage from './pages/ProjectTrainPage';
 import ProjectResultsPage from './pages/ProjectResultsPage';
 import ProjectAutopilotPage from './pages/ProjectAutopilotPage';
 import ProjectManifestPage from './pages/ProjectManifestPage';
-import ProjectDeploymentsPage from './pages/ProjectDeploymentsPage';
-import ProjectObservabilityPage from './pages/ProjectObservabilityPage';
 import ProjectExtensionStudioPage from './pages/ProjectExtensionStudioPage';
 import ProjectAnnotatePage from './pages/ProjectAnnotatePage';
 import SSOLoginPage from './pages/SSOLoginPage';
@@ -41,7 +39,7 @@ function App() {
               <Route path="data" element={<ProjectDataPage />} />
               <Route path="train" element={<ProjectTrainPage />} />
               <Route path="results" element={<ProjectResultsPage />} />
-              <Route path="ship" element={<ProjectStagePage destination="ship" />} />
+              <Route path="ship" element={<ProjectShipPage />} />
               <Route path="settings" element={<ProjectSettingsPage />} />
               {/* Retired URLs (Epic U phase U1): /guide, /wizard, /pipeline/<tab>. */}
               <Route path="guide" element={<LegacyRouteRedirect />} />
@@ -65,9 +63,10 @@ function App() {
               <Route path="eval/compare" element={<LegacyRouteRedirect />} />
               <Route path="playground" element={<LegacyRouteRedirect />} />
               <Route path="autopilot" element={<ProjectAutopilotPage />} />
-              <Route path="manifest" element={<ProjectManifestPage />} />
-              <Route path="deployments" element={<ProjectDeploymentsPage />} />
-              <Route path="observability" element={<ProjectObservabilityPage />} />
+              {/* Folded into Ship (Epic U phase U5). */}
+              <Route path="deployments" element={<LegacyRouteRedirect />} />
+              <Route path="observability" element={<LegacyRouteRedirect />} />
+              <Route path="manifest" element={<LegacyRouteRedirect />} />
               <Route path="extensions" element={<ProjectExtensionStudioPage />} />
               <Route path="annotate/:job_id" element={<ProjectAnnotatePage />} />
             </Route>

@@ -52,7 +52,7 @@ Clustering is **idempotent**: running it again on the same event log produces th
 
 ### UI
 
-**Observability page → Failure clusters** card.
+**Ship** → **Monitor** → **Failure clusters** card.
 
 - Each row shows: red count badge, stage, reason_code, signature suffix, last-seen timestamp.
 - **Show exemplars** expands to 3 representative events with their run id + summary.

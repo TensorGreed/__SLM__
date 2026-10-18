@@ -506,7 +506,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectRecipesPage.tsx` — Pipeline recipe catalog page for applying, configuring, and monitoring template-based workflows.
 - `frontend/src/pages/ProjectResultsPage.tsx` — Results — the workspace's evaluation destination (Epic U, phase U3).
 - `frontend/src/pages/ProjectSettingsPage.tsx` — Project Settings — the workspace's long tail (Epic U, phase U1).
-- `frontend/src/pages/ProjectStagePage.tsx` — A stage destination of the workspace — Data, Train, Results or Ship
+- `frontend/src/pages/ProjectShipPage.tsx` — Ship — the workspace's release destination (Epic U, phase U5), one flow:
 - `frontend/src/pages/ProjectTrainPage.tsx` — Train — the workspace's training destination (Epic U, phase U2).
 - `frontend/src/pages/ProjectWorkflowPage.tsx` — Visual workflow builder page for DAG editing, execution monitoring, and stage orchestration.
 - `frontend/src/pages/ProjectWorkspaceLayout.tsx` — Root layout for the project workspace: sidebar (six destinations), top
@@ -1081,6 +1081,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalLabel.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalSplit.test.ts` — _(no docstring)_
+- `frontend/src/components/export/ExportPanel.stages.test.tsx` — Ship stages (Epic U phase U5): the export panel splits by ``stage`` —
 - `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/guide/QuickstartCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/CommandPalette.test.tsx` — _(no docstring)_
@@ -1146,7 +1147,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectRecipePickerPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectResultsPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectSettingsPage.test.tsx` — _(no docstring)_
-- `frontend/src/pages/ProjectStagePage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectShipPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectTrainPage.test.tsx` — _(no docstring)_
 - `frontend/src/stores/coachModeStore.test.ts` — _(no docstring)_
 - `frontend/src/stores/jobsStore.test.ts` — Tests for the bell's up-trend counter

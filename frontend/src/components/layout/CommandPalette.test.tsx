@@ -42,7 +42,7 @@ describe('CommandPalette', () => {
         // A few well-known actions.
         expect(screen.getByText('Sources')).toBeInTheDocument();
         expect(screen.getByText('Annotation jobs')).toBeInTheDocument();
-        expect(screen.getByText('Observability')).toBeInTheDocument();
+        expect(screen.getByText('Monitor (observability)')).toBeInTheDocument();
     });
 
     it('also opens on Ctrl-K (for non-mac users)', async () => {
@@ -74,7 +74,7 @@ describe('CommandPalette', () => {
             screen.getByRole('textbox', { name: /Command query/i }),
             'observ',
         );
-        expect(screen.getByText('Observability')).toBeInTheDocument();
+        expect(screen.getByText('Monitor (observability)')).toBeInTheDocument();
         expect(screen.queryByText('Annotation jobs')).not.toBeInTheDocument();
     });
 

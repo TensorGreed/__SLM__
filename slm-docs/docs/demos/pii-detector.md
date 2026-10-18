@@ -486,7 +486,7 @@ Roughly doubles training time but worth it on the first pass.
 ### Medium impact: training schedule
 
 - **Epochs**: 3 is too few for 2k rows. Bump to `5` or `6`. Watch
-  the eval_loss curve on the **Ship** → **Observability** page — stop when it plateaus.
+  the eval_loss curve on the **Ship** → **Monitor** stage — stop when it plateaus.
 - **Learning rate**: `2e-4` is aggressive for small datasets. If you
   see loss spikes in the training log, drop to `1e-4`.
 

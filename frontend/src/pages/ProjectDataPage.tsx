@@ -51,7 +51,7 @@ import {
 } from '../utils/workspaceRoutes';
 import { AnnotateListView } from './ProjectAnnotatePage';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
-import '../pages/ProjectStagePage.css';
+import './stagePage.css';
 
 const STEP_HINT: Record<string, string> = {
     data: 'Upload files, import a dataset, or let a model write sample documents.',

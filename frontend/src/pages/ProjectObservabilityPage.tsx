@@ -73,7 +73,12 @@ function buildTimelineParams(
     return params;
 }
 
-export default function ProjectObservabilityPage() {
+interface ProjectObservabilityPageProps {
+    /** Rendered inside Ship → Monitor: no page header. */
+    embedded?: boolean;
+}
+
+export default function ProjectObservabilityPage({ embedded = false }: ProjectObservabilityPageProps = {}) {
     const params = useParams();
     const workspace = useOutletContext<ProjectWorkspaceContextValue | null>();
     const routeProjectId = params.id ? Number.parseInt(params.id, 10) : null;
@@ -150,6 +155,7 @@ export default function ProjectObservabilityPage() {
 
     return (
         <div className="workspace-page observability-page">
+            {!embedded && (
             <section className="workspace-page-header">
                 <div>
                     <h2 className="workspace-page-title">Observability</h2>
@@ -161,6 +167,7 @@ export default function ProjectObservabilityPage() {
                 </div>
                 {summaryBadges}
             </section>
+            )}
 
             {error && (
                 <div className="deployment-status is-error" role="alert">

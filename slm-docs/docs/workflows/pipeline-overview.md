@@ -74,11 +74,14 @@ Train    (/train)         → one form (no steps) + the runs list below it
 Results  (/results)       → evaluation, four tabs: Verdict, Failures,
                             Compare, Try it (?tab=verdict|failures|compare|try)
 Ship     (/ship)
-│   ├── Compression       → compression
-│   └── Export            → export         (?step=export)
+│   ├── Package           → ?stage=package  (seed picker, New export, Releases;
+│   │                       Options: ?open=compress, ?open=manifest)
+│   ├── Publish           → ?stage=publish  (Hugging Face Hub)
+│   ├── Deploy            → ?stage=deploy   (serve plans, Deployment Assistant)
+│   └── Monitor           → ?stage=monitor  (timeline, failure clusters, support bundles)
 Settings (/settings)      → tips switch, beginner flag, manifest export,
                             Autopilot Planner, Workflow Builder, Pipeline presets,
-                            Pipeline as Code, Domain Packs/Profiles,
+                            Domain Packs/Profiles,
                             Adapter Studio, Extension Studio
 ```
 

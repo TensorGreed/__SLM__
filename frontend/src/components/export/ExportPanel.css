@@ -600,3 +600,23 @@
 .export-hub-publish__done a {
   font-weight: 600;
 }
+
+/* Ship → Publish (Epic U phase U5) */
+.export-publish-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.export-publish-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding-top: var(--space-sm);
+    border-top: 1px solid var(--border-muted);
+}
+
+.export-publish-row__meta {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}

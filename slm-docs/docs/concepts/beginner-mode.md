@@ -32,7 +32,7 @@ Nothing is hidden or locked. Pages that used to be "advanced only" now live unde
 
 | Where | What |
 |---|---|
-| **Settings** | Autopilot Planner (plan diffs, repair preview, rollback), Workflow Builder, Pipeline presets, Pipeline as Code (manifest), Domain Packs, Domain Profiles, Adapter Studio, Extension Studio, manifest export |
+| **Settings** | Autopilot Planner (plan diffs, repair preview, rollback), Workflow Builder, Pipeline presets, Domain Packs, Domain Profiles, Adapter Studio, Extension Studio, manifest export; Pipeline as Code links into Ship |
 | **Results** | Nothing. All four tabs (Verdict, Failures, Compare, Try it) look the same with the flag on or off |
 | Other advanced sections | Start collapsed when the flag is on |
 
@@ -44,7 +44,7 @@ They each represent a power-user concept a first-time ML engineer doesn't need y
 
 - **Adapter Studio / Extension Studio** — assume you understand the data adapter / runtime / pack plugin contracts.
 - **Workflow Builder / Pipeline presets** — assume you've already run a few experiments and want to template them.
-- **Pipeline as Code** — assumes you're ready to code-review your project as YAML.
+- **Pipeline as Code** (Ship → Package → Options) — assumes you're ready to code-review your project as YAML.
 - **Domain Packs / Profiles** — assume you understand the domain overlay concept. The default `general-pack-v1` is fine until you outgrow it.
 
 ## Toggling beginner mode

@@ -24,7 +24,7 @@ Rollback flips the `active` pointer **back** to the most recent `superseded` dep
 
 ### UI
 
-Deployments detail → **Rollback** (top right of an `active` deployment). The dialog asks:
+**Ship** → **Deploy** → deployment detail → **Rollback** (top right of an `active` deployment). The dialog asks:
 
 - **Target** — which superseded version to roll back to (defaults to the most recent).
 - **Reason** — required; lives in the audit log.
@@ -79,7 +79,7 @@ If any **required** component is missing (no smoke run, no recent telemetry), th
 
 ### Read the score
 
-UI: Deployments detail → **Deployability** card at the top. Shows:
+UI: **Ship** → **Deploy** → deployment detail → **Deployability** card at the top. Shows:
 
 - Score 0–1 + verdict (`ready` / `caution` / `block`).
 - Per-component table with weight, value, provenance.

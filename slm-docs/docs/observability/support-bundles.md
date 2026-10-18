@@ -51,7 +51,7 @@ Each redaction is **counted** and surfaced in the bundle metadata so you can ver
 
 ### UI
 
-**Observability page → Support bundle** card.
+**Ship** → **Monitor** → **Support bundle** card.
 
 1. Click **Generate bundle**.
 2. The card shows live progress, then surfaces the new bundle:
