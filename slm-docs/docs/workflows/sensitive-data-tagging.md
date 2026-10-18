@@ -34,6 +34,13 @@ your local Ollama model first; a cloud model only if you pin one under
   national ids, passport numbers, IP addresses; medical record numbers,
   health-plan member ids, diagnoses, medications, provider names;
   employee ids, API keys, internal ticket ids".
+  Name the *kinds*, never example values — and never a benchmark's own
+  values. The model copies examples verbatim (on 2026-10-17, ids and
+  plates lifted from a benchmark's rows ended up 591 times in the
+  training text and inflated that benchmark's score). The card's *Check
+  against benchmarks* button says whether the text carries a gold value
+  of any benchmark on the project, and the start is refused when it
+  does (*Write anyway* overrides, once you have read the list).
 - *Genres*, one per line: support tickets, billing emails, clinical
   visit notes, insurance claims, HR onboarding emails, data-subject
   access requests, incident reports, bank chat transcripts, travel

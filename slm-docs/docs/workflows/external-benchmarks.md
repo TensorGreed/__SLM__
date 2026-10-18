@@ -103,6 +103,26 @@ of the same shape, retrain, and rescan before trusting the number. Never put
 a benchmark's values into a seeding or synthesis prompt — describe the shape
 instead.
 
+### Caught at the prompt
+
+The same values are checked **before** anything is generated. *Write sample
+documents* (what the documents must contain, the genres, the domain hint)
+and span synthesis (the entity types, the focus types, and the project's
+labelling conventions — the type definitions and custom-pattern notes every
+span prompt carries) are refused when a prompt field holds a gold value of
+any benchmark on the project, as a whole word:
+`400 PROMPT_CARRIES_BENCHMARK_VALUES` with `metadata.offending` =
+`[{value, type, benchmarks, fields}]`. The Generate step has a dry run —
+*Check against benchmarks* on the seed-documents card, *Check prompt against
+benchmarks* under the span tools (`POST /api/projects/{id}/synthetic/prompt-check`
+`{fields: {name: text | [texts]}, include_conventions}` → `{clean, offending,
+offending_total, values_checked, benchmarks, fields}`). A flagged definition
+("an employee badge number, for example EMP-48213") blocks every span run
+until it is reworded, which is the point. When the flagged value is genuinely
+not the benchmark's in your text (a common name in a definition), *Write
+anyway* / *Generate anyway* resend with `ignore_benchmark_values: true`; the
+seed-documents Job records `prompt_check` (`overridden: true`) in its params.
+
 ## Score a run
 
 *Score this run* (or *Re-score*) runs the selected run over the benchmark as a

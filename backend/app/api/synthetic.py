@@ -266,6 +266,50 @@ class GenerateSpanRequest(BaseModel):
     api_url: str = ""
     api_key: str = ""
     model_name: str = "llama3"
+    # The prompt (types + the project's conventions) is refused when it
+    # carries a benchmark gold value (PROMPT_CARRIES_BENCHMARK_VALUES).
+    ignore_benchmark_values: bool = False
+
+
+async def _refuse_contaminated_span_prompt(
+    db: AsyncSession, project_id: int, entity_types: list[str], focus_types: list[str], override: bool,
+) -> None:
+    from app.services.prompt_contamination_service import (
+        PromptCarriesBenchmarkValues,
+        http_detail,
+        refuse_if_contaminated,
+        span_prompt_fields,
+    )
+
+    fields = await span_prompt_fields(db, project_id, entity_types, focus_types)
+    try:
+        await refuse_if_contaminated(db, project_id, fields, override=override)
+    except PromptCarriesBenchmarkValues as exc:
+        raise HTTPException(400, http_detail(exc)) from exc
+
+
+class PromptCheckRequest(BaseModel):
+    """Dry run of the benchmark-value gate: ``fields`` = the prompt pieces
+    (``{name: text | [texts]}``); ``include_conventions`` adds the project's
+    span conventions (definitions + custom-pattern descriptions), which
+    every span-synthesis prompt carries."""
+
+    fields: dict[str, str | list[str]] = Field(default_factory=dict)
+    include_conventions: bool = False
+
+
+@router.post("/prompt-check")
+async def prompt_check(project_id: int, req: PromptCheckRequest, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Does this prompt text carry a value from a benchmark's gold rows?
+    ``{clean, offending: [{value, type, benchmarks, fields}], offending_total,
+    values_checked, benchmarks, fields}`` — nothing is generated."""
+    from app.services.prompt_contamination_service import check_prompt, span_prompt_fields
+
+    fields: dict[str, Any] = dict(req.fields)
+    if req.include_conventions:
+        conventions = await span_prompt_fields(db, project_id, [], [])
+        fields.update({k: v for k, v in conventions.items() if k.startswith(("definition:", "pattern:"))})
+    return await check_prompt(db, project_id, fields)
 
 
 class SaveSpanBatchRequest(BaseModel):
@@ -283,6 +327,7 @@ async def generate_spans(
     structured-extraction span_set training. Uses the teacher model
     when configured, falls back to a regex-based heuristic on the
     source text otherwise."""
+    await _refuse_contaminated_span_prompt(db, project_id, req.entity_types, [], req.ignore_benchmark_values)
     try:
         rows = await generate_span_extraction_rows(
             db,
@@ -322,6 +367,7 @@ class GenerateSpanAsyncRequest(BaseModel):
     # A refine pass: what each snippet must contain (a subset of entity_types,
     # which stays the full vocabulary that gets labelled).
     focus_types: list[str] = Field(default_factory=list)
+    ignore_benchmark_values: bool = False
     use_all_chunks: bool = Field(
         default=True,
         description=(
@@ -564,6 +610,7 @@ async def _spawn_legacy_synth_shadow_job(
 async def generate_spans_async(
     project_id: int,
     req: GenerateSpanAsyncRequest,
+    db: AsyncSession = Depends(get_db),
 ):
     """Kick off a batched span-generation job. Returns immediately with
     a ``task_id``; clients poll ``GET /synthetic/tasks/{task_id}`` for
@@ -572,6 +619,7 @@ async def generate_spans_async(
     Hardening Phase H2 — also spawns a shadow Job that mirrors the
     legacy task's progress into the top-bar notification bell.
     """
+    await _refuse_contaminated_span_prompt(db, project_id, req.entity_types, req.focus_types, req.ignore_benchmark_values)
     try:
         task = start_span_generation_task(
             project_id=project_id,

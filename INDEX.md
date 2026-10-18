@@ -224,6 +224,7 @@ session-start guidance.
 - `backend/app/services/probe_runner.py` — Probe runner — Coach-stage-2 phase 9.
 - `backend/app/services/project_smoke_test_service.py` — Project smoke-test service (Diagnostics Intervention C).
 - `backend/app/services/project_template_service.py` — Project templates — cloneable starting kits for new projects.
+- `backend/app/services/prompt_contamination_service.py` — Prompts must never carry a benchmark's own values.
 - `backend/app/services/rag_project_service.py` — RAG-skeleton project service (USER-SUCCESS Epic 7 Phase 7b).
 - `backend/app/services/rag_sandbox_service.py` — Lightweight RAG sandbox retrieval helpers.
 - `backend/app/services/readiness_service.py` — Pre-deployment readiness checks for a project — GPU, deps, paths, secrets, with pass/warn/fail verdicts.
@@ -461,6 +462,7 @@ session-start guidance.
 - `frontend/src/api/planRefinement.ts` — _(no docstring)_
 - `frontend/src/api/probePack.ts` — Probe Pack API client — Coach-stage-2 phase 8.
 - `frontend/src/api/projectTemplates.ts` — Typed wrappers for the project-template catalog + instantiation API.
+- `frontend/src/api/promptCheck.ts` — Dry run of the benchmark-value gate: does a seed-documents or
 - `frontend/src/api/quickstart.ts` — Typed wrappers for the project-guide quickstart endpoints
 - `frontend/src/api/recipes.ts` — Typed wrappers around the Theme 2 recipe registry + shape sniffer.
 - `frontend/src/api/redact.ts` — POST /api/projects/{id}/redact — tag a text with a span-tagging
@@ -930,6 +932,7 @@ session-start guidance.
 - `backend/tests/test_probe_runner.py` — Coach-stage-2 phase 9 — probe runner scoring + aggregation.
 - `backend/tests/test_project_smoke_test.py` — Tests for the project smoke-test service (Diagnostics Intervention C).
 - `backend/tests/test_project_template_service.py` — Tests for the project_template service + endpoints.
+- `backend/tests/test_prompt_contamination.py` — Seed-documents / span-synthesis prompts are refused when they carry a
 - `backend/tests/test_quickstart_endpoints.py` — Tests for the project-guide quickstart endpoints (Theme 1 Epic 4 +
 - `backend/tests/test_rag_adapter_prompt_wrap.py` — η-fix tests — rag-grounded adapter writes the production
 - `backend/tests/test_rag_project_service.py` — Tests for the RAG-skeleton project service

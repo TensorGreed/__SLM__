@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 
 import { fetchSeedDocumentsDefaults, startSeedDocuments } from '../../api/flows';
+import { checkPrompt, offendingValuesFromError, promptCheckText, type PromptCheckReport } from '../../api/promptCheck';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
+import { extractApiErrorMessage } from '../../utils/apiError';
 
 interface SeedDocumentsCardProps {
     projectId: number;
@@ -26,6 +28,26 @@ export default function SeedDocumentsCard({ projectId, onDone }: SeedDocumentsCa
     const [layout, setLayout] = useState<'plain' | 'paged' | 'scanned'>('plain');
     const [starting, setStarting] = useState(false);
     const [startedJobId, setStartedJobId] = useState<number | null>(null);
+    const [checking, setChecking] = useState(false);
+    const [check, setCheck] = useState<PromptCheckReport | null>(null);
+    /** The last start was refused for benchmark values; "Write anyway" resends with the override. */
+    const [blocked, setBlocked] = useState<string | null>(null);
+
+    const promptFields = () => ({
+        kinds,
+        genres: genres.split('\n').map((g) => g.trim()).filter(Boolean),
+    });
+
+    const runCheck = async () => {
+        setChecking(true);
+        try {
+            setCheck(await checkPrompt(projectId, promptFields()));
+        } catch (err) {
+            toast.error(extractApiErrorMessage(err, 'Could not check the prompt.').message, 5000);
+        } finally {
+            setChecking(false);
+        }
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -51,20 +73,28 @@ export default function SeedDocumentsCard({ projectId, onDone }: SeedDocumentsCa
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [job?.status]);
 
-    const start = async () => {
+    const start = async (ignoreBenchmarkValues = false) => {
         setStarting(true);
         try {
             const started = await startSeedDocuments(projectId, {
-                kinds,
-                genres: genres.split('\n').map((g) => g.trim()).filter(Boolean),
+                ...promptFields(),
                 count: Math.max(1, count),
                 words: Math.max(60, words),
                 layout,
+                ...(ignoreBenchmarkValues ? { ignoreBenchmarkValues: true } : {}),
             });
             setStartedJobId(started.id);
+            setBlocked(null);
             toast.info(`Writing ${count} sample documents — the bell tracks it.`, 4000);
         } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Could not start writing documents.', 5000);
+            const offending = offendingValuesFromError(err);
+            if (offending) {
+                // Refused: the prompt carries a benchmark's gold values. Show the
+                // list here (not a toast) so the user can fix the text or override.
+                setBlocked(extractApiErrorMessage(err, 'The prompt carries benchmark values.').message);
+            } else {
+                toast.error(extractApiErrorMessage(err, 'Could not start writing documents.').message, 5000);
+            }
         } finally {
             setStarting(false);
         }
@@ -116,10 +146,27 @@ export default function SeedDocumentsCard({ projectId, onDone }: SeedDocumentsCa
                                 <option value="scanned">Scanned (OCR'd) multi-page</option>
                             </select>
                         </label>
+                        <button type="button" className="btn btn-secondary" onClick={() => void runCheck()} disabled={checking || starting} data-testid="seed-documents-check"
+                            title="Dry run: does the text above carry a value from a benchmark's gold rows? Nothing is generated.">
+                            {checking ? 'Checking…' : 'Check against benchmarks'}
+                        </button>
                         <button type="button" className="btn btn-primary" onClick={() => void start()} disabled={starting || count < 1} data-testid="seed-documents-start">
                             {starting ? 'Starting…' : `Write ${count} documents`}
                         </button>
                     </div>
+                    {check && (
+                        <p className={check.clean ? 'u-hint u-m0' : 'text-danger u-m0'} data-testid="seed-documents-check-result">
+                            {promptCheckText(check)}
+                        </p>
+                    )}
+                    {blocked && (
+                        <div className="seed-documents-card__blocked" role="alert" data-testid="seed-documents-blocked">
+                            <p className="text-danger u-m0">{blocked}</p>
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => void start(true)} disabled={starting} data-testid="seed-documents-write-anyway">
+                                Write anyway (I checked these are not benchmark values)
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
             {running && (

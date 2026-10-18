@@ -19,6 +19,11 @@ from app.services.documents_qa_flow_service import (
     preview_documents_qa_flow,
     run_documents_qa_flow,
 )
+from app.services.prompt_contamination_service import (
+    PromptCarriesBenchmarkValues,
+    http_detail,
+    refuse_if_contaminated,
+)
 from app.services.synth_backends.base import SynthBackendError
 from app.services.seed_documents_service import (
     DEFAULT_GENRES,
@@ -156,6 +161,15 @@ class SeedDocumentsRequest(BaseModel):
     words_per_page: int = Field(110, ge=40, le=600)
     chunk_size: int = Field(900, ge=200, le=4000)
     chunk_overlap: int = Field(60, ge=0, le=1000)
+    # The prompt (kinds / genres / domain hint) is refused when it carries a
+    # value from a benchmark's gold rows (PROMPT_CARRIES_BENCHMARK_VALUES);
+    # true runs anyway — the user has seen the list.
+    ignore_benchmark_values: bool = False
+
+
+def seed_prompt_fields(req: "SeedDocumentsRequest") -> dict[str, Any]:
+    """The user-written parts of the seed-documents prompt."""
+    return {"kinds": req.kinds, "genres": req.genres, "domain_hint": req.domain_hint}
 
 
 @router.get("/seed-documents/defaults")
@@ -180,6 +194,12 @@ async def start_seed_documents(
     req = data or SeedDocumentsRequest()
     if req.chunk_overlap >= req.chunk_size:
         raise HTTPException(400, {"error_code": "BAD_CHUNKING", "message": "chunk_overlap must be smaller than chunk_size"})
+    try:
+        prompt_check = await refuse_if_contaminated(
+            db, project_id, seed_prompt_fields(req), override=req.ignore_benchmark_values,
+        )
+    except PromptCarriesBenchmarkValues as exc:
+        raise HTTPException(400, http_detail(exc)) from exc
     in_flight = (
         await db.execute(
             select(Job)
@@ -231,6 +251,8 @@ async def start_seed_documents(
         title=f"Sample documents · project #{project_id}",
         runner=_runner,
         project_id=project_id,
-        params={"project_id": project_id, "count": req.count, "words": req.words, "genres": req.genres, "backend": req.backend, "layout": req.layout},
+        params={"project_id": project_id, "count": req.count, "words": req.words, "genres": req.genres, "backend": req.backend, "layout": req.layout,
+                "prompt_check": {"clean": prompt_check["clean"], "offending_total": prompt_check["offending_total"],
+                                 "overridden": bool(req.ignore_benchmark_values and not prompt_check["clean"])}},
     )
     return serialize_job(job)

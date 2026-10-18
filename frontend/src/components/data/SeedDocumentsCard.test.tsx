@@ -53,4 +53,43 @@ describe('SeedDocumentsCard', () => {
         await user.click(screen.getByTestId('seed-documents-start'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/5/flows/seed-documents', expect.objectContaining({ layout: 'scanned' })));
     });
+
+    it('dry-runs the prompt against the benchmarks and shows the offending values', async () => {
+        apiMock.post.mockResolvedValue({ data: {
+            clean: false, offending_total: 1, values_checked: 1480, benchmarks: ['gretel-pii'], fields: ['genres', 'kinds'],
+            offending: [{ value: 'EMP-48213', type: 'employee_id', benchmarks: ['gretel-pii'], fields: ['kinds'] }],
+        } });
+        const user = userEvent.setup();
+        render(<SeedDocumentsCard projectId={5} />);
+        await user.click(screen.getByTestId('seed-documents-toggle'));
+        await user.type(screen.getByTestId('seed-documents-kinds'), 'employee ids like EMP-48213');
+        await user.click(screen.getByTestId('seed-documents-check'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/5/synthetic/prompt-check', {
+            fields: { kinds: 'employee ids like EMP-48213', genres: ['customer support ticket', 'clinical visit note'] }, include_conventions: false,
+        }));
+        expect(screen.getByTestId('seed-documents-check-result')).toHaveTextContent(
+            '1 benchmark value in the prompt: EMP-48213 (employee_id, in what the documents must contain). A generation model copies examples word for word',
+        );
+    });
+
+    it('shows a refusal with the values and resends with the override on "Write anyway"', async () => {
+        const refusal = { response: { status: 400, data: {
+            error_code: 'PROMPT_CARRIES_BENCHMARK_VALUES', detail: 'The prompt carries 1 value(s) from a benchmark\'s gold rows: EMP-48213 (employee_id, gretel-pii).',
+            message: 'The prompt carries 1 value(s) from a benchmark\'s gold rows: EMP-48213 (employee_id, gretel-pii).',
+            metadata: { offending: [{ value: 'EMP-48213', type: 'employee_id', benchmarks: ['gretel-pii'], fields: ['kinds'] }], override_field: 'ignore_benchmark_values' },
+        } } };
+        apiMock.post.mockRejectedValueOnce(refusal).mockResolvedValueOnce({ data: { id: 93, kind: 'seed_documents', status: 'queued', project_id: 5 } });
+        const user = userEvent.setup();
+        render(<SeedDocumentsCard projectId={5} />);
+        await user.click(screen.getByTestId('seed-documents-toggle'));
+        await waitFor(() => expect(screen.getByTestId('seed-documents-genres')).toHaveValue('customer support ticket\nclinical visit note'));
+        await user.type(screen.getByTestId('seed-documents-kinds'), 'use EMP-48213');
+        await user.click(screen.getByTestId('seed-documents-start'));
+        expect(await screen.findByTestId('seed-documents-blocked')).toHaveTextContent('EMP-48213 (employee_id, gretel-pii)');
+        await user.click(screen.getByTestId('seed-documents-write-anyway'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenLastCalledWith('/projects/5/flows/seed-documents', expect.objectContaining({
+            kinds: 'use EMP-48213', ignore_benchmark_values: true,
+        })));
+        await waitFor(() => expect(screen.queryByTestId('seed-documents-blocked')).toBeNull());
+    });
 });

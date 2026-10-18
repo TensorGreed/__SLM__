@@ -1311,6 +1311,22 @@ runs real CPU inference). ~4 min locally.
   `genres` (default `DEFAULT_GENRES`) containing `kinds`; `ingest_file(...,
   source="seed_documents")` → `process_document` → `clean_document` (one
   `seed-documents-<stamp>.txt`). Raises when nothing usable was written.
+  **Prompt gate** (`services/prompt_contamination_service.py`, 2026-10-18):
+  the seed-documents route (`kinds` / `genres` / `domain_hint`) and both
+  span-synthesis routes (`entity_types` / `focus_types` + the project's
+  definitions and custom-pattern descriptions, `span_prompt_fields`) call
+  `refuse_if_contaminated` → 400 `PROMPT_CARRIES_BENCHMARK_VALUES`
+  (`http_detail`: `metadata.offending` [{value, type, benchmarks, fields}])
+  when a prompt field holds a benchmark gold value as a whole word
+  (`benchmark_gold_index` over every BENCHMARK dataset's rows.jsonl, via
+  `benchmark_contamination_service.gold_values`); request
+  `ignore_benchmark_values: true` overrides (seed Job params
+  `prompt_check.overridden`). Dry run `POST /synthetic/prompt-check`
+  {fields, include_conventions}; UI buttons "Check against benchmarks"
+  (`SeedDocumentsCard`, + "Write anyway") and "Check prompt against
+  benchmarks" (`SyntheticPanel` span mode, + the "Generate anyway" checkbox);
+  `api/promptCheck.ts` (`checkPrompt`, `promptCheckText`,
+  `offendingValuesFromError`). Tests `tests/test_prompt_contamination.py`.
   `SeedDocumentsCard` is the first card on the Data tab (`IngestionPanel`);
   bell deep-links `#seed-documents`. **`layout="paged"`** (card checkbox
   "Multi-page, with headers and footers"; `words_per_page`, default 110):

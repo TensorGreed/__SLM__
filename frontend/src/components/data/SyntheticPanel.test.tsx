@@ -622,4 +622,37 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
             screen.queryByTestId('synth-legacy-ollama-model'),
         ).not.toBeInTheDocument();
     });
+
+    it('span mode: "Check prompt against benchmarks" dry-runs the types with the conventions, and a refusal offers the override', async () => {
+        installGetRouter({
+            'prepared-manifest': { task_profile: 'structured_extraction', output_schema: { scoring_mode: 'span_set' }, entity_types: ['employee_id', 'plate'] },
+        });
+        apiMock.post.mockResolvedValueOnce({ data: {
+            clean: false, offending_total: 1, values_checked: 1480, benchmarks: ['gretel-pii'], fields: ['definition:employee_id', 'entity_types'],
+            offending: [{ value: 'EMP-48213', type: 'employee_id', benchmarks: ['gretel-pii'], fields: ['definition:employee_id'] }],
+        } });
+        render(<SyntheticPanel projectId={1} />);
+        await userEvent.click(await screen.findByTestId('synthetic-prompt-check'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/1/synthetic/prompt-check', {
+            fields: { entity_types: ['employee_id', 'plate'] }, include_conventions: true,
+        }));
+        expect(screen.getByTestId('synthetic-prompt-check-result')).toHaveTextContent('EMP-48213 (employee_id, in the definition of employee_id)');
+
+        apiMock.post.mockRejectedValueOnce({ response: { status: 400, data: {
+            error_code: 'PROMPT_CARRIES_BENCHMARK_VALUES', detail: 'The prompt carries 1 value(s) from a benchmark\'s gold rows: EMP-48213 (employee_id, gretel-pii).',
+            message: 'The prompt carries 1 value(s) from a benchmark\'s gold rows: EMP-48213 (employee_id, gretel-pii).',
+            metadata: { offending: [{ value: 'EMP-48213', type: 'employee_id', benchmarks: ['gretel-pii'], fields: ['definition:employee_id'] }], override_field: 'ignore_benchmark_values' },
+        } } });
+        fireEvent.change(screen.getByPlaceholderText(/Paste domain text here/i), { target: { value: 'seed text seed text' } });
+        await userEvent.click(screen.getByTestId('synth-legacy-generate'));
+        expect(await screen.findByTestId('synthetic-prompt-blocked')).toHaveTextContent('EMP-48213 (employee_id, gretel-pii)');
+        await userEvent.click(screen.getByTestId('synthetic-ignore-benchmark-values'));
+        apiMock.post.mockResolvedValueOnce({ data: { rows: [], count: 0 } });
+        await userEvent.click(screen.getByTestId('synth-legacy-generate'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenLastCalledWith(
+            '/projects/1/synthetic/generate-spans',
+            expect.objectContaining({ entity_types: ['employee_id', 'plate'], ignore_benchmark_values: true }),
+            expect.anything(),
+        ));
+    });
 });

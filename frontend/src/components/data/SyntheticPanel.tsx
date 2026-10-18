@@ -11,6 +11,7 @@ import { listOllamaModels, type OllamaModelInfo } from '../../api/synthPlaybook'
 import PlaybookPickerPanel from './PlaybookPickerPanel';
 import SynthReviewQueue from './SynthReviewQueue';
 import StepFooter from '../shared/StepFooter';
+import { checkPrompt, offendingValuesFromError, promptCheckText, type PromptCheckReport } from '../../api/promptCheck';
 import { toast } from '../../stores/toastStore';
 import { budgetWarningMessage } from '../../api/llmSpend';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
@@ -666,6 +667,26 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
     // "Relabel training rows": limit to one synth_source group (optional).
     const [relabelSource, setRelabelSource] = useState('');
     const [refineLoading, setRefineLoading] = useState(false);
+    // The benchmark-value gate on the span prompt (types + the project's
+    // conventions): a dry run, and the override after a refusal.
+    const [promptCheck, setPromptCheck] = useState<PromptCheckReport | null>(null);
+    const [promptChecking, setPromptChecking] = useState(false);
+    const [ignoreBenchmarkValues, setIgnoreBenchmarkValues] = useState(false);
+    const [promptBlocked, setPromptBlocked] = useState<string | null>(null);
+
+    const runPromptCheck = async () => {
+        setPromptChecking(true);
+        try {
+            setPromptCheck(await checkPrompt(projectId, {
+                entity_types: parseEntityTypes(entityTypesInput),
+                ...(focusTypes.length ? { focus_types: focusTypes } : {}),
+            }, true));
+        } catch (err) {
+            toast.error(extractErrorMessage(err));
+        } finally {
+            setPromptChecking(false);
+        }
+    };
     const refineRequested = useRef(false);
     const handleRefineWeakTypes = async () => {
         setRefineLoading(true);
@@ -837,6 +858,7 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                             // Ollama turns thinking off); cloud providers keep the URL.
                             backend: provider === 'ollama' ? 'ollama' : undefined,
                             ...(focusTypes.length ? { focus_types: focusTypes } : {}),
+                            ...(ignoreBenchmarkValues ? { ignore_benchmark_values: true } : {}),
                             use_all_chunks: useAllChunks,
                             source_text: useAllChunks ? '' : sourceText,
                         },
@@ -863,6 +885,7 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                             api_url: apiUrl,
                             api_key: apiKey,
                             model_name: modelName,
+                            ...(ignoreBenchmarkValues ? { ignore_benchmark_values: true } : {}),
                         },
                         { timeout: LONG_REQUEST_TIMEOUT_MS },
                     );
@@ -929,8 +952,14 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                 }
             }
             setSaveResult(null);
+            setPromptBlocked(null);
         } catch (err: any) {
-            toast.error(extractErrorMessage(err));
+            if (offendingValuesFromError(err)) {
+                // Refused: the span prompt carries a benchmark's gold values.
+                setPromptBlocked(extractErrorMessage(err));
+            } else {
+                toast.error(extractErrorMessage(err));
+            }
         } finally {
             setIsGenerating(false);
         }
@@ -1244,6 +1273,35 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                                     />
                                     Batch (half price, slower)
                                 </label>
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => void runPromptCheck()}
+                                    disabled={promptChecking || isGenerating}
+                                    data-testid="synthetic-prompt-check"
+                                    title="Dry run: do the entity types, focus types or the project's labelling conventions carry a value from a benchmark's gold rows? Nothing is generated."
+                                >
+                                    {promptChecking ? 'Checking…' : 'Check prompt against benchmarks'}
+                                </button>
+                                {promptCheck && (
+                                    <p className={promptCheck.clean ? 'u-hint u-m0' : 'text-danger u-m0'} data-testid="synthetic-prompt-check-result">
+                                        {promptCheckText(promptCheck)}
+                                    </p>
+                                )}
+                                {promptBlocked && (
+                                    <div role="alert" className="u-stack-sm" data-testid="synthetic-prompt-blocked">
+                                        <p className="text-danger u-m0">{promptBlocked}</p>
+                                        <label className="u-row-xs u-text-sm">
+                                            <input
+                                                type="checkbox"
+                                                checked={ignoreBenchmarkValues}
+                                                onChange={(e) => setIgnoreBenchmarkValues(e.target.checked)}
+                                                data-testid="synthetic-ignore-benchmark-values"
+                                            />
+                                            Generate anyway (I checked these are not benchmark values)
+                                        </label>
+                                    </div>
+                                )}
                                 <button
                                     type="button"
                                     className="btn btn-secondary"

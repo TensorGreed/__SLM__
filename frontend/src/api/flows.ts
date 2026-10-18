@@ -119,9 +119,12 @@ export async function startSeedDocuments(
         kinds?: string; genres?: string[]; count?: number; words?: number; backend?: string | null; domainHint?: string;
         /** "paged": pages with header / footer lines (letterheads, "Page 2 of 5"…). */
         layout?: 'plain' | 'paged' | 'scanned';
+        /** Run even though the prompt carries benchmark gold values (the user saw the list). */
+        ignoreBenchmarkValues?: boolean;
     } = {},
 ): Promise<Job> {
     const body: Record<string, unknown> = {};
+    if (options.ignoreBenchmarkValues) body.ignore_benchmark_values = true;
     if (options.kinds != null) body.kinds = options.kinds;
     if (options.genres && options.genres.length) body.genres = options.genres;
     if (options.count != null) body.count = options.count;
