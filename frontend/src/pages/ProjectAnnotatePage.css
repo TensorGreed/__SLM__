@@ -1,0 +1,40 @@
+.annotate-create {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin-bottom: var(--space-lg);
+  background: var(--bg-tertiary);
+}
+.annotate-empty {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+.annotate-bar {
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+.annotate-bar--compact {
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--font-size-sm);
+}
+.annotate-bar--block { display: block; }
+.annotate-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.annotate-promote__text { flex: 1; min-width: 280px; }
+.annotate-queue-empty {
+  padding: var(--space-lg);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  text-align: center;
+}

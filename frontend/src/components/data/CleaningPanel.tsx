@@ -226,10 +226,10 @@ export default function CleaningPanel({ projectId, onNextStep , extraDetails = [
                     </div>
                 </div>
                 <button className="btn btn-primary" onClick={handleCleanAll} disabled={!documents.length}>
-                    {isCleaning ? 'Cleaning...' : '🧹 Clean All Documents'}
+                    {isCleaning ? 'Cleaning...' : 'Clean All Documents'}
                 </button>
                 {cleaningStatus && (
-                    <div style={{ marginTop: 'var(--space-sm)', fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+                    <div className="u-hint u-mt-sm">
                         {cleaningStatus}
                     </div>
                 )}
@@ -304,7 +304,7 @@ export default function CleaningPanel({ projectId, onNextStep , extraDetails = [
                 <StepFooter
                     currentStep="Data Cleaning"
                     nextStep="Gold Dataset"
-                    nextStepIcon="🏆"
+                    nextStepIcon=""
                     isComplete={cleaningResults.length > 0 && cleaningErrors.length === 0}
                     hint="Run cleaning on your documents to proceed"
                     onNext={onNextStep}

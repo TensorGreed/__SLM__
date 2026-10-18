@@ -198,3 +198,16 @@
     flex-shrink: 0;
     color: var(--text-tertiary);
 }
+
+/* Bar widths snapped to 10% (no inline styles). */
+.dataset-fit-card__shape-bar-fill--w-0 { width: 0%; }
+.dataset-fit-card__shape-bar-fill--w-10 { width: 10%; }
+.dataset-fit-card__shape-bar-fill--w-20 { width: 20%; }
+.dataset-fit-card__shape-bar-fill--w-30 { width: 30%; }
+.dataset-fit-card__shape-bar-fill--w-40 { width: 40%; }
+.dataset-fit-card__shape-bar-fill--w-50 { width: 50%; }
+.dataset-fit-card__shape-bar-fill--w-60 { width: 60%; }
+.dataset-fit-card__shape-bar-fill--w-70 { width: 70%; }
+.dataset-fit-card__shape-bar-fill--w-80 { width: 80%; }
+.dataset-fit-card__shape-bar-fill--w-90 { width: 90%; }
+.dataset-fit-card__shape-bar-fill--w-100 { width: 100%; }

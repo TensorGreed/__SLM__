@@ -483,6 +483,7 @@ session-start guidance.
 - `frontend/src/stores/glossaryStore.ts` — Zustand store for glossary entries with lazy loading and case-insensitive term lookup.
 - `frontend/src/stores/jobsStore.ts` — Global jobs store (Hardening Phase H1).
 - `frontend/src/stores/projectStore.ts` — Zustand store for the active project, pipeline status, project list, and CRUD operations.
+- `frontend/src/stores/themeStore.ts` — The colour theme (Epic U phase U7): ``light`` (the default), ``dark``,
 - `frontend/src/stores/toastStore.ts` — Zustand store for toast notifications with auto-dismiss timers.
 
 ## Frontend · Pages
@@ -632,14 +633,15 @@ session-start guidance.
 - `frontend/src/components/projects/ProjectTemplateGallery.tsx` — Project-template gallery — surfaces every available template on
 - `frontend/src/components/shared/CommandSnippet.tsx` — CommandSnippet — collapsed "Show as CLI / API" disclosure rendered
 - `frontend/src/components/shared/DetailsDrawer.tsx` — "Details" — the collapsed drawer under a step's short form (Epic U phase
-- `frontend/src/components/shared/EmptyState.tsx` — EmptyState — shared component for "this page has no data yet" surfaces.
+- `frontend/src/components/shared/EmptyState.tsx` — EmptyState — the one way a surface says "nothing here yet" (Epic U
 - `frontend/src/components/shared/ErrorPanel.tsx` — Shared error rendering component (Diagnostics Intervention A).
 - `frontend/src/components/shared/HealthCheckButton.tsx` — HealthCheckButton — Diagnostics Intervention C.
 - `frontend/src/components/shared/HealthCheckModal.tsx` — HealthCheckModal — Diagnostics Intervention C.
+- `frontend/src/components/shared/LoadingState.tsx` — LoadingState — the one way a panel says "fetching" (Epic U phase U7).
 - `frontend/src/components/shared/NoRecipeEmptyState.tsx` — NoRecipeEmptyState — directive CTA shown when a panel can't render
 - `frontend/src/components/shared/ReadinessPanel.tsx` — Deployment readiness checker displaying pass / warn / fail status for pre-flight requirements.
 - `frontend/src/components/shared/RecipeTileFrame.tsx` — RecipeTileFrame — shared visual container for the two recipe-tile
-- `frontend/src/components/shared/Skeleton.tsx` — Configurable animated placeholder component for content loading states.
+- `frontend/src/components/shared/Skeleton.tsx` — Skeleton — a loading placeholder (Epic U phase U7).
 - `frontend/src/components/shared/StepFooter.tsx` — Footer bar with completion badge and conditional next-step navigation button.
 - `frontend/src/components/shared/Term.tsx` — Glossary popover component providing beginner/advanced terminology with definitions.
 - `frontend/src/components/shared/TerminalConsole.tsx` — Console viewer with auto-scroll and error highlighting for streaming runner output.
@@ -677,7 +679,7 @@ session-start guidance.
 - `frontend/src/components/training/TrainingValidationSection.tsx` — Validation & Planning (Power tools): effective-config preview, capability
 - `frontend/src/components/training/WarmStartDeltaChart.tsx` — WarmStartDeltaChart — Track 1, Epic B/C.
 - `frontend/src/components/training/WhyThisPlanPanel.tsx` — WhyThisPlanPanel — P20 Training Planner reproducibility & cost view.
-- `frontend/src/components/video/TabVideoLink.tsx` — TabVideoLink — small "▶ Watch the 2-minute walkthrough" affordance
+- `frontend/src/components/video/TabVideoLink.tsx` — TabVideoLink — small "Watch the 2-minute walkthrough" affordance
 - `frontend/src/components/video/YouTubeEmbedModal.tsx` — YouTubeEmbedModal — in-page modal for the inline-video-embed
 
 ## Repo · Top-level scripts
@@ -1150,6 +1152,8 @@ session-start guidance.
 - `frontend/src/pages/ProjectTrainPage.test.tsx` — _(no docstring)_
 - `frontend/src/stores/coachModeStore.test.ts` — _(no docstring)_
 - `frontend/src/stores/jobsStore.test.ts` — Tests for the bell's up-trend counter
+- `frontend/src/stores/themeStore.test.ts` — _(no docstring)_
+- `frontend/src/styles/visualPass.test.ts` — Visual-pass lock-in (Epic U phase U7).
 - `frontend/src/utils/apiError.test.ts` — _(no docstring)_
 - `frontend/src/utils/clusterFixRouter.test.ts` — _(no docstring)_
 - `frontend/src/utils/forecastActionRouter.test.ts` — _(no docstring)_

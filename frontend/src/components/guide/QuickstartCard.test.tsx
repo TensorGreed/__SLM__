@@ -136,7 +136,7 @@ describe('QuickstartCard', () => {
         await user.click(screen.getByTestId('quickstart-import-button'));
 
         await waitFor(() => {
-            expect(screen.getByTestId('quickstart-import-badge')).toHaveTextContent('✓ Done');
+            expect(screen.getByTestId('quickstart-import-badge')).toHaveTextContent('Done');
         });
         expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/1/quickstart/import-sample',
@@ -178,7 +178,7 @@ describe('QuickstartCard', () => {
         await user.click(screen.getByTestId('quickstart-train-button'));
 
         await waitFor(() => {
-            expect(screen.getByTestId('quickstart-train-badge')).toHaveTextContent('✓ Done');
+            expect(screen.getByTestId('quickstart-train-badge')).toHaveTextContent('Done');
         });
         expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/1/quickstart/train-default',
@@ -196,7 +196,7 @@ describe('QuickstartCard', () => {
         await user.click(screen.getByTestId('quickstart-eval-button'));
 
         await waitFor(() => {
-            expect(screen.getByTestId('quickstart-eval-badge')).toHaveTextContent('✓ Done');
+            expect(screen.getByTestId('quickstart-eval-badge')).toHaveTextContent('Done');
         });
         expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/1/quickstart/evaluate-latest?async_job=true',
@@ -268,7 +268,7 @@ describe('QuickstartCard', () => {
 
         // Wait for the badge to flip — confirms the import POST resolved.
         await waitFor(() => {
-            expect(screen.getByTestId('quickstart-import-badge')).toHaveTextContent('✓ Done');
+            expect(screen.getByTestId('quickstart-import-badge')).toHaveTextContent('Done');
         });
 
         // Nudge stays suppressed because the user already dismissed it in a
@@ -312,7 +312,7 @@ describe('QuickstartCard', () => {
         await user.click(screen.getByTestId('quickstart-baseline-button'));
 
         await waitFor(() => {
-            expect(screen.getByTestId('quickstart-baseline-badge')).toHaveTextContent('✓ Done');
+            expect(screen.getByTestId('quickstart-baseline-badge')).toHaveTextContent('Done');
         });
         expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/1/quickstart/baseline-eval?async_job=true',
@@ -355,12 +355,12 @@ describe('QuickstartCard', () => {
         const user = userEvent.setup();
         await user.click(screen.getByTestId('quickstart-baseline-button'));
         await waitFor(() => {
-            expect(screen.getByTestId('quickstart-baseline-badge')).toHaveTextContent('✓ Done');
+            expect(screen.getByTestId('quickstart-baseline-badge')).toHaveTextContent('Done');
         });
 
         await user.click(screen.getByTestId('quickstart-eval-button'));
         await waitFor(() => {
-            expect(screen.getByTestId('quickstart-eval-badge')).toHaveTextContent('✓ Done');
+            expect(screen.getByTestId('quickstart-eval-badge')).toHaveTextContent('Done');
         });
 
         expect(screen.getByTestId('quickstart-baseline-description'))

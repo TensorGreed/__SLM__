@@ -1,22 +1,23 @@
 /**
- * EmptyState — shared component for "this page has no data yet" surfaces.
+ * EmptyState — the one way a surface says "nothing here yet" (Epic U
+ * phase U7).
  *
- * Drops a centered card with an optional icon, a title that says what
- * the page is for, a 1–2 line description, up to two action buttons,
- * and an optional "Learn more →" docs link. Designed for newbies who
- * land on a blank table and don't know what to do next.
+ * A centred dashed card with an icon (a lucide icon node; the default is
+ * an inbox), a title that says what the surface is for, a 1–2 line
+ * description, up to two actions and an optional docs link.
  *
- * Supports two prop shapes for backwards compatibility:
- *   <EmptyState icon="📂" title="..." description="..." action={<button/>} />
  *   <EmptyState
- *       icon={<Folder/>} title="..." description="..."
- *       primary={{ label: "Create", onClick: () => ... }}
- *       secondary={{ label: "Import", href: "/x" }}
- *       docsHref="https://localhost:3001/docs/..."
- *    />
+ *       icon={<Database />} title="No data yet" description="…"
+ *       primary={{ label: 'Import', onClick }}
+ *       secondary={{ label: 'Upload', href: '/x' }}
+ *       docsHref="https://…"
+ *   />
+ *
+ * ``action`` is a free-form slot for callers whose buttons carry state.
  */
 
 import type { ReactNode } from 'react';
+import { Inbox } from 'lucide-react';
 
 import './EmptyState.css';
 
@@ -27,34 +28,30 @@ interface ActionDescriptor {
 }
 
 interface EmptyStateProps {
-    /** Icon node (preferred) or emoji string (legacy). */
-    icon?: ReactNode | string;
+    /** A lucide icon element; the inbox when omitted. ``null`` hides the icon. */
+    icon?: ReactNode | null;
     title: string;
     description: string;
-    /** Preferred action shape — renders an inverted-black primary button. */
     primary?: ActionDescriptor;
-    /** Secondary action — renders as an outlined button next to primary. */
     secondary?: ActionDescriptor;
-    /** Renders a small "Learn more →" link below the buttons. */
+    /** Renders a small "Learn more" link below the buttons. */
     docsHref?: string;
-    /** Legacy free-form action slot. New code should use primary/secondary. */
+    /** Free-form action slot; prefer primary / secondary. */
     action?: ReactNode;
+    /** ``compact`` = less padding, for empty lists inside a card. */
+    size?: 'default' | 'compact';
+    testId?: string;
 }
 
-function ActionButton({
-    descriptor,
-    variant,
-}: {
-    descriptor: ActionDescriptor;
-    variant: 'primary' | 'secondary';
-}) {
+function ActionButton({ descriptor, variant }: { descriptor: ActionDescriptor; variant: 'primary' | 'secondary' }) {
     const className = `btn ${variant === 'primary' ? 'btn-primary' : 'btn-secondary'} btn-sm`;
     if (descriptor.href) {
+        const external = descriptor.href.startsWith('http');
         return (
             <a
                 href={descriptor.href}
-                target={descriptor.href.startsWith('http') ? '_blank' : undefined}
-                rel={descriptor.href.startsWith('http') ? 'noopener noreferrer' : undefined}
+                target={external ? '_blank' : undefined}
+                rel={external ? 'noopener noreferrer' : undefined}
                 className={className}
             >
                 {descriptor.label}
@@ -76,22 +73,22 @@ export default function EmptyState({
     secondary,
     docsHref,
     action,
+    size = 'default',
+    testId,
 }: EmptyStateProps) {
-    const hasStructuredActions = Boolean(primary || secondary);
-    const renderedIcon = typeof icon === 'string' ? (
-        <span aria-hidden="true">{icon}</span>
-    ) : (
-        icon ?? null
-    );
+    const renderedIcon = icon === null ? null : (icon ?? <Inbox aria-hidden="true" />);
+    const hasActions = Boolean(primary || secondary || action);
 
     return (
-        <div className="empty-state-card" role="status">
-            {renderedIcon && (
-                <div className="empty-state-card-icon">{renderedIcon}</div>
-            )}
+        <div
+            className={`empty-state-card${size === 'compact' ? ' empty-state-card--compact' : ''}`}
+            role="status"
+            data-testid={testId ?? 'empty-state'}
+        >
+            {renderedIcon && <div className="empty-state-card-icon">{renderedIcon}</div>}
             <h4 className="empty-state-card-title">{title}</h4>
             <p className="empty-state-card-description">{description}</p>
-            {(hasStructuredActions || action) && (
+            {hasActions && (
                 <div className="empty-state-card-actions">
                     {primary && <ActionButton descriptor={primary} variant="primary" />}
                     {secondary && <ActionButton descriptor={secondary} variant="secondary" />}
@@ -99,13 +96,8 @@ export default function EmptyState({
                 </div>
             )}
             {docsHref && (
-                <a
-                    href={docsHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="empty-state-card-docs"
-                >
-                    Learn more →
+                <a href={docsHref} target="_blank" rel="noopener noreferrer" className="empty-state-card-docs">
+                    Learn more
                 </a>
             )}
         </div>

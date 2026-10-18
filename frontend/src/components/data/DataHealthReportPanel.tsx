@@ -30,13 +30,15 @@
  * Backed by GET /api/projects/{id}/data-health.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { AlertTriangle, Check, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import api from '../../api/client';
 import type { ErrorEnvelope } from '../../api/errors';
 import { parseErrorEnvelope } from '../../api/errors';
 import ErrorPanel from '../shared/ErrorPanel';
+import LoadingState from '../shared/LoadingState';
 import AutofixPreviewModal from './AutofixPreviewModal';
 import './DataHealthReportPanel.css';
 import { stagePath, trainSectionPath } from '../../utils/workspaceRoutes';
@@ -122,10 +124,10 @@ interface DataHealthReportPanelProps {
 // Severity → display metadata. Single source of truth for badge
 // label + ARIA description so the same vocab lands across every
 // signal row + the top-line summary.
-const SEVERITY_META: Record<Severity, { label: string; icon: string }> = {
-    ok: { label: 'OK', icon: '✓' },
-    warn: { label: 'Warning', icon: '!' },
-    block: { label: 'Blocker', icon: '✕' },
+const SEVERITY_META: Record<Severity, { label: string; icon: ReactNode }> = {
+    ok: { label: 'OK', icon: <Check className="u-icon" aria-hidden="true" /> },
+    warn: { label: 'Warning', icon: <AlertTriangle className="u-icon" aria-hidden="true" /> },
+    block: { label: 'Blocker', icon: <X className="u-icon" aria-hidden="true" /> },
 };
 
 const OVERALL_HEADLINE: Record<Severity, string> = {
@@ -233,7 +235,7 @@ export default function DataHealthReportPanel({ projectId, onSignalAction }: Dat
     if (loading && !data) {
         return (
             <div className="data-health data-health--loading" data-testid="data-health">
-                Loading Data Health Report…
+                <LoadingState label="Loading Data Health Report" lines={3} />
             </div>
         );
     }

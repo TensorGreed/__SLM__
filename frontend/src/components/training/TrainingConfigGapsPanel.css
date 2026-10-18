@@ -58,18 +58,18 @@
 }
 
 .tcg-panel__overall-badge--ok {
-    background: var(--color-success, #16a34a);
-    color: #ffffff;
+    background: var(--color-success);
+    color: var(--accent-contrast);
 }
 
 .tcg-panel__overall-badge--warn {
-    background: #eab308;
-    color: #ffffff;
+    background: var(--color-warning);
+    color: var(--accent-contrast);
 }
 
 .tcg-panel__overall-badge--block {
-    background: var(--color-error, #ef4444);
-    color: #ffffff;
+    background: var(--color-error);
+    color: var(--accent-contrast);
 }
 
 .tcg-panel__headline {
@@ -123,15 +123,15 @@
 }
 
 .tcg-panel__signal--ok {
-    border-left: 3px solid var(--color-success, #16a34a);
+    border-left: 3px solid var(--color-success);
 }
 
 .tcg-panel__signal--warn {
-    border-left: 3px solid #eab308;
+    border-left: 3px solid var(--color-warning);
 }
 
 .tcg-panel__signal--block {
-    border-left: 3px solid var(--color-error, #ef4444);
+    border-left: 3px solid var(--color-error);
 }
 
 .tcg-panel__signal-head {
@@ -150,19 +150,19 @@
     justify-content: center;
     font-size: 12px;
     font-weight: 700;
-    color: #ffffff;
+    color: var(--accent-contrast);
 }
 
 .tcg-panel__sev-badge--ok {
-    background: var(--color-success, #16a34a);
+    background: var(--color-success);
 }
 
 .tcg-panel__sev-badge--warn {
-    background: #eab308;
+    background: var(--color-warning);
 }
 
 .tcg-panel__sev-badge--block {
-    background: var(--color-error, #ef4444);
+    background: var(--color-error);
 }
 
 .tcg-panel__signal-body {
@@ -190,7 +190,7 @@
     border: none;
     padding: 0;
     font-size: 11px;
-    color: var(--color-primary, #2563eb);
+    color: var(--accent-text);
     cursor: pointer;
 }
 

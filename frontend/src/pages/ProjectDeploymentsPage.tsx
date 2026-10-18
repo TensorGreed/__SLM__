@@ -148,7 +148,7 @@ export default function ProjectDeploymentsPage({ embedded = false }: ProjectDepl
 
             <section className="card">
                 <div className="deployment-section-header">
-                    <h3 style={{ marginTop: 0 }}>Served versions</h3>
+                    <h3 className="u-mt0">Served versions</h3>
                     <button
                         type="button"
                         className="btn btn-secondary btn-sm"

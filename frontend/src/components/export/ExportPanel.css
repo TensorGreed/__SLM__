@@ -60,7 +60,7 @@
 
 .export-target-option.selected {
     border-color: var(--color-primary);
-    background: rgba(86, 156, 214, 0.12);
+    background: var(--accent-bg);
 }
 
 .export-target-name {
@@ -472,7 +472,7 @@
 
 .optimization-card.recommended {
     border-color: var(--gray-1000);
-    box-shadow: 0 4px 12px rgba(61, 121, 203, 0.15);
+    box-shadow: 0 4px 12px var(--accent-ring);
 }
 
 .optimization-card:hover {
@@ -495,7 +495,7 @@
     top: -10px;
     right: 10px;
     background: var(--gray-1000);
-    color: white;
+    color: var(--accent-contrast);
     font-size: 10px;
     font-weight: 700;
     padding: 2px 8px;
@@ -619,4 +619,54 @@
 .export-publish-row__meta {
     font-size: var(--font-size-sm);
     color: var(--text-secondary);
+}
+
+/* U7: classes replacing inline styles */
+.export-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: var(--space-md);
+    margin-bottom: var(--space-lg);
+}
+
+.export-scroll-240 { max-height: 240px; }
+.export-scroll-220 { max-height: 220px; }
+
+.export-target-field {
+    margin-top: var(--space-md);
+    margin-bottom: var(--space-md);
+}
+
+.export-flush-card {
+    padding: 0;
+    overflow: hidden;
+}
+
+.export-card-head {
+    padding: var(--space-lg);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.export-col-expand { width: 40px; }
+
+.export-expand-icon {
+    display: inline-block;
+    font-size: var(--font-size-2xs);
+}
+
+.export-output-path {
+    margin-bottom: var(--space-lg);
+    font-size: var(--font-size-xs);
+    color: var(--color-info);
+}
+
+.export-output-path__code {
+    background: var(--bg-code);
+    padding: 2px var(--space-xs);
+    border-radius: var(--radius-sm);
+}
+
+.export-steps {
+    margin: 0;
+    padding-left: var(--space-xl);
 }

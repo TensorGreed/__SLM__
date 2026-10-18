@@ -16,6 +16,7 @@
  */
 
 import { type FormEvent, useMemo, useState } from 'react';
+import { Sparkles } from 'lucide-react';
 import { useOutletContext } from 'react-router-dom';
 
 import api from '../api/client';
@@ -392,7 +393,7 @@ export default function ProjectAutopilotPage({ embedded = false }: { embedded?: 
                             role="status"
                             aria-label="Intent pre-filled from starter project"
                         >
-                            <span>✨ Pre-filled from this starter project's suggested brief — tweak as needed before previewing.</span>
+                            <span><Sparkles className="u-icon" aria-hidden="true" /> Pre-filled from this starter project's suggested brief — tweak as needed before previewing.</span>
                         </div>
                     )}
                     <label className="autopilot-field">

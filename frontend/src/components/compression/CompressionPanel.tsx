@@ -417,7 +417,6 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
                 <StepFooter
                     currentStep="Compression"
                     nextStep="Export"
-                    nextStepIcon="🚀"
                     isComplete={result != null}
                     hint="Quantize or merge your model to continue"
                     onNext={onNextStep}

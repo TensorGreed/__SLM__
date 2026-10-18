@@ -139,7 +139,7 @@
 .project-list-mode-pill.active {
     background: var(--bg-primary);
     color: var(--text-primary);
-    box-shadow: 0 1px 4px rgba(23, 49, 90, 0.08);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 
 .project-list-beginner-body {

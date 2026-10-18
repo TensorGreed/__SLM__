@@ -216,7 +216,7 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
         expect(screen.getByText('email')).toBeInTheDocument();
         expect(screen.getByText('a@example.com')).toBeInTheDocument();
         expect(screen.getByText('10–25')).toBeInTheDocument();
-        expect(screen.getByText(/✓ matched/i)).toBeInTheDocument();
+        expect(screen.getByText(/^matched$/i)).toBeInTheDocument();
     });
 
     it('shows missed + hallucinated rows in the breakdown', async () => {
@@ -248,8 +248,8 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
-        expect(await screen.findByText(/✗ missed/i)).toBeInTheDocument();
-        expect(screen.getByText(/✗ hallucinated/i)).toBeInTheDocument();
+        expect(await screen.findByText(/^missed$/i)).toBeInTheDocument();
+        expect(screen.getByText(/^hallucinated$/i)).toBeInTheDocument();
         // The hallucinated entity is in the breakdown.
         expect(screen.getByText('000-12-3456')).toBeInTheDocument();
         // The missed entity is in the breakdown.

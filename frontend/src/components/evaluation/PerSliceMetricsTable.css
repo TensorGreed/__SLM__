@@ -89,7 +89,7 @@
 }
 
 .per-slice-table__orphan-tag {
-    background: var(--color-warning-bg, rgba(250, 173, 20, 0.15));
+    background: var(--color-warning-bg);
     color: var(--color-warning);
 }
 
@@ -103,7 +103,7 @@
 }
 
 .per-slice-table__cell--failed {
-    background: var(--color-error-bg, rgba(245, 34, 45, 0.12));
+    background: var(--color-error-bg);
     color: var(--color-error);
     font-weight: 600;
 }

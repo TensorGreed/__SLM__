@@ -36,7 +36,7 @@ export default function TaskShapeCard({ projectId }: TaskShapeCardProps) {
     if (!taskShape?.detection) {
         return (
             <section className="card" data-testid="task-shape-card-empty">
-                <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-sm)' }}>Task shape</h3>
+                <h3 className="u-card-title u-mb-sm">Task shape</h3>
                 <p className="form-hint">Bring data in first; the task shape is detected from the rows.</p>
             </section>
         );

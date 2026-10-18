@@ -7,13 +7,13 @@ import TabVideoLink from './TabVideoLink';
 describe('TabVideoLink', () => {
     it('renders the link with the resolved chapter label + timecode for a known tab', () => {
         render(<TabVideoLink tabKey="data" />);
-        // Catalog maps 'data' → v03 chapter "Data tab" at 00:15.
+        // Catalog maps 'data' → v03 chapter "Data · Sources" at 00:18.
         const button = screen.getByRole('button', {
-            name: /Watch the 2-minute walkthrough for Data tab/i,
+            name: /Watch the 2-minute walkthrough for Data · Sources/i,
         });
         expect(button).toBeInTheDocument();
-        expect(button.textContent).toContain('Data tab');
-        expect(button.textContent).toContain('0:15');
+        expect(button.textContent).toContain('Data · Sources');
+        expect(button.textContent).toContain('0:18');
     });
 
     it('opens the embed modal when clicked', async () => {
@@ -30,25 +30,25 @@ describe('TabVideoLink', () => {
 
         const dialog = screen.getByRole('dialog');
         expect(dialog).toBeInTheDocument();
-        // Cleaning chapter is in v03.
-        expect(dialog.textContent).toContain('Cleaning');
+        // The Prepare chapter is in v03.
+        expect(dialog.textContent).toContain('Data · Prepare');
     });
 
     it('renders different chapter labels per pipeline tab', () => {
         const { rerender } = render(<TabVideoLink tabKey="goldset" />);
         expect(
-            screen.getByRole('button', { name: /Gold Set/i }),
+            screen.getByRole('button', { name: /Data · Labels/i }),
         ).toBeInTheDocument();
 
         rerender(<TabVideoLink tabKey="training" />);
-        // Training maps to v07 chapter "Training Config recap".
+        // Training maps to the v03 "Train" chapter.
         expect(
-            screen.getByRole('button', { name: /Training Config recap/i }),
+            screen.getByRole('button', { name: /walkthrough for Train$/i }),
         ).toBeInTheDocument();
 
         rerender(<TabVideoLink tabKey="compression" />);
         expect(
-            screen.getByRole('button', { name: /Compression form/i }),
+            screen.getByRole('button', { name: /Ship · Package/i }),
         ).toBeInTheDocument();
     });
 });

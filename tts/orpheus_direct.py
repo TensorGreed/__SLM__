@@ -30,8 +30,15 @@ import requests
 import torch
 from snac import SNAC
 
+# The CPU SNAC decode goes through oneDNN's JIT, which on this aarch64 box
+# now dies in conv1d with ``Xbyak::Error: illegal immediate parameter``
+# (2026-10-18, every call, including the smoke test). The plain ATen conv
+# path decodes fine and is fast enough for narration work.
+torch.backends.mkldnn.enabled = False
 
-_OLLAMA_URL = "http://127.0.0.1:11434/v1/completions"
+
+_OLLAMA_URL = "http://127.0.0.1:11434/v1/completions"  # legacy; see _request_orpheus
+_OLLAMA_GENERATE_URL = "http://127.0.0.1:11434/api/generate"
 _MODEL = "legraphista/Orpheus:3b-ft-q4_k_m"
 
 _TOKEN_RE = re.compile(r"<custom_token_(\d+)>")
@@ -49,23 +56,34 @@ def _request_orpheus(
     Called per-sentence (see ``_split_sentences``), so the 4096-token
     cap is comfortably above a single sentence's audio length (~10s ≈
     1800 tokens) while staying far from the runaway/loop regime that a
-    whole-paragraph prompt invites."""
+    whole-paragraph prompt invites.
+
+    Uses the native ``/api/generate`` endpoint with ``raw: true``. The
+    OpenAI-compatible ``/v1/completions`` path tokenised the special
+    markers (``<|audio|>``, ``<|eot_id|>``) as plain text (46 prompt tokens
+    for a 7-word sentence vs 12 here), and for many sentences the model
+    then continued the text instead of voicing it — every take came back
+    empty (2026-10-18; "Everything else lives under More options." 0/6,
+    raw mode 3/3)."""
     prompt = f"<|audio|>{voice}: {text}<|eot_id|>"
     resp = requests.post(
-        _OLLAMA_URL,
+        _OLLAMA_GENERATE_URL,
         json={
             "model": _MODEL,
             "prompt": prompt,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "top_p": 0.9,
-            "repeat_penalty": 1.1,
+            "raw": True,
             "stream": False,
+            "options": {
+                "num_predict": max_tokens,
+                "temperature": temperature,
+                "top_p": 0.9,
+                "repeat_penalty": 1.1,
+            },
         },
         timeout=600,
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["text"]
+    return resp.json()["response"]
 
 
 def _tokens_to_codes(raw_text: str) -> list[int]:

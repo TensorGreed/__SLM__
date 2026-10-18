@@ -243,7 +243,7 @@ The watcher is **lazy-on-fetch**: there's no background worker; the frontend pol
 
 The sweep's `best_label` is whoever has the highest `quality_score`, even if that "best" never cleared the project's pass/fail rules (evaluation gate). The honest layer on top runs each completed cell through `evaluate_experiment_auto_gates` and surfaces a three-state verdict:
 
-- `promote` — at least one completed cell passed the project's pass/fail rules (evaluation pack gate). The UI renders a green banner naming the pack (`evalpack.demo`, etc.) and the winner row gets a `gate ✓` badge (banner: "✓ Winner passed the pass/fail rules"). This is the only state where a promote-to-base action is honest.
+- `promote` — at least one completed cell passed the project's pass/fail rules (evaluation pack gate). The UI renders a green banner naming the pack (`evalpack.demo`, etc.) and the winner row gets a `gate ✓` badge (banner: "Winner passed the pass/fail rules"). This is the only state where a promote-to-base action is honest.
 - `inconclusive` — every completed cell has eval results but none cleared the gate. The UI renders an amber banner with the gate name + a one-line handoff: *"Open the Failure clusters panel to see why each cell missed."* Each cell row gets a `gate ✗ · <gate_id>` badge so the user can see which gate failed without opening the cell.
 - `pending` — cells are still running, or completed cells don't have eval results yet (`gate_passed=null`). No promote/inconclusive claim made; the banner reads "Pass/fail verdict pending" without a failure-cluster handoff.
 

@@ -283,7 +283,7 @@ button.playground-message__provenance-chip {
 }
 
 button.playground-message__provenance-chip:hover:not(:disabled) {
-    border-color: var(--accent, #3b82f6);
+    border-color: var(--accent);
 }
 
 button.playground-message__provenance-chip:disabled {
@@ -292,13 +292,13 @@ button.playground-message__provenance-chip:disabled {
 }
 
 .playground-message__provenance-chip--faster {
-    border-color: var(--accent-success, #22c55e);
-    color: var(--accent-success, #22c55e);
+    border-color: var(--color-success);
+    color: var(--color-success);
 }
 
 .playground-message__provenance-chip--slower {
-    border-color: var(--accent-warning, #f59e0b);
-    color: var(--accent-warning, #f59e0b);
+    border-color: var(--color-warning);
+    color: var(--color-warning);
 }
 
 .playground-message__provenance-hits {
@@ -328,13 +328,13 @@ button.playground-message__provenance-chip:disabled {
 }
 
 .playground-message__provenance-chip--retrieval {
-  background: rgba(31, 111, 235, 0.08);
+  background: var(--accent-bg);
 }
 
 .playground-compare {
   margin-top: 0.6rem;
   padding: 0.6rem 0.8rem;
-  border: 1px solid var(--border, #ddd);
+  border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 0.9rem;
 }
@@ -347,7 +347,7 @@ button.playground-message__provenance-chip:disabled {
 }
 
 .playground-compare__column {
-  border: 1px solid var(--border, #e5e5e5);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.5rem 0.6rem;
 }
@@ -363,7 +363,7 @@ button.playground-message__provenance-chip:disabled {
 }
 
 .playground-compare__error {
-  color: var(--danger, #c62828);
+  color: var(--danger);
 }
 
 @media (max-width: 900px) {

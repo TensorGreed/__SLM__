@@ -13,7 +13,7 @@
 }
 
 .eval-compare__error {
-    color: var(--color-error-fg, #8c1f37);
+    color: var(--color-error);
 }
 
 .eval-compare__summary {
@@ -34,7 +34,7 @@
 }
 
 .eval-compare__card--winner {
-    border-color: var(--color-success, #18a058);
+    border-color: var(--color-success);
     background: var(--color-success-bg, rgba(24, 160, 88, 0.06));
 }
 
@@ -72,17 +72,17 @@
 }
 
 .eval-compare__verdict--a {
-    color: var(--color-success-fg, #0c6b3a);
+    color: var(--color-success);
     background: var(--color-success-bg, rgba(24, 160, 88, 0.10));
 }
 
 .eval-compare__verdict--b {
-    color: var(--color-success-fg, #0c6b3a);
+    color: var(--color-success);
     background: var(--color-success-bg, rgba(24, 160, 88, 0.10));
 }
 
 .eval-compare__verdict--regressed {
-    color: var(--color-error-fg, #8c1f37);
+    color: var(--color-error);
     background: var(--color-error-bg, rgba(208, 48, 80, 0.08));
 }
 
@@ -98,7 +98,7 @@
     justify-content: space-between;
     gap: var(--space-md);
     padding: var(--space-md);
-    border: 1px solid var(--color-error, #d03050);
+    border: 1px solid var(--color-error);
     border-left-width: 4px;
     border-radius: var(--radius-md);
     background: var(--color-error-bg, rgba(208, 48, 80, 0.06));
@@ -143,14 +143,14 @@
 }
 
 .eval-compare__pill--regressed {
-    color: var(--color-error-fg, #8c1f37);
-    border-color: var(--color-error, #d03050);
+    color: var(--color-error);
+    border-color: var(--color-error);
     background: var(--color-error-bg, rgba(208, 48, 80, 0.08));
 }
 
 .eval-compare__pill--improved {
-    color: var(--color-success-fg, #0c6b3a);
-    border-color: var(--color-success, #18a058);
+    color: var(--color-success);
+    border-color: var(--color-success);
     background: var(--color-success-bg, rgba(24, 160, 88, 0.08));
 }
 
@@ -172,11 +172,11 @@
 }
 
 .eval-compare__cluster-block--regressed {
-    border-left-color: var(--color-error, #d03050);
+    border-left-color: var(--color-error);
 }
 
 .eval-compare__cluster-block--improved {
-    border-left-color: var(--color-success, #18a058);
+    border-left-color: var(--color-success);
 }
 
 .eval-compare__cluster-block--neutral {

@@ -43,8 +43,8 @@
 }
 
 .synth-review-queue__reject-btn {
-    border-color: var(--color-error, #d03050);
-    color: var(--color-error-fg, #8c1f37);
+    border-color: var(--color-error);
+    color: var(--color-error);
 }
 
 .synth-review-queue__flash {
@@ -107,7 +107,7 @@
 }
 
 .synth-review-queue__row.is-selected {
-    background: var(--color-accent-bg, rgba(59, 130, 246, 0.06));
+    background: var(--accent-bg);
 }
 
 .synth-review-queue__row label {
@@ -157,7 +157,7 @@
 }
 
 .synth-review-queue__accepted-headline strong {
-    color: var(--color-success-fg, #0c6b3a);
+    color: var(--color-success);
 }
 
 .synth-review-queue__accepted-hint {
@@ -192,8 +192,8 @@
 }
 
 .synth-review-queue__accepted-count {
-    background: var(--color-success-bg, rgba(24, 160, 88, 0.10));
-    color: var(--color-success-fg, #0c6b3a);
+    background: var(--color-success-bg);
+    color: var(--color-success);
     padding: 1px 8px;
     border-radius: 999px;
     font-size: 11px;
@@ -236,11 +236,11 @@
 }
 
 .synth-review-queue__totals-value--ok {
-    color: var(--color-success-fg, #0c6b3a);
+    color: var(--color-success);
 }
 
 .synth-review-queue__totals-value--warn {
-    color: var(--color-warning-fg, #936203);
+    color: var(--color-warning);
 }
 
 .synth-review-queue__totals-label {
@@ -310,10 +310,10 @@
     flex-wrap: wrap;
     gap: var(--space-sm);
     padding: var(--space-sm) var(--space-md);
-    border: 1px solid var(--accent, #3b82f6);
+    border: 1px solid var(--accent);
     border-left-width: 3px;
     border-radius: var(--radius-sm);
-    background: rgba(59, 130, 246, 0.08);
+    background: var(--accent-bg);
     color: var(--text-primary);
 }
 
@@ -370,7 +370,7 @@
     padding: var(--space-sm) var(--space-md);
     border: 1px dashed var(--border-muted);
     border-radius: var(--radius-sm);
-    background: rgba(244, 63, 94, 0.04);
+    background: var(--color-error-bg);
     color: var(--text-secondary);
 }
 
@@ -402,8 +402,8 @@
 
 .synth-review-queue__rejected-purge-all {
     padding: 4px 10px;
-    border: 1px solid var(--border-danger, #f43f5e);
-    background: rgba(244, 63, 94, 0.10);
+    border: 1px solid var(--color-error);
+    background: var(--color-error-bg);
     color: var(--text-primary);
     border-radius: var(--radius-sm);
     cursor: pointer;
@@ -429,7 +429,7 @@
 
 .synth-review-queue__rejected-error {
     margin: var(--space-xs) 0;
-    color: var(--text-danger, #f43f5e);
+    color: var(--color-error);
     font-size: 12px;
 }
 
@@ -466,7 +466,7 @@
     font-family: var(--font-mono);
     font-size: 11px;
     padding: 1px 6px;
-    background: rgba(244, 63, 94, 0.12);
+    background: var(--color-error-bg);
     color: var(--text-primary);
     border-radius: var(--radius-sm);
 }
@@ -548,14 +548,14 @@
 }
 
 .synth-review-queue__groupby-btn.is-active {
-    background: var(--accent, var(--accent-primary));
-    border-color: var(--accent, var(--accent-primary));
-    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-contrast);
 }
 
 /* P1k — groups labelled under older labelling conventions. */
 .synth-review-queue__stale {
-    border: 1px solid var(--color-warning, #d97706);
+    border: 1px solid var(--color-warning);
     border-radius: var(--radius-md, 8px);
     padding: var(--space-sm, 8px) var(--space-md, 12px);
     margin: var(--space-sm, 8px) 0;
@@ -570,13 +570,13 @@
     font-size: 11px;
     padding: 1px 6px;
     border-radius: 999px;
-    border: 1px solid var(--color-warning, #d97706);
-    color: var(--color-warning, #d97706);
+    border: 1px solid var(--color-warning);
+    color: var(--color-warning);
 }
 .synth-review-queue__stale-with { display: inline-flex; gap: 6px; align-items: center; margin: 2px 0 6px; }
 .synth-review-queue__retire { margin: 4px 0; }
 .synth-review-queue__retired {
-    border: 1px dashed var(--border-color, #ccc);
+    border: 1px dashed var(--border-color);
     border-radius: var(--radius-md, 8px);
     padding: var(--space-sm, 8px) var(--space-md, 12px);
     margin: var(--space-sm, 8px) 0;

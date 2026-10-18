@@ -151,11 +151,11 @@ describe('SftLiftPanel', () => {
         expect(noise).toHaveAttribute('data-verdict', 'within_noise');
         expect(noise).toHaveTextContent('within noise · 14 rows better, 6 worse');
         // A delta the rows can't back up is not painted as a win.
-        expect(screen.getByTestId('sft-lift-delta-f1').style.color).toBe('var(--text-secondary)');
+        expect(screen.getByTestId('sft-lift-delta-f1')).toHaveClass('sft-lift__text--neutral');
 
         const solid = screen.getByTestId('sft-lift-evidence-exact_match');
         expect(solid).toHaveTextContent('beyond row noise · 9 rows better, 1 worse');
-        expect(screen.getByTestId('sft-lift-delta-exact_match').style.color).toBe('var(--color-success)');
+        expect(screen.getByTestId('sft-lift-delta-exact_match')).toHaveClass('sft-lift__text--good');
     });
 
     it('shows no evidence line for rows without it (older results, non-row metrics)', async () => {

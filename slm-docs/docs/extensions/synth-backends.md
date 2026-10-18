@@ -66,13 +66,13 @@ Should return something like:
 
 In the UI, the **Data** → **Generate** playbook panel will now show a **Backend** dropdown next to "Target rows". The dropdown is hidden when fewer than two backends are available (single-backend installs don't see clutter).
 
-Each option that actually honors the playbook's `response_schema` (`nemo`, `vllm`) is suffixed with **· schema-aware** in the dropdown text. When the active selection is schema-aware, a green **✓ schema-aware** chip appears next to the picker. The `/backends` endpoint returns a `schema_aware: bool` per entry so the frontend can render the badge without hard-coding backend names.
+Each option that actually honors the playbook's `response_schema` (`nemo`, `vllm`) is suffixed with **· schema-aware** in the dropdown text. When the active selection is schema-aware, a green **schema-aware** chip (with a check icon) appears next to the picker. The `/backends` endpoint returns a `schema_aware: bool` per entry so the frontend can render the badge without hard-coding backend names.
 
 ### The class-imbalance suggestion auto-pins schema-aware backends
 
 The Coach's class-imbalance suggestion (`gold_set:class-imbalance`) — the click-to-execute action that runs `class_balance_fill` — auto-pins the highest-ranked schema-aware backend when one is configured + reachable. Preference order is **vLLM > NeMo** (vLLM enforces the schema during decoding via xgrammar / outlines; NeMo passes it upstream where enforcement quality depends on the model + NIM version). When neither is reachable the suggestion stamps no `backend` and the orchestrator's auto-pick takes over (typically Ollama, which silently ignores the schema). This means users on a vLLM-equipped install get constrained decoding "for free" from the Coach button without having to remember to switch the dropdown manually.
 
-The suggestion notice surfaces the auto-pinned backend under the action button as a caption — e.g. **will run on `vllm:meta-llama/Meta-Llama-3.1-8B-Instruct`  ✓ schema-aware** — so users see the upgrade happening instead of it being silently applied. The schema-aware chip renders only when the pinned backend matches `context.schema_aware_backend` (also stamped by `coach_service`), so the UI never has to maintain its own backend-name allowlist.
+The suggestion notice surfaces the auto-pinned backend under the action button as a caption — e.g. **will run on `vllm:meta-llama/Meta-Llama-3.1-8B-Instruct`  schema-aware** — so users see the upgrade happening instead of it being silently applied. The schema-aware chip renders only when the pinned backend matches `context.schema_aware_backend` (also stamped by `coach_service`), so the UI never has to maintain its own backend-name allowlist.
 
 ### A notice reminds you to review pending synth rows
 

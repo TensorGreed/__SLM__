@@ -55,15 +55,15 @@
 }
 
 .domain-profile-status--ok {
-  background: rgba(34, 197, 94, 0.12);
+  background: var(--color-success-bg);
   color: var(--color-success);
-  border: 1px solid rgba(34, 197, 94, 0.2);
+  border: 1px solid var(--color-success-border);
 }
 
 .domain-profile-status--error {
-  background: rgba(239, 68, 68, 0.12);
+  background: var(--color-error-bg);
   color: var(--color-error);
-  border: 1px solid rgba(239, 68, 68, 0.2);
+  border: 1px solid var(--color-error-border);
 }
 
 .domain-profile-list {

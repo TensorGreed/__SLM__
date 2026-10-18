@@ -6,7 +6,7 @@
     gap: 4px;
     padding: 4px 10px;
     border-radius: var(--radius-sm);
-    background: var(--bg-tertiary, rgba(59, 130, 246, 0.08));
+    background: var(--bg-tertiary);
     border: 1px solid var(--border-muted);
     color: var(--text-secondary);
     font-size: 12px;
@@ -20,6 +20,6 @@
 }
 
 .parent-project-chip:hover {
-    background: var(--accent-bg, rgba(59, 130, 246, 0.16));
+    background: var(--accent-bg);
     color: var(--text-primary);
 }

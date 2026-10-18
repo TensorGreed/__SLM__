@@ -22,7 +22,7 @@
 }
 
 .token-dist__hint {
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
     font-size: 12px;
 }
 
@@ -38,7 +38,7 @@
     display: flex;
     flex-direction: column;
     font-size: 11px;
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.4px;
     gap: 4px;
@@ -56,8 +56,8 @@
     margin: 8px 0;
     padding: 8px 12px;
     border-radius: var(--radius-sm);
-    background: rgba(239, 68, 68, 0.10);
-    color: #b91c1c;
+    background: var(--color-error-bg);
+    color: var(--color-error);
     font-size: 12px;
 }
 
@@ -65,8 +65,8 @@
     margin: 8px 0;
     padding: 8px 12px;
     border-radius: var(--radius-sm);
-    background: rgba(148, 163, 184, 0.10);
-    color: var(--text-secondary, var(--text-muted));
+    background: var(--accent-bg);
+    color: var(--text-secondary);
     font-size: 12px;
 }
 
@@ -90,7 +90,7 @@
 }
 
 .token-dist__stats th {
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.4px;
@@ -107,12 +107,12 @@
 }
 
 .token-dist__trunc {
-    color: #ea580c;
+    color: var(--color-warning);
     font-weight: 600;
 }
 
 .token-dist__trunc-frac {
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
     font-weight: 400;
     margin-left: 2px;
 }
@@ -121,8 +121,8 @@
     margin-top: var(--space-sm);
     padding: 8px 12px;
     border-radius: var(--radius-sm);
-    background: rgba(234, 88, 12, 0.12);
-    color: #c2410c;
+    background: var(--color-warning-bg);
+    color: var(--color-error);
     font-size: 12px;
     line-height: 1.5;
 }

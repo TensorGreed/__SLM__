@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 
 import api from '../../api/client';
+import LoadingState from '../shared/LoadingState';
 import {
     getDataStudioReviewQueue,
     getPreparedVersionPreview,
@@ -313,7 +314,7 @@ function ActiveLearningCard({
                                 <code>#{entry.label_row_id}</code>
                                 {entry.labeled && (
                                     <span className="data-studio-review__al-labeled-tag" title="already labeled">
-                                        {' '}✓
+                                        {' '}<Check className="u-icon" aria-hidden="true" />
                                     </span>
                                 )}
                             </td>
@@ -653,7 +654,7 @@ export default function DataStudioReviewQueuePanel({
     if (loading && !queue) {
         return (
             <section className="data-studio-review data-studio-review--loading">
-                <span>Loading review queue...</span>
+                <LoadingState label="Loading review queue" lines={3} />
             </section>
         );
     }

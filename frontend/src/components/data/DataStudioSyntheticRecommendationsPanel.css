@@ -384,11 +384,11 @@
 }
 
 .data-studio-synth-recs__gap-card--block {
-    border-left-color: var(--color-error, #dc2626);
+    border-left-color: var(--color-error);
 }
 
 .data-studio-synth-recs__gap-card--warn {
-    border-left-color: var(--color-warning, #d97706);
+    border-left-color: var(--color-warning);
 }
 
 .data-studio-synth-recs__gap-text {

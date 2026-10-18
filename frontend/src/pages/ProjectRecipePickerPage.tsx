@@ -33,7 +33,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 
 import { applyRecipeToProject, listRecipes, type Recipe } from '../api/recipes';
+import LoadingState from '../components/shared/LoadingState';
 import RecipeTileFrame from '../components/shared/RecipeTileFrame';
+import './ProjectRecipePickerPage.css';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import { toast } from '../stores/toastStore';
 import { trainSectionPath } from '../utils/workspaceRoutes';
@@ -138,24 +140,11 @@ export default function ProjectRecipePickerPage({ embedded = false, returnTo: re
     return (
         <section
             data-testid="project-recipe-picker-page"
-            style={{
-                maxWidth: '960px',
-                margin: '0 auto',
-                padding: 'var(--space-lg) var(--space-md)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'var(--space-lg)',
-            }}
+            className="recipe-picker"
         >
             <header>
-                {!embedded && <h1 style={{ margin: 0 }}>Choose a task type for this project</h1>}
-                <p
-                    style={{
-                        margin: 'var(--space-xs) 0 0',
-                        color: 'var(--text-secondary)',
-                        fontSize: '0.95rem',
-                    }}
-                >
+                {!embedded && <h1 className="u-m0">Choose a task type for this project</h1>}
+                <p className="recipe-picker__lede">
                     A task type bundles the task shape, adapter, scoring mode, and
                     suggested base model — it shapes synthetic-data playbooks,
                     pass/fail rules, and Coach Mode signals. You can change the
@@ -165,11 +154,7 @@ export default function ProjectRecipePickerPage({ embedded = false, returnTo: re
                 {currentRecipeId && (
                     <p
                         data-testid="project-recipe-picker-current"
-                        style={{
-                            margin: 'var(--space-xs) 0 0',
-                            color: 'var(--text-tertiary)',
-                            fontSize: '0.85rem',
-                        }}
+                        className="u-meta u-mt-xs u-mb0"
                     >
                         Currently applied: <code>{currentRecipeId}</code>
                     </p>
@@ -177,25 +162,18 @@ export default function ProjectRecipePickerPage({ embedded = false, returnTo: re
             </header>
 
             {loading && (
-                <p
-                    role="status"
-                    data-testid="project-recipe-picker-loading"
-                    style={{ color: 'var(--text-secondary)' }}
-                >
-                    Loading task types…
-                </p>
+                <LoadingState
+                    label="Loading task types"
+                    lines={3}
+                    testId="project-recipe-picker-loading"
+                />
             )}
 
             {loadError && (
                 <p
                     role="alert"
                     data-testid="project-recipe-picker-error"
-                    style={{
-                        padding: 'var(--space-md)',
-                        background: 'var(--color-error-bg)',
-                        color: 'var(--color-error)',
-                        borderRadius: 'var(--radius-md)',
-                    }}
+                    className="recipe-picker__error"
                 >
                     {loadError}
                 </p>
@@ -203,12 +181,7 @@ export default function ProjectRecipePickerPage({ embedded = false, returnTo: re
 
             {!loading && !loadError && catalog.length > 0 && (
                 <div
-                    style={{
-                        display: 'grid',
-                        gridTemplateColumns:
-                            'repeat(auto-fit, minmax(280px, 1fr))',
-                        gap: 'var(--space-md)',
-                    }}
+                    className="recipe-picker__grid"
                 >
                     {catalog.map((recipe) => {
                         const isCurrent = recipe.id === currentRecipeId;
@@ -219,46 +192,22 @@ export default function ProjectRecipePickerPage({ embedded = false, returnTo: re
                                 testId={`project-recipe-picker-card-${recipe.id}`}
                                 highlighted={isCurrent}
                             >
-                                <div
-                                    style={{
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        gap: 'var(--space-sm)',
-                                    }}
-                                >
-                                    <header
-                                        style={{
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: 'var(--space-sm)',
-                                        }}
-                                    >
+                                <div className="u-stack-sm">
+                                    <header className="u-row">
                                         <span
                                             aria-hidden="true"
-                                            style={{ fontSize: '1.5rem' }}
+                                            className="recipe-picker__icon"
                                         >
                                             {recipe.icon}
                                         </span>
-                                        <h3 style={{ margin: 0, fontSize: '1rem' }}>
+                                        <h3 className="recipe-picker__name">
                                             {recipe.name}
                                         </h3>
                                     </header>
-                                    <p
-                                        style={{
-                                            margin: 0,
-                                            fontSize: '0.9rem',
-                                            color: 'var(--text-secondary)',
-                                        }}
-                                    >
+                                    <p className="u-hint u-m0">
                                         {recipe.headline}
                                     </p>
-                                    <p
-                                        style={{
-                                            margin: 0,
-                                            fontSize: '0.8rem',
-                                            color: 'var(--text-tertiary)',
-                                        }}
-                                    >
+                                    <p className="u-meta u-m0">
                                         Suggested base model:{' '}
                                         <code>{recipe.suggested_base_model}</code>
                                     </p>

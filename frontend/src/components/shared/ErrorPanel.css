@@ -14,13 +14,13 @@
 }
 
 .error-panel--warning {
-    background: rgba(234, 179, 8, 0.08);
-    border-color: rgba(234, 179, 8, 0.4);
+    background: var(--color-warning-bg);
+    border-color: var(--color-warning-border);
 }
 
 .error-panel--critical {
-    background: rgba(239, 68, 68, 0.08);
-    border-color: rgba(239, 68, 68, 0.4);
+    background: var(--color-error-bg);
+    border-color: var(--color-error-border);
 }
 
 .error-panel__head {
@@ -41,13 +41,13 @@
 }
 
 .error-panel__badge--warning {
-    background: rgba(234, 179, 8, 0.2);
-    color: rgb(146, 109, 5);
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
 }
 
 .error-panel__badge--critical {
-    background: rgba(239, 68, 68, 0.2);
-    color: rgb(146, 23, 23);
+    background: var(--color-error-bg);
+    color: var(--color-error);
 }
 
 .error-panel__headline {

@@ -133,7 +133,7 @@
 .alignment-scaffold__comparison-card {
   border: 1px solid var(--border-muted);
   border-radius: 4px;
-  background: white;
+  background: var(--bg-card);
   overflow: hidden;
 }
 

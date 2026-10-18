@@ -15,6 +15,7 @@ import ManifestExportButton from '../components/manifest/ManifestExportButton';
 import DetailsDrawer, { type DetailSection } from '../components/shared/DetailsDrawer';
 import { useCoachMode } from '../components/coach/useCoachMode';
 import { useProjectStore } from '../stores/projectStore';
+import { THEME_OPTIONS, useThemeStore } from '../stores/themeStore';
 import { isSettingsSection, SETTINGS_SECTIONS, type SettingsSectionId } from '../utils/workspaceRoutes';
 import ProjectAutopilotPage from './ProjectAutopilotPage';
 import ProjectDomainPacksPage from './ProjectDomainPacksPage';
@@ -51,6 +52,8 @@ export default function ProjectSettingsPage() {
     const { projectId, project } = useOutletContext<ProjectWorkspaceContextValue>();
     const setActiveProject = useProjectStore((s) => s.setActiveProject);
     const { isOn: tipsOn, toggle: toggleTips } = useCoachMode(projectId);
+    const themePreference = useThemeStore((s) => s.preference);
+    const setThemePreference = useThemeStore((s) => s.setPreference);
     const [savingBeginner, setSavingBeginner] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const open = searchParams.get('open');
@@ -84,6 +87,29 @@ export default function ProjectSettingsPage() {
                     <h2 className="workspace-page-title">Settings</h2>
                     <p className="workspace-page-subtitle">Workspace preferences and the tools you rarely need.</p>
                 </div>
+            </section>
+
+            <section className="card settings-section">
+                <h3>Appearance</h3>
+                <fieldset className="settings-theme" data-testid="settings-theme">
+                    <legend className="sr-only">Colour theme</legend>
+                    {THEME_OPTIONS.map((option) => (
+                        <label key={option.value} className="settings-theme__option">
+                            <input
+                                type="radio"
+                                name="theme"
+                                value={option.value}
+                                checked={themePreference === option.value}
+                                onChange={() => setThemePreference(option.value)}
+                                data-testid={`settings-theme-${option.value}`}
+                            />
+                            <span>
+                                <strong>{option.label}</strong>
+                                <small>{option.hint}</small>
+                            </span>
+                        </label>
+                    ))}
+                </fieldset>
             </section>
 
             <section className="card settings-section">

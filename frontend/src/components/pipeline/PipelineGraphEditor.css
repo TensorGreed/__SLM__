@@ -33,12 +33,12 @@
 }
 
 .pipeline-editor-alert--error {
-    border-color: rgba(239, 68, 68, 0.35);
+    border-color: var(--color-error-border);
     color: var(--color-error);
 }
 
 .pipeline-editor-alert--ok {
-    border-color: rgba(34, 197, 94, 0.35);
+    border-color: var(--color-success-border);
     color: var(--color-success);
 }
 
@@ -114,7 +114,7 @@
 }
 
 .pipeline-editor-palette-item {
-    border: 1px solid rgba(115, 115, 115, 0.35);
+    border: 1px solid var(--border-default);
     border-radius: 10px;
     background: var(--bg-tertiary);
     color: var(--text-primary);
@@ -163,7 +163,7 @@
 
 .pipeline-editor-edge {
     fill: none;
-    stroke: rgba(115, 115, 115, 0.85);
+    stroke: var(--border-default);
     stroke-width: 2;
     pointer-events: all;
     cursor: pointer;
@@ -179,7 +179,7 @@
 }
 
 .pipeline-editor-edge-dot {
-    fill: rgba(115, 115, 115, 0.95);
+    fill: var(--border-default);
     pointer-events: none;
 }
 
@@ -188,7 +188,7 @@
 }
 
 .pipeline-editor-svg marker path {
-    fill: rgba(115, 115, 115, 0.95);
+    fill: var(--border-default);
 }
 
 .pipeline-editor-canvas-node {
@@ -210,8 +210,8 @@
 }
 
 .pipeline-editor-canvas-node.connect-source {
-    border-color: rgba(34, 197, 94, 0.95);
-    box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.75), 0 10px 24px rgba(22, 163, 74, 0.3);
+    border-color: var(--color-success-border);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 10px 24px rgba(0, 0, 0, 0.3);
 }
 
 .pipeline-editor-canvas-node-head {
@@ -220,7 +220,7 @@
     align-items: center;
     gap: var(--space-sm);
     padding: 10px 12px;
-    border-bottom: 1px solid rgba(115, 115, 115, 0.2);
+    border-bottom: 1px solid var(--border-default);
     background: var(--bg-tertiary);
     cursor: grab;
     user-select: none;
@@ -262,7 +262,7 @@
     display: flex;
     gap: 8px;
     padding: 10px 12px;
-    border-top: 1px solid rgba(115, 115, 115, 0.2);
+    border-top: 1px solid var(--border-default);
     background: var(--bg-tertiary);
 }
 
@@ -286,7 +286,7 @@
 }
 
 .pipeline-editor-inspector-empty {
-    border: 1px dashed rgba(115, 115, 115, 0.35);
+    border: 1px dashed var(--border-default);
     border-radius: var(--radius-sm);
     padding: var(--space-md);
     color: var(--text-secondary);
@@ -331,10 +331,10 @@
 
 .pipeline-editor-canvas {
     background:
-        linear-gradient(90deg, rgba(164, 181, 206, 0.23) 1px, transparent 1px),
-        linear-gradient(0deg, rgba(164, 181, 206, 0.23) 1px, transparent 1px),
-        radial-gradient(circle at 20% 10%, rgba(91, 158, 239, 0.11), transparent 45%),
-        radial-gradient(circle at 90% 80%, rgba(47, 116, 217, 0.1), transparent 46%),
+        linear-gradient(90deg, var(--accent-bg) 1px, transparent 1px),
+        linear-gradient(0deg, var(--accent-bg) 1px, transparent 1px),
+        radial-gradient(circle at 20% 10%, var(--accent-bg), transparent 45%),
+        radial-gradient(circle at 90% 80%, var(--accent-bg), transparent 46%),
         var(--bg-tertiary);
 }
 
@@ -420,12 +420,12 @@
 }
 
 .pipeline-editor-result.ok {
-    border-color: rgba(34, 197, 94, 0.35);
+    border-color: var(--color-success-border);
     color: var(--color-success);
 }
 
 .pipeline-editor-result.error {
-    border-color: rgba(239, 68, 68, 0.35);
+    border-color: var(--color-error-border);
     color: var(--color-error);
 }
 

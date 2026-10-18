@@ -12,6 +12,7 @@
  */
 
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import type { CoachSuggestion } from '../../api/coach';
@@ -19,6 +20,7 @@ import { startDocumentsQaFlow } from '../../api/flows';
 import { rerouteToRagAsync } from '../../api/rerouteAnalysis';
 import CoachSuggestionTrace from './CoachSuggestionTrace';
 import './CoachSuggestionTrace.css';
+import './CoachSuggestion.css';
 import {
     augmentFromClusterAsync,
     runPlaybookAsync,
@@ -122,29 +124,6 @@ interface CoachSuggestionCardProps {
     onActionCompleted?: () => void;
 }
 
-const SEVERITY_COLORS: Record<
-    CoachSuggestion['severity'],
-    { bg: string; border: string; tag: string; fg: string }
-> = {
-    info: {
-        bg: 'rgba(59, 130, 246, 0.08)',
-        border: 'rgba(59, 130, 246, 0.35)',
-        tag: 'rgba(59, 130, 246, 0.85)',
-        fg: 'rgb(30, 64, 175)',
-    },
-    warning: {
-        bg: 'rgba(245, 158, 11, 0.10)',
-        border: 'rgba(245, 158, 11, 0.40)',
-        tag: 'rgba(217, 119, 6, 0.95)',
-        fg: 'rgb(146, 64, 14)',
-    },
-    critical: {
-        bg: 'rgba(239, 68, 68, 0.08)',
-        border: 'rgba(239, 68, 68, 0.40)',
-        tag: 'rgba(220, 38, 38, 0.95)',
-        fg: 'rgb(153, 27, 27)',
-    },
-};
 
 // Phase 5c — known navigate targets that route to a concrete URL
 // (vs. fall through to the toast-hint fallback). Builders receive
@@ -259,7 +238,7 @@ const NAVIGATE_TARGET_URLS: Record<
         resultsPath(projectId, 'failures') + '#reroute-recommendation-panel',
     // Gap-#1/#2 slice 3 — Coach's no-op normalizer nudge points here.
     // The page mounts DomainPackManager, where the slice-2 picker
-    // badges safe-cleanup-normalizer with a ★ so the swap is one click.
+    // badges safe-cleanup-normalizer with a star so the swap is one click.
     'domain-pack-manager': (projectId) =>
         settingsPath(projectId, 'domain-packs'),
     // Gap-#6 slice 3 — Coach's per-class-gates-missing nudge points
@@ -326,7 +305,6 @@ export default function CoachSuggestionCard({
 }: CoachSuggestionCardProps) {
     const [isExecuting, setIsExecuting] = useState(false);
     const navigate = useNavigate();
-    const colors = SEVERITY_COLORS[suggestion.severity];
     // Cache the term-wrap parse so the regex scan doesn't re-run on
     // every state flip (e.g. while the action button is "Working…").
     const bodyNodes = useMemo(
@@ -562,78 +540,33 @@ export default function CoachSuggestionCard({
     return (
         <div
             data-testid={`coach-suggestion-${suggestion.id}`}
-            style={{
-                display: 'flex',
-                gap: 'var(--space-md)',
-                padding: 'var(--space-sm) var(--space-md)',
-                background: colors.bg,
-                border: `1px solid ${colors.border}`,
-                borderRadius: 'var(--radius-md)',
-                alignItems: 'flex-start',
-            }}
+            className={`coach-card coach-card--${suggestion.severity}`}
         >
-            <div style={{ flex: 1, minWidth: 0 }}>
-                <div
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        marginBottom: 4,
-                    }}
-                >
-                    <span
-                        style={{
-                            fontSize: '0.65rem',
-                            fontWeight: 700,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.06em',
-                            color: colors.tag,
-                        }}
-                    >
+            <div className="u-grow">
+                <div className="u-row u-mb-xs">
+                    <span className="coach-card__tag">
                         Coach · {suggestion.severity}
                     </span>
                 </div>
-                <div
-                    style={{
-                        fontWeight: 600,
-                        color: colors.fg,
-                        marginBottom: 2,
-                        fontSize: 'var(--font-size-sm)',
-                    }}
-                >
+                <div className="coach-card__title">
                     {suggestion.title}
                 </div>
-                <div
-                    style={{
-                        color: 'var(--text-secondary)',
-                        fontSize: 'var(--font-size-sm)',
-                        lineHeight: 1.5,
-                    }}
-                >
+                <div className="coach-card__body">
                     {bodyNodes.map((node, idx) => (
                         <Fragment key={idx}>{node}</Fragment>
                     ))}
                 </div>
                 <CoachSuggestionTrace suggestion={suggestion} />
             </div>
-            <div
-                style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'flex-end',
-                    gap: 4,
-                    minWidth: 0,
-                }}
-            >
+            <div className="coach-card__actions">
                 <button
                     type="button"
-                    className="btn btn-primary"
-                    style={{ fontSize: 'var(--font-size-xs)', whiteSpace: 'nowrap' }}
+                    className="btn btn-primary coach-card__button"
                     onClick={handleClick}
                     disabled={isExecuting}
                     data-testid={`coach-suggestion-action-${suggestion.id}`}
                 >
-                    {isExecuting ? '⏳ Working…' : suggestion.action.label}
+                    {isExecuting ? 'Working…' : suggestion.action.label}
                 </button>
                 {(() => {
                     // Phase 5c — surface auto-pinned backend so users
@@ -659,45 +592,19 @@ export default function CoachSuggestionCard({
                     const isSchemaAware = schemaAwarePin === pinnedBackend;
                     return (
                         <div
-                            style={{
-                                fontSize: '0.65rem',
-                                color: 'var(--text-tertiary)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 6,
-                                maxWidth: 240,
-                                textAlign: 'right',
-                                lineHeight: 1.35,
-                            }}
+                            className="coach-card__backend"
                             data-testid={`coach-suggestion-backend-${suggestion.id}`}
                         >
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                will run on <code style={{
-                                    fontFamily: 'var(--font-mono)',
-                                    fontSize: '0.65rem',
-                                    padding: '0 3px',
-                                    background: 'var(--gray-50)',
-                                    borderRadius: 'var(--radius-sm)',
-                                    color: 'var(--text-secondary)',
-                                }}>{pinnedBackend}</code>
+                            <span className="coach-card__backend-name">
+                                will run on <code className="coach-card__code">{pinnedBackend}</code>
                             </span>
                             {isSchemaAware && (
                                 <span
                                     title="This backend forwards the playbook's JSON Schema as response_format=json_schema and enforces it during decoding."
-                                    style={{
-                                        padding: '1px 6px',
-                                        border: '1px solid var(--color-success, #15803d)',
-                                        borderRadius: 999,
-                                        background: 'var(--color-success-bg, rgba(34, 197, 94, 0.10))',
-                                        color: 'var(--color-success-fg, #166534)',
-                                        fontSize: '0.6rem',
-                                        fontWeight: 600,
-                                        whiteSpace: 'nowrap',
-                                        cursor: 'help',
-                                    }}
+                                    className="coach-card__badge"
                                     data-testid={`coach-suggestion-schema-badge-${suggestion.id}`}
                                 >
-                                    ✓ schema-aware
+                                    <Check className="u-icon" aria-hidden="true" /> schema-aware
                                 </span>
                             )}
                         </div>

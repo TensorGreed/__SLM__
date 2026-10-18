@@ -4,7 +4,7 @@
     border: 1px solid var(--border-color);
     border-radius: 8px;
     padding: 12px 16px;
-    background: var(--surface, rgba(148, 163, 184, 0.04));
+    background: var(--accent-bg);
 }
 
 .probe-pack--loading,
@@ -29,8 +29,8 @@
     font-weight: 600;
     padding: 2px 8px;
     border-radius: 999px;
-    background: rgba(234, 179, 8, 0.15);
-    color: var(--warning, #b45309);
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
     white-space: nowrap;
 }
 
@@ -53,8 +53,8 @@
     font-size: 11px;
     padding: 2px 8px;
     border-radius: 999px;
-    background: rgba(148, 163, 184, 0.12);
-    color: var(--text-secondary, var(--text-muted));
+    background: var(--accent-bg);
+    color: var(--text-secondary);
 }
 
 .probe-pack__list {
@@ -92,18 +92,18 @@
     letter-spacing: 0.03em;
     padding: 2px 6px;
     border-radius: 4px;
-    background: rgba(148, 163, 184, 0.15);
+    background: var(--accent-bg);
     white-space: nowrap;
 }
 
 .probe-pack__kind--safety_refusal {
-    background: rgba(239, 68, 68, 0.15);
-    color: var(--danger, #b91c1c);
+    background: var(--color-error-bg);
+    color: var(--danger);
 }
 
 .probe-pack__probe-prop {
     flex: 1;
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
 }
 
 .probe-pack__chevron {
@@ -145,8 +145,8 @@
 
 /* Graded state (phase 9) — independent probe pass-rate + per-probe verdicts. */
 .probe-pack__badge--graded {
-    background: rgba(34, 197, 94, 0.15);
-    color: var(--success, #15803d);
+    background: var(--color-success-bg);
+    color: var(--color-success);
 }
 
 .probe-pack__score {
@@ -170,7 +170,7 @@
     font-size: 11px;
     padding: 2px 8px;
     border-radius: 999px;
-    background: rgba(148, 163, 184, 0.12);
+    background: var(--accent-bg);
 }
 
 .probe-pack__score-note {
@@ -188,11 +188,11 @@
 }
 
 .probe-pack__verdict--pass {
-    color: var(--success, #15803d);
+    color: var(--color-success);
 }
 
 .probe-pack__verdict--fail {
-    color: var(--danger, #b91c1c);
+    color: var(--danger);
 }
 
 /* Optional probe gate (phase 13). */
@@ -249,7 +249,7 @@
 }
 
 .probe-pack__trend-gap {
-    color: var(--danger, #b91c1c);
+    color: var(--danger);
 }
 
 .probe-pack__sparkline {
@@ -258,19 +258,19 @@
 }
 
 .probe-pack__spark-gold {
-    stroke: var(--text-muted, #94a3b8);
+    stroke: var(--text-muted);
     stroke-width: 1.5;
 }
 
 .probe-pack__spark-probe {
-    stroke: var(--accent, #6366f1);
+    stroke: var(--accent);
     stroke-width: 1.5;
 }
 
 /* Probe-arc finale — the comparable trend re-scored under current weights.
    Dashed + dimmed so it reads as a derived overlay, not a third ruler. */
 .probe-pack__spark-probe-reweighted {
-    stroke: var(--accent, #6366f1);
+    stroke: var(--accent);
     stroke-width: 1.5;
     stroke-dasharray: 3 2;
     opacity: 0.6;
@@ -283,22 +283,22 @@
 }
 
 .probe-pack__legend-gold {
-    color: var(--text-muted, #94a3b8);
+    color: var(--text-muted);
 }
 
 .probe-pack__legend-probe {
-    color: var(--accent, #4f46e5);
+    color: var(--accent);
 }
 
 .probe-pack__legend-reweighted {
-    color: var(--accent, #4f46e5);
+    color: var(--accent);
     opacity: 0.7;
     font-style: italic;
 }
 
 /* Interactive sparkline points + hover readout (phase 17). */
 .probe-pack__spark-point {
-    fill: var(--accent, #6366f1);
+    fill: var(--accent);
 }
 
 .probe-pack__spark-point--clickable {
@@ -306,7 +306,7 @@
 }
 
 .probe-pack__spark-point--clickable:hover {
-    fill: var(--accent-strong, #4338ca);
+    fill: var(--accent-text);
 }
 
 .probe-pack__trend-readout {
@@ -341,8 +341,8 @@
     font-size: 11px;
     padding: 2px 8px;
     border-radius: 999px;
-    background: rgba(99, 102, 241, 0.1);
-    color: var(--accent, #4f46e5);
+    background: var(--accent-bg);
+    color: var(--accent);
 }
 
 /* Per-kind weight editor (phase 22). */
@@ -376,13 +376,13 @@
 
 /* Weight-regime change marker on the sparkline (phase 23). */
 .probe-pack__spark-regime {
-    stroke: var(--warning, #b45309);
+    stroke: var(--color-warning);
     stroke-width: 1;
     stroke-dasharray: 2 2;
 }
 
 .probe-pack__trend-regime-note {
-    color: var(--warning, #b45309);
+    color: var(--color-warning);
 }
 
 /* Cumulative judge-spend rollup (phase 24). */

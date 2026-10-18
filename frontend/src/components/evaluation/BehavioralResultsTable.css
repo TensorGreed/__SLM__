@@ -131,6 +131,6 @@
 }
 
 .behavioral-results__capped-tag {
-    background: var(--color-warning-bg, rgba(250, 173, 20, 0.15));
+    background: var(--color-warning-bg);
     color: var(--color-warning);
 }

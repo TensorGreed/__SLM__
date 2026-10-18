@@ -12,7 +12,7 @@
 }
 
 .health-check-modal {
-    background: var(--bg-elevated, #fff);
+    background: var(--bg-card);
     color: var(--text-primary, inherit);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md, 8px);
@@ -50,7 +50,7 @@
 
 .health-check-modal__loading {
     padding: 24px 18px;
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
     font-size: 13px;
     display: flex;
     align-items: center;
@@ -76,19 +76,19 @@
 }
 
 .health-check-modal__summary--ok {
-    background: rgba(34, 197, 94, 0.10);
+    background: var(--color-success-bg);
 }
 
 .health-check-modal__summary--warn {
-    background: rgba(234, 179, 8, 0.10);
+    background: var(--color-warning-bg);
 }
 
 .health-check-modal__summary--fail {
-    background: rgba(239, 68, 68, 0.10);
+    background: var(--color-error-bg);
 }
 
 .health-check-modal__summary--skip {
-    background: rgba(148, 163, 184, 0.10);
+    background: var(--accent-bg);
 }
 
 .health-check-modal__overall-badge {
@@ -100,23 +100,23 @@
 }
 
 .health-check-modal__overall-badge--ok {
-    background: rgba(34, 197, 94, 0.2);
-    color: rgb(20, 110, 50);
+    background: var(--color-success-bg);
+    color: var(--color-success);
 }
 
 .health-check-modal__overall-badge--warn {
-    background: rgba(234, 179, 8, 0.2);
-    color: rgb(146, 109, 5);
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
 }
 
 .health-check-modal__overall-badge--fail {
-    background: rgba(239, 68, 68, 0.2);
-    color: rgb(146, 23, 23);
+    background: var(--color-error-bg);
+    color: var(--color-error);
 }
 
 .health-check-modal__overall-badge--skip {
-    background: rgba(148, 163, 184, 0.2);
-    color: rgb(71, 85, 105);
+    background: var(--accent-bg);
+    color: var(--text-secondary);
 }
 
 .health-check-modal__overall-headline {
@@ -160,15 +160,15 @@
 }
 
 .health-check-modal__check-glyph--ok {
-    color: rgb(34, 150, 80);
+    color: var(--color-success);
 }
 
 .health-check-modal__check-glyph--warn {
-    color: rgb(180, 130, 10);
+    color: var(--color-warning);
 }
 
 .health-check-modal__check-glyph--fail {
-    color: rgb(190, 50, 50);
+    color: var(--color-error);
 }
 
 .health-check-modal__check-glyph--skip {

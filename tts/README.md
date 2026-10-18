@@ -53,37 +53,34 @@ ollama pull legraphista/Orpheus:3b-ft-q4_k_m
 
 ## Per-recording workflow
 
-```bash
-# 1. Start the Orpheus-FastAPI server (background)
-cd tts/Orpheus-FastAPI
-source .venv/bin/activate
-nohup python app.py > /tmp/orpheus-server.log 2>&1 &
-disown
-# Wait until :5005 is listening
+The generators call Ollama + SNAC directly (`tts/orpheus_direct.py` via
+`tts/narration_tts.py`) — the Orpheus-FastAPI server on :5005 is **not**
+needed any more (its stream parser mangles the tokens anyway; see the
+docstring in `orpheus_direct.py`). Only Ollama must be running. The venv's
+python is `tts/Orpheus-FastAPI/.venv/bin/python` (torch + snac live there).
 
-# 2. Generate per-section WAVs from the narration script
-cd ..
-python generate_narration.py
+```bash
+# 1. Generate per-section WAVs from the narration script (video 02 here;
+#    video 03 is generate_v03_narration.py, same flags)
+tts/Orpheus-FastAPI/.venv/bin/python tts/generate_narration.py
+#    --only 04-overview 09-train   # regenerate just those sections
 # Output:
 #   tts/audio/v02-section-*.wav      (one per section)
-#   tts/audio/v02-durations.json     (durations the spec reads)
+#   tts/audio/v02-durations.json     (durations the spec reads, keyed by section)
+#   tts/audio/concat-v02.txt         (the ffmpeg concat list for step 3)
+# The generator refuses a section whose length is implausible for its word
+# count (~2.6 words/s is normal; Orpheus occasionally truncates or loops —
+# each section is retried once) and a total outside the 2–4 minute band.
 
-# 3. Re-record the Playwright video, re-timed to the audio
-cd ..
+# 2. Re-record the Playwright video, re-timed to the audio
 npx playwright test 02-brewslm-quickstart-narrated.spec.ts --project chromium
 
-# 4. Concatenate the WAVs + mux onto the video
+# 3. Concatenate the WAVs + mux onto the video
 FFMPEG=$(./tts/Orpheus-FastAPI/.venv/bin/python -c \
     "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())")
 VIDEO="test-results/02-brewslm-quickstart-narrated-Video-02-—-narrated-take-chromium/video.webm"
 
-# concat list
-> tts/audio/concat.txt
-for n in 01-cold-open 02-login 03-tiles 04-seed 05-cleaning 06-goldset \
-         07-dataprep 08-training 09-expand-wrap; do
-    echo "file '$(pwd)/tts/audio/v02-section-${n}.wav'" >> tts/audio/concat.txt
-done
-$FFMPEG -y -f concat -safe 0 -i tts/audio/concat.txt -c copy \
+$FFMPEG -y -f concat -safe 0 -i tts/audio/concat-v02.txt -c copy \
     tts/audio/v02-narration.wav
 
 # mux video + audio
@@ -92,10 +89,11 @@ $FFMPEG -y -i "$VIDEO" -i tts/audio/v02-narration.wav \
     -c:a aac -b:a 192k \
     -map 0:v:0 -map 1:a:0 -shortest \
     docs-demo/recordings/raw/02-brewslm-quickstart-narrated.mp4
-
-# 5. Stop the Orpheus server (frees VRAM)
-pkill -f "Orpheus-FastAPI.*app.py"
 ```
+
+The older `generate_v04_narration.py` … `generate_v14_narration.py` still
+post to the :5005 bridge; port them to `narration_tts.generate_video` when
+they are next re-recorded.
 
 ## Editing narration
 
@@ -105,7 +103,8 @@ text. The narration MD at
 human-readable mirror with stage directions; keep the two in sync
 when you edit.
 
-Available voices (set `VOICE` constant at the top of the script):
+Available voices (the `VOICE` constant in `tts/narration_tts.py`, shared
+by every generator so the series keeps one narrator):
 - Female: `tara`, `leah`, `jess`, `mia`, `zoe`
 - Male: `leo`, `dan`, `zac`
 

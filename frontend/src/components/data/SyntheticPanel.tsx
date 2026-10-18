@@ -4,7 +4,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
+import { Check, Info } from 'lucide-react';
 import api from '../../api/client';
+import './SyntheticPanel.css';
 import { listOllamaModels, type OllamaModelInfo } from '../../api/synthPlaybook';
 import PlaybookPickerPanel from './PlaybookPickerPanel';
 import SynthReviewQueue from './SynthReviewQueue';
@@ -981,8 +983,7 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
     if (recipeRequired) {
         return (
             <div
-                className="animate-fade-in"
-                style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}
+                className="animate-fade-in u-stack-xl"
                 data-testid="synthetic-panel-recipe-required"
             >
                 <PlaybookPickerPanel projectId={projectId} />
@@ -991,15 +992,15 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
     }
 
     return (
-        <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
+        <div className="animate-fade-in u-stack-xl">
             <div className="card">
-                <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>🧪 Synthetic Data Generation</h3>
+                <h3 className="u-card-title u-mb-lg">Synthetic Data Generation</h3>
                 {prefillSourceStage && (
-                    <div style={{ marginBottom: 'var(--space-md)', fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+                    <div className="u-hint u-mb-md">
                         Prefilled from workflow template stage: <strong>{prefillSourceStage}</strong>
                     </div>
                 )}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
+                <div className="u-stack u-mb-md">
                     <div className="form-group">
                         <label className="form-label">Generation Mode</label>
                         <select
@@ -1023,15 +1024,7 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                         </select>
                         {projectIsSpanExtraction && generationMode !== 'span_extraction' && (
                             <div
-                                style={{
-                                    marginTop: 'var(--space-sm)',
-                                    padding: '8px 12px',
-                                    background: 'rgba(239, 68, 68, 0.08)',
-                                    border: '1px solid rgba(239, 68, 68, 0.25)',
-                                    borderRadius: 'var(--radius-md)',
-                                    fontSize: 'var(--font-size-sm)',
-                                    color: 'rgb(153, 27, 27)',
-                                }}
+                                className="synthetic-panel__error"
                             >
                                 <strong>Heads up:</strong> this project is tagged{' '}
                                 <code>task_profile: structured_extraction</code> with{' '}
@@ -1043,7 +1036,7 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                             </div>
                         )}
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: provider === 'ollama' ? '1fr 1fr' : '1fr 1fr 1fr', gap: 'var(--space-md)' }}>
+                    <div className={`synthetic-panel__provider-grid${provider === 'ollama' ? ' synthetic-panel__provider-grid--two' : ''}`}>
                         <div className="form-group">
                             <label className="form-label">Provider</label>
                             <select
@@ -1054,13 +1047,13 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                             >
                                 <option value="ollama">Local (Ollama)</option>
                                 <option value="openai">
-                                    OpenAI{savedSecretCoords.some(s => s.provider === 'cloud_llm_openai') ? ' ✓' : ''}
+                                    OpenAI{savedSecretCoords.some(s => s.provider === 'cloud_llm_openai') ? ' (saved)' : ''}
                                 </option>
                                 <option value="deepseek">
-                                    Deepseek{savedSecretCoords.some(s => s.provider === 'cloud_llm_deepseek') ? ' ✓' : ''}
+                                    Deepseek{savedSecretCoords.some(s => s.provider === 'cloud_llm_deepseek') ? ' (saved)' : ''}
                                 </option>
                                 <option value="anthropic">
-                                    Anthropic{savedSecretCoords.some(s => s.provider === 'cloud_llm_anthropic') ? ' ✓' : ''}
+                                    Anthropic{savedSecretCoords.some(s => s.provider === 'cloud_llm_anthropic') ? ' (saved)' : ''}
                                 </option>
                                 <option value="custom">Custom Endpoint</option>
                             </select>
@@ -1091,10 +1084,10 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                                     API Key
                                     {hasSavedProviderKey && (
                                         <span
-                                            style={{ color: 'rgb(34, 197, 94)', fontSize: '0.8em', marginLeft: 6 }}
+                                            className="u-text-success u-text-xs u-ml-sm"
                                             data-testid="synth-legacy-saved-key-badge"
                                         >
-                                            ✓ saved on project
+                                            <Check className="u-icon" aria-hidden="true" /> saved on project
                                         </span>
                                     )}
                                 </label>
@@ -1121,22 +1114,18 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                             </div>
                         )}
                     </div>
-                    <div className="form-group" style={{ marginBottom: 0 }}>
+                    <div className="form-group u-mb0">
                         <label className="form-label">
                             API URL
                             {(provider === 'openai' || provider === 'deepseek' || provider === 'anthropic') && (
-                                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8em' }}> (locked — provider preset)</span>
+                                <span className="u-text-tertiary u-text-xs"> (locked — provider preset)</span>
                             )}
                         </label>
                         <input
-                            className="input"
+                            className={`input u-mono${(provider === 'openai' || provider === 'deepseek' || provider === 'anthropic') ? ' u-dim' : ''}`}
                             value={apiUrl}
                             onChange={e => setApiUrl(e.target.value)}
                             readOnly={provider === 'openai' || provider === 'deepseek' || provider === 'anthropic'}
-                            style={{
-                                opacity: (provider === 'openai' || provider === 'deepseek' || provider === 'anthropic') ? 0.7 : 1,
-                                fontFamily: 'monospace',
-                            }}
                             data-testid="synth-legacy-api-url"
                         />
                     </div>
@@ -1144,29 +1133,29 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
 
                 {/* Source Text with Auto-Load */}
                 <div className="form-group">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                        <label className="form-label" style={{ margin: 0 }}>Source Text</label>
+                    <div className="u-row u-between u-mb-sm">
+                        <label className="form-label u-m0">Source Text</label>
                         <button
-                            className="btn btn-secondary"
+                            className="btn btn-secondary synthetic-panel__btn-sm"
                             onClick={loadChunks}
                             disabled={isLoadingChunks}
-                            style={{ fontSize: 'var(--font-size-xs)', padding: '4px 12px' }}
+
                         >
-                            {isLoadingChunks ? '⏳ Loading...' : '📥 Load from Cleaned Data'}
+                            {isLoadingChunks ? 'Loading...' : 'Load from Cleaned Data'}
                         </button>
                     </div>
-                    <textarea className="input" style={{ minHeight: 120, resize: 'vertical' }} value={sourceText} onChange={e => setSourceText(e.target.value)} placeholder="Paste domain text here, or click 'Load from Cleaned Data' to auto-import chunks from the Cleaning step..." />
-                    <small style={{ color: 'var(--text-secondary)', marginTop: '4px', display: 'block' }}>
+                    <textarea className="input synthetic-panel__source"  value={sourceText} onChange={e => setSourceText(e.target.value)} placeholder="Paste domain text here, or click 'Load from Cleaned Data' to auto-import chunks from the Cleaning step..." />
+                    <small className="u-text-secondary u-mt-xs u-block">
                         {sourceText ? `${sourceText.length.toLocaleString()} characters loaded` : 'No text loaded yet. Use the button above to import cleaned chunks automatically.'}
                     </small>
                 </div>
 
-                <div style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div className="u-row-md">
                     {generationMode === 'qa' ? (
-                        <div className="form-group" style={{ marginBottom: 0 }}>
+                        <div className="form-group u-mb0">
                             <label className="form-label">Pairs to Generate</label>
                             <input
-                                className="input"
+                                className="input u-w-md"
                                 type="number"
                                 value={numPairs}
                                 onChange={e =>
@@ -1182,15 +1171,10 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                                 }
                                 min={1}
                                 max={MAX_TOTAL_ROWS_FRONTEND}
-                                style={{ width: 120 }}
                                 data-testid="qa-num-pairs"
                             />
                             <div
-                                style={{
-                                    fontSize: '0.75rem',
-                                    color: 'var(--text-tertiary)',
-                                    marginTop: 4,
-                                }}
+                                className="u-text-2xs u-text-tertiary u-mt-xs"
                             >
                                 {numPairs > PER_BATCH_ROW_CAP_FRONTEND
                                     ? `Will run in ${Math.ceil(numPairs / PER_BATCH_ROW_CAP_FRONTEND)} background batches.`
@@ -1199,10 +1183,10 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                         </div>
                     ) : generationMode === 'span_extraction' ? (
                         <>
-                            <div className="form-group" style={{ marginBottom: 0 }}>
+                            <div className="form-group u-mb0">
                                 <label className="form-label">Rows to Generate</label>
                                 <input
-                                    className="input"
+                                    className="input u-w-md"
                                     type="number"
                                     value={numSpans}
                                     onChange={(e) =>
@@ -1212,25 +1196,20 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                                     }
                                     min={1}
                                     max={5000}
-                                    style={{ width: 120 }}
                                     data-testid="span-num-rows"
                                 />
                                 <div
-                                    style={{
-                                        fontSize: '0.75rem',
-                                        color: 'var(--text-tertiary)',
-                                        marginTop: 4,
-                                    }}
+                                    className="u-text-2xs u-text-tertiary u-mt-xs"
                                 >
                                     {numSpans > 50
                                         ? `Will run in ${Math.ceil(numSpans / 50)} background batches.`
                                         : 'Single-shot generation.'}
                                 </div>
                             </div>
-                            <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 280 }}>
+                            <div className="form-group synthetic-panel__grow">
                                 <label className="form-label">
                                     Entity types{' '}
-                                    <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>
+                                    <span className="u-text-tertiary u-regular">
                                         (comma-separated)
                                     </span>
                                 </label>
@@ -1251,7 +1230,7 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                                     {refineLoading ? 'Reading last evaluation…' : 'Refine weak types'}
                                 </button>
                                 <label
-                                    style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--font-size-sm)' }}
+                                    className="u-row-xs u-text-sm"
                                     title={batchAvailable
                                         ? "Send every labelling call of the job as one Anthropic Message Batch — half the list price; results arrive in minutes to hours. Requests that fail are redone directly."
                                         : 'Batch mode needs an Anthropic model (it uses the Message Batches API).'}
@@ -1343,10 +1322,10 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                         </>
                     ) : (
                         <>
-                            <div className="form-group" style={{ marginBottom: 0 }}>
+                            <div className="form-group u-mb0">
                                 <label className="form-label">Dialogues</label>
                                 <input
-                                    className="input"
+                                    className="input u-w-sm"
                                     type="number"
                                     value={numDialogues}
                                     onChange={e =>
@@ -1362,25 +1341,20 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                                     }
                                     min={1}
                                     max={MAX_TOTAL_ROWS_FRONTEND}
-                                    style={{ width: 100 }}
                                     data-testid="conversation-num-dialogues"
                                 />
                                 <div
-                                    style={{
-                                        fontSize: '0.75rem',
-                                        color: 'var(--text-tertiary)',
-                                        marginTop: 4,
-                                    }}
+                                    className="u-text-2xs u-text-tertiary u-mt-xs"
                                 >
                                     {numDialogues > PER_BATCH_CONVERSATION_CAP_FRONTEND
                                         ? `Will run in ${Math.ceil(numDialogues / PER_BATCH_CONVERSATION_CAP_FRONTEND)} background batches.`
                                         : 'Single-shot generation.'}
                                 </div>
                             </div>
-                            <div className="form-group" style={{ marginBottom: 0 }}>
+                            <div className="form-group u-mb0">
                                 <label className="form-label">Min Turns</label>
                                 <input
-                                    className="input"
+                                    className="input u-w-sm"
                                     type="number"
                                     value={minTurns}
                                     onChange={e => {
@@ -1390,19 +1364,19 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                                     }}
                                     min={1}
                                     max={20}
-                                    style={{ width: 100 }}
+
                                 />
                             </div>
-                            <div className="form-group" style={{ marginBottom: 0 }}>
+                            <div className="form-group u-mb0">
                                 <label className="form-label">Max Turns</label>
                                 <input
-                                    className="input"
+                                    className="input u-w-sm"
                                     type="number"
                                     value={maxTurns}
                                     onChange={e => setMaxTurns(Math.max(minTurns, Math.min(20, Number(e.target.value) || minTurns)))}
                                     min={minTurns}
                                     max={20}
-                                    style={{ width: 100 }}
+
                                 />
                             </div>
                         </>
@@ -1413,23 +1387,10 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                         becomes a server-batched async task that samples
                         4–8k tokens from the cleaned-chunk pool per batch. */}
                     <div
-                        className="form-group"
-                        style={{
-                            marginBottom: 0,
-                            flexBasis: '100%',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                        }}
+                        className="form-group synthetic-panel__full-row"
                     >
                         <label
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 8,
-                                cursor: 'pointer',
-                                fontSize: '0.85rem',
-                            }}
+                            className="u-row u-pointer u-text-sm"
                         >
                             <input
                                 type="checkbox"
@@ -1442,10 +1403,7 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                             Sample randomly from all cleaned chunks (per batch)
                         </label>
                         <span
-                            style={{
-                                fontSize: '0.75rem',
-                                color: 'var(--text-tertiary)',
-                            }}
+                            className="u-text-2xs u-text-tertiary"
                         >
                             Ignores the source-text textarea; each
                             batch gets a fresh 4–8k-token sample.
@@ -1454,14 +1412,7 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                     {asyncTaskStatus && (
                         <div
                             data-testid="synth-task-progress"
-                            style={{
-                                flexBasis: '100%',
-                                padding: 'var(--space-sm)',
-                                background: 'var(--bg-secondary)',
-                                border: '1px solid var(--border-color)',
-                                borderRadius: 'var(--radius-sm)',
-                                fontSize: '0.85rem',
-                            }}
+                            className="synthetic-panel__subpanel"
                         >
                             <strong>{asyncTaskStatus.status}</strong>
                             {' — '}
@@ -1472,10 +1423,7 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                             {asyncTaskStatus.target_rows} rows
                             {asyncTaskStatus.error && (
                                 <div
-                                    style={{
-                                        color: 'var(--color-error, #c00)',
-                                        marginTop: 4,
-                                    }}
+                                    className="u-text-error u-mt-xs"
                                 >
                                     {asyncTaskStatus.error}
                                 </div>
@@ -1497,22 +1445,14 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                             )
                         }
                     >
-                        {isGenerating ? '⏳ Generating...' : '🧪 Generate'}
+                        {isGenerating ? 'Generating...' : 'Generate'}
                     </button>
                 </div>
                 {isGenerating && (
                     <div
-                        style={{
-                            marginTop: 'var(--space-md)',
-                            padding: '8px 12px',
-                            background: 'rgba(59, 130, 246, 0.08)',
-                            border: '1px solid rgba(59, 130, 246, 0.25)',
-                            borderRadius: 'var(--radius-md)',
-                            fontSize: 'var(--font-size-sm)',
-                            color: 'var(--text-secondary)',
-                        }}
+                        className="synthetic-panel__note"
                     >
-                        ⏳ Generation can take several minutes for large batches on
+                        Generation can take several minutes for large batches on
                         local models. The GPU is working even if this page looks
                         idle — please don't refresh.
                     </div>
@@ -1521,19 +1461,14 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
 
             {/* Chunk Picker Modal */}
             {showChunkPicker && (
-                <div className="card" style={{ border: '2px solid var(--color-primary)', background: 'var(--bg-secondary)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
-                        <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, margin: 0 }}>
-                            📥 Select Chunks to Import
-                            <span className="badge badge-accent" style={{ marginLeft: 8 }}>{selectedCount} / {chunks.length} selected</span>
+                <div className="card synthetic-panel__chunk-picker-card">
+                    <div className="u-row u-between u-mb-md">
+                        <h3 className="u-card-title u-card-title--tight">
+                            Select Chunks to Import
+                            <span className="badge badge-accent u-ml-sm">{selectedCount} / {chunks.length} selected</span>
                             {chunkPoolTotal > chunks.length && (
                                 <span
-                                    style={{
-                                        marginLeft: 8,
-                                        fontSize: 'var(--font-size-xs)',
-                                        color: 'var(--text-tertiary)',
-                                        fontWeight: 400,
-                                    }}
+                                    className="u-ml-sm u-meta u-regular"
                                     data-testid="chunk-pool-total"
                                     title={`Random sample of ${chunks.length} chunks from ${chunkPoolTotal.toLocaleString()} total. Use "Reroll sample" to see a different random subset, or enable "Sample randomly from all cleaned chunks" on the generation form to use the whole pool server-side.`}
                                 >
@@ -1541,70 +1476,57 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                                 </span>
                             )}
                         </h3>
-                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <div className="u-row">
                             {chunkPoolTotal > chunks.length && (
                                 <button
-                                    className="btn btn-primary"
-                                    style={{ fontSize: 'var(--font-size-xs)' }}
+                                    className="btn btn-primary u-text-xs"
                                     onClick={useAllChunksFromPicker}
                                     title={`Use the full pool of ${chunkPoolTotal.toLocaleString()} chunks. Each generation batch will sample 4–8k tokens randomly server-side — no need to load them all in the browser.`}
                                     data-testid="synth-use-all-from-picker"
                                 >
-                                    📦 Use all {chunkPoolTotal.toLocaleString()} (auto-sample per batch)
+                                    Use all {chunkPoolTotal.toLocaleString()} (auto-sample per batch)
                                 </button>
                             )}
                             <button
-                                className="btn btn-secondary"
-                                style={{ fontSize: 'var(--font-size-xs)' }}
+                                className="btn btn-secondary u-text-xs"
                                 onClick={loadChunks}
                                 disabled={isLoadingChunks}
                                 title="Fetch a different random sample from the pool"
                             >
-                                {isLoadingChunks ? 'Loading…' : '🎲 Reroll sample'}
+                                {isLoadingChunks ? 'Loading…' : 'Reroll sample'}
                             </button>
-                            <button className="btn btn-secondary" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => setChunks(prev => prev.map(c => ({ ...c, selected: true })))}>Select all visible</button>
-                            <button className="btn btn-secondary" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => setChunks(prev => prev.map(c => ({ ...c, selected: false })))}>Deselect All</button>
+                            <button className="btn btn-secondary u-text-xs"  onClick={() => setChunks(prev => prev.map(c => ({ ...c, selected: true })))}>Select all visible</button>
+                            <button className="btn btn-secondary u-text-xs"  onClick={() => setChunks(prev => prev.map(c => ({ ...c, selected: false })))}>Deselect All</button>
                         </div>
                     </div>
-                    <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div className="synthetic-panel__chunk-list">
                         {chunks.map((chunk, idx) => (
                             <div
                                 key={idx}
                                 onClick={() => toggleChunk(idx)}
-                                style={{
-                                    padding: 'var(--space-sm) var(--space-md)',
-                                    borderRadius: 'var(--radius-md)',
-                                    background: chunk.selected ? 'rgba(139, 92, 246, 0.08)' : 'var(--bg-tertiary)',
-                                    border: `1px solid ${chunk.selected ? 'var(--color-primary)' : 'transparent'}`,
-                                    cursor: 'pointer', transition: 'all 0.2s ease',
-                                }}
+                                className={`synthetic-panel__chunk${chunk.selected ? ' synthetic-panel__chunk--selected' : ''}`}
                             >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                    <input type="checkbox" checked={chunk.selected || false} onChange={() => { }} style={{ pointerEvents: 'none' }} />
-                                    <span className="badge badge-info" style={{ fontSize: 10 }}>{chunk.source_doc}</span>
-                                    <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>Chunk #{chunk.chunk_id}</span>
+                                <div className="u-row">
+                                    <input type="checkbox" checked={chunk.selected || false} onChange={() => { }} className="synthetic-panel__no-pointer" />
+                                    <span className="badge badge-info u-text-2xs">{chunk.source_doc}</span>
+                                    <span className="u-meta">Chunk #{chunk.chunk_id}</span>
                                 </div>
-                                <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginTop: 4, maxHeight: 40, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                <div className="synthetic-panel__chunk-text">
                                     {chunk.text.slice(0, 200)}...
                                 </div>
                             </div>
                         ))}
                         {chunks.length === 0 && (
-                            <div style={{ textAlign: 'center', padding: 'var(--space-lg)', color: 'var(--text-tertiary)' }}>
+                            <div className="u-p-lg u-text-center u-text-tertiary">
                                 No chunks found. Run Data Cleaning on your documents first.
                             </div>
                         )}
                         {chunks.length > 0 && chunkPoolTotal > chunks.length && (
                             <button
                                 type="button"
-                                className="btn btn-secondary"
+                                className="btn btn-secondary synthetic-panel__more"
                                 onClick={loadMoreChunks}
                                 disabled={isLoadingMoreChunks}
-                                style={{
-                                    fontSize: 'var(--font-size-xs)',
-                                    alignSelf: 'center',
-                                    marginTop: 'var(--space-sm)',
-                                }}
                                 data-testid="span-load-more-chunks"
                                 title={`Append another random ${CHUNK_PICKER_PAGE_SIZE} chunks to the picker (deduplicated). Or click "Use all" to skip the picker entirely and sample the whole pool server-side.`}
                             >
@@ -1614,9 +1536,9 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                             </button>
                         )}
                     </div>
-                    <div style={{ display: 'flex', gap: 8, marginTop: 'var(--space-md)' }}>
+                    <div className="u-row u-mt-md">
                         <button className="btn btn-primary" onClick={applySelectedChunks} disabled={selectedCount === 0}>
-                            ✅ Load {selectedCount} Chunk{selectedCount !== 1 ? 's' : ''} into Source Text
+                            Load {selectedCount} Chunk{selectedCount !== 1 ? 's' : ''} into Source Text
                         </button>
                         <button className="btn btn-secondary" onClick={() => setShowChunkPicker(false)}>Cancel</button>
                     </div>
@@ -1625,8 +1547,8 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
 
             {activeGeneratedCount > 0 && (
                 <div className="card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
-                        <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600 }}>
+                    <div className="u-row u-between u-mb-md">
+                        <h3 className="u-semibold u-text-md">
                             {generationMode === 'qa'
                                 ? 'Generated Pairs'
                                 : generationMode === 'span_extraction'
@@ -1635,12 +1557,12 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                             {' '}
                             <span className="badge badge-accent">{activeGeneratedCount}</span>
                         </h3>
-                        <button className="btn btn-primary" onClick={handleSave}>✅ Save Approved</button>
+                        <button className="btn btn-primary" onClick={handleSave}>Save Approved</button>
                     </div>
 
                     {isDemoMode && (
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '.5rem', padding: '.75rem 1rem', background: 'rgba(99, 179, 237, .08)', border: '1px solid rgba(99, 179, 237, .2)', borderRadius: '8px', fontSize: '.85rem', color: 'rgba(255, 255, 255, .8)', marginBottom: '1rem' }}>
-                            <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>ℹ️</span>
+                        <div className="synthetic-panel__tip">
+                            <Info className="u-icon-lg synthetic-panel__tip-icon" aria-hidden="true" />
                             <div>
                                 <strong>Demo mode</strong> — pairs generated via heuristic extraction. Connect a teacher model (Ollama, OpenAI, etc.) for production-quality generation.
                             </div>
@@ -1648,18 +1570,18 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                     )}
 
                     {saveResult && (
-                        <div style={{ background: 'var(--color-success-bg)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', marginBottom: 'var(--space-md)', color: 'var(--color-success)', fontSize: 'var(--font-size-sm)' }}>
+                        <div className="synthetic-panel__success">
                             Saved {saveResult.accepted} item(s) ({saveResult.rejected} rejected). Total: {saveResult.total}
                             {typeof saveResult.accepted_turns === 'number' ? ` • accepted turns: ${saveResult.accepted_turns}` : ''}
                         </div>
                     )}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div className="u-stack-sm">
                         {generationMode === 'qa' ? (
                             generatedPairs.map((p, i) => (
-                                <div key={i} style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)' }}>
-                                    <div style={{ fontSize: 'var(--font-size-sm)', marginBottom: 4 }}><strong>Q:</strong> {p.question}</div>
-                                    <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 4 }}><strong>A:</strong> {p.answer}</div>
-                                    <div style={{ display: 'flex', gap: 8 }}>
+                                <div key={i} className="synthetic-panel__item">
+                                    <div className="u-text-sm u-mb-xs"><strong>Q:</strong> {p.question}</div>
+                                    <div className="u-hint u-mb-xs"><strong>A:</strong> {p.answer}</div>
+                                    <div className="u-row">
                                         <span className={`badge ${p.confidence >= 0.7 ? 'badge-success' : p.confidence >= 0.4 ? 'badge-warning' : 'badge-error'}`}>
                                             Confidence: {(p.confidence * 100).toFixed(0)}%
                                         </span>
@@ -1673,26 +1595,15 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                                 return (
                                     <div
                                         key={idx}
-                                        style={{
-                                            background: 'var(--bg-tertiary)',
-                                            borderRadius: 'var(--radius-md)',
-                                            padding: 'var(--space-md)',
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            gap: 8,
-                                        }}
+                                        className="synthetic-panel__item u-stack-sm"
                                     >
-                                        <div style={{ fontSize: 'var(--font-size-sm)', whiteSpace: 'pre-wrap' }}>
+                                        <div className="u-text-sm u-pre">
                                             <strong>Text:</strong> {row.text || '—'}
                                         </div>
-                                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                        <div className="u-row-xs">
                                             {entities.length === 0 ? (
                                                 <span
-                                                    style={{
-                                                        fontSize: 'var(--font-size-xs)',
-                                                        color: 'var(--text-tertiary)',
-                                                        fontStyle: 'italic',
-                                                    }}
+                                                    className="u-meta synthetic-panel__italic"
                                                 >
                                                     no entities detected
                                                 </span>
@@ -1700,16 +1611,16 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                                                 entities.map((ent, ei) => (
                                                     <span
                                                         key={ei}
-                                                        className="badge badge-accent"
+                                                        className="badge badge-accent u-mono"
                                                         title={`${ent.start}–${ent.end}`}
-                                                        style={{ fontFamily: 'monospace' }}
+
                                                     >
                                                         {ent.type || '?'}: {ent.text || '—'}
                                                     </span>
                                                 ))
                                             )}
                                         </div>
-                                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                        <div className="u-row">
                                             <span
                                                 className={`badge ${confidence >= 0.7
                                                     ? 'badge-success'
@@ -1721,10 +1632,7 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                                                 Confidence: {(confidence * 100).toFixed(0)}%
                                             </span>
                                             <span
-                                                style={{
-                                                    fontSize: 'var(--font-size-xs)',
-                                                    color: 'var(--text-tertiary)',
-                                                }}
+                                                className="u-meta"
                                             >
                                                 {entities.length} entit{entities.length === 1 ? 'y' : 'ies'}
                                             </span>
@@ -1734,9 +1642,9 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                             })
                         ) : (
                             generatedConversations.map((conversation, index) => (
-                                <div key={conversation.conversation_id || index} style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)' }}>
-                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                                        <strong style={{ fontSize: 'var(--font-size-sm)' }}>
+                                <div key={conversation.conversation_id || index} className="synthetic-panel__item">
+                                    <div className="u-row u-mb-sm">
+                                        <strong className="u-text-sm">
                                             Conversation {index + 1}
                                         </strong>
                                         <span className="badge badge-info">
@@ -1748,9 +1656,9 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                                             </span>
                                         )}
                                     </div>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    <div className="u-stack-xs">
                                         {(conversation.messages || []).map((message: any, messageIndex: number) => (
-                                            <div key={`${conversation.conversation_id || index}-${messageIndex}`} style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+                                            <div key={`${conversation.conversation_id || index}-${messageIndex}`} className="u-hint">
                                                 <strong>{String(message?.role || 'assistant')}:</strong> {String(message?.content || '')}
                                             </div>
                                         ))}
@@ -1798,7 +1706,7 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                 <StepFooter
                     currentStep="Synthetic Generation"
                     nextStep="Dataset Prep"
-                    nextStepIcon="📋"
+                    nextStepIcon=""
                     isComplete={activeGeneratedCount > 0}
                     hint={
                         generationMode === 'qa'

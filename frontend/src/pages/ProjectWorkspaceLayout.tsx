@@ -7,6 +7,8 @@
 import { useEffect, useMemo } from 'react';
 import { Navigate, Outlet, useParams } from 'react-router-dom';
 
+import LoadingState from '../components/shared/LoadingState';
+import './ProjectWorkspaceLayout.css';
 import TopBar from '../components/layout/TopBar';
 import ProjectSidebar from '../components/layout/ProjectSidebar';
 import CommandPalette from '../components/layout/CommandPalette';
@@ -62,10 +64,9 @@ export default function ProjectWorkspaceLayout() {
     if (!activeProject || activeProject.id !== projectId || !contextValue) {
         return (
             <div className="app-layout">
-                <div className="main-content" style={{ marginLeft: 0 }}>
+                <div className="main-content workspace-layout__flush">
                     <div className="page-container">
-                        <div className="skeleton" style={{ height: 48, width: 300, marginBottom: 24 }} />
-                        <div className="skeleton" style={{ height: 200 }} />
+                        <LoadingState label="Loading project" title lines={4} testId="workspace-loading" />
                     </div>
                 </div>
             </div>

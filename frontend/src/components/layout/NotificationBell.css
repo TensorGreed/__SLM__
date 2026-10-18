@@ -25,13 +25,13 @@
 }
 
 .notif-bell__btn.has-active {
-    color: var(--accent, #3b82f6);
-    border-color: var(--accent, #3b82f6);
+    color: var(--accent);
+    border-color: var(--accent);
 }
 
 .notif-bell__btn.has-failure {
-    color: var(--error, #dc2626);
-    border-color: var(--error, #dc2626);
+    color: var(--color-error);
+    border-color: var(--color-error);
 }
 
 .notif-bell__badge {
@@ -42,8 +42,8 @@
     height: 16px;
     padding: 0 4px;
     border-radius: 8px;
-    background: var(--accent, #3b82f6);
-    color: white;
+    background: var(--accent);
+    color: var(--accent-contrast);
     font-size: 10px;
     font-weight: 600;
     line-height: 16px;
@@ -51,7 +51,7 @@
 }
 
 .notif-bell__badge--failure {
-    background: var(--error, #dc2626);
+    background: var(--color-error);
 }
 
 .notif-bell__panel {
@@ -129,15 +129,15 @@
 }
 
 .notif-bell__row--running {
-    background: var(--accent-bg, rgba(59, 130, 246, 0.04));
+    background: var(--accent-bg);
 }
 
 .notif-bell__row--succeeded {
-    background: var(--success-bg, rgba(16, 185, 129, 0.04));
+    background: var(--color-success-bg);
 }
 
 .notif-bell__row--failed {
-    background: var(--error-bg, rgba(220, 38, 38, 0.04));
+    background: var(--color-error-bg);
 }
 
 .notif-bell__row-main {
@@ -165,7 +165,7 @@
 
 .notif-bell__row-error {
     font-size: 12px;
-    color: var(--error, #dc2626);
+    color: var(--color-error);
     margin-top: 4px;
     font-family: var(--font-mono);
     word-break: break-word;
@@ -214,14 +214,14 @@
     font-weight: 600;
     background: var(--color-warning-bg);
     color: var(--color-warning);
-    border: 1px solid rgba(138, 90, 0, 0.32);
+    border: 1px solid var(--color-warning-border);
     border-radius: var(--radius-sm);
     cursor: pointer;
 }
 .notif-bell__kill-switch:hover:not(:disabled) {
     background: var(--color-error-bg);
     color: var(--color-error);
-    border-color: rgba(179, 38, 30, 0.32);
+    border-color: var(--color-error-border);
 }
 .notif-bell__kill-switch:disabled {
     opacity: 0.6;
@@ -231,7 +231,7 @@
     margin-top: 6px;
     padding: 6px 8px;
     background: var(--color-warning-bg);
-    border: 1px solid rgba(138, 90, 0, 0.24);
+    border: 1px solid var(--color-warning-border);
     border-radius: var(--radius-sm);
 }
 .notif-bell__kill-switch-msg {
@@ -248,7 +248,7 @@
 
 .notif-bell__progress-fill {
     height: 100%;
-    background: var(--accent, #3b82f6);
+    background: var(--accent);
     transition: width 0.3s ease;
     width: 0%;
 }
@@ -299,10 +299,10 @@
 }
 
 .notif-bell__row-btn--danger {
-    color: var(--error, #dc2626);
-    border-color: var(--error, #dc2626);
+    color: var(--color-error);
+    border-color: var(--color-error);
 }
 
 .notif-bell__row-btn--danger:hover {
-    background: var(--error-bg, rgba(220, 38, 38, 0.08));
+    background: var(--color-error-bg);
 }

@@ -117,6 +117,18 @@ describe('ProjectOverviewPage', () => {
         expect(screen.getByTestId('location')).toHaveTextContent('/project/31/results');
     });
 
+    it('shows loading, then empty states when nothing is trained or exported', async () => {
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/export/list')) return { data: [] };
+            return { data: { project_id: 31, experiment_id: null, kind: null, verdict: 'no_trained_run', headline: null, failures: [] } };
+        });
+        renderOverview();
+        expect(screen.getAllByTestId('loading-state').length).toBeGreaterThan(0);
+        await waitFor(() => expect(screen.getAllByTestId('empty-state')).toHaveLength(2));
+        expect(screen.getByTestId('overview-latest-run')).toHaveTextContent('Nothing trained yet');
+        expect(screen.getByTestId('overview-shipped')).toHaveTextContent('Nothing exported yet');
+    });
+
     it('opens the full plan on request', async () => {
         const user = userEvent.setup();
         renderOverview();

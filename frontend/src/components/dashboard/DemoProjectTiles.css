@@ -136,8 +136,8 @@
 }
 
 .demo-project-tile-reset:hover:not(:disabled) {
-    color: var(--text-primary, var(--text-secondary));
-    border-color: var(--accent, #6366f1);
+    color: var(--text-primary);
+    border-color: var(--accent);
 }
 
 .demo-project-tile-reset:disabled {

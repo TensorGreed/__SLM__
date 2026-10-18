@@ -1076,11 +1076,11 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
     };
 
     return (
-        <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
+        <div className="animate-fade-in u-stack-xl">
             {st('package') && (
             <div className="card" data-testid="export-form-card">
-                <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>New export</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>
+                <h3 className="u-card-title u-mb-lg">New export</h3>
+                <div className="export-form-grid">
                     <div className="form-group">
                         <label className="form-label">Experiment</label>
                         <select className="input" value={selectedExp} onChange={(e) => setSelectedExp(e.target.value)}>
@@ -1277,8 +1277,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                                             </div>
                                         )}
                                         <button
-                                            className="btn btn-secondary btn-sm"
-                                            style={{ marginTop: 'auto' }}
+                                            className="btn btn-secondary btn-sm u-push-bottom"
                                             onClick={() => applyOptimization(c)}
                                         >
                                             Apply Settings
@@ -1299,7 +1298,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                                     Run {matrixRun.run_id} • {matrixRun.status}
                                 </div>
                             </div>
-                            <div style={{ display: 'flex', gap: 8 }}>
+                            <div className="u-row">
                                 <span className={`badge ${runStatusColor(matrixRun.status)}`}>{matrixRun.status}</span>
                                 <button
                                     className="btn btn-secondary btn-sm"
@@ -1381,7 +1380,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                         </div>
 
                         {(matrixRun.targets || []).length > 0 && (
-                            <div className="table-container" style={{ maxHeight: 240 }}>
+                            <div className="table-container export-scroll-240">
                                 <table className="docs-table">
                                     <thead>
                                         <tr>
@@ -1488,8 +1487,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                                                             </div>
                                                         )}
                                                         <button
-                                                            className="btn btn-secondary btn-sm"
-                                                            style={{ marginTop: 'auto' }}
+                                                            className="btn btn-secondary btn-sm u-push-bottom"
                                                             onClick={() => applyOptimization(candidate)}
                                                         >
                                                             Apply Settings
@@ -1505,7 +1503,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                     </div>
                 )}
 
-                <div style={{ marginTop: '0.75rem', marginBottom: '0.75rem' }}>
+                <div className="export-target-field">
                     <label className="form-label">Deploy / SDK Plan Target</label>
                     <select className="input" value={deployTargetId} onChange={(e) => setDeployTargetId(e.target.value)}>
                         <option value="deployment.hf_inference_endpoint">HuggingFace Inference Endpoint</option>
@@ -1515,7 +1513,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                         <option value="sdk.android_executorch_stub">Android ExecuTorch Stub App</option>
                     </select>
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <div className="u-row">
                     <button
                         className="btn btn-primary"
                         onClick={() => void handleCreateExport()}
@@ -1542,7 +1540,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                     </button>
                 </div>
                 {(errorMessage || statusMessage) && (
-                    <div style={{ marginTop: 'var(--space-md)', color: errorMessage ? 'var(--color-error)' : 'var(--color-success)' }}>
+                    <div className={`u-mt-md ${errorMessage ? 'u-text-error' : 'u-text-success'}`}>
                         {errorMessage || statusMessage}
                     </div>
                 )}
@@ -1551,8 +1549,8 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
 
             {st('publish') && (
                 <div className="card" data-testid="export-publish-card">
-                    <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-sm)' }}>Publish to the Hugging Face Hub</h3>
-                    <p style={{ margin: '0 0 var(--space-md)', color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+                    <h3 className="u-card-title u-mb-sm">Publish to the Hugging Face Hub</h3>
+                    <p className="u-hint u-mt0 u-mb-md">
                         A completed Hugging Face export becomes a model repo: weights, tokenizer, model card, thresholds, plus the manifest and release notes under brewslm/. The server's HF_TOKEN or login is used; nothing is stored.
                     </p>
                     {(() => {
@@ -1611,7 +1609,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                         );
                     })()}
                     {(errorMessage || statusMessage) && (
-                        <div style={{ marginTop: 'var(--space-md)', color: errorMessage ? 'var(--color-error)' : 'var(--color-success)' }}>
+                        <div className={`u-mt-md ${errorMessage ? 'u-text-error' : 'u-text-success'}`}>
                             {errorMessage || statusMessage}
                         </div>
                     )}
@@ -1619,10 +1617,10 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
             )}
 
             {st('package') && (
-                <div className="card" style={{ padding: 0, overflow: 'hidden' }} data-testid="export-releases">
-                    <div style={{ padding: 'var(--space-lg)', borderBottom: '1px solid var(--border-color)' }}>
-                        <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, margin: 0 }}>Releases</h3>
-                        <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+                <div className="card export-flush-card" data-testid="export-releases">
+                    <div className="export-card-head">
+                        <h3 className="u-card-title u-card-title--tight">Releases</h3>
+                        <p className="u-hint u-mt-xs u-mb0">
                             {exportsList.length} export{exportsList.length === 1 ? '' : 's'}
                             {registryModels.length ? ` · ${registryModels.length} registered model${registryModels.length === 1 ? '' : 's'}` : ''}
                             {exportsList.length === 0 ? ' — nothing packaged yet.' : ''}
@@ -1632,11 +1630,11 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
             )}
 
             {registryModels.length > 0 && st('package') && (
-                <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                    <div style={{ padding: 'var(--space-lg)', borderBottom: '1px solid var(--border-color)' }}>
-                        <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, margin: 0 }}>Registered models</h3>
+                <div className="card export-flush-card">
+                    <div className="export-card-head">
+                        <h3 className="u-card-title u-card-title--tight">Registered models</h3>
                     </div>
-                    <div style={{ overflowX: 'auto' }}>
+                    <div className="u-scroll-x">
                         <table className="export-history-table">
                             <thead>
                                 <tr>
@@ -1661,7 +1659,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                                         <td>{fmtMetric(model.readiness?.metrics?.llm_judge_pass_rate)}</td>
                                         <td>{fmtMetric(model.readiness?.metrics?.safety_pass_rate)}</td>
                                         <td>
-                                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                            <div className="u-row-xs">
                                                 <button className="btn btn-secondary btn-sm" onClick={() => void handlePromote(model.id, 'staging')}>
                                                     Promote Staging
                                                 </button>
@@ -1689,15 +1687,15 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
             )}
 
             {exportsList.length > 0 && st('package') && (
-                <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                    <div style={{ padding: 'var(--space-lg)', borderBottom: '1px solid var(--border-color)' }}>
-                        <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, margin: 0 }}>Exports</h3>
+                <div className="card export-flush-card">
+                    <div className="export-card-head">
+                        <h3 className="u-card-title u-card-title--tight">Exports</h3>
                     </div>
-                    <div style={{ overflowX: 'auto' }}>
+                    <div className="u-scroll-x">
                         <table className="export-history-table">
                             <thead>
                                 <tr>
-                                    <th style={{ width: 40 }}></th>
+                                    <th className="export-col-expand"></th>
                                     <th>Format</th>
                                     <th>Quantization</th>
                                     <th>Size</th>
@@ -1714,13 +1712,13 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
 
                                     return (
                                         <React.Fragment key={exp.id}>
-                                            <tr className={`export-row ${isExpanded ? 'expanded' : ''}`} onClick={() => toggleExpand(exp.id)} style={{ cursor: 'pointer' }}>
-                                                <td style={{ textAlign: 'center' }}><span className="expand-icon" style={{ display: 'inline-block', fontSize: 10 }}>▼</span></td>
-                                                <td style={{ fontWeight: 600 }}>{String(exp.export_format || exp.format || 'unknown').toUpperCase()}</td>
+                                            <tr className={`export-row u-pointer ${isExpanded ? 'expanded' : ''}`} onClick={() => toggleExpand(exp.id)}>
+                                                <td className="u-text-center"><span className="expand-icon export-expand-icon">▼</span></td>
+                                                <td className="u-semibold">{String(exp.export_format || exp.format || 'unknown').toUpperCase()}</td>
                                                 <td>{exp.quantization || 'None'}</td>
                                                 <td>{formatBytes(exp.file_size_bytes)}</td>
                                                 <td><span className={`badge ${statusColor(exp.status)}`}>{exp.status}</span></td>
-                                                <td><span style={{ color: 'var(--text-tertiary)' }}>{exp.created_at ? new Date(exp.created_at).toLocaleString() : '—'}</span></td>
+                                                <td><span className="u-text-tertiary">{exp.created_at ? new Date(exp.created_at).toLocaleString() : '—'}</span></td>
                                             </tr>
                                             {isExpanded && (
                                                 <tr className="export-details-row">
@@ -1728,7 +1726,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                                                     <td colSpan={5}>
                                                         <div className="manifest-header">
                                                             <div className="manifest-title">Manifest and Output Path</div>
-                                                            <div style={{ display: 'flex', gap: 8 }}>
+                                                            <div className="u-row">
                                                                 <button
                                                                     className="btn btn-secondary btn-sm"
                                                                     onClick={(e) => { e.stopPropagation(); handleCopy(`path-${exp.id}`, exp.output_path || ''); }}
@@ -1766,9 +1764,9 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                                                         </div>
 
                                                         {exp.output_path && (
-                                                            <div style={{ marginBottom: 16, fontSize: '0.8rem', color: 'var(--color-info)' }}>
-                                                                <span style={{ color: 'var(--text-tertiary)' }}>Path:</span>{' '}
-                                                                <code style={{ background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: 4 }}>{exp.output_path}</code>
+                                                            <div className="export-output-path">
+                                                                <span className="u-text-tertiary">Path:</span>{' '}
+                                                                <code className="export-output-path__code">{exp.output_path}</code>
                                                             </div>
                                                         )}
 
@@ -1791,8 +1789,8 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                 <div className="card">
                     <div className="serve-plan-header">
                         <div>
-                            <h3 style={{ margin: 0, fontSize: 'var(--font-size-md)' }}>One-Click Serve Plan</h3>
-                            <p style={{ margin: '6px 0 0', color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+                            <h3 className="u-card-title u-card-title--tight">One-Click Serve Plan</h3>
+                            <p className="u-hint u-mt-xs u-mb0">
                                 Source: {servePlan.source}
                                 {servePlan.export_format ? ` • Format: ${servePlan.export_format}` : ''}
                                 {servePlan.model_name ? ` • Model: ${servePlan.model_name}` : ''}
@@ -1919,7 +1917,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                                         Run ID: {activeServeRun.run_id} • Template: {activeServeRun.template_id}
                                     </div>
                                 </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <div className="u-row">
                                     <span className={`badge ${runStatusColor(activeServeRun.status)}`}>{activeServeRun.status}</span>
                                     <button
                                         className="btn btn-secondary btn-sm"
@@ -2029,8 +2027,8 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                 <div className="card">
                     <div className="serve-plan-header">
                         <div>
-                            <h3 style={{ margin: 0, fontSize: 'var(--font-size-md)' }}>Deploy / SDK Plan</h3>
-                            <p style={{ margin: '6px 0 0', color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+                            <h3 className="u-card-title u-card-title--tight">Deploy / SDK Plan</h3>
+                            <p className="u-hint u-mt-xs u-mb0">
                                 {deployPlan.display_name || deployPlan.target_id}
                             </p>
                         </div>
@@ -2054,7 +2052,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                     {Array.isArray(deployPlan.steps) && deployPlan.steps.length > 0 && (
                         <div className="serve-template-block">
                             <div className="serve-template-block__label">Steps</div>
-                            <ol style={{ margin: 0, paddingLeft: '1.2rem' }}>
+                            <ol className="export-steps">
                                 {deployPlan.steps.map((step, idx) => (
                                     <li key={`deploy-step-${idx}`}>{step}</li>
                                 ))}
@@ -2097,7 +2095,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                                 />
                             </>
                         )}
-                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <div className="u-row">
                             <button
                                 className="btn btn-primary btn-sm"
                                 onClick={() => void handleExecuteDeployPlan()}
@@ -2110,7 +2108,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                                         : 'Execute Deployment'}
                             </button>
                             {deployPlanExportId !== null && (
-                                <span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--font-size-xs)' }}>
+                                <span className="u-meta">
                                     Export ID: {deployPlanExportId}
                                 </span>
                             )}
@@ -2132,7 +2130,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                         <div className="serve-template-block">
                             <div className="serve-template-block__label">SDK Artifact Zip</div>
                             <code>{deployPlan.sdk_artifact.zip_path}</code>
-                            <div style={{ marginTop: 8 }}>
+                            <div className="u-mt-sm">
                                 <button
                                     className="btn btn-secondary btn-sm"
                                     onClick={() => handleCopy(`deploy-sdk-${deployPlan.target_id}`, deployPlan.sdk_artifact?.zip_path || '')}
@@ -2213,7 +2211,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                                         )}
                                     {Array.isArray(deployPlan.sdk_artifact.smoke_validation.checks)
                                         && deployPlan.sdk_artifact.smoke_validation.checks.length > 0 && (
-                                            <div className="table-container" style={{ maxHeight: 220 }}>
+                                            <div className="table-container export-scroll-220">
                                                 <table className="docs-table">
                                                     <thead>
                                                         <tr>
@@ -2241,12 +2239,12 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                     {deployExecution?.execution && (
                         <div className="serve-template-block">
                             <div className="serve-template-block__label">Execution Result</div>
-                            <div style={{ fontSize: 'var(--font-size-sm)' }}>
+                            <div className="u-text-sm">
                                 <strong>Status:</strong> {deployExecution.execution.status || 'unknown'}
                                 {deployExecution.execution.dry_run ? ' (dry-run)' : ''}
                             </div>
                             {deployExecution.execution.message && (
-                                <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+                                <div className="u-hint">
                                     {deployExecution.execution.message}
                                 </div>
                             )}

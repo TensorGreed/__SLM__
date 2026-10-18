@@ -215,3 +215,50 @@
 .doc-row:hover {
     background: var(--bg-tertiary);
 }
+
+/* Epic U phase U7 — classes that replaced inline styles */
+.ing__th-narrow { width: 32px; }
+.ing__src-badge { font-size: var(--font-size-2xs); }
+.ing__import-card {
+    margin-bottom: var(--space-lg);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+}
+.ing__import-blurb {
+    margin: var(--space-xs) 0 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    max-width: 720px;
+}
+.ing__grid-inspect { grid-template-columns: 1fr auto; align-items: end; }
+.ing__align-end { align-self: end; }
+.ing__remediation { margin-top: var(--space-xs); font-size: var(--font-size-sm); opacity: 0.9; }
+.ing__step2 {
+    margin-top: var(--space-md);
+    padding: var(--space-md);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+}
+.ing__w-split { width: 140px; }
+.ing__w-samples { width: 100px; }
+.ing__w-adapter { min-width: 180px; }
+.ing__json-area { height: 60px; }
+.ing__check {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: var(--font-size-xs);
+}
+.ing__grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); }
+.ing__span-all { grid-column: 1 / -1; }
+.ing__secret-status { color: var(--accent-text); }
+.ing__import-status {
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-sm);
+}
+.ing__import-status--ok { background: var(--color-success-bg); color: var(--color-success); }
+.ing__import-status--bad { background: var(--color-error-bg); color: var(--color-error); }

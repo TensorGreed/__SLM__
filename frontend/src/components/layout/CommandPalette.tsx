@@ -22,11 +22,15 @@ import {
     Database,
     FlaskConical,
     Home,
+    Moon,
     Rocket,
     Search,
     Settings2,
     Sparkles,
+    Sun,
 } from 'lucide-react';
+
+import { useThemeStore, type ResolvedTheme } from '../../stores/themeStore';
 
 import { workspaceCommands } from '../../utils/workspaceCommands';
 
@@ -62,6 +66,7 @@ const DESTINATION_ICON: Record<Destination, ReactNode> = {
 function buildItems(
     projectId: number | null,
     navigate: ReturnType<typeof useNavigate>,
+    theme: ResolvedTheme,
 ): CommandItem[] {
     const items: CommandItem[] = [];
 
@@ -72,6 +77,15 @@ function buildItems(
         section: 'Navigation',
         icon: <Home size={14} />,
         onSelect: () => navigate('/'),
+    });
+
+    items.push({
+        id: 'theme-toggle',
+        label: theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme',
+        hint: 'Settings · Appearance',
+        section: 'Navigation',
+        icon: theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />,
+        onSelect: () => useThemeStore.getState().toggle(),
     });
 
     if (projectId == null) return items;
@@ -121,9 +135,10 @@ export default function CommandPalette({ projectId }: Props) {
     const inputRef = useRef<HTMLInputElement | null>(null);
     const listRef = useRef<HTMLDivElement | null>(null);
 
+    const theme = useThemeStore((s) => s.resolved);
     const items = useMemo(
-        () => buildItems(projectId, navigate),
-        [projectId, navigate],
+        () => buildItems(projectId, navigate, theme),
+        [projectId, navigate, theme],
     );
     const filtered = useMemo(() => filterItems(items, query), [items, query]);
     const grouped = useMemo(() => groupBySection(filtered), [filtered]);

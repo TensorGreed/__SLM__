@@ -11,7 +11,7 @@
 }
 
 .tcg-patch-modal {
-    background: var(--bg-elevated, #ffffff);
+    background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     min-width: 360px;

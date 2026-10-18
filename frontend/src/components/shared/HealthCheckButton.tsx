@@ -9,6 +9,7 @@
 
 import { useState } from 'react';
 
+import { Stethoscope } from 'lucide-react';
 import HealthCheckModal from './HealthCheckModal';
 
 
@@ -30,7 +31,8 @@ export default function HealthCheckButton({ projectId }: HealthCheckButtonProps)
                 aria-label="Run project health check"
                 data-testid="health-check-button"
             >
-                🩺 Health
+                <Stethoscope size={14} aria-hidden="true" />
+                Health
             </button>
             {open && (
                 <HealthCheckModal

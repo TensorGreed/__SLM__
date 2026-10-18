@@ -14,7 +14,7 @@
  */
 
 import { Link } from 'react-router-dom';
-import { CheckCircle2, AlertTriangle, ArrowRight } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, ArrowRight, Check, X } from 'lucide-react';
 
 import './DatasetFitCard.css';
 import { trainSectionPath } from '../../utils/workspaceRoutes';
@@ -177,12 +177,16 @@ export default function DatasetFitCard({ contract, projectId }: DatasetFitCardPr
                                 <span className="dataset-fit-card__shape-name">{meta.label}</span>
                                 <span className="dataset-fit-card__shape-bar">
                                     <span
-                                        className="dataset-fit-card__shape-bar-fill"
-                                        style={{ width: `${pct}%` }}
+                                        className={`dataset-fit-card__shape-bar-fill dataset-fit-card__shape-bar-fill--w-${Math.min(100, count > 0 ? Math.max(10, Math.round(pct / 10) * 10) : 0)}`}
                                     />
                                 </span>
                                 <span className="dataset-fit-card__shape-count">
-                                    {count} {isRequired && count > 0 ? '✓' : isRequired ? '✗' : ''}
+                                    {count}{' '}
+                                    {isRequired && count > 0 ? (
+                                        <Check className="u-icon" aria-label="present" />
+                                    ) : isRequired ? (
+                                        <X className="u-icon" aria-label="missing" />
+                                    ) : null}
                                 </span>
                             </li>
                         );

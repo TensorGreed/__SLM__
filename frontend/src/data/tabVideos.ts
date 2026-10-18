@@ -1,25 +1,28 @@
 /**
- * Static catalog mapping each pipeline tab to a walkthrough video +
- * chapter timestamp. Sourced from `docs-demo/youtube/videos.md`.
+ * Static catalog mapping each workspace step to a walkthrough video +
+ * chapter timestamp. Sourced from `docs-demo/youtube/videos.md` and the
+ * narration scripts under `docs-demo/scripts/narration/`.
  *
- * `youtubeId` is `null` for videos that haven't been published yet —
- * the embed modal renders a "watch on @TensorGreed channel" fallback
- * card in that case so the affordance still lands even before upload.
- * Filling in `youtubeId` here is the only change needed when the
- * videos go live.
+ * Epic U phase U7 (2026-10-18): video 03 was re-recorded on the
+ * six-destination workspace (Overview → Data's five steps → Train → Results
+ * → Ship); its chapters below are the new take's. `youtubeId` is `null`
+ * until the new take is uploaded — the embed modal then renders a "watch on
+ * @TensorGreed" card — so the old take's chapter offsets are never
+ * deep-linked. Filling in `youtubeId` is the only change needed when it
+ * goes live (see `docs-demo/videos/03-support-faq-pipeline/PUBLISH.md`).
  */
 
 import type { TabKey } from '../types';
 
 export interface VideoChapter {
-    /** Display label, e.g. "Data tab". */
+    /** Display label, e.g. "Data · Sources". */
     label: string;
     /** Offset within the video, in seconds. */
     timeSeconds: number;
 }
 
 export interface VideoMeta {
-    /** Stable short id used as catalog key — "v03", "v07", … */
+    /** Stable short id used as catalog key — "v03", … */
     id: string;
     /**
      * The 11-char YouTube video id (e.g. "dQw4w9WgXcQ").
@@ -44,58 +47,26 @@ function t(timecode: string): number {
 export const VIDEOS: Record<string, VideoMeta> = {
     v03: {
         id: 'v03',
-        youtubeId: "93D9XMNeKhU",
-        title: 'Fine-Tune an SLM on Support Tickets — Full Pipeline Walkthrough',
-        chapters: [
-            { label: 'Intro', timeSeconds: t('00:00') },
-            { label: 'Data tab', timeSeconds: t('00:15') },
-            { label: 'Cleaning', timeSeconds: t('00:34') },
-            { label: 'Gold Set', timeSeconds: t('00:55') },
-            { label: 'Synthetic', timeSeconds: t('01:12') },
-            { label: 'Dataset Prep', timeSeconds: t('01:29') },
-            { label: 'Tokenization', timeSeconds: t('01:48') },
-            { label: 'Training Config', timeSeconds: t('02:04') },
-            { label: 'Evaluation & wrap', timeSeconds: t('02:27') },
-        ],
-    },
-    v07: {
-        id: 'v07',
         youtubeId: null,
-        title: 'Train a 135M LoRA in 12 Seconds — Real Celery, Real LoRA, Local GPU',
+        title: 'Fine-Tune an SLM on Support Tickets — Workspace Walkthrough',
         chapters: [
-            { label: 'Intro', timeSeconds: t('00:00') },
-            { label: 'Training Config recap', timeSeconds: t('00:17') },
-            { label: 'Kickoff (API)', timeSeconds: t('00:34') },
-            { label: 'Watching status: running', timeSeconds: t('00:46') },
-            { label: 'Completed with metrics', timeSeconds: t('00:59') },
-            { label: 'Wrap', timeSeconds: t('01:16') },
-        ],
-    },
-    v08: {
-        id: 'v08',
-        youtubeId: null,
-        title: 'Evaluate a Fine-Tuned SLM Against a 200-Row Gold Set',
-        chapters: [
-            { label: 'Intro', timeSeconds: t('00:00') },
-            { label: 'Eval setup', timeSeconds: t('00:11') },
-            { label: 'Kickoff (POST /run-heldout)', timeSeconds: t('00:29') },
-            { label: 'Running eval on gold_dev', timeSeconds: t('00:38') },
-            { label: 'Results: Auto-Gate & predictions', timeSeconds: t('00:52') },
-            { label: 'Wrap', timeSeconds: t('01:08') },
-        ],
-    },
-    v09: {
-        id: 'v09',
-        youtubeId: null,
-        title: 'Compress an SLM to a 105 MB GGUF — Merge LoRA + llama.cpp Quantize',
-        chapters: [
-            { label: 'Intro', timeSeconds: t('00:00') },
-            { label: 'Compression form', timeSeconds: t('00:15') },
-            { label: 'Merge LoRA + quantize', timeSeconds: t('00:31') },
-            { label: 'GGUF on disk (105 MB)', timeSeconds: t('00:49') },
-            { label: 'Export tab', timeSeconds: t('01:03') },
-            { label: 'Export registered', timeSeconds: t('01:18') },
-            { label: 'Wrap', timeSeconds: t('01:31') },
+            { label: 'Overview', timeSeconds: t('00:00') },
+            { label: 'Data · Sources', timeSeconds: t('00:18') },
+            { label: 'Data · Prepare', timeSeconds: t('00:32') },
+            { label: 'Data · Labels', timeSeconds: t('00:43') },
+            { label: 'Data · Generate', timeSeconds: t('00:59') },
+            { label: 'Data · Split', timeSeconds: t('01:16') },
+            { label: 'Train', timeSeconds: t('01:33') },
+            { label: 'Train · More options', timeSeconds: t('01:50') },
+            { label: 'Results · Verdict', timeSeconds: t('02:07') },
+            { label: 'Results · Failures', timeSeconds: t('02:19') },
+            { label: 'Results · Compare', timeSeconds: t('02:29') },
+            { label: 'Results · Try it', timeSeconds: t('02:41') },
+            { label: 'Ship · Package', timeSeconds: t('02:50') },
+            { label: 'Ship · Publish', timeSeconds: t('03:02') },
+            { label: 'Ship · Deploy', timeSeconds: t('03:10') },
+            { label: 'Ship · Monitor', timeSeconds: t('03:22') },
+            { label: 'Wrap', timeSeconds: t('03:34') },
         ],
     },
 };
@@ -106,20 +77,20 @@ export const VIDEOS: Record<string, VideoMeta> = {
 export const CHANNEL_URL = 'https://www.youtube.com/@TensorGreed';
 
 /**
- * Maps a pipeline tab to the video + chapter that explains it.
+ * Maps a step to the video + chapter that explains it.
  * `chapterIndex` is the index into the video's `chapters` array.
  */
 export const TAB_VIDEO_MAP: Record<TabKey, { videoId: string; chapterIndex: number }> = {
-    data: { videoId: 'v03', chapterIndex: 1 },          // 00:15 Data tab
-    cleaning: { videoId: 'v03', chapterIndex: 2 },      // 00:34 Cleaning
-    goldset: { videoId: 'v03', chapterIndex: 3 },       // 00:55 Gold Set
-    synthetic: { videoId: 'v03', chapterIndex: 4 },     // 01:12 Synthetic
-    dataprep: { videoId: 'v03', chapterIndex: 5 },      // 01:29 Dataset Prep
-    tokenization: { videoId: 'v03', chapterIndex: 6 },  // 01:48 Tokenization
-    training: { videoId: 'v07', chapterIndex: 1 },      // 00:17 Training Config recap
-    eval: { videoId: 'v08', chapterIndex: 1 },          // 00:11 Eval setup
-    compression: { videoId: 'v09', chapterIndex: 1 },   // 00:15 Compression form
-    export: { videoId: 'v09', chapterIndex: 4 },        // 01:03 Export tab
+    data: { videoId: 'v03', chapterIndex: 1 },          // Data · Sources
+    cleaning: { videoId: 'v03', chapterIndex: 2 },      // Data · Prepare
+    goldset: { videoId: 'v03', chapterIndex: 3 },       // Data · Labels
+    synthetic: { videoId: 'v03', chapterIndex: 4 },     // Data · Generate
+    dataprep: { videoId: 'v03', chapterIndex: 5 },      // Data · Split
+    training: { videoId: 'v03', chapterIndex: 6 },      // Train
+    tokenization: { videoId: 'v03', chapterIndex: 7 },  // Train · More options
+    eval: { videoId: 'v03', chapterIndex: 8 },          // Results · Verdict
+    compression: { videoId: 'v03', chapterIndex: 12 },  // Ship · Package
+    export: { videoId: 'v03', chapterIndex: 12 },       // Ship · Package
 };
 
 export interface TabVideo {

@@ -17,6 +17,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Star } from 'lucide-react';
+import LoadingState from '../components/shared/LoadingState';
 import { useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 
 import type {
@@ -143,7 +145,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
     if (loading) {
         return (
             <div className="workspace-page eval-compare" data-testid="eval-compare-loading">
-                <p>Loading comparison…</p>
+                <LoadingState label="Loading comparison" lines={3} card />
             </div>
         );
     }
@@ -313,7 +315,7 @@ function SideCard({
             data-testid={`eval-compare-side-${label.toLowerCase()}`}
         >
             <div className="eval-compare__card-label">
-                {label}{winner ? ' ★' : ''}
+                {label}{winner && <> <Star className="u-icon" aria-label="winner" /></>}
             </div>
             <div className="eval-compare__card-name">{side.name}</div>
             <div className="eval-compare__card-meta">

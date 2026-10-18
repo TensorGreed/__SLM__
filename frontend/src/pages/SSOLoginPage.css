@@ -6,7 +6,7 @@
     padding: var(--space-xl);
     background:
         radial-gradient(circle at 15% 15%, rgba(0, 0, 0, 0.16), transparent 44%),
-        radial-gradient(circle at 88% 20%, rgba(97, 161, 237, 0.1), transparent 36%),
+        radial-gradient(circle at 88% 20%, var(--accent-bg), transparent 36%),
         var(--bg-primary);
 }
 
@@ -25,7 +25,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 8px 24px rgba(37, 99, 235, 0.26);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.26);
 }
 
 .auth-logo-mark {

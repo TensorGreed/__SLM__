@@ -1,6 +1,10 @@
 /* ───────────────────────────────────────────────────────────────────────
-   BrewSLM — Design System
-   Flat, airy, monochrome. Vercel-leaning. Light only.
+   BrewSLM — Design System (Epic U phase U7)
+   Flat and airy. A neutral gray ramp, ONE accent hue, three status
+   colours. Light by default; ``html[data-theme="dark"]`` flips the ramp
+   (set by ``stores/themeStore`` — Settings → Appearance).
+   Rules: components never write a hex colour — every colour is a token
+   below; spacing and type come from the scales; no inline styles.
    ─────────────────────────────────────────────────────────────────────── */
 
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
@@ -48,30 +52,52 @@
   --border-secondary: var(--gray-150);
   --border-hover: var(--gray-400);
 
-  /* Accent — monochrome. Black IS the accent. */
-  --accent: var(--gray-1000);
-  --accent-primary: var(--gray-1000);
-  --accent-primary-hover: var(--gray-800);
-  --accent-secondary: var(--gray-900);
-  --accent-gradient: var(--gray-1000);     /* deliberately flat — gradients out */
-  --accent-glow: rgba(0, 0, 0, 0.06);
-  --primary: var(--accent-primary);
-  --primary-color: var(--accent-primary);
-  --color-primary: var(--accent-primary);
-  --color-primary-light: var(--gray-700);
-  --color-accent: var(--accent-primary);
+  /* Accent — ONE hue (blue). Primary actions, the active nav item and tab,
+     links, focus rings, selected states. Nothing else is coloured except
+     the three status colours below. */
+  --accent-50: #eff6ff;
+  --accent-100: #dbeafe;
+  --accent-200: #bfdbfe;
+  --accent-500: #3b82f6;
+  --accent-600: #2563eb;
+  --accent-700: #1d4ed8;
+  --accent: var(--accent-600);
+  --accent-hover: var(--accent-700);
+  --accent-text: var(--accent-700);        /* accent used as text on a light surface */
+  --accent-bg: var(--accent-50);           /* selected / highlighted surface */
+  --accent-border: var(--accent-200);
+  --accent-contrast: var(--gray-0);        /* text on an accent surface */
+  --accent-ring: rgba(37, 99, 235, 0.25);  /* focus ring */
+  --accent-primary: var(--accent);
+  --accent-primary-hover: var(--accent-hover);
+  --accent-secondary: var(--accent-700);
+  --accent-gradient: var(--accent);        /* deliberately flat — gradients out */
+  --accent-glow: var(--accent-ring);
+  --primary: var(--accent);
+  --primary-color: var(--accent);
+  --color-primary: var(--accent);
+  --color-primary-light: var(--accent-500);
+  --color-accent: var(--accent);
 
-  /* Semantic — desaturated, used sparingly */
+  /* Status — the only other colours. Each has a text and a surface shade. */
   --color-success: #167a3a;
   --color-success-bg: #ecf6ee;
+  --color-success-border: rgba(22, 122, 58, 0.22);
   --color-warning: #8a5a00;
   --color-warning-bg: #fbf3e3;
+  --color-warning-border: rgba(138, 90, 0, 0.22);
   --color-error: #b3261e;
   --color-error-bg: #fbecea;
-  --color-info: var(--gray-800);
-  --color-info-bg: var(--gray-100);
+  --color-error-border: rgba(179, 38, 30, 0.22);
+  --color-error-hover: #962019;
+  --color-info: var(--accent-text);
+  --color-info-bg: var(--accent-bg);
+  --color-info-border: var(--accent-border);
   --color-danger: var(--color-error);
   --color-danger-bg: var(--color-error-bg);
+  --color-neutral: var(--gray-700);
+  --color-neutral-bg: var(--gray-100);
+  --color-neutral-border: var(--gray-200);
 
   /* Text */
   --text-primary: var(--gray-1000);
@@ -93,6 +119,10 @@
   /* Typography — Geist Sans + Geist Mono */
   --font-family: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  /* Type scale — seven sizes, each with its line height. Roles: xs = meta
+     and badges, sm = body in dense panels, md = body, lg = card titles,
+     xl = page titles, 2xl / 3xl = marketing and the project list only. */
+  --font-size-2xs: 11px;
   --font-size-xs: 12px;
   --font-size-sm: 13px;
   --font-size-md: 14px;
@@ -100,6 +130,17 @@
   --font-size-xl: 20px;
   --font-size-2xl: 24px;
   --font-size-3xl: 32px;
+  --leading-2xs: 16px;
+  --leading-xs: 18px;
+  --leading-sm: 20px;
+  --leading-md: 22px;
+  --leading-lg: 24px;
+  --leading-xl: 28px;
+  --leading-2xl: 32px;
+  --leading-3xl: 40px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
 
   /* Spacing scale: 4 / 8 / 12 / 16 / 24 / 32 / 48 / 64 */
   --space-xs: 4px;
@@ -141,8 +182,59 @@
   --nav-panel-border: var(--border-default);
   --nav-text: var(--text-primary);
   --nav-text-muted: var(--text-tertiary);
-  --nav-active-bg: var(--gray-100);
-  --nav-active-border: var(--gray-900);
+  --nav-active-bg: var(--accent-bg);
+  --nav-active-border: var(--accent);
+
+  color-scheme: light;
+}
+
+/* ── Dark theme ─────────────────────────────────────────────────────────
+   The gray ramp is mirrored so every token built on it flips with it;
+   the accent and status colours get lighter text shades and translucent
+   surfaces. Applied by ``stores/themeStore`` as ``html[data-theme]``. */
+:root[data-theme="dark"] {
+  --gray-0: #0e0e0e;
+  --gray-50: #141414;
+  --gray-100: #1a1a1a;
+  --gray-150: #1f1f1f;
+  --gray-200: #292929;
+  --gray-300: #383838;
+  --gray-400: #595959;
+  --gray-500: #8a8a8a;
+  --gray-600: #ababab;
+  --gray-700: #c4c4c4;
+  --gray-800: #d9d9d9;
+  --gray-900: #ebebeb;
+  --gray-1000: #f7f7f7;
+
+  --accent-50: rgba(96, 165, 250, 0.12);
+  --accent-100: rgba(96, 165, 250, 0.2);
+  --accent-200: rgba(96, 165, 250, 0.35);
+  --accent-500: #60a5fa;
+  --accent-600: #3b82f6;
+  --accent-700: #2563eb;
+  --accent: var(--accent-600);
+  --accent-hover: var(--accent-500);
+  --accent-text: #8ab8ff;
+  --accent-contrast: #0a1a33;
+  --accent-ring: rgba(96, 165, 250, 0.35);
+
+  --color-success: #5ad17e;
+  --color-success-bg: rgba(90, 209, 126, 0.12);
+  --color-success-border: rgba(90, 209, 126, 0.3);
+  --color-warning: #f2c14e;
+  --color-warning-bg: rgba(242, 193, 78, 0.12);
+  --color-warning-border: rgba(242, 193, 78, 0.3);
+  --color-error: #f28b82;
+  --color-error-bg: rgba(242, 139, 130, 0.12);
+  --color-error-border: rgba(242, 139, 130, 0.3);
+  --color-error-hover: #e06c62;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+
+  color-scheme: dark;
 }
 
 /* ── Global ─────────────────────────────────────────────────────────── */
@@ -171,13 +263,19 @@ body {
 }
 
 a {
-  color: var(--text-primary);
+  color: var(--accent-text);
   text-decoration: none;
-  border-bottom: 1px solid var(--gray-300);
-  transition: border-color var(--transition-fast);
+  border-bottom: 1px solid var(--accent-border);
+  transition: border-color var(--transition-fast), color var(--transition-fast);
 }
 a:hover {
-  border-bottom-color: var(--text-primary);
+  color: var(--accent-hover);
+  border-bottom-color: var(--accent-hover);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 code, pre {
@@ -187,8 +285,21 @@ code, pre {
 
 h1, h2, h3, h4, h5, h6 {
   letter-spacing: -0.015em;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   line-height: 1.25;
+  color: var(--text-primary);
+}
+h1 { font-size: var(--font-size-2xl); line-height: var(--leading-2xl); }
+h2 { font-size: var(--font-size-xl); line-height: var(--leading-xl); }
+h3 { font-size: var(--font-size-lg); line-height: var(--leading-lg); }
+h4 { font-size: var(--font-size-md); line-height: var(--leading-md); }
+h5, h6 { font-size: var(--font-size-sm); line-height: var(--leading-sm); }
+
+small { font-size: var(--font-size-xs); line-height: var(--leading-xs); }
+
+::selection {
+  background: var(--accent-100);
+  color: var(--text-primary);
 }
 
 /* ── Scrollbar ──────────────────────────────────────────────────────── */
@@ -252,14 +363,14 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .btn-primary {
-  background: var(--gray-1000);
-  color: var(--gray-0);
-  border-color: var(--gray-1000);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
   box-shadow: none;
 }
 .btn-primary:hover:not(:disabled) {
-  background: var(--gray-800);
-  border-color: var(--gray-800);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
   transform: none;
   box-shadow: none;
 }
@@ -291,8 +402,8 @@ h1, h2, h3, h4, h5, h6 {
   border-color: var(--color-error);
 }
 .btn-danger:hover:not(:disabled) {
-  background: #962019;
-  border-color: #962019;
+  background: var(--color-error-hover);
+  border-color: var(--color-error-hover);
 }
 
 .btn-sm {
@@ -341,8 +452,8 @@ textarea {
 input:focus,
 textarea:focus,
 select:focus {
-  border-color: var(--gray-900);
-  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.06);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .input::placeholder,
@@ -371,28 +482,33 @@ textarea::placeholder {
 .badge-success {
   background: var(--color-success-bg);
   color: var(--color-success);
-  border-color: rgba(22, 122, 58, 0.18);
+  border-color: var(--color-success-border);
 }
 .badge-warning {
   background: var(--color-warning-bg);
   color: var(--color-warning);
-  border-color: rgba(138, 90, 0, 0.18);
+  border-color: var(--color-warning-border);
 }
 .badge-error,
 .badge-danger {
   background: var(--color-error-bg);
   color: var(--color-error);
-  border-color: rgba(179, 38, 30, 0.18);
+  border-color: var(--color-error-border);
 }
 .badge-info {
-  background: var(--gray-100);
-  color: var(--gray-800);
-  border-color: var(--border-default);
+  background: var(--color-info-bg);
+  color: var(--color-info);
+  border-color: var(--color-info-border);
+}
+.badge-neutral {
+  background: var(--color-neutral-bg);
+  color: var(--color-neutral);
+  border-color: var(--color-neutral-border);
 }
 .badge-accent {
-  background: var(--gray-1000);
-  color: var(--gray-0);
-  border-color: var(--gray-1000);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
 }
 
 /* ── Animations (kept; tighter) ─────────────────────────────────────── */
@@ -421,11 +537,54 @@ textarea::placeholder {
 .animate-slide-left  { animation: slideInLeft 0.2s ease-out; }
 .animate-slide-right { animation: slideInRight 0.2s ease-out; }
 
+/* ── Skeleton (loading placeholders; see components/shared/Skeleton) ── */
 .skeleton {
-  background: linear-gradient(90deg, var(--gray-100) 25%, var(--gray-150) 50%, var(--gray-100) 75%);
+  display: block;
+  width: 100%;
+  background: linear-gradient(90deg, var(--gray-100) 25%, var(--gray-200) 50%, var(--gray-100) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.4s infinite;
   border-radius: var(--radius-sm);
+}
+.skeleton--static { animation: none; }
+.skeleton--line { height: 14px; }
+.skeleton--line-short { height: 14px; width: 60%; }
+.skeleton--title { height: 20px; width: 40%; }
+.skeleton--text { height: 12px; }
+.skeleton--block { height: 120px; border-radius: var(--radius-lg); }
+.skeleton--card { height: 200px; border-radius: var(--radius-xl); }
+.skeleton--row { height: 36px; }
+.skeleton--inline { display: inline-block; width: 6em; height: 1em; vertical-align: middle; }
+.skeleton-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md) 0;
+}
+.loading-state--card {
+  padding: var(--space-lg);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
 }
 
 /* ── Layout shell ───────────────────────────────────────────────────── */
@@ -513,8 +672,8 @@ textarea::placeholder {
   background: transparent;
 }
 .tab.active {
-  color: var(--text-primary);
-  border-bottom-color: var(--text-primary);
+  color: var(--accent-text);
+  border-bottom-color: var(--accent);
 }
 
 .tab-content {

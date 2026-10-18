@@ -531,8 +531,8 @@
 .data-studio-versions__run-flash {
     margin: var(--space-xs) 0 0;
     padding: var(--space-xs) var(--space-sm);
-    background: rgba(34, 197, 94, 0.10);
-    border-left: 3px solid var(--accent-success, #22c55e);
+    background: var(--color-success-bg);
+    border-left: 3px solid var(--color-success);
     color: var(--text-primary);
     font-size: 13px;
     border-radius: var(--radius-sm);
@@ -541,8 +541,8 @@
 .data-studio-versions__run-error {
     margin: var(--space-xs) 0 0;
     padding: var(--space-xs) var(--space-sm);
-    background: rgba(244, 63, 94, 0.10);
-    border-left: 3px solid var(--text-danger, #f43f5e);
+    background: var(--color-error-bg);
+    border-left: 3px solid var(--color-error);
     color: var(--text-primary);
     font-size: 13px;
     border-radius: var(--radius-sm);
@@ -609,7 +609,7 @@
 .data-studio-versions__activate-error {
     margin: 0 0 var(--space-sm);
     font-size: 12.5px;
-    color: var(--color-error, #dc2626);
+    color: var(--color-error);
 }
 
 /* Epic E — version compare. */

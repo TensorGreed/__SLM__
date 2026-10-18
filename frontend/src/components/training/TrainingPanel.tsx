@@ -1915,7 +1915,7 @@ export default function TrainingPanel({
           <StepFooter
             currentStep="Training"
             nextStep="Results"
-            nextStepIcon="📊"
+            nextStepIcon=""
             isComplete={experiments.some((e) => e.status === 'completed')}
             hint="Start and complete a run to proceed"
             onNext={onNextStep}

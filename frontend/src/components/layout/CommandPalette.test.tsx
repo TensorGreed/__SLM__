@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
+import { useThemeStore } from '../../stores/themeStore';
 import CommandPalette from './CommandPalette';
 import { openCommandPalette } from './commandPaletteBridge';
 
@@ -128,12 +129,23 @@ describe('CommandPalette', () => {
         ).toBeInTheDocument();
     });
 
-    it('when projectId is null only the Back-to-projects action is offered', async () => {
+    it('when projectId is null only Back-to-projects and the theme switch are offered', async () => {
         renderPalette(null);
         const user = userEvent.setup();
         await user.keyboard('{Meta>}k{/Meta}');
         await screen.findByRole('dialog');
         expect(screen.getByText('Back to projects')).toBeInTheDocument();
+        expect(screen.getByText('Switch to the dark theme')).toBeInTheDocument();
         expect(screen.queryByText('Annotation jobs')).not.toBeInTheDocument();
+    });
+
+    it('the theme command flips the document theme', async () => {
+        renderPalette(null);
+        const user = userEvent.setup();
+        await user.keyboard('{Meta>}k{/Meta}');
+        await screen.findByRole('dialog');
+        await user.click(screen.getByText('Switch to the dark theme'));
+        expect(document.documentElement.dataset.theme).toBe('dark');
+        useThemeStore.getState().setPreference('light');
     });
 });

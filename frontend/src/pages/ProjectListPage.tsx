@@ -308,7 +308,7 @@ export default function ProjectListPage() {
                 {isLoadingProjects ? (
                     <div className="project-grid">
                         {[1, 2, 3].map((i) => (
-                            <Skeleton key={i} height={200} borderRadius={16} />
+                            <Skeleton key={i} variant="card" />
                         ))}
                     </div>
                 ) : projects.length === 0 ? (

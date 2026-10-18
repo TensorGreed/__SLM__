@@ -1,0 +1,82 @@
+/* Coach suggestion card (Epic U phase U7). Severity picks the tint. */
+.coach-card {
+  --coach-bg: var(--accent-bg);
+  --coach-border: var(--accent-border);
+  --coach-tag: var(--accent-text);
+  --coach-fg: var(--accent-text);
+  display: flex;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--coach-bg);
+  border: 1px solid var(--coach-border);
+  border-radius: var(--radius-md);
+  align-items: flex-start;
+}
+.coach-card--warning {
+  --coach-bg: var(--color-warning-bg);
+  --coach-border: var(--color-warning-border);
+  --coach-tag: var(--color-warning);
+  --coach-fg: var(--color-warning);
+}
+.coach-card--critical {
+  --coach-bg: var(--color-error-bg);
+  --coach-border: var(--color-error-border);
+  --coach-tag: var(--color-error);
+  --coach-fg: var(--color-error);
+}
+.coach-card__tag {
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--coach-tag);
+}
+.coach-card__title {
+  font-weight: var(--font-weight-semibold);
+  color: var(--coach-fg);
+  margin-bottom: 2px;
+  font-size: var(--font-size-sm);
+}
+.coach-card__body {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+.coach-card__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+.coach-card__button { font-size: var(--font-size-xs); white-space: nowrap; }
+.coach-card__backend {
+  font-size: var(--font-size-2xs);
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  text-align: right;
+  line-height: 1.35;
+}
+.coach-card__backend-name { overflow: hidden; text-overflow: ellipsis; }
+.coach-card__code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  padding: 0 3px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+.coach-card__badge {
+  padding: 1px 6px;
+  border: 1px solid var(--color-success);
+  border-radius: var(--radius-full);
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+  cursor: help;
+}

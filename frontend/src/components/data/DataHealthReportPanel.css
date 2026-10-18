@@ -60,18 +60,18 @@
 }
 
 .data-health__overall-badge--ok {
-    background: var(--color-success, #16a34a);
-    color: #ffffff;
+    background: var(--color-success);
+    color: var(--accent-contrast);
 }
 
 .data-health__overall-badge--warn {
-    background: #eab308;
-    color: #ffffff;
+    background: var(--color-warning);
+    color: var(--accent-contrast);
 }
 
 .data-health__overall-badge--block {
-    background: var(--color-error, #ef4444);
-    color: #ffffff;
+    background: var(--color-error);
+    color: var(--accent-contrast);
 }
 
 .data-health__headline {
@@ -168,19 +168,19 @@
     border-radius: 50%;
     font-size: 12px;
     font-weight: 700;
-    color: #ffffff;
+    color: var(--accent-contrast);
 }
 
 .data-health__sev-badge--ok {
-    background: var(--color-success, #16a34a);
+    background: var(--color-success);
 }
 
 .data-health__sev-badge--warn {
-    background: #eab308;
+    background: var(--color-warning);
 }
 
 .data-health__sev-badge--block {
-    background: var(--color-error, #ef4444);
+    background: var(--color-error);
 }
 
 .data-health__signal-body {
@@ -206,7 +206,7 @@
     padding: 0;
     background: transparent;
     border: none;
-    color: var(--color-primary, #2563eb);
+    color: var(--accent-text);
     font-size: 11px;
     cursor: pointer;
     text-align: left;
@@ -240,14 +240,15 @@
 }
 
 .data-health__autofix {
-    background: var(--color-success, #16a34a);
-    color: #ffffff;
-    border-color: var(--color-success, #16a34a);
+    background: var(--color-success);
+    color: var(--accent-contrast);
+    border-color: var(--color-success);
 }
 
 .data-health__autofix:hover:not(:disabled) {
-    background: #15803d;
-    border-color: #15803d;
+    background: var(--color-success);
+    border-color: var(--color-success);
+    opacity: 0.9;
 }
 
 .data-health__autofix:disabled {
@@ -261,7 +262,7 @@
     margin: 0;
     padding: 8px 16px;
     background: rgba(34, 197, 94, 0.12);
-    color: var(--color-success, #16a34a);
+    color: var(--color-success);
     border-bottom: 1px solid rgba(34, 197, 94, 0.25);
     font-size: 12px;
     display: flex;

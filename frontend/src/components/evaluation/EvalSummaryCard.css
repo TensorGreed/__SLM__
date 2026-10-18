@@ -61,26 +61,26 @@
     border-radius: 999px;
     font-weight: 600;
     font-size: 11px;
-    background: var(--gray-100, #f3f4f6);
+    background: var(--gray-100);
     color: var(--text-primary);
 }
 
 .eval-summary__evidence--within_noise,
 .eval-summary__evidence--too_few_rows {
-    border-left-color: var(--color-warning-border, #f59e0b);
+    border-left-color: var(--color-warning-border);
 }
 
 .eval-summary__evidence--within_noise .eval-summary__evidence-label,
 .eval-summary__evidence--too_few_rows .eval-summary__evidence-label {
-    background: var(--color-warning-bg, #fffbeb);
-    color: var(--color-warning-fg, #92400e);
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
 }
 
 .eval-summary__evidence--better { border-left-color: var(--color-success); }
-.eval-summary__evidence--too_few_seeds { border-left-color: var(--color-warning-border, #f59e0b); }
+.eval-summary__evidence--too_few_seeds { border-left-color: var(--color-warning-border); }
 .eval-summary__evidence--too_few_seeds .eval-summary__evidence-label {
-    background: var(--color-warning-bg, #fffbeb);
-    color: var(--color-warning-fg, #92400e);
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
 }
 .eval-summary__seed-runs { color: var(--text-tertiary); }
 .eval-summary__evidence--worse { border-left-color: var(--color-error); }
@@ -88,7 +88,7 @@
 .eval-summary__judge {
     margin: 0.5rem 0 0;
     font-size: 0.9rem;
-    color: var(--text-muted, #555);
+    color: var(--text-muted);
 }
 
 .eval-summary__judge-verdict {
@@ -96,9 +96,9 @@
     font-size: 0.85rem;
 }
 
-.eval-summary__judge-verdict--correct { color: var(--success, #2e7d32); }
-.eval-summary__judge-verdict--partial { color: var(--warning, #b26a00); }
-.eval-summary__judge-verdict--wrong { color: var(--danger, #c62828); }
+.eval-summary__judge-verdict--correct { color: var(--color-success); }
+.eval-summary__judge-verdict--partial { color: var(--color-warning); }
+.eval-summary__judge-verdict--wrong { color: var(--danger); }
 
 /* span_eval: per-regime scores (compliance bundles) */
 .eval-summary__regime-table {
@@ -119,9 +119,9 @@
 
 /* Multi-seed run: ship one seed (SeedShipTable). */
 .eval-summary__seed-ship { margin-top: 0.75rem; }
-.eval-summary__seed-picked { color: var(--accent-primary, var(--text-primary)); font-weight: 600; }
+.eval-summary__seed-picked { color: var(--accent-primary); font-weight: 600; }
 
 .eval-summary__sizing-short th,
 .eval-summary__sizing-short td {
-    color: var(--color-warning, #f0a020);
+    color: var(--color-warning);
 }

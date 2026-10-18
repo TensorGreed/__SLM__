@@ -443,7 +443,7 @@ button.data-studio-synth__prereq:hover {
 }
 
 button.data-studio-synth__prereq:focus-visible {
-    outline: 2px solid var(--accent, #3b82f6);
+    outline: 2px solid var(--accent);
     outline-offset: 1px;
 }
 

@@ -1,5 +1,5 @@
 /**
- * TabVideoLink — small "▶ Watch the 2-minute walkthrough" affordance
+ * TabVideoLink — small "Watch the 2-minute walkthrough" affordance
  * rendered above each pipeline-tab body. Click → opens a modal with
  * the matching video deep-linked to the relevant chapter.
  *
@@ -8,6 +8,7 @@
  */
 
 import { useState } from 'react';
+import { Play } from 'lucide-react';
 
 import type { TabKey } from '../../types';
 import { getTabVideo, formatTimecode } from '../../data/tabVideos';
@@ -37,7 +38,7 @@ export default function TabVideoLink({ tabKey }: Props) {
                 onClick={() => setOpen(true)}
                 aria-label={`Watch the 2-minute walkthrough for ${chapter.label}`}
             >
-                <span className="tab-video-link__icon" aria-hidden="true">▶</span>
+                <span className="tab-video-link__icon" aria-hidden="true"><Play size={12} /></span>
                 <span className="tab-video-link__label">
                     Watch the walkthrough — <strong>{chapter.label}</strong>
                 </span>

@@ -2,15 +2,16 @@
  * Toast notification renderer with auto-dismiss capability.
  */
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
+import { AlertTriangle, CheckCircle2, Info, XCircle } from 'lucide-react';
 import { useToastStore, type ToastMessage } from '../../stores/toastStore';
 import './Toast.css';
 
-const ICONS: Record<string, string> = {
-    success: '✅',
-    error: '❌',
-    warning: '⚠️',
-    info: 'ℹ️',
+const ICONS: Record<string, ReactNode> = {
+    success: <CheckCircle2 aria-hidden="true" />,
+    error: <XCircle aria-hidden="true" />,
+    warning: <AlertTriangle aria-hidden="true" />,
+    info: <Info aria-hidden="true" />,
 };
 
 const ToastItem = ({ toast }: { toast: ToastMessage }) => {
@@ -39,7 +40,7 @@ const ToastItem = ({ toast }: { toast: ToastMessage }) => {
 
     return (
         <div className={`toast ${toast.type} ${isRemoving ? 'removing' : ''}`} role="alert">
-            <span className="toast-icon">{ICONS[toast.type] ?? 'ℹ️'}</span>
+            <span className="toast-icon">{ICONS[toast.type] ?? ICONS.info}</span>
             <span className="toast-message">{toast.message}</span>
             {toast.action && (
                 <button

@@ -2,11 +2,13 @@
  * Panel for ingesting data from files, Hugging Face, Kaggle, and URLs with validation and EDA.
  */
 
-import { Fragment, useState, useCallback, useEffect } from 'react';
+import { Fragment, type ReactNode, useState, useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { RawDocument, DocumentStatus } from '../../types';
 import api from '../../api/client';
+import { ChevronDown, ChevronRight, Upload, Package, Link as LinkIcon, BarChart3, Settings2, Trash2, Lightbulb } from 'lucide-react';
 import EmptyState from '../shared/EmptyState';
+import LoadingState from '../shared/LoadingState';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import { ReadinessPanel } from '../shared/ReadinessPanel';
@@ -593,27 +595,27 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
         return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     };
 
-    const sourceTabConfig: Record<SourceTab, { icon: string; label: string; placeholder: string; help: string }> = {
+    const sourceTabConfig: Record<SourceTab, { icon: ReactNode; label: string; placeholder: string; help: string }> = {
         upload: {
-            icon: '📤',
+            icon: <Upload className="u-icon" aria-hidden="true" />,
             label: 'Local Files',
             placeholder: '',
             help: '',
         },
         huggingface: {
-            icon: '🤗',
+            icon: <Package className="u-icon" aria-hidden="true" />,
             label: 'HuggingFace',
             placeholder: 'e.g. tatsu-lab/alpaca or squad',
             help: 'Enter a HuggingFace dataset ID. Add HF token below for gated/private datasets.',
         },
         kaggle: {
-            icon: '📊',
+            icon: <BarChart3 className="u-icon" aria-hidden="true" />,
             label: 'Kaggle',
             placeholder: 'e.g. username/dataset-name',
             help: 'Enter a Kaggle dataset slug. Add Kaggle username/key below if not configured on the server.',
         },
         url: {
-            icon: '🔗',
+            icon: <LinkIcon className="u-icon" aria-hidden="true" />,
             label: 'URL / S3 / GCS',
             placeholder: 'https://example.com/data.csv',
             help: 'Paste a direct link to a CSV, JSON, or JSONL file. Supports HTTP, S3, and GCS URIs.',
@@ -629,11 +631,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
 
 
                 {isLoading ? (
-                    <div className="docs-loading">
-                        {[1, 2, 3].map((i) => (
-                            <div key={i} className="skeleton" style={{ height: 56, marginBottom: 8, borderRadius: 10 }} />
-                        ))}
-                    </div>
+                    <LoadingState label="Loading documents" lines={3} />
                 ) : documents.length === 0 ? (
                     <EmptyState
                         title="No documents yet"
@@ -645,7 +643,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                         <table className="docs-table">
                             <thead>
                                 <tr>
-                                    <th style={{ width: 32 }}></th>
+                                    <th className="ing__th-narrow"></th>
                                     <th>Filename</th>
                                     <th>Source</th>
                                     <th>Type</th>
@@ -675,7 +673,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                                         title="Preview 10 random rows"
                                                         data-testid={`expand-doc-${doc.id}`}
                                                     >
-                                                        {isExpanded ? '▼' : '▶'}
+                                                        {isExpanded ? <ChevronDown className="u-icon" aria-hidden="true" /> : <ChevronRight className="u-icon" aria-hidden="true" />}
                                                     </button>
                                                 </td>
                                                 <td className="doc-name">
@@ -692,7 +690,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                                     )}
                                                 </td>
                                                 <td>
-                                                    <span className="badge badge-info" style={{ fontSize: 10 }}>
+                                                    <span className="badge badge-info ing__src-badge">
                                                         {doc.source || 'upload'}
                                                     </span>
                                                 </td>
@@ -712,7 +710,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                                             onClick={() => void handleProcess(doc.id)}
                                                             title="Process"
                                                         >
-                                                            ⚙️
+                                                            <Settings2 className="u-icon" aria-hidden="true" />
                                                         </button>
                                                     )}
                                                     <button
@@ -721,7 +719,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                                         onClick={() => void handleDelete(doc.id)}
                                                         title="Delete"
                                                     >
-                                                        🗑️
+                                                        <Trash2 className="u-icon" aria-hidden="true" />
                                                     </button>
                                                 </td>
                                             </tr>
@@ -757,26 +755,11 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                 detects the task shape and lands rows in the project's
                 synthetic dataset. */}
             <div
-                className="card"
-                style={{
-                    marginBottom: 'var(--space-lg)',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 'var(--space-md)',
-                    flexWrap: 'wrap',
-                }}
+                className="card ing__import-card"
             >
                 <div>
-                    <h3 style={{ margin: 0 }}>Import dataset (auto-mapping)</h3>
-                    <p
-                        style={{
-                            margin: '4px 0 0',
-                            color: 'var(--text-secondary)',
-                            fontSize: '0.9rem',
-                            maxWidth: 720,
-                        }}
-                    >
+                    <h3 className="u-m0">Import dataset (auto-mapping)</h3>
+                    <p className="ing__import-blurb">
                         Skip the converter. Point at a JSONL, CSV, HuggingFace dataset, or
                         Kaggle competition; the introspector sniffs the columns, proposes a
                         mapping, and lands rows straight in the project's synthetic dataset.
@@ -792,14 +775,13 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                 </button>
             </div>
 
-            <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 'var(--space-md)' }}>
+            <div className="card u-mb-lg">
+                <div className="u-row u-mb-md">
                     {(Object.keys(sourceTabConfig) as SourceTab[]).map((tab) => (
                         <button
                             key={tab}
-                            className={`btn ${activeTab === tab ? 'btn-primary' : 'btn-secondary'}`}
+                            className={`btn u-row-xs ${activeTab === tab ? 'btn-primary' : 'btn-secondary'}`}
                             onClick={() => setActiveTab(tab)}
-                            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
                         >
                             <span>{sourceTabConfig[tab].icon}</span>
                             {sourceTabConfig[tab].label}
@@ -818,7 +800,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                         onDrop={handleDrop}
                     >
                         <div className="upload-zone-content">
-                            <div className="upload-icon">📤</div>
+                            <div className="upload-icon"><Upload className="u-icon" aria-hidden="true" /></div>
                             <h3 className="upload-title">Drop files here or click to browse</h3>
                             <p className="upload-subtitle">
                                 Documents: PDF, Word (.docx), HTML, TXT, Markdown. Row files: CSV, TSV, Excel (.xlsx), JSON, JSONL, Parquet — any encoding.
@@ -844,11 +826,11 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
 
                 {activeTab !== 'upload' && (
                     <div className="remote-import-panel">
-                        <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', margin: 0 }}>
+                        <p className="u-hint u-m0">
                             {sourceTabConfig[activeTab].help}
                         </p>
-                        <div className="remote-import-grid" style={{ gridTemplateColumns: '1fr auto', alignItems: 'end' }}>
-                            <div className="form-group" style={{ margin: 0 }}>
+                        <div className="remote-import-grid ing__grid-inspect">
+                            <div className="form-group u-m0">
                                 <label className="form-label">Dataset Identifier</label>
                                 <input
                                     className="input"
@@ -870,21 +852,21 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                         </div>
 
                         {inspectionResult?.error && (
-                            <div className="alert alert-error" style={{ marginTop: 'var(--space-md)' }}>
-                                <div style={{ fontWeight: 600 }}>{inspectionResult.error}</div>
+                            <div className="alert alert-error u-mt-md">
+                                <div className="u-semibold">{inspectionResult.error}</div>
                                 {inspectionResult.remediation && (
-                                    <div style={{ marginTop: 4, fontSize: '0.9em', opacity: 0.9 }}>
-                                        💡 {inspectionResult.remediation}
+                                    <div className="ing__remediation">
+                                        <Lightbulb className="u-icon" aria-hidden="true" /> {inspectionResult.remediation}
                                     </div>
                                 )}
                             </div>
                         )}
 
                         {inspectionResult && !inspectionResult.error && (
-                            <div className="remote-import-step2 animate-slide-up" style={{ marginTop: 'var(--space-md)', padding: 'var(--space-md)', background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-md)' }}>
+                            <div className="remote-import-step2 animate-slide-up ing__step2">
                                 <div className="remote-import-grid">
                                     {activeTab === 'huggingface' && inspectionResult.configs && inspectionResult.configs.length > 1 && (
-                                        <div className="form-group" style={{ margin: 0 }}>
+                                        <div className="form-group u-m0">
                                             <label className="form-label">Config / Subset</label>
                                             <select
                                                 className="input"
@@ -895,13 +877,12 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                             </select>
                                         </div>
                                     )}
-                                    <div className="form-group" style={{ margin: 0 }}>
+                                    <div className="form-group u-m0">
                                         <label className="form-label">Split</label>
                                         <select
-                                            className="input"
+                                            className="input ing__w-split"
                                             value={remoteSplit}
                                             onChange={(e) => setRemoteSplit(e.target.value)}
-                                            style={{ width: 140 }}
                                         >
                                             {inspectionResult.splits?.map(s => <option key={s} value={s}>{s}</option>) || (
                                                 <>
@@ -912,24 +893,22 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                             )}
                                         </select>
                                     </div>
-                                    <div className="form-group" style={{ margin: 0 }}>
+                                    <div className="form-group u-m0">
                                         <label className="form-label">Max Samples</label>
                                         <input
-                                            className="input"
+                                            className="input ing__w-samples"
                                             type="number"
                                             value={remoteMaxSamples}
                                             onChange={(e) => setRemoteMaxSamples(e.target.value)}
                                             placeholder="All"
-                                            style={{ width: 100 }}
                                         />
                                     </div>
-                                    <div className="form-group" style={{ margin: 0 }}>
+                                    <div className="form-group u-m0">
                                         <label className="form-label">Adapter</label>
                                         <select
-                                            className="input"
+                                            className="input ing__w-adapter"
                                             value={remoteAdapterId}
                                             onChange={(e) => setRemoteAdapterId(e.target.value)}
-                                            style={{ minWidth: 180 }}
                                         >
                                             <option value="auto">auto-detect</option>
                                             {Object.keys(adapterCatalog?.adapters || {})
@@ -944,9 +923,9 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                 </div>
 
                                 {inspectionResult.features && Object.keys(inspectionResult.features).length > 0 && (
-                                    <div style={{ marginTop: 'var(--space-md)', fontSize: 'var(--font-size-xs)' }}>
-                                        <div style={{ color: 'var(--text-secondary)', marginBottom: 4 }}>Detected Schema:</div>
-                                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                    <div className="u-mt-md u-text-xs">
+                                        <div className="u-text-secondary u-mb-xs">Detected Schema:</div>
+                                        <div className="u-row-xs">
                                             {Object.entries(inspectionResult.features).map(([name, type]) => (
                                                 <span key={name} className="badge badge-outline" title={type}>{name}</span>
                                             ))}
@@ -954,21 +933,20 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                     </div>
                                 )}
 
-                                <div className="remote-import-adapter-box" style={{ marginTop: 'var(--space-md)' }}>
+                                <div className="remote-import-adapter-box u-mt-md">
                                     <div className="remote-import-adapter-head">
                                         <strong>Adapter Mapping</strong>
                                         <span>Optional JSON overrides for adapter behavior.</span>
                                     </div>
                                     <textarea
-                                        className="input remote-import-json"
+                                        className="input remote-import-json ing__json-area"
                                         value={remoteAdapterConfigText}
                                         onChange={(e) => setRemoteAdapterConfigText(e.target.value)}
                                         placeholder='{"field_mapping":{"instruction":"question","response":"answer"}}'
-                                        style={{ height: 60 }}
                                     />
                                 </div>
 
-                                <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center', marginTop: 'var(--space-lg)' }}>
+                                <div className="u-row u-mt-lg">
                                     <button
                                         className="btn btn-primary"
                                         onClick={() => void handleRemoteImport()}
@@ -989,7 +967,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                         )}
 
                         {!inspectionResult && activeTab === 'huggingface' && (
-                            <div className="form-group" style={{ margin: 0 }}>
+                            <div className="form-group u-m0">
                                 <label className="form-label">HuggingFace Token (optional)</label>
                                 <input
                                     className="input"
@@ -998,8 +976,8 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                     onChange={(e) => setHfToken(e.target.value)}
                                     placeholder="hf_..."
                                 />
-                                <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 8, flexWrap: 'wrap' }}>
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--font-size-xs)' }}>
+                                <div className="u-row u-mt-sm">
+                                    <label className="ing__check">
                                         <input
                                             type="checkbox"
                                             checked={useSavedHfToken}
@@ -1016,7 +994,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                         Save Token
                                     </button>
                                 </div>
-                                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)', marginTop: 4 }}>
+                                <div className="u-meta u-mt-xs">
                                     {savedHfTokenHint
                                         ? `Saved token: ${savedHfTokenHint} (auto-used when request token is blank).`
                                         : 'No saved token. Imported request token is used only for this run unless you click Save Token.'}
@@ -1025,8 +1003,8 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                         )}
 
                         {activeTab === 'kaggle' && (
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>
-                                <div className="form-group" style={{ margin: 0 }}>
+                            <div className="ing__grid-2">
+                                <div className="form-group u-m0">
                                     <label className="form-label">Kaggle Username (optional)</label>
                                     <input
                                         className="input"
@@ -1035,7 +1013,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                         placeholder="your_kaggle_username"
                                     />
                                 </div>
-                                <div className="form-group" style={{ margin: 0 }}>
+                                <div className="form-group u-m0">
                                     <label className="form-label">Kaggle Key (optional)</label>
                                     <input
                                         className="input"
@@ -1045,8 +1023,8 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                         placeholder="kaggle_api_key"
                                     />
                                 </div>
-                                <div className="form-group" style={{ margin: 0, alignSelf: 'end' }}>
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--font-size-xs)' }}>
+                                <div className="form-group u-m0 ing__align-end">
+                                    <label className="ing__check">
                                         <input
                                             type="checkbox"
                                             checked={useSavedKaggleCreds}
@@ -1056,7 +1034,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                         Use saved credentials
                                     </label>
                                 </div>
-                                <div className="form-group" style={{ margin: 0, alignSelf: 'end' }}>
+                                <div className="form-group u-m0 ing__align-end">
                                     <button
                                         className="btn btn-secondary btn-sm"
                                         onClick={() => void handleSaveKaggleCredentials()}
@@ -1065,7 +1043,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                         Save Credentials
                                     </button>
                                 </div>
-                                <div style={{ gridColumn: '1 / -1', fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
+                                <div className="u-meta ing__span-all">
                                     {savedKaggleUserHint && savedKaggleKeyHint
                                         ? `Saved Kaggle credentials: username ${savedKaggleUserHint}, key ${savedKaggleKeyHint}.`
                                         : 'No saved Kaggle credentials.'}
@@ -1073,12 +1051,11 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                             </div>
                         )}
 
-                        <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <div className="u-row">
                             <button
                                 className="btn btn-primary"
                                 onClick={() => void handleRemoteImport()}
                                 disabled={isImporting || !remoteId.trim()}
-                                style={{ alignSelf: 'flex-start' }}
                             >
                                 {isImporting
                                     ? 'Importing...'
@@ -1095,24 +1072,14 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                         </div>
 
                         {secretStatus && (
-                            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-info)' }}>
+                            <div className="u-text-xs ing__secret-status">
                                 {secretStatus}
                             </div>
                         )}
 
                         {importStatus && (
                             <div
-                                style={{
-                                    padding: 'var(--space-sm) var(--space-md)',
-                                    borderRadius: 'var(--radius-md)',
-                                    background: importStatus.toLowerCase().includes('failed')
-                                        ? 'rgba(239,68,68,0.1)'
-                                        : 'rgba(34,197,94,0.1)',
-                                    color: importStatus.toLowerCase().includes('failed')
-                                        ? 'var(--color-error)'
-                                        : 'var(--color-success)',
-                                    fontSize: 'var(--font-size-sm)',
-                                }}
+                                className={`ing__import-status ${importStatus.toLowerCase().includes('failed') ? 'ing__import-status--bad' : 'ing__import-status--ok'}`}
                             >
                                 {importStatus}
                             </div>
@@ -1122,14 +1089,8 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
             </div>
 
             {(isImporting || importLogs.length > 0) && (
-                <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
-                    <h3
-                        style={{
-                            fontSize: 'var(--font-size-md)',
-                            fontWeight: 600,
-                            marginBottom: 'var(--space-md)',
-                        }}
-                    >
+                <div className="card u-mb-lg">
+                    <h3 className="u-card-title">
                         Remote Import Progress
                     </h3>
                     <TerminalConsole logs={importLogs} height="260px" />
@@ -1182,7 +1143,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                 <StepFooter
                     currentStep="Data Ingestion"
                     nextStep="Data Cleaning"
-                    nextStepIcon="🧹"
+                    nextStepIcon=""
                     isComplete={documents.length > 0}
                     hint="Upload files or import a dataset to continue"
                     onNext={onNextStep}

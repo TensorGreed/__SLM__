@@ -1,48 +1,29 @@
 /**
- * Configurable animated placeholder component for content loading states.
+ * Skeleton — a loading placeholder (Epic U phase U7).
+ *
+ * Variants are CSS classes in ``index.css`` (``.skeleton--<variant>``),
+ * so a loading state never writes an inline size:
+ *   line        one line of body text
+ *   line-short  a 60 % line (the last line of a paragraph)
+ *   title       a heading
+ *   text        a small meta line
+ *   row         a table / list row
+ *   block       a chart or card body
+ *   card        a whole card
+ *   inline      a few words inside running text
  */
 
-import React from 'react';
+export type SkeletonVariant = 'line' | 'line-short' | 'title' | 'text' | 'row' | 'block' | 'card' | 'inline';
 
 interface SkeletonProps {
-    width?: string | number;
-    height?: string | number;
-    borderRadius?: string | number;
+    variant?: SkeletonVariant;
     className?: string;
-    style?: React.CSSProperties;
     animated?: boolean;
 }
 
-export default function Skeleton({
-    width = '100%',
-    height = '1rem',
-    borderRadius = 'var(--radius-md)',
-    className = '',
-    style = {},
-    animated = true
-}: SkeletonProps) {
-    const defaultStyles: React.CSSProperties = {
-        width,
-        height,
-        borderRadius,
-        backgroundColor: 'var(--bg-tertiary)',
-        display: 'inline-block',
-        ...style
-    };
-
-    return (
-        <span
-            className={`skeleton ${animated ? 'skeleton-pulse' : ''} ${className}`}
-            style={defaultStyles}
-            aria-hidden="true"
-        />
-    );
+export default function Skeleton({ variant = 'line', className = '', animated = true }: SkeletonProps) {
+    const classes = ['skeleton', `skeleton--${variant}`, animated ? '' : 'skeleton--static', className]
+        .filter(Boolean)
+        .join(' ');
+    return <span className={classes} aria-hidden="true" />;
 }
-
-// Add these keyframes to your global css file (e.g., index.css)
-// @keyframes skeleton-pulse {
-//     0% { opacity: 0.5; }
-//     50% { opacity: 1; }
-//     100% { opacity: 0.5; }
-// }
-// .skeleton-pulse { animation: skeleton-pulse 1.5s ease-in-out infinite; }

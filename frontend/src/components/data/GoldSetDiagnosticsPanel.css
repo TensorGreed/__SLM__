@@ -88,7 +88,7 @@
 .gold-diag__balance-fill {
     display: block;
     height: 100%;
-    background: var(--color-primary, #2563eb);
+    background: var(--accent);
     border-radius: 2px;
     transition: width 200ms ease;
 }
@@ -108,7 +108,7 @@
 .gold-diag__balance-fill--w-100 { width: 100%; }
 
 .gold-diag__balance-row.is-below-floor .gold-diag__balance-fill {
-    background: #ef4444;
+    background: var(--color-error);
 }
 
 .gold-diag__balance-threshold {

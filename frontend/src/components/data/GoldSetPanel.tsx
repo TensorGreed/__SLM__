@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
+import { Lock } from 'lucide-react';
 import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
@@ -405,9 +406,8 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
     const entriesCard = (
             <div className="card">
                 <div
-                    className="gold-header"
+                    className="gold-header gold-header--wrap"
                     data-testid="gold-entries-header"
-                    style={{ flexWrap: 'wrap' }}
                 >
                     <h3>
                         Entries <span className="badge badge-accent">{entries.length}</span>
@@ -418,19 +418,17 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                             data-testid="gold-entries-filter-row"
                         >
                             <label
-                                className="form-label"
+                                className="form-label gold-panel__filter-label"
                                 htmlFor="gold-entries-filter"
-                                style={{ margin: 0, fontWeight: 400 }}
                             >
                                 Filter:
                             </label>
                             <select
                                 id="gold-entries-filter"
-                                className="input"
+                                className="input u-w-auto"
                                 value={entryFilter}
                                 onChange={(e) => setEntryFilter(e.target.value as EntryFilter)}
                                 data-testid="gold-entries-filter"
-                                style={{ width: 'auto' }}
                             >
                                 <option value="all">All</option>
                                 <option value="easy">Easy only</option>
@@ -448,15 +446,8 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                     next Generate click. */}
                 {recipeId === 'qa-sft' && mixSummary && mixSummary.total > 0 && (
                     <div
+                        className="gold-panel__mix-summary"
                         data-testid="gold-entries-mix-summary"
-                        style={{
-                            margin: '0 0 var(--space-sm)',
-                            padding: 'var(--space-sm) var(--space-md)',
-                            background: 'var(--bg-subtle)',
-                            borderRadius: 'var(--radius-sm)',
-                            fontSize: '0.9rem',
-                            color: 'var(--text-secondary)',
-                        }}
                     >
                         <strong>{mixSummary.total}</strong>{' '}
                         entr{mixSummary.total === 1 ? 'y' : 'ies'}:{' '}
@@ -489,21 +480,10 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                 {!forecastFixDismissed
                     && (forecastFix.rowIds.length > 0 || forecastFix.fragments.length > 0) && (
                     <div
+                        className="gold-panel__forecast-banner"
                         data-testid="gold-forecast-fix-banner"
-                        style={{
-                            margin: '0 0 var(--space-sm)',
-                            padding: 'var(--space-sm) var(--space-md)',
-                            background: 'var(--color-warning-bg, rgba(240, 160, 32, 0.10))',
-                            border: '1px solid var(--color-warning, #f0a020)',
-                            borderRadius: 'var(--radius-sm)',
-                            fontSize: '0.9rem',
-                            color: 'var(--text-primary)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '6px',
-                        }}
                     >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-sm)' }}>
+                        <div className="u-row u-row-nowrap u-between">
                             <strong>Trainability forecast flagged this answer key.</strong>
                             <button
                                 type="button"
@@ -513,7 +493,6 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                                     setForecastRowFilterActive(false);
                                 }}
                                 data-testid="gold-forecast-fix-dismiss"
-                                style={{ padding: 0 }}
                                 aria-label="Dismiss forecast fix banner"
                             >
                                 Dismiss
@@ -529,7 +508,6 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                                     className="btn btn-link"
                                     onClick={() => setForecastRowFilterActive((v) => !v)}
                                     data-testid="gold-forecast-fix-toggle"
-                                    style={{ padding: 0 }}
                                 >
                                     {forecastRowFilterActive ? 'Show all rows' : 'Show flagged only'}
                                 </button>
@@ -538,12 +516,12 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                         {forecastFix.fragments.length > 0 && (
                             <div data-testid="gold-forecast-fix-fragments">
                                 Label vocabulary fragments to merge:
-                                <ul style={{ margin: '4px 0 0 var(--space-md)', padding: 0 }}>
+                                <ul className="gold-panel__fragments">
                                     {forecastFix.fragments.map((group, idx) => (
                                         <li key={idx}>
                                             {group.map((label, j) => (
                                                 <span key={j}>
-                                                    {j > 0 && <span style={{ color: 'var(--text-tertiary)' }}> ↔ </span>}
+                                                    {j > 0 && <span className="u-text-tertiary"> / </span>}
                                                     <code>{label}</code>
                                                 </span>
                                             ))}
@@ -568,12 +546,8 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                     confused by the truncated list. */}
                 {entryFilter !== 'all' && filteredEntries.length !== entries.length && (
                     <div
+                        className="gold-panel__filter-banner"
                         data-testid="gold-entries-filter-banner"
-                        style={{
-                            margin: '0 0 var(--space-sm)',
-                            fontSize: '0.85rem',
-                            color: 'var(--text-tertiary)',
-                        }}
                     >
                         Showing <strong>{filteredEntries.length}</strong> of{' '}
                         {entries.length} (filter: <em>{entryFilter}</em>).
@@ -583,7 +557,6 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                             className="btn btn-link"
                             onClick={() => setEntryFilter('all')}
                             data-testid="gold-entries-filter-clear"
-                            style={{ padding: 0 }}
                         >
                             Clear filter
                         </button>
@@ -639,12 +612,8 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                     )}
                     {entries.length > 0 && filteredEntries.length === 0 && (
                         <div
+                            className="u-p-lg u-text-center u-text-tertiary"
                             data-testid="gold-entries-filtered-empty"
-                            style={{
-                                padding: 'var(--space-lg)',
-                                textAlign: 'center',
-                                color: 'var(--text-tertiary)',
-                            }}
                         >
                             No entries match the current filter.
                         </div>
@@ -659,11 +628,11 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                 <div className="gold-header">
                     <h3>Gold Evaluation Dataset</h3>
                     <div className="gold-controls">
-                        <select className="input" value={datasetType} onChange={e => setDatasetType(e.target.value)} style={{ width: 'auto' }}>
+                        <select className="input u-w-auto" value={datasetType} onChange={e => setDatasetType(e.target.value)}>
                             <option value="gold_dev">Dev Set</option>
                             <option value="gold_test">Test Set</option>
                         </select>
-                        <button className="btn btn-secondary" onClick={handleLock}>🔒 Lock</button>
+                        <button className="btn btn-secondary" onClick={handleLock}><Lock className="u-icon" aria-hidden="true" /> Lock</button>
                     </div>
                 </div>
 
@@ -698,12 +667,8 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                     />
                 ) : (
                     <div
+                        className="u-p-md u-hint"
                         data-testid="gold-add-form-hidden-hint"
-                        style={{
-                            padding: 'var(--space-md)',
-                            color: 'var(--text-tertiary)',
-                            fontSize: '0.9rem',
-                        }}
                     >
                         Choose a task type (Data tab → task type picker) to
                         unlock manual gold-row entry. The form's
@@ -729,7 +694,7 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                 <StepFooter
                     currentStep="Gold Dataset"
                     nextStep="Synthetic Generation"
-                    nextStepIcon="🧪"
+                    nextStepIcon=""
                     isComplete={entries.length >= 5}
                     hint="Add at least 5 Q&A pairs for evaluation"
                     onNext={onNextStep}

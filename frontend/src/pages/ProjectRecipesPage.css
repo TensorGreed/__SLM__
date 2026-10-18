@@ -314,14 +314,14 @@
 }
 
 .pipeline-recipes-warning {
-    border: 1px solid rgba(245, 158, 11, 0.35);
-    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid var(--color-warning-border);
+    background: var(--color-warning-bg);
     color: var(--color-warning);
 }
 
 .pipeline-recipes-error {
-    border: 1px solid rgba(239, 68, 68, 0.35);
-    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid var(--color-error-border);
+    background: var(--color-error-bg);
     color: var(--color-error-bg);
 }
 

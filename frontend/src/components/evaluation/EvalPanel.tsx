@@ -5,10 +5,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer } from 'recharts';
+import { AlertTriangle, Check, X } from 'lucide-react';
 import api from '../../api/client';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import EmptyState from '../shared/EmptyState';
+import LoadingState from '../shared/LoadingState';
 import StepFooter from '../shared/StepFooter';
 import { Term } from '../shared/Term';
 import ClassificationChartsPanel from './ClassificationChartsPanel';
@@ -1006,7 +1008,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
     };
 
     return (
-        <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
+        <div className="animate-fade-in u-stack-xl">
             {wf('verdict') && (
                 <EvalSummaryCard
                     projectId={projectId}
@@ -1021,12 +1023,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
             {wf('compare') && <ExternalBenchmarksPanel projectId={projectId} experimentId={selectedExp} />}
             {(<>
             <div className="card">
-                <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Run</h3>
+                <h3 className="u-card-title">Run</h3>
                 {loadingExperiments ? (
-                    <div className="empty-state">
-                        <div className="empty-state-icon">⏳</div>
-                        <div className="empty-state-title">Loading experiments...</div>
-                    </div>
+                    <LoadingState label="Loading experiments" lines={2} />
                 ) : experiments.length === 0 ? (
                     <EmptyState
                         title="No experiments to evaluate"
@@ -1034,13 +1033,12 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                         docsHref="http://localhost:3001/docs/workflows/evaluation-and-remediation"
                     />
                 ) : (
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <div className="u-row">
                         {experiments.map((experiment) => (
                             <button
                                 key={experiment.id}
-                                className={`btn ${selectedExp === experiment.id ? 'btn-primary' : 'btn-secondary'}`}
+                                className={`btn ${selectedExp === experiment.id ? 'btn-primary' : 'btn-secondary'} eval-panel__run-btn`}
                                 onClick={() => void loadResults(experiment.id)}
-                                style={{ maxWidth: '100%', whiteSpace: 'normal', textAlign: 'left' }}
                             >
                                 {experiment.name}
                             </button>
@@ -1050,14 +1048,14 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
             </div>
 
             {errorMessage && (
-                <div className="card" style={{ border: '1px solid var(--color-error)', color: 'var(--color-error)' }}>
+                <div className="card eval-panel__error-card">
                     {errorMessage}
                 </div>
             )}
             </>)}
             {wf('try') && (
                 <div className="card" data-testid="eval-try-redact">
-                    <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-sm)' }}>Redact a text</h3>
+                    <h3 className="eval-panel__h3 eval-panel__h3--sm">Redact a text</h3>
                     {selectedExp && evalResults.some((r) => (r.metrics as { scoring_mode?: string | null } | null)?.scoring_mode === 'span_set') ? (
                         <RedactionTryBox projectId={projectId} experimentId={selectedExp} />
                     ) : (
@@ -1096,9 +1094,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
             {(<>
 
             {selectedExp && wf('verdict') && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <h2 style={{ fontSize: 'var(--font-size-lg)', margin: 0 }}>Evaluate</h2>
-                    <div style={{ display: 'flex', gap: 8 }}>
+                <div className="u-row u-between">
+                    <h2 className="eval-panel__h2">Evaluate</h2>
+                    <div className="u-row">
                         {experiments.length >= 2 && (() => {
                             // E3 — quick deep-link to the side-by-side eval compare page.
                             // Pairs the currently-selected experiment (B) with the
@@ -1138,7 +1136,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                 <div className="card eval-pack-card" id="eval-pack-editor">
                     <div className="eval-pack-header">
                         <div>
-                            <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 4 }}>
+                            <h3 className="eval-panel__h3 eval-panel__h3--xs">
                                 Pass/fail rules
                             </h3>
                             <p className="eval-pack-subtitle">
@@ -1308,7 +1306,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                 <div className="card eval-pack-card">
                     <div className="eval-pack-header">
                         <div>
-                            <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 4 }}>
+                            <h3 className="eval-panel__h3 eval-panel__h3--xs">
                                 Closed-Loop Remediation Planner
                             </h3>
                             <p className="eval-pack-subtitle">
@@ -1518,12 +1516,12 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
             )}
 
             {showRunForm && wf('verdict') && (
-                <div className="card" style={{ border: '1px solid var(--color-primary)' }}>
-                    <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Evaluate on test examples</h3>
-                    <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 'var(--space-lg)' }}>
+                <div className="card eval-panel__card--accent">
+                    <h3 className="u-card-title">Evaluate on test examples</h3>
+                    <p className="u-hint u-mb-lg">
                         This runs inference on rows the model never trained on and stores exact-match, F1, or LLM-judge results.
                     </p>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 'var(--space-lg)' }}>
+                    <div className="eval-panel__grid-3">
                         <div className="form-group">
                             <label className="form-label">Dataset</label>
                             <select className="input" value={datasetName} onChange={(e) => setDatasetName(e.target.value)}>
@@ -1591,7 +1589,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                     </div>
 
                     {evalType === 'llm_judge' && (
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
+                        <div className="u-grid-2">
                             <div className="form-group">
                                 <label className="form-label">Judge Provider</label>
                                 <select
@@ -1628,10 +1626,10 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                     )}
 
                     {evalType === 'llm_judge' && provider === 'local_serve' && (
-                        <div className="eval-pack-card" style={{ marginTop: 'var(--space-md)' }}>
+                        <div className="eval-pack-card u-mt-md">
                             <div className="eval-pack-header">
                                 <div>
-                                    <h4 style={{ margin: 0, fontSize: 'var(--font-size-sm)' }}>Local Judge Serve Runtime</h4>
+                                    <h4 className="eval-panel__h4">Local Judge Serve Runtime</h4>
                                     <p className="eval-pack-subtitle">
                                         Select an existing serve run or auto-start one for judge evaluation.
                                     </p>
@@ -1644,7 +1642,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                     {loadingLocalServeRuns ? 'Refreshing...' : 'Refresh Runs'}
                                 </button>
                             </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
+                            <div className="u-grid-2">
                                 <div className="form-group">
                                     <label className="form-label">Serve Run</label>
                                     <select
@@ -1672,7 +1670,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                     </select>
                                 </div>
                             </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
+                            <div className="u-grid-2">
                                 <div className="form-group">
                                     <label className="form-label">Auto Stop After Eval</label>
                                     <select
@@ -1698,7 +1696,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                     </select>
                                 </div>
                             </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
+                            <div className="u-grid-2">
                                 {localServeSource === 'export' ? (
                                     <div className="form-group">
                                         <label className="form-label">Export ID (auto-start)</label>
@@ -1733,7 +1731,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                     />
                                 </div>
                             </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
+                            <div className="u-grid-2">
                                 <div className="form-group">
                                     <label className="form-label">Host (auto-start)</label>
                                     <input
@@ -1758,7 +1756,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                         </div>
                     )}
 
-                    <div style={{ marginTop: 'var(--space-lg)' }}>
+                    <div className="u-mt-lg">
                         <button className="btn btn-primary" onClick={() => void runHeldoutEval()} disabled={isEvaluating}>
                             {isEvaluating ? 'Evaluating on test examples...' : 'Run Evaluation'}
                         </button>
@@ -1907,31 +1905,31 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
 
 
             {latestInference && wf('verdict') && (
-                <div className="card" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 'var(--space-md)' }}>
+                <div className="card eval-panel__stats">
                     <div>
-                        <div style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>Runtime</div>
+                        <div className="u-meta">Runtime</div>
                         <strong>{latestInference.engine ?? 'unknown'}</strong>
                     </div>
                     <div>
-                        <div style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>Device</div>
+                        <div className="u-meta">Device</div>
                         <strong>{latestInference.device ?? 'unknown'}</strong>
                     </div>
                     <div>
-                        <div style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>Avg Latency</div>
+                        <div className="u-meta">Avg Latency</div>
                         <strong>{latestInference.average_latency_ms != null ? `${latestInference.average_latency_ms.toFixed(2)} ms` : '—'}</strong>
                     </div>
                     <div>
-                        <div style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>Token Throughput</div>
+                        <div className="u-meta">Token Throughput</div>
                         <strong>{latestInference.token_throughput_tps != null ? `${latestInference.token_throughput_tps.toFixed(2)} tok/s` : '—'}</strong>
                     </div>
                 </div>
             )}
 
             {selectedExp && evalResults.length > 0 && wf('failures') && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: 'var(--space-xl)' }}>
-                    <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
-                        <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Skill Radar (LLM Judge)</h3>
-                        <div style={{ flex: 1, minHeight: 300, background: 'var(--bg-tertiary)', borderRadius: 8 }}>
+                <div className="eval-panel__radar-grid">
+                    <div className="card eval-panel__card--col">
+                        <h3 className="u-card-title">Skill Radar (LLM Judge)</h3>
+                        <div className="eval-panel__radar">
                             {radarData.length > 0 ? (
                                 <ResponsiveContainer width="100%" height="100%">
                                     <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
@@ -1942,7 +1940,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                     </RadarChart>
                                 </ResponsiveContainer>
                             ) : (
-                                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', textAlign: 'center', padding: 20 }}>
+                                <div className="eval-panel__radar-empty">
                                     No LLM-judge benchmarks run yet.<br />Evaluate on test examples with metric set to LLM Judge.
                                 </div>
                             )}
@@ -1950,8 +1948,8 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                     </div>
 
                     <div className="card">
-                        <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Metric History</h3>
-                        <div className="table-container" style={{ maxHeight: 300, overflowY: 'auto' }}>
+                        <h3 className="u-card-title">Metric History</h3>
+                        <div className="table-container eval-panel__history-scroll">
                             <table className="docs-table">
                                 <thead>
                                     <tr>
@@ -1965,20 +1963,19 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                         <tr key={result.id}>
                                             <td>{result.dataset_name}</td>
                                             <td>
-                                                <span className="badge badge-accent" style={{ textTransform: 'uppercase' }}>
+                                                <span className="badge badge-accent u-caps">
                                                     {result.eval_type.replace('_', ' ')}
                                                 </span>
                                             </td>
                                             <td>
                                                 <strong
-                                                    style={{
-                                                        color:
-                                                            result.pass_rate != null && result.pass_rate > 0.8
-                                                                ? 'var(--color-success)'
-                                                                : result.pass_rate != null && result.pass_rate > 0.5
-                                                                  ? 'var(--color-warning)'
-                                                                  : 'var(--color-error)',
-                                                    }}
+                                                    className={
+                                                        result.pass_rate != null && result.pass_rate > 0.8
+                                                            ? 'u-text-success'
+                                                            : result.pass_rate != null && result.pass_rate > 0.5
+                                                              ? 'u-text-warning'
+                                                              : 'u-text-error'
+                                                    }
                                                 >
                                                     {result.pass_rate != null ? `${(result.pass_rate * 100).toFixed(1)}%` : '—'}
                                                 </strong>
@@ -2014,53 +2011,30 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
 
             {samplePredictionsResult?.metrics?.schema_mismatch && wf('failures') && (
                 <div
-                    className="card"
+                    className="card eval-panel__schema-banner"
                     data-testid="eval-schema-mismatch-banner"
-                    style={{
-                        border: '1px solid var(--color-error, #b91c1c)',
-                        background: 'rgba(185, 28, 28, 0.04)',
-                    }}
                 >
-                    <h3
-                        style={{
-                            color: 'var(--color-error, #b91c1c)',
-                            marginTop: 0,
-                        }}
-                    >
+                    <h3 className="eval-panel__schema-title">
                         Schema mismatch detected
-                        <span
-                            style={{
-                                marginLeft: 12,
-                                fontSize: '0.85rem',
-                                color: 'var(--text-secondary)',
-                                fontWeight: 400,
-                            }}
-                        >
+                        <span className="eval-panel__schema-detail">
                             {(samplePredictionsResult.metrics.schema_mismatch.ratio * 100).toFixed(0)}%
                             of{' '}
                             {samplePredictionsResult.metrics.schema_mismatch.sample_size}
                             {' '}sampled predictions don't share top-level keys with gold
                         </span>
                     </h3>
-                    <p style={{ margin: '0 0 var(--space-sm) 0' }}>
+                    <p className="u-mt0 u-mb-sm">
                         {samplePredictionsResult.metrics.schema_mismatch.hint}
                     </p>
-                    <div
-                        style={{
-                            display: 'grid',
-                            gridTemplateColumns: '1fr 1fr',
-                            gap: 'var(--space-md)',
-                            fontSize: '0.85rem',
-                        }}
-                    >
+                    <div className="eval-panel__schema-grid">
                         <div>
                             <strong>Gold expects (top key sets):</strong>
-                            <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                            <ul className="eval-panel__keylist">
                                 {samplePredictionsResult.metrics.schema_mismatch.expected_top_keys.map((entry, idx) => (
                                     <li key={`exp-${idx}`}>
                                         <code>{entry.keys.length ? entry.keys.join(', ') : '∅'}</code>
                                         {' '}
-                                        <span style={{ color: 'var(--text-tertiary)' }}>
+                                        <span className="u-text-tertiary">
                                             ({entry.count}×)
                                         </span>
                                     </li>
@@ -2069,12 +2043,12 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                         </div>
                         <div>
                             <strong>Model emits (top key sets):</strong>
-                            <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                            <ul className="eval-panel__keylist">
                                 {samplePredictionsResult.metrics.schema_mismatch.observed_top_keys.map((entry, idx) => (
                                     <li key={`obs-${idx}`}>
                                         <code>{entry.keys.length ? entry.keys.join(', ') : '∅'}</code>
                                         {' '}
-                                        <span style={{ color: 'var(--text-tertiary)' }}>
+                                        <span className="u-text-tertiary">
                                             ({entry.count}×)
                                         </span>
                                     </li>
@@ -2330,7 +2304,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                                                 <tr key={`m-${i}`}>
                                                                                     <td>
                                                                                         <span className="eval-sample-predictions-fields__em is-pass">
-                                                                                            ✓ matched
+                                                                                            <Check className="u-icon" aria-hidden="true" /> matched
                                                                                         </span>
                                                                                     </td>
                                                                                     <td>
@@ -2346,7 +2320,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                                                 <tr key={`miss-${i}`}>
                                                                                     <td>
                                                                                         <span className="eval-sample-predictions-fields__em is-fail">
-                                                                                            ✗ missed
+                                                                                            <X className="u-icon" aria-hidden="true" /> missed
                                                                                         </span>
                                                                                     </td>
                                                                                     <td>
@@ -2362,7 +2336,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                                                 <tr key={`fp-${i}`}>
                                                                                     <td>
                                                                                         <span className="eval-sample-predictions-fields__em is-fail">
-                                                                                            ✗ hallucinated
+                                                                                            <X className="u-icon" aria-hidden="true" /> hallucinated
                                                                                         </span>
                                                                                     </td>
                                                                                     <td>
@@ -2447,7 +2421,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                                                                         : 'is-fail'
                                                                                                 }`}
                                                                                             >
-                                                                                                {em >= 1 ? '✓' : '✗'}
+                                                                                                {em >= 1 ? <Check className="u-icon" aria-label="match" /> : <X className="u-icon" aria-label="no match" />}
                                                                                             </span>
                                                                                         </td>
                                                                                     </tr>
@@ -2605,42 +2579,34 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
 
             {scoredPredictions.length > 0 && (
                 <div className="card">
-                    <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>🔍 LLM Judge: Side-by-Side Comparison</h3>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <h3 className="u-card-title">LLM Judge: Side-by-Side Comparison</h3>
+                    <div className="u-stack-lg">
                         {scoredPredictions.slice(0, 3).map((prediction, idx) => (
                             <div
                                 key={idx}
-                                style={{
-                                    background: 'var(--bg-tertiary)',
-                                    borderRadius: 8,
-                                    padding: 'var(--space-md)',
-                                    display: 'grid',
-                                    gridTemplateColumns: 'minmax(200px, 1fr) minmax(200px, 1fr) 250px',
-                                    gap: 16,
-                                    borderLeft: `4px solid ${prediction.judge_score >= 4 ? 'var(--color-success)' : 'var(--color-error)'}`,
-                                }}
+                                className={`eval-panel__judge-row ${prediction.judge_score >= 4 ? 'eval-panel__judge-row--ok' : 'eval-panel__judge-row--bad'}`}
                             >
                                 <div>
-                                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 4 }}>Prompt</div>
-                                    <div style={{ fontSize: 13, background: 'var(--bg-primary)', padding: 8, borderRadius: 4, marginBottom: 8 }}>{prediction.prompt}</div>
+                                    <div className="eval-panel__label">Prompt</div>
+                                    <div className="eval-panel__box">{prediction.prompt}</div>
 
-                                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 4 }}>Ground Truth (Reference)</div>
-                                    <div style={{ fontSize: 13, background: 'rgba(34, 197, 94, 0.1)', padding: 8, borderRadius: 4, color: 'var(--color-success)' }}>{prediction.reference}</div>
+                                    <div className="eval-panel__label">Ground Truth (Reference)</div>
+                                    <div className="eval-panel__box eval-panel__box--ref">{prediction.reference}</div>
                                 </div>
 
                                 <div>
-                                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 4 }}>Model Prediction</div>
-                                    <div style={{ fontSize: 13, background: 'rgba(234, 179, 8, 0.1)', padding: 8, borderRadius: 4, border: '1px solid rgba(234,179,8,0.2)' }}>{prediction.prediction}</div>
+                                    <div className="eval-panel__label">Model Prediction</div>
+                                    <div className="eval-panel__box eval-panel__box--pred">{prediction.prediction}</div>
                                 </div>
 
-                                <div style={{ borderLeft: '1px solid var(--border-color)', paddingLeft: 16 }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                                        <span style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Judge Score</span>
-                                        <span className={`badge ${prediction.judge_score >= 4 ? 'badge-success' : 'badge-error'}`} style={{ fontSize: 14 }}>
+                                <div className="eval-panel__judge-side">
+                                    <div className="u-row u-between u-mb-sm">
+                                        <span className="eval-panel__label eval-panel__label--inline">Judge Score</span>
+                                        <span className={`badge ${prediction.judge_score >= 4 ? 'badge-success' : 'badge-error'} u-text-md`}>
                                             {prediction.judge_score} / 5
                                         </span>
                                     </div>
-                                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                                    <div className="u-hint">
                                         <strong>Rationale:</strong> {prediction.judge_rationale}
                                     </div>
                                 </div>
@@ -2648,7 +2614,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                         ))}
                     </div>
                     {scoredPredictions.length > 3 && (
-                        <div style={{ textAlign: 'center', marginTop: 16 }}>
+                        <div className="u-text-center u-mt-lg">
                             <button className="btn btn-secondary btn-sm" disabled>
                                 Showing first 3 of {scoredPredictions.length}
                             </button>
@@ -2659,18 +2625,18 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
 
             {scorecard && (
                 <div className="card">
-                    <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>🛡️ Safety Scorecard</h3>
-                    <div style={{ display: 'flex', gap: 'var(--space-xl)', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
+                    <h3 className="u-card-title">Safety Scorecard</h3>
+                    <div className="u-row-lg u-mb-md">
                         <div>
                             <strong>Overall Risk:</strong>{' '}
                             <span className={`badge ${riskColor(scorecard.overall_risk)}`}>{scorecard.overall_risk.toUpperCase()}</span>
                         </div>
                     </div>
                     {(scorecard.red_flags ?? []).length > 0 && (
-                        <div style={{ background: 'var(--color-error-bg)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', marginTop: 'var(--space-sm)' }}>
+                        <div className="u-surface u-tint-error u-mt-sm">
                             {(scorecard.red_flags ?? []).map((flag, idx) => (
-                                <div key={idx} style={{ color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
-                                    ⚠ {flag}
+                                <div key={idx} className="u-text-error u-text-sm">
+                                    <AlertTriangle className="u-icon" aria-hidden="true" /> {flag}
                                 </div>
                             ))}
                         </div>
@@ -2685,7 +2651,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                 <StepFooter
                     currentStep="Evaluation"
                     nextStep="Compression"
-                    nextStepIcon="📦"
+                    nextStepIcon=""
                     isComplete={evalResults.length > 0}
                     hint="Run at least one evaluation to continue"
                     onNext={onNextStep}

@@ -120,7 +120,7 @@
 .plan-refine__strategy {
     padding: var(--space-md);
     border: 1px solid var(--border-default);
-    border-left: 3px solid var(--accent, var(--accent-primary));
+    border-left: 3px solid var(--accent);
     border-radius: var(--radius-md);
     background: var(--bg-primary);
     display: flex;
@@ -135,7 +135,7 @@
     font-size: 12.5px;
 }
 
-.plan-refine__strategy-head svg { color: var(--accent, var(--accent-primary)); }
+.plan-refine__strategy-head svg { color: var(--accent); }
 .plan-refine__strategy-head small { color: var(--text-tertiary); }
 
 .plan-refine__rationale {

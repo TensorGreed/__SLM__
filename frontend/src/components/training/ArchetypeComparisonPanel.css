@@ -13,20 +13,20 @@
 }
 
 .archetype-cmp--healthy {
-    border-left-color: var(--success, #10b981);
+    border-left-color: var(--color-success);
 }
 
 .archetype-cmp--below_cohort {
-    border-left-color: var(--warning, #d97706);
-    background: var(--warning-bg, rgba(217, 119, 6, 0.05));
+    border-left-color: var(--color-warning);
+    background: var(--color-warning-bg);
 }
 
 .archetype-cmp--above_cohort {
-    border-left-color: var(--accent, #3b82f6);
+    border-left-color: var(--accent);
 }
 
 .archetype-cmp--mixed {
-    border-left-color: var(--text-tertiary, #6b7280);
+    border-left-color: var(--text-tertiary);
 }
 
 .archetype-cmp__head h3 {
@@ -66,11 +66,11 @@
 }
 
 .archetype-cmp__row--below {
-    background: var(--warning-bg, rgba(217, 119, 6, 0.04));
+    background: var(--color-warning-bg);
 }
 
 .archetype-cmp__row--above {
-    background: var(--accent-bg, rgba(59, 130, 246, 0.04));
+    background: var(--accent-bg);
 }
 
 .archetype-cmp__val {
@@ -87,18 +87,18 @@
 }
 
 .archetype-cmp__badge--ok {
-    background: var(--success-bg, rgba(16, 185, 129, 0.12));
-    color: var(--success, #10b981);
+    background: var(--color-success-bg);
+    color: var(--color-success);
 }
 
 .archetype-cmp__badge--below {
-    background: var(--warning-bg, rgba(217, 119, 6, 0.16));
-    color: var(--warning, #d97706);
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
 }
 
 .archetype-cmp__badge--above {
-    background: var(--accent-bg, rgba(59, 130, 246, 0.12));
-    color: var(--accent, #3b82f6);
+    background: var(--accent-bg);
+    color: var(--accent);
 }
 
 .archetype-cmp__badge--missing {
@@ -173,8 +173,8 @@
 }
 
 .archetype-cmp__cohort-badge--user {
-    background: var(--accent-bg, rgba(59, 130, 246, 0.12));
-    color: var(--accent, #3b82f6);
+    background: var(--accent-bg);
+    color: var(--accent);
 }
 
 .archetype-cmp__cohort-badge--template {

@@ -9,7 +9,7 @@
 }
 
 .loss-curve--empty {
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
     font-style: italic;
     text-align: center;
 }
@@ -30,13 +30,13 @@
 }
 
 .loss-curve__head-meta {
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
 }
 
 .loss-curve__hint {
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
     font-size: 12px;
     margin: 0;
 }
@@ -49,19 +49,19 @@
 }
 
 .loss-curve__axis {
-    stroke: var(--border-color, rgba(148, 163, 184, 0.5));
+    stroke: var(--border-color);
     stroke-width: 1;
     fill: none;
 }
 
 .loss-curve__tick-label {
-    fill: var(--text-secondary, var(--text-muted));
+    fill: var(--text-secondary);
     font-size: 10px;
     font-variant-numeric: tabular-nums;
 }
 
 .loss-curve__axis-label {
-    fill: var(--text-secondary, var(--text-muted));
+    fill: var(--text-secondary);
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.4px;
@@ -70,49 +70,49 @@
 /* -- Paths ----------------------------------------------------------- */
 
 .loss-curve__path--train {
-    stroke: var(--color-primary, #2563eb);
+    stroke: var(--color-primary);
     stroke-width: 1.75;
 }
 
 .loss-curve__path--eval {
-    stroke: #ea580c;
+    stroke: var(--color-warning);
     stroke-width: 1.75;
     stroke-dasharray: 5 3;
 }
 
 .loss-curve__eval-marker {
-    fill: #ea580c;
-    stroke: var(--bg-elevated, #ffffff);
+    fill: var(--color-warning);
+    stroke: var(--bg-card);
     stroke-width: 1;
 }
 
 /* -- Best-eval marker ---------------------------------------------- */
 
 .loss-curve__best-marker {
-    stroke: var(--color-success, #16a34a);
+    stroke: var(--color-success);
     stroke-width: 1;
     stroke-dasharray: 2 3;
     opacity: 0.7;
 }
 
 .loss-curve__best-dot {
-    fill: var(--color-success, #16a34a);
-    stroke: var(--bg-elevated, #ffffff);
+    fill: var(--color-success);
+    stroke: var(--bg-card);
     stroke-width: 1.5;
 }
 
 /* -- Divergence (overfitting) shade --------------------------------- */
 
 .loss-curve__diverge-shade {
-    fill: rgba(239, 68, 68, 0.10);
+    fill: var(--color-error);
 }
 
 .loss-curve__diverge-note {
     margin: var(--space-sm) 0 0;
     padding: 8px 12px;
     border-radius: var(--radius-sm);
-    background: rgba(234, 88, 12, 0.12);
-    color: #ea580c;
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
     font-size: 12px;
 }
 
@@ -129,7 +129,7 @@
 .loss-curve__legend-item {
     display: inline-flex;
     align-items: center;
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
 }
 
 .loss-curve__legend-item::before {
@@ -142,27 +142,27 @@
 }
 
 .loss-curve__legend-item--train::before {
-    background: var(--color-primary, #2563eb);
+    background: var(--color-primary);
 }
 
 .loss-curve__legend-item--eval::before {
-    background: #ea580c;
-    border-top: 2px dashed #ea580c;
+    background: var(--color-warning);
+    border-top: 2px dashed var(--color-warning);
     background: transparent;
     height: 0;
     border-top-width: 2px;
 }
 
 .loss-curve__legend-item--best::before {
-    background: var(--color-success, #16a34a);
+    background: var(--color-success);
     height: 8px;
     width: 8px;
     border-radius: 50%;
 }
 
 .loss-curve__legend-item--diverge::before {
-    background: rgba(239, 68, 68, 0.18);
+    background: var(--color-error-bg);
     height: 10px;
     width: 14px;
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    border: 1px solid var(--color-error-border);
 }

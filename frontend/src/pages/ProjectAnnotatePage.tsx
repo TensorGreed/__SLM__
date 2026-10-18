@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { Tags, Upload } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import {
@@ -32,6 +33,9 @@ import {
     skipRow,
     submitLabel,
 } from '../api/annotation';
+import EmptyState from '../components/shared/EmptyState';
+import LoadingState from '../components/shared/LoadingState';
+import './ProjectAnnotatePage.css';
 import AnnotationProgress from '../components/annotation/AnnotationProgress';
 import ClassificationLabeler from '../components/annotation/ClassificationLabeler';
 import PreferencePairLabeler, {
@@ -143,18 +147,12 @@ function CreateJobForm({
         <form
             onSubmit={submit}
             data-testid="annotate-create-form"
-            style={{
-                border: '1px solid var(--border-color)',
-                borderRadius: 'var(--radius-md)',
-                padding: 'var(--space-md)',
-                marginBottom: 'var(--space-lg)',
-                background: 'var(--bg-secondary)',
-            }}
+            className="annotate-create"
         >
-            <h3 style={{ marginTop: 0 }}>New label job</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <span style={{ fontSize: '0.8rem' }}>Name</span>
+            <h3 className="u-mt0">New label job</h3>
+            <div className="u-stack">
+                <label className="u-stack-xs">
+                    <span className="u-text-sm">Name</span>
                     <input
                         className="form-input"
                         value={name}
@@ -163,8 +161,8 @@ function CreateJobForm({
                         data-testid="annotate-create-name"
                     />
                 </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <span style={{ fontSize: '0.8rem' }}>Task shape</span>
+                <label className="u-stack-xs">
+                    <span className="u-text-sm">Task shape</span>
                     <select
                         className="form-input"
                         value={labelType}
@@ -179,10 +177,8 @@ function CreateJobForm({
                     </select>
                 </label>
                 {labelType !== 'preference_pair' && (
-                    <label
-                        style={{ display: 'flex', flexDirection: 'column', gap: 4 }}
-                    >
-                        <span style={{ fontSize: '0.8rem' }}>
+                    <label className="u-stack-xs">
+                        <span className="u-text-sm">
                             {labelType === 'classification'
                                 ? 'Allowed labels'
                                 : 'Span types'}{' '}
@@ -196,8 +192,8 @@ function CreateJobForm({
                         />
                     </label>
                 )}
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <span style={{ fontSize: '0.8rem' }}>
+                <label className="u-stack-xs">
+                    <span className="u-text-sm">
                         Target rows (optional)
                     </span>
                     <input
@@ -268,7 +264,7 @@ export function AnnotateListView({ projectId, embedded = false }: { projectId: n
     return (
         <div className={embedded ? 'annotate-embedded' : 'page-container'}>
             {!embedded && <h2>Annotation</h2>}
-            <p style={{ color: 'var(--text-secondary)', marginTop: 0 }}>
+            <p className="u-hint u-mt0">
                 Define label jobs and label rows by hand. Each job tracks
                 its own task shape, label set, and reviewer queue.
             </p>
@@ -281,18 +277,18 @@ export function AnnotateListView({ projectId, embedded = false }: { projectId: n
                 </div>
             )}
 
-            {jobs === null && !error && <div>Loading…</div>}
+            {jobs === null && !error && (
+                <LoadingState label="Loading label jobs" lines={3} />
+            )}
 
             {jobs && jobs.length === 0 && !error && (
-                <div
-                    style={{
-                        color: 'var(--text-secondary)',
-                        fontStyle: 'italic',
-                    }}
-                    data-testid="annotate-list-empty"
-                >
-                    No label jobs yet. Create one above to start labeling.
-                </div>
+                <EmptyState
+                    size="compact"
+                    icon={<Tags />}
+                    title="No label jobs yet"
+                    description="Create one above to start labeling."
+                    testId="annotate-list-empty"
+                />
             )}
 
             {jobs && jobs.length > 0 && (
@@ -518,7 +514,7 @@ function AnnotateLabelerView({
     if (!job) {
         return (
             <div className="page-container">
-                <div className="skeleton" style={{ height: 60 }} />
+                <LoadingState label="Loading label job" lines={2} />
             </div>
         );
     }
@@ -527,7 +523,7 @@ function AnnotateLabelerView({
 
     return (
         <div className="page-container">
-            <div style={{ marginBottom: 'var(--space-md)' }}>
+            <div className="u-mb-md">
                 <Link to={dataStepPath(projectId, 'goldset', 'annotation')}>← Back to jobs</Link>
             </div>
 
@@ -535,28 +531,12 @@ function AnnotateLabelerView({
 
             {job.label_type === 'classification' && (
                 <div
-                    style={{
-                        marginTop: 'var(--space-md)',
-                        padding: 'var(--space-sm) var(--space-md)',
-                        background: 'var(--bg-secondary)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: 'var(--radius-sm)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 'var(--space-md)',
-                        flexWrap: 'wrap',
-                        fontSize: '0.85rem',
-                    }}
+                    className="annotate-bar annotate-bar--compact"
                     data-testid="annotate-strategy-toggle"
                 >
-                    <strong style={{ minWidth: 'auto' }}>Order:</strong>
+                    <strong>Order:</strong>
                     <label
-                        style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 6,
-                            cursor: 'pointer',
-                        }}
+                        className="annotate-radio"
                     >
                         <input
                             type="radio"
@@ -570,12 +550,7 @@ function AnnotateLabelerView({
                         FIFO (insertion order)
                     </label>
                     <label
-                        style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 6,
-                            cursor: 'pointer',
-                        }}
+                        className="annotate-radio"
                         title="Ranks unassigned rows by your most recent classification experiment's softmax entropy. Falls back to FIFO when no completed classification experiment exists yet."
                     >
                         <input
@@ -591,10 +566,7 @@ function AnnotateLabelerView({
                     </label>
                     {strategy === 'active' && (
                         <span
-                            style={{
-                                color: 'var(--text-secondary)',
-                                fontStyle: 'italic',
-                            }}
+                            className="annotate-empty"
                             data-testid="annotate-strategy-hint"
                         >
                             Uses your latest completed classification model;
@@ -606,32 +578,16 @@ function AnnotateLabelerView({
 
             {job.stats.labeled > 0 && (
                 <div
-                    style={{
-                        marginTop: 'var(--space-md)',
-                        padding: 'var(--space-md)',
-                        background: 'var(--bg-secondary)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: 'var(--radius-sm)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 'var(--space-md)',
-                        flexWrap: 'wrap',
-                    }}
+                    className="annotate-bar"
                     data-testid="annotate-promote-card"
                 >
-                    <div style={{ flex: 1, minWidth: 280 }}>
+                    <div className="annotate-promote__text">
                         <strong>
                             {job.stats.labeled - (job.stats.promoted || 0)}
                             {' '}
                             labeled row(s) ready to promote
                         </strong>
-                        <div
-                            style={{
-                                fontSize: '0.85rem',
-                                color: 'var(--text-secondary)',
-                                marginTop: 4,
-                            }}
-                        >
+                        <div className="u-hint u-mt-xs">
                             {(job.stats.promoted || 0) > 0
                                 ? `${job.stats.promoted} already in your training data.`
                                 : 'Labels stay in the annotation table until promoted into a training dataset.'}
@@ -650,7 +606,12 @@ function AnnotateLabelerView({
                     >
                         {promoting
                             ? 'Promoting…'
-                            : '📤 Promote to synthetic'}
+                            : (
+                                <>
+                                    <Upload className="u-icon" aria-hidden="true" />
+                                    {' '}Promote to synthetic
+                                </>
+                            )}
                     </button>
                     <button
                         type="button"
@@ -670,37 +631,21 @@ function AnnotateLabelerView({
 
             {job.instructions && (
                 <div
-                    style={{
-                        marginTop: 'var(--space-md)',
-                        padding: 'var(--space-md)',
-                        background: 'var(--bg-secondary)',
-                        borderRadius: 'var(--radius-sm)',
-                        border: '1px solid var(--border-color)',
-                    }}
+                    className="annotate-bar annotate-bar--block"
                     data-testid="annotate-instructions"
                 >
                     {job.instructions}
                 </div>
             )}
 
-            <div style={{ marginTop: 'var(--space-lg)' }}>
+            <div className="u-mt-lg">
                 {queueEmpty || !currentRow ? (
                     <div
-                        style={{
-                            padding: 'var(--space-lg)',
-                            background: 'var(--bg-secondary)',
-                            borderRadius: 'var(--radius-md)',
-                            textAlign: 'center',
-                        }}
+                        className="annotate-queue-empty"
                         data-testid="annotate-queue-empty"
                     >
                         <strong>Queue empty.</strong>
-                        <div
-                            style={{
-                                color: 'var(--text-secondary)',
-                                marginTop: 8,
-                            }}
-                        >
+                        <div className="u-hint u-mt-sm">
                             No unlabeled rows are waiting. Seed more rows from
                             a dataset to keep labeling.
                         </div>

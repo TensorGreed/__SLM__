@@ -47,7 +47,7 @@
 
 .badge.strict {
   background: var(--text-primary);
-  color: white;
+  color: var(--accent-contrast);
 }
 
 .badge.status-pass { background: var(--color-success-bg); color: var(--color-success); }
@@ -62,7 +62,7 @@
 
 .readiness-check {
   padding: 0.75rem;
-  background: white;
+  background: var(--bg-card);
   border-radius: 6px;
   border: 1px solid var(--bg-tertiary);
 }
@@ -96,7 +96,7 @@
 
 .check-type-tag.blocker {
   background: var(--color-error);
-  color: white;
+  color: var(--accent-contrast);
   font-size: 0.7rem;
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
@@ -115,7 +115,7 @@
   margin-top: 1rem;
   padding: 0.4rem 0.8rem;
   font-size: 0.8rem;
-  background: white;
+  background: var(--bg-card);
   border: 1px solid var(--border-default);
   border-radius: 4px;
   cursor: pointer;

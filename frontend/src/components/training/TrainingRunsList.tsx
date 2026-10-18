@@ -4,6 +4,7 @@
  * bulk-archive of failed runs.
  */
 
+import { Package, RefreshCw, Trash2 } from 'lucide-react';
 import type { Job as JobShape } from '../../api/jobs';
 import EmptyState from '../shared/EmptyState';
 import ExperimentClassifierHeadBadge from './ExperimentClassifierHeadBadge';
@@ -57,17 +58,7 @@ export default function TrainingRunsList({
           {experiments.filter((e) => e.status === 'failed').length >= 2 && (
             <div
               data-testid="bulk-archive-failed-banner"
-              style={{
-                padding: 'var(--space-md)',
-                background: 'var(--bg-secondary)',
-                border: '1px solid var(--border-color)',
-                borderRadius: 'var(--radius-sm)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 'var(--space-md)',
-                marginBottom: 'var(--space-md)',
-              }}
+              className="u-surface u-row-md u-between u-mb-md"
             >
               <span>
                 You have <strong>
@@ -83,7 +74,7 @@ export default function TrainingRunsList({
                 onClick={handleBulkArchiveFailed}
                 data-testid="bulk-archive-failed-button"
               >
-                📦 Archive all failed
+                <Package className="u-icon" aria-hidden="true" /> Archive all failed
               </button>
             </div>
           )}
@@ -158,7 +149,7 @@ export default function TrainingRunsList({
                     data-testid={`experiment-reset-${exp.id}`}
                     title="Reset to PENDING + archive stale output dir + clear stale checkpoints"
                   >
-                    🔄 Reset
+                    <RefreshCw className="u-icon" aria-hidden="true" /> Reset
                   </button>
                 )}
                 <button className="btn btn-secondary btn-sm" onClick={() => viewDashboard(exp)}>
@@ -172,7 +163,7 @@ export default function TrainingRunsList({
                     data-testid={`experiment-delete-${exp.id}`}
                     title="Permanently delete this experiment + its output directory"
                   >
-                    🗑
+                    <Trash2 className="u-icon" aria-label="Delete" />
                   </button>
                 )}
               </div>

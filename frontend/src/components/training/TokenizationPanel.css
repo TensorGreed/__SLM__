@@ -100,7 +100,7 @@
 
 .tok-btn:hover {
     transform: translateY(-1px);
-    box-shadow: 0 6px 14px rgba(47, 116, 217, 0.3);
+    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.3);
 }
 
 .tok-btn:disabled {

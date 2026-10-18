@@ -190,7 +190,7 @@ preview rows:
 
 - Inline counts per row: *"3 matched · 1 missed · 0 hallucinated · P 1.00 · R 0.75"*. Missed/hallucinated counts render in red when > 0.
 - "Show entity-by-entity breakdown" disclosure: per-entity table
-  with status badge (**✓ matched** in green, **✗ missed** /
+  with status badge (**matched** in green, **missed** /
   **✗ hallucinated** in red), entity type, text, and offset range.
   Every failure mode is visible without leaving the page.
 
@@ -464,7 +464,7 @@ negatives:
 - **Option C — Annotation jobs**: on **Data** → **Labels** → Details → *Annotation jobs*, create a `span` label job, seed from
   cleaned chunks, hand-label 100–200 rows paying special attention to
   what should NOT be tagged, then click
-  **📤 Promote to synthetic** ([Story 1.6](https://github.com/anugram/__SLM__/blob/main/backend/app/services/annotation/promotion.py)).
+  **Promote to synthetic** ([Story 1.6](https://github.com/anugram/__SLM__/blob/main/backend/app/services/annotation/promotion.py)).
   Highest quality, most time-intensive.
 
 200 hard-negative rows mixed with 2k clean synthetics typically lifts
@@ -657,13 +657,13 @@ checkpoint built with different LoRA config. The compatibility gate
 now refuses incompatible resumes with a clear message ("was rank=16,
 now rank=8"). On older builds:
 
-- **From the UI**: open the experiment list, click the 🔄 **Reset**
+- **From the UI**: open the experiment list, click the **Reset**
   button on the failed row. The output directory gets archived to
   `<dir>.bak.<utc-stamp>` and the row flips to PENDING — restart
   cleanly from there.
 - **From the CLI**: `brewslm experiment reset --project <id> --exp <id>`
 - **Bulk cleanup after a chain of failures**: the experiment list
-  shows an "📦 Archive all failed" banner when ≥2 FAILED rows exist —
+  shows an "Archive all failed" banner when ≥2 FAILED rows exist —
   one click sweeps every one. CLI: `brewslm experiment archive-failed --project <id>`.
 
 ### "Network error" during held-out eval

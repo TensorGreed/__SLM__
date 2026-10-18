@@ -1,5 +1,5 @@
 .documents-qa-flow {
-    border-left: 3px solid var(--accent, #3b82f6);
+    border-left: 3px solid var(--accent);
     display: flex;
     flex-direction: column;
     gap: var(--space-sm);
@@ -29,7 +29,7 @@
 
 .documents-qa-flow__option { font-size: var(--font-size-sm); }
 
-.documents-qa-flow__running { margin: 0; color: var(--accent, #3b82f6); font-size: var(--font-size-sm); }
+.documents-qa-flow__running { margin: 0; color: var(--accent); font-size: var(--font-size-sm); }
 
 .documents-qa-flow__failed,
 .documents-qa-flow__blockers {
@@ -37,9 +37,9 @@
     font-size: var(--font-size-sm);
     padding: 6px 10px;
     border-radius: var(--radius-sm);
-    border: 1px solid var(--color-warning-border, #f59e0b);
-    background: var(--color-warning-bg, #fffbeb);
-    color: var(--color-warning-fg, #92400e);
+    border: 1px solid var(--color-warning-border);
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
 }
 
 .documents-qa-flow__result {
@@ -60,13 +60,13 @@
     margin-top: 0.75rem;
     padding: 0.6rem 0.8rem;
     border-radius: 8px;
-    border: 1px solid var(--border, #ddd);
+    border: 1px solid var(--border);
     font-size: 0.92rem;
 }
 
 .documents-qa-flow__gate--retrieval_ready {
-    border-color: var(--warning, #b26a00);
-    background: rgba(178, 106, 0, 0.06);
+    border-color: var(--color-warning);
+    background: var(--color-warning-bg);
 }
 
 .documents-qa-flow__gate .documents-qa-flow__actions {

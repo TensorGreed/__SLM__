@@ -310,7 +310,6 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
             <StepFooter
                 currentStep="Tokenization"
                 nextStep="Training"
-                nextStepIcon="🔬"
                 isComplete={!!stats}
                 hint="Analyze your dataset tokens before training"
                 onNext={onNextStep}

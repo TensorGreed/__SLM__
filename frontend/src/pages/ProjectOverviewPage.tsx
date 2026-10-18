@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { FlaskConical, Package } from 'lucide-react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 
 import { fetchCoachSuggestions, type CoachStage, type CoachSuggestion } from '../api/coach';
@@ -14,6 +15,8 @@ import { fetchEvalSummary, type EvalSummary } from '../api/evalSummary';
 import { latestRunText } from './overviewText';
 import api from '../api/client';
 import CoachSuggestionCard from '../components/coach/CoachSuggestion';
+import EmptyState from '../components/shared/EmptyState';
+import LoadingState from '../components/shared/LoadingState';
 import QuickstartCard from '../components/guide/QuickstartCard';
 import { useCoachMode } from '../components/coach/useCoachMode';
 import { getPipelineStageIndex, getRecommendedAction, PIPELINE_STAGE_LABEL } from '../utils/flowGuide';
@@ -57,6 +60,8 @@ export default function ProjectOverviewPage() {
     const [summary, setSummary] = useState<EvalSummary | null>(null);
     const [exports, setExports] = useState<ExportRow[]>([]);
     const [nudges, setNudges] = useState<CoachSuggestion[]>([]);
+    const [summaryLoaded, setSummaryLoaded] = useState(false);
+    const [exportsLoaded, setExportsLoaded] = useState(false);
     const [planOpen, setPlanOpen] = useState(false);
 
     const currentStage = pipelineStatus?.current_stage || project.pipeline_stage || 'ingestion';
@@ -67,11 +72,11 @@ export default function ProjectOverviewPage() {
     useEffect(() => {
         let cancelled = false;
         fetchEvalSummary(projectId)
-            .then((data) => { if (!cancelled) setSummary(data); })
-            .catch(() => { if (!cancelled) setSummary(null); });
+            .then((data) => { if (!cancelled) { setSummary(data); setSummaryLoaded(true); } })
+            .catch(() => { if (!cancelled) { setSummary(null); setSummaryLoaded(true); } });
         api.get<ExportRow[]>(`/projects/${projectId}/export/list`)
-            .then((res) => { if (!cancelled) setExports(Array.isArray(res.data) ? res.data : []); })
-            .catch(() => { if (!cancelled) setExports([]); });
+            .then((res) => { if (!cancelled) { setExports(Array.isArray(res.data) ? res.data : []); setExportsLoaded(true); } })
+            .catch(() => { if (!cancelled) { setExports([]); setExportsLoaded(true); } });
         return () => { cancelled = true; };
     }, [projectId, currentStage]);
 
@@ -130,7 +135,9 @@ export default function ProjectOverviewPage() {
             <div className="overview-grid">
                 <section className="card overview-card" data-testid="overview-latest-run">
                     <span className="overview-kicker">Latest run</span>
-                    {latest ? (
+                    {!summaryLoaded ? (
+                        <LoadingState label="Loading latest run" lines={2} />
+                    ) : latest ? (
                         <>
                             <strong>{latest.title}</strong>
                             <p>{latest.detail}</p>
@@ -139,18 +146,21 @@ export default function ProjectOverviewPage() {
                             </button>
                         </>
                     ) : (
-                        <>
-                            <p className="overview-muted">Nothing trained yet.</p>
-                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => navigate(projectPath(projectId, 'train'))}>
-                                Open Train
-                            </button>
-                        </>
+                        <EmptyState
+                            size="compact"
+                            icon={<FlaskConical />}
+                            title="Nothing trained yet"
+                            description="Train a model and its verdict shows up here."
+                            primary={{ label: 'Open Train', onClick: () => navigate(projectPath(projectId, 'train')) }}
+                        />
                     )}
                 </section>
 
                 <section className="card overview-card" data-testid="overview-shipped">
                     <span className="overview-kicker">Shipped model</span>
-                    {shipped ? (
+                    {!exportsLoaded ? (
+                        <LoadingState label="Loading exports" lines={2} />
+                    ) : shipped ? (
                         <>
                             <strong>
                                 Export #{shipped.id}
@@ -172,7 +182,13 @@ export default function ProjectOverviewPage() {
                             </button>
                         </>
                     ) : (
-                        <p className="overview-muted">Nothing exported yet.</p>
+                        <EmptyState
+                            size="compact"
+                            icon={<Package />}
+                            title="Nothing exported yet"
+                            description="Package a trained model and it lists here."
+                            primary={{ label: 'Open Ship', onClick: () => navigate(projectPath(projectId, 'ship')) }}
+                        />
                     )}
                 </section>
             </div>

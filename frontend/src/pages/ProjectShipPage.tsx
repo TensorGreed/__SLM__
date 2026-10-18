@@ -59,8 +59,8 @@ export function SeedPickCard({ projectId }: { projectId: number }) {
     if (!summary?.seed_group_leader || !leaderId) return null;
     return (
         <section className="card" data-testid="ship-seed-pick">
-            <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-sm)' }}>Pick the seed to ship</h3>
-            <p style={{ margin: '0 0 var(--space-md)', color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+            <h3 className="u-card-title u-mb-sm">Pick the seed to ship</h3>
+            <p className="u-hint u-mt0 u-mb-md">
                 Run #{leaderId} trained several seeds. The one shipped is picked by its validation score only; the export below records why.
             </p>
             <SeedShipTable projectId={projectId} leaderId={leaderId} seeds={summary.seeds} />

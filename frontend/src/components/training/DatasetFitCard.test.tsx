@@ -182,6 +182,6 @@ describe('DatasetFitCard', () => {
             .getByText('Question + answer')
             .closest('li');
         expect(qaRow).not.toBeNull();
-        expect(within(qaRow as HTMLElement).getByText(/✓/)).toBeInTheDocument();
+        expect(within(qaRow as HTMLElement).getByLabelText('present')).toBeInTheDocument();
     });
 });

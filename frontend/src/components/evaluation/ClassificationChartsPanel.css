@@ -24,13 +24,13 @@
 }
 
 .cls-charts__head-meta {
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
 }
 
 .cls-charts__hint {
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
     font-size: 12px;
     margin: 0 0 8px;
 }
@@ -49,7 +49,7 @@
 }
 
 .cls-charts__bars-header text {
-    fill: var(--text-secondary, var(--text-muted));
+    fill: var(--text-secondary);
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.4px;
@@ -62,12 +62,12 @@
 }
 
 .cls-charts__bars-support {
-    fill: var(--text-secondary, var(--text-muted));
+    fill: var(--text-secondary);
     font-variant-numeric: tabular-nums;
 }
 
 .cls-charts__bar-bg {
-    fill: rgba(148, 163, 184, 0.16);
+    fill: var(--accent);
     rx: 2;
 }
 
@@ -75,9 +75,9 @@
     rx: 2;
 }
 
-.cls-charts__bar.is-good .cls-charts__bar-fill { fill: var(--color-success, #22c55e); }
-.cls-charts__bar.is-mid  .cls-charts__bar-fill { fill: var(--color-warning, #eab308); }
-.cls-charts__bar.is-bad  .cls-charts__bar-fill { fill: var(--color-error, #ef4444); }
+.cls-charts__bar.is-good .cls-charts__bar-fill { fill: var(--color-success); }
+.cls-charts__bar.is-mid  .cls-charts__bar-fill { fill: var(--color-warning); }
+.cls-charts__bar.is-bad  .cls-charts__bar-fill { fill: var(--color-error); }
 
 .cls-charts__bar-value {
     fill: var(--text-primary);
@@ -102,12 +102,12 @@
 }
 
 .cls-charts__matrix-col-label.is-unparseable {
-    fill: #ea580c;
+    fill: var(--color-warning);
     font-style: italic;
 }
 
 .cls-charts__matrix-cell {
-    stroke: var(--border-color, rgba(148, 163, 184, 0.3));
+    stroke: var(--border-color);
     stroke-width: 0.5;
 }
 
@@ -121,5 +121,5 @@
 .cls-charts__matrix-count.is-light {
     /* When a cell has a high share its background is dark — flip the
        count colour to keep the digit readable. */
-    fill: #ffffff;
+    fill: var(--accent-contrast);
 }

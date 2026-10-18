@@ -16,7 +16,8 @@
  * Backed by GET /api/projects/{id}/eval-gaps.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Check, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import type { ErrorEnvelope } from '../../api/errors';
@@ -37,10 +38,10 @@ interface EvalGapsPanelProps {
     projectId: number;
 }
 
-const SEVERITY_META: Record<EvalGapSeverity, { label: string; icon: string }> = {
-    ok: { label: 'OK', icon: '✓' },
+const SEVERITY_META: Record<EvalGapSeverity, { label: string; icon: ReactNode }> = {
+    ok: { label: 'OK', icon: <Check className="u-icon" aria-hidden="true" /> },
     warn: { label: 'Warning', icon: '!' },
-    block: { label: 'Blocker', icon: '✕' },
+    block: { label: 'Blocker', icon: <X className="u-icon" aria-hidden="true" /> },
 };
 
 const OVERALL_HEADLINE: Record<EvalGapSeverity, string> = {

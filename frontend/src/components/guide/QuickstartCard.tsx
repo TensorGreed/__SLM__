@@ -19,7 +19,8 @@
  * next render — the checkmarks flip without a page reload.
  */
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
+import { BarChart3, FlaskConical, FolderOpen, Lightbulb, Ruler, X } from 'lucide-react';
 
 import api from '../../api/client';
 import {
@@ -30,6 +31,7 @@ import {
     type ImportSampleSummary,
     type TrainDefaultResponse,
 } from '../../api/quickstart';
+import './QuickstartCard.css';
 import { useJobsStore } from '../../stores/jobsStore';
 import { useToastStore } from '../../stores/toastStore';
 
@@ -243,34 +245,23 @@ export default function QuickstartCard({
 
     return (
         <section
-            className="card"
+            className="card u-stack"
             data-testid="quickstart-card"
-            style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'var(--space-md)',
-            }}
         >
             <div>
-                <h3 style={{ margin: 0 }}>Quickstart</h3>
-                <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)' }}>
+                <h3 className="u-m0">Quickstart</h3>
+                <p className="u-hint u-mt-xs u-mb0">
                     Three one-click actions to take a fresh project from
                     empty → trained → evaluated. Each step also has a full
                     UI for power users — see the checklist below.
                 </p>
             </div>
 
-            <div
-                style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-                    gap: 'var(--space-md)',
-                }}
-            >
+            <div className="u-grid-auto">
                 {/* 1. Import sample CSV */}
                 <ActionTile
                     index={1}
-                    icon="📂"
+                    icon={<FolderOpen />}
                     title="Import sample CSV"
                     description={
                         importState.status === 'success'
@@ -288,7 +279,7 @@ export default function QuickstartCard({
                 {/* 2. Baseline (untrained) — Theme 8 Epic 1 */}
                 <ActionTile
                     index={2}
-                    icon="📐"
+                    icon={<Ruler />}
                     title="Baseline (untrained)"
                     description={
                         !hasBaseModel
@@ -309,7 +300,7 @@ export default function QuickstartCard({
                 {/* 3. Train default config */}
                 <ActionTile
                     index={3}
-                    icon="🧪"
+                    icon={<FlaskConical />}
                     title="Train default config"
                     description={
                         !hasBaseModel
@@ -339,7 +330,7 @@ export default function QuickstartCard({
                 {/* 4. Evaluate */}
                 <ActionTile
                     index={4}
-                    icon="📊"
+                    icon={<BarChart3 />}
                     title="Evaluate"
                     description={
                         evalState.status === 'success'
@@ -377,7 +368,7 @@ interface TileNudge {
 
 interface ActionTileProps<T> {
     index: number;
-    icon: string;
+    icon: ReactNode;
     title: string;
     description: string;
     state: ButtonState<T>;
@@ -412,7 +403,7 @@ function ActionTile<T>({
 
     let badge: { label: string; tone: 'info' | 'success' | 'error' | 'warning' };
     if (isSuccess) {
-        badge = { label: '✓ Done', tone: 'success' };
+        badge = { label: 'Done', tone: 'success' };
     } else if (isError) {
         badge = { label: 'Failed', tone: 'error' };
     } else if (isRunning) {
@@ -424,64 +415,31 @@ function ActionTile<T>({
     return (
         <div
             data-testid={testid}
-            style={{
-                padding: 'var(--space-md)',
-                borderRadius: 'var(--radius-md)',
-                border: nudge
-                    ? '1px solid var(--color-warning)'
-                    : '1px solid var(--border-color)',
-                background: 'var(--bg-card)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'var(--space-sm)',
-                position: 'relative',
-            }}
+            className={`quickstart-tile${nudge ? ' quickstart-tile--nudge' : ''}`}
         >
             {nudge && (
                 <div
                     role="status"
                     data-testid={nudge.testid}
-                    style={{
-                        margin: 'calc(-1 * var(--space-md)) calc(-1 * var(--space-md)) 0',
-                        padding: 'var(--space-sm) var(--space-md)',
-                        background: 'var(--color-warning-bg)',
-                        color: 'var(--color-warning)',
-                        borderTopLeftRadius: 'var(--radius-md)',
-                        borderTopRightRadius: 'var(--radius-md)',
-                        borderBottom: '1px solid var(--color-warning)',
-                        fontSize: '0.82rem',
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: 'var(--space-sm)',
-                    }}
+                    className="quickstart-tile__nudge"
                 >
-                    <span aria-hidden="true">💡 ↓</span>
-                    <span style={{ flex: 1 }}>{nudge.message}</span>
+                    <span aria-hidden="true">
+                        <Lightbulb className="u-icon" /> ↓
+                    </span>
+                    <span className="u-grow">{nudge.message}</span>
                     <button
                         type="button"
-                        className="btn btn-ghost"
+                        className="btn btn-ghost quickstart-tile__dismiss"
                         onClick={nudge.onDismiss}
                         aria-label="Dismiss tour nudge"
                         data-testid={`${nudge.testid}-dismiss`}
-                        style={{
-                            padding: 0,
-                            fontSize: '1rem',
-                            lineHeight: 1,
-                            color: 'var(--color-warning)',
-                        }}
                     >
-                        ✕
+                        <X className="u-icon" aria-hidden="true" />
                     </button>
                 </div>
             )}
-            <div
-                style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                }}
-            >
-                <span style={{ fontSize: '1.4rem' }} aria-hidden="true">
+            <div className="u-row u-between">
+                <span className="quickstart-tile__icon" aria-hidden="true">
                     {icon}
                 </span>
                 <span
@@ -491,13 +449,9 @@ function ActionTile<T>({
                     {badge.label}
                 </span>
             </div>
-            <div style={{ fontWeight: 600 }}>{title}</div>
+            <div className="u-semibold">{title}</div>
             <div
-                style={{
-                    color: 'var(--text-secondary)',
-                    fontSize: '0.85rem',
-                    flex: 1,
-                }}
+                className="quickstart-tile__description"
                 data-testid={`${testid}-description`}
             >
                 {description}
@@ -505,13 +459,7 @@ function ActionTile<T>({
             {isError && (
                 <div
                     role="alert"
-                    style={{
-                        padding: 'var(--space-xs) var(--space-sm)',
-                        background: 'var(--color-error-bg)',
-                        color: 'var(--color-error)',
-                        borderRadius: 'var(--radius-sm)',
-                        fontSize: '0.8rem',
-                    }}
+                    className="quickstart-tile__error"
                     data-testid={`${testid}-error`}
                 >
                     {state.message}

@@ -1,0 +1,38 @@
+/* SftLiftPanel — Epic U7: classes that replaced inline styles. */
+.sft-lift__row {
+    display: grid; grid-template-columns: minmax(110px, auto) 1fr; gap: var(--space-md);
+    align-items: center; padding: var(--space-xs) 0;
+}
+.sft-lift__metric {
+    font-family: var(--font-mono); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold);
+}
+.sft-lift__values { display: flex; align-items: center; gap: var(--space-sm); font-size: var(--font-size-sm); }
+.sft-lift__bar {
+    position: relative; flex: 1; height: 8px; border-radius: var(--radius-sm);
+    background: var(--bg-tertiary); overflow: hidden;
+}
+.sft-lift__bar-fill { position: absolute; top: 0; left: 0; height: 100%; }
+.sft-lift__bar-fill--base { background: var(--gray-400); width: 0; }
+.sft-lift__bar-fill--trained { opacity: 0.6; mix-blend-mode: multiply; }
+.sft-lift__tone--good { background: var(--color-success); }
+.sft-lift__tone--bad { background: var(--color-error); }
+.sft-lift__tone--neutral { background: var(--text-secondary); }
+.sft-lift__text--good { color: var(--color-success); }
+.sft-lift__text--bad { color: var(--color-error); }
+.sft-lift__text--neutral { color: var(--text-secondary); }
+.sft-lift__delta { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); min-width: 110px; text-align: right; }
+.sft-lift__evidence { font-size: var(--font-size-xs); color: var(--text-secondary); text-align: right; }
+.sft-lift__evidence--unproven { color: var(--color-warning); }
+.sft-lift__gate-row { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) 0; font-size: var(--font-size-sm); }
+.sft-lift__error { background: var(--color-error-bg); color: var(--color-error); }
+.sft-lift__w-0 { width: 0%; }
+.sft-lift__w-10 { width: 10%; }
+.sft-lift__w-20 { width: 20%; }
+.sft-lift__w-30 { width: 30%; }
+.sft-lift__w-40 { width: 40%; }
+.sft-lift__w-50 { width: 50%; }
+.sft-lift__w-60 { width: 60%; }
+.sft-lift__w-70 { width: 70%; }
+.sft-lift__w-80 { width: 80%; }
+.sft-lift__w-90 { width: 90%; }
+.sft-lift__w-100 { width: 100%; }

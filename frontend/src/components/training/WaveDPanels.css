@@ -90,17 +90,17 @@
 }
 
 .why-this-plan__provenance--measured {
-    background: rgba(34, 197, 94, 0.18);
+    background: var(--color-success-bg);
     color: var(--color-success);
 }
 
 .why-this-plan__provenance--estimated {
-    background: rgba(234, 179, 8, 0.18);
+    background: var(--color-warning-bg);
     color: var(--color-warning);
 }
 
 .why-this-plan__error {
-    color: var(--color-danger, var(--color-error));
+    color: var(--color-danger);
     font-size: var(--font-size-sm);
     margin-bottom: var(--space-sm);
 }
@@ -114,13 +114,13 @@
 }
 
 .why-this-plan__warm-start--warm {
-    background: rgba(34, 197, 94, 0.14);
+    background: var(--color-success-bg);
     color: var(--color-success);
 }
 
 .why-this-plan__warm-start--cold {
-    background: rgba(148, 163, 184, 0.16);
-    color: var(--text-secondary, var(--text-muted));
+    background: var(--accent-bg);
+    color: var(--text-secondary);
 }
 
 .why-this-plan__manifest {
@@ -133,7 +133,7 @@
 }
 
 .why-this-plan__manifest-json {
-    background: var(--bg-tertiary, var(--bg-tertiary));
+    background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
     padding: var(--space-sm);
@@ -167,7 +167,7 @@
 }
 
 .checkpoints-panel__error {
-    color: var(--color-danger, var(--color-error));
+    color: var(--color-danger);
     font-size: var(--font-size-sm);
     margin-bottom: var(--space-sm);
 }
@@ -206,7 +206,7 @@
 }
 
 .checkpoints-panel__table tr.is-best {
-    background: rgba(34, 197, 94, 0.06);
+    background: var(--color-success-bg);
 }
 
 .checkpoints-panel__path {
@@ -242,7 +242,7 @@
 }
 
 .pre-run-modal {
-    background: var(--bg-primary, white);
+    background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg, 12px);
     width: 100%;
@@ -294,12 +294,12 @@
 }
 
 .pre-run-modal__provenance--measured {
-    background: rgba(34, 197, 94, 0.18);
+    background: var(--color-success-bg);
     color: var(--color-success);
 }
 
 .pre-run-modal__provenance--estimated {
-    background: rgba(234, 179, 8, 0.18);
+    background: var(--color-warning-bg);
     color: var(--color-warning);
 }
 
@@ -327,7 +327,7 @@
 }
 
 .pre-run-modal__error {
-    color: var(--color-danger, var(--color-error));
+    color: var(--color-danger);
     font-size: var(--font-size-sm);
 }
 

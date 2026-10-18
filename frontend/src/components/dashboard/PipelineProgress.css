@@ -80,15 +80,15 @@
 
 .progress-stage.active .stage-dot {
     background: var(--accent-primary);
-    color: white;
+    color: var(--accent-contrast);
     box-shadow: 0 0 16px var(--accent-glow);
     animation: pulse 2s infinite;
 }
 
 .progress-stage.completed .stage-dot {
     background: var(--color-success);
-    color: white;
-    box-shadow: 0 0 10px rgba(34, 197, 94, 0.3);
+    color: var(--accent-contrast);
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
 }
 
 .stage-label {

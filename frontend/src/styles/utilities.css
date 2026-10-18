@@ -1,0 +1,155 @@
+/* ───────────────────────────────────────────────────────────────────────
+   Utilities (Epic U phase U7) — the small layout and text-role classes
+   that used to be written as inline ``style={{ … }}`` objects. Every
+   value is a token from index.css. Prefix ``u-``. Add a class here only
+   when three or more components need it; a one-off belongs in the
+   component's own stylesheet.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Stacks and rows */
+.u-stack { display: flex; flex-direction: column; gap: var(--space-md); }
+.u-stack-xs { display: flex; flex-direction: column; gap: var(--space-xs); }
+.u-stack-sm { display: flex; flex-direction: column; gap: var(--space-sm); }
+.u-stack-lg { display: flex; flex-direction: column; gap: var(--space-lg); }
+.u-stack-xl { display: flex; flex-direction: column; gap: var(--space-xl); }
+.u-row { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
+.u-row-xs { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
+.u-row-md { display: flex; align-items: center; gap: var(--space-md); flex-wrap: wrap; }
+.u-row-lg { display: flex; align-items: center; gap: var(--space-lg); flex-wrap: wrap; }
+.u-row-start { align-items: flex-start; }
+.u-row-baseline { align-items: baseline; }
+.u-row-nowrap { flex-wrap: nowrap; }
+.u-between { justify-content: space-between; }
+.u-end { justify-content: flex-end; }
+.u-center { justify-content: center; }
+.u-grow { flex: 1 1 auto; min-width: 0; }
+.u-shrink-0 { flex-shrink: 0; }
+.u-push-end { margin-left: auto; }
+.u-push-bottom { margin-top: auto; }
+.u-wrap { flex-wrap: wrap; }
+
+/* Grids */
+.u-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-lg); }
+.u-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-lg); }
+.u-grid-auto { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-md); }
+.u-grid-auto-sm { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-sm); }
+@media (max-width: 980px) {
+  .u-grid-2, .u-grid-3 { grid-template-columns: 1fr; }
+}
+
+/* Margins — zero and the scale, one axis each */
+.u-m0 { margin: 0; }
+.u-mt0 { margin-top: 0; }
+.u-mb0 { margin-bottom: 0; }
+.u-mt-xs { margin-top: var(--space-xs); }
+.u-mt-sm { margin-top: var(--space-sm); }
+.u-mt-md { margin-top: var(--space-md); }
+.u-mt-lg { margin-top: var(--space-lg); }
+.u-mt-xl { margin-top: var(--space-xl); }
+.u-mb-xs { margin-bottom: var(--space-xs); }
+.u-mb-sm { margin-bottom: var(--space-sm); }
+.u-mb-md { margin-bottom: var(--space-md); }
+.u-mb-lg { margin-bottom: var(--space-lg); }
+.u-mb-xl { margin-bottom: var(--space-xl); }
+.u-ml-sm { margin-left: var(--space-sm); }
+.u-ml-md { margin-left: var(--space-md); }
+.u-ml-lg { margin-left: var(--space-lg); }
+
+/* Padding */
+.u-p0 { padding: 0; }
+.u-p-sm { padding: var(--space-sm); }
+.u-p-md { padding: var(--space-md); }
+.u-p-lg { padding: var(--space-lg); }
+.u-px-md { padding-left: var(--space-md); padding-right: var(--space-md); }
+.u-py-sm { padding-top: var(--space-sm); padding-bottom: var(--space-sm); }
+
+/* Text roles — colour and size come together so a role reads the same everywhere */
+.u-text-primary { color: var(--text-primary); }
+.u-text-secondary { color: var(--text-secondary); }
+.u-text-tertiary { color: var(--text-tertiary); }
+.u-text-accent { color: var(--accent-text); }
+.u-text-success { color: var(--color-success); }
+.u-text-warning { color: var(--color-warning); }
+.u-text-error { color: var(--color-error); }
+.u-text-2xs { font-size: var(--font-size-2xs); line-height: var(--leading-2xs); }
+.u-text-xs { font-size: var(--font-size-xs); line-height: var(--leading-xs); }
+.u-text-sm { font-size: var(--font-size-sm); line-height: var(--leading-sm); }
+.u-text-md { font-size: var(--font-size-md); line-height: var(--leading-md); }
+.u-text-lg { font-size: var(--font-size-lg); line-height: var(--leading-lg); }
+.u-text-xl { font-size: var(--font-size-xl); line-height: var(--leading-xl); }
+.u-meta { font-size: var(--font-size-xs); line-height: var(--leading-xs); color: var(--text-tertiary); }
+.u-hint { font-size: var(--font-size-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
+.u-eyebrow {
+  font-size: var(--font-size-2xs);
+  line-height: var(--leading-2xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-xs);
+}
+.u-card-title {
+  margin: 0 0 var(--space-md);
+  font-size: var(--font-size-md);
+  line-height: var(--leading-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+.u-card-title--tight { margin-bottom: 0; }
+.u-semibold { font-weight: var(--font-weight-semibold); }
+.u-medium { font-weight: var(--font-weight-medium); }
+.u-regular { font-weight: var(--font-weight-regular); }
+.u-mono { font-family: var(--font-mono); }
+.u-pre { white-space: pre-wrap; word-break: break-word; }
+.u-nowrap { white-space: nowrap; }
+.u-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.u-left { text-align: left; }
+.u-right { text-align: right; }
+.u-text-center { text-align: center; }
+.u-caps { text-transform: uppercase; letter-spacing: 0.04em; }
+.u-strike { text-decoration: line-through; }
+
+/* Boxes */
+.u-scroll-x { overflow-x: auto; max-width: 100%; }
+.u-scroll-y { overflow-y: auto; }
+.u-clip { overflow: hidden; }
+.u-full { width: 100%; }
+.u-w-auto { width: auto; }
+.u-w-xs { width: 80px; }
+.u-w-sm { width: 100px; }
+.u-w-md { width: 120px; }
+.u-w-lg { width: 150px; }
+.u-w-xl { width: 200px; }
+.u-max-sm { max-width: 360px; }
+.u-max-md { max-width: 480px; }
+.u-max-lg { max-width: 720px; }
+.u-max-prose { max-width: 72ch; }
+.u-min-0 { min-width: 0; }
+.u-hidden { display: none; }
+.u-block { display: block; }
+.u-inline { display: inline; }
+.u-inline-block { display: inline-block; }
+.u-relative { position: relative; }
+.u-pointer { cursor: pointer; }
+.u-dim { opacity: 0.6; }
+
+/* Surfaces — a recessed panel and status tints */
+.u-surface {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+}
+.u-tint-success { background: var(--color-success-bg); border-color: var(--color-success-border); }
+.u-tint-warning { background: var(--color-warning-bg); border-color: var(--color-warning-border); }
+.u-tint-error { background: var(--color-error-bg); border-color: var(--color-error-border); }
+.u-tint-info { background: var(--color-info-bg); border-color: var(--color-info-border); }
+.u-tint-accent { background: var(--accent-bg); border-color: var(--accent-border); }
+.u-divider-top { border-top: 1px solid var(--border-muted); padding-top: var(--space-md); }
+.u-divider-bottom { border-bottom: 1px solid var(--border-muted); padding-bottom: var(--space-md); }
+
+/* Icons — lucide icons sit on the text baseline at the text's size */
+.u-icon { width: 1em; height: 1em; vertical-align: -0.125em; flex-shrink: 0; }
+.u-icon-sm { width: 14px; height: 14px; flex-shrink: 0; }
+.u-icon-md { width: 16px; height: 16px; flex-shrink: 0; }
+.u-icon-lg { width: 20px; height: 20px; flex-shrink: 0; }

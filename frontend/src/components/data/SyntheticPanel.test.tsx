@@ -589,7 +589,7 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
         // Provider dropdown labels the deepseek option with the saved-key check.
         const select = screen.getByTestId('synth-legacy-provider') as HTMLSelectElement;
         const options = Array.from(select.options).map((o) => o.textContent);
-        expect(options.find((t) => t?.includes('Deepseek'))).toMatch(/✓/);
+        expect(options.find((t) => t?.includes('Deepseek'))).toMatch(/saved/);
         // After selecting it, the inline 'saved on project' badge renders.
         await userEvent.selectOptions(select, 'deepseek');
         await waitFor(() => {

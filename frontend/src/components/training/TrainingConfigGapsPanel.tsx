@@ -13,12 +13,14 @@
  * Backed by GET /api/projects/{id}/training-config-gaps.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { AlertTriangle, Check, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import type { ErrorEnvelope } from '../../api/errors';
 import { parseErrorEnvelope } from '../../api/errors';
 import ErrorPanel from '../shared/ErrorPanel';
+import LoadingState from '../shared/LoadingState';
 import {
     fetchTrainingConfigGaps,
     TRAINING_OVERRIDES_APPLIED_EVENT,
@@ -36,10 +38,10 @@ interface TrainingConfigGapsPanelProps {
     projectId: number;
 }
 
-const SEVERITY_META: Record<GapSeverity, { label: string; icon: string }> = {
-    ok: { label: 'OK', icon: '✓' },
-    warn: { label: 'Warning', icon: '!' },
-    block: { label: 'Blocker', icon: '✕' },
+const SEVERITY_META: Record<GapSeverity, { label: string; icon: ReactNode }> = {
+    ok: { label: 'OK', icon: <Check className="u-icon" aria-hidden="true" /> },
+    warn: { label: 'Warning', icon: <AlertTriangle className="u-icon" aria-hidden="true" /> },
+    block: { label: 'Blocker', icon: <X className="u-icon" aria-hidden="true" /> },
 };
 
 const OVERALL_HEADLINE: Record<GapSeverity, string> = {
@@ -163,7 +165,7 @@ export default function TrainingConfigGapsPanel({
                 className="tcg-panel tcg-panel--loading"
                 data-testid="training-config-gaps"
             >
-                Loading Training Config gaps…
+                <LoadingState label="Loading Training Config gaps" lines={3} />
             </div>
         );
     }

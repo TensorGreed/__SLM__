@@ -2,7 +2,7 @@
 
 .auto-rag-comparison {
     border: 1px solid var(--border-default);
-    border-left: 3px solid var(--accent, #3b82f6);
+    border-left: 3px solid var(--accent);
     border-radius: var(--radius-md);
     background: var(--bg-secondary);
     padding: var(--space-lg);
@@ -116,7 +116,7 @@
 }
 
 .auto-rag-comparison__totals-value.is-positive {
-    color: var(--color-success-fg, #166534);
+    color: var(--color-success);
 }
 
 .auto-rag-comparison__totals-sub {
@@ -185,15 +185,15 @@
 }
 
 .auto-rag-comparison__row-lift.is-positive {
-    background: var(--color-success-bg, rgba(34, 197, 94, 0.10));
-    color: var(--color-success-fg, #166534);
-    border-color: var(--color-success, #15803d);
+    background: var(--color-success-bg);
+    color: var(--color-success);
+    border-color: var(--color-success);
 }
 
 .auto-rag-comparison__row-lift.is-negative {
-    background: var(--color-error-bg, rgba(208, 48, 80, 0.08));
-    color: var(--color-error-fg, #8c1f37);
-    border-color: var(--color-error, #d03050);
+    background: var(--color-error-bg);
+    color: var(--color-error);
+    border-color: var(--color-error);
 }
 
 .auto-rag-comparison__row-f1pair {
@@ -290,7 +290,7 @@
 }
 
 .auto-rag-comparison__totals-value.is-negative {
-    color: var(--color-error, #b91c1c);
+    color: var(--color-error);
 }
 
 .auto-rag-comparison__rows-head {
@@ -311,8 +311,8 @@
 }
 
 .auto-rag-comparison__rows-toggle .btn.is-active {
-    border-color: var(--accent, #3b82f6);
-    color: var(--accent, #3b82f6);
+    border-color: var(--accent);
+    color: var(--accent);
     font-weight: 600;
 }
 
@@ -321,15 +321,15 @@
     font-size: 12px;
     padding: 6px 10px;
     border-radius: var(--radius-sm);
-    border: 1px solid var(--color-warning-border, #f59e0b);
-    background: var(--color-warning-bg, #fffbeb);
-    color: var(--color-warning-fg, #92400e);
+    border: 1px solid var(--color-warning-border);
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
 }
 
 .auto-rag-comparison__running {
     margin: 0;
     font-size: 12px;
-    color: var(--accent, #3b82f6);
+    color: var(--accent);
 }
 
 /* Row counts + "is the lift more than noise?" under each model's numbers. */
@@ -348,27 +348,27 @@
     border-radius: 999px;
     font-weight: 600;
     font-size: 11px;
-    background: var(--gray-100, #f3f4f6);
+    background: var(--gray-100);
     color: var(--text-primary);
 }
 
 .auto-rag-comparison__evidence--within_noise,
 .auto-rag-comparison__evidence--too_few_rows {
-    border-left-color: var(--color-warning-border, #f59e0b);
+    border-left-color: var(--color-warning-border);
 }
 
 .auto-rag-comparison__evidence--within_noise .auto-rag-comparison__evidence-label,
 .auto-rag-comparison__evidence--too_few_rows .auto-rag-comparison__evidence-label {
-    background: var(--color-warning-bg, #fffbeb);
-    color: var(--color-warning-fg, #92400e);
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
 }
 
 .auto-rag-comparison__evidence--better {
-    border-left-color: var(--color-success-fg, #166534);
+    border-left-color: var(--color-success);
 }
 
 .auto-rag-comparison__evidence--worse {
-    border-left-color: var(--color-error, #b91c1c);
+    border-left-color: var(--color-error);
 }
 
 .auto-rag-comparison__judge {
@@ -381,14 +381,14 @@
     font-size: 0.85rem;
 }
 
-.auto-rag-comparison__row-judge--correct { color: var(--success, #2e7d32); }
-.auto-rag-comparison__row-judge--partial { color: var(--warning, #b26a00); }
-.auto-rag-comparison__row-judge--wrong { color: var(--danger, #c62828); }
+.auto-rag-comparison__row-judge--correct { color: var(--color-success); }
+.auto-rag-comparison__row-judge--partial { color: var(--color-warning); }
+.auto-rag-comparison__row-judge--wrong { color: var(--danger); }
 
 .auto-rag-comparison__row-sources {
     margin-top: 0.25rem;
     font-size: 0.8rem;
-    color: var(--text-muted, #666);
+    color: var(--text-muted);
 }
 
 .auto-rag-comparison__sweep {
@@ -406,7 +406,7 @@
 .auto-rag-comparison__sweep-table td {
     text-align: left;
     padding: 0.25rem 0.5rem;
-    border-bottom: 1px solid var(--border, #e5e5e5);
+    border-bottom: 1px solid var(--border);
 }
 
 .auto-rag-comparison__pin {
@@ -416,7 +416,7 @@
 }
 
 .auto-rag-comparison__serving {
-    color: var(--text-muted, #666);
+    color: var(--text-muted);
     font-size: 0.8rem;
 }
 
@@ -431,14 +431,14 @@
 
 .auto-rag-comparison__decisions-excerpt {
     white-space: pre-wrap;
-    color: var(--text-muted, #555);
+    color: var(--text-muted);
     max-width: 28rem;
 }
 
 .auto-rag-comparison__decisions-winner {
-    background: rgba(46, 125, 50, 0.07);
+    background: var(--color-success-bg);
 }
 
 .auto-rag-comparison__decisions-error {
-    color: var(--danger, #c62828);
+    color: var(--danger);
 }

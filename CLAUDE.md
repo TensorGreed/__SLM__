@@ -539,6 +539,40 @@ runs real CPU inference). ~4 min locally.
   section, generated from `workspaceRoutes`; add a surface there, never in
   the palette. In-app links use the `*Path` helpers; `LegacyRouteRedirect`
   stays for bookmarks and docs.
+  **The visual pass (Epic U phase U7, 2026-10-18)** — `frontend/src/index.css`
+  is the whole palette: a gray ramp, ONE accent hue (`--accent` blue:
+  primary buttons, active nav/tab, links, focus rings, selected states;
+  `--accent-text` / `--accent-bg` / `--accent-border` / `--accent-contrast`),
+  three status colours (`--color-success|warning|error` + `-bg` / `-border`),
+  a type scale (`--font-size-2xs…3xl` + `--leading-*`) and the spacing scale.
+  **Dark theme**: `html[data-theme="dark"]` mirrors the ramp and re-shades
+  the accent/status tokens; `stores/themeStore` (`light` default, `dark`,
+  `system`; localStorage `brewslm:theme`; `initTheme()` in `main.tsx` before
+  first paint) writes the resolved value; the switch is Settings → Appearance
+  and the ⌘K "Switch to the dark/light theme" command. Because `--gray-0`
+  flips, text on a coloured surface uses `--accent-contrast`, never
+  `white`. **No component writes a colour literal, an inline `style={{…}}`
+  or an emoji**: `styles/visualPass.test.ts` lists the clean files and
+  asserts no stylesheet but `index.css` has a hex — add new files to the
+  list, never remove one. Layout one-offs use `styles/utilities.css`
+  (`u-stack`, `u-row`, `u-grid-2`, `u-m0`, `u-meta`, `u-hint`,
+  `u-card-title`, `u-icon`…; loaded AFTER index.css from `main.tsx` so a
+  utility wins a specificity tie); data-driven widths are bucketed classes
+  (10 % steps); icons are `lucide-react`. **Empty + loading**:
+  `components/shared/EmptyState` (lucide icon node, `size="compact"` inside
+  a card, testid `empty-state`) and `LoadingState` (skeleton lines +
+  sr-only label, testid `loading-state`; `Skeleton variant=…`) are the only
+  two ways to say "nothing yet" / "fetching"; a one-line "none" inside a
+  dense table stays text (`u-meta`). `StepFooter.nextStepIcon` is unused.
+  Leftovers: ~50 hex strings in SVG chart attributes
+  (`DatasetVersionPanel`, `TokenizationPanel`, `SpanLabeler`,
+  `ExperimentCompare`, `TokenLengthDistributionPanel`), the template
+  gallery's emoji on the project list, `▸/▾` disclosure glyphs. Demo videos
+  02 (quickstart) and 03 (pipeline walkthrough — the in-app "Watch the
+  walkthrough" catalogue `data/tabVideos.ts`) were re-recorded on the new
+  workspace via `tests/demo-recordings/0{2,3}-*-narrated.spec.ts` +
+  `tts/narration_tts.py` (Orpheus through Ollama, no FastAPI bridge);
+  outputs under `docs-demo/recordings/` (gitignored), upload is manual.
 - **Synthetic data** — two paths: (a) modern `synth_playbook_service`
   with recipe-aware playbooks + per-row `review_status="pending"`;
   (b) legacy `synthetic_service` with task framework + bridge to Jobs.

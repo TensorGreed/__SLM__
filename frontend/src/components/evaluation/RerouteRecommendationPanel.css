@@ -14,17 +14,17 @@
 
 /* Flavor tints — amber for try_rag, blue for prompt, gray for data. */
 .reroute-card--try-rag {
-    border-left-color: var(--warning, #d97706);
-    background: var(--warning-bg, rgba(217, 119, 6, 0.06));
+    border-left-color: var(--color-warning);
+    background: var(--color-warning-bg);
 }
 
 .reroute-card--try-prompt {
-    border-left-color: var(--accent, #3b82f6);
-    background: var(--accent-bg, rgba(59, 130, 246, 0.06));
+    border-left-color: var(--accent);
+    background: var(--accent-bg);
 }
 
 .reroute-card--expand-data {
-    border-left-color: var(--text-tertiary, #6b7280);
+    border-left-color: var(--text-tertiary);
     background: var(--bg-secondary);
 }
 
@@ -117,7 +117,7 @@
     margin: 6px 0 0;
     padding: 6px 10px;
     border-left: 2px solid var(--border-muted);
-    background: rgba(148, 163, 184, 0.04);
+    background: var(--accent-bg);
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     display: flex;
     flex-direction: column;

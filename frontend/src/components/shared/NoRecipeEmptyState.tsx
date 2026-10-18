@@ -24,6 +24,7 @@
  * Mode's `recipe-picker` action uses).
  */
 
+import { Compass } from 'lucide-react';
 import EmptyState from './EmptyState';
 import { trainSectionPath } from '../../utils/workspaceRoutes';
 
@@ -57,7 +58,7 @@ export default function NoRecipeEmptyState({
     return (
         <div data-testid={testId}>
             <EmptyState
-                icon="🧭"
+                icon={<Compass />}
                 title="Choose a task type first"
                 description={
                     `${surface} is recipe-scoped — each task shape `

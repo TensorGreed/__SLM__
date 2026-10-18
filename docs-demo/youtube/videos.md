@@ -65,8 +65,8 @@ BrewSLM in 2 Minutes — Local Fine-Tuning Workspace Quickstart
 ```
 From a fresh repo clone to a fully-seeded demo project, in two
 minutes. No training, no data prep — just login, click the demo
-tile, and land on the Data tab with 20 raw rows + a 200-row gold
-set already loaded.
+tile, and land on the project Overview with the sample's tickets and
+a 200-row answer key already loaded.
 
 The tile-driven seed flow is the fastest way to see what BrewSLM
 actually does without committing your own dataset. Three official
@@ -76,16 +76,19 @@ Classifier.
 🔗 Code: https://github.com/TensorGreed/__SLM__
 📺 Channel: https://www.youtube.com/@TensorGreed
 
+Re-recorded 2026-10-18 on the six-destination workspace, awaiting upload.
+
 Chapters:
-00:00 Intro
-00:11 Login
-00:20 Demo tiles
-00:41 Seed Support FAQ
-01:06 Cleaning tab
-01:19 Gold Set tab
-01:27 Dataset Prep tab
-01:38 Training tab
-01:44 Expand a row & wrap
+00:00 Cold open
+00:12 Login
+00:24 Starter tiles
+00:45 Seed Support FAQ & the Overview
+01:09 Data · Sources
+01:27 Data · Prepare
+01:43 Data · Labels
+01:55 Data · Split
+02:06 Train
+02:23 Wrap
 
 #smallLanguageModel #BrewSLM #LocalLLM #FineTuning #AI
 ```
@@ -108,30 +111,35 @@ Fine-Tune an SLM on Support Tickets — Full Pipeline Walkthrough
 
 **Description**
 ```
-Walk a real fine-tuning pipeline end to end without launching any
-training. Twenty customer-support tickets, a 200-row hand-labelled
-gold set, dataset prep with a Q&A adapter, and a 16-train/2-val/2-
-test split — already prepared by the demo seeder so you can see
-what every stage actually surfaces.
-
-Covers all 10 pipeline tabs (Data, Cleaning, Gold Set, Synthetic,
-Dataset Prep, Tokenization, Training, Evaluation, Compression,
-Export) plus the dedicated Training Config page. Real training
-is Video 7 of this series.
+Walk a real fine-tuning workspace end to end: the Support FAQ sample's
+tickets and 200-row answer key, the five Data steps (Sources, Prepare,
+Labels, Generate, Split), the Train form, the four Results workflows
+(Verdict, Failures, Compare, Try it) and the four Ship stages (Package,
+Publish, Deploy, Monitor). Real training is Video 7 of this series.
 
 🔗 Code: https://github.com/TensorGreed/__SLM__
 📺 Channel: https://www.youtube.com/@TensorGreed
 
+Re-recorded 2026-10-18 on the six-destination workspace, awaiting upload.
+
 Chapters:
-00:00 Intro
-00:15 Data tab
-00:34 Cleaning
-00:55 Gold Set
-01:12 Synthetic
-01:29 Dataset Prep
-01:48 Tokenization
-02:04 Training Config
-02:27 Evaluation & wrap
+00:00 Overview
+00:18 Data · Sources
+00:32 Data · Prepare
+00:43 Data · Labels
+00:59 Data · Generate
+01:16 Data · Split
+01:33 Train
+01:50 Train · More options
+02:07 Results · Verdict
+02:19 Results · Failures
+02:29 Results · Compare
+02:41 Results · Try it
+02:50 Ship · Package
+03:02 Ship · Publish
+03:10 Ship · Deploy
+03:22 Ship · Monitor
+03:34 Wrap
 
 #smallLanguageModel #FineTuning #LoRA #BrewSLM #LLM
 ```

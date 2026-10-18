@@ -298,7 +298,7 @@ export default function ProjectManifestPage({ embedded = false }: ProjectManifes
             )}
 
             <section className="card">
-                <h3 style={{ marginTop: 0 }}>Manifest source</h3>
+                <h3 className="u-mt0">Manifest source</h3>
                 <div
                     className={`manifest-dropzone ${dragActive ? 'is-active' : ''}`}
                     onDrop={handleDrop}
@@ -311,7 +311,7 @@ export default function ProjectManifestPage({ embedded = false }: ProjectManifes
                 >
                     <div>Drop a <strong>.yaml</strong>, <strong>.yml</strong>, or <strong>.json</strong> manifest here, or click to choose a file.</div>
                     {fileName && (
-                        <div style={{ marginTop: 6, fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
+                        <div className="manifest-source-hint">
                             Loaded: <code>{fileName}</code>
                         </div>
                     )}
@@ -324,7 +324,7 @@ export default function ProjectManifestPage({ embedded = false }: ProjectManifes
                     />
                 </div>
                 <textarea
-                    className="manifest-textarea"
+                    className="manifest-textarea u-mt-sm"
                     placeholder="…or paste your manifest YAML/JSON here."
                     value={manifestText}
                     onChange={(event) => {
@@ -332,10 +332,9 @@ export default function ProjectManifestPage({ embedded = false }: ProjectManifes
                         clearResults();
                     }}
                     aria-label="Manifest text"
-                    style={{ marginTop: 'var(--space-sm)' }}
                 />
 
-                <div className="manifest-actions" style={{ marginTop: 'var(--space-sm)' }}>
+                <div className="manifest-actions u-mt-sm">
                     <button
                         type="button"
                         className="btn btn-secondary"
@@ -376,7 +375,7 @@ export default function ProjectManifestPage({ embedded = false }: ProjectManifes
 
             {validation && (
                 <section className="card">
-                    <h3 style={{ marginTop: 0 }}>Validation</h3>
+                    <h3 className="u-mt0">Validation</h3>
                     {validation.ok && validationWarnings.length === 0 ? (
                         <div className="manifest-validation-ok" role="status">
                             Manifest is clean — no errors, no warnings.
@@ -422,7 +421,7 @@ export default function ProjectManifestPage({ embedded = false }: ProjectManifes
 
             {diffPlan && groupedActions && (
                 <section className="card manifest-diff">
-                    <h3 style={{ marginTop: 0 }}>Diff plan</h3>
+                    <h3 className="u-mt0">Diff plan</h3>
                     <div className="manifest-diff-summary">
                         <span className="badge badge-info">project: {diffPlan.project_name}</span>
                         {Object.entries(diffPlan.summary || {}).map(([key, value]) => (
@@ -446,7 +445,7 @@ export default function ProjectManifestPage({ embedded = false }: ProjectManifes
                     {Object.entries(groupedActions).map(([target, actions]) => (
                         <div key={target} className="manifest-diff-group">
                             <h4>{target} ({actions.length})</h4>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            <div className="manifest-diff-list">
                                 {actions.map((action, idx) => (
                                     <div
                                         key={`${target}-${action.operation}-${action.name ?? idx}`}
@@ -478,7 +477,7 @@ export default function ProjectManifestPage({ embedded = false }: ProjectManifes
 
             {applyResult && (
                 <section className="card">
-                    <h3 style={{ marginTop: 0 }}>Apply result</h3>
+                    <h3 className="u-mt0">Apply result</h3>
                     <div className="manifest-diff-summary">
                         <span className="badge badge-info">
                             project_id: {applyResult.project_id}

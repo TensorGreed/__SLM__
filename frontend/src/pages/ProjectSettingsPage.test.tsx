@@ -32,6 +32,7 @@ vi.mock('./ProjectAutopilotPage', () => ({ default: () => <div data-testid="auto
 
 import ProjectSettingsPage from './ProjectSettingsPage';
 import { _resetCoachModeStoreForTests, useCoachModeStore } from '../stores/coachModeStore';
+import { _resetThemeStoreForTests, useThemeStore } from '../stores/themeStore';
 
 function LocationProbe() {
     const location = useLocation();
@@ -54,6 +55,16 @@ describe('ProjectSettingsPage', () => {
         _resetCoachModeStoreForTests();
         apiMock.put.mockReset();
         setActiveProjectMock.mockReset();
+    });
+
+    it('Appearance picks the theme and applies it to <html>', async () => {
+        const user = userEvent.setup();
+        renderSettings();
+        expect(screen.getByTestId('settings-theme-light')).toBeChecked();
+        await user.click(screen.getByTestId('settings-theme-dark'));
+        expect(document.documentElement.dataset.theme).toBe('dark');
+        expect(useThemeStore.getState().preference).toBe('dark');
+        _resetThemeStoreForTests();
     });
 
     it('toggles inline tips for the project', async () => {

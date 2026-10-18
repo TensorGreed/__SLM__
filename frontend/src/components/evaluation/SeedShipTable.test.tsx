@@ -53,7 +53,7 @@ describe('SeedShipTable', () => {
         expect(table).toHaveTextContent('Validation span F1');
         expect(table).toHaveTextContent('not used to pick');
         expect(screen.getByTestId('seed-ship-row-42')).toHaveAttribute('data-picked', 'true');
-        expect(screen.getByTestId('seed-ship-row-42')).toHaveTextContent('★ picked');
+        expect(screen.getByTestId('seed-ship-row-42')).toHaveTextContent('picked');
         expect(screen.getByTestId('seed-ship-row-42')).toHaveTextContent('0.840');
         expect(screen.getByTestId('seed-ship-row-41')).toHaveTextContent('0.900');
         expect(screen.getByTestId('seed-ship-row-43')).toHaveTextContent('— (no value)');

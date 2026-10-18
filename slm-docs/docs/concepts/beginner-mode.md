@@ -22,6 +22,7 @@ Nothing in the backend changes and every endpoint stays callable; it is purely a
 - **Step tips.** Under the step bar there is also a one-line tip for the page you're on, with the walkthrough video link and **Got it** to dismiss it.
 - **The Overview.** The sidebar's **Overview** shows the current stage, the one next step as a button, the latest run and its verdict, the shipped model, and up to three suggestions.
 - **Switching it off.** **Settings** → **Show inline tips** turns all notices and step tips off for a project. It defaults to on.
+- **Appearance.** **Settings** → **Appearance** offers **Light** (the default), **Dark** and **Match system**. The choice is per browser, not per project, and the ⌘K palette has a "Switch to the dark/light theme" command.
 
 ## What the flag changes
 

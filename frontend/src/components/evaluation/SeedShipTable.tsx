@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { Star } from 'lucide-react';
 
 import { fetchSeedPick, shipSeed, type SeedPick, type ShipSeedResponse } from '../../api/seedGroups';
 import type { EvalSummaryHeadline } from '../../api/evalSummary';
@@ -93,7 +94,7 @@ export default function SeedShipTable({ projectId, leaderId, seeds }: SeedShipTa
                         <tr key={c.experiment_id} data-testid={`seed-ship-row-${c.experiment_id}`} data-picked={c.picked ? 'true' : 'false'}>
                             <th scope="row">
                                 {c.seed_value ?? '—'}
-                                {c.picked && <span className="eval-summary__seed-picked" data-testid="seed-ship-picked"> ★ picked</span>}
+                                {c.picked && <span className="eval-summary__seed-picked" data-testid="seed-ship-picked"> <Star className="u-icon" aria-hidden="true" /> picked</span>}
                             </th>
                             <td>#{c.experiment_id}</td>
                             <td title={c.skipped_reason ?? undefined}>{c.value != null ? fmt(c.value) : '— (no value)'}</td>

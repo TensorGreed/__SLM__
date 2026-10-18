@@ -12,7 +12,7 @@
 }
 
 .autofix-modal {
-    background: var(--bg-elevated, #fff);
+    background: var(--bg-card);
     color: var(--text-primary, inherit);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md, 8px);
@@ -51,11 +51,11 @@
 .autofix-modal__body--loading,
 .autofix-modal__body--error {
     padding: 18px;
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
 }
 
 .autofix-modal__body--error {
-    color: var(--danger, #b91c1c);
+    color: var(--danger);
 }
 
 .autofix-modal__intro,
@@ -63,7 +63,7 @@
     margin: 0;
     padding: 12px 18px 0;
     font-size: 13px;
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
 }
 
 .autofix-modal__summary {
@@ -74,8 +74,8 @@
 .autofix-modal__blocked {
     margin: 12px 18px 0;
     padding: 10px 12px;
-    background: rgba(234, 179, 8, 0.12);
-    border: 1px solid rgba(234, 179, 8, 0.4);
+    background: var(--color-warning-bg);
+    border: 1px solid var(--color-warning-border);
     border-radius: var(--radius-sm, 6px);
     font-size: 13px;
 }
@@ -87,7 +87,7 @@
 }
 
 .autofix-modal__items-empty {
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
     font-style: italic;
     margin: 0;
 }
@@ -115,7 +115,7 @@
 .autofix-modal__group-head {
     font-weight: 600;
     font-size: 12px;
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
     margin-bottom: 2px;
 }
 
@@ -130,11 +130,11 @@
 }
 
 .autofix-modal__row--keep {
-    background: rgba(34, 197, 94, 0.10);
+    background: var(--color-success-bg);
 }
 
 .autofix-modal__row--drop {
-    background: rgba(239, 68, 68, 0.10);
+    background: var(--color-error-bg);
 }
 
 .autofix-modal__row-icon {
@@ -150,7 +150,7 @@
 }
 
 .autofix-modal__row-meta {
-    color: var(--text-secondary, var(--text-muted));
+    color: var(--text-secondary);
     font-size: 12px;
     white-space: nowrap;
 }

@@ -14,7 +14,10 @@
  * Each renders a small explanatory card with a CTA, not an error.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { AlertTriangle, Check, XCircle } from 'lucide-react';
+import LoadingState from '../shared/LoadingState';
+import './SftLiftPanel.css';
 
 import {
     fetchSftLiftSummary,
@@ -57,12 +60,12 @@ function formatAbsDelta(d: number): string {
 }
 
 function GateBadge({ status }: { status: SftLiftGateStatus }) {
-    const labels: Record<SftLiftGateStatus, { label: string; tone: string }> = {
-        cleared: { label: '✓ pass/fail rules passed after training', tone: 'success' },
-        still_failing: { label: '❌ still below threshold', tone: 'error' },
-        regressed: { label: '⚠ regressed — baseline passed, trained fails', tone: 'warning' },
-        always_passed: { label: '✓ already passing pre-SFT', tone: 'success' },
-        incomplete: { label: 'incomplete', tone: 'info' },
+    const labels: Record<SftLiftGateStatus, { label: string; tone: string; icon: ReactNode }> = {
+        cleared: { label: 'pass/fail rules passed after training', tone: 'success', icon: <Check className="u-icon" aria-hidden="true" /> },
+        still_failing: { label: 'still below threshold', tone: 'error', icon: <XCircle className="u-icon" aria-hidden="true" /> },
+        regressed: { label: 'regressed — baseline passed, trained fails', tone: 'warning', icon: <AlertTriangle className="u-icon" aria-hidden="true" /> },
+        always_passed: { label: 'already passing pre-SFT', tone: 'success', icon: <Check className="u-icon" aria-hidden="true" /> },
+        incomplete: { label: 'incomplete', tone: 'info', icon: null },
     };
     const cfg = labels[status] ?? labels.incomplete;
     return (
@@ -70,9 +73,16 @@ function GateBadge({ status }: { status: SftLiftGateStatus }) {
             className={`badge badge-${cfg.tone}`}
             data-testid={`sft-lift-gate-${status}`}
         >
-            {cfg.label}
+            {cfg.icon}{cfg.icon ? ' ' : ''}{cfg.label}
         </span>
     );
+}
+
+function directionTone(direction: string | undefined, unproven = false): string {
+    if (unproven) return 'neutral';
+    if (direction === 'improved') return 'good';
+    if (direction === 'regressed') return 'bad';
+    return 'neutral';
 }
 
 function MetricLiftRow({ row }: { row: SftLiftMetricRow }) {
@@ -84,91 +94,31 @@ function MetricLiftRow({ row }: { row: SftLiftMetricRow }) {
     // in the neutral colour, with the row split next to it.
     const evidence = row.evidence ?? null;
     const unproven = isUnproven(evidence);
-    const directionColor = unproven
-        ? 'var(--text-secondary)'
-        : row.direction === 'improved'
-            ? 'var(--color-success)'
-            : row.direction === 'regressed'
-                ? 'var(--color-error)'
-                : 'var(--text-secondary)';
+    const tone = directionTone(row.direction, unproven);
+    const bucket = (pct: number) => Math.round(pct / 10) * 10;
     return (
         <div
             data-testid={`sft-lift-row-${row.metric_id}`}
-            style={{
-                display: 'grid',
-                gridTemplateColumns: 'minmax(110px, auto) 1fr',
-                gap: 'var(--space-md)',
-                alignItems: 'center',
-                padding: 'var(--space-xs) 0',
-            }}
+            className="sft-lift__row"
         >
-            <div
-                style={{
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '0.85rem',
-                    fontWeight: 600,
-                }}
-            >
+            <div className="sft-lift__metric">
                 {metricDisplayName(row.metric_id)}
             </div>
             <div>
-                <div
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 'var(--space-sm)',
-                        fontSize: '0.85rem',
-                    }}
-                >
+                <div className="sft-lift__values">
                     <code data-testid={`sft-lift-baseline-${row.metric_id}`}>
                         {formatValue(row.baseline_value)}
                     </code>
-                    <div
-                        aria-hidden="true"
-                        style={{
-                            position: 'relative',
-                            flex: 1,
-                            height: 8,
-                            borderRadius: 4,
-                            background: 'var(--bg-subtle)',
-                            overflow: 'hidden',
-                        }}
-                    >
-                        <div
-                            style={{
-                                position: 'absolute',
-                                top: 0,
-                                left: 0,
-                                width: `${baselinePct}%`,
-                                height: '100%',
-                                background: 'var(--gray-400)',
-                            }}
-                        />
-                        <div
-                            style={{
-                                position: 'absolute',
-                                top: 0,
-                                left: 0,
-                                width: `${trainedPct}%`,
-                                height: '100%',
-                                background: directionColor,
-                                opacity: 0.6,
-                                mixBlendMode: 'multiply',
-                            }}
-                        />
+                    <div aria-hidden="true" className="sft-lift__bar">
+                        <div className={`sft-lift__bar-fill sft-lift__bar-fill--base sft-lift__w-${bucket(baselinePct)}`} />
+                        <div className={`sft-lift__bar-fill sft-lift__bar-fill--trained sft-lift__tone--${tone} sft-lift__w-${bucket(trainedPct)}`} />
                     </div>
                     <code data-testid={`sft-lift-trained-${row.metric_id}`}>
                         {formatValue(row.trained_value)}
                     </code>
                     <span
                         data-testid={`sft-lift-delta-${row.metric_id}`}
-                        style={{
-                            color: directionColor,
-                            fontSize: '0.85rem',
-                            fontWeight: 600,
-                            minWidth: 110,
-                            textAlign: 'right',
-                        }}
+                        className={`sft-lift__delta sft-lift__text--${tone}`}
                     >
                         {formatAbsDelta(row.absolute_delta)} (
                         {formatRelativeDelta(row.relative_delta_pct)})
@@ -178,11 +128,7 @@ function MetricLiftRow({ row }: { row: SftLiftMetricRow }) {
                     <div
                         data-testid={`sft-lift-evidence-${row.metric_id}`}
                         data-verdict={evidence.verdict}
-                        style={{
-                            fontSize: '0.75rem',
-                            color: unproven ? 'var(--color-warning-fg, #92400e)' : 'var(--text-secondary)',
-                            textAlign: 'right',
-                        }}
+                        className={`sft-lift__evidence${unproven ? ' sft-lift__evidence--unproven' : ''}`}
                     >
                         {shortEvidenceText(evidence)}
                     </div>
@@ -196,22 +142,16 @@ function GateRow({ row }: { row: SftLiftGateRow }) {
     return (
         <div
             data-testid={`sft-lift-gate-row-${row.gate_id}`}
-            style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-sm)',
-                padding: 'var(--space-xs) 0',
-                fontSize: '0.85rem',
-            }}
+            className="sft-lift__gate-row"
         >
             <GateBadge status={row.status} />
-            <code style={{ fontFamily: 'var(--font-mono)' }}>
+            <code className="u-mono">
                 {metricDisplayName(row.metric_id)}
             </code>
-            <span style={{ color: 'var(--text-secondary)' }}>
+            <span className="u-text-secondary">
                 {row.operator === 'lte' ? '≤' : '≥'} {row.threshold.toFixed(2)}
             </span>
-            <span style={{ color: 'var(--text-secondary)' }}>
+            <span className="u-text-secondary">
                 · {formatValue(row.baseline_value)} → {formatValue(row.trained_value)}
                 {row.delta_to_threshold !== null && (
                     <> · {formatAbsDelta(row.delta_to_threshold)} to threshold</>
@@ -250,13 +190,10 @@ export default function SftLiftPanel({
     if (loading) {
         return (
             <section
-                className="card"
+                className="card u-p-md"
                 data-testid="sft-lift-panel-loading"
-                style={{ padding: 'var(--space-md)' }}
             >
-                <div style={{ color: 'var(--text-secondary)' }}>
-                    Computing baseline → trained lift…
-                </div>
+                <LoadingState label="Computing baseline → trained lift…" lines={2} />
             </section>
         );
     }
@@ -264,14 +201,9 @@ export default function SftLiftPanel({
     if (error) {
         return (
             <section
-                className="card"
+                className="card u-p-md sft-lift__error"
                 role="alert"
                 data-testid="sft-lift-panel-error"
-                style={{
-                    padding: 'var(--space-md)',
-                    background: 'var(--color-error-bg)',
-                    color: 'var(--color-error)',
-                }}
             >
                 {error}
             </section>
@@ -294,12 +226,11 @@ export default function SftLiftPanel({
     if (summary.status === 'no_baseline') {
         return (
             <section
-                className="card"
+                className="card u-p-md"
                 data-testid="sft-lift-panel-no-baseline"
-                style={{ padding: 'var(--space-md)' }}
             >
-                <h4 style={{ margin: 0 }}>Did SFT help? — no baseline yet</h4>
-                <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0' }}>
+                <h4 className="u-m0">Did SFT help? — no baseline yet</h4>
+                <p className="u-hint u-mt-xs u-mb0">
                     {summary.message}
                 </p>
             </section>
@@ -309,12 +240,11 @@ export default function SftLiftPanel({
     if (summary.status === 'no_trained') {
         return (
             <section
-                className="card"
+                className="card u-p-md"
                 data-testid="sft-lift-panel-no-trained"
-                style={{ padding: 'var(--space-md)' }}
             >
-                <h4 style={{ margin: 0 }}>Did SFT help? — no trained eval yet</h4>
-                <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0' }}>
+                <h4 className="u-m0">Did SFT help? — no trained eval yet</h4>
+                <p className="u-hint u-mt-xs u-mb0">
                     {summary.message}
                 </p>
             </section>
@@ -324,12 +254,11 @@ export default function SftLiftPanel({
     if (summary.status === 'no_overlap') {
         return (
             <section
-                className="card"
+                className="card u-p-md"
                 data-testid="sft-lift-panel-no-overlap"
-                style={{ padding: 'var(--space-md)' }}
             >
-                <h4 style={{ margin: 0 }}>Did SFT help? — metrics didn't overlap</h4>
-                <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0' }}>
+                <h4 className="u-m0">Did SFT help? — metrics didn't overlap</h4>
+                <p className="u-hint u-mt-xs u-mb0">
                     {summary.message}
                 </p>
             </section>
@@ -348,24 +277,12 @@ export default function SftLiftPanel({
 
     return (
         <section
-            className="card"
+            className="card u-p-md u-stack"
             data-testid="sft-lift-panel"
-            style={{
-                padding: 'var(--space-md)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'var(--space-md)',
-            }}
         >
             <div>
-                <h4 style={{ margin: 0 }}>Did SFT help?</h4>
-                <p
-                    style={{
-                        margin: '4px 0 0',
-                        color: 'var(--text-secondary)',
-                        fontSize: '0.85rem',
-                    }}
-                >
+                <h4 className="u-m0">Did SFT help?</h4>
+                <p className="u-hint u-mt-xs u-mb0">
                     Baseline ·{' '}
                     <strong data-testid="sft-lift-baseline-name">
                         {baseline?.experiment_name}
@@ -382,14 +299,7 @@ export default function SftLiftPanel({
                             <code>{formatValue(headline.trained_value)}</code>{' '}
                             <strong
                                 data-testid="sft-lift-headline-delta"
-                                style={{
-                                    color:
-                                        headline.direction === 'improved'
-                                            ? 'var(--color-success)'
-                                            : headline.direction === 'regressed'
-                                                ? 'var(--color-error)'
-                                                : 'var(--text-secondary)',
-                                }}
+                                className={`sft-lift__text--${directionTone(headline.direction)}`}
                             >
                                 {formatAbsDelta(headline.absolute_delta)} (
                                 {formatRelativeDelta(headline.relative_delta_pct)})
@@ -416,7 +326,7 @@ export default function SftLiftPanel({
 
             {gate_status.length > 0 && (
                 <div data-testid="sft-lift-gate-rows">
-                    <h5 style={{ margin: '0 0 var(--space-xs)' }}>
+                    <h5 className="u-m0 u-mb-xs">
                         Pass/fail rules from{' '}
                         <code>{summary.eval_pack_id || 'evalpack.general.default'}</code>
                         {' '}·{' '}

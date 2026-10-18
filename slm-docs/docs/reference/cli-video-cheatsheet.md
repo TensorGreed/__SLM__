@@ -45,6 +45,8 @@ brewslm template list
 brewslm template instantiate ticket-router --name "Acme Tickets"
 ```
 
+Chapters in the re-recorded take (2:37, re-recorded 2026-10-18 on the six-destination workspace; awaiting upload): 0:00 Cold open, 0:12 Login, 0:24 Project list and starter tiles, 0:45 Seed Support FAQ and the Overview, 1:09 Data · Sources, 1:27 Data · Prepare, 1:43 Data · Labels, 1:55 Data · Split, 2:06 Train, 2:23 Wrap.
+
 ### Video 3 — Support FAQ Pipeline (full walkthrough)
 
 After seeding the demo project (Video 2), drive the pipeline:
@@ -55,6 +57,8 @@ brewslm pipeline run --project $PID --to-stage training
 
 Step-by-step is the same command with `--stage cleaning`,
 `--stage gold_set`, `--stage dataset_prep`, `--stage tokenization`.
+
+The re-recorded walkthrough (about 3:50, re-recorded 2026-10-18 on the six-destination workspace; awaiting upload, so the in-app "Watch the walkthrough" links show a channel card until it is live) has these chapters: 0:00 Overview, 0:18 Data · Sources, 0:32 Data · Prepare, 0:43 Data · Labels, 0:59 Data · Generate, 1:16 Data · Split, 1:33 Train, 1:50 Train · More options, 2:07 Results · Verdict, 2:19 Results · Failures, 2:29 Results · Compare, 2:41 Results · Try it, 2:50 Ship · Package, 3:02 Ship · Publish, 3:10 Ship · Deploy, 3:22 Ship · Monitor, 3:34 Wrap.
 
 ### Video 4 — PII Detector Pipeline
 

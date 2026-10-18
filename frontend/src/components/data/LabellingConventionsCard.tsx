@@ -39,8 +39,8 @@ export default function LabellingConventionsCard({ projectId }: LabellingConvent
     const [entityTypes, setEntityTypes] = useState<string[]>([]);
     return (
         <section className="card" data-testid="labelling-conventions">
-            <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-sm)' }}>Labelling conventions</h3>
-            <p className="form-hint" style={{ marginBottom: 'var(--space-md)' }}>
+            <h3 className="u-card-title u-mb-sm">Labelling conventions</h3>
+            <p className="form-hint u-mb-md">
                 Every labeller reads these: what each type means, where a span starts and ends, which compliance regime it serves.
             </p>
             <ComplianceBundlePicker projectId={projectId} entityTypes={entityTypes} onEntityTypesChange={setEntityTypes} />

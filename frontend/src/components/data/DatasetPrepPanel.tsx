@@ -3,6 +3,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { AlertTriangle, Info, Lightbulb, RefreshCw } from 'lucide-react';
 import api from '../../api/client';
 import DataHealthReportPanel from './DataHealthReportPanel';
 import StepFooter from '../shared/StepFooter';
@@ -320,6 +321,12 @@ function normalizeStringMap(mapping: Record<string, unknown> | Record<string, st
         out[key] = value;
     }
     return out;
+}
+
+/** Snap a count's share of the total to a 10 % bucket (min 10 when non-zero). */
+function barBucket(count: number, total: number): number {
+    if (!total || count <= 0) return 0;
+    return Math.min(100, Math.max(10, Math.round((count / total) * 10) * 10));
 }
 
 function asPercent(value: unknown): string {
@@ -979,7 +986,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
             return true;
         }
         if (signalId === 'leakage.gold_train_overlap') {
-            // Gold↔train overlap is a judgement call (which copy is
+            // Gold-train overlap is a judgement call (which copy is
             // canonical?), so we don't auto-delete. Guide the user to the
             // split controls with the one thing they need to know.
             scrollToSplitForm();
@@ -1112,9 +1119,9 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
         <>
             {/* ── Preview Section ──────────────────────────────── */}
             <div className="dp-section">
-                <h3><span className="icon">👁️</span> Dataset Preview</h3>
+                <h3>Dataset Preview</h3>
                 <div className="dp-info">
-                    <span className="info-icon">ℹ️</span>
+                    <span className="info-icon"><Info className="u-icon" aria-hidden="true" /></span>
                     Preview combines all available data sources (cleaned, synthetic, gold, raw) into a unified view before splitting.
                 </div>
                 <div className="dp-actions">
@@ -1124,9 +1131,9 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         ))}
                     </select>
                     <button className="btn-primary" onClick={loadPreview} disabled={previewLoading}>
-                        {previewLoading ? '⏳ Loading...' : '🔍 Load Preview'}
+                        {previewLoading ? 'Loading...' : 'Load Preview'}
                     </button>
-                    {previewTotal > 0 && <span style={{ color: 'rgba(255,255,255,.5)', fontSize: '.85rem' }}>
+                    {previewTotal > 0 && <span className="dp__total">
                         {previewTotal} total entries
                     </span>}
                 </div>
@@ -1180,7 +1187,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
 
             {/* ── Profile Section ──────────────────────────────── */}
             <div className="dp-section">
-                <h3><span className="icon">📊</span> Schema Profile</h3>
+                <h3>Schema Profile</h3>
                 <div className="dp-actions">
                     <select value={profileType} onChange={e => setProfileType(e.target.value)}>
                         <option value="raw">Raw</option>
@@ -1189,7 +1196,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         <option value="gold_dev">Practice answer key</option>
                     </select>
                     <button className="btn-primary" onClick={loadProfile} disabled={profileLoading}>
-                        {profileLoading ? '⏳ Profiling...' : '📋 Run Profile'}
+                        {profileLoading ? 'Profiling...' : 'Run Profile'}
                     </button>
                 </div>
 
@@ -1206,7 +1213,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                             </div>
                             <div className="dp-stat">
                                 <div className="label">Dropped</div>
-                                <div className="value" style={{ color: profile.profile.dropped_records > 0 ? '#ff6b6b' : undefined }}>
+                                <div className={`value${profile.profile.dropped_records > 0 ? ' dp__value--bad' : ''}`}>
                                     {profile.profile.dropped_records}
                                 </div>
                             </div>
@@ -1226,15 +1233,14 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
 
                         {profile.profile.top_fields.length > 0 && (
                             <>
-                                <h4 style={{ fontSize: '.85rem', color: 'rgba(255,255,255,.5)', margin: '1rem 0 .5rem' }}>Field Frequency</h4>
+                                <h4 className="dp__subhead">Field Frequency</h4>
                                 <div className="dp-field-bars">
                                     {profile.profile.top_fields.slice(0, 12).map(([field, count]) => (
                                         <div className="dp-field-bar" key={field}>
                                             <span className="field-name">{field}</span>
                                             <div className="bar-track">
                                                 <div
-                                                    className="bar-fill"
-                                                    style={{ width: `${(count / profile.profile.total_records) * 100}%` }}
+                                                    className={`bar-fill dp__w-${barBucket(count, profile.profile.total_records)}`}
                                                 />
                                             </div>
                                             <span className="bar-count">{count}</span>
@@ -1244,7 +1250,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                             </>
                         )}
 
-                        <div className="dp-resolved-panel" style={{ marginTop: '1rem' }}>
+                        <div className="dp-resolved-panel dp__mt-lg">
                             <div className="dp-resolved-title">Hook Validation</div>
                             <div className="dp-resolved-kv">
                                 <span>Normalizer Hook</span>
@@ -1267,17 +1273,17 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
             </div>
 
             <div className="dp-section">
-                <h3><span className="icon">🧠</span> Semantic Intelligence</h3>
+                <h3>Semantic Intelligence</h3>
                 {semanticPrefillStage && (
-                    <div style={{ marginBottom: '.5rem', fontSize: '.78rem', color: 'rgba(255,255,255,.62)' }}>
+                    <div className="u-meta u-mb-sm">
                         Prefilled from workflow template stage: <strong>{semanticPrefillStage}</strong>
                     </div>
                 )}
                 <div className="dp-info">
-                    <span className="info-icon">ℹ️</span>
+                    <span className="info-icon"><Info className="u-icon" aria-hidden="true" /></span>
                     Analyze semantic diversity, redundancy, and cluster spread in prepared data.
                 </div>
-                <div className="dp-actions" style={{ flexWrap: 'wrap' }}>
+                <div className="dp-actions u-wrap">
                     <select value={semanticTargetSplit} onChange={e => setSemanticTargetSplit(e.target.value)}>
                         <option value="train">Train</option>
                         <option value="validation">Validation</option>
@@ -1291,7 +1297,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         value={semanticSampleSize}
                         onChange={e => setSemanticSampleSize(Math.max(20, Math.min(2000, Number(e.target.value) || 20)))}
                         title="Sample Size"
-                        style={{ width: 130 }}
+                        className="dp__input-130"
                     />
                     <input
                         type="number"
@@ -1301,7 +1307,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         onChange={e => setSemanticClusterCount(e.target.value)}
                         title="Cluster Count (optional)"
                         placeholder="clusters (opt)"
-                        style={{ width: 150 }}
+                        className="dp__input-150"
                     />
                     <input
                         type="number"
@@ -1311,14 +1317,14 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         value={semanticThreshold}
                         onChange={e => setSemanticThreshold(e.target.value)}
                         title="Similarity Threshold"
-                        style={{ width: 150 }}
+                        className="dp__input-150"
                     />
                     <button className="btn-primary" onClick={runSemanticIntelligence} disabled={semanticLoading}>
-                        {semanticLoading ? '⏳ Analyzing...' : '🧪 Run Analysis'}
+                        {semanticLoading ? 'Analyzing...' : 'Run Analysis'}
                     </button>
                 </div>
                 {semanticError && (
-                    <p style={{ color: '#ff6b6b', fontSize: '.82rem', margin: '0 0 .75rem' }}>{semanticError}</p>
+                    <p className="dp__error">{semanticError}</p>
                 )}
                 {semanticResult && (
                     <>
@@ -1341,9 +1347,9 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                             </div>
                         </div>
                         {Array.isArray(semanticResult.suggestions) && semanticResult.suggestions.length > 0 && (
-                            <div className="dp-resolved-panel" style={{ marginBottom: '.75rem' }}>
+                            <div className="dp-resolved-panel u-mb-md">
                                 <div className="dp-resolved-title">Suggestions</div>
-                                <ul style={{ margin: 0, paddingLeft: '1rem', color: 'rgba(255,255,255,.78)' }}>
+                                <ul className="dp__list">
                                     {semanticResult.suggestions.map((item, index) => (
                                         <li key={`semantic-suggestion-${index}`}>{item}</li>
                                     ))}
@@ -1353,16 +1359,16 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         {Array.isArray(semanticResult.clusters) && semanticResult.clusters.length > 0 && (
                             <div className="dp-resolved-panel">
                                 <div className="dp-resolved-title">Top Clusters</div>
-                                <div style={{ display: 'grid', gap: '.5rem' }}>
+                                <div className="dp__grid-gap">
                                     {semanticResult.clusters.slice(0, 6).map((cluster) => (
-                                        <div key={`cluster-${cluster.cluster_id}`} style={{ border: '1px solid rgba(255,255,255,.08)', borderRadius: 8, padding: '.55rem .65rem' }}>
-                                            <div style={{ fontSize: '.8rem', fontWeight: 600 }}>
+                                        <div key={`cluster-${cluster.cluster_id}`} className="dp__card">
+                                            <div className="u-text-xs u-semibold">
                                                 Cluster #{cluster.cluster_id} • {cluster.size} rows ({asPercent(cluster.share)})
                                             </div>
                                             {Array.isArray(cluster.representatives) && cluster.representatives.length > 0 && (
-                                                <div style={{ marginTop: '.4rem', display: 'grid', gap: '.4rem' }}>
+                                                <div className="dp__grid-gap dp__grid-gap--tight">
                                                     {cluster.representatives.slice(0, 2).map((rep, repIndex) => (
-                                                        <div key={`cluster-${cluster.cluster_id}-rep-${repIndex}`} style={{ fontSize: '.75rem', color: 'rgba(255,255,255,.72)' }}>
+                                                        <div key={`cluster-${cluster.cluster_id}-rep-${repIndex}`} className="u-text-xs u-text-secondary">
                                                             #{rep.sample_index ?? 0} • sim {asPercent(rep.similarity_to_nearest)} • {String(rep.text_preview || '')}
                                                         </div>
                                                     ))}
@@ -1372,7 +1378,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                                     ))}
                                 </div>
                                 {semanticResult.report_path && (
-                                    <div style={{ marginTop: '.5rem', fontSize: '.74rem', color: 'rgba(255,255,255,.62)' }}>
+                                    <div className="u-meta u-mt-sm">
                                         Report path: {semanticResult.report_path}
                                     </div>
                                 )}
@@ -1386,12 +1392,12 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
     const adaptersView = (
         <>
             <div className="dp-section">
-                <h3><span className="icon">🧩</span> Adapter Preview</h3>
+                <h3>Adapter Preview</h3>
                 <div className="dp-info">
-                    <span className="info-icon">ℹ️</span>
+                    <span className="info-icon"><Info className="u-icon" aria-hidden="true" /></span>
                     Test adapter mapping against sampled rows before split/training. This validates row contracts for different task types and domains.
                 </div>
-                <div className="dp-actions" style={{ flexWrap: 'wrap' }}>
+                <div className="dp-actions u-wrap">
                     <select value={adapterType} onChange={e => setAdapterType(e.target.value)}>
                         <option value="raw">Raw</option>
                         <option value="cleaned">Cleaned</option>
@@ -1420,7 +1426,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         max={5000}
                         value={adapterSampleSize}
                         onChange={e => setAdapterSampleSize(Math.max(10, Math.min(5000, Number(e.target.value) || 10)))}
-                        style={{ width: 120 }}
+                        className="dp__input-120"
                         title="Sample Size"
                     />
                     <input
@@ -1429,20 +1435,20 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         max={100}
                         value={adapterPreviewLimit}
                         onChange={e => setAdapterPreviewLimit(Math.max(5, Math.min(100, Number(e.target.value) || 5)))}
-                        style={{ width: 120 }}
+                        className="dp__input-120"
                         title="Preview Rows"
                     />
                     <button className="btn-primary" onClick={runAdapterPreview} disabled={adapterPreviewLoading}>
-                        {adapterPreviewLoading ? '⏳ Running...' : '🧪 Run Adapter Preview'}
+                        {adapterPreviewLoading ? 'Running...' : 'Run Adapter Preview'}
                     </button>
                     <button className="btn-secondary" onClick={autoDetectAndSaveAdapterPreference} disabled={adapterPreviewLoading}>
-                        🤖 Auto-Detect + Save Preset
+                        Auto-Detect + Save Preset
                     </button>
                     <button className="btn-secondary" onClick={loadAdapterCatalog}>
-                        🔄 Refresh Catalog
+                        Refresh Catalog
                     </button>
                 </div>
-                <div style={{ fontSize: '.8rem', color: 'rgba(255,255,255,.6)', marginBottom: '.75rem' }}>
+                <div className="u-hint u-mb-md">
                     Active preset source: <strong>{adapterPreference?.source || 'default'}</strong>
                     {adapterPreference?.adapter_id ? ` • adapter: ${adapterPreference.adapter_id}` : ''}
                     {adapterPreference?.task_profile ? ` • task_profile: ${adapterPreference.task_profile}` : ''}
@@ -1467,7 +1473,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                     />
                 </label>
                 {adapterPreviewError && (
-                    <p style={{ color: '#ff6b6b', fontSize: '.82rem', margin: '0 0 .75rem' }}>{adapterPreviewError}</p>
+                    <p className="dp__error">{adapterPreviewError}</p>
                 )}
                 {adapterPreviewResult && (
                     <>
@@ -1486,7 +1492,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                             </div>
                             <div className="dp-stat">
                                 <div className="label">Dropped</div>
-                                <div className="value" style={{ color: adapterPreviewResult.dropped_records > 0 ? '#ff6b6b' : undefined }}>
+                                <div className={`value${adapterPreviewResult.dropped_records > 0 ? ' dp__value--bad' : ''}`}>
                                     {adapterPreviewResult.dropped_records}
                                 </div>
                             </div>
@@ -1500,7 +1506,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                             </div>
                         </div>
                         {Array.isArray(adapterPreviewResult.compatibility_warnings) && adapterPreviewResult.compatibility_warnings.length > 0 && (
-                            <div style={{ color: '#fbbf24', fontSize: '.8rem', marginBottom: '.75rem' }}>
+                            <div className="u-text-warning u-text-xs u-mb-md">
                                 {adapterPreviewResult.compatibility_warnings.join(' | ')}
                             </div>
                         )}
@@ -1509,7 +1515,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                                 <div className="dp-resolved-title">Contract Conformance</div>
                                 <div className="dp-resolved-kv">
                                     <span>Contract Pass</span>
-                                    <strong style={{ color: adapterPreviewResult.conformance_report.contract_pass ? '#34d399' : '#f87171' }}>
+                                    <strong className={adapterPreviewResult.conformance_report.contract_pass ? 'u-text-success' : 'u-text-error'}>
                                         {adapterPreviewResult.conformance_report.contract_pass ? 'yes' : 'no'}
                                     </strong>
                                 </div>
@@ -1530,8 +1536,8 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                                         {Object.entries(adapterPreviewResult.conformance_report.required_field_coverage || {}).map(([field, stats]) => (
                                             <div className="dp-stat" key={`required-${field}`}>
                                                 <div className="label">{field}</div>
-                                                <div className="value" style={{ fontSize: '1.05rem' }}>{asPercent(stats?.ratio)}</div>
-                                                <div style={{ fontSize: '.72rem', color: 'rgba(255,255,255,.58)' }}>
+                                                <div className="value dp__value--sm">{asPercent(stats?.ratio)}</div>
+                                                <div className="u-meta">
                                                     {stats?.present || 0} present / {stats?.missing || 0} missing
                                                 </div>
                                             </div>
@@ -1540,7 +1546,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                                 )}
                                 {Array.isArray(adapterPreviewResult.conformance_report.required_fields_below_100) &&
                                     adapterPreviewResult.conformance_report.required_fields_below_100.length > 0 && (
-                                    <div style={{ fontSize: '.78rem', color: '#fca5a5' }}>
+                                    <div className="u-text-xs u-text-error">
                                         Missing required coverage: {adapterPreviewResult.conformance_report.required_fields_below_100.join(', ')}
                                     </div>
                                 )}
@@ -1548,14 +1554,8 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         )}
                         {autoFixSuggestions.length > 0 && (
                             <div className="dp-resolved-panel">
-                                <div style={{
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    gap: '.6rem',
-                                    marginBottom: '.5rem',
-                                }}>
-                                    <div className="dp-resolved-title" style={{ marginBottom: 0 }}>Auto-Fix Suggestions</div>
+                                <div className="u-row u-between u-mb-sm">
+                                    <div className="dp-resolved-title u-mb0">Auto-Fix Suggestions</div>
                                     <button
                                         type="button"
                                         className="btn-secondary"
@@ -1566,23 +1566,18 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                                     </button>
                                 </div>
                                 {adapterPreviewResult.auto_apply?.applied_count ? (
-                                    <div style={{ fontSize: '.74rem', color: 'rgba(255,255,255,.62)', marginBottom: '.5rem' }}>
+                                    <div className="u-meta u-mb-sm">
                                         Auto-apply ready: {adapterPreviewResult.auto_apply.applied_count} mapping(s) at or above
                                         {' '}{asPercent(adapterPreviewResult.auto_apply.confidence_threshold || 0)} confidence.
                                     </div>
                                 ) : null}
-                                <div style={{ display: 'grid', gap: '.55rem' }}>
+                                <div className="dp__grid-gap">
                                     {autoFixSuggestions.map((suggestion, index) => (
-                                        <div key={`suggestion-${index}`} style={{
-                                            border: '1px solid rgba(255,255,255,.08)',
-                                            borderRadius: 8,
-                                            padding: '.5rem .65rem',
-                                            background: 'rgba(13,18,31,.45)',
-                                        }}>
-                                            <div style={{ fontSize: '.78rem', color: 'rgba(255,255,255,.9)' }}>
+                                        <div key={`suggestion-${index}`} className="dp__card dp__card--tinted">
+                                            <div className="u-text-xs u-text-primary">
                                                 {suggestion.message || 'No message'}
                                             </div>
-                                            <div style={{ fontSize: '.72rem', color: 'rgba(255,255,255,.62)', marginTop: '.3rem' }}>
+                                            <div className="u-meta u-mt-xs">
                                                 Confidence: {asPercent(suggestion.confidence)}
                                                 {suggestion.confidence_label ? ` (${suggestion.confidence_label})` : ''}
                                                 {typeof suggestion.expected_coverage_gain === 'number'
@@ -1591,13 +1586,12 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                                             </div>
                                             {suggestion.suggested_field_mapping && Object.keys(suggestion.suggested_field_mapping).length > 0 && (
                                                 <>
-                                                    <pre className="dp-resolved-json" style={{ marginTop: '.45rem' }}>
+                                                    <pre className="dp-resolved-json u-mt-sm">
                                                         {JSON.stringify({ field_mapping: suggestion.suggested_field_mapping }, null, 2)}
                                                     </pre>
                                                     <button
                                                         type="button"
-                                                        className="btn-secondary"
-                                                        style={{ marginTop: '.45rem' }}
+                                                        className="btn-secondary u-mt-sm"
                                                         onClick={() => applySuggestedFieldMapping(
                                                             suggestion.suggested_field_mapping || {},
                                                             {
@@ -1661,12 +1655,12 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                                             <tr key={row.index}>
                                                 <td>{row.index + 1}</td>
                                                 <td>
-                                                    <pre style={{ maxWidth: 360, whiteSpace: 'pre-wrap', fontSize: '.75rem' }}>
+                                                    <pre className="dp__raw-pre">
                                                         {JSON.stringify(row.raw, null, 2)}
                                                     </pre>
                                                 </td>
                                                 <td>
-                                                    <pre style={{ maxWidth: 360, whiteSpace: 'pre-wrap', fontSize: '.75rem' }}>
+                                                    <pre className="dp__raw-pre">
                                                         {JSON.stringify(row.mapped, null, 2)}
                                                     </pre>
                                                 </td>
@@ -1684,14 +1678,14 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
     const splitView = (
         <>
             <div className="dp-section" ref={splitSectionRef}>
-                <h3><span className="icon">✂️</span> Train / Val / Test Split</h3>
+                <h3>Train / Val / Test Split</h3>
                 <div className="dp-info">
-                    <span className="info-icon">💡</span>
+                    <span className="info-icon"><Lightbulb className="u-icon" aria-hidden="true" /></span>
                     Splits your combined dataset into training, validation, and test JSONL files. Ratios must sum to 1.0.
                 </div>
                 {hydratedFromActiveVersion.length > 0 && (
                     <div className="dp-info" data-testid="dp-active-config-hint">
-                        <span className="info-icon">♻️</span>
+                        <span className="info-icon"><RefreshCw className="u-icon" aria-hidden="true" /></span>
                         Reusing the active prepared version's split config (
                         {hydratedFromActiveVersion.map((f, i) => (
                             <span key={f}>{i > 0 ? ', ' : ''}<code>{f}</code></span>
@@ -1699,9 +1693,9 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         ). Edit any field to override before running.
                     </div>
                 )}
-                <div className="dp-resolved-panel" style={{ marginBottom: '1rem' }}>
+                <div className="dp-resolved-panel u-mb-lg">
                     <div className="dp-resolved-title">Split Adapter</div>
-                    <div className="dp-actions" style={{ marginBottom: '.5rem' }}>
+                    <div className="dp-actions u-mb-sm">
                         <select value={splitAdapterId} onChange={e => setSplitAdapterId(e.target.value)}>
                             <option value="default-canonical">default-canonical</option>
                             <option value="auto">auto</option>
@@ -1731,7 +1725,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                             {adapterPreferenceLoading ? 'Loading...' : 'Load Saved Preset'}
                         </button>
                     </div>
-                    <div style={{ fontSize: '.8rem', color: 'rgba(255,255,255,.6)', marginBottom: '.5rem' }}>
+                    <div className="u-hint u-mb-sm">
                         Resolved preset source: <strong>{adapterPreference?.source || 'default'}</strong>
                         {adapterPreference?.adapter_id ? ` • ${adapterPreference.adapter_id}` : ''}
                         {adapterPreference?.task_profile ? ` • ${adapterPreference.task_profile}` : ''}
@@ -1815,8 +1809,8 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                     </div>
                 </div>
                 {Math.abs(ratioSum - 1.0) > 0.001 && (
-                    <p style={{ color: '#ff6b6b', fontSize: '.82rem', margin: '0 0 .75rem' }}>
-                        ⚠️ Ratios sum to {ratioSum} — must equal 1.0
+                    <p className="dp__error">
+                        <AlertTriangle className="u-icon" aria-hidden="true" /> Ratios sum to {ratioSum} — must equal 1.0
                     </p>
                 )}
                 <div className="dp-split-row">
@@ -1856,15 +1850,15 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                 )}
                 <div className="dp-actions">
                     <button className="btn-primary" onClick={previewEffectiveSplitConfig} disabled={effectiveSplitLoading}>
-                        {effectiveSplitLoading ? '⏳ Resolving...' : '🧭 Preview Effective Config'}
+                        {effectiveSplitLoading ? 'Resolving...' : 'Preview Effective Config'}
                     </button>
                     <button className="btn-primary" onClick={() => void runSplit()}
                         disabled={splitLoading || Math.abs(ratioSum - 1.0) > 0.001}>
-                        {splitLoading ? '⏳ Splitting...' : '✂️ Run Split'}
+                        {splitLoading ? 'Splitting...' : 'Run Split'}
                     </button>
                 </div>
                 {effectiveSplitError && (
-                    <p style={{ color: '#ff6b6b', fontSize: '.82rem', margin: '0 0 .75rem' }}>{effectiveSplitError}</p>
+                    <p className="dp__error">{effectiveSplitError}</p>
                 )}
                 {effectiveSplitConfig && (
                     <div className="dp-resolved-panel">
@@ -1912,7 +1906,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
 
                 {splitManifest && (
                     <div className="dp-manifest">
-                        <h4>✅ Split Complete</h4>
+                        <h4>Split Complete</h4>
                         <div className="dp-resolved-panel">
                             <div className="dp-resolved-title">Resolved Defaults</div>
                             <div className="dp-resolved-kv">
@@ -1971,12 +1965,12 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                                 <div className="dp-resolved-title">
                                     {splitManifest.dedup_report && splitManifest.dedup_report.dropped_count > 0 ? (
                                         <>
-                                            🧹 Deduped — dropped {splitManifest.dedup_report.dropped_count} of{' '}
+                                            Deduped — dropped {splitManifest.dedup_report.dropped_count} of{' '}
                                             {splitManifest.dedup_report.input_count} row(s);{' '}
                                             {splitManifest.dedup_report.kept_count} kept and split
                                         </>
                                     ) : (
-                                        <>🧹 Deduped — no cross-split duplicates were found</>
+                                        <>Deduped — no cross-split duplicates were found</>
                                     )}
                                 </div>
                                 <p className="dp-strat-help">
@@ -1986,7 +1980,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                                 </p>
                                 {splitManifest.dedup_inherited_config && splitManifest.dedup_inherited_config.length > 0 && (
                                     <p className="dp-strat-help" data-testid="dp-dedup-inherited">
-                                        ♻️ Reproduced the active prepared version's split config (rather than form
+                                        Reproduced the active prepared version's split config (rather than form
                                         defaults): {splitManifest.dedup_inherited_config.map((f, i) => (
                                             <span key={f}>{i > 0 ? ', ' : ''}<code>{f}</code></span>
                                         ))}.
@@ -2001,7 +1995,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                                 </div>
                                 {splitManifest.disjoint_report.missing_count > 0 && (
                                     <p className="dp-strat-warning">
-                                        ⚠️ {splitManifest.disjoint_report.missing_count} row(s) had a missing/null/empty <code>{splitManifest.disjoint_report.disjoint_field}</code> and were sent entirely to train (the disjoint guarantee on non-missing keys is unconditional).
+                                        <AlertTriangle className="u-icon" aria-hidden="true" /> {splitManifest.disjoint_report.missing_count} row(s) had a missing/null/empty <code>{splitManifest.disjoint_report.disjoint_field}</code> and were sent entirely to train (the disjoint guarantee on non-missing keys is unconditional).
                                     </p>
                                 )}
                                 <table className="dp-strat-table">
@@ -2045,12 +2039,12 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                                 </div>
                                 {splitManifest.stratification_report.missing_count > 0 && (
                                     <p className="dp-strat-warning">
-                                        ⚠️ {splitManifest.stratification_report.missing_count} row(s) had a missing/null/empty <code>{splitManifest.stratification_report.stratify_field}</code> and were bucketed as <code>__missing__</code>.
+                                        <AlertTriangle className="u-icon" aria-hidden="true" /> {splitManifest.stratification_report.missing_count} row(s) had a missing/null/empty <code>{splitManifest.stratification_report.stratify_field}</code> and were bucketed as <code>__missing__</code>.
                                     </p>
                                 )}
                                 {splitManifest.stratification_report.small_groups_train_only.length > 0 && (
                                     <p className="dp-strat-warning">
-                                        ⚠️ Small group(s) with &lt; 2 rows were sent entirely to train (no val/test coverage): {splitManifest.stratification_report.small_groups_train_only.map((g) => <code key={g}>{g}</code>)}
+                                        <AlertTriangle className="u-icon" aria-hidden="true" /> Small group(s) with &lt; 2 rows were sent entirely to train (no val/test coverage): {splitManifest.stratification_report.small_groups_train_only.map((g) => <code key={g}>{g}</code>)}
                                     </p>
                                 )}
                                 <table className="dp-strat-table">
@@ -2128,7 +2122,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
             <StepFooter
                 currentStep="Dataset Preparation"
                 nextStep="Tokenization"
-                nextStepIcon="🔤"
+                nextStepIcon=""
                 isComplete={!!splitManifest}
                 hint="Split your dataset before continuing"
                 onNext={onNextStep}

@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
-import Skeleton from '../shared/Skeleton';
+import LoadingState from '../shared/LoadingState';
 import './EDADashboard.css';
 
 interface EDAStats {
@@ -80,7 +80,7 @@ export default function EDADashboard({ projectId }: { projectId: number }) {
         }
     };
 
-    if (loading) return <Skeleton height={150} />;
+    if (loading) return <LoadingState label="Loading the data overview" lines={4} title />;
     if (error) return <div className="eda-error">Failed to load EDA stats: {error}</div>;
     if (!stats || stats.total_files === 0) return null;
 

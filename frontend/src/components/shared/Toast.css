@@ -54,8 +54,13 @@
 }
 
 .toast-icon {
-    font-size: 1.25rem;
+    display: inline-flex;
     flex-shrink: 0;
+}
+
+.toast-icon svg {
+    width: 18px;
+    height: 18px;
 }
 
 .toast-message {
