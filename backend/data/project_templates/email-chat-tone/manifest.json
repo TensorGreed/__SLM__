@@ -3,7 +3,7 @@
   "name": "Email/Chat Tone Adapter",
   "headline": "Rewrite drafts in a consistent brand voice — concise, warm, no jargon.",
   "description": "An instruction-SFT template for support, success, and PR teams who want every outbound message to land in a single recognizable voice. Train a small model to take a raw draft (engineer-speak, terse Slack, or AI-generated boilerplate) and rewrite it to the brand style guide: short opener, plain English, action-first close. Generalizes across email, Slack, in-app notifications, and chat replies once tuned.",
-  "icon": "✉️",
+  "icon": "mail",
   "is_template": true,
   "template_version": "v1",
   "minimum_dataset_size": 100,

@@ -56,7 +56,7 @@ Two-phase by design. **Plan** is read-only and cheap; **Run** acts on the snapsh
    - **Blockers** (if any) with concrete remediation links.
    - **Strict-mode preview** — what would be refused under stricter rules.
 3. Toggle **Strict mode** if you want autopilot to refuse all fallbacks instead of taking safe ones.
-4. Inspect the **Decision log drawer** (button top-right) — every node of the plan with the `provenance` per component.
+4. Inspect the **decision log** (Settings → Tools → *Autopilot decisions*, or `⌘K` → "Autopilot decisions") — every step of the plan with the `provenance` per component, grouped by run and filterable by stage, status and reason code.
 5. Click **One-click run** when you're happy, or **Repair preview** to see what changed before run.
 
 ### CLI
@@ -110,7 +110,7 @@ Strict mode refuses every repair and surfaces the blockers verbatim. Reach for s
 
 ## Decision log
 
-Every run produces an `AutopilotDecision` row. The drawer (Autopilot Planner section → top-right icon) shows:
+Every run produces `AutopilotDecision` rows. The log (Settings → Tools → *Autopilot decisions*; `⌘K` → "Autopilot decisions") groups them by run and shows:
 
 - Brief.
 - Resolved plan (every field + provenance).
@@ -126,7 +126,7 @@ If autopilot took a fallback you didn't intend (or a downstream stage misbehaved
 
 ### UI
 
-Autopilot Planner → Decision log drawer → **Rollback to snapshot** on the matching row.
+Autopilot Planner → **Rollback to snapshot** on the matching row (the decision log under Settings → *Autopilot decisions* shows which row).
 
 ### CLI
 

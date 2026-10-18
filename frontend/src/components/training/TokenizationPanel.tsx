@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { Type, Info, Loader2, FlaskConical, BarChart3, Lightbulb, TriangleAlert, BookOpen } from 'lucide-react';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import TokenLengthDistributionPanel from './TokenLengthDistributionPanel';
@@ -142,7 +143,7 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
         ? Math.min(32768, Math.pow(2, Math.ceil(Math.log2(Math.max(1, stats.p95_tokens)))))
         : null;
 
-    const histogramColors = ['#2f74d9', '#4f96ea', '#79b2f5'];
+    const histogramColors = ['var(--chart-1)', 'var(--accent-500)', 'var(--accent-200)'];
 
     return (
         <div className="tok-panel">
@@ -158,20 +159,19 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
 
             {/* ── Model Selection ──────────────────────────────── */}
             <div className="tok-section">
-                <h3><span className="icon">🔤</span> Tokenization Analysis</h3>
+                <h3><span className="icon"><Type size={18} aria-hidden="true" /></span> Tokenization Analysis</h3>
                 <div className="tok-info">
-                    <span className="info-icon">ℹ️</span>
+                    <span className="info-icon"><Info size={16} aria-hidden="true" /></span>
                     Analyze how your dataset tokenizes under a specific model's tokenizer. This helps you set the optimal <code>max_seq_length</code> for training — balancing context coverage vs memory usage.
                 </div>
 
-                <p style={{ fontSize: '.78rem', color: '#627a96', margin: '0 0 .4rem' }}>Quick presets:</p>
+                <p className="tok-presets__label">Quick presets:</p>
                 <div className="tok-presets">
                     {MODEL_PRESETS.map(m => (
                         <button
                             key={m.id}
-                            className="tok-preset"
+                            className={`tok-preset${modelName === m.id ? ' tok-preset--active' : ''}`}
                             onClick={() => setModelName(m.id)}
-                            style={modelName === m.id ? { background: '#eaf2ff', borderColor: '#4a83d7', color: '#22508e' } : undefined}
                         >
                             {m.label}
                         </button>
@@ -192,11 +192,13 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
                     <div className="tok-field">
                         <label>Max Seq Length</label>
                         <input type="number" value={maxSeqLen} onChange={e => setMaxSeqLen(+e.target.value)}
-                            min={128} max={32768} step={128} style={{ width: '110px' }}
+                            className="tok-field__input--short" min={128} max={32768} step={128}
                         />
                     </div>
                     <button className="tok-btn" onClick={analyze} disabled={loading || !modelName.trim()}>
-                        {loading ? '⏳ Analyzing...' : '🔬 Analyze Tokens'}
+                        {loading
+                            ? <><Loader2 size={14} className="tok-spin" aria-hidden="true" /> Analyzing...</>
+                            : <><FlaskConical size={14} aria-hidden="true" /> Analyze Tokens</>}
                     </button>
                 </div>
             </div>
@@ -204,7 +206,7 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
             {/* ── Results ──────────────────────────────────────── */}
             {stats && (
                 <div className="tok-section">
-                    <h3><span className="icon">📈</span> Token Statistics — <span style={{ color: '#2f74d9' }}>{stats.model_name}</span></h3>
+                    <h3><span className="icon"><BarChart3 size={18} aria-hidden="true" /></span> Token Statistics — <span className="tok-model-name">{stats.model_name}</span></h3>
 
                     <div className="tok-stats-grid">
                         <div className="tok-stat">
@@ -247,12 +249,9 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
                             <div className="tok-chart-label">Token Length Distribution</div>
                             <ResponsiveContainer width="100%" height={200}>
                                 <BarChart data={stats.histogram} margin={{ left: 10, right: 10 }}>
-                                    <XAxis dataKey="bucket" tick={{ fill: '#617b98', fontSize: 11 }} />
-                                    <YAxis tick={{ fill: '#617b98', fontSize: 11 }} />
-                                    <Tooltip
-                                        contentStyle={{ background: '#ffffff', border: '1px solid #d4e0f1', borderRadius: 8, color: '#1f3e67' }}
-                                        labelStyle={{ color: '#2f74d9' }}
-                                    />
+                                    <XAxis dataKey="bucket" tick={{ fill: 'var(--chart-axis)', fontSize: 11 }} />
+                                    <YAxis tick={{ fill: 'var(--chart-axis)', fontSize: 11 }} />
+                                    <Tooltip wrapperClassName="chart-tooltip" />
                                     <Bar dataKey="count" radius={[4, 4, 0, 0]}>
                                         {stats.histogram.map((_, i) => (
                                             <Cell key={i} fill={histogramColors[i % histogramColors.length]} />
@@ -266,7 +265,7 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
                     {/* Recommendation */}
                     {recommendedSeqLen && (
                         <div className="tok-recommendation">
-                            <span className="rec-icon">💡</span>
+                            <span className="rec-icon"><Lightbulb size={16} aria-hidden="true" /></span>
                             <div>
                                 Based on P95 = <code>{stats.p95_tokens}</code> tokens, the recommended
                                 <code>max_seq_length</code> is <code>{recommendedSeqLen}</code>.
@@ -274,8 +273,8 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
                                     <span> You can safely reduce from {maxSeqLen} to save GPU memory.</span>
                                 )}
                                 {stats.exceeding_max > 0 && (
-                                    <span style={{ color: '#cf4343' }}>
-                                        &nbsp;⚠ {stats.exceeding_max} samples ({((stats.exceeding_max / stats.total_samples) * 100).toFixed(1)}%) exceed your current max — they will be truncated.
+                                    <span className="tok-warning">
+                                        &nbsp;<TriangleAlert size={14} aria-hidden="true" /> {stats.exceeding_max} samples ({((stats.exceeding_max / stats.total_samples) * 100).toFixed(1)}%) exceed your current max — they will be truncated.
                                     </span>
                                 )}
                             </div>
@@ -286,13 +285,15 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
 
             {/* ── Vocabulary Sample ────────────────────────────── */}
             <div className="tok-section">
-                <h3><span className="icon">📖</span> Vocabulary Sample</h3>
-                <div style={{ display: 'flex', gap: '.75rem', alignItems: 'center', marginBottom: '1rem' }}>
+                <h3><span className="icon"><BookOpen size={18} aria-hidden="true" /></span> Vocabulary Sample</h3>
+                <div className="u-row tok-vocab-head">
                     <button className="tok-btn" onClick={loadVocab} disabled={vocabLoading || !modelName.trim()}>
-                        {vocabLoading ? '⏳ Loading...' : '📖 Load Vocab Sample'}
+                        {vocabLoading
+                            ? <><Loader2 size={14} className="tok-spin" aria-hidden="true" /> Loading...</>
+                            : <><BookOpen size={14} aria-hidden="true" /> Load Vocab Sample</>}
                     </button>
                     {vocab.length > 0 && (
-                        <span style={{ color: '#6f86a4', fontSize: '.82rem' }}>{vocab.length} tokens shown</span>
+                        <span className="u-meta tok-vocab-count">{vocab.length} tokens shown</span>
                     )}
                 </div>
                 {vocab.length > 0 && (

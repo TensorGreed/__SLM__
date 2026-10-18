@@ -32,7 +32,7 @@ const SAMPLE_TEMPLATES = {
             name: 'Ticket Router SLM',
             headline: 'Auto-route inbound support tickets.',
             description: 'Multi-class classifier for support inboxes.',
-            icon: '📨',
+            icon: 'mail',
             recipe_id: 'classification',
             task_profile: 'classification',
             target_profile: 'mobile_cpu',
@@ -51,7 +51,7 @@ const SAMPLE_TEMPLATES = {
             name: 'Security Alert Summarizer',
             headline: 'Turn vendor advisories into exec summaries.',
             description: 'Summarization for security advisories.',
-            icon: '🚨',
+            icon: 'siren',
             recipe_id: 'summarization',
             task_profile: 'summarization',
             target_profile: 'vllm_server',
@@ -99,6 +99,9 @@ describe('ProjectTemplateGallery', () => {
         expect(
             screen.getByTestId('project-template-card-security-alert-summarizer'),
         ).toBeInTheDocument();
+        const card = screen.getByTestId('project-template-card-ticket-router');
+        expect(card.querySelector('svg')).not.toBeNull();
+        expect(card).not.toHaveTextContent('mail');
         expect(
             screen.getByTestId('project-template-card-ticket-router-headline'),
         ).toHaveTextContent('Auto-route inbound support tickets.');

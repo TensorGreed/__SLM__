@@ -76,6 +76,18 @@ async def history(project_id: int, benchmark_id: int, db: AsyncSession = Depends
     return svc.benchmark_history(ds)
 
 
+@router.post("/{benchmark_id}/contamination")
+async def rescan_contamination(project_id: int, benchmark_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Re-scan the benchmark's gold values (entity texts / answers) against
+    the project's current training rows; the result replaces the manifest's
+    ``contamination`` block (it is also computed once at import)."""
+    try:
+        ds = await svc.rescan_contamination(db, project_id, benchmark_id)
+    except svc.BenchmarkError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return svc.serialize_benchmark(ds)
+
+
 @router.delete("/{benchmark_id}")
 async def delete(project_id: int, benchmark_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     try:

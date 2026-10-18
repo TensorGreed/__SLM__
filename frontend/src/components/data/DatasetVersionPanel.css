@@ -1,0 +1,43 @@
+.dsv-header { margin-bottom: var(--space-lg); }
+.dsv-title { font-size: var(--font-size-lg); font-weight: 600; margin: 0; }
+.dsv-count { font-size: var(--font-size-xs); }
+.dsv-icon { color: var(--accent); }
+.dsv-lock-icon { color: var(--color-success); }
+.dsv-list { display: flex; flex-direction: column; gap: var(--space-sm); }
+.dsv-row {
+  display: flex; align-items: flex-start; gap: var(--space-md);
+  padding: var(--space-md); border-radius: var(--radius-md);
+  background: transparent; border: 1px solid var(--border-primary);
+  cursor: pointer; transition: all 0.15s ease;
+}
+.dsv-row--selected { background: var(--accent-bg); border-color: var(--accent); }
+.dsv-rail { display: flex; flex-direction: column; align-items: center; min-width: 24px; padding-top: 4px; }
+.dsv-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--dsv-color, var(--gray-500)); }
+.dsv-line { width: 2px; flex: 1; min-height: 20px; background: var(--border-primary); margin-top: 4px; }
+.dsv-body { flex: 1; }
+.dsv-name-row { display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-xs); }
+.dsv-name { font-weight: 600; font-size: var(--font-size-sm); }
+.dsv-badge {
+  font-size: var(--font-size-xs);
+  color: var(--dsv-color, var(--gray-500));
+  background: color-mix(in srgb, var(--dsv-color, var(--gray-500)) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dsv-color, var(--gray-500)) 30%, transparent);
+}
+.dsv-lock { display: inline-flex; }
+.dsv-facts { display: flex; gap: var(--space-lg); color: var(--text-tertiary); font-size: var(--font-size-xs); }
+.dsv-fact-icon { margin-right: 4px; vertical-align: middle; }
+.dsv-details {
+  margin-top: var(--space-sm); padding: var(--space-sm);
+  background: var(--bg-tertiary); border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs); font-family: var(--font-mono); color: var(--text-secondary);
+}
+.dsv-next { margin-top: 6px; color: var(--text-tertiary); }
+
+.dsv-type--raw, .dsv-type--train { --dsv-color: var(--chart-1); }
+.dsv-type--cleaned { --dsv-color: var(--accent-text); }
+.dsv-type--val { --dsv-color: var(--accent-500); }
+.dsv-type--gold_dev { --dsv-color: var(--chart-3); }
+.dsv-type--gold_test { --dsv-color: var(--chart-4); }
+.dsv-type--synthetic { --dsv-color: var(--chart-2); }
+.dsv-type--test { --dsv-color: var(--chart-6); }
+.dsv-type--unknown { --dsv-color: var(--gray-500); }

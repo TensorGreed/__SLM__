@@ -13,6 +13,18 @@
  */
 
 import { useEffect, useState } from 'react';
+import {
+    Database,
+    FileSignature,
+    Inbox,
+    Mail,
+    Package,
+    ScrollText,
+    Siren,
+    Stethoscope,
+    Wrench,
+    type LucideIcon,
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import {
@@ -21,6 +33,22 @@ import {
     type ProjectTemplateSummary,
 } from '../../api/projectTemplates';
 import { useToastStore } from '../../stores/toastStore';
+import EmptyState from '../shared/EmptyState';
+import LoadingState from '../shared/LoadingState';
+import './ProjectTemplateGallery.css';
+
+/** Template manifests name a lucide icon; anything else falls back to Package. */
+const TEMPLATE_ICONS: Record<string, LucideIcon> = {
+    wrench: Wrench,
+    mail: Mail,
+    'scroll-text': ScrollText,
+    inbox: Inbox,
+    siren: Siren,
+    'file-signature': FileSignature,
+    database: Database,
+    stethoscope: Stethoscope,
+    package: Package,
+};
 
 function extractErrorMessage(err: unknown): string {
     if (typeof err === 'object' && err !== null) {
@@ -70,14 +98,8 @@ export default function ProjectTemplateGallery({
 
     if (loading) {
         return (
-            <section
-                data-testid="project-template-gallery-loading"
-                className="card"
-                style={{ padding: 'var(--space-md)' }}
-            >
-                <div style={{ color: 'var(--text-secondary)' }}>
-                    Loading starter projects…
-                </div>
+            <section data-testid="project-template-gallery-loading">
+                <LoadingState label="Loading starter projects" lines={2} card />
             </section>
         );
     }
@@ -85,14 +107,13 @@ export default function ProjectTemplateGallery({
     if (templates.length === 0) {
         if (hideWhenEmpty) return null;
         return (
-            <section
-                data-testid="project-template-gallery-empty"
-                className="card"
-                style={{ padding: 'var(--space-md)' }}
-            >
-                <div style={{ color: 'var(--text-secondary)' }}>
-                    No starter projects available yet.
-                </div>
+            <section data-testid="project-template-gallery-empty">
+                <EmptyState
+                    size="compact"
+                    icon={<Package size={20} />}
+                    title="No starter projects available yet."
+                    description="Starter projects appear here once templates are installed."
+                />
             </section>
         );
     }
@@ -139,76 +160,31 @@ export default function ProjectTemplateGallery({
     };
 
     return (
-        <section
-            data-testid="project-template-gallery"
-            className="card"
-            style={{
-                padding: 'var(--space-md)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'var(--space-md)',
-            }}
-        >
+        <section data-testid="project-template-gallery" className="card tpl-gallery">
             <div>
-                <h3 style={{ margin: 0 }}>Starter projects — with data + answer key</h3>
-                <p
-                    style={{
-                        margin: '4px 0 0',
-                        color: 'var(--text-secondary)',
-                        fontSize: '0.9rem',
-                    }}
-                >
+                <h3 className="u-m0">Starter projects: with data and answer key</h3>
+                <p className="u-meta tpl-gallery__intro">
                     Curated starting kits with pre-loaded data, answer keys, and
                     task type defaults. You can spin up multiple projects from the
-                    same starter — each gets its own data + experiments.
+                    same starter. Each gets its own data and experiments.
                 </p>
             </div>
 
-            <div
-                style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                    gap: 'var(--space-md)',
-                }}
-            >
+            <div className="tpl-gallery__grid">
                 {templates.map((template) => {
                     const isActive = activeSlug === template.slug;
+                    const Icon = TEMPLATE_ICONS[template.icon] ?? Package;
                     return (
                         <article
                             key={template.slug}
                             data-testid={`project-template-card-${template.slug}`}
-                            style={{
-                                padding: 'var(--space-md)',
-                                borderRadius: 'var(--radius-md)',
-                                border: isActive
-                                    ? '2px solid var(--accent-primary)'
-                                    : '1px solid var(--border-color)',
-                                background: 'var(--bg-card)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: 'var(--space-sm)',
-                            }}
+                            className={`tpl-card${isActive ? ' tpl-card--active' : ''}`}
                         >
-                            <div
-                                style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 'var(--space-sm)',
-                                }}
-                            >
-                                <span style={{ fontSize: '1.6rem' }} aria-hidden="true">
-                                    {template.icon}
-                                </span>
+                            <div className="tpl-card__head">
+                                <Icon size={22} aria-hidden="true" className="tpl-card__icon" />
                                 <div>
-                                    <div style={{ fontWeight: 600 }}>
-                                        {template.name}
-                                    </div>
-                                    <div
-                                        style={{
-                                            fontSize: '0.8rem',
-                                            color: 'var(--text-secondary)',
-                                        }}
-                                    >
+                                    <div className="tpl-card__name">{template.name}</div>
+                                    <div className="tpl-card__shape">
                                         {template.task_profile} · target{' '}
                                         {template.target_profile}
                                     </div>
@@ -216,25 +192,13 @@ export default function ProjectTemplateGallery({
                             </div>
 
                             <p
-                                style={{
-                                    fontSize: '0.85rem',
-                                    color: 'var(--text-secondary)',
-                                    margin: 0,
-                                }}
+                                className="tpl-card__headline"
                                 data-testid={`project-template-card-${template.slug}-headline`}
                             >
                                 {template.headline}
                             </p>
 
-                            <div
-                                style={{
-                                    display: 'flex',
-                                    flexWrap: 'wrap',
-                                    gap: 4,
-                                    fontSize: '0.75rem',
-                                    color: 'var(--text-secondary)',
-                                }}
-                            >
+                            <div className="tpl-card__badges">
                                 {template.minimum_dataset_size > 0 && (
                                     <span className="badge badge-info">
                                         ≥ {template.minimum_dataset_size} rows
@@ -254,18 +218,10 @@ export default function ProjectTemplateGallery({
 
                             {isActive ? (
                                 <div
-                                    style={{
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        gap: 'var(--space-sm)',
-                                        marginTop: 'var(--space-xs)',
-                                    }}
+                                    className="tpl-card__form"
                                     data-testid={`project-template-name-form-${template.slug}`}
                                 >
-                                    <label
-                                        className="form-label"
-                                        style={{ fontSize: '0.85rem' }}
-                                    >
+                                    <label className="form-label">
                                         Project name
                                     </label>
                                     <input
@@ -279,21 +235,13 @@ export default function ProjectTemplateGallery({
                                     {error && (
                                         <div
                                             role="alert"
-                                            style={{
-                                                color: 'var(--color-error)',
-                                                fontSize: '0.8rem',
-                                            }}
+                                            className="tpl-card__error"
                                             data-testid={`project-template-error-${template.slug}`}
                                         >
                                             {error}
                                         </div>
                                     )}
-                                    <div
-                                        style={{
-                                            display: 'flex',
-                                            gap: 'var(--space-sm)',
-                                        }}
-                                    >
+                                    <div className="tpl-card__actions">
                                         <button
                                             type="button"
                                             className="btn btn-primary"
@@ -317,12 +265,11 @@ export default function ProjectTemplateGallery({
                             ) : (
                                 <button
                                     type="button"
-                                    className="btn btn-secondary"
+                                    className="btn btn-secondary tpl-card__pick"
                                     onClick={() =>
                                         handlePickTemplate(template.slug, template.name)
                                     }
                                     data-testid={`project-template-pick-${template.slug}`}
-                                    style={{ marginTop: 'auto' }}
                                 >
                                     Use this starter
                                 </button>

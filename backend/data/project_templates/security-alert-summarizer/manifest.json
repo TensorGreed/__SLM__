@@ -3,7 +3,7 @@
   "name": "Security Alert Summarizer",
   "headline": "Turn vendor advisories + CVE descriptions into one-line exec summaries.",
   "description": "A summarization template for security teams. Train a small model to read verbose CVE descriptions, vendor advisories, or threat-intel snippets and emit a single sentence the on-call engineer can scan in 3 seconds. Pattern fits CISO digests, paging-channel summaries, and ticket auto-tagging.",
-  "icon": "🚨",
+  "icon": "siren",
   "is_template": true,
   "template_version": "v1",
   "minimum_dataset_size": 80,

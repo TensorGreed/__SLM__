@@ -19,6 +19,7 @@ describe('workspaceCommands', () => {
         expect(paths).toContain('/project/7/results?tab=failures');
         expect(paths).toContain('/project/7/ship?stage=monitor');
         expect(paths).toContain('/project/7/settings?open=domain-packs');
+        expect(paths).toContain('/project/7/settings?open=decisions');
     });
 
     it('files each command under its destination', () => {

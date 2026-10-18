@@ -14,7 +14,20 @@ const yelp = {
     source: { locator: 'hf:Yelp/yelp_review_full:test', source_id: 'hf', dataset_id: 'Yelp/yelp_review_full', split: 'test', revision: null },
     licence: 'other', local_only: false, rows: 240, mapping: { '1 star': 'negative' }, scored_labels: ['negative', 'positive'],
     leakage: { checked_against: 800, exact: 0, near: 2 }, created_at: '2026-10-15',
+    contamination: { applicable: false, reason: 'classification_labels_are_not_values', checked_against: 800, scanned_at: 'x' },
     result: { experiment_id: 80, evaluated_at: 'x', rows: 240, headline: 'accuracy', score: 0.912 }, latest_result: null,
+};
+
+const pii = {
+    ...yelp, id: 6, name: 'Gretel PII', slug: 'gretel-pii', task_profile: 'structured_extraction', scored_labels: ['employee_id'],
+    contamination: {
+        applicable: true, values_checked: 1169, values_found: 32, found_share: 0.0274, occurrences: 591, rows_hit: 240, checked_against: 1927,
+        by_type: { employee_id: { checked: 300, found: 20, occurrences: 400 }, plate: { checked: 200, found: 12, occurrences: 191 } },
+        by_source: { 'seed_documents:doc=7': 240 },
+        examples: [{ value: 'EMP-48213', type: 'employee_id', occurrences: 40, rows: 31, sources: { 'seed_documents:doc=7': 31 } }],
+        severity: 'notable', scanned_at: 'x',
+    },
+    result: null,
 };
 
 describe('ExternalBenchmarksPanel', () => {
@@ -140,5 +153,20 @@ describe('ExternalBenchmarksPanel', () => {
         expect(screen.getByTestId('ext-bench-squad')).toHaveTextContent('Q&A — scores the answers');
         expect(screen.getByTestId('ext-bench-score-squad')).toHaveTextContent(
             'Run #82: F1 0.48 on 50 rows · not judged: local-only benchmark, cloud judge (anthropic:claude-x)');
+    });
+
+    it('shows the gold-value contamination per benchmark and rescans on request', async () => {
+        apiMock.get.mockImplementation(async (url: string) => (url.endsWith('/benchmarks') ? { data: { benchmarks: [yelp, pii] } } : { data: { history: [] } }));
+        apiMock.post.mockResolvedValue({ data: { ...pii, contamination: { ...pii.contamination, values_found: 0, occurrences: 0, severity: 'clean', examples: [] } } });
+        const user = userEvent.setup();
+        render(<ExternalBenchmarksPanel projectId={33} experimentId={80} />);
+        const line = await screen.findByTestId('ext-bench-contamination-gretel-pii');
+        expect(line).toHaveTextContent('32 of 1169 gold values (3%) appear in your training rows, 591 times (employee_id 20, plate 12) · notable');
+        expect(line).toHaveTextContent('EMP-48213');
+        expect(line.className).toContain('ext-bench__contamination--notable');
+        expect(screen.queryByTestId('ext-bench-contamination-yelp-stars')).toBeNull();
+        await user.click(screen.getByTestId('ext-bench-rescan-gretel-pii'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/33/benchmarks/6/contamination'));
+        await waitFor(() => expect(screen.getByTestId('ext-bench-contamination-gretel-pii')).toHaveTextContent('None of its 1169 gold values appear'));
     });
 });

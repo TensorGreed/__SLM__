@@ -87,6 +87,9 @@
 }
 
 .tok-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
     padding: 0.5rem 1.25rem;
     border-radius: 8px;
     border: none;
@@ -94,20 +97,17 @@
     font-weight: 600;
     font-size: 0.85rem;
     transition: all 0.2s;
-    background: linear-gradient(135deg, var(--gray-1000), var(--gray-1000));
-    color: var(--bg-primary);
+    background: var(--accent);
+    color: var(--accent-contrast);
 }
 
 .tok-btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.3);
+    background: var(--accent-hover);
 }
 
 .tok-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
 }
 
 .tok-stats-grid {
@@ -243,3 +243,13 @@
     flex-shrink: 0;
     margin-top: 0.1rem;
 }
+
+.tok-presets__label { font-size: var(--font-size-xs); color: var(--text-tertiary); margin: 0 0 0.4rem; }
+.tok-preset--active { background: var(--accent-bg); border-color: var(--accent-border); color: var(--accent-text); }
+.tok-field .tok-field__input--short { min-width: 0; width: 110px; }
+.tok-model-name { color: var(--accent-text); }
+.tok-warning { color: var(--color-error); }
+.tok-vocab-head { margin-bottom: 1rem; }
+.tok-vocab-count { font-size: var(--font-size-xs); }
+.tok-spin { animation: tok-spin 1s linear infinite; }
+@keyframes tok-spin { to { transform: rotate(360deg); } }

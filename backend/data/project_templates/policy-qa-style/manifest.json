@@ -3,7 +3,7 @@
   "name": "Policy Q&A Style Adapter",
   "headline": "Answer employee policy questions in a consistent compliant voice.",
   "description": "An instruction-SFT template for HR, IT, and InfoSec policy teams. Train a small model to answer free-form policy questions in a strict, citation-friendly style: short opening summary, the relevant policy clause, and a 'when in doubt, escalate to <team>' closer. Pattern fits HR helpdesks, security operations Slack bots, and compliance hotlines where consistency of voice matters as much as factual correctness.",
-  "icon": "📘",
+  "icon": "scroll-text",
   "is_template": true,
   "template_version": "v1",
   "minimum_dataset_size": 80,

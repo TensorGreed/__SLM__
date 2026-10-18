@@ -3,6 +3,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import api from '../api/client';
@@ -340,7 +341,7 @@ export default function ProjectListPage() {
                     >
                         <div className="modal-header">
                             <h2 className="modal-title">New BrewSLM Project</h2>
-                            <button className="btn btn-ghost" onClick={closeCreateModal}>✕</button>
+                            <button className="btn btn-ghost" onClick={closeCreateModal} aria-label="Close"><X size={16} aria-hidden="true" /></button>
                         </div>
 
                         <div className="modal-body">
@@ -381,25 +382,17 @@ export default function ProjectListPage() {
 
                             <button
                                 type="button"
-                                className="btn btn-ghost"
                                 onClick={() => setShowAdvanced((v) => !v)}
                                 data-testid="create-project-advanced-toggle"
-                                style={{ alignSelf: 'flex-start', padding: 0, fontSize: '0.85rem' }}
+                                className="btn btn-ghost project-list-advanced-toggle"
                             >
-                                {showAdvanced ? '▼' : '▶'} Advanced options
+                                {showAdvanced ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />} Advanced options
                             </button>
 
                             {showAdvanced && (
                                 <div
                                     data-testid="create-project-advanced"
-                                    style={{
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        gap: 'var(--space-md)',
-                                        marginTop: 'var(--space-sm)',
-                                        paddingTop: 'var(--space-md)',
-                                        borderTop: '1px solid var(--border-color)',
-                                    }}
+                                    className="project-list-advanced"
                                 >
                                     <p className="form-hint" data-testid="create-project-manifest-link">
                                         Have a <code>brewslm.yaml</code>?{' '}

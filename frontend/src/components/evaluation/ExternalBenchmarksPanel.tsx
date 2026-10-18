@@ -30,6 +30,7 @@ import {
     type BenchmarkPreview,
 } from '../../api/benchmarks';
 import { uploadImportFile } from '../../api/datasetImport';
+import { benchmarkContaminationText, rescanBenchmarkContamination } from '../../api/benchmarks';
 import { toast } from '../../stores/toastStore';
 import './ExternalBenchmarksPanel.css';
 
@@ -149,6 +150,15 @@ export default function ExternalBenchmarksPanel({ projectId, experimentId }: Pro
         }
     };
 
+    const rescan = async (b: BenchmarkInfo) => {
+        try {
+            const updated = await rescanBenchmarkContamination(projectId, b.id);
+            setBenchmarks((prev) => prev.map((x) => (x.id === updated.id ? { ...x, contamination: updated.contamination } : x)));
+        } catch (err) {
+            toast.error(errorText(err, 'Could not rescan the benchmark.'), 5000);
+        }
+    };
+
     const remove = async (b: BenchmarkInfo) => {
         if (!window.confirm(`Delete the benchmark "${b.name}" and its scores?`)) return;
         try {
@@ -191,6 +201,38 @@ export default function ExternalBenchmarksPanel({ projectId, experimentId }: Pro
                                         : ''}
                                 </span>
                             </div>
+                            {b.contamination?.applicable && (
+                                <div
+                                    className={`ext-bench__contamination${b.contamination.values_found ? ` ext-bench__contamination--${b.contamination.severity}` : ''}`}
+                                    data-testid={`ext-bench-contamination-${b.slug}`}
+                                >
+                                    {benchmarkContaminationText(b.contamination) ??
+                                        `None of its ${b.contamination.values_checked} gold values appear in your training rows`}
+                                    {' · '}
+                                    <button type="button" className="ext-bench__link" onClick={() => void rescan(b)} data-testid={`ext-bench-rescan-${b.slug}`}>
+                                        rescan
+                                    </button>
+                                    {b.contamination.values_found ? (
+                                        <details className="ext-bench__contamination-detail">
+                                            <summary>which values</summary>
+                                            <ul>
+                                                {(b.contamination.examples ?? []).map((ex) => (
+                                                    <li key={`${ex.type}:${ex.value}`}>
+                                                        <code>{ex.value}</code> ({ex.type}) in {ex.rows} rows
+                                                        {ex.sources && Object.keys(ex.sources).length > 0
+                                                            ? ` from ${Object.keys(ex.sources).join(', ')}`
+                                                            : ''}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                            <p className="u-hint u-m0">
+                                                Scores on these values may measure memorisation, not skill. Scrub them from the training rows with
+                                                invented values of the same shape, retrain, and rescan.
+                                            </p>
+                                        </details>
+                                    ) : null}
+                                </div>
+                            )}
                             <div className="ext-bench__score" data-testid={`ext-bench-score-${b.slug}`}>
                                 {experimentId != null ? `Run #${experimentId}: ` : 'Latest run: '}
                                 {scoring[b.id] != null ? `scoring (job #${scoring[b.id]})…` : benchmarkScoreText(b.result)}

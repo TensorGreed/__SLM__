@@ -3,7 +3,7 @@
   "name": "Data-to-SQL Assistant",
   "headline": "Turn plain-English business questions into runnable SQL against your schema.",
   "description": "An instruction-SFT template for analytics and ops teams who want a small local model to translate questions like 'how many active subscribers in EU last month' into a parameterized SQL query against a known schema. Trains on (question, schema, SQL) triples so the model learns table joins, date filters, and the schema's column naming conventions. Pair with a downstream SQL validator and read-only DB role for production use.",
-  "icon": "🗃️",
+  "icon": "database",
   "is_template": true,
   "template_version": "v1",
   "minimum_dataset_size": 100,

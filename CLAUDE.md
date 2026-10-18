@@ -530,7 +530,9 @@ runs real CPU inference). ~4 min locally.
   lost its view tabs and the TaskShapeConfirmCard, which lives on Data →
   Labels). **Settings = the long tail as sections** (`SETTINGS_SECTIONS`,
   `settingsPath`, `?open=`): Autopilot Planner, Workflow Builder, Domain Packs,
-  Domain Profiles, Extension Studio render embedded (`embedded` prop); the
+  Domain Profiles, Extension Studio render embedded (`embedded` prop), plus
+  `decisions` = `components/autopilot/DecisionLogPanel` (the Autopilot
+  decision log; it was a floating drawer on every page until 2026-10-18); the
   routes `/autopilot`, `/workflow`, `/domain`, `/domain/packs`,
   `/domain/profiles`, `/extensions` redirect (`SETTINGS_SECTION_BY_LEGACY_PATH`);
   ProjectDomainPage deleted. **The ⌘K palette** renders
@@ -564,10 +566,17 @@ runs real CPU inference). ~4 min locally.
   sr-only label, testid `loading-state`; `Skeleton variant=…`) are the only
   two ways to say "nothing yet" / "fetching"; a one-line "none" inside a
   dense table stays text (`u-meta`). `StepFooter.nextStepIcon` is unused.
-  Leftovers: ~50 hex strings in SVG chart attributes
-  (`DatasetVersionPanel`, `TokenizationPanel`, `SpanLabeler`,
-  `ExperimentCompare`, `TokenLengthDistributionPanel`), the template
-  gallery's emoji on the project list, `▸/▾` disclosure glyphs. Demo videos
+  **Charts** (2026-10-18 follow-up): series colours are `--chart-1…6`
+  (1 = the accent; the only place a second hue is allowed), axes / grid /
+  tooltip `--chart-axis|grid|tooltip-bg|tooltip-border`, inline highlight
+  tones `--highlight-1…9` (the span labeler's entity types,
+  `.span-tone-N`); recharts takes them as `stroke="var(--chart-grid)"` and
+  `<Tooltip wrapperClassName="chart-tooltip">` (rule in index.css). The
+  lock-in test also refuses any colour literal (hex / rgb / hsl) in a clean
+  file. Template icons are lucide NAMES in each
+  `backend/data/project_templates/*/manifest.json` (`"icon": "mail"`,
+  default `package`; `ProjectTemplateGallery.TEMPLATE_ICONS` maps them,
+  unknown → `Package`). Leftover: `▸/▾` disclosure glyphs. Demo videos
   02 (quickstart) and 03 (pipeline walkthrough — the in-app "Watch the
   walkthrough" catalogue `data/tabVideos.ts`) were re-recorded on the new
   workspace via `tests/demo-recordings/0{2,3}-*-narrated.spec.ts` +
@@ -1839,6 +1848,22 @@ runs real CPU inference). ~4 min locally.
   summary card; `#external-benchmarks`), benchmark lines in `EvalSummaryCard`,
   bell outcome + deep link. Helpers `api/benchmarks.ts` (`benchmarkScoreText`,
   `benchmarkSourceText`). Docs `workflows/external-benchmarks.md`.
+  **Gold-value contamination** (`services/benchmark_contamination_service.py`,
+  2026-10-18): at import, `benchmark_contamination(rows, task_profile,
+  training_rows)` looks for every gold VALUE (span entity texts; Q&A /
+  summarization answers; classification = labels, `applicable: False`) verbatim
+  in the training rows (`project_training_rows`: prepared train + val, else
+  the default sources; whitespace/case-insensitive, `MIN_VALUE_CHARS` 4) →
+  manifest `contamination` {values_checked / found / found_share, occurrences,
+  rows_hit, by_type, by_source (rows' `synth_source` / `source`), examples,
+  severity clean / low (< 2 %) / notable / severe (≥ 10 %)}; `POST
+  /{bid}/contamination` (`rescan_contamination`) re-runs it against the
+  current rows and rewrites manifest.json + `Dataset.metadata_`. Surfaces:
+  the panel's per-benchmark line (`benchmarkContaminationText`, "rescan",
+  "which values"), the span model card (one line per affected benchmark via
+  `contamination_line`). The row-level `leakage_filter` is unchanged. Why:
+  the 2026-10-17 Gretel incident (32 values × 591 in training rows, nothing
+  flagged it). A hit is evidence, not proof — common first names read `low`.
   Third span format `entity_strings` (offset-less `[{entity|value|text,
   types|type|label}]`, list or JSON/literal string — `_parse_entity_list`,
   `_entity_string_key` (≥ 80% of values found in the text), `locate_entities`:

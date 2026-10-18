@@ -62,9 +62,9 @@ interface TokenLengthDistributionPanelProps {
 
 const SPLIT_ORDER = ['train', 'validation', 'test'] as const;
 const SPLIT_COLOR: Record<(typeof SPLIT_ORDER)[number], string> = {
-    train: '#2563eb',
-    validation: '#16a34a',
-    test: '#ea580c',
+    train: 'var(--chart-1)',
+    validation: 'var(--chart-2)',
+    test: 'var(--chart-3)',
 };
 
 // Distribution-shift threshold. When test's p95 is more than this much
@@ -211,11 +211,11 @@ export default function TokenLengthDistributionPanel({
                         <div className="token-dist__chart-wrap">
                             <ResponsiveContainer width="100%" height={260}>
                                 <BarChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.18)" />
-                                    <XAxis dataKey="bucket" tick={{ fontSize: 11 }} />
-                                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                                    <Tooltip />
-                                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                                    <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                                    <XAxis dataKey="bucket" tick={{ fontSize: 11, fill: 'var(--chart-axis)' }} />
+                                    <YAxis tick={{ fontSize: 11, fill: 'var(--chart-axis)' }} allowDecimals={false} />
+                                    <Tooltip wrapperClassName="chart-tooltip" />
+                                    <Legend />
                                     {availableSplits.map((split) => (
                                         <Bar
                                             key={split}
@@ -249,10 +249,7 @@ export default function TokenLengthDistributionPanel({
                                 return (
                                     <tr key={split} data-testid={`token-dist-row-${split}`}>
                                         <td>
-                                            <span
-                                                className="token-dist__chip"
-                                                style={{ background: SPLIT_COLOR[split] }}
-                                            />
+                                            <span className={`token-dist__chip token-dist__chip--${split}`} />
                                             {split}
                                         </td>
                                         <td>{s.total_samples}</td>

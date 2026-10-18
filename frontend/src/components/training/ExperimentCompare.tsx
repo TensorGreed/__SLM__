@@ -4,7 +4,9 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { BarChart3, ArrowLeft } from 'lucide-react';
 import api from '../../api/client';
+import LoadingState from '../shared/LoadingState';
 import './ExperimentCompare.css';
 
 interface ExperimentCompareProps {
@@ -13,7 +15,7 @@ interface ExperimentCompareProps {
     onClose: () => void;
 }
 
-const COLORS = ['#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#3b82f6'];
+const COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
 
 export default function ExperimentCompare({ projectId, experimentIds, onClose }: ExperimentCompareProps) {
     const [data, setData] = useState<any[]>([]);
@@ -60,17 +62,15 @@ export default function ExperimentCompare({ projectId, experimentIds, onClose }:
 
     if (isLoading) {
         return (
-            <div className="card animate-fade-in" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 400 }}>
-                <div style={{ color: 'var(--text-tertiary)' }}>Loading comparison data...</div>
-            </div>
+            <LoadingState label="Loading comparison data" lines={4} card />
         );
     }
 
     if (!data.length) {
         return (
             <div className="card animate-fade-in">
-                <div style={{ color: 'var(--color-error)' }}>Failed to load valid comparison data.</div>
-                <button className="btn btn-secondary" style={{ marginTop: 16 }} onClick={onClose}>Close Comparison</button>
+                <div className="u-meta">Failed to load valid comparison data.</div>
+                <button className="btn btn-secondary u-mt-md" onClick={onClose}>Close Comparison</button>
             </div>
         );
     }
@@ -85,20 +85,17 @@ export default function ExperimentCompare({ projectId, experimentIds, onClose }:
     return (
         <div className="card animate-fade-in experiment-compare-container">
             <div className="compare-header">
-                <h3 className="compare-title">📊 Compare {data.length} Experiments</h3>
-                <button className="btn btn-secondary btn-sm" onClick={onClose}>← Back to List</button>
+                <h3 className="compare-title"><BarChart3 size={16} aria-hidden="true" /> Compare {data.length} Experiments</h3>
+                <button className="btn btn-secondary btn-sm" onClick={onClose}><ArrowLeft size={14} aria-hidden="true" /> Back to list</button>
             </div>
 
             <div className="compare-chart-container">
                 <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData} margin={{ top: 10, right: 30, bottom: 5, left: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                        <XAxis dataKey="step" stroke="#888" tick={{ fontSize: 12 }} />
-                        <YAxis stroke="#888" tick={{ fontSize: 12 }} domain={['auto', 'auto']} />
-                        <Tooltip
-                            contentStyle={{ backgroundColor: '#1a1b23', border: '1px solid #333', borderRadius: 8 }}
-                            labelStyle={{ color: '#888', marginBottom: 4 }}
-                        />
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                        <XAxis dataKey="step" stroke="var(--chart-axis)" tick={{ fontSize: 12 }} />
+                        <YAxis stroke="var(--chart-axis)" tick={{ fontSize: 12 }} domain={['auto', 'auto']} />
+                        <Tooltip wrapperClassName="chart-tooltip" />
                         <Legend />
                         {data.map((exp, idx) => (
                             <Line
@@ -125,7 +122,7 @@ export default function ExperimentCompare({ projectId, experimentIds, onClose }:
                             <th>Attribute</th>
                             {data.map((exp, idx) => (
                                 <th key={exp.id}>
-                                    <span className="compare-legend-color" style={{ background: COLORS[idx % COLORS.length] }}></span>
+                                    <span className={`compare-legend-color compare-legend-color--${(idx % COLORS.length) + 1}`}></span>
                                     {exp.name}
                                 </th>
                             ))}
@@ -138,7 +135,7 @@ export default function ExperimentCompare({ projectId, experimentIds, onClose }:
                         </tr>
                         <tr>
                             <th>Training Mode</th>
-                            {data.map(exp => <td key={exp.id} style={{ textTransform: 'uppercase' }}>{exp.training_mode}</td>)}
+                            {data.map(exp => <td key={exp.id} className="compare-upper">{exp.training_mode}</td>)}
                         </tr>
                         <tr>
                             <th>Learning Rate</th>
@@ -156,13 +153,13 @@ export default function ExperimentCompare({ projectId, experimentIds, onClose }:
                         </tr>
                         <tr className="compare-metric-row">
                             <th>Final Train Loss</th>
-                            {data.map(exp => <td key={exp.id} style={{ fontWeight: 600, color: 'var(--color-warning)' }}>
+                            {data.map(exp => <td key={exp.id} className="compare-metric compare-metric--warning">
                                 {exp.final_train_loss?.toFixed(4) || '—'}
                             </td>)}
                         </tr>
                         <tr className="compare-metric-row">
                             <th>Final Eval Loss</th>
-                            {data.map(exp => <td key={exp.id} style={{ fontWeight: 600, color: 'var(--color-success)' }}>
+                            {data.map(exp => <td key={exp.id} className="compare-metric compare-metric--success">
                                 {exp.final_eval_loss?.toFixed(4) || '—'}
                             </td>)}
                         </tr>

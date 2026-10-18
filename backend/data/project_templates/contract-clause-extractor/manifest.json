@@ -3,7 +3,7 @@
   "name": "Contract Clause Extractor",
   "headline": "Find liability, termination, jurisdiction, and IP clauses in contract text.",
   "description": "A span-extraction template for legal-ops teams. Train a small model to read a paragraph of contract text and emit a JSON array of every clause-type span it contains — type, start offset, end offset, raw text. Output drops directly into review queues, redlining tools, or compliance dashboards. Covers liability_cap, termination, jurisdiction, governing_law, confidentiality, indemnification, payment_terms, warranty, dispute_resolution, ip_assignment.",
-  "icon": "📜",
+  "icon": "file-signature",
   "is_template": true,
   "template_version": "v1",
   "minimum_dataset_size": 100,

@@ -20,3 +20,11 @@
 .eval-summary__benchmarks { margin-top: var(--space-sm, 8px); font-size: var(--font-size-sm, 13px); }
 .eval-summary__benchmarks ul { margin: 2px 0 0; padding-left: 1.2em; }
 .eval-summary__muted { color: var(--text-secondary); }
+.ext-bench__contamination { font-size: var(--font-size-xs); color: var(--text-secondary); margin-top: 2px; }
+.ext-bench__contamination--low { color: var(--text-secondary); }
+.ext-bench__contamination--notable { color: var(--color-warning); }
+.ext-bench__contamination--severe { color: var(--color-error); font-weight: var(--font-weight-medium); }
+.ext-bench__link { background: none; border: none; padding: 0; color: var(--accent-text); cursor: pointer; font: inherit; text-decoration: underline; }
+.ext-bench__contamination-detail { margin-top: 4px; color: var(--text-secondary); font-weight: var(--font-weight-regular); }
+.ext-bench__contamination-detail summary { cursor: pointer; }
+.ext-bench__contamination-detail ul { margin: 4px 0; padding-left: var(--space-lg); }

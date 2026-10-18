@@ -12,7 +12,6 @@ import './ProjectWorkspaceLayout.css';
 import TopBar from '../components/layout/TopBar';
 import ProjectSidebar from '../components/layout/ProjectSidebar';
 import CommandPalette from '../components/layout/CommandPalette';
-import DecisionLogDrawer from '../components/autopilot/DecisionLogDrawer';
 import HealthCheckButton from '../components/shared/HealthCheckButton';
 import ParentProjectBackChip from '../components/layout/ParentProjectBackChip';
 import { useProjectStore } from '../stores/projectStore';
@@ -96,7 +95,6 @@ export default function ProjectWorkspaceLayout() {
                     <Outlet context={contextValue} />
                 </div>
             </div>
-            <DecisionLogDrawer projectId={projectId} />
             <CommandPalette projectId={projectId} />
         </div>
     );

@@ -942,6 +942,7 @@ def serialize_benchmark(ds: Dataset, *, experiment_id: int | None = None) -> dic
         "groups": m.get("groups") or {},
         "context_folded": bool(m.get("context_folded")),
         "leakage": m.get("leakage"),
+        "contamination": m.get("contamination"),
         "created_at": m.get("created_at"),
         "result": for_run[-1] if for_run else None,
         "latest_result": results[-1] if results else None,
@@ -1024,9 +1025,13 @@ async def create_benchmark(
     else:
         clean_mapping = validate_mapping(mapping or {}, list(source_label_counts(rows)), project["labels"])
         mapped, mapping_summary = apply_mapping(rows, clean_mapping, join_adjacent=join_adjacent)
-    kept, leakage = leakage_filter(mapped, await project_training_rows(db, project_id))
+    training_rows = await project_training_rows(db, project_id)
+    kept, leakage = leakage_filter(mapped, training_rows)
     if not kept:
         raise BenchmarkError("No benchmark rows left after mapping and the leakage check.")
+    from app.services.benchmark_contamination_service import benchmark_contamination
+
+    contamination = benchmark_contamination(kept, shape["task_profile"], training_rows)
     slug = _slugify(name)
     existing = {manifest_of(d).get("slug") for d in await list_benchmarks(db, project_id)}
     base, n = slug, 2
@@ -1053,6 +1058,7 @@ async def create_benchmark(
         "project_task_profile": project["task_profile"],
         "mapping_summary": mapping_summary,
         "leakage": leakage,
+        "contamination": contamination,
         "rows_scanned": len(raw),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1068,6 +1074,33 @@ async def create_benchmark(
         is_locked=True,
     )
     db.add(ds)
+    await db.commit()
+    await db.refresh(ds)
+    return ds
+
+
+async def rescan_contamination(db: AsyncSession, project_id: int, benchmark_id: int) -> Dataset:
+    """Re-run the gold-value contamination scan against the CURRENT training
+    rows (they change after import: seeding, synthesis, re-splits) and store
+    the result on the manifest (disk + DB)."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.services.benchmark_contamination_service import benchmark_contamination
+
+    ds = await get_benchmark(db, project_id, benchmark_id)
+    manifest = manifest_of(ds)
+    slug = manifest.get("slug") or ""
+    rows = _read_jsonl(benchmark_dir(project_id, slug) / "rows.jsonl")
+    manifest["contamination"] = benchmark_contamination(
+        rows, manifest.get("task_profile"), await project_training_rows(db, project_id)
+    )
+    folder = benchmark_dir(project_id, slug)
+    if folder.exists():
+        (folder / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    meta = dict(ds.metadata_) if isinstance(ds.metadata_, dict) else {}
+    meta["benchmark"] = manifest
+    ds.metadata_ = meta
+    flag_modified(ds, "metadata_")
     await db.commit()
     await db.refresh(ds)
     return ds

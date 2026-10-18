@@ -91,7 +91,7 @@ def _template_summary(manifest: dict[str, Any]) -> dict[str, Any]:
         "name": str(manifest.get("name") or manifest.get("slug") or ""),
         "headline": str(manifest.get("headline") or ""),
         "description": str(manifest.get("description") or ""),
-        "icon": str(manifest.get("icon") or "🧰"),
+        "icon": str(manifest.get("icon") or "package"),
         "recipe_id": str(manifest.get("recipe_id") or "").strip() or None,
         "task_profile": str(manifest.get("task_profile") or "").strip(),
         "target_profile": str(manifest.get("target_profile") or "vllm_server"),

@@ -101,6 +101,7 @@ export const SETTINGS_SECTIONS = [
     { id: 'domain-packs', label: 'Domain Packs', hint: 'overlay a domain pack on the project' },
     { id: 'domain-profiles', label: 'Domain Profiles', hint: 'profiles that tune the pack' },
     { id: 'extensions', label: 'Extension Studio', hint: 'runtime and pack plugins' },
+    { id: 'decisions', label: 'Autopilot decisions', hint: 'every step the Autopilot took, by run' },
 ] as const;
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id'];
 

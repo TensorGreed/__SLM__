@@ -29,6 +29,9 @@ vi.mock('./ProjectDomainProfilesPage', () => ({ default: () => <div data-testid=
 vi.mock('./ProjectWorkflowPage', () => ({ default: () => <div data-testid="workflow" /> }));
 vi.mock('./ProjectExtensionStudioPage', () => ({ default: () => <div data-testid="extensions" /> }));
 vi.mock('./ProjectAutopilotPage', () => ({ default: () => <div data-testid="autopilot" /> }));
+vi.mock('../components/autopilot/DecisionLogPanel', () => ({
+    default: ({ projectId }: { projectId: number }) => <div data-testid="decisions">decisions for {projectId}</div>,
+}));
 
 import ProjectSettingsPage from './ProjectSettingsPage';
 import { _resetCoachModeStoreForTests, useCoachModeStore } from '../stores/coachModeStore';
@@ -95,6 +98,11 @@ describe('ProjectSettingsPage', () => {
         expect(screen.queryByTestId('workflow')).toBeNull();
         renderSettings('/project/31/settings?open=extensions');
         expect(screen.getByTestId('extensions')).toBeInTheDocument();
+    });
+
+    it('holds the Autopilot decision log as a section with the project id', () => {
+        renderSettings('/project/31/settings?open=decisions');
+        expect(screen.getByTestId('decisions')).toHaveTextContent('decisions for 31');
     });
 
     it('links the tools that live elsewhere', async () => {

@@ -3,7 +3,7 @@
   "name": "Ticket Router SLM",
   "headline": "Auto-route inbound support tickets to the right team in <100ms.",
   "description": "A multi-class classification template for customer-support orgs. Train a small model to read an incoming ticket and tag it with one of 5 destinations: billing, technical, account, sales, legal. Targets sub-100ms inference on mobile-cpu hardware so it can run on the support gateway without a GPU round-trip. Use case: SaaS support inboxes, e-commerce post-purchase queues, internal IT helpdesks.",
-  "icon": "📨",
+  "icon": "inbox",
   "is_template": true,
   "template_version": "v1",
   "minimum_dataset_size": 150,

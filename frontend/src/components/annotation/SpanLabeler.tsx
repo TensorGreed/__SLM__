@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import './SpanLabeler.css';
 
 export interface SpanAnnotation {
     start: number;
@@ -34,22 +35,13 @@ interface SpanLabelerProps {
     initialSpans?: SpanAnnotation[];
 }
 
-const TYPE_PALETTE = [
-    '#fde68a',
-    '#bfdbfe',
-    '#bbf7d0',
-    '#fecaca',
-    '#ddd6fe',
-    '#fed7aa',
-    '#a7f3d0',
-    '#fbcfe8',
-    '#e9d5ff',
-];
+const TONE_COUNT = 9;
 
-function typeColor(spanTypes: string[], type: string): string {
+/** 1..9 tone index for a span type (unknown types get the last tone). */
+function typeTone(spanTypes: string[], type: string): number {
     const idx = spanTypes.indexOf(type);
-    if (idx < 0) return TYPE_PALETTE[TYPE_PALETTE.length - 1];
-    return TYPE_PALETTE[idx % TYPE_PALETTE.length];
+    if (idx < 0) return TONE_COUNT;
+    return (idx % TONE_COUNT) + 1;
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -217,14 +209,7 @@ export default function SpanLabeler({
 
     return (
         <div className="span-labeler" data-testid="span-labeler">
-            <div
-                style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: 'var(--space-sm)',
-                    marginBottom: 'var(--space-md)',
-                }}
-            >
+            <div className="span-labeler__types">
                 {spanTypes.map((type, idx) => (
                     <button
                         key={type}
@@ -244,32 +229,12 @@ export default function SpanLabeler({
                         }
                     >
                         {idx < 26 && (
-                            <span
-                                style={{
-                                    display: 'inline-block',
-                                    marginRight: 6,
-                                    minWidth: 16,
-                                    textAlign: 'center',
-                                    border: '1px solid var(--border-color)',
-                                    borderRadius: 4,
-                                    padding: '0 4px',
-                                    fontSize: '0.75rem',
-                                    fontFamily: 'var(--font-mono, monospace)',
-                                }}
-                            >
+                            <span className="span-labeler__key">
                                 {String.fromCharCode(97 + idx)}
                             </span>
                         )}
                         <span
-                            style={{
-                                display: 'inline-block',
-                                width: 10,
-                                height: 10,
-                                marginRight: 6,
-                                background: typeColor(spanTypes, type),
-                                borderRadius: 2,
-                                verticalAlign: 'middle',
-                            }}
+                            className={`span-labeler__swatch span-tone-${typeTone(spanTypes, type)}`}
                         />
                         {type}
                     </button>
@@ -280,18 +245,7 @@ export default function SpanLabeler({
                 ref={textRef}
                 onMouseUp={addSpanFromSelection}
                 data-testid="span-labeler-text"
-                style={{
-                    padding: 'var(--space-md)',
-                    background: 'var(--bg-secondary)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: 'var(--radius-sm)',
-                    fontFamily: 'var(--font-mono, monospace)',
-                    fontSize: '0.95rem',
-                    whiteSpace: 'pre-wrap',
-                    lineHeight: 1.6,
-                    userSelect: 'text',
-                    cursor: activeType && !disabled ? 'text' : 'default',
-                }}
+                className={`span-labeler__text${activeType && !disabled ? ' span-labeler__text--selectable' : ''}`}
             >
                 {segments.map((segment, segIdx) =>
                     segment.spanIndex === null ? (
@@ -304,16 +258,10 @@ export default function SpanLabeler({
                             title={`${
                                 spans[segment.spanIndex as number]?.type
                             } — click to remove`}
-                            style={{
-                                background: typeColor(
-                                    spanTypes,
-                                    spans[segment.spanIndex as number]?.type ??
-                                        '',
-                                ),
-                                padding: '0 2px',
-                                borderRadius: 2,
-                                cursor: 'pointer',
-                            }}
+                            className={`span-labeler__mark span-tone-${typeTone(
+                                spanTypes,
+                                spans[segment.spanIndex as number]?.type ?? '',
+                            )}`}
                         >
                             {segment.text}
                         </mark>
@@ -321,19 +269,9 @@ export default function SpanLabeler({
                 )}
             </div>
 
-            <div
-                style={{
-                    display: 'flex',
-                    gap: 'var(--space-sm)',
-                    marginTop: 'var(--space-md)',
-                    alignItems: 'center',
-                }}
-            >
+            <div className="span-labeler__footer">
                 <div
-                    style={{
-                        color: 'var(--text-secondary)',
-                        fontSize: '0.85rem',
-                    }}
+                    className="span-labeler__status"
                     data-testid="span-labeler-status"
                 >
                     {spans.length} span(s){' '}
@@ -347,11 +285,10 @@ export default function SpanLabeler({
                 </div>
                 <button
                     type="button"
-                    className="btn btn-primary"
+                    className="btn btn-primary span-labeler__submit"
                     onClick={() => onSubmit(spans)}
                     disabled={disabled}
                     data-testid="span-submit"
-                    style={{ marginLeft: 'auto' }}
                     title="Save spans and advance (press j)"
                 >
                     Save &amp; next

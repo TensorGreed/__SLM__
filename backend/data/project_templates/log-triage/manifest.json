@@ -3,7 +3,7 @@
   "name": "Log Triage Assistant",
   "headline": "Classify production log lines into critical / error / warning / info / noise.",
   "description": "A 5-class classification template for SRE and platform teams drowning in log volume. Train a small model to tag every log line with its real triage priority so dashboards, alerts, and paging routes can filter on a semantic class rather than just log-level. Targets sub-50ms inference on mobile-cpu so it can run inline in a log shipper or a Fluent Bit Lua filter without a GPU round-trip.",
-  "icon": "🩺",
+  "icon": "stethoscope",
   "is_template": true,
   "template_version": "v1",
   "minimum_dataset_size": 150,

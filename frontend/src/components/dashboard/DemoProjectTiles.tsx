@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Rocket } from 'lucide-react';
+import { ArrowRight, Rocket, RotateCcw } from 'lucide-react';
 
 import api from '../../api/client';
 import type {
@@ -153,7 +153,7 @@ export default function DemoProjectTiles() {
                                 <div className="demo-project-tile-footer">
                                     <span className="dim">target: {archetype.target_profile}</span>
                                     <span className="demo-project-tile-cta">
-                                        {isSeeding ? 'Seeding…' : 'Open demo →'}
+                                        {isSeeding ? 'Seeding…' : <>Open demo <ArrowRight size={14} aria-hidden="true" className="u-icon" /></>}
                                     </span>
                                 </div>
                             </button>
@@ -164,7 +164,7 @@ export default function DemoProjectTiles() {
                                 onClick={() => void resetAndOpen(archetype.slug, archetype.name)}
                                 aria-label={`Reset the ${archetype.name} starter project`}
                             >
-                                {isResetting ? 'Resetting…' : '↺ Reset to fresh'}
+                                {isResetting ? 'Resetting…' : <><RotateCcw size={12} aria-hidden="true" className="u-icon" /> Reset to fresh</>}
                             </button>
                         </div>
                     );

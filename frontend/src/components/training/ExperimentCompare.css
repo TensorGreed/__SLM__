@@ -76,3 +76,14 @@
     margin-right: 8px;
     vertical-align: middle;
 }
+.compare-title { display: inline-flex; align-items: center; gap: var(--space-sm); }
+.compare-header .btn { display: inline-flex; align-items: center; gap: var(--space-xs); }
+.compare-upper { text-transform: uppercase; }
+.compare-metric { font-weight: 600; }
+.compare-metric--warning { color: var(--color-warning); }
+.compare-metric--success { color: var(--color-success); }
+.compare-legend-color--1 { background: var(--chart-1); }
+.compare-legend-color--2 { background: var(--chart-2); }
+.compare-legend-color--3 { background: var(--chart-3); }
+.compare-legend-color--4 { background: var(--chart-4); }
+.compare-legend-color--5 { background: var(--chart-5); }

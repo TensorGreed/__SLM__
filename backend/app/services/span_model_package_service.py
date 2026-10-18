@@ -310,6 +310,13 @@ def build_span_model_card(
                 f"{', '.join(b.get('scored_labels') or []) or '–'} | {_fmt(r.get('precision'))} | {_fmt(r.get('recall'))} | {_fmt(r.get('f1'))} |"
             )
         lines.append("")
+        from app.services.benchmark_contamination_service import contamination_line
+
+        for b in scored:
+            note = contamination_line(b.get("contamination"))
+            if note:
+                lines.append(f"- **{b.get('name')}** — {note}")
+                lines.append("")
 
     model_ref = "path/to/model"
     lines.append("## Usage")

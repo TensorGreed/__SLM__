@@ -4,7 +4,8 @@
  * Workspace preferences (inline tips, advanced sections, the manifest
  * export) and the tools a normal day never needs, each as a section that
  * loads only when opened: Autopilot Planner, Workflow Builder, Domain Packs,
- * Domain Profiles, Extension Studio. ``?open=<id>`` opens one.
+ * Domain Profiles, Extension Studio, the Autopilot decision log.
+ * ``?open=<id>`` opens one.
  */
 
 import { useState, type ReactNode } from 'react';
@@ -12,6 +13,7 @@ import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom
 
 import api from '../api/client';
 import ManifestExportButton from '../components/manifest/ManifestExportButton';
+import DecisionLogPanel from '../components/autopilot/DecisionLogPanel';
 import DetailsDrawer, { type DetailSection } from '../components/shared/DetailsDrawer';
 import { useCoachMode } from '../components/coach/useCoachMode';
 import { useProjectStore } from '../stores/projectStore';
@@ -25,12 +27,13 @@ import ProjectWorkflowPage from './ProjectWorkflowPage';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectSettingsPage.css';
 
-const SECTION_CONTENT: Record<SettingsSectionId, () => ReactNode> = {
+const SECTION_CONTENT: Record<SettingsSectionId, (projectId: number) => ReactNode> = {
     autopilot: () => <ProjectAutopilotPage embedded />,
     workflow: () => <ProjectWorkflowPage embedded />,
     'domain-packs': () => <ProjectDomainPacksPage embedded />,
     'domain-profiles': () => <ProjectDomainProfilesPage embedded />,
     extensions: () => <ProjectExtensionStudioPage embedded />,
+    decisions: (projectId) => <DecisionLogPanel projectId={projectId} />,
 };
 
 interface ToolLink {
@@ -77,7 +80,7 @@ export default function ProjectSettingsPage() {
         id: section.id,
         title: section.label,
         hint: section.hint,
-        render: SECTION_CONTENT[section.id],
+        render: () => SECTION_CONTENT[section.id](projectId),
     }));
 
     return (
@@ -152,7 +155,7 @@ export default function ProjectSettingsPage() {
             <DetailsDrawer
                 testId="settings-details"
                 title="Tools"
-                hint="automation, domain controls, extensions — each loads when opened"
+                hint="automation, domain controls, extensions, the decision log — each loads when opened"
                 openSection={openSection}
                 sections={sections}
             />

@@ -3,8 +3,8 @@
  *
  * The pages and panels the workspace IA touched carry no inline
  * ``style={{ … }}`` objects and no emoji glyphs (icons are lucide), and no
- * stylesheet other than ``index.css`` writes a hex colour — every colour is
- * a token, so the dark theme covers it. Add a file to the lists when it
+ * component or stylesheet other than ``index.css`` writes a colour literal —
+ * every colour is a token (charts: ``--chart-*``), so the dark theme covers it. Add a file to the lists when it
  * joins the clean set; never remove one.
  */
 
@@ -16,13 +16,17 @@ const SRC = join(__dirname, '..');
 
 /** Components and pages that must stay free of inline styles and emoji. */
 export const CLEAN_FILES = [
+    'components/annotation/SpanLabeler.tsx',
+    'components/autopilot/DecisionLogPanel.tsx',
     'components/coach/CoachNotices.tsx',
     'components/coach/CoachSuggestion.tsx',
     'components/coach/StepHelp.tsx',
+    'components/dashboard/DemoProjectTiles.tsx',
     'components/data/CleaningPanel.tsx',
     'components/data/DataHealthReportPanel.tsx',
     'components/data/DataStudioReviewQueuePanel.tsx',
     'components/data/DatasetPrepPanel.tsx',
+    'components/data/DatasetVersionPanel.tsx',
     'components/data/GoldSetPanel.tsx',
     'components/data/IngestionPanel.tsx',
     'components/data/LabellingConventionsCard.tsx',
@@ -30,6 +34,7 @@ export const CLEAN_FILES = [
     'components/data/TaskShapeCard.tsx',
     'components/evaluation/EvalGapsPanel.tsx',
     'components/evaluation/EvalPanel.tsx',
+    'components/evaluation/ExternalBenchmarksPanel.tsx',
     'components/evaluation/SeedShipTable.tsx',
     'components/evaluation/SftLiftPanel.tsx',
     'components/export/ExportPanel.tsx',
@@ -37,6 +42,7 @@ export const CLEAN_FILES = [
     'components/layout/CommandPalette.tsx',
     'components/layout/TopBar.tsx',
     'components/layout/ProjectSidebar.tsx',
+    'components/projects/ProjectTemplateGallery.tsx',
     'components/shared/DetailsDrawer.tsx',
     'components/shared/EmptyState.tsx',
     'components/shared/HealthCheckButton.tsx',
@@ -46,6 +52,9 @@ export const CLEAN_FILES = [
     'components/shared/StepFooter.tsx',
     'components/shared/Toast.tsx',
     'components/training/DatasetFitCard.tsx',
+    'components/training/ExperimentCompare.tsx',
+    'components/training/TokenLengthDistributionPanel.tsx',
+    'components/training/TokenizationPanel.tsx',
     'components/training/TrainForm.tsx',
     'components/training/TrainingConfigGapsPanel.tsx',
     'components/training/TrainingPanel.tsx',
@@ -57,6 +66,7 @@ export const CLEAN_FILES = [
     'pages/ProjectDataPage.tsx',
     'pages/ProjectDeploymentsPage.tsx',
     'pages/ProjectEvalComparePage.tsx',
+    'pages/ProjectListPage.tsx',
     'pages/ProjectManifestPage.tsx',
     'pages/ProjectOverviewPage.tsx',
     'pages/ProjectRecipePickerPage.tsx',
@@ -70,6 +80,8 @@ export const CLEAN_FILES = [
 const INLINE_STYLE = /\bstyle=\{/;
 const EMOJI = /[\p{Extended_Pictographic}✓✔✕✖✗★☆⏳⭐]/u;
 const HEX_COLOUR = /#[0-9a-fA-F]{3,8}\b/;
+/** A colour literal in a component: hex, rgb()/rgba(), hsl(). */
+const COLOUR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
 
 function walkCss(dir: string, out: string[] = []): string[] {
     for (const entry of readdirSync(dir)) {
@@ -101,6 +113,15 @@ describe('visual pass (U7)', () => {
         const report: Record<string, string[]> = {};
         for (const file of CLEAN_FILES) {
             const lines = offendingLines(readFileSync(join(SRC, file), 'utf8'), EMOJI);
+            if (lines.length) report[file] = lines;
+        }
+        expect(report).toEqual({});
+    });
+
+    it('the cleaned components carry no colour literal (charts use the --chart-* tokens)', () => {
+        const report: Record<string, string[]> = {};
+        for (const file of CLEAN_FILES) {
+            const lines = offendingLines(readFileSync(join(SRC, file), 'utf8'), COLOUR_LITERAL);
             if (lines.length) report[file] = lines;
         }
         expect(report).toEqual({});

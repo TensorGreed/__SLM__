@@ -46,6 +46,25 @@ export interface BenchmarkHistoryPoint {
     rows?: number;
 }
 
+/** Gold-value contamination: the benchmark's answers (entity texts / answers)
+ * found verbatim in the project's training rows. Computed at import and on
+ * ``POST …/contamination``. Not applicable to classification (labels, not values). */
+export interface BenchmarkContamination {
+    applicable: boolean;
+    reason?: string;
+    values_checked?: number;
+    values_found?: number;
+    found_share?: number;
+    occurrences?: number;
+    rows_hit?: number;
+    checked_against: number;
+    by_type?: Record<string, { checked: number; found: number; occurrences: number }>;
+    by_source?: Record<string, number>;
+    examples?: { value: string; type: string; occurrences: number; rows: number; sources?: Record<string, number> }[];
+    severity?: 'clean' | 'low' | 'notable' | 'severe';
+    scanned_at: string;
+}
+
 export interface BenchmarkInfo {
     id: number;
     name: string;
@@ -65,6 +84,7 @@ export interface BenchmarkInfo {
     context_folded?: boolean;
     mapping_summary?: { rows_in: number; rows_kept: number; rows_dropped_by_label: Record<string, number>; entities_ignored: Record<string, number> };
     leakage?: { checked_against: number; exact: number; near: number };
+    contamination?: BenchmarkContamination | null;
     created_at: string;
     /** This run's latest score (null: not scored yet). */
     result: BenchmarkResult | null;
@@ -116,6 +136,11 @@ export async function evaluateBenchmark(projectId: number, benchmarkId: number, 
 
 export async function deleteBenchmark(projectId: number, benchmarkId: number): Promise<void> {
     await api.delete(`/projects/${projectId}/benchmarks/${benchmarkId}`);
+}
+
+export async function rescanBenchmarkContamination(projectId: number, benchmarkId: number): Promise<BenchmarkInfo> {
+    const res = await api.post<BenchmarkInfo>(`/projects/${projectId}/benchmarks/${benchmarkId}/contamination`);
+    return res.data;
 }
 
 export async function getBenchmarkHistory(projectId: number, benchmarkId: number): Promise<BenchmarkHistoryPoint[]> {
@@ -177,4 +202,19 @@ export function benchmarkSourceText(b: BenchmarkInfo): string {
     const src = b.source?.dataset_id || b.source?.locator || '';
     const split = b.source?.split ? `:${b.source.split}` : '';
     return `${src}${split} · licence ${b.licence || 'unknown'}${b.local_only ? ' · local only' : ''}`;
+}
+
+/** One line on the benchmark's gold-value contamination; null when the scan
+ * didn't apply or found nothing (the panel then says "none found"). */
+export function benchmarkContaminationText(c: BenchmarkContamination | null | undefined): string | null {
+    if (!c || !c.applicable || !c.values_found) return null;
+    const share = Math.round((c.found_share ?? 0) * 100);
+    const types = Object.entries(c.by_type ?? {})
+        .filter(([, v]) => v.found > 0)
+        .sort((a, b) => b[1].found - a[1].found)
+        .slice(0, 3)
+        .map(([t, v]) => `${t} ${v.found}`)
+        .join(', ');
+    return `${c.values_found} of ${c.values_checked} gold values (${share}%) appear in your training rows, ${c.occurrences} times` +
+        (types ? ` (${types})` : '') + ` · ${c.severity}`;
 }

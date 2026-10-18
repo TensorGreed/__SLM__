@@ -15,6 +15,7 @@ export interface ProjectTemplateSummary {
     name: string;
     headline: string;
     description: string;
+    /** lucide icon name (see TEMPLATE_ICONS); unknown names fall back to a package icon */
     icon: string;
     recipe_id: string | null;
     task_profile: string;

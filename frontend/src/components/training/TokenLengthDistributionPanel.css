@@ -126,3 +126,9 @@
     font-size: 12px;
     line-height: 1.5;
 }
+
+.token-dist__chip--train { background: var(--chart-1); }
+.token-dist__chip--validation { background: var(--chart-2); }
+.token-dist__chip--test { background: var(--chart-3); }
+
+.token-dist__chart-wrap .recharts-legend-wrapper { font-size: var(--font-size-xs); }

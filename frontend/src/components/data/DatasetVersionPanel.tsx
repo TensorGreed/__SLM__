@@ -6,6 +6,8 @@ import { useState, useEffect } from 'react';
 import { GitBranch, FileText, Clock, ArrowRight, CheckCircle } from 'lucide-react';
 import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
+import LoadingState from '../shared/LoadingState';
+import './DatasetVersionPanel.css';
 
 interface DatasetVersion {
     id: number;
@@ -48,120 +50,68 @@ export default function DatasetVersionPanel({ projectId }: DatasetVersionPanelPr
         });
     };
 
-    const typeColors: Record<string, string> = {
-        raw: '#3b82f6',
-        cleaned: '#2f74d9',
-        gold_dev: '#f59e0b',
-        gold_test: '#ef4444',
-        synthetic: '#10b981',
-        train: '#2f74d9',
-        val: '#4f96ea',
-        test: '#14b8a6',
-    };
+    const KNOWN_TYPES = ['raw', 'cleaned', 'gold_dev', 'gold_test', 'synthetic', 'train', 'val', 'test'];
+    const typeClass = (t: string) => `dsv-type--${KNOWN_TYPES.includes(t) ? t : 'unknown'}`;
 
     if (isLoading) {
-        return (
-            <div className="card animate-fade-in" style={{ padding: 'var(--space-xl)', textAlign: 'center', color: 'var(--text-tertiary)' }}>
-                Loading dataset versions...
-            </div>
-        );
+        return <LoadingState label="Loading dataset versions" lines={3} card />;
     }
 
     return (
         <div className="card animate-fade-in">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)' }}>
-                <GitBranch size={20} color="var(--color-primary)" />
-                <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 600, margin: 0 }}>
-                    Dataset Versions
-                </h3>
-                <span className="badge" style={{ fontSize: 'var(--font-size-xs)' }}>{datasets.length} datasets</span>
+            <div className="u-row dsv-header">
+                <GitBranch size={20} className="dsv-icon" aria-hidden="true" />
+                <h3 className="dsv-title">Dataset Versions</h3>
+                <span className="badge dsv-count">{datasets.length} datasets</span>
             </div>
 
             {datasets.length === 0 ? (
                 <EmptyState
                     title="No datasets yet"
-                    description="Datasets are versioned snapshots produced by ingestion → cleaning → prep. Start by ingesting a file or remote source above; new versions will land here as each stage runs."
+                    description="Datasets are versioned snapshots produced by ingestion, cleaning and prep. Start by ingesting a file or remote source above; new versions will land here as each stage runs."
                     docsHref="http://localhost:3001/docs/workflows/data-ingestion"
                 />
             ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
-                    {/* Timeline view */}
+                <div className="dsv-list">
                     {datasets.map((ds, idx) => (
                         <div
                             key={ds.id}
                             onClick={() => setSelectedId(selectedId === ds.id ? null : ds.id)}
-                            style={{
-                                display: 'flex',
-                                alignItems: 'flex-start',
-                                gap: 'var(--space-md)',
-                                padding: 'var(--space-md)',
-                                borderRadius: 'var(--radius-md)',
-                                background: selectedId === ds.id ? 'rgba(47, 116, 217, 0.1)' : 'transparent',
-                                border: `1px solid ${selectedId === ds.id ? 'var(--color-primary)' : 'var(--border-primary)'}`,
-                                cursor: 'pointer',
-                                transition: 'all 0.15s ease',
-                            }}
+                            className={`dsv-row ${typeClass(ds.dataset_type)}${selectedId === ds.id ? ' dsv-row--selected' : ''}`}
                         >
-                            {/* Timeline dot + line */}
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 24, paddingTop: 4 }}>
-                                <div style={{
-                                    width: 12,
-                                    height: 12,
-                                    borderRadius: '50%',
-                                    background: typeColors[ds.dataset_type] || '#666',
-                                    boxShadow: `0 0 8px ${typeColors[ds.dataset_type] || '#666'}40`,
-                                }} />
-                                {idx < datasets.length - 1 && (
-                                    <div style={{ width: 2, flex: 1, minHeight: 20, background: 'var(--border-primary)', marginTop: 4 }} />
-                                )}
+                            <div className="dsv-rail">
+                                <div className="dsv-dot" />
+                                {idx < datasets.length - 1 && <div className="dsv-line" />}
                             </div>
 
-                            {/* Content */}
-                            <div style={{ flex: 1 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-xs)' }}>
-                                    <span style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>{ds.name}</span>
-                                    <span className="badge" style={{
-                                        fontSize: 'var(--font-size-xs)',
-                                        background: `${typeColors[ds.dataset_type] || '#666'}20`,
-                                        color: typeColors[ds.dataset_type] || '#666',
-                                        border: `1px solid ${typeColors[ds.dataset_type] || '#666'}40`,
-                                    }}>
-                                        {ds.dataset_type}
-                                    </span>
+                            <div className="dsv-body">
+                                <div className="dsv-name-row">
+                                    <span className="dsv-name">{ds.name}</span>
+                                    <span className="badge dsv-badge">{ds.dataset_type}</span>
                                     {ds.is_locked && (
-                                        <span title="Locked (immutable)" style={{ display: 'inline-flex' }}>
-                                            <CheckCircle size={14} color="var(--color-success)" />
+                                        <span title="Locked (immutable)" className="dsv-lock">
+                                            <CheckCircle size={14} className="dsv-lock-icon" aria-hidden="true" />
                                         </span>
                                     )}
                                 </div>
-                                <div style={{ display: 'flex', gap: 'var(--space-lg)', color: 'var(--text-tertiary)', fontSize: 'var(--font-size-xs)' }}>
-                                    <span><FileText size={12} style={{ marginRight: 4, verticalAlign: 'middle' }} />{ds.record_count.toLocaleString()} records</span>
-                                    <span><Clock size={12} style={{ marginRight: 4, verticalAlign: 'middle' }} />{formatDate(ds.created_at)}</span>
+                                <div className="dsv-facts">
+                                    <span><FileText size={12} className="dsv-fact-icon" aria-hidden="true" />{ds.record_count.toLocaleString()} records</span>
+                                    <span><Clock size={12} className="dsv-fact-icon" aria-hidden="true" />{formatDate(ds.created_at)}</span>
                                 </div>
 
-                                {/* Expanded details */}
                                 {selectedId === ds.id && (
-                                    <div style={{
-                                        marginTop: 'var(--space-sm)',
-                                        padding: 'var(--space-sm)',
-                                        background: 'rgba(0,0,0,0.2)',
-                                        borderRadius: 'var(--radius-sm)',
-                                        fontSize: 'var(--font-size-xs)',
-                                        fontFamily: 'var(--font-mono)',
-                                        color: 'var(--text-secondary)',
-                                    }}>
+                                    <div className="dsv-details">
                                         <div>ID: {ds.id}</div>
                                         <div>Type: {ds.dataset_type}</div>
                                         <div>Records: {ds.record_count}</div>
-                                        <div>Locked: {ds.is_locked ? 'Yes ✓' : 'No'}</div>
+                                        <div>Locked: {ds.is_locked ? 'Yes' : 'No'}</div>
                                         {ds.file_path && <div>Path: {ds.file_path}</div>}
                                     </div>
                                 )}
                             </div>
 
-                            {/* Arrow for next */}
                             {idx < datasets.length - 1 && (
-                                <ArrowRight size={14} color="var(--text-tertiary)" style={{ marginTop: 6 }} />
+                                <ArrowRight size={14} className="dsv-next" aria-hidden="true" />
                             )}
                         </div>
                     ))}

@@ -99,6 +99,30 @@
   --color-neutral-bg: var(--gray-100);
   --color-neutral-border: var(--gray-200);
 
+  /* Charts — series colours for recharts / SVG (data needs more than one
+     hue; these are the only place a second hue is allowed). Series 1 is the
+     accent. Axis / grid / tooltip tokens keep charts readable in both themes. */
+  --chart-1: var(--accent-500);
+  --chart-2: #1f9d55;
+  --chart-3: #d97706;
+  --chart-4: #dc2626;
+  --chart-5: #7c3aed;
+  --chart-6: #0d9488;
+  --chart-grid: var(--gray-200);
+  --chart-axis: var(--gray-500);
+  --chart-tooltip-bg: var(--gray-0);
+  --chart-tooltip-border: var(--gray-200);
+  /* Inline highlight tones (the span labeler paints up to nine entity types). */
+  --highlight-1: #fde68a;
+  --highlight-2: #bfdbfe;
+  --highlight-3: #bbf7d0;
+  --highlight-4: #fecaca;
+  --highlight-5: #ddd6fe;
+  --highlight-6: #fed7aa;
+  --highlight-7: #a7f3d0;
+  --highlight-8: #fbcfe8;
+  --highlight-9: #e9d5ff;
+
   /* Text */
   --text-primary: var(--gray-1000);
   --text-secondary: var(--gray-600);
@@ -230,11 +254,48 @@
   --color-error-border: rgba(242, 139, 130, 0.3);
   --color-error-hover: #e06c62;
 
+  --chart-2: #4ade80;
+  --chart-3: #fbbf24;
+  --chart-4: #f87171;
+  --chart-5: #a78bfa;
+  --chart-6: #2dd4bf;
+  --chart-grid: var(--gray-300);
+  --chart-axis: var(--gray-600);
+  --chart-tooltip-bg: var(--gray-100);
+  --chart-tooltip-border: var(--gray-300);
+  --highlight-1: rgba(253, 230, 138, 0.35);
+  --highlight-2: rgba(147, 197, 253, 0.35);
+  --highlight-3: rgba(134, 239, 172, 0.35);
+  --highlight-4: rgba(252, 165, 165, 0.35);
+  --highlight-5: rgba(196, 181, 253, 0.35);
+  --highlight-6: rgba(253, 186, 116, 0.35);
+  --highlight-7: rgba(110, 231, 183, 0.35);
+  --highlight-8: rgba(249, 168, 212, 0.35);
+  --highlight-9: rgba(216, 180, 254, 0.35);
+
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
 
   color-scheme: dark;
+}
+
+/* ── Charts (recharts) ──────────────────────────────────────────────── */
+/* ``<Tooltip wrapperClassName="chart-tooltip">`` — the default tooltip is
+   white-on-white in the dark theme without this. */
+.chart-tooltip .recharts-default-tooltip {
+  background: var(--chart-tooltip-bg) !important;
+  border: 1px solid var(--chart-tooltip-border) !important;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+}
+.chart-tooltip .recharts-tooltip-label {
+  color: var(--text-secondary);
+}
+.recharts-legend-wrapper,
+.recharts-cartesian-axis-tick-value {
+  font-size: var(--font-size-xs);
 }
 
 /* ── Global ─────────────────────────────────────────────────────────── */

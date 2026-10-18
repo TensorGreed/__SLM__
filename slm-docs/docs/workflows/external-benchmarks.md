@@ -63,6 +63,46 @@ Rows that match your training data (exact or near-identical) are dropped, so
 the benchmark stays held out. The benchmark is locked and eval-only — it never
 becomes a training source.
 
+## Gold values in your training rows (contamination)
+
+Dropping identical rows is not enough: a benchmark's **answers** can leak into
+training text on their own. On 2026-10-17, 32 values from a PII benchmark
+turned up 591 times in a project's training rows — the seed-document prompts
+had used the benchmark's own ids and plates as examples, and the local seeder
+copied them word for word. The model's score on those types measured
+memorisation, and nothing flagged it.
+
+So every import now scans the benchmark's **gold values** — each entity text
+of a span benchmark, each answer of a Q&A or summarization one (classification
+benchmarks have labels, not values, and are skipped) — against the project's
+training rows (the prepared train + validation splits, else the default
+training sources), whitespace- and case-insensitive, values of 4+ characters.
+Each benchmark in the panel then says either *None of its N gold values appear
+in your training rows* or, for example:
+
+> 32 of 1,169 gold values (3%) appear in your training rows, 591 times
+> (employee_id 20, plate 12) · notable
+
+with *which values* listing the worst offenders, how many rows hold each and
+which source they came from (`seed_documents:doc=7`, `documents_qa_flow`,
+`cleaned`…). The label is a share of the benchmark's distinct values: *low*
+under 2 %, *notable* from 2 %, *severe* from 10 %. A hit is evidence, not
+proof — a common first name from a news benchmark will legitimately occur in
+support tickets, and a single one stays *low*. A long list of ids, addresses
+and plates that all occur in your text is the signature of copied examples.
+
+Training rows change after import (seeding, synthesis, re-splits), so
+*rescan* re-runs the check against the current rows
+(`POST /api/projects/{id}/benchmarks/{benchmark_id}/contamination`) and
+replaces the stored block. The scan is stored on the benchmark manifest
+(`contamination`) and, when values were found, the exported span model's card
+carries one line per affected benchmark under *External benchmarks*.
+
+If values were found: scrub them from the training rows with invented values
+of the same shape, retrain, and rescan before trusting the number. Never put
+a benchmark's values into a seeding or synthesis prompt — describe the shape
+instead.
+
 ## Score a run
 
 *Score this run* (or *Re-score*) runs the selected run over the benchmark as a

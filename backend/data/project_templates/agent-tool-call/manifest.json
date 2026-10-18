@@ -3,7 +3,7 @@
   "name": "Agent Tool-Call Fine-Tune",
   "headline": "Train a small model to pick the right tool and emit valid JSON args.",
   "description": "An instruction-SFT template for teams building local agents (MCP servers, internal copilots, support bots) that need consistent tool-call behavior on cheaper hardware. Train a small model to read a user request plus a tool catalog and emit a single tool-call JSON object — exact tool name, correct arg shape, no hallucinated tools, no chatter. Pair with constrained JSON decoding at serve-time for hard guarantees.",
-  "icon": "🛠️",
+  "icon": "wrench",
   "is_template": true,
   "template_version": "v1",
   "minimum_dataset_size": 120,

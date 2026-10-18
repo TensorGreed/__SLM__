@@ -1933,10 +1933,10 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                             {radarData.length > 0 ? (
                                 <ResponsiveContainer width="100%" height="100%">
                                     <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
-                                        <PolarGrid stroke="#333" />
-                                        <PolarAngleAxis dataKey="subject" tick={{ fill: '#888', fontSize: 12 }} />
-                                        <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: '#666' }} />
-                                        <Radar name="Pass Rate %" dataKey="A" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.5} />
+                                        <PolarGrid stroke="var(--chart-grid)" />
+                                        <PolarAngleAxis dataKey="subject" tick={{ fill: 'var(--chart-axis)', fontSize: 12 }} />
+                                        <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: 'var(--chart-axis)' }} />
+                                        <Radar name="Pass Rate %" dataKey="A" stroke="var(--chart-1)" fill="var(--chart-1)" fillOpacity={0.5} />
                                     </RadarChart>
                                 </ResponsiveContainer>
                             ) : (

@@ -106,6 +106,7 @@ session-start guidance.
 - `backend/app/services/base_model_registry_service.py` — Universal base model registry normalization + compatibility engine.
 - `backend/app/services/behavioral_test_runner.py` — Quality-Lift phase 5 slice 2 — Behavioral test runner.
 - `backend/app/services/behavioral_test_schema.py` — Quality-Lift phase 5 slice 1 — Behavioral test schema validator.
+- `backend/app/services/benchmark_contamination_service.py` — Benchmark gold-VALUE contamination (the honesty guard behind a benchmark score).
 - `backend/app/services/brewslm_manifest_service.py` — Pipeline-as-code manifest serializer + deserializer (priority.md P21).
 - `backend/app/services/capability_contract_service.py` — Shared training capability contract helpers.
 - `backend/app/services/checkpoint_registry_service.py` — Local pre-fine-tuned warm-start checkpoint registry (Track 1, Epic B).
@@ -518,7 +519,7 @@ session-start guidance.
 - `frontend/src/components/annotation/ClassificationLabeler.tsx` — Keyboard-driven classification labeler.
 - `frontend/src/components/annotation/PreferencePairLabeler.tsx` — Preference-pair labeler (Story 1.3).
 - `frontend/src/components/annotation/SpanLabeler.tsx` — Keyboard + drag-to-select span (NER) labeler.
-- `frontend/src/components/autopilot/DecisionLogDrawer.tsx` — Persistent Autopilot Decision Log drawer (priority.md P6).
+- `frontend/src/components/autopilot/DecisionLogPanel.tsx` — Autopilot decision log — a Settings section (``?open=decisions``).
 - `frontend/src/components/coach/CoachNotices.tsx` — Inline Coach notices (Epic U, phase U6). Replaces the Coach bar: a
 - `frontend/src/components/coach/CoachSuggestion.tsx` — One Coach Mode suggestion card with a click-to-execute action
 - `frontend/src/components/coach/CoachSuggestionTrace.tsx` — Decision-trace disclosure for a Coach suggestion (Arc 4).
@@ -719,6 +720,7 @@ session-start guidance.
 - `backend/tests/test_behavioral_test_schema_slice1.py` — Quality-Lift phase 5 slice 1 — Behavioral test pack schema validator.
 - `backend/tests/test_behavioral_tests_endpoint_slice2.py` — Quality-Lift phase 7 slice 2 — behavioral_tests focused CRUD endpoint.
 - `backend/tests/test_bell_live_metrics.py` — Tests for the bell live-loss sparkline backend
+- `backend/tests/test_benchmark_contamination.py` — Benchmark gold-VALUE contamination scan: do the answers a benchmark
 - `backend/tests/test_chat_template_rewrap.py` — Tests for the opt-in chat-template re-wrap pass
 - `backend/tests/test_check_seeds_endpoint.py` — ``POST /evaluation/summary/check-seeds`` — the multi-seed option for the
 - `backend/tests/test_checkpoint_registry.py` — Unit tests for the warm-start checkpoint registry (Track 1, Epic B).
@@ -999,6 +1001,7 @@ session-start guidance.
 - `frontend/src/components/annotation/ClassificationLabeler.test.tsx` — ClassificationLabeler contract.
 - `frontend/src/components/annotation/PreferencePairLabeler.test.tsx` — PreferencePairLabeler contract.
 - `frontend/src/components/annotation/SpanLabeler.test.tsx` — SpanLabeler contract.
+- `frontend/src/components/autopilot/DecisionLogPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/coach/CoachNotices.test.tsx` — _(no docstring)_
 - `frontend/src/components/coach/CoachSuggestion.test.tsx` — _(no docstring)_
 - `frontend/src/components/coach/CoachSuggestionTrace.test.tsx` — Arc 4 — Coach decision-trace disclosure.
