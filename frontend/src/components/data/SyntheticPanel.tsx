@@ -21,11 +21,9 @@ import DetailsDrawer, { type DetailSection } from '../shared/DetailsDrawer';
 interface SyntheticPanelProps {
     projectId: number;
     onNextStep?: () => void;
-    /** Epic U phase U4: ``stepper`` = a short form + a Details drawer. */
-    layout?: 'classic' | 'stepper';
-    /** Stepper: extra Details sections appended after the panel's own. */
+    /** Extra Details sections appended after the panel's own (Epic U). */
     extraDetails?: DetailSection[];
-    /** Stepper: the Details section to open (``?open=``). */
+    /** The Details section to open (``?open=``). */
     openSection?: string | null;
 }
 
@@ -140,8 +138,7 @@ const LEGACY_PROVIDER_PRESETS: Record<string, { apiUrl: string; defaultModel: st
     },
 };
 
-export default function SyntheticPanel({ projectId, onNextStep , layout = 'classic', extraDetails = [], openSection = null }: SyntheticPanelProps) {
-    const stepper = layout === 'stepper';
+export default function SyntheticPanel({ projectId, onNextStep , extraDetails = [], openSection = null }: SyntheticPanelProps) {
     type Provider = 'ollama' | 'openai' | 'deepseek' | 'anthropic' | 'custom';
     const [provider, setProvider] = useState<Provider>('ollama');
     const [generationMode, setGenerationMode] = useState<GenerationMode>('qa');
@@ -995,16 +992,6 @@ export default function SyntheticPanel({ projectId, onNextStep , layout = 'class
 
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
-            {!stepper && (<>
-            <PlaybookPickerPanel projectId={projectId} />
-            <div ref={reviewQueueRef} id="synth-review-queue">
-                <SynthReviewQueue
-                    projectId={projectId}
-                    focusSource={focusSynthSource}
-                />
-            </div>
-            <LlmSpendCard projectId={projectId} />
-            </>)}
             <div className="card">
                 <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>🧪 Synthetic Data Generation</h3>
                 {prefillSourceStage && (
@@ -1775,8 +1762,7 @@ export default function SyntheticPanel({ projectId, onNextStep , layout = 'class
                 </div>
             )}
 
-            {stepper && (
-                <DetailsDrawer
+            <DetailsDrawer
                     testId="data-details"
                     openSection={openSection}
                     sections={[
@@ -1808,7 +1794,6 @@ export default function SyntheticPanel({ projectId, onNextStep , layout = 'class
                         ...extraDetails,
                     ]}
                 />
-            )}
             {onNextStep && (
                 <StepFooter
                     currentStep="Synthetic Generation"

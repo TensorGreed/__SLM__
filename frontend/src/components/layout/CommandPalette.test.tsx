@@ -37,10 +37,11 @@ describe('CommandPalette', () => {
         ).toBeInTheDocument();
         // Multiple sections.
         expect(screen.getByText('Navigation')).toBeInTheDocument();
-        expect(screen.getByText('Workspace')).toBeInTheDocument();
-        expect(screen.getByText('Overview')).toBeInTheDocument();
+        // Sections are the destinations; each destination is also its own first item.
+        expect(screen.getAllByText('Overview').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Data').length).toBeGreaterThan(0);
         // A few well-known actions.
-        expect(screen.getByText('Sources')).toBeInTheDocument();
+        expect(screen.getByText('Data · Labels')).toBeInTheDocument();
         expect(screen.getByText('Annotation jobs')).toBeInTheDocument();
         expect(screen.getByText('Monitor (observability)')).toBeInTheDocument();
     });
@@ -54,7 +55,7 @@ describe('CommandPalette', () => {
         ).toBeInTheDocument();
     });
 
-    it('offers every tool regardless of beginner mode (nothing is hidden since Epic U)', async () => {
+    it('offers every tool from the workspace registry (nothing is hidden)', async () => {
         renderPalette(7);
         const user = userEvent.setup();
         await user.keyboard('{Meta>}k{/Meta}');

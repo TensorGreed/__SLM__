@@ -25,6 +25,7 @@ import type {
     PlaybookGapRecommendations,
 } from '../../api/dataStudio';
 import './DataStudioSyntheticRecommendationsPanel.css';
+import { stagePath } from '../../utils/workspaceRoutes';
 
 interface DataStudioSyntheticRecommendationsPanelProps {
     projectId: number;
@@ -158,8 +159,7 @@ export default function DataStudioSyntheticRecommendationsPanel({
     // exact class from the playbook's built-in dropdown.
     const launchClassBalance = (generate: number) => {
         window.location.assign(
-            `/project/${projectId}/pipeline/synthetic`
-            + `?prefill_mode=class_balance_fill&prefill_count=${generate}`,
+            stagePath(projectId, 'synthetic', `prefill_mode=class_balance_fill&prefill_count=${generate}`),
         );
     };
 

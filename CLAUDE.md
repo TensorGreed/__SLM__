@@ -509,17 +509,36 @@ runs real CPU inference). ~4 min locally.
   `STEPS_BY_DESTINATION.ship = ['export']`; ProjectStagePage is deleted (its
   CSS lives on as `pages/stagePage.css`, shared by Data and Ship). Tests:
   `ExportPanel.stages.test.tsx`, `ProjectShipPage.test.tsx`.
-  **The Coach** (`components/coach/Coach.tsx`, mounted once in
-  `ProjectWorkspaceLayout`) stays the guidance bar on the four stage pages:
-  stage + %, next step (`utils/flowGuide.getRecommendedAction`; "on target"
-  compares destination AND step), per-tab tip (`coachContext.TAB_TIP`,
-  dismiss key `brewslm.coach.tip.<id>.<tab>`), TabVideoLink, `CoachStrip`
-  for the route's stage (`coachLocationFor(pathname, search)` understands
-  `/data?step=…` and the legacy form). Hidden on Overview and Settings; its
-  button goes back to the Overview. `useCoachMode(projectId)`: on by default
-  for every project (`COACH_DEFAULT_ON`), per-project override in
-  `coachModeStore` (localStorage), switched from Settings. U6 turns the bar
-  into inline notices.
+  **Guidance is inline (Epic U phase U6, 2026-10-17)** — the Coach bar,
+  `CoachStrip`, `CoachToggle` and `coachLocationFor` are gone. The backend
+  `coach_service` stages/rules are unchanged; the frontend renders them as
+  `components/coach/CoachNotices` (one per destination: Data per step's
+  stage, Train `training`, Results `eval`, Ship `export`; `CoachSuggestionCard`
+  with its action + "why?" trace, an × that remembers the `rule_id` in
+  localStorage `brewslm.coach.dismissed.<pid>.<stage>`, "Show N more") and
+  `StepHelp` (the step's `coachContext.TAB_TIP` + `TabVideoLink`, "Got it"
+  key `brewslm.coach.tip.<pid>.<tab>`). The Overview lists ≤ 3 nudges.
+  `useCoachMode(projectId)` (on by default, override in `coachModeStore`) is the
+  one switch — Settings → "Show inline tips". Beginner mode hides nothing
+  anywhere (the `flowGuide` domain-first detour is gone too).
+  **Only one layout per panel.** `TrainingPanel` = the form (props
+  `hideCreateControls` / `forceCreateVisible` / `hideExperimentList` /
+  `setupMode` / `layout` deleted with the setup tabs, journey strip and
+  workspace tabs); `EvalPanel` requires `workflow`; `ExportPanel` requires
+  `stage` (the in-row Hub form is gone — Publish stage only); the five data
+  panels render form + `DetailsDrawer` (no `layout` prop; `DatasetPrepPanel`
+  lost its view tabs and the TaskShapeConfirmCard, which lives on Data →
+  Labels). **Settings = the long tail as sections** (`SETTINGS_SECTIONS`,
+  `settingsPath`, `?open=`): Autopilot Planner, Workflow Builder, Domain Packs,
+  Domain Profiles, Extension Studio render embedded (`embedded` prop); the
+  routes `/autopilot`, `/workflow`, `/domain`, `/domain/packs`,
+  `/domain/profiles`, `/extensions` redirect (`SETTINGS_SECTION_BY_LEGACY_PATH`);
+  ProjectDomainPage deleted. **The ⌘K palette** renders
+  `utils/workspaceCommands.workspaceCommands(projectId)` — every destination,
+  Data step/section, Train section, Results workflow, Ship stage, Settings
+  section, generated from `workspaceRoutes`; add a surface there, never in
+  the palette. In-app links use the `*Path` helpers; `LegacyRouteRedirect`
+  stays for bookmarks and docs.
 - **Synthetic data** — two paths: (a) modern `synth_playbook_service`
   with recipe-aware playbooks + per-row `review_status="pending"`;
   (b) legacy `synthetic_service` with task framework + bridge to Jobs.

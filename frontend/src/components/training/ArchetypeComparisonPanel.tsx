@@ -31,6 +31,7 @@ import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import './ArchetypeComparisonPanel.css';
+import { stagePath } from '../../utils/workspaceRoutes';
 
 
 interface Props {
@@ -158,7 +159,7 @@ export default function ArchetypeComparisonPanel({ projectId }: Props) {
         if (kind === 'navigate') {
             const target = String(params['target'] || '');
             if (target === 'data-studio-diversity') {
-                navigateTo(`/project/${projectId}/data-studio#diversity`);
+                navigateTo(stagePath(projectId, 'data'));
                 return;
             }
             // Generic fallback — drop the user on the project page.

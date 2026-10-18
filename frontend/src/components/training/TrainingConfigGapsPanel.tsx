@@ -30,6 +30,7 @@ import {
 } from '../../api/trainingConfigGaps';
 import TrainingConfigPatchPreviewModal from './TrainingConfigPatchPreviewModal';
 import './TrainingConfigGapsPanel.css';
+import { trainSectionPath } from '../../utils/workspaceRoutes';
 
 interface TrainingConfigGapsPanelProps {
     projectId: number;
@@ -71,19 +72,18 @@ function targetUrl(
             if (typeof warmup === 'number' && Number.isFinite(warmup)) {
                 qs.set('recommended_warmup_ratio', String(warmup));
             }
-            const tail = qs.toString() ? `?${qs.toString()}` : '';
-            return `/project/${projectId}/training-config${tail}`;
+            return trainSectionPath(projectId, 'plan', qs.toString());
         }
         case 'training-base-model-picker': {
             const recommended = params['recommended_base_model'];
             const tail =
                 typeof recommended === 'string' && recommended.length > 0
-                    ? `?recommended_base_model=${encodeURIComponent(recommended)}`
+                    ? `recommended_base_model=${encodeURIComponent(recommended)}`
                     : '';
-            return `/project/${projectId}/training-config${tail}#base-model`;
+            return trainSectionPath(projectId, 'model', tail);
         }
         case 'recipe-picker':
-            return `/project/${projectId}/recipe-picker`;
+            return trainSectionPath(projectId, 'task');
         default:
             return null;
     }

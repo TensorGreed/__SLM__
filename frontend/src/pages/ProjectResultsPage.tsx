@@ -15,6 +15,8 @@ import { useMemo } from 'react';
 import { useLocation, useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 
 import EvalPanel from '../components/evaluation/EvalPanel';
+import CoachNotices from '../components/coach/CoachNotices';
+import StepHelp from '../components/coach/StepHelp';
 import ChatPlaygroundPanel from '../components/training/ChatPlaygroundPanel';
 import { isResultsTab, RESULTS_TAB_BY_HASH, RESULTS_TABS, resultsPath, type ResultsTab } from '../utils/workspaceRoutes';
 import ProjectEvalComparePage from './ProjectEvalComparePage';
@@ -85,6 +87,9 @@ export default function ProjectResultsPage() {
                     </button>
                 ))}
             </div>
+
+            <StepHelp projectId={projectId} tab="eval" />
+            <CoachNotices projectId={projectId} stage="eval" />
 
             {tab === 'verdict' && autoGate && (
                 <div className="card results-page__gate" data-testid="results-auto-gate">

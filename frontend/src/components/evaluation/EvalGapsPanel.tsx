@@ -31,6 +31,7 @@ import {
 import type { GapSuggestedAction } from '../../api/trainingConfigGaps';
 import EvalGapPatchPreviewModal from './EvalGapPatchPreviewModal';
 import '../training/TrainingConfigGapsPanel.css';
+import { stagePath, trainSectionPath } from '../../utils/workspaceRoutes';
 
 interface EvalGapsPanelProps {
     projectId: number;
@@ -55,13 +56,13 @@ function targetUrl(
     if (!action || !action.target) return null;
     switch (action.target) {
         case 'archetype-comparison-panel':
-            return `/project/${projectId}/training-config#archetype-comparison-panel`;
+            return trainSectionPath(projectId, 'plan') + '#archetype-comparison-panel';
         case 'checkpoints-panel':
-            return `/project/${projectId}/training-config#checkpoints-panel`;
+            return trainSectionPath(projectId, 'plan') + '#checkpoints-panel';
         case 'data-studio-splits':
-            return `/project/${projectId}/data-studio#splits`;
+            return stagePath(projectId, 'dataprep') + '#split';
         case 'recipe-picker':
-            return `/project/${projectId}/recipe-picker`;
+            return trainSectionPath(projectId, 'task');
         default:
             return null;
     }

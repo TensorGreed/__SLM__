@@ -6,15 +6,9 @@ import ProjectShipPage from './pages/ProjectShipPage';
 import ProjectSettingsPage from './pages/ProjectSettingsPage';
 import LegacyRouteRedirect from './components/layout/LegacyRouteRedirect';
 import ProjectDataPage from './pages/ProjectDataPage';
-import ProjectDomainPage from './pages/ProjectDomainPage';
-import ProjectDomainPacksPage from './pages/ProjectDomainPacksPage';
-import ProjectDomainProfilesPage from './pages/ProjectDomainProfilesPage';
-import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
 import ProjectTrainPage from './pages/ProjectTrainPage';
 import ProjectResultsPage from './pages/ProjectResultsPage';
-import ProjectAutopilotPage from './pages/ProjectAutopilotPage';
 import ProjectManifestPage from './pages/ProjectManifestPage';
-import ProjectExtensionStudioPage from './pages/ProjectExtensionStudioPage';
 import ProjectAnnotatePage from './pages/ProjectAnnotatePage';
 import SSOLoginPage from './pages/SSOLoginPage';
 import ToastContainer from './components/shared/Toast';
@@ -41,6 +35,13 @@ function App() {
               <Route path="results" element={<ProjectResultsPage />} />
               <Route path="ship" element={<ProjectShipPage />} />
               <Route path="settings" element={<ProjectSettingsPage />} />
+              {/* The long tail lives in Settings (Epic U phase U6). */}
+              <Route path="workflow" element={<LegacyRouteRedirect />} />
+              <Route path="domain" element={<LegacyRouteRedirect />} />
+              <Route path="domain/packs" element={<LegacyRouteRedirect />} />
+              <Route path="domain/profiles" element={<LegacyRouteRedirect />} />
+              <Route path="autopilot" element={<LegacyRouteRedirect />} />
+              <Route path="extensions" element={<LegacyRouteRedirect />} />
               {/* Retired URLs (Epic U phase U1): /guide, /wizard, /pipeline/<tab>. */}
               <Route path="guide" element={<LegacyRouteRedirect />} />
               <Route path="wizard" element={<LegacyRouteRedirect />} />
@@ -49,10 +50,6 @@ function App() {
               {/* Folded into Data (Epic U phase U4); the labeler keeps its own page. */}
               <Route path="data-studio" element={<LegacyRouteRedirect />} />
               <Route path="annotate" element={<LegacyRouteRedirect />} />
-              <Route path="workflow" element={<ProjectWorkflowPage />} />
-              <Route path="domain" element={<ProjectDomainPage />} />
-              <Route path="domain/packs" element={<ProjectDomainPacksPage />} />
-              <Route path="domain/profiles" element={<ProjectDomainProfilesPage />} />
               {/* Folded into Train (Epic U phase U2). */}
               <Route path="recipes" element={<LegacyRouteRedirect />} />
               <Route path="recipe-picker" element={<LegacyRouteRedirect />} />
@@ -62,12 +59,10 @@ function App() {
               {/* Folded into Results (Epic U phase U3). */}
               <Route path="eval/compare" element={<LegacyRouteRedirect />} />
               <Route path="playground" element={<LegacyRouteRedirect />} />
-              <Route path="autopilot" element={<ProjectAutopilotPage />} />
               {/* Folded into Ship (Epic U phase U5). */}
               <Route path="deployments" element={<LegacyRouteRedirect />} />
               <Route path="observability" element={<LegacyRouteRedirect />} />
               <Route path="manifest" element={<LegacyRouteRedirect />} />
-              <Route path="extensions" element={<ProjectExtensionStudioPage />} />
               <Route path="annotate/:job_id" element={<ProjectAnnotatePage />} />
             </Route>
           </>

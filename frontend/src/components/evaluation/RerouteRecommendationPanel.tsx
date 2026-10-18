@@ -26,6 +26,7 @@ import {
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import './RerouteRecommendationPanel.css';
+import { resultsPath, stagePath } from '../../utils/workspaceRoutes';
 
 
 interface Props {
@@ -162,7 +163,7 @@ export default function RerouteRecommendationPanel({ projectId, evalResultId }: 
                 confidence={analysis.recommendation.confidence}
                 signals={firedSignals}
                 primaryLabel="Open Playground"
-                onPrimaryClick={() => navigateTo(`/project/${projectId}/playground`)}
+                onPrimaryClick={() => navigateTo(resultsPath(projectId, 'try'))}
             />
         );
     }
@@ -177,7 +178,7 @@ export default function RerouteRecommendationPanel({ projectId, evalResultId }: 
             confidence={analysis.recommendation.confidence}
             signals={firedSignals}
             primaryLabel="Open Active Learning"
-            onPrimaryClick={() => navigateTo(`/project/${projectId}/pipeline/data`)}
+            onPrimaryClick={() => navigateTo(stagePath(projectId, 'data'))}
         />
     );
 }

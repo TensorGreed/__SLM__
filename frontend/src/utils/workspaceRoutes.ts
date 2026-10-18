@@ -94,6 +94,36 @@ export function dataStepPath(projectId: number, tab: TabKey, open?: string | nul
     return stagePath(projectId, tab, params.toString());
 }
 
+/** Settings sections (``/settings?open=<id>``, Epic U phase U6): the long tail. */
+export const SETTINGS_SECTIONS = [
+    { id: 'autopilot', label: 'Autopilot Planner', hint: 'plan diffs, repair preview, rollback' },
+    { id: 'workflow', label: 'Workflow Builder', hint: 'compose and run pipeline graphs' },
+    { id: 'domain-packs', label: 'Domain Packs', hint: 'overlay a domain pack on the project' },
+    { id: 'domain-profiles', label: 'Domain Profiles', hint: 'profiles that tune the pack' },
+    { id: 'extensions', label: 'Extension Studio', hint: 'runtime and pack plugins' },
+] as const;
+export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id'];
+
+export function isSettingsSection(value: string | null | undefined): value is SettingsSectionId {
+    return !!value && SETTINGS_SECTIONS.some((s) => s.id === value);
+}
+
+/** ``/project/7/settings?open=domain-packs``. */
+export function settingsPath(projectId: number, section?: SettingsSectionId | null): string {
+    const base = projectPath(projectId, 'settings');
+    return section ? `${base}?open=${section}` : base;
+}
+
+/** The retired long-tail pages and the Settings section each became. */
+export const SETTINGS_SECTION_BY_LEGACY_PATH: Record<string, SettingsSectionId> = {
+    '/autopilot': 'autopilot',
+    '/workflow': 'workflow',
+    '/domain': 'domain-packs',
+    '/domain/packs': 'domain-packs',
+    '/domain/profiles': 'domain-profiles',
+    '/extensions': 'extensions',
+};
+
 /** Results workflows (``/results?tab=<id>``, Epic U phase U3). */
 export const RESULTS_TABS = ['verdict', 'failures', 'compare', 'try'] as const;
 export type ResultsTab = (typeof RESULTS_TABS)[number];
@@ -244,6 +274,10 @@ export function legacyRedirectPath(projectId: number, pathname: string, search =
     }
     if (clean === '/annotate') {
         return dataStepPath(projectId, 'goldset', 'annotation', search) + hash;
+    }
+    const settingsSection = SETTINGS_SECTION_BY_LEGACY_PATH[clean];
+    if (settingsSection) {
+        return settingsPath(projectId, settingsSection) + hash;
     }
     if (clean === '/deployments') {
         return shipPath(projectId, 'deploy', search) + hash;

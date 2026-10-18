@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import { benchmarkHeadlineLabel } from '../../api/benchmarks';
 import { cancelJob, dismissJob, type Job } from '../../api/jobs';
 import { useJobsStore } from '../../stores/jobsStore';
+import { dataStepPath, resultsPath, stagePath, trainSectionPath } from '../../utils/workspaceRoutes';
 import { metricDisplayName, shortEvidenceText } from '../evaluation/liftEvidence';
 import { toast } from '../../stores/toastStore';
 import TrainingKillSwitch from './TrainingKillSwitch';
@@ -41,34 +42,34 @@ function jobDeepLink(job: Job): string | null {
         if (typeof newId === 'number') return `/project/${newId}`;
     }
     if (job.kind === 'synth_playbook' && job.project_id) {
-        return `/project/${job.project_id}/pipeline/synthetic#synth-review-queue`;
+        return dataStepPath(job.project_id, 'synthetic', 'review-queue') + '#synth-review-queue';
     }
     if (job.kind === 'synth_augment_from_cluster' && job.project_id) {
-        return `/project/${job.project_id}/pipeline/synthetic#synth-review-queue`;
+        return dataStepPath(job.project_id, 'synthetic', 'review-queue') + '#synth-review-queue';
     }
     // Legacy synth (QA / spans / conversations) all land on the
     // Synthetic tab where the inline review UI lives — the user
     // reviews the generated rows + saves from there.
     if (job.kind.startsWith('synth_legacy') && job.project_id) {
-        return `/project/${job.project_id}/pipeline/synthetic`;
+        return stagePath(job.project_id, 'synthetic');
     }
     if (job.kind === 'training_start' && job.project_id) {
-        return `/project/${job.project_id}/training-config`;
+        return trainSectionPath(job.project_id, 'plan');
     }
     if (job.kind === 'post_training_lift_eval' && job.project_id) {
-        return `/project/${job.project_id}/pipeline/eval`;
+        return stagePath(job.project_id, 'eval');
     }
     if (job.kind === 'documents_qa_flow' && job.project_id) {
-        return `/project/${job.project_id}/pipeline/training#documents-qa-flow`;
+        return stagePath(job.project_id, 'training') + '#documents-qa-flow';
     }
     if (job.kind === 'seed_documents' && job.project_id) {
-        return `/project/${job.project_id}/pipeline/data#seed-documents`;
+        return stagePath(job.project_id, 'data') + '#seed-documents';
     }
     if (job.kind === 'span_relabel' && job.project_id) {
-        return `/project/${job.project_id}/pipeline/eval`;
+        return stagePath(job.project_id, 'eval');
     }
     if (job.kind === 'benchmark_eval' && job.project_id) {
-        return `/project/${job.project_id}/pipeline/eval#external-benchmarks`;
+        return resultsPath(job.project_id, 'compare') + '#external-benchmarks';
     }
     if (job.project_id) {
         return `/project/${job.project_id}`;

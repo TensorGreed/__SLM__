@@ -6,7 +6,7 @@
  *   2. By how much? (headline metric, base → fine-tuned; perplexity is
  *      lower-is-better and the backend already says which way is good)
  *   3. Where does it still fail? (up to five real failing rows)
- * Everything else on the Eval tab lives under "Advanced evaluation".
+ * Everything else lives on the other Results workflows (Failures, Compare).
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -24,6 +24,7 @@ import { toast } from '../../stores/toastStore';
 import { useJobsStore } from '../../stores/jobsStore';
 import './EvalSummaryCard.css';
 import { benchmarkScoreText, benchmarkSourceText } from '../../api/benchmarks';
+import { stagePath } from '../../utils/workspaceRoutes';
 
 interface EvalSummaryCardProps {
     projectId: number;
@@ -114,7 +115,7 @@ export function SpanSizingTable({ block, onAnswerKey, projectId }: { block: Span
                 {short.length > 0 && (
                     <>
                         {' '}
-                        <a href={`/project/${projectId}/pipeline/synthetic`} data-testid="eval-summary-sizing-refine">Refine weak types</a> on the Synthetic tab now targets the under-sampled types too; new rows reach the key through a re-split without “keep test” and a re-key.
+                        <a href={stagePath(projectId, 'synthetic')} data-testid="eval-summary-sizing-refine">Refine weak types</a> on the Synthetic tab now targets the under-sampled types too; new rows reach the key through a re-split without “keep test” and a re-key.
                     </>
                 )}
                 {' '}

@@ -121,6 +121,9 @@ function mockApi(predictionsPreview: unknown[]) {
         if (url.includes('remediation-plans')) {
             return { data: { project_id: 4, count: 0, plans: [] } };
         }
+        if (url.includes('/gold/review')) {
+            return { data: { total: 0, rows: [] } };
+        }
         return { data: {} };
     });
 }
@@ -165,7 +168,7 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // Inline counts pick up the entity tallies.
@@ -201,7 +204,7 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // The disclosure summary is present.
@@ -242,7 +245,7 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/✗ missed/i)).toBeInTheDocument();
@@ -275,7 +278,7 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // The per-field count + disclosure render, NOT the entity-by-entity view.

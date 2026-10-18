@@ -1,7 +1,7 @@
 /**
  * Side-by-side eval comparison page (E3).
  *
- * Mounted at ``/project/:projectId/eval/compare?a=<exp>&b=<exp>``.
+ * Rendered in Results → Compare (``/project/:projectId/results?tab=compare&a=<exp>&b=<exp>``).
  * Renders:
  *   - Two experiment summary chips (A vs B) with pass_rate badges.
  *   - Per-metric delta table — regressions to the top.

@@ -7,7 +7,6 @@ import { useNavigate } from 'react-router-dom';
 import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import api from '../../api/client';
 import { useJobsStore } from '../../stores/jobsStore';
-import { useProjectStore } from '../../stores/projectStore';
 import { toast } from '../../stores/toastStore';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
@@ -37,16 +36,15 @@ import RedactionTryBox from './RedactionTryBox';
 import AnswerKeyReviewPanel from '../data/AnswerKeyReviewPanel';
 import { projectPath } from '../../utils/workspaceRoutes';
 
-type EvalSubTab = 'runs' | 'workbench';
 
 /** Results workflows (Epic U phase U3). ``null`` = the one-page layout. */
 export type EvalWorkflow = 'verdict' | 'failures' | 'compare' | 'try';
 
 interface EvalPanelProps {
     projectId: number;
-    /** Render only the blocks of one workflow; the panel stays mounted across
-     *  tab switches so the selected run and its results persist. */
-    workflow?: EvalWorkflow | null;
+    /** The Results workflow to render; the panel stays mounted across tab
+     *  switches so the selected run and its results persist. */
+    workflow: EvalWorkflow;
     onNextStep?: () => void;
 }
 
@@ -418,10 +416,9 @@ function getErrorMessage(error: unknown): string {
     return 'Failed to run evaluation';
 }
 
-export default function EvalPanel({ projectId, onNextStep, workflow = null }: EvalPanelProps) {
+export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanelProps) {
     const navigate = useNavigate();
-    const workflows = workflow != null;
-    const wf = (name: EvalWorkflow) => workflow == null || workflow === name;
+    const wf = (name: EvalWorkflow) => workflow === name;
     const [experiments, setExperiments] = useState<ExperimentSummary[]>([]);
     const [selectedExp, setSelectedExp] = useState<number | null>(null);
     const [evalResults, setEvalResults] = useState<EvalResult[]>([]);
@@ -447,11 +444,6 @@ export default function EvalPanel({ projectId, onNextStep, workflow = null }: Ev
     const [maxNewTokens, setMaxNewTokens] = useState(128);
     const [temperature, setTemperature] = useState(0);
     const [modelPath, setModelPath] = useState('');
-    const [subTab, setSubTab] = useState<EvalSubTab>('runs');
-    // Wave 3b: beginners see one summary card; the full evaluation
-    // surface (gates, packs, probes, clusters, …) sits behind this toggle.
-    const beginnerMode = Boolean(useProjectStore((s) => s.activeProject?.beginner_mode));
-    const [advancedOpen, setAdvancedOpen] = useState(!beginnerMode);
 
     const [loadingExperiments, setLoadingExperiments] = useState(false);
     const [isEvaluating, setIsEvaluating] = useState(false);
@@ -1015,21 +1007,21 @@ export default function EvalPanel({ projectId, onNextStep, workflow = null }: Ev
 
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
-            {subTab === 'runs' && wf('verdict') && (
+            {wf('verdict') && (
                 <EvalSummaryCard
                     projectId={projectId}
                     experimentId={selectedExp}
                     refreshToken={evalResults.length}
-                    hideTryBox={workflows}
+                    hideTryBox
                     onResolved={(expId) => {
                         if (selectedExp == null) void loadResults(expId);
                     }}
                 />
             )}
-            {subTab === 'runs' && wf('compare') && <ExternalBenchmarksPanel projectId={projectId} experimentId={selectedExp} />}
-            {subTab === 'runs' && (<>
+            {wf('compare') && <ExternalBenchmarksPanel projectId={projectId} experimentId={selectedExp} />}
+            {(<>
             <div className="card">
-                <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>{workflows ? 'Run' : 'Select Experiment / Model'}</h3>
+                <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Run</h3>
                 {loadingExperiments ? (
                     <div className="empty-state">
                         <div className="empty-state-icon">⏳</div>
@@ -1048,6 +1040,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow = null }: Ev
                                 key={experiment.id}
                                 className={`btn ${selectedExp === experiment.id ? 'btn-primary' : 'btn-secondary'}`}
                                 onClick={() => void loadResults(experiment.id)}
+                                style={{ maxWidth: '100%', whiteSpace: 'normal', textAlign: 'left' }}
                             >
                                 {experiment.name}
                             </button>
@@ -1062,22 +1055,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow = null }: Ev
                 </div>
             )}
             </>)}
-            {!workflows && (
-            <button
-                type="button"
-                className="btn btn-secondary eval-advanced-toggle"
-                data-testid="eval-advanced-toggle"
-                onClick={() => {
-                    // Closing Advanced hides the Workbench sub-tab switch, so
-                    // fall back to the runs view the summary card lives in.
-                    if (advancedOpen) setSubTab('runs');
-                    setAdvancedOpen(!advancedOpen);
-                }}
-            >
-                {advancedOpen ? '▾ Hide advanced evaluation' : '▸ Advanced evaluation (pass/fail rules, built-in checks, custom checks, failure clusters, comparisons)'}
-            </button>
-            )}
-            {wf('try') && workflows && (
+            {wf('try') && (
                 <div className="card" data-testid="eval-try-redact">
                     <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-sm)' }}>Redact a text</h3>
                     {selectedExp && evalResults.some((r) => (r.metrics as { scoring_mode?: string | null } | null)?.scoring_mode === 'span_set') ? (
@@ -1087,13 +1065,12 @@ export default function EvalPanel({ projectId, onNextStep, workflow = null }: Ev
                     )}
                 </div>
             )}
-            {(advancedOpen || workflows) && (<>
+            {(<>
             {wf('failures') && <EvalGapsPanel projectId={projectId} />}
             {wf('failures') && (
             <ProbePackPanel
                 projectId={projectId}
                 onOpenRun={(expId) => {
-                    setAdvancedOpen(true);
                     void loadResults(expId);
                     // Best-effort scroll to the now-selected run's scorecard.
                     setTimeout(() => {
@@ -1104,46 +1081,23 @@ export default function EvalPanel({ projectId, onNextStep, workflow = null }: Ev
                 }}
             />
             )}
-            {!workflows && (
-            <div className="eval-subtab-switch" role="tablist" aria-label="Evaluation sections">
-                <button
-                    type="button"
-                    role="tab"
-                    aria-selected={subTab === 'runs' ? 'true' : 'false'}
-                    className={`eval-subtab-btn ${subTab === 'runs' ? 'active' : ''}`}
-                    onClick={() => setSubTab('runs')}
-                >
-                    Eval runs
-                </button>
-                <button
-                    type="button"
-                    role="tab"
-                    aria-selected={subTab === 'workbench' ? 'true' : 'false'}
-                    className={`eval-subtab-btn ${subTab === 'workbench' ? 'active' : ''}`}
-                    onClick={() => setSubTab('workbench')}
-                >
-                    Workbench
-                </button>
-            </div>
-            )}
-            {subTab === 'workbench' && <GoldSetWorkbenchPanel projectId={projectId} />}
-            {workflows && wf('failures') && (
+            {wf('failures') && (
                 <details className="card eval-collapsible" data-testid="eval-answer-key-review">
                     <summary>Answer-key review — check the key row by row</summary>
                     <AnswerKeyReviewPanel projectId={projectId} />
                 </details>
             )}
-            {workflows && wf('failures') && (
+            {wf('failures') && (
                 <details className="card eval-collapsible" data-testid="eval-workbench">
                     <summary>Answer-key workbench — suggested rows, coverage, authoring</summary>
                     <GoldSetWorkbenchPanel projectId={projectId} />
                 </details>
             )}
-            {subTab === 'runs' && (<>
+            {(<>
 
             {selectedExp && wf('verdict') && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <h2 style={{ fontSize: 'var(--font-size-lg)', margin: 0 }}>{workflows ? 'Evaluate' : 'Evaluation Suite'}</h2>
+                    <h2 style={{ fontSize: 'var(--font-size-lg)', margin: 0 }}>Evaluate</h2>
                     <div style={{ display: 'flex', gap: 8 }}>
                         {experiments.length >= 2 && (() => {
                             // E3 — quick deep-link to the side-by-side eval compare page.
@@ -1165,11 +1119,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow = null }: Ev
                                     className="btn btn-secondary"
                                     data-testid="eval-panel-compare-to-prior"
                                     onClick={() =>
-                                        navigate(
-                                            workflows
-                                                ? `${projectPath(projectId, 'results')}?tab=compare&a=${prior.id}&b=${selectedExp}`
-                                                : `/project/${projectId}/eval/compare?a=${prior.id}&b=${selectedExp}`,
-                                        )
+                                        navigate(`${projectPath(projectId, 'results')}?tab=compare&a=${prior.id}&b=${selectedExp}`)
                                     }
                                     title={`Side-by-side eval comparison: ${prior.name} → currently selected`}
                                 >

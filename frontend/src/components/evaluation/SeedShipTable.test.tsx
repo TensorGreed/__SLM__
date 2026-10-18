@@ -76,7 +76,7 @@ describe('SeedShipTable', () => {
         const result = await screen.findByTestId('seed-ship-result');
         expect(result).toHaveTextContent('Export #9 (huggingface, completed) of seed 2 (run #42)');
         expect(result).toHaveTextContent('/data/exports/9');
-        expect(screen.getByTestId('seed-ship-export-link')).toHaveAttribute('href', '/project/7/pipeline/export');
+        expect(screen.getByTestId('seed-ship-export-link')).toHaveAttribute('href', '/project/7/ship?stage=package');
     });
 
     it('says when nothing can be picked', async () => {

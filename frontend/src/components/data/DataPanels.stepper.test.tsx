@@ -1,7 +1,7 @@
 /**
  * Epic U phase U4: each data panel in ``layout="stepper"`` keeps its short
  * form on top and moves the rest into the Details drawer (own sections first,
- * the page's extra sections after). The classic layout is untouched.
+ * the page's extra sections after).
  */
 
 import { render, screen } from '@testing-library/react';
@@ -67,7 +67,7 @@ async function openDrawer() {
 
 describe('Data panels — stepper layout', () => {
     it('Sources: seed / import / upload stay on top; documents, mappings, readiness, EDA and the extras go to Details', async () => {
-        render(<MemoryRouter><IngestionPanel projectId={1} layout="stepper" extraDetails={EXTRA} /></MemoryRouter>);
+        render(<MemoryRouter><IngestionPanel projectId={1} extraDetails={EXTRA} /></MemoryRouter>);
         expect(await screen.findByTestId('seed-documents')).toBeInTheDocument();
         expect(screen.getByTestId('open-import-wizard-btn')).toBeInTheDocument();
         expect(screen.queryByTestId('readiness')).toBeNull();
@@ -80,7 +80,7 @@ describe('Data panels — stepper layout', () => {
     });
 
     it('Prepare: the cleaning form stays; results, errors, label noise and extras go to Details', async () => {
-        render(<MemoryRouter><CleaningPanel projectId={1} layout="stepper" extraDetails={EXTRA} /></MemoryRouter>);
+        render(<MemoryRouter><CleaningPanel projectId={1} extraDetails={EXTRA} /></MemoryRouter>);
         expect(screen.getByText('Cleaning Configuration')).toBeInTheDocument();
         expect(screen.queryByTestId('label-noise')).toBeNull();
         const user = await openDrawer();
@@ -90,7 +90,7 @@ describe('Data panels — stepper layout', () => {
     });
 
     it('Labels: the answer-key card stays; the entries list goes to Details', async () => {
-        render(<MemoryRouter><GoldSetPanel projectId={1} layout="stepper" extraDetails={EXTRA} /></MemoryRouter>);
+        render(<MemoryRouter><GoldSetPanel projectId={1} extraDetails={EXTRA} /></MemoryRouter>);
         expect(await screen.findByText('Gold Evaluation Dataset')).toBeInTheDocument();
         expect(screen.queryByTestId('gold-entries-header')).toBeNull();
         const user = await openDrawer();
@@ -108,7 +108,7 @@ describe('Data panels — stepper layout', () => {
             if (url.endsWith('/projects/1')) return { data: { id: 1, selected_recipe: { recipe_id: 'qa-sft', scoring_mode: 'field_match' } } };
             return { data: {} };
         });
-        render(<MemoryRouter><SyntheticPanel projectId={1} layout="stepper" extraDetails={EXTRA} /></MemoryRouter>);
+        render(<MemoryRouter><SyntheticPanel projectId={1} extraDetails={EXTRA} /></MemoryRouter>);
         expect(await screen.findByText(/Synthetic Data Generation/)).toBeInTheDocument();
         expect(screen.queryByTestId('playbooks')).toBeNull();
         expect(screen.queryByTestId('spend')).toBeNull();
@@ -119,7 +119,7 @@ describe('Data panels — stepper layout', () => {
     });
 
     it('Split: the split form stays; health, preview, adapters go to Details; no view tabs, no task-shape card', async () => {
-        render(<MemoryRouter><DatasetPrepPanel projectId={1} onNextStep={() => undefined} layout="stepper" extraDetails={EXTRA} /></MemoryRouter>);
+        render(<MemoryRouter><DatasetPrepPanel projectId={1} onNextStep={() => undefined} extraDetails={EXTRA} /></MemoryRouter>);
         expect(await screen.findByText(/Train \/ Val \/ Test Split/)).toBeInTheDocument();
         expect(screen.queryByText('Adapter Lab')).toBeNull();
         expect(screen.queryByTestId('health')).toBeNull();
@@ -128,12 +128,5 @@ describe('Data panels — stepper layout', () => {
         expect(sectionIds()).toEqual(['health', 'preview', 'adapters', 'extra']);
         await user.click(screen.getByTestId('data-details-section-health'));
         expect(screen.getByTestId('health')).toBeInTheDocument();
-    });
-
-    it('classic layout still renders the whole panel (no drawer)', async () => {
-        render(<MemoryRouter><CleaningPanel projectId={1} /></MemoryRouter>);
-        expect(screen.getByText('Cleaning Configuration')).toBeInTheDocument();
-        expect(screen.getByTestId('label-noise')).toBeInTheDocument();
-        expect(screen.queryByTestId('data-details')).toBeNull();
     });
 });

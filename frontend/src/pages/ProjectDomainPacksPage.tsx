@@ -10,12 +10,13 @@ import { useProjectStore } from '../stores/projectStore';
 import type { Project } from '../types';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 
-export default function ProjectDomainPacksPage() {
+export default function ProjectDomainPacksPage({ embedded = false }: { embedded?: boolean } = {}) {
     const { projectId, project } = useOutletContext<ProjectWorkspaceContextValue>();
     const { setActiveProject } = useProjectStore();
 
     return (
         <div className="workspace-page">
+            {!embedded && (
             <section className="workspace-page-header">
                 <div>
                     <h2 className="workspace-page-title">
@@ -26,6 +27,7 @@ export default function ProjectDomainPacksPage() {
                     </p>
                 </div>
             </section>
+            )}
             <DomainPackManager
                 projectId={projectId}
                 activeDomainPackId={project.domain_pack_id}

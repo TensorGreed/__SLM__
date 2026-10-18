@@ -35,8 +35,8 @@ The platform has grown well beyond pipeline-as-a-website. Recent waves added:
 
 - **Deployment Assistant** — versioning, smoke tests, rollback, post-deploy telemetry, drift checks, deployability score. See the [Deployment](deployment/plan.md) section.
 - **Unified Observability** — every stage emits canonical `RunEvent` rows; the [timeline](observability/timeline.md), [failure clusters](observability/failure-clusters.md), and [support bundles](observability/support-bundles.md) all read from this one log.
-- **Extension Studio** — formal Protocol contracts for the four plugin kinds (data adapter, training runtime, domain pack, eval pack), with a [scaffold generator](extensions/scaffold.md), [validator + reloader](extensions/validate-and-reload.md), and a hidden-in-beginner-mode [UI](extensions/extension-studio.md).
-- **Cmd-K command palette** — fast nav across all workspace pages from any page.
+- **Extension Studio** — formal Protocol contracts for the four plugin kinds (data adapter, training runtime, domain pack, eval pack), with a [scaffold generator](extensions/scaffold.md), [validator + reloader](extensions/validate-and-reload.md), and a [UI under Settings](extensions/extension-studio.md).
+- **⌘K command palette** — fast nav across every destination, step and section from any page.
 
 ## Core principles
 

@@ -1,5 +1,5 @@
 /**
- * Token classification: the "OCR-noise copies" control (Power Tools tab)
+ * Token classification: the "OCR-noise copies" control (More options -> model)
  * appears only for that task type and starts off.
  */
 
@@ -29,8 +29,7 @@ beforeEach(() => {
 describe('TrainingPanel — OCR-noise copies', () => {
     it('shows only for token classification, off by default, copies enabled once a rate is picked', async () => {
         const user = userEvent.setup();
-        render(<TrainingPanel projectId={1} forceCreateVisible hideExperimentList />);
-        await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+        render(<TrainingPanel projectId={1} openSection="model" />);
         expect(screen.queryByTestId('ocr-noise-augment')).toBeNull();
         const taskSelect = (await screen.findAllByRole('combobox')).find(
             (el) => el.querySelector('option[value="token_classification"]'),

@@ -3,7 +3,7 @@
  * surface (priority.md P24).
  *
  * The page mounts at two routes:
- *   - `/project/:id/manifest` — diff and apply against an existing project.
+ *   - Ship → Package, ``/project/:id/ship?stage=package&open=manifest`` — diff and apply against an existing project.
  *   - `/manifest/import`      — apply a manifest end-to-end into a brand
  *                                new project (no project_id in path).
  *

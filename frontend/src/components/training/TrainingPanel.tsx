@@ -12,7 +12,6 @@ import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import ErrorPanel from '../shared/ErrorPanel';
 import StepFooter from '../shared/StepFooter';
-import { Term } from '../shared/Term';
 import { ReadinessPanel } from '../shared/ReadinessPanel';
 import ExperimentCompare from './ExperimentCompare';
 import HardwareRecommenderModal from './HardwareRecommenderModal';
@@ -71,8 +70,6 @@ import {
   parseBool,
   type ConfigFieldKey,
   untouchedConfig,
-  type TrainingWorkspaceView,
-  type TrainingSetupTab,
   type ModelSelectionApplySource,
   buildModelSelectionSummary,
   buildPreflightContractDetails,
@@ -84,18 +81,12 @@ export default function TrainingPanel({
   onNextStep,
   title = 'Training Experiments',
   hideStepFooter = false,
-  hideCreateControls = false,
-  hideExperimentList = false,
-  forceCreateVisible = false,
-  setupMode = 'advanced',
-  layout = 'classic',
   moreOptions = [],
   openSection = null,
   taskShapeLabel = 'Not set',
   defaultBaseModel = null,
   afterForm = null,
 }: TrainingPanelProps) {
-  const isFormLayout = layout === 'form';
   // Which More-options section the form should open (Browse / Change task /
   // Fix); the nonce re-opens an already-open section.
   const [formOpen, setFormOpen] = useState<{ id: string | null; nonce: number }>({ id: openSection, nonce: 0 });
@@ -120,7 +111,6 @@ export default function TrainingPanel({
     }
     return map;
   }, [allJobs]);
-  const [showCreate, setShowCreate] = useState(Boolean(forceCreateVisible && !hideCreateControls));
   const [activeExperiment, setActiveExperiment] = useState<Experiment | null>(null);
   const [metrics, setMetrics] = useState<TrainingMetric[]>([]);
   const [trainingLogs, setTrainingLogs] = useState<string[]>([]);
@@ -238,15 +228,6 @@ export default function TrainingPanel({
     touchedConfig,
     setTouchedConfig,
   } = configForm;
-  const [lastCreateSummary, setLastCreateSummary] = useState<{
-    domainPackApplied: string | null;
-    domainPackSource: string | null;
-    domainProfileApplied: string | null;
-    domainProfileSource: string | null;
-    defaultsApplied: string[];
-    profileDefaults: Record<string, unknown> | null;
-    resolvedConfig: Record<string, unknown> | null;
-  } | null>(null);
   const [effectivePreview, setEffectivePreview] = useState<TrainingEffectiveConfigResponse | null>(null);
   const [effectivePreviewLoading, setEffectivePreviewLoading] = useState(false);
   const [effectivePreviewError, setEffectivePreviewError] = useState('');
@@ -267,8 +248,6 @@ export default function TrainingPanel({
   const [selectedRecipeId, setSelectedRecipeId] = useState('');
   const [recipeResolveLoading, setRecipeResolveLoading] = useState(false);
   const [recipeResolveError, setRecipeResolveError] = useState('');
-  const [workspaceView, setWorkspaceView] = useState<TrainingWorkspaceView>('overview');
-  const [setupTab, setSetupTab] = useState<TrainingSetupTab>('basics');
   const [wizardTargetDevice, setWizardTargetDevice] = useState('laptop');
   const [wizardPrimaryLanguage, setWizardPrimaryLanguage] = useState('english');
   const [wizardVramGb, setWizardVramGb] = useState('8');
@@ -280,11 +259,9 @@ export default function TrainingPanel({
   const [benchmarkError, setBenchmarkError] = useState('');
   const [benchmarkResult, setBenchmarkResult] = useState<ModelBenchmarkSweepResponse | null>(null);
   const [benchmarkHistory, setBenchmarkHistory] = useState<ModelBenchmarkHistoryRun[]>([]);
-  const [reviewSelectionActionNote, setReviewSelectionActionNote] = useState('');
   const [baseModelIntrospection, setBaseModelIntrospection] = useState<ModelIntrospectionSummary | null>(null);
   const [baseModelIntrospectionLoading, setBaseModelIntrospectionLoading] = useState(false);
   const [baseModelIntrospectionError, setBaseModelIntrospectionError] = useState('');
-  const [wizardAutoRan, setWizardAutoRan] = useState(false);
   const [observabilitySummary, setObservabilitySummary] = useState<TrainingObservabilitySummary | null>(null);
   const [observabilityRecentCount, setObservabilityRecentCount] = useState(0);
   const [observabilityError, setObservabilityError] = useState('');
@@ -298,61 +275,8 @@ export default function TrainingPanel({
 
 
   const activeExperimentKey = activeExperiment ? `${activeExperiment.id}:${activeExperiment.status}` : '';
-  const createFormVisible = !hideCreateControls && (forceCreateVisible || showCreate);
-  const canConfigureExperiments = !hideCreateControls;
-  const canViewRuns = !hideExperimentList;
-  const showWorkspaceTabs = canConfigureExperiments && canViewRuns;
   const isAlignmentMode = trainingMode === 'dpo' || trainingMode === 'orpo';
-  const isSetupAdvancedMode = setupMode === 'advanced';
-  const setupTabOrder: TrainingSetupTab[] = isSetupAdvancedMode
-    ? ['basics', 'config', 'power', 'review']
-    : ['basics', 'config', 'review'];
-  const setupTabIndex = setupTabOrder.indexOf(setupTab);
-  const showSetupBasics = setupTab === 'basics';
-  const showSetupConfig = setupTab === 'config';
-  const showSetupPower = isSetupAdvancedMode && setupTab === 'power';
-  const showSetupReview = setupTab === 'review';
-  const canSetupGoBack = setupTabIndex > 0;
-  const canSetupGoNext = setupTabIndex >= 0 && setupTabIndex < setupTabOrder.length - 1;
 
-  const experimentStats = useMemo(() => {
-    const running = experiments.filter((item) => item.status === 'running').length;
-    const completed = experiments.filter((item) => item.status === 'completed').length;
-    const failed = experiments.filter((item) => item.status === 'failed').length;
-    const pending = experiments.filter((item) => item.status === 'pending').length;
-    return {
-      total: experiments.length,
-      running,
-      completed,
-      failed,
-      pending,
-    };
-  }, [experiments]);
-
-  const recommendedAction = useMemo(() => {
-    if (canConfigureExperiments && experimentStats.total === 0) {
-      return {
-        title: 'Create your first experiment',
-        detail: 'Open Setup and use a training preset + preflight before launching.',
-      };
-    }
-    if (canViewRuns && experimentStats.running > 0) {
-      return {
-        title: 'Monitor active runs',
-        detail: `${experimentStats.running} experiment(s) are running. Open Runs and launch dashboard.`,
-      };
-    }
-    if (canConfigureExperiments && canViewRuns) {
-      return {
-        title: 'Tune and iterate',
-        detail: 'Adjust config in Setup, then create another run and compare results.',
-      };
-    }
-    return {
-      title: 'Review experiment status',
-      detail: 'Open the available section and continue with the next training action.',
-    };
-  }, [canConfigureExperiments, canViewRuns, experimentStats]);
 
   const runtimeOptions = Array.isArray(runtimeCatalog?.runtimes) ? runtimeCatalog.runtimes : [];
   const selectedRuntimeCatalogId =
@@ -370,24 +294,6 @@ export default function TrainingPanel({
 
   const preflightContractDetails = useMemo(() => buildPreflightContractDetails(preflightPreview), [preflightPreview]);
 
-  const essentialsModelGateSummary = useMemo(() => {
-    const gateOk = preflightContractDetails.modelGateOk;
-    const statusLabel = gateOk === true ? 'Pass' : gateOk === false ? 'Blocked' : 'Unknown';
-    const statusClass = gateOk === true ? 'ok' : gateOk === false ? 'blocked' : 'unknown';
-    const topIssue =
-      preflightContractDetails.modelGateErrors[0] ||
-      preflightContractDetails.modelGateHints[0] ||
-      '';
-    return {
-      statusLabel,
-      statusClass,
-      modelId: preflightContractDetails.modelId,
-      architecture: preflightContractDetails.modelArchitecture,
-      source: preflightContractDetails.modelIntrospectionSource,
-      topIssue,
-      supportedArchitectures: preflightContractDetails.modelSupportedArchitectures.join(', '),
-    };
-  }, [preflightContractDetails]);
 
   const modelSelectionSummary = useMemo(() => buildModelSelectionSummary(wizardResult, benchmarkResult, benchmarkHistory, baseModel), [wizardResult, benchmarkResult, benchmarkHistory, baseModel]);
 
@@ -1103,75 +1009,6 @@ export default function TrainingPanel({
     });
   };
 
-  const applyReviewConsensusWinner = () => {
-    const recommendationWinnerId = String(modelSelectionSummary.recommendationWinnerId || '').trim();
-    const benchmarkWinnerId = String(modelSelectionSummary.benchmarkWinnerId || '').trim();
-
-    let selectedModelId = '';
-    let selectedWinnerLabel: 'consensus' | 'benchmark' | 'recommendation' = 'recommendation';
-
-    if (recommendationWinnerId && benchmarkWinnerId && recommendationWinnerId === benchmarkWinnerId) {
-      selectedModelId = recommendationWinnerId;
-      selectedWinnerLabel = 'consensus';
-    } else if (benchmarkWinnerId) {
-      selectedModelId = benchmarkWinnerId;
-      selectedWinnerLabel = 'benchmark';
-    } else if (recommendationWinnerId) {
-      selectedModelId = recommendationWinnerId;
-      selectedWinnerLabel = 'recommendation';
-    }
-
-    if (!selectedModelId) {
-      setReviewSelectionActionNote('No model winner available yet. Run recommendation or benchmark first.');
-      return;
-    }
-
-    const recommendationRows = Array.isArray(wizardResult?.recommendations)
-      ? wizardResult.recommendations
-      : [];
-    const currentBenchmarkRows = Array.isArray(benchmarkResult?.matrix) ? benchmarkResult.matrix : [];
-    const historyBenchmarkRows = Array.isArray(benchmarkHistory[0]?.matrix) ? benchmarkHistory[0].matrix || [] : [];
-    const recommendationIndex = recommendationRows
-      .findIndex((item) => String(item?.model_id || '').trim() === selectedModelId);
-    const currentBenchmarkIndex = currentBenchmarkRows
-      .findIndex((item) => String(item?.model_id || '').trim() === selectedModelId);
-    const historyBenchmarkIndex = historyBenchmarkRows
-      .findIndex((item) => String(item?.model_id || '').trim() === selectedModelId);
-
-    const recommendationRow = recommendationIndex >= 0 ? recommendationRows[recommendationIndex] : null;
-    const benchmarkRow = currentBenchmarkIndex >= 0
-      ? currentBenchmarkRows[currentBenchmarkIndex]
-      : historyBenchmarkIndex >= 0
-        ? historyBenchmarkRows[historyBenchmarkIndex]
-        : currentBenchmarkRows[0] || historyBenchmarkRows[0] || null;
-    const benchmarkRankIndex = currentBenchmarkIndex >= 0
-      ? currentBenchmarkIndex
-      : historyBenchmarkIndex >= 0
-        ? historyBenchmarkIndex
-        : 0;
-    const selectedRankIndex = recommendationIndex >= 0 ? recommendationIndex : benchmarkRankIndex;
-    const recommendationScore = Number(recommendationRow?.match_score);
-    const benchmarkScore = Number(benchmarkRow?.estimated_quality_score);
-    const selectedScore = Number.isFinite(recommendationScore)
-      ? recommendationScore
-      : Number.isFinite(benchmarkScore)
-        ? benchmarkScore
-        : undefined;
-
-    applyModelSelectionChoice({
-      modelId: selectedModelId,
-      rankIndex: selectedRankIndex,
-      selectedScore,
-      defaults: recommendationRow?.suggested_defaults,
-      applySource: selectedWinnerLabel,
-    });
-
-    setBenchmarkError('');
-    setReviewSelectionActionNote(
-      `Applied ${selectedWinnerLabel} winner (${selectedModelId}) to base model.`,
-    );
-  };
-
   const persistPreferredPlanProfile = async (profile: string) => {
     const normalized = String(profile || '').trim().toLowerCase();
     if (!normalized) return;
@@ -1202,22 +1039,6 @@ export default function TrainingPanel({
     const profile = String(suggestion.profile || '').trim();
     if (profile) {
       void persistPreferredPlanProfile(profile);
-    }
-  };
-
-  const goToNextSetupTab = () => {
-    if (!canSetupGoNext) return;
-    const nextTab = setupTabOrder[setupTabIndex + 1];
-    if (nextTab) {
-      setSetupTab(nextTab);
-    }
-  };
-
-  const goToPreviousSetupTab = () => {
-    if (!canSetupGoBack) return;
-    const prevTab = setupTabOrder[setupTabIndex - 1];
-    if (prevTab) {
-      setSetupTab(prevTab);
     }
   };
 
@@ -1417,22 +1238,12 @@ export default function TrainingPanel({
   }, [projectId]);
 
   useEffect(() => {
-    if (forceCreateVisible || !canViewRuns) {
-      setWorkspaceView('setup');
-    } else if (!canConfigureExperiments) {
-      setWorkspaceView('runs');
-    } else {
-      setWorkspaceView('overview');
-    }
-
     setExperiments([]);
     setActiveExperiment(null);
     setMetrics([]);
     setTrainingLogs([]);
     setSelectedForCompare([]);
     setShowCompare(false);
-    setShowCreate(Boolean(forceCreateVisible && !hideCreateControls));
-    setSetupTab('basics');
     setTaskState('');
     setTrainingError(null);
     setTrainingMode('sft');
@@ -1456,7 +1267,6 @@ export default function TrainingPanel({
     setMultimodalRequireMedia(false);
     setUseProfileDefaults(true);
     setTouchedConfig(untouchedConfig());
-    setLastCreateSummary(null);
     setEffectivePreview(null);
     setEffectivePreviewError('');
     setPreflightPreview(null);
@@ -1481,11 +1291,9 @@ export default function TrainingPanel({
     setBenchmarkError('');
     setBenchmarkResult(null);
     setBenchmarkHistory([]);
-    setReviewSelectionActionNote('');
     setBaseModelIntrospection(null);
     setBaseModelIntrospectionLoading(false);
     setBaseModelIntrospectionError('');
-    setWizardAutoRan(false);
     setObservabilitySummary(null);
     setObservabilityRecentCount(0);
     setObservabilityError('');
@@ -1496,18 +1304,9 @@ export default function TrainingPanel({
     void loadModelBenchmarkHistory({ silent: true });
     refreshExperiments().catch((err) => console.error('Failed to load experiments', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, forceCreateVisible, hideCreateControls, hideExperimentList]);
+  }, [projectId]);
 
 
-  useEffect(() => {
-    if (workspaceView !== 'setup') {
-      setSetupTab('basics');
-      return;
-    }
-    if (!setupTabOrder.includes(setupTab)) {
-      setSetupTab('basics');
-    }
-  }, [workspaceView, setupTabOrder, setupTab]);
 
   useEffect(() => {
     const currentModel = String(baseModel || '').trim();
@@ -1522,48 +1321,6 @@ export default function TrainingPanel({
       setBaseModelIntrospectionError('');
     }
   }, [baseModel, baseModelIntrospection?.model_id]);
-
-  useEffect(() => {
-    setReviewSelectionActionNote('');
-  }, [modelSelectionSummary.recommendationWinnerId, modelSelectionSummary.benchmarkWinnerId]);
-
-  useEffect(() => {
-    if (workspaceView !== 'setup' || !createFormVisible) {
-      return;
-    }
-    if (!isSetupAdvancedMode || setupTab !== 'power') {
-      return;
-    }
-    if (wizardAutoRan || wizardLoading) {
-      return;
-    }
-    if (Array.isArray(wizardResult?.recommendations) && wizardResult.recommendations.length > 0) {
-      return;
-    }
-    setWizardAutoRan(true);
-    void runModelWizard({ silent: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceView, createFormVisible, wizardAutoRan, wizardLoading, projectId, isSetupAdvancedMode, setupTab]);
-
-  useEffect(() => {
-    if (forceCreateVisible || !canViewRuns) {
-      if (workspaceView !== 'setup') {
-        setWorkspaceView('setup');
-      }
-      return;
-    }
-    if (!canConfigureExperiments && workspaceView !== 'runs') {
-      setWorkspaceView('runs');
-      return;
-    }
-    if (workspaceView === 'setup' && !canConfigureExperiments) {
-      setWorkspaceView('runs');
-      return;
-    }
-    if (workspaceView === 'runs' && !canViewRuns) {
-      setWorkspaceView('setup');
-    }
-  }, [forceCreateVisible, canConfigureExperiments, canViewRuns, workspaceView]);
 
   useEffect(() => {
     if (!activeExperiment || activeExperiment.status !== 'running') {
@@ -1681,13 +1438,11 @@ export default function TrainingPanel({
     return () => ws.close();
   }, [activeExperimentKey, projectId]);
 
+  // The form is always visible: resolve the effective config once per project.
   useEffect(() => {
-    if (!(forceCreateVisible || showCreate)) {
-      return;
-    }
     void previewEffectiveConfig();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showCreate, forceCreateVisible, projectId]);
+  }, [projectId]);
 
   useEffect(() => {
     if (!activeExperiment) {
@@ -1725,24 +1480,6 @@ export default function TrainingPanel({
       const res = await api.post<Experiment>(`/projects/${projectId}/training/experiments`, { name: runName, config });
       const created = res.data;
       setExperiments((prev) => [created, ...prev]);
-      setLastCreateSummary({
-        domainPackApplied: created.domain_pack_applied ?? null,
-        domainPackSource: created.domain_pack_source ?? null,
-        domainProfileApplied: created.domain_profile_applied ?? null,
-        domainProfileSource: created.domain_profile_source ?? null,
-        defaultsApplied: created.profile_defaults_applied || [],
-        profileDefaults:
-          created.profile_training_defaults && typeof created.profile_training_defaults === 'object'
-            ? created.profile_training_defaults
-            : null,
-        resolvedConfig:
-          created.resolved_training_config && typeof created.resolved_training_config === 'object'
-            ? created.resolved_training_config
-            : null,
-      });
-      if (!forceCreateVisible) {
-        setShowCreate(false);
-      }
       setName('');
       setTrainingRuntimeId('auto');
       setPreflightPreview(null);
@@ -1772,13 +1509,13 @@ export default function TrainingPanel({
     }
   };
 
-  // Form layout: prefill from the latest run's config (what the user trained
+  // Prefill from the latest run's config (what the user trained
   // last is the best default), else the project's base model. Once per
   // project, after the runs list has loaded (the stored config carries no
   // base_model — that is a column on the run — so both are applied).
   const [formPrefilledFor, setFormPrefilledFor] = useState<number | null>(null);
   useEffect(() => {
-    if (!isFormLayout || !experimentsLoaded || formPrefilledFor === projectId) return;
+    if (!experimentsLoaded || formPrefilledFor === projectId) return;
     const latest = experiments.find((exp) => exp.config && typeof exp.config === 'object' && !exp.config.is_baseline);
     if (latest?.config) {
       applySuggestedConfig(latest.config as Record<string, unknown>);
@@ -1788,18 +1525,17 @@ export default function TrainingPanel({
     }
     setFormPrefilledFor(projectId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isFormLayout, experimentsLoaded, experiments, defaultBaseModel, projectId, formPrefilledFor]);
+  }, [experimentsLoaded, experiments, defaultBaseModel, projectId, formPrefilledFor]);
 
-  // Form layout: check readiness on mount and whenever the base model changes
+  // Check readiness on mount and whenever the base model changes
   // (debounced — the defaults land asynchronously and typing is bursty).
   useEffect(() => {
-    if (!isFormLayout) return;
     const timer = window.setTimeout(() => {
       void runPreflightPreview();
     }, 600);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isFormLayout, baseModel, projectId]);
+  }, [baseModel, projectId]);
 
   const handleStart = async (experimentId: number) => {
     setTrainingError(null);
@@ -1942,7 +1678,7 @@ export default function TrainingPanel({
     );
   }
 
-  if (isFormLayout) {
+  {
     const readiness: TrainReadiness = preflightPreviewLoading
       ? { state: 'checking', errors: [], warnings: [] }
       : preflightPreviewError
@@ -2154,7 +1890,7 @@ export default function TrainingPanel({
 
         {afterForm}
 
-        {canViewRuns && (
+        {(
           <div className="card">
             <div className="training-panel-head">
               <h3 className="training-panel-title">{title}</h3>
@@ -2215,645 +1951,5 @@ export default function TrainingPanel({
     );
   }
 
-  return (
-    <div className="animate-fade-in training-panel-stack">
-      <div className="card">
-        <div className="training-panel-head">
-          <h3 className="training-panel-title">{title}</h3>
-          {!hideCreateControls && !forceCreateVisible && (
-            <button
-              className="btn btn-primary"
-              onClick={() => {
-                setWorkspaceView('setup');
-                setSetupTab('basics');
-                setShowCreate(true);
-                setPreflightPreview(null);
-                setPreflightPreviewError('');
-                setPreflightPlan(null);
-                setPreflightPlanError('');
-              }}
-            >
-              + New Experiment
-            </button>
-          )}
-        </div>
-
-        <div className="training-journey-strip">
-          <div className="training-journey-card">
-            <span className="training-journey-card__index">1</span>
-            <div>
-              <strong>Setup</strong>
-              <p>
-                <Term id="recipe" />, profile defaults, <Term id="preflight" />, hyperparameters.
-              </p>
-            </div>
-          </div>
-          <div className="training-journey-card">
-            <span className="training-journey-card__index">2</span>
-            <div>
-              <strong>Run</strong>
-              <p>Create and start experiments, compare multiple runs.</p>
-            </div>
-          </div>
-          <div className="training-journey-card">
-            <span className="training-journey-card__index">3</span>
-            <div>
-              <strong>Monitor</strong>
-              <p>Open dashboard for live epoch/loss and worker logs.</p>
-            </div>
-          </div>
-        </div>
-
-        {showWorkspaceTabs && (
-          <div className="training-workspace-tabs">
-            <button
-              className={`training-workspace-tab ${workspaceView === 'overview' ? 'active' : ''}`}
-              onClick={() => setWorkspaceView('overview')}
-            >
-              Overview
-            </button>
-            <button
-              className={`training-workspace-tab ${workspaceView === 'setup' ? 'active' : ''}`}
-              onClick={() => {
-                setWorkspaceView('setup');
-                setSetupTab('basics');
-                if (!forceCreateVisible) {
-                  setShowCreate(true);
-                }
-              }}
-            >
-              Setup
-            </button>
-            <button
-              className={`training-workspace-tab ${workspaceView === 'runs' ? 'active' : ''}`}
-              onClick={() => setWorkspaceView('runs')}
-            >
-              Runs
-            </button>
-          </div>
-        )}
-
-        {workspaceView === 'overview' && (
-          <>
-            <div className="training-overview-grid">
-              <article className="training-overview-card">
-                <span className="training-overview-card__label">Experiments</span>
-                <strong>{experimentStats.total}</strong>
-                <p>Total created</p>
-              </article>
-              <article className="training-overview-card">
-                <span className="training-overview-card__label">Running</span>
-                <strong>{experimentStats.running}</strong>
-                <p>Active right now</p>
-              </article>
-              <article className="training-overview-card">
-                <span className="training-overview-card__label">Completed</span>
-                <strong>{experimentStats.completed}</strong>
-                <p>Finished successfully</p>
-              </article>
-              <article className="training-overview-card">
-                <span className="training-overview-card__label">Recommended Next</span>
-                <strong>{recommendedAction.title}</strong>
-                <p>{recommendedAction.detail}</p>
-              </article>
-            </div>
-            <div className="training-overview-actions">
-              {canConfigureExperiments && (
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    setWorkspaceView('setup');
-                    setSetupTab('basics');
-                    if (!forceCreateVisible) setShowCreate(true);
-                  }}
-                >
-                  Go to Setup
-                </button>
-              )}
-              {canViewRuns && (
-                <button className="btn btn-secondary" onClick={() => setWorkspaceView('runs')}>
-                  View Runs
-                </button>
-              )}
-            </div>
-          </>
-        )}
-
-        {canConfigureExperiments && !showWorkspaceTabs && createFormVisible && (
-          <div className="training-form-intro">
-            <span>Configure your run settings below, then create the experiment.</span>
-          </div>
-        )}
-
-        {canConfigureExperiments && workspaceView === 'setup' && !createFormVisible && !forceCreateVisible && (
-          <div className="training-empty-helper">
-            <p>Setup form is currently hidden.</p>
-            <button className="btn btn-secondary" onClick={() => setShowCreate(true)}>
-              Open Setup Form
-            </button>
-          </div>
-        )}
-
-        {canConfigureExperiments && workspaceView === 'setup' && createFormVisible && (
-          <div className="training-create-shell">
-            <div className="training-create-shell__head">
-              <strong>Create Experiment</strong>
-              <span className="training-create-shell__hint">
-                {isSetupAdvancedMode
-                  ? 'Use a training preset + defaults for quick setup, then open advanced sections only if needed.'
-                  : 'Essentials mode keeps only launch-critical controls visible. Switch to Advanced for full tuning.'}
-              </span>
-            </div>
-            <ReadinessPanel projectId={projectId} />
-            <div className="training-setup-tabs" role="tablist" aria-label="Training setup steps">
-              {setupTabOrder.map((tab, idx) => {
-                const label = tab === 'basics'
-                  ? 'Basics'
-                  : tab === 'config'
-                    ? 'Config'
-                    : tab === 'power'
-                      ? 'Power Tools'
-                      : 'Review';
-                return (
-                  <button
-                    key={tab}
-                    className={`training-setup-tab ${setupTab === tab ? 'active' : ''}`}
-                    onClick={() => setSetupTab(tab)}
-                    role="tab"
-                    aria-selected={setupTab === tab}
-                  >
-                    <span className="setup-tab-index">{idx + 1}</span>
-                    <span>{label}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {showSetupBasics && (
-              <>
-                <div className="form-group">
-                  <label className="form-label">Experiment Name</label>
-                  <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. llama3-sft-v1" />
-                </div>
-                <div className="form-group form-group--spaced">
-                  <label className="form-label form-label-inline">
-                    <input
-                      type="checkbox"
-                      checked={useProfileDefaults}
-                      onChange={(e) => setUseProfileDefaults(e.target.checked)}
-                    />
-                    Use domain runtime defaults for untouched fields
-                  </label>
-                  <div className="form-hint">
-                    Base model is always sent. Other fields are only sent after you edit them.
-                  </div>
-                </div>
-                <div className="form-group form-group--spaced">
-                  <label className="form-label">Training preset</label>
-                  <div className="form-inline-actions">
-                    <select
-                      className="input training-recipe-select"
-                      value={selectedRecipeId}
-                      onChange={(e) => setSelectedRecipeId(e.target.value)}
-                    >
-                      <option value="">Select preset</option>
-                      {trainingRecipes.map((recipe) => (
-                        <option key={recipe.recipe_id} value={recipe.recipe_id}>
-                          {recipe.display_name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => void applySelectedRecipe()}
-                      disabled={recipeResolveLoading || !selectedRecipeId}
-                    >
-                      {recipeResolveLoading ? 'Applying...' : 'Apply preset'}
-                    </button>
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => setShowHardwareModal(true)}
-                      title="Optimize settings for target hardware"
-                    >
-                      ✨ Hardware Auto-Tuner
-                    </button>
-                  </div>
-                  <div className="form-hint">
-                    A training preset applies a domain-agnostic config patch, then runtime/profile defaults and preflight.
-                  </div>
-                  {recipeResolveError && (
-                    <div className="training-alert training-alert--warning training-alert--tight">
-                      {recipeResolveError}
-                    </div>
-                  )}
-                  {effectivePreview?.warm_start && (
-                    <div
-                      className={`training-warm-start training-warm-start--${
-                        effectivePreview.warm_start.source === 'checkpoint' ? 'warm' : 'cold'
-                      }`}
-                    >
-                      <strong>Starting weights:</strong>{' '}
-                      {effectivePreview.warm_start.source === 'checkpoint'
-                        ? effectivePreview.warm_start.checkpoint_name ||
-                          effectivePreview.warm_start.manifest?.display_name ||
-                          'warm start'
-                        : 'base model (cold start)'}
-                      {' — '}
-                      {describeWarmStartReason(effectivePreview.warm_start.reason)}
-                    </div>
-                  )}
-                </div>
-
-                {!isSetupAdvancedMode && (
-                  <div className="training-essentials-tools">
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => void runPreflightPreview()}
-                      disabled={preflightPreviewLoading}
-                    >
-                      {preflightPreviewLoading ? 'Checking...' : 'Run Quick Preflight'}
-                    </button>
-                    {preflightPreview && (
-                      <span className={`training-essentials-preflight ${preflightPreview.ok ? 'ok' : 'blocked'}`}>
-                        {preflightPreview.ok
-                          ? 'Preflight passed'
-                          : `${preflightPreview.errors.length} blocking issue(s)`}
-                      </span>
-                    )}
-                    {preflightPreview && (
-                      <div className={`training-essentials-model-gate training-essentials-model-gate--${essentialsModelGateSummary.statusClass}`}>
-                        <strong>Model Gate: {essentialsModelGateSummary.statusLabel}</strong>
-                        <span>
-                          {essentialsModelGateSummary.modelId} • {essentialsModelGateSummary.architecture} • source {essentialsModelGateSummary.source}
-                        </span>
-                        {essentialsModelGateSummary.topIssue && (
-                          <span>{essentialsModelGateSummary.topIssue}</span>
-                        )}
-                        {essentialsModelGateSummary.supportedArchitectures && (
-                          <span>Supported: {essentialsModelGateSummary.supportedArchitectures}</span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-
-            {showSetupPower && (
-            <TrainingValidationSection
-              projectId={projectId}
-              effectivePreview={effectivePreview}
-              effectivePreviewLoading={effectivePreviewLoading}
-              effectivePreviewError={effectivePreviewError}
-              preflightPreview={preflightPreview}
-              preflightPreviewLoading={preflightPreviewLoading}
-              preflightPreviewError={preflightPreviewError}
-              preflightPlan={preflightPlan}
-              preflightPlanLoading={preflightPlanLoading}
-              preflightPlanError={preflightPlanError}
-              preferredPlanProfile={preferredPlanProfile}
-              preflightContractDetails={preflightContractDetails}
-              modelSelectionSummary={modelSelectionSummary}
-              onPreviewEffectiveConfig={() => void previewEffectiveConfig()}
-              onRunPreflightPreview={() => void runPreflightPreview()}
-              onRunPreflightPlan={() => void runPreflightPlan()}
-              onApplyPlanSuggestion={applyPlanSuggestion}
-            />
-            )}
-
-            {showSetupPower && (
-            <CloudBurstPlanningSection key={projectId} projectId={projectId} />
-            )}
-
-            {(showSetupConfig || showSetupPower) && (
-            <details className="training-collapsible" open>
-              <summary>
-                <span>{showSetupPower ? 'Power Tools' : 'Core Configuration'}</span>
-                <small>
-                  {showSetupPower
-                    ? 'Advanced tuning, model recommendation, and PEFT controls'
-                    : 'Only required controls for a reliable run'}
-                </small>
-              </summary>
-              <div className="training-collapsible__content">
-                <div className={showSetupPower ? 'training-config-grid' : 'training-config-grid training-config-grid--essentials'}>
-                  <TrainingModelEssentialsSection
-                    form={configForm}
-                    applyBenchmarkWinner={applyBenchmarkWinner}
-                    applyModelSelectionChoice={applyModelSelectionChoice}
-                    applyModelWizardRecommendation={applyModelWizardRecommendation}
-                    baseModelIntrospection={baseModelIntrospection}
-                    baseModelIntrospectionError={baseModelIntrospectionError}
-                    baseModelIntrospectionLoading={baseModelIntrospectionLoading}
-                    benchmarkError={benchmarkError}
-                    benchmarkHistory={benchmarkHistory}
-                    benchmarkLoading={benchmarkLoading}
-                    benchmarkResult={benchmarkResult}
-                    buildTrainingConfigPayload={buildTrainingConfigPayload}
-                    introspectBaseModel={introspectBaseModel}
-                    isAlignmentMode={isAlignmentMode}
-                    projectId={projectId}
-                    runModelBenchmarkSweep={runModelBenchmarkSweep}
-                    runModelWizard={runModelWizard}
-                    runtimeCatalog={runtimeCatalog}
-                    runtimeCatalogError={runtimeCatalogError}
-                    selectedRuntimeModalities={selectedRuntimeModalities}
-                    selectedRuntimeModalitiesDeclared={selectedRuntimeModalitiesDeclared}
-                    selectedRuntimeSpec={selectedRuntimeSpec}
-                    setWizardPrimaryLanguage={setWizardPrimaryLanguage}
-                    setWizardTargetDevice={setWizardTargetDevice}
-                    setWizardTaskProfile={setWizardTaskProfile}
-                    setWizardVramGb={setWizardVramGb}
-                    showSetupConfig={showSetupConfig}
-                    showSetupPower={showSetupPower}
-                    wizardError={wizardError}
-                    wizardLoading={wizardLoading}
-                    wizardPrimaryLanguage={wizardPrimaryLanguage}
-                    wizardResult={wizardResult}
-                    wizardTargetDevice={wizardTargetDevice}
-                    wizardTaskProfile={wizardTaskProfile}
-                    wizardVramGb={wizardVramGb}
-                  />
-
-                  {showSetupPower && (
-                  <TrainingMultiSeedSection
-                    form={configForm}
-                  />
-                  )}
-
-                  {showSetupPower && (
-                  <TrainingAdvancedPeftSection
-                    form={configForm}
-                    isAlignmentMode={isAlignmentMode}
-                  />
-                  )}
-                </div>
-              </div>
-            </details>
-            )}
-
-            {showSetupReview && (
-              <div className="training-review-panel">
-                <div className="training-review-grid">
-                  <div className="training-review-item">
-                    <span>Name</span>
-                    <strong>{name || 'Untitled experiment'}</strong>
-                  </div>
-                  <div className="training-review-item">
-                    <span>Base Model</span>
-                    <strong>{baseModel || 'not set'}</strong>
-                  </div>
-                  <div className="training-review-item">
-                    <span>Runtime</span>
-                    <strong>{trainingRuntimeId}</strong>
-                  </div>
-                  <div className="training-review-item">
-                    <span>Training</span>
-                    <strong>{epochs} epochs · batch {batchSize} · lr {lr}</strong>
-                  </div>
-                </div>
-                {modelSelectionSummary.hasAny && (
-                  <div className="training-review-selection-panel">
-                    <div className="training-review-selection-panel__head">
-                      <strong>Preflight Model Selection Snapshot</strong>
-                      <span>{modelSelectionSummary.winnerAlignmentLabel}</span>
-                    </div>
-                    <div className="training-review-selection-grid">
-                      <div className="training-review-item">
-                        <span>Recommendation Winner</span>
-                        <strong>{modelSelectionSummary.recommendationWinnerId || 'not available'}</strong>
-                      </div>
-                      <div className="training-review-item">
-                        <span>Benchmark Winner</span>
-                        <strong>{modelSelectionSummary.benchmarkWinnerId || 'not available'}</strong>
-                      </div>
-                    </div>
-                    <div className="training-review-selection-panel__actions">
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={applyReviewConsensusWinner}
-                        disabled={!modelSelectionSummary.recommendationWinnerId && !modelSelectionSummary.benchmarkWinnerId}
-                      >
-                        Use Consensus Winner
-                      </button>
-                      {reviewSelectionActionNote && (
-                        <span className="training-review-selection-panel__note">
-                          {reviewSelectionActionNote}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                )}
-                {!isSetupAdvancedMode && (
-                  <div className="training-essentials-tools">
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => void runPreflightPreview()}
-                      disabled={preflightPreviewLoading}
-                    >
-                      {preflightPreviewLoading ? 'Checking...' : 'Run Quick Preflight'}
-                    </button>
-                    {preflightPreview && (
-                      <span className={`training-essentials-preflight ${preflightPreview.ok ? 'ok' : 'blocked'}`}>
-                        {preflightPreview.ok
-                          ? 'Preflight passed'
-                          : `${preflightPreview.errors.length} blocking issue(s)`}
-                      </span>
-                    )}
-                    {preflightPreview && (
-                      <div className={`training-essentials-model-gate training-essentials-model-gate--${essentialsModelGateSummary.statusClass}`}>
-                        <strong>Model Gate: {essentialsModelGateSummary.statusLabel}</strong>
-                        <span>
-                          {essentialsModelGateSummary.modelId} • {essentialsModelGateSummary.architecture} • source {essentialsModelGateSummary.source}
-                        </span>
-                        {essentialsModelGateSummary.topIssue && (
-                          <span>{essentialsModelGateSummary.topIssue}</span>
-                        )}
-                        {essentialsModelGateSummary.supportedArchitectures && (
-                          <span>Supported: {essentialsModelGateSummary.supportedArchitectures}</span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {!showSetupReview && (
-              <div className="training-create-shell__actions training-create-shell__actions--step">
-                <button
-                  className="btn btn-secondary"
-                  onClick={goToPreviousSetupTab}
-                  disabled={!canSetupGoBack}
-                >
-                  Back
-                </button>
-                <button
-                  className="btn btn-primary"
-                  onClick={goToNextSetupTab}
-                  disabled={!canSetupGoNext}
-                >
-                  Continue
-                </button>
-                {!forceCreateVisible && (
-                  <button
-                    className="btn btn-secondary"
-                    onClick={() => {
-                      setShowCreate(false);
-                      setSetupTab('basics');
-                      setPreflightPreview(null);
-                      setPreflightPreviewError('');
-                      setPreflightPlan(null);
-                      setPreflightPlanError('');
-                    }}
-                  >
-                    Close
-                  </button>
-                )}
-              </div>
-            )}
-
-            {showSetupReview && (
-              <div className="training-create-shell__actions">
-                <button className="btn btn-secondary" onClick={goToPreviousSetupTab}>
-                  Back
-                </button>
-                <button className="btn btn-primary" onClick={() => void handleCreate()}>Create Experiment</button>
-                {!forceCreateVisible && (
-                  <button
-                    className="btn btn-secondary"
-                    onClick={() => {
-                      setShowCreate(false);
-                      setSetupTab('basics');
-                      setPreflightPreview(null);
-                      setPreflightPreviewError('');
-                      setPreflightPlan(null);
-                      setPreflightPlanError('');
-                    }}
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {trainingError && (
-          <ErrorPanel
-            envelope={trainingError}
-            onDismiss={() => setTrainingError(null)}
-            testIdPrefix="training-error-bottom"
-          />
-        )}
-        {trainingWarnings.length > 0 && (
-          <div className="training-alert training-alert--warning">
-            Preflight warnings: {trainingWarnings.join(' | ')}
-          </div>
-        )}
-
-        {lastCreateSummary && (
-          <div className="resolved-defaults-panel">
-            <div className="resolved-defaults-panel__title">Resolved Defaults</div>
-            <div className="resolved-defaults-panel__kv">
-              <span>Applied Pack</span>
-              <strong>
-                {lastCreateSummary.domainPackApplied
-                  ? `${lastCreateSummary.domainPackApplied} (${lastCreateSummary.domainPackSource || 'unknown'})`
-                  : 'none'}
-              </strong>
-            </div>
-            <div className="resolved-defaults-panel__kv">
-              <span>Applied Profile</span>
-              <strong>
-                {lastCreateSummary.domainProfileApplied
-                  ? `${lastCreateSummary.domainProfileApplied} (${lastCreateSummary.domainProfileSource || 'unknown'})`
-                  : 'none'}
-              </strong>
-            </div>
-            <div className="resolved-defaults-panel__kv">
-              <span>Runtime Fields Applied</span>
-              <strong>
-                {lastCreateSummary.defaultsApplied.length > 0
-                  ? lastCreateSummary.defaultsApplied.join(', ')
-                  : 'none'}
-              </strong>
-            </div>
-            <div className="resolved-defaults-panel__grid">
-              <div>
-                <div className="resolved-defaults-panel__subtitle">Resolved Training Config</div>
-                <pre className="resolved-defaults-panel__json">
-                  {JSON.stringify(lastCreateSummary.resolvedConfig || {}, null, 2)}
-                </pre>
-              </div>
-              <div>
-                <div className="resolved-defaults-panel__subtitle">Runtime Training Defaults</div>
-                <pre className="resolved-defaults-panel__json">
-                  {JSON.stringify(lastCreateSummary.profileDefaults || {}, null, 2)}
-                </pre>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {canViewRuns && (workspaceView === 'runs' || (!showWorkspaceTabs && workspaceView !== 'setup')) && (
-          <TrainingRunsList
-            hideCreateControls={hideCreateControls}
-            experiments={experiments}
-            jobByExperimentId={jobByExperimentId}
-            selectedForCompare={selectedForCompare}
-            handleBulkArchiveFailed={handleBulkArchiveFailed}
-            handleDeleteExperiment={handleDeleteExperiment}
-            handleResetExperiment={handleResetExperiment}
-            setPendingStartExperiment={setPendingStartExperiment}
-            setShowCompare={setShowCompare}
-            toggleCompareSelection={toggleCompareSelection}
-            viewDashboard={viewDashboard}
-          />
-        )}
-      </div>
-
-      {onNextStep && !hideStepFooter && (
-        <StepFooter
-          currentStep="Training"
-          nextStep="Compression"
-          nextStepIcon="🗜️"
-          isComplete={experiments.some((e) => e.status === 'completed')}
-          hint="Start and complete an experiment to proceed"
-          onNext={onNextStep}
-        />
-      )}
-
-      {showHardwareModal && (
-        <HardwareRecommenderModal
-          onClose={() => setShowHardwareModal(false)}
-          onApply={handleApplyHardwareRecommendation}
-        />
-      )}
-
-      {pendingStartExperiment && (
-        <PreRunConfirmModal
-          projectId={projectId}
-          config={
-            pendingStartExperiment.config && typeof pendingStartExperiment.config === 'object'
-              ? (pendingStartExperiment.config as Record<string, unknown>)
-              : {}
-          }
-          baseModel={pendingStartExperiment.base_model}
-          targetProfileId={
-            (pendingStartExperiment.config as Record<string, unknown> | null | undefined)?.[
-              'target_profile_id'
-            ] as string | undefined
-          }
-          onCancel={() => setPendingStartExperiment(null)}
-          onConfirm={() => {
-            const expId = pendingStartExperiment.id;
-            setPendingStartExperiment(null);
-            void handleStart(expId);
-          }}
-          confirmLabel="Launch"
-        />
-      )}
-    </div>
-  );
+  return null;
 }

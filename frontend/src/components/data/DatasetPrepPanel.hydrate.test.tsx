@@ -46,8 +46,8 @@ async function renderAndOpenSplit() {
             <DatasetPrepPanel projectId={42} onNextStep={() => undefined} />
         </MemoryRouter>,
     );
-    // The split form (and the hydration hint) only render under the Split view.
-    await user.click(await screen.findByRole('button', { name: 'Split' }));
+    // The split form is the page itself (no view tabs any more).
+    await screen.findByText(/Train \/ Val \/ Test Split/i);
     return user;
 }
 

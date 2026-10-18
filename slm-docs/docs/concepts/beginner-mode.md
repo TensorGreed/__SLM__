@@ -11,32 +11,29 @@ Nothing in the backend changes and every endpoint stays callable; it is purely a
 
 **It's on by default for every new project**, whichever way the project was created: **+ New Project**, a starter project, a manifest without an explicit setting, or the API. Experts switch it off per project.
 
-## One way in, one Coach
+## One way in, inline guidance
 
 - **Starting a project.** Use **+ New Project**: describe what the model should do, and BrewSLM sets up the task type and base model. Alternatively, start from a starter project on the same page. An existing `brewslm.yaml` can be imported from the create dialog's **Advanced** section. Every path lands on the project's **Overview**.
-- **The Coach bar.** It sits at the top of the **Data**, **Train**, **Results** and **Ship** pages (it is hidden on Overview and Settings), and it's the one guidance surface. It shows:
-  - where you are (stage and % done);
-  - the single **next step**, with **Continue →**;
-  - a short tip and a walkthrough video for the page you're on;
-  - rule-based suggestions for that stage, with one-click fixes:
-    - **Training** on a documents-only project: one click turns the documents into a Q&A assistant (generated question→answer pairs, an answer key, a split, a training run and the lift check).
-    - **Data** → **Generate**: rows still waiting for review, a training mix that is mostly synthetic, or no task type chosen yet.
-    - **Data** → **Split**: data not split yet, a split older than the data it was cut from, a test split too small to trust, or overlapping splits.
-    - **Ship**: nothing trained yet, or the model you're about to ship lost to its base model, was never evaluated, or isn't clearly different from the base model (the change on the test examples is within noise). It also flags a newer run that beat its base model but hasn't been exported.
-- **The full plan.** The Coach bar's **Overview** button (and the sidebar's **Overview**) opens the project landing page: the current stage, the one next step as a button, the latest run and its verdict, the shipped model, up to three suggestions ("Worth a look"), and a collapsed **Full plan** with the step checklist and the one-click Quickstart actions.
-- **Switching it off.** **Settings** → **Show inline tips** turns the Coach on or off for a project. It defaults to on.
+- **Suggestions appear where you work.** There is no separate guidance bar. The **Overview** lists up to three suggestions ("Worth a look"). Each destination (each **Data** step, **Train**, **Results**, **Ship**) shows the suggestions for its stage as notices right under the step bar. Every notice has its one action, a **why?** trace, and an **×** to hide it (per project and rule); a **Show N more** link reveals the rest. The suggestion engine is still called the Coach (`GET /coach/{stage}`). Examples:
+  - **Training** on a documents-only project: one click turns the documents into a Q&A assistant (generated question→answer pairs, an answer key, a split, a training run and the lift check).
+  - **Data** → **Generate**: rows still waiting for review, a training mix that is mostly synthetic, or no task type chosen yet.
+  - **Data** → **Split**: data not split yet, a split older than the data it was cut from, a test split too small to trust, or overlapping splits.
+  - **Ship**: nothing trained yet, or the model you're about to ship lost to its base model, was never evaluated, or isn't clearly different from the base model (the change on the test examples is within noise). It also flags a newer run that beat its base model but hasn't been exported.
+- **Step tips.** Under the step bar there is also a one-line tip for the page you're on, with the walkthrough video link and **Got it** to dismiss it.
+- **The Overview.** The sidebar's **Overview** shows the current stage, the one next step as a button, the latest run and its verdict, the shipped model, and up to three suggestions.
+- **Switching it off.** **Settings** → **Show inline tips** turns all notices and step tips off for a project. It defaults to on.
 
 ## What the flag changes
 
-Nothing is hidden or locked. Pages that used to be "advanced only" now live under **Settings**, out of the main path:
+Nothing is hidden or locked. The long-tail tools live as sections of **Settings** (a Tools drawer; `/settings?open=<id>`), out of the main path:
 
 | Where | What |
 |---|---|
-| **Settings** | Autopilot Planner (plan diffs, repair preview, rollback), Workflow Builder, Pipeline presets, Domain Packs, Domain Profiles, Adapter Studio, Extension Studio, manifest export; Pipeline as Code links into Ship |
+| **Settings** | Sections: Autopilot Planner (plan diffs, repair preview, rollback), Workflow Builder, Domain Packs, Domain Profiles, Extension Studio; manifest export. An "Elsewhere" card links Pipeline presets and Adapter Studio (under Train) and Pipeline as Code (under Ship) |
 | **Results** | Nothing. All four tabs (Verdict, Failures, Compare, Try it) look the same with the flag on or off |
 | Other advanced sections | Start collapsed when the flag is on |
 
-All of these are also reachable by URL and from the Cmd-K palette, which lists the six destinations plus every tool page.
+All of these are also reachable from the ⌘K palette, which lists every destination, Data step and section, Train section, Results workflow, Ship stage and Settings section. The old `/autopilot`, `/workflow`, `/domain`, `/domain/packs`, `/domain/profiles` and `/extensions` URLs redirect to the matching Settings section.
 
 ## Why the advanced pages sit under Settings
 

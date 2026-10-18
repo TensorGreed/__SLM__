@@ -24,6 +24,11 @@ vi.mock('../stores/projectStore', () => ({
         selector({ setActiveProject: setActiveProjectMock }),
 }));
 vi.mock('../components/manifest/ManifestExportButton', () => ({ default: () => <button type="button">Export manifest</button> }));
+vi.mock('./ProjectDomainPacksPage', () => ({ default: () => <div data-testid="domain-packs" /> }));
+vi.mock('./ProjectDomainProfilesPage', () => ({ default: () => <div data-testid="domain-profiles" /> }));
+vi.mock('./ProjectWorkflowPage', () => ({ default: () => <div data-testid="workflow" /> }));
+vi.mock('./ProjectExtensionStudioPage', () => ({ default: () => <div data-testid="extensions" /> }));
+vi.mock('./ProjectAutopilotPage', () => ({ default: () => <div data-testid="autopilot" /> }));
 
 import ProjectSettingsPage from './ProjectSettingsPage';
 import { _resetCoachModeStoreForTests, useCoachModeStore } from '../stores/coachModeStore';
@@ -33,9 +38,9 @@ function LocationProbe() {
     return <div data-testid="location">{location.pathname}</div>;
 }
 
-function renderSettings() {
+function renderSettings(path = '/project/31/settings') {
     return render(
-        <MemoryRouter initialEntries={['/project/31/settings']}>
+        <MemoryRouter initialEntries={[path]}>
             <Routes>
                 <Route path="/project/:id/settings" element={<><ProjectSettingsPage /><LocationProbe /></>} />
                 <Route path="*" element={<LocationProbe />} />
@@ -69,10 +74,22 @@ describe('ProjectSettingsPage', () => {
         expect(setActiveProjectMock).toHaveBeenCalledWith({ id: 31, name: 'Tagger', beginner_mode: false });
     });
 
-    it('links to the long-tail tools', async () => {
+    it('holds the long tail as sections that load only when opened; ?open= opens one', async () => {
         const user = userEvent.setup();
         renderSettings();
-        await user.click(screen.getByRole('button', { name: /Domain Packs/ }));
-        expect(screen.getByTestId('location')).toHaveTextContent('/project/31/domain/packs');
+        expect(screen.queryByTestId('domain-packs')).toBeNull();
+        await user.click(screen.getByTestId('settings-details-toggle'));
+        await user.click(screen.getByTestId('settings-details-section-domain-packs'));
+        expect(screen.getByTestId('domain-packs')).toBeInTheDocument();
+        expect(screen.queryByTestId('workflow')).toBeNull();
+        renderSettings('/project/31/settings?open=extensions');
+        expect(screen.getByTestId('extensions')).toBeInTheDocument();
+    });
+
+    it('links the tools that live elsewhere', async () => {
+        const user = userEvent.setup();
+        renderSettings();
+        await user.click(screen.getByRole('button', { name: /Adapter Studio/ }));
+        expect(screen.getByTestId('location')).toHaveTextContent('/project/31/train');
     });
 });

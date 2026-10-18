@@ -175,7 +175,7 @@ describe('ProjectRecipePickerPage', () => {
     });
 
     it('PUTs to /projects/{id}/recipe on apply + navigates back via return_to', async () => {
-        searchString = `?return_to=${encodeURIComponent('/project/1/pipeline/synthetic')}`;
+        searchString = `?return_to=${encodeURIComponent('/project/1/data?step=synthetic')}`;
         apiMock.get.mockResolvedValueOnce({ data: SAMPLE_CATALOG });
         apiMock.put.mockResolvedValueOnce({ data: { id: 1, selected_recipe: { recipe_id: 'qa-sft' } } });
         render(<ProjectRecipePickerPage />);
@@ -195,7 +195,7 @@ describe('ProjectRecipePickerPage', () => {
         });
         await waitFor(() => {
             expect(window.location.assign).toHaveBeenCalledWith(
-                '/project/1/pipeline/synthetic',
+                '/project/1/data?step=synthetic',
             );
         });
         expect(toastMock.success).toHaveBeenCalledWith(

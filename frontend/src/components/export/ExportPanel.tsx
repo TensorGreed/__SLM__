@@ -12,9 +12,9 @@ export type ShipStage = 'package' | 'publish' | 'deploy' | 'monitor';
 
 interface ExportPanelProps {
     projectId: number;
-    /** Render only the blocks of one stage; the panel stays mounted across
-     *  the stage bar so plans and the releases list persist. */
-    stage?: ShipStage | null;
+    /** The Ship stage to render; the panel stays mounted across the stage bar
+     *  so plans and the releases list persist. */
+    stage: ShipStage;
 }
 
 interface ExperimentOption {
@@ -438,9 +438,8 @@ function formatOptimizationMetricValue(
     return `${prefix}${(value * 100).toFixed(1)}%`;
 }
 
-export default function ExportPanel({ projectId, stage = null }: ExportPanelProps) {
-    const staged = stage != null;
-    const st = (name: ShipStage) => stage == null || stage === name;
+export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
+    const st = (name: ShipStage) => stage === name;
     const [experiments, setExperiments] = useState<ExperimentOption[]>([]);
     const [exportsList, setExportsList] = useState<ExportRecord[]>([]);
     const [registryModels, setRegistryModels] = useState<RegistryModel[]>([]);
@@ -1080,7 +1079,7 @@ export default function ExportPanel({ projectId, stage = null }: ExportPanelProp
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
             {st('package') && (
             <div className="card" data-testid="export-form-card">
-                <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>{staged ? 'New export' : 'Export and Registry'}</h3>
+                <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>New export</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>
                     <div className="form-group">
                         <label className="form-label">Experiment</label>
@@ -1550,7 +1549,7 @@ export default function ExportPanel({ projectId, stage = null }: ExportPanelProp
             </div>
             )}
 
-            {st('publish') && staged && (
+            {st('publish') && (
                 <div className="card" data-testid="export-publish-card">
                     <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-sm)' }}>Publish to the Hugging Face Hub</h3>
                     <p style={{ margin: '0 0 var(--space-md)', color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
@@ -1619,7 +1618,7 @@ export default function ExportPanel({ projectId, stage = null }: ExportPanelProp
                 </div>
             )}
 
-            {st('package') && staged && (
+            {st('package') && (
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }} data-testid="export-releases">
                     <div style={{ padding: 'var(--space-lg)', borderBottom: '1px solid var(--border-color)' }}>
                         <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, margin: 0 }}>Releases</h3>
@@ -1635,7 +1634,7 @@ export default function ExportPanel({ projectId, stage = null }: ExportPanelProp
             {registryModels.length > 0 && st('package') && (
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                     <div style={{ padding: 'var(--space-lg)', borderBottom: '1px solid var(--border-color)' }}>
-                        <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, margin: 0 }}>{staged ? 'Registered models' : 'Model Registry'}</h3>
+                        <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, margin: 0 }}>Registered models</h3>
                     </div>
                     <div style={{ overflowX: 'auto' }}>
                         <table className="export-history-table">
@@ -1692,7 +1691,7 @@ export default function ExportPanel({ projectId, stage = null }: ExportPanelProp
             {exportsList.length > 0 && st('package') && (
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                     <div style={{ padding: 'var(--space-lg)', borderBottom: '1px solid var(--border-color)' }}>
-                        <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, margin: 0 }}>{staged ? 'Exports' : 'Export History'}</h3>
+                        <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, margin: 0 }}>Exports</h3>
                     </div>
                     <div style={{ overflowX: 'auto' }}>
                         <table className="export-history-table">
@@ -1765,46 +1764,6 @@ export default function ExportPanel({ projectId, stage = null }: ExportPanelProp
                                                                 </button>
                                                             </div>
                                                         </div>
-
-                                                        {String(exp.export_format || exp.format || '').toLowerCase() === 'huggingface' && exp.status === 'completed' && (
-                                                            <div className="export-hub-publish" data-testid={`export-hub-publish-${exp.id}`} onClick={(e) => e.stopPropagation()}>
-                                                                {exp.hub_publish ? (
-                                                                    <div className="export-hub-publish__done">
-                                                                        Published to{' '}
-                                                                        <a href={exp.hub_publish.url} target="_blank" rel="noreferrer">{exp.hub_publish.repo_id}</a>
-                                                                        {exp.hub_publish.private ? ' (private)' : ''}
-                                                                        {exp.hub_publish.commit ? ` · commit ${String(exp.hub_publish.commit).slice(0, 7)}` : ''}
-                                                                        {' · '}
-                                                                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handlePublishHub({ ...exp, hub_publish: null })} disabled={publishingExportId === exp.id}>
-                                                                            Publish again
-                                                                        </button>
-                                                                    </div>
-                                                                ) : (
-                                                                    <div className="export-hub-publish__form">
-                                                                        <label htmlFor={`hub-repo-${exp.id}`}>Hugging Face repo</label>
-                                                                        <input
-                                                                            id={`hub-repo-${exp.id}`}
-                                                                            type="text"
-                                                                            placeholder="owner/model-name"
-                                                                            value={hubRepoIds[exp.id] || ''}
-                                                                            onChange={(e) => setHubRepoIds((prev) => ({ ...prev, [exp.id]: e.target.value }))}
-                                                                        />
-                                                                        <label className="export-hub-publish__private">
-                                                                            <input
-                                                                                type="checkbox"
-                                                                                checked={Boolean(hubPrivate[exp.id])}
-                                                                                onChange={(e) => setHubPrivate((prev) => ({ ...prev, [exp.id]: e.target.checked }))}
-                                                                            />{' '}
-                                                                            private
-                                                                        </label>
-                                                                        <button type="button" className="btn btn-primary btn-sm" onClick={() => void handlePublishHub(exp)} disabled={publishingExportId === exp.id}>
-                                                                            {publishingExportId === exp.id ? 'Publishing…' : 'Publish to Hugging Face'}
-                                                                        </button>
-                                                                        <span className="export-hub-publish__hint">Uploads model/ (weights, tokenizer, model card, thresholds) and the manifest; uses the server's HF_TOKEN or login.</span>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        )}
 
                                                         {exp.output_path && (
                                                             <div style={{ marginBottom: 16, fontSize: '0.8rem', color: 'var(--color-info)' }}>

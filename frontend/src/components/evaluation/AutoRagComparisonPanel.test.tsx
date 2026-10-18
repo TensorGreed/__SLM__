@@ -217,8 +217,7 @@ describe('AutoRagComparisonPanel — run-comparison button', () => {
         expect(cta.textContent).toMatch(/Choose a task type first/);
         const link = cta.querySelector('a') as HTMLAnchorElement;
         const href = link.getAttribute('href') || '';
-        expect(href.startsWith('/project/4/recipe-picker?')).toBe(true);
-        expect(href).toMatch(/return_to=/);
+        expect(href).toBe('/project/4/train?open=task');
     });
 
     it('still silently hides on non-RECIPE_REQUIRED 400 (recipe ineligible)', async () => {

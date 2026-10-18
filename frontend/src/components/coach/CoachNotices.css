@@ -1,0 +1,32 @@
+/* Inline Coach notices — Epic U phase U6. */
+
+.coach-notices {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+}
+
+.coach-notice {
+    position: relative;
+}
+
+.coach-notice__dismiss {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-tertiary);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.coach-notice__dismiss:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}

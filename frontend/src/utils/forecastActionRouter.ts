@@ -10,9 +10,9 @@
  * it deterministically.
  *
  * Query-param encoding (kept legible — no base64):
- *   /pipeline/synthetic?prefill_mode=<SynthMode>&prefill_count=<int>
- *   /pipeline/goldset?fix_rows=1,7,12
- *   /pipeline/goldset?fragment_groups=positive|Positive;billing|Billing
+ *   /data?step=synthetic&prefill_mode=<SynthMode>&prefill_count=<int>
+ *   /data?step=goldset&fix_rows=1,7,12
+ *   /data?step=goldset&fragment_groups=positive|Positive;billing|Billing
  *
  * The "diversify" hint on synth_augment maps to a SynthMode:
  *   - "entity_types"      → cluster_targeted (varies entity vocabulary)
@@ -22,11 +22,19 @@
 
 import type { SuggestedActionKind } from '../api/trainabilityForecast';
 import type { SynthMode } from '../api/synthPlaybook';
+import type { TabKey } from '../types';
+import { stagePath } from './workspaceRoutes';
 
 
 export interface ForecastActionRoute {
     path: string;
     search: string;
+}
+
+/** ``stagePath`` split into the ``{path, search}`` shape the callers navigate with. */
+function stageRoute(projectId: number, tab: TabKey, search: string): ForecastActionRoute {
+    const [path, query = ''] = stagePath(projectId, tab, search).split('?');
+    return { path, search: query };
 }
 
 
@@ -147,10 +155,7 @@ export function routeForecastAction(
         if (fragments) {
             search.set('fragment_groups', fragments);
         }
-        return {
-            path: `/project/${projectId}/pipeline/goldset`,
-            search: search.toString(),
-        };
+        return stageRoute(projectId, 'goldset', search.toString());
     }
 
     // All synth_* actions land on the synthetic tab. The destination
@@ -182,8 +187,5 @@ export function routeForecastAction(
         return null;
     }
 
-    return {
-        path: `/project/${projectId}/pipeline/synthetic`,
-        search: search.toString(),
-    };
+    return stageRoute(projectId, 'synthetic', search.toString());
 }

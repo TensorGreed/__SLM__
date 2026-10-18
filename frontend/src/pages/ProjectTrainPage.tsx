@@ -19,6 +19,8 @@ import TokenizationPanel from '../components/training/TokenizationPanel';
 import TrainabilityForecastPanel from '../components/training/TrainabilityForecastPanel';
 import TrainingConfigGapsPanel from '../components/training/TrainingConfigGapsPanel';
 import TrainingPanel from '../components/training/TrainingPanel';
+import CoachNotices from '../components/coach/CoachNotices';
+import StepHelp from '../components/coach/StepHelp';
 import type { TrainFormSection } from '../components/training/trainingPanelTypes';
 import { recordRemediationEvent } from '../api/remediation';
 import { routeForecastAction } from '../utils/forecastActionRouter';
@@ -109,9 +111,10 @@ export default function ProjectTrainPage() {
                     <p className="workspace-page-subtitle">Pick a base model and train. Runs and live metrics stay here.</p>
                 </div>
             </section>
+            <StepHelp projectId={projectId} tab="training" />
+            <CoachNotices projectId={projectId} stage="training" />
             <TrainingPanel
                 projectId={projectId}
-                layout="form"
                 title="Runs"
                 hideStepFooter
                 moreOptions={extraSections}

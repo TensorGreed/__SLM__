@@ -128,7 +128,7 @@ near-duplicates (synthetic paraphrases of gold rows bleeding into train,
 detected via token-set Jaccard ≥ 0.9). Any overlap warns; ≥ 10% of gold rows
 blocks. A `GOLD_TEST` leak — the held-out final grade — is called out
 separately as the worst kind (the UI calls it the *final answer key*). There is no one-click auto-fix (deciding which
-copy is canonical is a judgement call); the Coach nudge routes you to re-split
+copy is canonical is a judgement call); the Coach suggestion routes you to re-split
 so the answer key is held out. See
 [Evaluation + remediation](../workflows/evaluation-and-remediation.md).
 

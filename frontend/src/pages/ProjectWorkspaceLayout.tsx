@@ -1,6 +1,7 @@
 /**
  * Root layout for the project workspace: sidebar (six destinations), top
- * bar, the Coach bar on stage pages, the command palette.
+ * bar, the command palette. Guidance is inline on each destination
+ * (CoachNotices) and on the Overview.
  */
 
 import { useEffect, useMemo } from 'react';
@@ -9,7 +10,6 @@ import { Navigate, Outlet, useParams } from 'react-router-dom';
 import TopBar from '../components/layout/TopBar';
 import ProjectSidebar from '../components/layout/ProjectSidebar';
 import CommandPalette from '../components/layout/CommandPalette';
-import Coach from '../components/coach/Coach';
 import DecisionLogDrawer from '../components/autopilot/DecisionLogDrawer';
 import HealthCheckButton from '../components/shared/HealthCheckButton';
 import ParentProjectBackChip from '../components/layout/ParentProjectBackChip';
@@ -92,11 +92,6 @@ export default function ProjectWorkspaceLayout() {
                     }
                 />
                 <div className="page-container">
-                    <Coach
-                        projectId={projectId}
-                        project={activeProject}
-                        pipelineStatus={pipelineStatus}
-                    />
                     <Outlet context={contextValue} />
                 </div>
             </div>

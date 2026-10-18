@@ -50,7 +50,7 @@ flowchart LR
   trained -- yes --> n4[All stages]
 ```
 
-The Coach bar points at the next step that can run; pages are never disabled.
+The notices under each step bar point at the next step that can run; pages are never disabled.
 
 ## Emit pattern
 

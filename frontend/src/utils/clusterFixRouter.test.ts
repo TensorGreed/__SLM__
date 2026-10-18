@@ -60,7 +60,8 @@ describe('routeClusterFix', () => {
             reason_code: 'hallucination',
             classifier_reason: 'Model is fabricating dates.',
         });
-        expect(route.path).toBe('/project/7/pipeline/goldset');
+        expect(route.path).toBe('/project/7/data');
+        expect(new URLSearchParams(route.search).get('step')).toBe('goldset');
         const params = new URLSearchParams(route.search);
         expect(params.get('focus_cluster_id')).toBe('cluster-42');
         expect(params.get('focus_hint')).toBe('[hallucination] Model is fabricating dates.');

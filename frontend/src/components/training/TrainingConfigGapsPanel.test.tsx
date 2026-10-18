@@ -171,7 +171,7 @@ describe('TrainingConfigGapsPanel', () => {
             ),
         );
         expect(navigateMock).toHaveBeenCalledWith(
-            '/project/42/training-config?recommended_eval_steps=10',
+            '/project/42/train?recommended_eval_steps=10&open=plan',
         );
     });
 

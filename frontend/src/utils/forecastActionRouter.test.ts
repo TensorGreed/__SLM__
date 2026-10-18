@@ -9,10 +9,11 @@ import {
 
 describe('routeForecastAction', () => {
     describe('synth_augment', () => {
-        it('routes to /pipeline/synthetic with positives_paraphrase as the safe default', () => {
+        it('routes to the synthetic step with positives_paraphrase as the safe default', () => {
             const route = routeForecastAction(1, 'synth_augment', { target_rows: 100 });
             expect(route).not.toBeNull();
-            expect(route!.path).toBe('/project/1/pipeline/synthetic');
+            expect(route!.path).toBe('/project/1/data');
+            expect(new URLSearchParams(route!.search).get('step')).toBe('synthetic');
             const params = new URLSearchParams(route!.search);
             expect(params.get('prefill_mode')).toBe('positives_paraphrase');
             expect(params.get('prefill_count')).toBe('100');
@@ -55,7 +56,7 @@ describe('routeForecastAction', () => {
                 underrepresented_classes: ['a', 'b', 'c'],
                 target_rows_per_class: 10,
             });
-            expect(route!.path).toBe('/project/2/pipeline/synthetic');
+            expect(route!.path).toBe('/project/2/data');
             const params = new URLSearchParams(route!.search);
             expect(params.get('prefill_mode')).toBe('class_balance_fill');
             expect(params.get('prefill_count')).toBe('30');
@@ -82,7 +83,7 @@ describe('routeForecastAction', () => {
         it('routes to positives_paraphrase with the target_rows count', () => {
             const route = routeForecastAction(3, 'synth_diversify', { target_rows: 75 });
             const params = new URLSearchParams(route!.search);
-            expect(route!.path).toBe('/project/3/pipeline/synthetic');
+            expect(route!.path).toBe('/project/3/data');
             expect(params.get('prefill_mode')).toBe('positives_paraphrase');
             expect(params.get('prefill_count')).toBe('75');
         });
@@ -93,7 +94,7 @@ describe('routeForecastAction', () => {
             const route = routeForecastAction(7, 'fix_gold_rows', {
                 invalid_row_ids: [1, 7, 12],
             });
-            expect(route!.path).toBe('/project/7/pipeline/goldset');
+            expect(route!.path).toBe('/project/7/data');
             expect(new URLSearchParams(route!.search).get('fix_rows')).toBe('1,7,12');
         });
 
@@ -131,8 +132,8 @@ describe('routeForecastAction', () => {
 
         it('emits the goldset path even when no params are supplied (signal carries no row ids)', () => {
             const route = routeForecastAction(7, 'fix_gold_rows', {});
-            expect(route!.path).toBe('/project/7/pipeline/goldset');
-            expect(route!.search).toBe('');
+            expect(route!.path).toBe('/project/7/data');
+            expect(route!.search).toBe('step=goldset');
         });
     });
 

@@ -15,6 +15,7 @@ import { AlertTriangle, CheckCircle2, ShieldCheck, Sparkles, XCircle } from 'luc
 import { applyPlanRefinement, getPlanRefinement, runCloudPlanRefinement } from '../../api/planRefinement';
 import type { PlanRefinement, StrategyRefinement } from '../../api/planRefinement';
 import './PlanRefinementCard.css';
+import { stagePath } from '../../utils/workspaceRoutes';
 
 const VERDICT = {
     ready: { label: 'Plan fits the data', cls: 'ready', Icon: CheckCircle2 },
@@ -60,7 +61,7 @@ export default function PlanRefinementCard({ projectId }: Props) {
 
     const openSyntheticForGap = (suggested?: number) => {
         window.location.assign(
-            `/project/${projectId}/pipeline/synthetic`
+            stagePath(projectId, 'synthetic')
             + `?prefill_mode=class_balance_fill&prefill_count=${suggested ?? 30}`,
         );
     };

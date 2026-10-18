@@ -29,7 +29,7 @@ describe('TrainingPanel run dashboard', () => {
 
   it('"Back to Experiments" returns to the list and stays there after the refresh', async () => {
     const user = userEvent.setup();
-    render(<TrainingPanel projectId={1} hideCreateControls />);
+    render(<TrainingPanel projectId={1} />);
 
     await user.click(await screen.findByRole('button', { name: 'Dashboard' }));
     const back = await screen.findByRole('button', { name: /Back to Experiments/ });

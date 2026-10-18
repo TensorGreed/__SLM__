@@ -97,14 +97,11 @@ describe('PlaybookPickerPanel', () => {
         });
         const cta = screen.getByTestId('playbook-picker-empty-recipe-required');
         expect(cta.textContent).toMatch(/Choose a task type first/);
-        // CTA button points at the standalone task-shape recipe-picker
-        // page (NOT /recipes — that's the pipeline-DAG recipes page,
-        // a different concept). Always includes a return_to so the
-        // user lands back on the same panel after applying.
+        // CTA button points at the Train page's task section (NOT the
+        // pipeline presets section — a different concept).
         const button = cta.querySelector('a') as HTMLAnchorElement;
         const href = button.getAttribute('href') || '';
-        expect(href.startsWith('/project/7/recipe-picker?')).toBe(true);
-        expect(href).toMatch(/return_to=/);
+        expect(href).toBe('/project/7/train?open=task');
     });
 
     it('runs a playbook via the async-job endpoint and shows a queued confirmation', async () => {

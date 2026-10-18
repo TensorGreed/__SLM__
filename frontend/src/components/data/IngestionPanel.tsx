@@ -21,11 +21,9 @@ import DetailsDrawer, { type DetailSection } from '../shared/DetailsDrawer';
 
 interface IngestionPanelProps {
     projectId: number;
-    /** Epic U phase U4: ``stepper`` = a short form + a Details drawer. */
-    layout?: 'classic' | 'stepper';
-    /** Stepper: extra Details sections appended after the panel's own. */
+    /** Extra Details sections appended after the panel's own (Epic U). */
     extraDetails?: DetailSection[];
-    /** Stepper: the Details section to open (``?open=``). */
+    /** The Details section to open (``?open=``). */
     openSection?: string | null;
     onNextStep?: () => void;
 }
@@ -130,8 +128,7 @@ function extractErrorMessage(error: unknown): string {
     return 'Operation failed';
 }
 
-export default function IngestionPanel({ projectId, onNextStep , layout = 'classic', extraDetails = [], openSection = null }: IngestionPanelProps) {
-    const stepper = layout === 'stepper';
+export default function IngestionPanel({ projectId, onNextStep , extraDetails = [], openSection = null }: IngestionPanelProps) {
     const [documents, setDocuments] = useState<RawDocument[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
@@ -747,7 +744,6 @@ export default function IngestionPanel({ projectId, onNextStep , layout = 'class
 
     return (
         <div className="ingestion-panel animate-fade-in">
-            {!stepper && <ReadinessPanel projectId={projectId} />}
 
             {/* No corpus yet: a generation model writes sample documents for
                 the domain; they go through parse → clean like an upload. */}
@@ -756,16 +752,6 @@ export default function IngestionPanel({ projectId, onNextStep , layout = 'class
             {/* Phase G: saved mappings panel — only renders when at
                 least one config exists for the project. Re-run / delete
                 live alongside the new-import CTA below. */}
-{!stepper && (
-            <SavedMappingsPanel
-                projectId={projectId}
-                refreshKey={savedMappingsRefreshKey}
-                onRunComplete={() => {
-                    void fetchDocs();
-                }}
-            />
-
-            )}
             {/* Phase F: generic dataset-import pipeline. Parallel route
                 to the legacy file-format upload tabs below — auto-
                 detects the task shape and lands rows in the project's
@@ -1150,12 +1136,9 @@ export default function IngestionPanel({ projectId, onNextStep , layout = 'class
                 </div>
             )}
 
-            {!stepper && documents.length > 0 && <EDADashboard projectId={projectId} />}
 
-            {!stepper && docsSection}
 
-            {stepper && (
-                <DetailsDrawer
+            <DetailsDrawer
                     testId="data-details"
                     openSection={openSection}
                     sections={[
@@ -1195,7 +1178,6 @@ export default function IngestionPanel({ projectId, onNextStep , layout = 'class
                         ...extraDetails,
                     ]}
                 />
-            )}
             {onNextStep && (
                 <StepFooter
                     currentStep="Data Ingestion"

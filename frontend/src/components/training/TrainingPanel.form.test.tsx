@@ -61,7 +61,7 @@ describe('TrainingPanel — form layout', () => {
     });
 
     it('checks readiness on mount and shows the runs list below the form', async () => {
-        render(<TrainingPanel projectId={1} layout="form" title="Runs" taskShapeLabel="Span extraction (span-extraction)" />);
+        render(<TrainingPanel projectId={1} title="Runs" taskShapeLabel="Span extraction (span-extraction)" />);
         expect(screen.getByTestId('train-form')).toBeInTheDocument();
         await waitFor(() => expect(screen.getByTestId('train-form-readiness')).toHaveTextContent('Ready to train.'));
         expect(apiMock.post).toHaveBeenCalledWith('/projects/1/training/experiments/preflight', expect.anything());
@@ -74,7 +74,7 @@ describe('TrainingPanel — form layout', () => {
 
     it('Train creates the run (dated name when blank, seeds in the config) and opens the launch confirmation', async () => {
         const user = userEvent.setup();
-        render(<TrainingPanel projectId={1} layout="form" />);
+        render(<TrainingPanel projectId={1} />);
         await waitFor(() => expect(screen.getByTestId('train-form-readiness')).toHaveTextContent('Ready to train.'));
         await user.click(screen.getByTestId('train-form-seeds-3'));
         await user.click(screen.getByTestId('train-form-train'));
@@ -91,7 +91,7 @@ describe('TrainingPanel — form layout', () => {
     it('a blocked preflight disables nothing but shows the issues, and Fix opens the Checks section', async () => {
         installApi({ ok: false, errors: ['No prepared split'], warnings: [] });
         const user = userEvent.setup();
-        render(<TrainingPanel projectId={1} layout="form" />);
+        render(<TrainingPanel projectId={1} />);
         await waitFor(() => expect(screen.getByTestId('train-form-readiness')).toHaveTextContent('1 blocking issue.'));
         expect(screen.getByTestId('train-form-issues')).toHaveTextContent('No prepared split');
         await user.click(screen.getByTestId('train-form-fix'));
@@ -103,7 +103,7 @@ describe('TrainingPanel — form layout', () => {
         render(
             <TrainingPanel
                 projectId={1}
-                layout="form"
+               
                 openSection="lora"
                 moreOptions={[{ id: 'models', title: 'Base model registry', render: () => <div data-testid="registry-body" /> }]}
             />,

@@ -98,7 +98,7 @@ describe('DatasetFitCard', () => {
         const switchLink = screen.getByRole('link', {
             name: /Switch task to Classification/i,
         });
-        expect(switchLink).toHaveAttribute('href', '/project/42/training-config');
+        expect(switchLink).toHaveAttribute('href', '/project/42/train?open=plan');
         // It mentions the coverage percentage of the alternative.
         expect(switchLink).toHaveTextContent(/97% match/i);
     });
@@ -129,7 +129,7 @@ describe('DatasetFitCard', () => {
         // The other two branches still render.
         expect(screen.getByRole('link', { name: /Map your columns/i })).toHaveAttribute(
             'href',
-            '/project/42/adapter-studio',
+            '/project/42/train?open=adapters',
         );
         expect(screen.getByRole('link', { name: /Start from a demo/i })).toHaveAttribute(
             'href',

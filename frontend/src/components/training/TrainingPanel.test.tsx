@@ -342,20 +342,15 @@ describe('TrainingPanel model wizard', () => {
   it('applies recommended model defaults from wizard card', async () => {
     const user = userEvent.setup();
     render(
-      <TrainingPanel
-        projectId={1}
-        forceCreateVisible
-        hideExperimentList
-      />,
+      <TrainingPanel projectId={1} openSection="model" />,
     );
 
-    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+    await user.click(screen.getByRole('button', { name: 'Recommend Models' }));
     expect(await screen.findByText('acme/test-model')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Apply Model + Defaults' }));
-    await user.click(screen.getByRole('tab', { name: /Config/i }));
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('acme/test-model')).toBeInTheDocument();
+      expect(screen.getByTestId('train-form-base-model')).toHaveValue('acme/test-model');
     });
     expect(apiMock.post).toHaveBeenCalledWith(
       '/projects/1/training/model-selection/telemetry',
@@ -370,22 +365,16 @@ describe('TrainingPanel model wizard', () => {
   it('runs benchmark sweep and applies benchmark winner', async () => {
     const user = userEvent.setup();
     render(
-      <TrainingPanel
-        projectId={1}
-        forceCreateVisible
-        hideExperimentList
-      />,
+      <TrainingPanel projectId={1} openSection="model" />,
     );
 
-    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
     await user.click(screen.getByRole('button', { name: 'Run Benchmark Sweep' }));
     expect(await screen.findByRole('button', { name: 'Apply Benchmark Winner' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Apply Benchmark Winner' }));
-    await user.click(screen.getByRole('tab', { name: /Config/i }));
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('acme/test-model')).toBeInTheDocument();
+      expect(screen.getByTestId('train-form-base-model')).toHaveValue('acme/test-model');
     });
 
     expect(apiMock.post).toHaveBeenCalledWith(
@@ -407,14 +396,9 @@ describe('TrainingPanel model wizard', () => {
   it('introspects base model metadata from setup config', async () => {
     const user = userEvent.setup();
     render(
-      <TrainingPanel
-        projectId={1}
-        forceCreateVisible
-        hideExperimentList
-      />,
+      <TrainingPanel projectId={1} openSection="model" />,
     );
 
-    await user.click(screen.getByRole('tab', { name: /Config/i }));
     await user.click(screen.getByRole('button', { name: 'Introspect Model' }));
 
     expect(await screen.findByText('Model Introspection')).toBeInTheDocument();
@@ -430,14 +414,9 @@ describe('TrainingPanel model wizard', () => {
   it('surfaces model compatibility gate diagnostics in preflight panel', async () => {
     const user = userEvent.setup();
     render(
-      <TrainingPanel
-        projectId={1}
-        forceCreateVisible
-        hideExperimentList
-      />,
+      <TrainingPanel projectId={1} openSection="checks" />,
     );
 
-    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
     await user.click(screen.getByRole('button', { name: 'Run Capability Preflight' }));
 
     expect(await screen.findByText('Model Compatibility')).toBeInTheDocument();
@@ -449,14 +428,9 @@ describe('TrainingPanel model wizard', () => {
   it('shows model-vs-dataset modality contract diagnostics with blocked badge', async () => {
     const user = userEvent.setup();
     render(
-      <TrainingPanel
-        projectId={1}
-        forceCreateVisible
-        hideExperimentList
-      />,
+      <TrainingPanel projectId={1} openSection="checks" />,
     );
 
-    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
     await user.click(screen.getByRole('button', { name: 'Run Capability Preflight' }));
 
     const title = await screen.findByText('Model + Dataset Modality');
@@ -474,14 +448,9 @@ describe('TrainingPanel model wizard', () => {
   it('shows media asset contract diagnostics with blocked badge and counts', async () => {
     const user = userEvent.setup();
     render(
-      <TrainingPanel
-        projectId={1}
-        forceCreateVisible
-        hideExperimentList
-      />,
+      <TrainingPanel projectId={1} openSection="checks" />,
     );
 
-    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
     await user.click(screen.getByRole('button', { name: 'Run Capability Preflight' }));
 
     const title = await screen.findByText('Media Asset Contract');
@@ -500,15 +469,11 @@ describe('TrainingPanel model wizard', () => {
   it('includes strict multimodal media flag in preflight-plan payload when enabled', async () => {
     const user = userEvent.setup();
     render(
-      <TrainingPanel
-        projectId={1}
-        forceCreateVisible
-        hideExperimentList
-      />,
+      <TrainingPanel projectId={1} openSection="lora" />,
     );
 
-    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
     await user.click(screen.getByRole('checkbox', { name: /Require local media assets for multimodal batches/i }));
+    await user.click(screen.getByTestId('train-section-checks'));
     await user.click(screen.getByRole('button', { name: 'Run Preflight Plan' }));
 
     await waitFor(() => {
@@ -527,93 +492,29 @@ describe('TrainingPanel model wizard', () => {
     });
   });
 
-  it('shows recommendation vs benchmark snapshot in preflight and review', async () => {
+  it('shows recommendation vs benchmark snapshot in preflight', async () => {
     const user = userEvent.setup();
     render(
-      <TrainingPanel
-        projectId={1}
-        forceCreateVisible
-        hideExperimentList
-      />,
+      <TrainingPanel projectId={1} openSection="model" />,
     );
 
-    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+    await user.click(screen.getByRole('button', { name: 'Recommend Models' }));
     expect(await screen.findByText('acme/test-model')).toBeInTheDocument();
+    await user.click(screen.getByTestId('train-section-checks'));
     await user.click(screen.getByRole('button', { name: 'Run Capability Preflight' }));
 
     expect(await screen.findByText('Model Selection Snapshot')).toBeInTheDocument();
     expect(await screen.findByText('Recommendation Winner')).toBeInTheDocument();
     expect(await screen.findByText('Benchmark Winner')).toBeInTheDocument();
     expect(await screen.findByText(/Winners align/i)).toBeInTheDocument();
-
-    await user.click(screen.getByRole('tab', { name: /Review/i }));
-    expect(await screen.findByText('Preflight Model Selection Snapshot')).toBeInTheDocument();
-    expect(await screen.findByText('Recommendation Winner')).toBeInTheDocument();
-    expect(await screen.findByText('Benchmark Winner')).toBeInTheDocument();
-  });
-
-  it('applies consensus winner from review snapshot action', async () => {
-    const user = userEvent.setup();
-    render(
-      <TrainingPanel
-        projectId={1}
-        forceCreateVisible
-        hideExperimentList
-      />,
-    );
-
-    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
-    expect(await screen.findByText('acme/test-model')).toBeInTheDocument();
-    await user.click(screen.getByRole('tab', { name: /Review/i }));
-
-    expect(await screen.findByRole('button', { name: 'Use Consensus Winner' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Use Consensus Winner' }));
-    expect(await screen.findByText('Applied consensus winner (acme/test-model) to base model.')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('tab', { name: /Config/i }));
-    await waitFor(() => {
-      expect(screen.getByDisplayValue('acme/test-model')).toBeInTheDocument();
-    });
-
-    expect(apiMock.post).toHaveBeenCalledWith(
-      '/projects/1/training/model-selection/telemetry',
-      expect.objectContaining({
-        action: 'apply',
-        apply_source: 'consensus',
-        selected_model_id: 'acme/test-model',
-      }),
-    );
-  });
-
-  it('shows compact model gate summary in essentials quick preflight', async () => {
-    const user = userEvent.setup();
-    render(
-      <TrainingPanel
-        projectId={1}
-        forceCreateVisible
-        hideExperimentList
-        setupMode="essentials"
-      />,
-    );
-
-    await user.click(screen.getByRole('button', { name: 'Run Quick Preflight' }));
-
-    expect(await screen.findByText('Model Gate: Blocked')).toBeInTheDocument();
-    expect(await screen.findByText(/acme\/unknown-arch • unknown • source none/i)).toBeInTheDocument();
-    expect(await screen.findByText(/Supported: causal_lm, seq2seq, classification, encoder/i)).toBeInTheDocument();
   });
 
   it('submits cloud burst managed job with execution controls and renders live metrics', async () => {
     const user = userEvent.setup();
     render(
-      <TrainingPanel
-        projectId={1}
-        forceCreateVisible
-        hideExperimentList
-      />,
+      <TrainingPanel projectId={1} openSection="cloud" />,
     );
 
-    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
     expect(await screen.findByText(/Provider capabilities:/i)).toBeInTheDocument();
 
     const executionModeSelect = screen

@@ -198,6 +198,9 @@ describe('EvalPanel remediation planner', () => {
           },
         };
       }
+      if (url.includes('/gold/review')) {
+        return { data: { total: 0, rows: [] } };
+      }
       return { data: {} };
     });
 
@@ -243,7 +246,7 @@ describe('EvalPanel remediation planner', () => {
 
   it('generates and renders remediation recommendations with root-cause details', async () => {
     const user = userEvent.setup();
-    render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+    render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
 
     await user.click(await screen.findByRole('button', { name: 'exp-21' }));
     expect(await screen.findByText('Closed-Loop Remediation Planner')).toBeInTheDocument();

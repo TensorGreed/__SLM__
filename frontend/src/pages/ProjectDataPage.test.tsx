@@ -38,6 +38,8 @@ vi.mock('../components/data/LabellingConventionsCard', () => ({
 }));
 vi.mock('./ProjectAnnotatePage', () => ({ AnnotateListView: () => <div data-testid="annotation-list" /> }));
 
+vi.mock('../components/coach/CoachNotices', () => ({ default: ({ stage }: { stage: string }) => <div data-testid={`coach-notices-${stage}`} /> }));
+vi.mock('../components/coach/StepHelp', () => ({ default: () => null }));
 import ProjectDataPage, { dataStudioTargetPath } from './ProjectDataPage';
 
 function LocationProbe() {
@@ -63,7 +65,7 @@ describe('ProjectDataPage', () => {
     it('renders five steps and the Sources panel in stepper layout with the studio details', () => {
         renderAt('/project/31/data');
         expect(screen.getAllByRole('tab')).toHaveLength(5);
-        expect(screen.getByTestId('panel-ingestion')).toHaveTextContent('stepper open=null');
+        expect(screen.getByTestId('panel-ingestion')).toHaveTextContent('open=null');
         const ids = (seen.props['panel-ingestion'].extraDetails as Array<{ id: string }>).map((s) => s.id);
         expect(ids).toEqual(['overview', 'sources', 'assist']);
     });
@@ -98,6 +100,6 @@ describe('ProjectDataPage', () => {
         expect(dataStudioTargetPath(7, 'synthetic?focus_synth_source=x')).toBe('/project/7/data?focus_synth_source=x&step=synthetic');
         expect(dataStudioTargetPath(7, 'annotate')).toBe('/project/7/data?open=annotation&step=goldset');
         expect(dataStudioTargetPath(7, 'data', 'dataset-versions')).toBe('/project/7/data?open=versions&step=dataprep');
-        expect(dataStudioTargetPath(7, 'domain-packs')).toBe('/project/7/domain/packs');
+        expect(dataStudioTargetPath(7, 'domain-packs')).toBe('/project/7/settings?open=domain-packs');
     });
 });

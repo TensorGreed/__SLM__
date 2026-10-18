@@ -284,7 +284,7 @@ describe('ArchetypeComparisonPanel', () => {
             screen.getByTestId('archetype-comparison-action-goldset_diversity'),
         );
         expect(locationAssignMock).toHaveBeenCalledWith(
-            '/project/4/data-studio#diversity',
+            '/project/4/data',
         );
     });
 
@@ -324,8 +324,7 @@ describe('ArchetypeComparisonPanel', () => {
         expect(cta.textContent).toMatch(/Choose a task type first/);
         const link = cta.querySelector('a') as HTMLAnchorElement;
         const href = link.getAttribute('href') || '';
-        expect(href.startsWith('/project/9/recipe-picker?')).toBe(true);
-        expect(href).toMatch(/return_to=/);
+        expect(href).toBe('/project/9/train?open=task');
     });
 
     it('keeps silent-hide on non-RECIPE_REQUIRED 400 (empty cohort)', async () => {

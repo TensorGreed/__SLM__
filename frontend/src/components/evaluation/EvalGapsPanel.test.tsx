@@ -123,7 +123,7 @@ describe('EvalGapsPanel', () => {
         );
         await userEvent.click(action);
         expect(navigateMock).toHaveBeenCalledWith(
-            '/project/42/training-config#checkpoints-panel',
+            '/project/42/train?open=plan#checkpoints-panel',
         );
     });
 
@@ -135,7 +135,7 @@ describe('EvalGapsPanel', () => {
         );
         await userEvent.click(action);
         expect(navigateMock).toHaveBeenCalledWith(
-            '/project/42/data-studio#splits',
+            '/project/42/data?step=dataprep#split',
         );
     });
 

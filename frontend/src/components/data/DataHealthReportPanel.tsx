@@ -39,6 +39,7 @@ import { parseErrorEnvelope } from '../../api/errors';
 import ErrorPanel from '../shared/ErrorPanel';
 import AutofixPreviewModal from './AutofixPreviewModal';
 import './DataHealthReportPanel.css';
+import { stagePath, trainSectionPath } from '../../utils/workspaceRoutes';
 
 type Severity = 'ok' | 'warn' | 'block';
 
@@ -140,19 +141,19 @@ function targetUrl(projectId: number, target: string | undefined): string | null
     if (!target) return null;
     switch (target) {
         case 'data':
-            return `/project/${projectId}/pipeline/data`;
+            return stagePath(projectId, 'data');
         case 'cleaning':
-            return `/project/${projectId}/pipeline/cleaning`;
+            return stagePath(projectId, 'cleaning');
         case 'goldset':
-            return `/project/${projectId}/pipeline/goldset`;
+            return stagePath(projectId, 'goldset');
         case 'dataprep':
-            return `/project/${projectId}/pipeline/dataprep`;
+            return stagePath(projectId, 'dataprep');
         case 'synthetic':
-            return `/project/${projectId}/pipeline/synthetic`;
+            return stagePath(projectId, 'synthetic');
         case 'recipe-picker':
-            return `/project/${projectId}/recipe-picker`;
+            return trainSectionPath(projectId, 'task');
         case 'ingest-error-list':
-            return `/project/${projectId}/pipeline/data#errors`;
+            return stagePath(projectId, 'data') + '#errors';
         default:
             return null;
     }

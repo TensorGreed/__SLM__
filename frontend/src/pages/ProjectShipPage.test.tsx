@@ -28,6 +28,8 @@ vi.mock('./ProjectDeploymentsPage', () => ({ default: () => <div data-testid="de
 vi.mock('./ProjectObservabilityPage', () => ({ default: () => <div data-testid="observability" /> }));
 vi.mock('./ProjectManifestPage', () => ({ default: () => <div data-testid="manifest" /> }));
 
+vi.mock('../components/coach/CoachNotices', () => ({ default: ({ stage }: { stage: string }) => <div data-testid={`coach-notices-${stage}`} /> }));
+vi.mock('../components/coach/StepHelp', () => ({ default: () => null }));
 import ProjectShipPage, { resolveShipStage } from './ProjectShipPage';
 
 function LocationProbe() {

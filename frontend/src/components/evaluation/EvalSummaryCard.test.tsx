@@ -462,40 +462,24 @@ describe('EvalSummaryCard', () => {
     });
 });
 
-describe('EvalPanel advanced disclosure', () => {
-    function mockPanelApi() {
+describe('EvalPanel Verdict workflow (one layout, no Advanced toggle)', () => {
+    beforeEach(() => {
+        useProjectStore.setState({ activeProject: { id: 7, name: 'p', beginner_mode: true } as Project });
         apiMock.get.mockImplementation(async (url: string) => {
             if (url.includes('/evaluation/summary')) return { data: BETTER };
             if (url.includes('/training/experiments')) return { data: [{ id: 21, name: 'exp-21' }] };
             if (url.includes('/evaluation/results/')) return { data: [] };
+            // Every other panel self-hides on a failed fetch.
             throw new Error(`unmocked GET ${url}`);
         });
-    }
-
-    it('beginner projects see the summary card with Advanced collapsed', async () => {
-        useProjectStore.setState({ activeProject: { id: 7, name: 'p', beginner_mode: true } as Project });
-        mockPanelApi();
-        render(<MemoryRouter><EvalPanel projectId={7} /></MemoryRouter>);
-
-        expect(await screen.findByTestId('eval-summary')).toBeInTheDocument();
-        // The server-resolved latest run is auto-selected for the user.
-        await waitFor(() => expect(screen.getByRole('button', { name: 'exp-21' })).toHaveClass('btn-primary'));
-        const toggle = screen.getByTestId('eval-advanced-toggle');
-        expect(toggle).toHaveTextContent('Advanced evaluation');
-        expect(screen.queryByRole('tablist', { name: 'Evaluation sections' })).not.toBeInTheDocument();
-
-        await userEvent.setup().click(toggle);
-        expect(screen.getByRole('tablist', { name: 'Evaluation sections' })).toBeInTheDocument();
-        expect(toggle).toHaveTextContent('Hide advanced evaluation');
     });
 
-    it('non-beginner projects open with Advanced expanded', async () => {
-        useProjectStore.setState({ activeProject: { id: 7, name: 'p', beginner_mode: false } as Project });
-        mockPanelApi();
-        render(<MemoryRouter><EvalPanel projectId={7} /></MemoryRouter>);
-
+    it('shows the summary card and selects the summarised run, without any disclosure toggle', async () => {
+        render(<MemoryRouter><EvalPanel projectId={7} workflow="verdict" /></MemoryRouter>);
         expect(await screen.findByTestId('eval-summary')).toBeInTheDocument();
-        expect(screen.getByRole('tablist', { name: 'Evaluation sections' })).toBeInTheDocument();
+        await waitFor(() => expect(screen.getByRole('button', { name: 'exp-21' })).toHaveClass('btn-primary'));
+        expect(screen.queryByTestId('eval-advanced-toggle')).toBeNull();
+        expect(screen.queryByRole('tablist', { name: 'Evaluation sections' })).not.toBeInTheDocument();
     });
 });
 
@@ -548,7 +532,7 @@ describe('EvalSummaryCard — answer-key sizing', () => {
         render(<EvalSummaryCard projectId={7} experimentId={59} />);
         const block = await screen.findByTestId('eval-summary-span-sizing');
         expect(block).toHaveTextContent('Can the answer key tell runs apart? 1 of 3 types have enough reference spans to show a 0.05 F1 difference; the other 2 can only show 0.94 or more — 1202 more spans short in all.');
-        expect(screen.getByTestId('eval-summary-sizing-refine')).toHaveAttribute('href', '/project/7/pipeline/synthetic');
+        expect(screen.getByTestId('eval-summary-sizing-refine')).toHaveAttribute('href', '/project/7/data?step=synthetic');
         expect(screen.queryByTestId('eval-summary-sizing-table')).not.toBeInTheDocument();
         await userEvent.click(screen.getByTestId('eval-summary-sizing-toggle'));
         expect(screen.getByTestId('eval-summary-sizing-api_key')).toHaveTextContent('api_key0.672712 (710 short)≥ 0.94');

@@ -1,12 +1,9 @@
 /**
- * Where the user is, from the Coach's point of view: which pipeline tab
- * (for the tip + walkthrough video) and which Coach stage (for the
- * rule-based suggestions from ``GET /coach/{stage}``).
+ * The one-line tip per step (``StepHelp`` shows it with the walkthrough
+ * video; the Coach bar that used to carry it is gone — Epic U phase U6).
  */
 
 import type { TabKey } from '../../types';
-import type { CoachStage } from '../../api/coach';
-import { isTabKey, resolveStep, type StageDestination } from '../../utils/workspaceRoutes';
 
 export const TAB_TIP: Record<TabKey, string> = {
     data: 'This is where your raw examples live. Import a CSV or launch a sample dataset to get started.',
@@ -20,43 +17,3 @@ export const TAB_TIP: Record<TabKey, string> = {
     compression: 'Shrink the model (quantize / distill) so it fits your deployment target.',
     export: 'Package the finished model for download or deployment. You made it!',
 };
-
-const COACH_STAGE_BY_TAB: Partial<Record<TabKey, CoachStage>> = {
-    data: 'data',
-    cleaning: 'cleaning',
-    goldset: 'gold_set',
-    synthetic: 'synthetic',
-    dataprep: 'dataprep',
-    training: 'training',
-    eval: 'eval',
-    export: 'export',
-};
-
-export interface CoachLocation {
-    tab: TabKey | null;
-    stage: CoachStage | null;
-}
-
-/** Map a workspace URL to the tab + Coach stage it belongs to. Accepts the
- *  destinations (``/data?step=cleaning``, ``/train``, ``/results``, ``/ship``)
- *  and the retired ``/pipeline/<tab>`` form. */
-export function coachLocationFor(pathname: string, search = ''): CoachLocation {
-    const pipeline = pathname.match(/\/pipeline\/([^/?#]+)/);
-    if (pipeline && isTabKey(pipeline[1])) {
-        const tab = pipeline[1];
-        return { tab, stage: COACH_STAGE_BY_TAB[tab] ?? null };
-    }
-    const destination = pathname.match(/\/project\/\d+\/(data|train|results|ship)(\/|$)/);
-    if (destination) {
-        const step = new URLSearchParams(search).get('step');
-        const tab = resolveStep(destination[1] as StageDestination, step);
-        return { tab, stage: COACH_STAGE_BY_TAB[tab] ?? null };
-    }
-    if (/\/(training-config|train)(\/|$)/.test(pathname)) {
-        return { tab: 'training', stage: 'training' };
-    }
-    if (/\/data-studio(\/|$)/.test(pathname)) {
-        return { tab: 'data', stage: 'data' };
-    }
-    return { tab: null, stage: null };
-}

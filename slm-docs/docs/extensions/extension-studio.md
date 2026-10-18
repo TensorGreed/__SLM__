@@ -9,7 +9,7 @@ A workspace page that wraps the three extension operations — list, [scaffold](
 
 ## Where it lives
 
-`/project/:id/extensions`. Open it from **Settings** → **Extension Studio**, or with Cmd-K.
+**Settings** → **Extension Studio** (`/project/:id/settings?open=extensions`; the old `/extensions` URL redirects there). It is also in the ⌘K palette.
 
 ## Layout
 

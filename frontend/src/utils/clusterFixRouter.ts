@@ -9,8 +9,8 @@
  * defaulted to 5.
  *
  * URL contract:
- *   /project/{id}/pipeline/goldset
- *     ?focus_cluster_id=<id>
+ *   /project/{id}/data?step=goldset
+ *     &focus_cluster_id=<id>
  *     &focus_hint=<one-line summary>
  *     &trap_count=<int>
  *
@@ -22,6 +22,8 @@
  *      the prefill.
  */
 
+
+import { stagePath } from './workspaceRoutes';
 
 /** Minimal shape we need from the FailureCluster — kept loose so the
  *  caller doesn't have to import the full FailureCluster type. */
@@ -91,8 +93,6 @@ export function routeClusterFix(
         Math.min(20, Math.round(options.trapCount ?? DEFAULT_TRAP_COUNT)),
     );
     search.set('trap_count', String(trapCount));
-    return {
-        path: `/project/${projectId}/pipeline/goldset`,
-        search: search.toString(),
-    };
+    const [path, query = ''] = stagePath(projectId, 'goldset', search.toString()).split('?');
+    return { path, search: query };
 }

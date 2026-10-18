@@ -450,7 +450,7 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
             '?focus_synth_source=playbook%3Aclassification%3Aclass_balance_fill%3Aclass%3Dtechnical';
         mockLocation.hash = '#synth-review-queue';
 
-        render(<SyntheticPanel projectId={1} />);
+        render(<SyntheticPanel projectId={1} openSection="review-queue" />);
 
         // The focused banner appears with the right copy.
         await waitFor(() => {
@@ -492,8 +492,9 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
                 screen.getByTestId('synthetic-panel-recipe-required'),
             ).toBeInTheDocument();
         });
+        // The picker mounts when the wrapper does and fetches its own catalog.
         expect(
-            screen.getByTestId('playbook-picker-empty-recipe-required'),
+            await screen.findByTestId('playbook-picker-empty-recipe-required'),
         ).toBeInTheDocument();
 
         // The legacy form's mode select must NOT render.

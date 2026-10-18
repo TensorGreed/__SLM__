@@ -122,6 +122,9 @@ function mockApi(predictionsPreview: unknown[]) {
                 data: { project_id: 4, count: 0, plans: [] },
             };
         }
+        if (url.includes('/gold/review')) {
+            return { data: { total: 0, rows: [] } };
+        }
         return { data: {} };
     });
 }
@@ -159,7 +162,7 @@ describe('EvalPanel — Sample Predictions card with QAHandler enrichment', () =
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // Status column header appears alongside the standard columns.
@@ -185,7 +188,7 @@ describe('EvalPanel — Sample Predictions card with QAHandler enrichment', () =
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // The disclosure for extracted spans is present.
@@ -207,7 +210,7 @@ describe('EvalPanel — Sample Predictions card with QAHandler enrichment', () =
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // Wait for the predictions card to appear with a known prompt.
@@ -236,7 +239,7 @@ describe('EvalPanel — Sample Predictions card with QAHandler enrichment', () =
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText('pass')).toBeInTheDocument();

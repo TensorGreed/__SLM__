@@ -13,9 +13,9 @@
  * task-shape recipe was inside `DatasetImportWizard`'s recipe step
  * (gated behind the source-introspection step). Coach Mode's
  * ``recipe-picker`` action + the shared ``NoRecipeEmptyState`` CTA
- * had no real landing page; they pointed at `/recipes`
- * (ProjectRecipesPage) which is the wrong concept. This page closes
- * that loop.
+ * had no real landing page; they pointed at the pipeline-presets
+ * page (ProjectRecipesPage) which is the wrong concept. This page
+ * closes that loop.
  *
  * Behavior:
  *   * Lists every catalog recipe as a tile with name + headline +
@@ -26,7 +26,7 @@
  *     ``applyRecipeToProject``, surfaces a toast, and navigates
  *     back to the page the user came from. Honors an optional
  *     ``?return_to=<encoded path>`` query string (set by the
- *     CTA-emitting panels); falls back to ``/project/{id}/pipeline/data``.
+ *     CTA-emitting panels); falls back to the Train page's task section.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -36,6 +36,7 @@ import { applyRecipeToProject, listRecipes, type Recipe } from '../api/recipes';
 import RecipeTileFrame from '../components/shared/RecipeTileFrame';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import { toast } from '../stores/toastStore';
+import { trainSectionPath } from '../utils/workspaceRoutes';
 
 
 function extractErrorMessage(err: unknown, fallback: string): string {
@@ -76,7 +77,7 @@ export default function ProjectRecipePickerPage({ embedded = false, returnTo: re
         const raw = searchParams.get('return_to');
         if (raw && raw.startsWith('/')) return raw;
         if (returnToProp) return returnToProp;
-        return `/project/${projectId}/train?open=task`;
+        return trainSectionPath(projectId, 'task');
     }, [searchParams, projectId, returnToProp]);
 
     const currentRecipeId = useMemo(() => {

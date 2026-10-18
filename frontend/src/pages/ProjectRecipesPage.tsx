@@ -19,6 +19,7 @@ import type {
 } from '../types';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectRecipesPage.css';
+import { settingsPath } from '../utils/workspaceRoutes';
 
 function extractErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
@@ -449,13 +450,13 @@ export default function ProjectRecipesPage({ embedded = false }: ProjectRecipesP
                     </button>
                     <button
                         className="btn btn-ghost"
-                        onClick={() => navigate(`/project/${projectId}/workflow`)}
+                        onClick={() => navigate(settingsPath(projectId, 'workflow'))}
                     >
                         Open Workflow Graph
                     </button>
                     <button
                         className="btn btn-ghost"
-                        onClick={() => navigate(`/project/${projectId}/domain/packs`)}
+                        onClick={() => navigate(settingsPath(projectId, 'domain-packs'))}
                     >
                         Open Domain Packs
                     </button>
@@ -786,7 +787,7 @@ export default function ProjectRecipesPage({ embedded = false }: ProjectRecipesP
                                             <div className="pipeline-recipes-run-links">
                                                 <button
                                                     className="btn btn-ghost"
-                                                    onClick={() => navigate(`/project/${projectId}/workflow`)}
+                                                    onClick={() => navigate(settingsPath(projectId, 'workflow'))}
                                                 >
                                                     Open Workflow Run Monitor
                                                 </button>

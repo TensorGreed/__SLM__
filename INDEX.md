@@ -493,7 +493,6 @@ session-start guidance.
 - `frontend/src/pages/ProjectDataPage.tsx` — Data — the workspace's data destination (Epic U, phase U4).
 - `frontend/src/pages/ProjectDeploymentsPage.tsx` — ProjectDeploymentsPage — Deployment Assistant (priority.md P30).
 - `frontend/src/pages/ProjectDomainPacksPage.tsx` — Page for assigning reusable domain pack policy bundles and hook defaults to projects.
-- `frontend/src/pages/ProjectDomainPage.tsx` — Combined domain pack + profile manager page for preprocessing, validation, and defaults.
 - `frontend/src/pages/ProjectDomainProfilesPage.tsx` — Page for editing task schemas, quality gates, and domain-specific deployment checks.
 - `frontend/src/pages/ProjectEvalComparePage.tsx` — Side-by-side eval comparison page (E3).
 - `frontend/src/pages/ProjectExtensionStudioPage.tsx` — ProjectExtensionStudioPage — Extension Studio for Wave H power users
@@ -505,7 +504,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectRecipePickerPage.tsx` — ProjectRecipePickerPage — standalone task-shape recipe picker.
 - `frontend/src/pages/ProjectRecipesPage.tsx` — Pipeline recipe catalog page for applying, configuring, and monitoring template-based workflows.
 - `frontend/src/pages/ProjectResultsPage.tsx` — Results — the workspace's evaluation destination (Epic U, phase U3).
-- `frontend/src/pages/ProjectSettingsPage.tsx` — Project Settings — the workspace's long tail (Epic U, phase U1).
+- `frontend/src/pages/ProjectSettingsPage.tsx` — Project Settings — the workspace's long tail (Epic U, phases U1 + U6).
 - `frontend/src/pages/ProjectShipPage.tsx` — Ship — the workspace's release destination (Epic U, phase U5), one flow:
 - `frontend/src/pages/ProjectTrainPage.tsx` — Train — the workspace's training destination (Epic U, phase U2).
 - `frontend/src/pages/ProjectWorkflowPage.tsx` — Visual workflow builder page for DAG editing, execution monitoring, and stage orchestration.
@@ -519,10 +518,10 @@ session-start guidance.
 - `frontend/src/components/annotation/PreferencePairLabeler.tsx` — Preference-pair labeler (Story 1.3).
 - `frontend/src/components/annotation/SpanLabeler.tsx` — Keyboard + drag-to-select span (NER) labeler.
 - `frontend/src/components/autopilot/DecisionLogDrawer.tsx` — Persistent Autopilot Decision Log drawer (priority.md P6).
-- `frontend/src/components/coach/Coach.tsx` — The Coach — the one guidance surface (Wave 3).
-- `frontend/src/components/coach/CoachStrip.tsx` — Per-panel Coach Mode strip (USER-SUCCESS Epic 4 Phase 1).
+- `frontend/src/components/coach/CoachNotices.tsx` — Inline Coach notices (Epic U, phase U6). Replaces the Coach bar: a
 - `frontend/src/components/coach/CoachSuggestion.tsx` — One Coach Mode suggestion card with a click-to-execute action
 - `frontend/src/components/coach/CoachSuggestionTrace.tsx` — Decision-trace disclosure for a Coach suggestion (Arc 4).
+- `frontend/src/components/coach/StepHelp.tsx` — One-line help under a step bar (Epic U, phase U6): the step's tip and its
 - `frontend/src/components/compression/CompressionPanel.tsx` — Model quantization UI with format selection, ONNX/GGUF conversion, and benchmark reporting.
 - `frontend/src/components/dashboard/DemoProjectTiles.tsx` — DemoProjectTiles — entry-point tiles on the project list that seed a
 - `frontend/src/components/dashboard/PipelineProgress.tsx` — Linear progress tracker showing pipeline stage completion with percentage and status indicators.
@@ -998,10 +997,10 @@ session-start guidance.
 - `frontend/src/components/annotation/ClassificationLabeler.test.tsx` — ClassificationLabeler contract.
 - `frontend/src/components/annotation/PreferencePairLabeler.test.tsx` — PreferencePairLabeler contract.
 - `frontend/src/components/annotation/SpanLabeler.test.tsx` — SpanLabeler contract.
-- `frontend/src/components/coach/Coach.test.tsx` — _(no docstring)_
-- `frontend/src/components/coach/CoachStrip.test.tsx` — _(no docstring)_
+- `frontend/src/components/coach/CoachNotices.test.tsx` — _(no docstring)_
 - `frontend/src/components/coach/CoachSuggestion.test.tsx` — _(no docstring)_
 - `frontend/src/components/coach/CoachSuggestionTrace.test.tsx` — Arc 4 — Coach decision-trace disclosure.
+- `frontend/src/components/coach/StepHelp.test.tsx` — _(no docstring)_
 - `frontend/src/components/dashboard/DemoProjectTiles.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/AnswerKeyReviewPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/AutofixPreviewModal.test.tsx` — _(no docstring)_
@@ -1126,7 +1125,7 @@ session-start guidance.
 - `frontend/src/components/training/TrainingPanel.back.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingPanel.form.test.tsx` — The Train form layout (Epic U phase U2): readiness from the preflight,
 - `frontend/src/components/training/TrainingPanel.multiSeed.test.tsx` — Quality-Lift phase 7 slice 3 — MultiSeedConfigSection tests.
-- `frontend/src/components/training/TrainingPanel.ocrNoise.test.tsx` — Token classification: the "OCR-noise copies" control (Power Tools tab)
+- `frontend/src/components/training/TrainingPanel.ocrNoise.test.tsx` — Token classification: the "OCR-noise copies" control (More options -> model)
 - `frontend/src/components/training/TrainingPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WarmStartDeltaChart.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WhyThisPlanPanel.test.tsx` — _(no docstring)_
@@ -1154,6 +1153,7 @@ session-start guidance.
 - `frontend/src/utils/apiError.test.ts` — _(no docstring)_
 - `frontend/src/utils/clusterFixRouter.test.ts` — _(no docstring)_
 - `frontend/src/utils/forecastActionRouter.test.ts` — _(no docstring)_
+- `frontend/src/utils/workspaceCommands.test.ts` — _(no docstring)_
 - `frontend/src/utils/workspaceRoutes.test.ts` — _(no docstring)_
 
 ---

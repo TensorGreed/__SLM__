@@ -6,7 +6,7 @@ title: Newbie Autopilot
 # Newbie Autopilot
 
 :::note The guided Autopilot page was retired on 2026-10-17
-The beginner "Autopilot" page (`/wizard`: goal → data → safe plan → train → chat) is gone, and `/wizard` now redirects to the project **Overview**. What replaces it: the brief-driven **+ New Project** dialog on the project list (describe what the model should do; BrewSLM sets up the task type and base model), the Coach bar's single next step on each page, and the advanced **Autopilot Planner** described below, now under **Settings** → **Autopilot Planner** (`/project/<id>/autopilot`).
+The beginner "Autopilot" page (`/wizard`: goal → data → safe plan → train → chat) is gone, and `/wizard` now redirects to the project **Overview**. What replaces it: the brief-driven **+ New Project** dialog on the project list (describe what the model should do; BrewSLM sets up the task type and base model), the inline suggestions and the Overview's single next step, and the advanced **Autopilot Planner** described below, now under **Settings** → **Autopilot Planner** (`/project/<id>/settings?open=autopilot`; the old `/autopilot` URL redirects there).
 :::
 
 Autopilot v3 takes a plain-language brief and proposes a full pipeline plan: adapter, base model, training preset, pass/fail rules (eval pack), target profile. Every decision is **labelled with provenance** (`measured` vs `estimated`) and written to a persisted decision log so you can audit what it did and why.
@@ -110,7 +110,7 @@ Strict mode refuses every repair and surfaces the blockers verbatim. Reach for s
 
 ## Decision log
 
-Every run produces an `AutopilotDecision` row. The drawer (Autopilot Planner page → top-right icon) shows:
+Every run produces an `AutopilotDecision` row. The drawer (Autopilot Planner section → top-right icon) shows:
 
 - Brief.
 - Resolved plan (every field + provenance).

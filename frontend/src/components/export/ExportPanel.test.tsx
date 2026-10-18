@@ -175,7 +175,7 @@ describe('ExportPanel serve run flow', () => {
 
   it('starts and stops a local serve run from registry serve plan', async () => {
     const user = userEvent.setup();
-    render(<ExportPanel projectId={9} />);
+    render(<ExportPanel projectId={9} stage="package" />);
 
     const servePlanButton = await screen.findByRole('button', { name: 'Serve Plan' });
     await user.click(servePlanButton);
@@ -255,7 +255,7 @@ describe('ExportPanel serve run flow', () => {
     });
 
     const user = userEvent.setup();
-    render(<ExportPanel projectId={9} />);
+    render(<ExportPanel projectId={9} stage="package" />);
 
     const selectors = await screen.findAllByRole('combobox');
     await user.selectOptions(selectors[0], '1');
@@ -392,7 +392,7 @@ describe('ExportPanel serve run flow', () => {
     });
 
     const user = userEvent.setup();
-    render(<ExportPanel projectId={9} />);
+    render(<ExportPanel projectId={9} stage="package" />);
 
     const selectors = await screen.findAllByRole('combobox');
     await user.selectOptions(selectors[0], '1');
@@ -484,7 +484,7 @@ describe('ExportPanel serve run flow', () => {
     });
 
     const user = userEvent.setup();
-    render(<ExportPanel projectId={9} />);
+    render(<ExportPanel projectId={9} stage="package" />);
 
     const selectors = await screen.findAllByRole('combobox');
     await user.selectOptions(selectors[3], 'sdk.apple_coreml_stub');
@@ -522,10 +522,8 @@ describe('ExportPanel publish to Hugging Face', () => {
     apiMock.post.mockResolvedValue({
       data: { repo_id: 'me/tagger', url: 'https://huggingface.co/me/tagger', private: false, commit: 'abc1234567' },
     });
-    render(<ExportPanel projectId={31} />);
-    const row = await screen.findByText('HUGGINGFACE');
-    await userEvent.click(row);
-    const form = await screen.findByTestId('export-hub-publish-36');
+    render(<ExportPanel projectId={31} stage="publish" />);
+    const form = await screen.findByTestId('export-publish-row-36');
     await userEvent.type(within(form).getByPlaceholderText('owner/model-name'), 'me/tagger');
     await userEvent.click(within(form).getByRole('button', { name: 'Publish to Hugging Face' }));
     await waitFor(() => {
@@ -536,10 +534,9 @@ describe('ExportPanel publish to Hugging Face', () => {
   });
 
   it('offers no publish form on a GGUF export', async () => {
-    render(<ExportPanel projectId={31} />);
-    await userEvent.click(await screen.findByText('GGUF'));
-    await screen.findByText('Manifest and Output Path');
-    expect(screen.queryByTestId('export-hub-publish-35')).toBeNull();
+    render(<ExportPanel projectId={31} stage="publish" />);
+    await screen.findByTestId('export-publish-row-36');
+    expect(screen.queryByTestId('export-publish-row-35')).toBeNull();
   });
 });
 

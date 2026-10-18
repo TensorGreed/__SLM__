@@ -187,7 +187,7 @@ describe('DataHealthReportPanel', () => {
             expect(screen.getByTestId('data-health-action-shape.no_recipe_selected')).toBeInTheDocument();
         });
         await user.click(screen.getByTestId('data-health-action-shape.no_recipe_selected'));
-        expect(navigateMock).toHaveBeenCalledWith('/project/42/recipe-picker');
+        expect(navigateMock).toHaveBeenCalledWith('/project/42/train?open=task');
     });
 
     it('renders the ok severity badge inline for ok signals', async () => {
@@ -579,7 +579,7 @@ describe('DataHealthReportPanel', () => {
         await user.click(btn);
         expect(onSignalAction).toHaveBeenCalledWith('shape.no_recipe_selected', 'recipe-picker');
         // Declined → normal target→URL navigation still happens.
-        expect(navigateMock).toHaveBeenCalledWith('/project/42/recipe-picker');
+        expect(navigateMock).toHaveBeenCalledWith('/project/42/train?open=task');
     });
 
     it('renders an error fallback when the API call fails', async () => {

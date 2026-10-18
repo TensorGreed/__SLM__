@@ -181,7 +181,7 @@ describe('DataStudioSyntheticRecommendationsPanel', () => {
         expect(gaps).toHaveTextContent(/refund/);
         fireEvent.click(screen.getByRole('button', { name: /Generate ~9/i }));
         expect(locationAssignMock).toHaveBeenCalledWith(
-            '/project/1/pipeline/synthetic?prefill_mode=class_balance_fill&prefill_count=9',
+            '/project/1/data?prefill_mode=class_balance_fill&prefill_count=9&step=synthetic',
         );
     });
 

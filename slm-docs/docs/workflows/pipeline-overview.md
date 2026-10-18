@@ -42,7 +42,7 @@ A typical project does 3–5 iteration loops before its first deployment. The pl
 
 ## What each stage needs
 
-Steps are never locked in the UI: every page is reachable at any time. A stage can only *produce* something once its inputs exist, and the Coach bar points at the next step that can run.
+Steps are never locked in the UI: every page is reachable at any time. A stage can only *produce* something once its inputs exist, and the notices under each step bar point at the next step that can run.
 
 | Stage | Needs |
 |---|---|
@@ -80,9 +80,10 @@ Ship     (/ship)
 │   ├── Deploy            → ?stage=deploy   (serve plans, Deployment Assistant)
 │   └── Monitor           → ?stage=monitor  (timeline, failure clusters, support bundles)
 Settings (/settings)      → tips switch, beginner flag, manifest export,
-                            Autopilot Planner, Workflow Builder, Pipeline presets,
-                            Domain Packs/Profiles,
-                            Adapter Studio, Extension Studio
+                            sections (?open=): Autopilot Planner, Workflow Builder,
+                            Domain Packs, Domain Profiles, Extension Studio
+                            (Pipeline presets, Adapter Studio live under Train;
+                            Pipeline as Code under Ship)
 ```
 
 Data Studio (`/data-studio`) and the Annotation list (`/annotate`) were retired on 2026-10-17: each **Data** step is a short form with a collapsed **Details** drawer whose sections load only when opened (`?open=<section-id>`), and the old pages' panels live there (table below). Related tools are linked from each page's header: the base model registry, task type, pipeline presets, Adapter Studio and tokenization live under **Train** → **More options**; the four evaluation workflows (Verdict, Failures, Compare, Try it) as tabs on **Results**; Deployments and Observability from **Ship**. Old `/pipeline/<tab>` URLs redirect to the matching destination and step; `/data-studio#<section>` redirects to the step and Details section below, and `/annotate` to **Labels** → *Annotation jobs*.

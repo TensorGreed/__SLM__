@@ -77,12 +77,4 @@ describe('ExportPanel — Ship stages', () => {
         expect(screen.queryByTestId('export-publish-card')).toBeNull();
         expect(screen.queryByText('Exports')).toBeNull();
     });
-
-    it('without a stage the one-page layout keeps Export History and the Model Registry', async () => {
-        render(<ExportPanel projectId={31} />);
-        expect(await screen.findByText('Export History')).toBeInTheDocument();
-        expect(screen.getByText('Model Registry')).toBeInTheDocument();
-        expect(screen.getByText('Export and Registry')).toBeInTheDocument();
-        expect(screen.queryByTestId('export-releases')).toBeNull();
-    });
 });

@@ -226,6 +226,30 @@ describe('NotificationBell', () => {
         expect(locationAssignMock).toHaveBeenCalledWith('/project/99');
     });
 
+    it.each([
+        ['synth_playbook', '/project/3/data?open=review-queue&step=synthetic#synth-review-queue'],
+        ['training_start', '/project/3/train?open=plan'],
+        ['post_training_lift_eval', '/project/3/results'],
+        ['documents_qa_flow', '/project/3/train#documents-qa-flow'],
+        ['seed_documents', '/project/3/data#seed-documents'],
+        ['benchmark_eval', '/project/3/results?tab=compare#external-benchmarks'],
+    ])('deep-links a %s job to the new workspace URL', async (kind, expected) => {
+        const payload = {
+            data: {
+                count: 1,
+                jobs: [jobFixture({ id: 8, kind, status: 'succeeded', project_id: 3, title: kind })],
+            },
+        };
+        apiMock.get.mockResolvedValue(payload);
+        render(<NotificationBell />);
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+        await userEvent.click(screen.getByTestId('notification-bell-row-8-open'));
+        expect(locationAssignMock).toHaveBeenCalledWith(expected);
+    });
+
     it('dismisses a completed job and removes it from the list', async () => {
         apiMock.get.mockResolvedValueOnce({
             data: {

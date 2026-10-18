@@ -121,6 +121,9 @@ function mockApi(predictionsPreview: unknown[]) {
         if (url.includes('remediation-plans')) {
             return { data: { project_id: 4, count: 0, plans: [] } };
         }
+        if (url.includes('/gold/review')) {
+            return { data: { total: 0, rows: [] } };
+        }
         return { data: {} };
     });
 }
@@ -153,7 +156,7 @@ describe('EvalPanel — Sample Predictions with RAGHandler enrichment', () => {
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // Faithful badge with the score.
@@ -180,7 +183,7 @@ describe('EvalPanel — Sample Predictions with RAGHandler enrichment', () => {
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(
@@ -209,7 +212,7 @@ describe('EvalPanel — Sample Predictions with RAGHandler enrichment', () => {
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(
@@ -240,7 +243,7 @@ describe('EvalPanel — Sample Predictions with RAGHandler enrichment', () => {
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/Faithful/i)).toBeInTheDocument();
@@ -265,7 +268,7 @@ describe('EvalPanel — Sample Predictions with RAGHandler enrichment', () => {
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/What is 2\+2/i)).toBeInTheDocument();

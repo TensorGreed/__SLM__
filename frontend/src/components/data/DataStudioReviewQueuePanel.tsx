@@ -37,6 +37,7 @@ import type {
 } from '../../api/dataStudio';
 import { bulkUpdateSynthReviewBySource } from '../../api/synthPlaybook';
 import './DataStudioReviewQueuePanel.css';
+import { dataStepPath } from '../../utils/workspaceRoutes';
 
 // Quality-Lift phase 3 slice 3 — Active-learning snapshot shape.
 // Mirrors the backend response from /api/projects/{id}/active-learning/latest;
@@ -614,22 +615,21 @@ export default function DataStudioReviewQueuePanel({
         }
         const url = jobId != null
             ? `/project/${projectId}/annotate/${jobId}`
-            : `/project/${projectId}/annotate`;
+            : dataStepPath(projectId, 'goldset', 'annotation');
         window.location.assign(url);
     };
 
     const handleOpenLabelNoiseReview = (scanId: number | null) => {
         // Mirror CoachSuggestion's ``label-noise-review`` target — slice
-        // 3 mounts the review surface at /pipeline/cleaning#label-noise-review.
+        // 3 mounts the review surface at /data?step=cleaning&open=label-noise#label-noise-review.
         // Forward scan_id as a query param so the surface can deep-link
         // to a specific scan (the user may have multiple in history).
         const qs = new URLSearchParams();
         if (scanId != null) {
             qs.set('scan_id', String(scanId));
         }
-        const query = qs.toString() ? `?${qs.toString()}` : '';
         window.location.assign(
-            `/project/${projectId}/pipeline/cleaning${query}#label-noise-review`,
+            dataStepPath(projectId, 'cleaning', 'label-noise', qs.toString()) + '#label-noise-review',
         );
     };
 

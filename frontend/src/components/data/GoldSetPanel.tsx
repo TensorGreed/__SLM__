@@ -176,17 +176,14 @@ function normalizeEntryForRecipe(
 
 interface GoldSetPanelProps {
     projectId: number;
-    /** Epic U phase U4: ``stepper`` = a short form + a Details drawer. */
-    layout?: 'classic' | 'stepper';
-    /** Stepper: extra Details sections appended after the panel's own. */
+    /** Extra Details sections appended after the panel's own (Epic U). */
     extraDetails?: DetailSection[];
-    /** Stepper: the Details section to open (``?open=``). */
+    /** The Details section to open (``?open=``). */
     openSection?: string | null;
     onNextStep?: () => void;
 }
 
-export default function GoldSetPanel({ projectId, onNextStep , layout = 'classic', extraDetails = [], openSection = null }: GoldSetPanelProps) {
-    const stepper = layout === 'stepper';
+export default function GoldSetPanel({ projectId, onNextStep , extraDetails = [], openSection = null }: GoldSetPanelProps) {
     const [entries, setEntries] = useState<any[]>([]);
     const [datasetType, setDatasetType] = useState('gold_dev');
     // A project whose answer key lives only in the test set (the span
@@ -715,9 +712,7 @@ export default function GoldSetPanel({ projectId, onNextStep , layout = 'classic
                 )}
             </div>
 
-            {!stepper && entriesCard}
-            {stepper && (
-                <DetailsDrawer
+            <DetailsDrawer
                     testId="data-details"
                     openSection={openSection}
                     sections={[
@@ -730,7 +725,6 @@ export default function GoldSetPanel({ projectId, onNextStep , layout = 'classic
                         ...extraDetails,
                     ]}
                 />
-            )}
             {onNextStep && (
                 <StepFooter
                     currentStep="Gold Dataset"

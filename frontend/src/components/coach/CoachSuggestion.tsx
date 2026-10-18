@@ -27,6 +27,15 @@ import {
 import { Term } from '../shared/Term';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
+import {
+    dataStepPath,
+    isTabKey,
+    resultsPath,
+    settingsPath,
+    shipPath,
+    stagePath,
+    trainSectionPath,
+} from '../../utils/workspaceRoutes';
 
 // Dictionary of plain-text phrases → glossary term IDs that
 // ``wrapTermsInBody`` scans for. Multi-word phrases come before
@@ -158,27 +167,26 @@ const NAVIGATE_TARGET_URLS: Record<
         const source = params['synth_source'];
         const query =
             typeof source === 'string' && source.length > 0
-                ? `?focus_synth_source=${encodeURIComponent(source)}`
+                ? `focus_synth_source=${encodeURIComponent(source)}`
                 : '';
-        return `/project/${projectId}/pipeline/synthetic${query}#synth-review-queue`;
+        return dataStepPath(projectId, 'synthetic', 'review-queue', query) + '#synth-review-queue';
     },
-    // Task-shape recipe picker — distinct from `/recipes` (which is
-    // the pipeline-DAG recipes page; different concept). The
-    // standalone `/recipe-picker` page sets `Project.selected_recipe`
+    // Task-shape recipe picker (the Train page's "task" section) —
+    // distinct from the pipeline-DAG presets section. It sets `Project.selected_recipe`
     // via `applyRecipeToProject`, which is what every
     // recipe-required surface (synth playbooks, auto-RAG comparison,
     // archetype comparison, Coach Mode signals) actually reads.
     // Sending Coach Mode users to the pipeline-DAG page was the bug
     // — they'd pick a pipeline recipe and the "no recipe selected"
     // signals would persist.
-    'recipe-picker': (projectId) => `/project/${projectId}/recipe-picker`,
+    'recipe-picker': (projectId) => trainSectionPath(projectId, 'task'),
     // Dataset Prep tab's split form (DatasetPrepPanel opens it on #split).
-    'dataprep-split': (projectId) => `/project/${projectId}/pipeline/dataprep#split`,
+    'dataprep-split': (projectId) => stagePath(projectId, 'dataprep') + '#split',
     // Any pipeline tab by key (``params.tab``) — the synthetic / data-prep /
     // export stages route between tabs (e.g. "Evaluate it" → eval).
     'pipeline-tab': (projectId, params) => {
-        const tab = typeof params['tab'] === 'string' && params['tab'] ? params['tab'] : 'data';
-        return `/project/${projectId}/pipeline/${encodeURIComponent(tab)}`;
+        const raw = typeof params['tab'] === 'string' && params['tab'] ? params['tab'] : 'data';
+        return stagePath(projectId, isTabKey(raw) ? raw : 'data');
     },
     // Training Config is its own page too (separate from the
     // pipeline tab) — same fix as recipe-picker. The Phase 6d
@@ -199,38 +207,36 @@ const NAVIGATE_TARGET_URLS: Record<
         if (Number.isFinite(suggested) && suggested >= 2 && suggested <= 8) {
             query.push(`suggested_num_seeds=${Math.trunc(suggested)}`);
         }
-        const qs = query.length ? `?${query.join('&')}` : '';
-        const hash = expand ? '#multi-seed' : '';
-        return `/project/${projectId}/training-config${qs}${hash}`;
+        return trainSectionPath(projectId, expand ? 'seeds' : 'plan', query.join('&'));
     },
     // Coach-stage-2 phase 1 — training-config gap roll-up nudge
     // sends the user to the TrainingConfigGapsPanel via its anchor.
     // The panel auto-loads on mount; no extra query params needed
     // for phase 1.
     'training-config-gaps-panel': (projectId) =>
-        `/project/${projectId}/training-config#training-config-gaps-panel`,
+        trainSectionPath(projectId, 'plan') + '#training-config-gaps-panel',
     // Coach-stage-2 phase 3 — eval-gap roll-up nudge lands on the
     // eval pipeline tab where EvalGapsPanel mounts above EvalPanel.
     'eval-gaps-panel': (projectId) =>
-        `/project/${projectId}/pipeline/eval#eval-gaps-panel`,
+        resultsPath(projectId, 'failures') + '#eval-gaps-panel',
     // Phase 11 — deep-link to the held-out probe pack panel so the
     // probe-vs-gold divergence nudge lands on the failing probes.
     'probe-pack-panel': (projectId) =>
-        `/project/${projectId}/pipeline/eval#probe-pack-panel`,
+        resultsPath(projectId, 'failures') + '#probe-pack-panel',
     // Phase 3 — archetype-coverage signal action target. The
     // ArchetypeComparisonPanel lives on the training-config page
     // today; users coming from the eval-gap panel land there.
     'archetype-comparison-panel': (projectId) =>
-        `/project/${projectId}/training-config#archetype-comparison-panel`,
+        trainSectionPath(projectId, 'plan') + '#archetype-comparison-panel',
     // Phase 3 — regression-baseline signal action target. Lands on
     // the training-config page's CheckpointsPanel where the user
     // can promote a checkpoint as baseline.
     'checkpoints-panel': (projectId) =>
-        `/project/${projectId}/training-config#checkpoints-panel`,
+        trainSectionPath(projectId, 'plan') + '#checkpoints-panel',
     // Phase 3 — train/eval label-KL signal action target. Lands on
     // the Data Studio splits tab (Splits tab is the splits surface).
     'data-studio-splits': (projectId) =>
-        `/project/${projectId}/data-studio#splits`,
+        stagePath(projectId, 'dataprep') + '#split',
     // Base-model swap target emitted by the trainability-forecast
     // coach suggestion ("Consider Qwen/..."). The params carry
     // `recommended_base_model`; we forward it as a URL query so
@@ -240,9 +246,9 @@ const NAVIGATE_TARGET_URLS: Record<
         const recommended = params['recommended_base_model'];
         const query =
             typeof recommended === 'string' && recommended.length > 0
-                ? `?recommended_base_model=${encodeURIComponent(recommended)}`
+                ? `recommended_base_model=${encodeURIComponent(recommended)}`
                 : '';
-        return `/project/${projectId}/training-config${query}#base-model`;
+        return trainSectionPath(projectId, 'model', query);
     },
     // Phase 7d — Coach Mode's reroute nudge sends the user to the
     // Eval tab + scrolls to the RerouteRecommendationPanel via the
@@ -250,25 +256,25 @@ const NAVIGATE_TARGET_URLS: Record<
     // EvalPanel so as long as an eval has run, the panel will be
     // mounted by the time the user lands.
     'reroute-recommendation-panel': (projectId) =>
-        `/project/${projectId}/pipeline/eval#reroute-recommendation-panel`,
+        resultsPath(projectId, 'failures') + '#reroute-recommendation-panel',
     // Gap-#1/#2 slice 3 — Coach's no-op normalizer nudge points here.
     // The page mounts DomainPackManager, where the slice-2 picker
     // badges safe-cleanup-normalizer with a ★ so the swap is one click.
     'domain-pack-manager': (projectId) =>
-        `/project/${projectId}/domain/packs`,
+        settingsPath(projectId, 'domain-packs'),
     // Gap-#6 slice 3 — Coach's per-class-gates-missing nudge points
     // at the Evaluation Pack section on the Eval tab. The
     // EvalPackScaffoldPanel + the per-class optgroups (slice 2) live
     // under that anchor.
     'eval-pack-editor': (projectId) =>
-        `/project/${projectId}/pipeline/eval#eval-pack-editor`,
+        resultsPath(projectId, 'failures') + '#eval-pack-editor',
     // Sweep-inconclusive nudge — sends the user to the observability
     // page's FailureClusterList (the section was given the
     // `failure-clusters` anchor for this deep-link). When the sweep
     // verdict is inconclusive, this is where the user goes to see why
     // each cell missed the gate rather than promoting a sub-gate model.
     'failure-clusters-panel': (projectId) =>
-        `/project/${projectId}/observability#failure-clusters`,
+        shipPath(projectId, 'monitor') + '#failure-clusters',
     // Quality-Lift phase 3 slice 2 — active-learning Coach nudge sends
     // the user to the labeler with the assignment strategy pre-set to
     // ``active``. The nudge stamps the dominant ``label_job_id`` from
@@ -289,13 +295,13 @@ const NAVIGATE_TARGET_URLS: Record<
         if (typeof jobId === 'number' && Number.isFinite(jobId)) {
             return `/project/${projectId}/annotate/${jobId}`;
         }
-        return `/project/${projectId}/annotate`;
+        return dataStepPath(projectId, 'goldset', 'annotation');
     },
     // Quality-Lift phase 4 slice 2 — label-noise nudges (scan-ready
     // + results-pending) target a dedicated review surface that
     // lands in slice 3. For slice 2 the URL fragment is enough that
     // the click-through doesn't 404; slice 3 mounts the panel at
-    // /project/{id}/pipeline/cleaning#label-noise-review and reads
+    // /project/{id}/data?step=cleaning&open=label-noise#label-noise-review and reads
     // the slice 1 endpoint. Params forwarded as query string so
     // ``scan_id`` (results-pending) and ``auto_start_scan`` (scan-
     // ready) survive the navigation.
@@ -309,8 +315,7 @@ const NAVIGATE_TARGET_URLS: Record<
         if (auto === true) {
             qs.set('auto_start_scan', '1');
         }
-        const query = qs.toString() ? `?${qs.toString()}` : '';
-        return `/project/${projectId}/pipeline/cleaning${query}#label-noise-review`;
+        return dataStepPath(projectId, 'cleaning', 'label-noise', qs.toString()) + '#label-noise-review';
     },
 };
 

@@ -5,8 +5,6 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../../api/client';
 import DataHealthReportPanel from './DataHealthReportPanel';
-import TaskShapeConfirmCard from './TaskShapeConfirmCard';
-import { fetchProjectTaskShape, type ProjectTaskShape } from '../../api/taskShape';
 import StepFooter from '../shared/StepFooter';
 import { toast } from '../../stores/toastStore';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
@@ -16,11 +14,9 @@ import DetailsDrawer, { type DetailSection } from '../shared/DetailsDrawer';
 
 interface DatasetPrepPanelProps {
     projectId: number;
-    /** Epic U phase U4: ``stepper`` = a short form + a Details drawer. */
-    layout?: 'classic' | 'stepper';
-    /** Stepper: extra Details sections appended after the panel's own. */
+    /** Extra Details sections appended after the panel's own (Epic U). */
     extraDetails?: DetailSection[];
-    /** Stepper: the Details section to open (``?open=``). */
+    /** The Details section to open (``?open=``). */
     openSection?: string | null;
     onNextStep: () => void | Promise<void>;
 }
@@ -261,7 +257,6 @@ const CHAT_TEMPLATES = [
     { value: 'phi3', label: 'Phi-3' },
 ];
 
-type DatasetPrepView = 'overview' | 'adapters' | 'split';
 
 const DEFAULT_TASK_PROFILE_OPTIONS = [
     'auto',
@@ -335,9 +330,7 @@ function asPercent(value: unknown): string {
     return `${(numberValue * 100).toFixed(1)}%`;
 }
 
-export default function DatasetPrepPanel({ projectId, onNextStep , layout = 'classic', extraDetails = [], openSection = null }: DatasetPrepPanelProps) {
-    const stepper = layout === 'stepper';
-    const [activeView, setActiveView] = useState<DatasetPrepView>('overview');
+export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails = [], openSection = null }: DatasetPrepPanelProps) {
 
     // Preview state
     const [previewEntries, setPreviewEntries] = useState<Record<string, unknown>[]>([]);
@@ -494,16 +487,6 @@ export default function DatasetPrepPanel({ projectId, onNextStep , layout = 'cla
     // Unified task-shape detector over the project's current data — the
     // documents path never passes through the import wizard, so the
     // "what kind of task is this?" confirmation lives here too.
-    const [taskShape, setTaskShape] = useState<ProjectTaskShape | null>(null);
-    const loadTaskShape = async () => {
-        try {
-            const res = await fetchProjectTaskShape(projectId);
-            setTaskShape(res && res.detection ? res : null);
-        } catch {
-            setTaskShape(null);
-        }
-    };
-
     const loadAdapterPreference = async () => {
         setAdapterPreferenceLoading(true);
         try {
@@ -584,7 +567,6 @@ export default function DatasetPrepPanel({ projectId, onNextStep , layout = 'cla
         void previewEffectiveSplitConfig();
         void loadAdapterCatalog();
         void loadAdapterPreference();
-        void loadTaskShape();
         void loadActivePreparedConfig();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
@@ -968,13 +950,12 @@ export default function DatasetPrepPanel({ projectId, onNextStep , layout = 'cla
         // The split form only renders under the 'split' view — switch to it
         // first (the health panel that triggers this is mounted regardless
         // of the active view), then scroll once it has painted.
-        setActiveView('split');
         requestAnimationFrame(() => {
             splitSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
     };
 
-    // Coach deep-link (``…/pipeline/dataprep#split``) opens the split form
+    // Coach deep-link (``…/data?step=dataprep#split``) opens the split form
     // on mount. A Coach click from this same tab doesn't remount the panel
     // (react-router's pushState fires no hashchange), so the Coach also
     // dispatches ``brewslm:open-split-form``.
@@ -1736,7 +1717,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , layout = 'cla
                             ))}
                         </select>
                         <button type="button" className="btn-secondary" onClick={syncSplitAdapterFromPreview}>
-                            Use Adapter Lab Settings
+                            Use the adapter preview settings
                         </button>
                         <button type="button" className="btn-secondary" onClick={saveSplitAdapterPreference}>
                             Save as Project Preset
@@ -2111,53 +2092,6 @@ export default function DatasetPrepPanel({ projectId, onNextStep , layout = 'cla
                 every signal is computable. The user reads "here's what's
                 wrong before you train" before scrolling to the per-split
                 tables below. */}
-            {!stepper && (<>
-            {taskShape?.detection && (
-                <TaskShapeConfirmCard
-                    key={taskShape.confirmed?.task_profile || 'unconfirmed'}
-                    projectId={projectId}
-                    detection={taskShape.detection}
-                    catalog={taskShape.catalog}
-                    confirmedLabel={taskShape.confirmed?.label ?? null}
-                    onConfirmed={() => {
-                        void loadAdapterPreference();
-                        void loadTaskShape();
-                    }}
-                />
-            )}
-            <DataHealthReportPanel
-                key={healthRefreshKey}
-                projectId={projectId}
-                onSignalAction={handleHealthSignalAction}
-            />
-            <div className="dp-view-tabs">
-                <button
-                    type="button"
-                    className={`dp-view-tab ${activeView === 'overview' ? 'active' : ''}`}
-                    onClick={() => setActiveView('overview')}
-                >
-                    Overview
-                </button>
-                <button
-                    type="button"
-                    className={`dp-view-tab ${activeView === 'adapters' ? 'active' : ''}`}
-                    onClick={() => setActiveView('adapters')}
-                >
-                    Adapter Lab
-                </button>
-                <button
-                    type="button"
-                    className={`dp-view-tab ${activeView === 'split' ? 'active' : ''}`}
-                    onClick={() => setActiveView('split')}
-                >
-                    Split
-                </button>
-            </div>
-            {activeView === 'overview' && overviewView}
-            {activeView === 'adapters' && adaptersView}
-            {activeView === 'split' && splitView}
-            </>)}
-            {stepper && (<>
             {splitView}
                 <DetailsDrawer
                     testId="data-details"
@@ -2190,7 +2124,6 @@ export default function DatasetPrepPanel({ projectId, onNextStep , layout = 'cla
                         ...extraDetails,
                     ]}
                 />
-            </>)}
 
             <StepFooter
                 currentStep="Dataset Preparation"

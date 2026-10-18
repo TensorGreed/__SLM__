@@ -1,20 +1,36 @@
 /**
- * Project Settings — the workspace's long tail (Epic U, phase U1).
+ * Project Settings — the workspace's long tail (Epic U, phases U1 + U6).
  *
- * Workspace preferences (inline tips, advanced sections) and links to the
- * tools a normal day never needs: automation, domain controls, studios,
- * the manifest. Later phases fold these pages into sections here.
+ * Workspace preferences (inline tips, advanced sections, the manifest
+ * export) and the tools a normal day never needs, each as a section that
+ * loads only when opened: Autopilot Planner, Workflow Builder, Domain Packs,
+ * Domain Profiles, Extension Studio. ``?open=<id>`` opens one.
  */
 
-import { useState } from 'react';
-import { useNavigate, useOutletContext } from 'react-router-dom';
+import { useState, type ReactNode } from 'react';
+import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 
 import api from '../api/client';
 import ManifestExportButton from '../components/manifest/ManifestExportButton';
+import DetailsDrawer, { type DetailSection } from '../components/shared/DetailsDrawer';
 import { useCoachMode } from '../components/coach/useCoachMode';
 import { useProjectStore } from '../stores/projectStore';
+import { isSettingsSection, SETTINGS_SECTIONS, type SettingsSectionId } from '../utils/workspaceRoutes';
+import ProjectAutopilotPage from './ProjectAutopilotPage';
+import ProjectDomainPacksPage from './ProjectDomainPacksPage';
+import ProjectDomainProfilesPage from './ProjectDomainProfilesPage';
+import ProjectExtensionStudioPage from './ProjectExtensionStudioPage';
+import ProjectWorkflowPage from './ProjectWorkflowPage';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectSettingsPage.css';
+
+const SECTION_CONTENT: Record<SettingsSectionId, () => ReactNode> = {
+    autopilot: () => <ProjectAutopilotPage embedded />,
+    workflow: () => <ProjectWorkflowPage embedded />,
+    'domain-packs': () => <ProjectDomainPacksPage embedded />,
+    'domain-profiles': () => <ProjectDomainProfilesPage embedded />,
+    extensions: () => <ProjectExtensionStudioPage embedded />,
+};
 
 interface ToolLink {
     label: string;
@@ -22,39 +38,23 @@ interface ToolLink {
     hint: string;
 }
 
-const TOOL_GROUPS: Array<{ title: string; links: ToolLink[] }> = [
-    {
-        title: 'Automation',
-        links: [
-            { label: 'Autopilot Planner', path: 'autopilot', hint: 'Plan diffs, repair preview, rollback.' },
-            { label: 'Workflow Builder', path: 'workflow', hint: 'Compose and run pipeline graphs.' },
-            { label: 'Pipeline presets', path: 'train?open=pipeline-presets', hint: 'End-to-end pipeline compositions (under Train).' },
-            { label: 'Pipeline as Code', path: 'ship?stage=package&open=manifest', hint: 'The project as a brewslm.yaml manifest (under Ship).' },
-        ],
-    },
-    {
-        title: 'Domain',
-        links: [
-            { label: 'Domain Packs', path: 'domain/packs', hint: 'Overlay a domain pack on the project.' },
-            { label: 'Domain Profiles', path: 'domain/profiles', hint: 'Profiles that tune the pack.' },
-        ],
-    },
-    {
-        title: 'Studios',
-        links: [
-            { label: 'Adapter Studio', path: 'train?open=adapters', hint: 'Data adapter contracts (under Train).' },
-            { label: 'Extension Studio', path: 'extensions', hint: 'Runtime and pack plugins.' },
-        ],
-    },
+/** Tools that live under another destination; linked here for the long-tail reader. */
+const ELSEWHERE: ToolLink[] = [
+    { label: 'Pipeline presets', path: 'train?open=pipeline-presets', hint: 'End-to-end pipeline compositions (under Train).' },
+    { label: 'Adapter Studio', path: 'train?open=adapters', hint: 'Data adapter contracts (under Train).' },
+    { label: 'Pipeline as Code', path: 'ship?stage=package&open=manifest', hint: 'The project as a brewslm.yaml manifest (under Ship).' },
 ];
 
 export default function ProjectSettingsPage() {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const { projectId, project } = useOutletContext<ProjectWorkspaceContextValue>();
     const setActiveProject = useProjectStore((s) => s.setActiveProject);
     const { isOn: tipsOn, toggle: toggleTips } = useCoachMode(projectId);
     const [savingBeginner, setSavingBeginner] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const open = searchParams.get('open');
+    const openSection = isSettingsSection(open) ? open : null;
 
     const toggleBeginner = async () => {
         setSavingBeginner(true);
@@ -69,6 +69,13 @@ export default function ProjectSettingsPage() {
             setSavingBeginner(false);
         }
     };
+
+    const sections: DetailSection[] = SETTINGS_SECTIONS.map((section) => ({
+        id: section.id,
+        title: section.label,
+        hint: section.hint,
+        render: SECTION_CONTENT[section.id],
+    }));
 
     return (
         <div className="workspace-page settings-page" data-testid="settings-page">
@@ -90,7 +97,7 @@ export default function ProjectSettingsPage() {
                     />
                     <span>
                         <strong>Show inline tips</strong>
-                        <small>Suggestions on the Overview and the stage pages. Off hides them for this project.</small>
+                        <small>Suggestions on the Overview and inside each step. Off hides them for this project.</small>
                     </span>
                 </label>
                 <label className="settings-row">
@@ -103,7 +110,7 @@ export default function ProjectSettingsPage() {
                     />
                     <span>
                         <strong>Start advanced sections collapsed</strong>
-                        <small>Advanced evaluation and power tools open on request. Every page stays reachable either way.</small>
+                        <small>Power tools open on request. Every page stays reachable either way.</small>
                     </span>
                 </label>
                 {error && <div className="settings-error" role="alert">{error}</div>}
@@ -116,25 +123,31 @@ export default function ProjectSettingsPage() {
                 </div>
             </section>
 
-            {TOOL_GROUPS.map((group) => (
-                <section key={group.title} className="card settings-section">
-                    <h3>{group.title}</h3>
-                    <ul className="settings-links">
-                        {group.links.map((link) => (
-                            <li key={link.path}>
-                                <button
-                                    type="button"
-                                    className="settings-link"
-                                    onClick={() => navigate(`/project/${projectId}/${link.path}`)}
-                                >
-                                    <strong>{link.label}</strong>
-                                    <small>{link.hint}</small>
-                                </button>
-                            </li>
-                        ))}
-                    </ul>
-                </section>
-            ))}
+            <DetailsDrawer
+                testId="settings-details"
+                title="Tools"
+                hint="automation, domain controls, extensions — each loads when opened"
+                openSection={openSection}
+                sections={sections}
+            />
+
+            <section className="card settings-section">
+                <h3>Elsewhere</h3>
+                <ul className="settings-links">
+                    {ELSEWHERE.map((link) => (
+                        <li key={link.path}>
+                            <button
+                                type="button"
+                                className="settings-link"
+                                onClick={() => navigate(`/project/${projectId}/${link.path}`)}
+                            >
+                                <strong>{link.label}</strong>
+                                <small>{link.hint}</small>
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            </section>
         </div>
     );
 }

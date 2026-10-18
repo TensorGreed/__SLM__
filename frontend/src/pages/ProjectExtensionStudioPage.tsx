@@ -55,7 +55,7 @@ function extractErrorMessage(err: unknown, fallback = 'Request failed.'): string
     return e?.message || fallback;
 }
 
-export default function ProjectExtensionStudioPage() {
+export default function ProjectExtensionStudioPage({ embedded = false }: { embedded?: boolean } = {}) {
     const params = useParams();
     const workspace = useOutletContext<ProjectWorkspaceContextValue | null>();
     const routeProjectId = params.id ? Number.parseInt(params.id, 10) : null;
@@ -149,6 +149,7 @@ export default function ProjectExtensionStudioPage() {
 
     return (
         <div className="workspace-page extension-studio-page">
+            {!embedded && (
             <section className="workspace-page-header">
                 <div>
                     <h2 className="workspace-page-title">Extension Studio</h2>
@@ -168,6 +169,7 @@ export default function ProjectExtensionStudioPage() {
                     {loading ? 'Refreshing…' : 'Refresh'}
                 </button>
             </section>
+            )}
 
             {error && (
                 <div className="deployment-status is-error" role="alert">

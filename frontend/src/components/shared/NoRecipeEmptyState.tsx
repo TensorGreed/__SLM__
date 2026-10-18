@@ -20,11 +20,12 @@
  *
  * Renders a centered card with a uniform headline, a one-line hint
  * scoped to the calling surface, and a primary "Pick a recipe" button
- * that navigates to the recipe-picker page (the same target Coach
+ * that opens the Train page's task section (the same target Coach
  * Mode's `recipe-picker` action uses).
  */
 
 import EmptyState from './EmptyState';
+import { trainSectionPath } from '../../utils/workspaceRoutes';
 
 
 interface Props {
@@ -34,10 +35,8 @@ interface Props {
      *  ``"synthetic playbooks"``). Slots into the description so the
      *  user knows which feature is gated on the recipe. */
     surface: string;
-    /** Optional in-app path the recipe-picker page should redirect to
-     *  after a successful apply. Defaults to the current pathname so
-     *  the user lands back where they were, which makes the CTA → pick
-     *  → CTA-disappears loop a single click round-trip. */
+    /** Retained for callers; ignored now that the task section lives on
+     *  the Train page (no separate page to return from). */
     returnTo?: string;
     /** Optional test id passthrough. Defaults to a stable id so the
      *  panel can scope its own assertions without colliding with
@@ -49,21 +48,11 @@ interface Props {
 export default function NoRecipeEmptyState({
     projectId,
     surface,
-    returnTo,
     testId = 'no-recipe-empty-state',
 }: Props) {
-    // Default ``returnTo`` to wherever the CTA is being mounted —
-    // resolved at render time so the legacy user comes back to the
-    // exact page (and tab) they triggered the CTA from. Tests can
-    // override via the explicit prop.
-    const resolvedReturnTo =
-        returnTo
-        ?? (typeof window !== 'undefined'
-            ? window.location.pathname + window.location.search
-            : `/project/${projectId}/pipeline/data`);
-    const href =
-        `/project/${projectId}/recipe-picker`
-        + `?return_to=${encodeURIComponent(resolvedReturnTo)}`;
+    // The task section lives on the Train page now; there is no
+    // separate page to return from, so ``returnTo`` is no longer used.
+    const href = trainSectionPath(projectId, 'task');
 
     return (
         <div data-testid={testId}>

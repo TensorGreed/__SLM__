@@ -12,11 +12,9 @@ import DetailsDrawer, { type DetailSection } from '../shared/DetailsDrawer';
 
 interface CleaningPanelProps {
     projectId: number;
-    /** Epic U phase U4: ``stepper`` = a short form + a Details drawer. */
-    layout?: 'classic' | 'stepper';
-    /** Stepper: extra Details sections appended after the panel's own. */
+    /** Extra Details sections appended after the panel's own (Epic U). */
     extraDetails?: DetailSection[];
-    /** Stepper: the Details section to open (``?open=``). */
+    /** The Details section to open (``?open=``). */
     openSection?: string | null;
     onNextStep?: () => void;
 }
@@ -91,8 +89,7 @@ function extractErrorMessage(error: unknown): string {
     return 'Operation failed';
 }
 
-export default function CleaningPanel({ projectId, onNextStep , layout = 'classic', extraDetails = [], openSection = null }: CleaningPanelProps) {
-    const stepper = layout === 'stepper';
+export default function CleaningPanel({ projectId, onNextStep , extraDetails = [], openSection = null }: CleaningPanelProps) {
     const [documents, setDocuments] = useState<DocToClean[]>([]);
     const [chunkSize, setChunkSize] = useState(1000);
     const [redactPii, setRedactPii] = useState(true);
@@ -238,51 +235,7 @@ export default function CleaningPanel({ projectId, onNextStep , layout = 'classi
                 )}
             </div>
 
-            {!stepper && (<>
-            {cleaningResults.length > 0 && (
-                <div className="card">
-                    <h3>Cleaning Results</h3>
-                    <div className="results-grid">
-                        {cleaningResults.map((r, i) => (
-                            <div key={i} className="result-card">
-                                <div className="result-header">
-                                    <span className="badge badge-success">Doc #{r.document_id}</span>
-                                    <span className="quality-score">Quality: {(r.quality_score * 100).toFixed(0)}%</span>
-                                </div>
-                                <div className="result-stats">
-                                    <div><strong>{r.chunk_count}</strong> chunks</div>
-                                    <div><strong>{r.pii_findings?.length || 0}</strong> PII found</div>
-                                    <div><strong>{r.toxicity_findings?.length || 0}</strong> toxicity spans</div>
-                                    <div>{r.original_chars?.toLocaleString()} → {r.cleaned_chars?.toLocaleString()} chars</div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-            {cleaningErrors.length > 0 && (
-                <div className="card">
-                    <h3>Cleaning Errors</h3>
-                    <div className="results-grid">
-                        {cleaningErrors.map((err) => (
-                            <div key={`${err.document_id}-${err.error}`} className="result-card">
-                                <div className="result-header">
-                                    <span className="badge badge-error">Doc #{err.document_id}</span>
-                                </div>
-                                <div className="result-stats">
-                                    <div>{err.error}</div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-            <div id="label-noise-review">
-                <LabelNoiseReviewPanel projectId={projectId} scanId={scanIdForPanel} />
-            </div>
-            </>)}
-            {stepper && (
-                <DetailsDrawer
+            <DetailsDrawer
                     testId="data-details"
                     openSection={openSection}
                     sections={[
@@ -347,7 +300,6 @@ export default function CleaningPanel({ projectId, onNextStep , layout = 'classi
                         ...extraDetails,
                     ]}
                 />
-            )}
             {onNextStep && (
                 <StepFooter
                     currentStep="Data Cleaning"

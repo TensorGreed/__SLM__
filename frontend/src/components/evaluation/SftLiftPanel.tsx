@@ -24,6 +24,7 @@ import {
     type SftLiftGateStatus,
 } from '../../api/sftLift';
 import { isUnproven, metricDisplayName, shortEvidenceText } from './liftEvidence';
+import { resultsPath } from '../../utils/workspaceRoutes';
 
 interface SftLiftPanelProps {
     projectId: number;
@@ -400,7 +401,7 @@ export default function SftLiftPanel({
 
             {trained?.experiment_id != null && (
                 <a
-                    href={`/project/${projectId}/playground?run=${trained.experiment_id}`}
+                    href={resultsPath(projectId, 'try', `run=${trained.experiment_id}`)}
                     data-testid="sft-lift-chat-link"
                 >
                     Chat with run #{trained.experiment_id} →

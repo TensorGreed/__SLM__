@@ -115,6 +115,9 @@ function mockApi(predictionsPreview: unknown[]) {
         if (url.includes('remediation-plans')) {
             return { data: { project_id: 4, count: 0, plans: [] } };
         }
+        if (url.includes('/gold/review')) {
+            return { data: { total: 0, rows: [] } };
+        }
         return { data: {} };
     });
 }
@@ -124,8 +127,6 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
     beforeEach(() => {
         apiMock.get.mockReset();
         apiMock.post.mockReset();
-        // No active project => not beginner mode => "Advanced evaluation"
-        // (where the predictions card lives) starts open.
         useProjectStore.setState({ activeProject: null });
     });
 
@@ -148,7 +149,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/Preferred chosen/i)).toBeInTheDocument();
@@ -176,7 +177,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/Preferred rejected/i)).toBeInTheDocument();
@@ -201,7 +202,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(
@@ -223,7 +224,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // Predictions card rendered.
@@ -236,7 +237,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
         ).not.toBeInTheDocument();
     });
 
-    it('beginner projects reach the badges once Advanced evaluation is opened', async () => {
+    it('beginner projects see the badges directly (one layout, no Advanced toggle)', async () => {
         useProjectStore.setState({
             activeProject: { id: 4, name: 'p', beginner_mode: true } as Project,
         });
@@ -258,15 +259,10 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
-        // Collapsed by default for beginners: the per-row badge is hidden.
-        const toggle = screen.getByTestId('eval-advanced-toggle');
-        expect(toggle).toHaveTextContent('Advanced evaluation');
-        expect(screen.queryByText(/Preferred chosen/i)).not.toBeInTheDocument();
-
-        await user.click(toggle);
         expect(await screen.findByText(/Preferred chosen/i)).toBeInTheDocument();
+        expect(screen.queryByTestId('eval-advanced-toggle')).not.toBeInTheDocument();
     });
 });

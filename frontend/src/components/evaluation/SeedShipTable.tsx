@@ -12,6 +12,7 @@ import { fetchSeedPick, shipSeed, type SeedPick, type ShipSeedResponse } from '.
 import type { EvalSummaryHeadline } from '../../api/evalSummary';
 import { metricDisplayName } from './liftEvidence';
 import { toast } from '../../stores/toastStore';
+import { shipPath } from '../../utils/workspaceRoutes';
 
 interface SeedShipTableProps {
     projectId: number;
@@ -129,7 +130,7 @@ export default function SeedShipTable({ projectId, leaderId, seeds }: SeedShipTa
                     {shipped.export.output_path ? <> · <code>{shipped.export.output_path}</code></> : null}
                     {shipped.export.error ? ` — ${shipped.export.error}` : ''}
                     {shipped.evaluated_before_ship?.ran ? ' · evaluated first (it had no evaluation on record)' : ''}
-                    {' '}· <a href={`/project/${projectId}/pipeline/export`} data-testid="seed-ship-export-link">Open Export →</a>
+                    {' '}· <a href={shipPath(projectId, 'package')} data-testid="seed-ship-export-link">Open Export →</a>
                 </p>
             )}
         </div>

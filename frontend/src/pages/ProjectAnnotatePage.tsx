@@ -41,6 +41,7 @@ import SpanLabeler, {
     type SpanAnnotation,
 } from '../components/annotation/SpanLabeler';
 import { toast } from '../stores/toastStore';
+import { dataStepPath } from '../utils/workspaceRoutes';
 
 
 // ─────────────────────────────────────────────────────────────────────
@@ -509,7 +510,7 @@ function AnnotateLabelerView({
                 <div className="error-banner" data-testid="annotate-error">
                     {error}
                 </div>
-                <Link to={`/project/${projectId}/annotate`}>← Back to jobs</Link>
+                <Link to={dataStepPath(projectId, 'goldset', 'annotation')}>← Back to jobs</Link>
             </div>
         );
     }
@@ -527,7 +528,7 @@ function AnnotateLabelerView({
     return (
         <div className="page-container">
             <div style={{ marginBottom: 'var(--space-md)' }}>
-                <Link to={`/project/${projectId}/annotate`}>← Back to jobs</Link>
+                <Link to={dataStepPath(projectId, 'goldset', 'annotation')}>← Back to jobs</Link>
             </div>
 
             <AnnotationProgress jobName={job.name} stats={job.stats} />

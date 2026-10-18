@@ -4,8 +4,9 @@
  * passing ``open``), type to filter, ↑/↓ to move, Enter to navigate,
  * Esc to dismiss.
  *
- * No external dep — just a substring match. The action set is scoped
- * to the current project workspace.
+ * No external dep — just a substring match. The action set is the
+ * workspace command registry (``utils/workspaceCommands``), generated from
+ * the IA — nothing is hand-maintained here (Epic U phase U6).
  */
 
 import {
@@ -18,26 +19,18 @@ import {
 } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    Activity,
-    BookOpen,
-    Bot,
-    Boxes,
-    ClipboardList,
     Database,
-    FileCode,
     FlaskConical,
     Home,
-    Layers,
-    PenSquare,
-    Puzzle,
     Rocket,
     Search,
     Settings2,
     Sparkles,
-    Workflow,
 } from 'lucide-react';
 
-import { DESTINATION_LABEL, projectPath, type Destination } from '../../utils/workspaceRoutes';
+import { workspaceCommands } from '../../utils/workspaceCommands';
+
+import { DESTINATION_LABEL, type Destination } from '../../utils/workspaceRoutes';
 
 import { OPEN_COMMAND_PALETTE_EVENT } from './commandPaletteBridge';
 import './CommandPalette.css';
@@ -82,47 +75,17 @@ function buildItems(
     });
 
     if (projectId == null) return items;
-    const base = `/project/${projectId}`;
 
-    for (const destination of ['overview', 'data', 'train', 'results', 'ship', 'settings'] as Destination[]) {
-        const path = projectPath(projectId, destination);
+    // The registry is generated from the IA (``utils/workspaceCommands``).
+    for (const command of workspaceCommands(projectId)) {
         items.push({
-            id: path,
-            label: DESTINATION_LABEL[destination],
-            hint: path,
-            section: 'Workspace',
-            icon: DESTINATION_ICON[destination],
-            onSelect: () => navigate(path),
+            id: command.id,
+            label: command.label,
+            hint: command.hint,
+            section: DESTINATION_LABEL[command.section],
+            icon: DESTINATION_ICON[command.section],
+            onSelect: () => navigate(command.path),
         });
-    }
-
-    const tools: Array<[string, string, string, ReactNode]> = [
-        ['Sources', `${base}/data`, 'Data', <ClipboardList size={14} />],
-        ['Labels and answer key', `${base}/data?step=goldset`, 'Data', <PenSquare size={14} />],
-        ['Annotation jobs', `${base}/data?step=goldset&open=annotation`, 'Data', <PenSquare size={14} />],
-        ['Split and versions', `${base}/data?step=dataprep`, 'Data', <ClipboardList size={14} />],
-        ['Plan and gaps', `${base}/train?open=plan`, 'Train', <Settings2 size={14} />],
-        ['Base model registry', `${base}/train?open=models`, 'Train', <Boxes size={14} />],
-        ['Task type', `${base}/train?open=task`, 'Train', <BookOpen size={14} />],
-        ['Verdict', `${base}/results?tab=verdict`, 'Results', <Sparkles size={14} />],
-        ['Failures', `${base}/results?tab=failures`, 'Results', <Activity size={14} />],
-        ['Compare runs', `${base}/results?tab=compare`, 'Results', <Sparkles size={14} />],
-        ['Try it (playground)', `${base}/results?tab=try`, 'Results', <Bot size={14} />],
-        ['Package', `${base}/ship?stage=package`, 'Ship', <Rocket size={14} />],
-        ['Publish', `${base}/ship?stage=publish`, 'Ship', <Rocket size={14} />],
-        ['Deploy', `${base}/ship?stage=deploy`, 'Ship', <Rocket size={14} />],
-        ['Monitor (observability)', `${base}/ship?stage=monitor`, 'Ship', <Activity size={14} />],
-        ['Autopilot Planner', `${base}/autopilot`, 'Settings', <ClipboardList size={14} />],
-        ['Workflow Builder', `${base}/workflow`, 'Settings', <Workflow size={14} />],
-        ['Pipeline presets', `${base}/train?open=pipeline-presets`, 'Train', <BookOpen size={14} />],
-        ['Pipeline as Code', `${base}/ship?stage=package&open=manifest`, 'Ship', <FileCode size={14} />],
-        ['Domain Packs', `${base}/domain/packs`, 'Settings', <Boxes size={14} />],
-        ['Domain Profiles', `${base}/domain/profiles`, 'Settings', <Layers size={14} />],
-        ['Adapter Studio', `${base}/train?open=adapters`, 'Train', <Boxes size={14} />],
-        ['Extension Studio', `${base}/extensions`, 'Settings', <Puzzle size={14} />],
-    ];
-    for (const [label, path, section, icon] of tools) {
-        items.push({ id: path, label, hint: path, section, icon, onSelect: () => navigate(path) });
     }
 
     return items;

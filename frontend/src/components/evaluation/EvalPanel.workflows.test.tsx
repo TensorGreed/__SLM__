@@ -115,11 +115,4 @@ describe('EvalPanel — Results workflows', () => {
         await user.click((await screen.findAllByRole('button', { name: 'exp-21' })).at(-1)!);
         expect((await screen.findAllByText(/Available for a span-tagging run/)).length).toBeGreaterThan(0);
     });
-
-    it('without a workflow the one-page layout still has the Advanced toggle', async () => {
-        render(<MemoryRouter><EvalPanel projectId={1} /></MemoryRouter>);
-        await screen.findByText('exp-21');
-        expect(screen.getByTestId('eval-advanced-toggle')).toBeInTheDocument();
-        expect(screen.getByTestId('summary-card')).toHaveTextContent('try-box');
-    });
 });

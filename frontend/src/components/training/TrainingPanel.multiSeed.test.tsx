@@ -2,7 +2,7 @@
  * Quality-Lift phase 7 slice 3 — MultiSeedConfigSection tests.
  *
  * Pins:
- *   * Section renders in the Power Tools tab (it's a power-user
+ *   * Section renders under More options -> seeds (it's a power-user
  *     authoring affordance, not basics).
  *   * Section is collapsed by default — every existing project ships
  *     with num_seeds=1 and we don't want to clutter the form.
@@ -83,10 +83,8 @@ describe('TrainingPanel — multi-seed variance section (phase 7 slice 3)', () =
         setUrlSearch(''); // clean URL between tests
     });
 
-    it('section is present in Power Tools tab and starts collapsed', async () => {
-        const user = userEvent.setup();
-        render(<TrainingPanel projectId={1} forceCreateVisible hideExperimentList />);
-        await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+    it('section is present under More options -> seeds and starts collapsed', async () => {
+        render(<TrainingPanel projectId={1} openSection="seeds" />);
 
         const section = await screen.findByTestId('training-multi-seed-section');
         expect(section).toBeInTheDocument();
@@ -99,8 +97,7 @@ describe('TrainingPanel — multi-seed variance section (phase 7 slice 3)', () =
 
     it('toggle expands the body and reveals all four fields', async () => {
         const user = userEvent.setup();
-        render(<TrainingPanel projectId={1} forceCreateVisible hideExperimentList />);
-        await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+        render(<TrainingPanel projectId={1} openSection="seeds" />);
         await user.click(await screen.findByTestId('training-multi-seed-toggle'));
 
         expect(screen.getByTestId('training-multi-seed-body')).toBeInTheDocument();
@@ -116,8 +113,7 @@ describe('TrainingPanel — multi-seed variance section (phase 7 slice 3)', () =
 
     it('bumping count above 1 surfaces the variance preview + active badge', async () => {
         const user = userEvent.setup();
-        render(<TrainingPanel projectId={1} forceCreateVisible hideExperimentList />);
-        await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+        render(<TrainingPanel projectId={1} openSection="seeds" />);
         await user.click(await screen.findByTestId('training-multi-seed-toggle'));
 
         const count = screen.getByTestId('training-multi-seed-count');
@@ -138,8 +134,7 @@ describe('TrainingPanel — multi-seed variance section (phase 7 slice 3)', () =
 
     it('multiple explicit seeds also trigger the variance preview', async () => {
         const user = userEvent.setup();
-        render(<TrainingPanel projectId={1} forceCreateVisible hideExperimentList />);
-        await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+        render(<TrainingPanel projectId={1} openSection="seeds" />);
         await user.click(await screen.findByTestId('training-multi-seed-toggle'));
 
         const explicit = screen.getByTestId('training-multi-seed-explicit');
@@ -152,10 +147,8 @@ describe('TrainingPanel — multi-seed variance section (phase 7 slice 3)', () =
     });
 
     it('URL ?expand_multi_seed=1 auto-expands the section on mount', async () => {
-        const user = userEvent.setup();
         setUrlSearch('expand_multi_seed=1');
-        render(<TrainingPanel projectId={1} forceCreateVisible hideExperimentList />);
-        await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+        render(<TrainingPanel projectId={1} openSection="seeds" />);
 
         // Body present without a manual toggle click — the coach
         // deep-link path.
@@ -168,10 +161,8 @@ describe('TrainingPanel — multi-seed variance section (phase 7 slice 3)', () =
     });
 
     it('URL ?suggested_num_seeds=3 pre-fills count + variance preview', async () => {
-        const user = userEvent.setup();
         setUrlSearch('expand_multi_seed=1&suggested_num_seeds=3');
-        render(<TrainingPanel projectId={1} forceCreateVisible hideExperimentList />);
-        await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+        render(<TrainingPanel projectId={1} openSection="seeds" />);
 
         await waitFor(() => {
             expect(screen.getByTestId('training-multi-seed-body')).toBeInTheDocument();
@@ -183,10 +174,8 @@ describe('TrainingPanel — multi-seed variance section (phase 7 slice 3)', () =
     });
 
     it('out-of-range suggested_num_seeds is clamped and does not crash', async () => {
-        const user = userEvent.setup();
         setUrlSearch('expand_multi_seed=1&suggested_num_seeds=99');
-        render(<TrainingPanel projectId={1} forceCreateVisible hideExperimentList />);
-        await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+        render(<TrainingPanel projectId={1} openSection="seeds" />);
 
         await waitFor(() => {
             expect(screen.getByTestId('training-multi-seed-body')).toBeInTheDocument();
@@ -197,9 +186,7 @@ describe('TrainingPanel — multi-seed variance section (phase 7 slice 3)', () =
     });
 
     it('brewslm:expand-multi-seed CustomEvent expands + sets count', async () => {
-        const user = userEvent.setup();
-        render(<TrainingPanel projectId={1} forceCreateVisible hideExperimentList />);
-        await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+        render(<TrainingPanel projectId={1} openSection="seeds" />);
 
         // Same-page coach activation: section is initially collapsed,
         // CustomEvent fires, body appears + count = suggested.

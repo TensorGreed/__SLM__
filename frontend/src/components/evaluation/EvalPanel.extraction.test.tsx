@@ -123,6 +123,9 @@ function mockApi(predictionsPreview: unknown[]) {
         if (url.includes('remediation-plans')) {
             return { data: { project_id: 4, count: 0, plans: [] } };
         }
+        if (url.includes('/gold/review')) {
+            return { data: { total: 0, rows: [] } };
+        }
         return { data: {} };
     });
 }
@@ -157,7 +160,7 @@ describe('EvalPanel — Sample Predictions with StructuredExtractionHandler enri
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/JSON: valid/i)).toBeInTheDocument();
@@ -181,7 +184,7 @@ describe('EvalPanel — Sample Predictions with StructuredExtractionHandler enri
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/JSON: malformed/i)).toBeInTheDocument();
@@ -206,7 +209,7 @@ describe('EvalPanel — Sample Predictions with StructuredExtractionHandler enri
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/missing:\s*total/i)).toBeInTheDocument();
@@ -243,7 +246,7 @@ describe('EvalPanel — Sample Predictions with StructuredExtractionHandler enri
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // The disclosure is collapsed by default; its summary is visible.
@@ -272,7 +275,7 @@ describe('EvalPanel — Sample Predictions with StructuredExtractionHandler enri
         ]);
 
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // Wait for the predictions card to land.

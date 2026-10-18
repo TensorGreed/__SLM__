@@ -11,12 +11,13 @@ import WorkflowRunMonitor from '../components/pipeline/WorkflowRunMonitor';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectWorkflowPage.css';
 
-export default function ProjectWorkflowPage() {
+export default function ProjectWorkflowPage({ embedded = false }: { embedded?: boolean } = {}) {
     const { projectId, project, pipelineStatus, refreshPipelineStatus } = useOutletContext<ProjectWorkspaceContextValue>();
     const currentStage = pipelineStatus?.current_stage || project.pipeline_stage;
 
     return (
         <div className="workspace-page">
+            {!embedded && (
             <section className="workspace-page-header">
                 <div>
                     <h2 className="workspace-page-title">Workflow Builder</h2>
@@ -25,6 +26,7 @@ export default function ProjectWorkflowPage() {
                     </p>
                 </div>
             </section>
+            )}
             {pipelineStatus && (
                 <div className="card progress-card">
                     <PipelineProgress

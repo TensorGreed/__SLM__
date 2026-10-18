@@ -56,16 +56,6 @@ export function getRecommendedAction(
 ): RecommendedAction {
     const currentStage = getCurrentStage(project, pipelineStatus);
 
-    // Domain packs/profiles are hidden in beginner mode — never send a
-    // newcomer to a page they can't see; defaults are fine to start.
-    if (!project.beginner_mode && !project.domain_pack_id && !project.domain_profile_id) {
-        return {
-            path: `/project/${projectId}/domain/packs`,
-            title: 'Set domain context',
-            description: 'Assign a domain pack/profile (or keep defaults) before deeper tuning.',
-        };
-    }
-
     switch (currentStage) {
         case 'ingestion':
             return {

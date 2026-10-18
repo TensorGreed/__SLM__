@@ -68,15 +68,15 @@ In the UI, the **Data** → **Generate** playbook panel will now show a **Backen
 
 Each option that actually honors the playbook's `response_schema` (`nemo`, `vllm`) is suffixed with **· schema-aware** in the dropdown text. When the active selection is schema-aware, a green **✓ schema-aware** chip appears next to the picker. The `/backends` endpoint returns a `schema_aware: bool` per entry so the frontend can render the badge without hard-coding backend names.
 
-### Coach Mode auto-pins schema-aware backends
+### The class-imbalance suggestion auto-pins schema-aware backends
 
-Coach Mode's class-imbalance suggestion (`gold_set:class-imbalance`) — the click-to-execute action that runs `class_balance_fill` — auto-pins the highest-ranked schema-aware backend when one is configured + reachable. Preference order is **vLLM > NeMo** (vLLM enforces the schema during decoding via xgrammar / outlines; NeMo passes it upstream where enforcement quality depends on the model + NIM version). When neither is reachable the suggestion stamps no `backend` and the orchestrator's auto-pick takes over (typically Ollama, which silently ignores the schema). This means users on a vLLM-equipped install get constrained decoding "for free" from the Coach button without having to remember to switch the dropdown manually.
+The Coach's class-imbalance suggestion (`gold_set:class-imbalance`) — the click-to-execute action that runs `class_balance_fill` — auto-pins the highest-ranked schema-aware backend when one is configured + reachable. Preference order is **vLLM > NeMo** (vLLM enforces the schema during decoding via xgrammar / outlines; NeMo passes it upstream where enforcement quality depends on the model + NIM version). When neither is reachable the suggestion stamps no `backend` and the orchestrator's auto-pick takes over (typically Ollama, which silently ignores the schema). This means users on a vLLM-equipped install get constrained decoding "for free" from the Coach button without having to remember to switch the dropdown manually.
 
-The Coach suggestion card surfaces the auto-pinned backend under the action button as a caption — e.g. **will run on `vllm:meta-llama/Meta-Llama-3.1-8B-Instruct`  ✓ schema-aware** — so users see the upgrade happening instead of it being silently applied. The schema-aware chip renders only when the pinned backend matches `context.schema_aware_backend` (also stamped by `coach_service`), so the UI never has to maintain its own backend-name allowlist.
+The suggestion notice surfaces the auto-pinned backend under the action button as a caption — e.g. **will run on `vllm:meta-llama/Meta-Llama-3.1-8B-Instruct`  ✓ schema-aware** — so users see the upgrade happening instead of it being silently applied. The schema-aware chip renders only when the pinned backend matches `context.schema_aware_backend` (also stamped by `coach_service`), so the UI never has to maintain its own backend-name allowlist.
 
-### Coach Mode reminds you to review pending synth rows
+### A notice reminds you to review pending synth rows
 
-After Coach runs the click-to-execute class-imbalance action, the generated rows land in the synth review queue with `review_status="pending"` and are **silently gated out of training** by the dataset-prep loader. To close that loop, the gold_set Coach surface emits a `gold_set:synth-review-pending` suggestion whenever the queue has pending rows. Severity scales with the pile-up — `info` for 1–4 rows (just a nudge), `warning` for 5+ (meaningful chunk of generated data not yet in training).
+After the Coach action runs the click-to-execute class-imbalance action, the generated rows land in the synth review queue with `review_status="pending"` and are **silently gated out of training** by the dataset-prep loader. To close that loop, the gold_set Coach surface emits a `gold_set:synth-review-pending` suggestion whenever the queue has pending rows. Severity scales with the pile-up — `info` for 1–4 rows (just a nudge), `warning` for 5+ (meaningful chunk of generated data not yet in training).
 
 The action is a `navigate` with target `synthetic-review-queue`. Coach also stamps the top pending bucket's `synth_source` onto `action.params.synth_source`. The Coach navigate handler builds a focused URL:
 
@@ -130,7 +130,7 @@ For most users, Ollama is fine — the playbook parser already handles markdown-
 
 ## How auto-pick works
 
-When the playbook is run without an explicit backend pin (the default for every existing call site, including Coach Mode click-to-execute actions), `pick_backend(None)` walks the registry in this order and returns the first that's available:
+When the playbook is run without an explicit backend pin (the default for every existing call site, including Coach click-to-execute actions), `pick_backend(None)` walks the registry in this order and returns the first that's available:
 
 1. `OllamaBackend`
 2. `TeacherModelBackend`

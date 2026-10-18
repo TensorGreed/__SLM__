@@ -24,6 +24,8 @@ vi.mock('../components/evaluation/EvalPanel', () => ({
 vi.mock('../components/training/ChatPlaygroundPanel', () => ({ default: () => <div data-testid="playground" /> }));
 vi.mock('./ProjectEvalComparePage', () => ({ default: () => <div data-testid="compare-page" /> }));
 
+vi.mock('../components/coach/CoachNotices', () => ({ default: ({ stage }: { stage: string }) => <div data-testid={`coach-notices-${stage}`} /> }));
+vi.mock('../components/coach/StepHelp', () => ({ default: () => null }));
 import ProjectResultsPage, { resolveResultsTab } from './ProjectResultsPage';
 
 function LocationProbe() {

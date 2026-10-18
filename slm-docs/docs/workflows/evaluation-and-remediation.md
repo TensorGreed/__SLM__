@@ -89,7 +89,7 @@ A locked answer-key version is **immutable**. New rows make a new version.
 
 The **Data** → **Labels** step's *Entries and human review* Details section renders a `GoldSetDiagnosticsPanel` above the entry list whenever the answer key has at least a few classification rows. Two complementary views from a single `GET /api/projects/{id}/gold/diagnostics` call:
 
-- **Class-balance bars** — one row per label sorted descending. The bar shows share-of-total; a dashed line at **15%** marks the same imbalance floor Coach Mode's `class_imbalance` signal fires below, so a bar dropping under the line previews exactly what'll be flagged at training time. Classes below the floor turn red. Header reports total rows, class count, and Shannon entropy.
+- **Class-balance bars** — one row per label sorted descending. The bar shows share-of-total; a dashed line at **15%** marks the same imbalance floor the Coach's `class_imbalance` signal fires below, so a bar dropping under the line previews exactly what'll be flagged at training time. Classes below the floor turn red. Header reports total rows, class count, and Shannon entropy.
 - **Class-similarity heatmap** — rows × cols = labels. Each cell is the mean pairwise Jaccard between a sample of rows from each class (default 12 per class):
     - **Diagonal cells** measure intra-class redundancy. ~1.0 = rows look the same → low diversity → the model learns nothing. ~0.0 = good variety.
     - **Off-diagonal cells** measure inter-class confusability. ~1.0 = even a perfect classifier can't separate the classes from text alone. ~0.0 = the classes are easy to tell apart.

@@ -187,7 +187,7 @@ function extractSuggestedBrief(project: ProjectWorkspaceContextValue['project'])
     return typeof value === 'string' ? value.trim() : '';
 }
 
-export default function ProjectAutopilotPage() {
+export default function ProjectAutopilotPage({ embedded = false }: { embedded?: boolean } = {}) {
     const { projectId, project } = useOutletContext<ProjectWorkspaceContextValue>();
 
     // Form state — pre-fill the intent from a demo project's
@@ -352,6 +352,7 @@ export default function ProjectAutopilotPage() {
 
     return (
         <div className="workspace-page autopilot-page">
+            {!embedded && (
             <section className="workspace-page-header">
                 <div>
                     <h2 className="workspace-page-title">
@@ -373,6 +374,7 @@ export default function ProjectAutopilotPage() {
                     ) : null}
                 </div>
             </section>
+            )}
 
             {errorMessage ? (
                 <div className="card autopilot-alert autopilot-alert-error">{errorMessage}</div>

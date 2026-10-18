@@ -40,7 +40,7 @@ describe('workspaceRoutes', () => {
         expect(legacyRedirectPath(7, '/project/7/pipeline/training')).toBe('/project/7/train');
         expect(legacyRedirectPath(7, '/project/7/pipeline/tokenization')).toBe('/project/7/train?open=tokenization');
         expect(legacyRedirectPath(7, '/project/7/pipeline/nope')).toBe('/project/7/data');
-        expect(legacyRedirectPath(7, '/project/7/extensions')).toBeNull();
+        expect(legacyRedirectPath(7, '/project/7/annotate/5')).toBeNull();
     });
 
     it('folds the retired training pages into Train sections (U2)', () => {
@@ -77,5 +77,13 @@ describe('workspaceRoutes', () => {
         expect(legacyRedirectPath(7, '/project/7/manifest')).toBe('/project/7/ship?open=manifest&stage=package');
         expect(legacyRedirectPath(7, '/project/7/pipeline/compression')).toBe('/project/7/ship?open=compress');
         expect(legacyRedirectPath(7, '/project/7/pipeline/export')).toBe('/project/7/ship');
+    });
+
+    it('sends the retired long-tail pages into Settings sections (U6)', () => {
+        expect(legacyRedirectPath(7, '/project/7/autopilot')).toBe('/project/7/settings?open=autopilot');
+        expect(legacyRedirectPath(7, '/project/7/domain')).toBe('/project/7/settings?open=domain-packs');
+        expect(legacyRedirectPath(7, '/project/7/domain/profiles')).toBe('/project/7/settings?open=domain-profiles');
+        expect(legacyRedirectPath(7, '/project/7/workflow')).toBe('/project/7/settings?open=workflow');
+        expect(legacyRedirectPath(7, '/project/7/extensions')).toBe('/project/7/settings?open=extensions');
     });
 });

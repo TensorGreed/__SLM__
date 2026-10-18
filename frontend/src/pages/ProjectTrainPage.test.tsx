@@ -24,6 +24,8 @@ vi.mock('../components/training/TrainingPanel', () => ({
 }));
 vi.mock('../components/training/DocumentsQaFlowCard', () => ({ default: () => <div data-testid="docs-qa" /> }));
 
+vi.mock('../components/coach/CoachNotices', () => ({ default: ({ stage }: { stage: string }) => <div data-testid={`coach-notices-${stage}`} /> }));
+vi.mock('../components/coach/StepHelp', () => ({ default: () => null }));
 import ProjectTrainPage from './ProjectTrainPage';
 import { taskShapeLabelFor } from './trainPageUtils';
 
@@ -44,7 +46,7 @@ describe('ProjectTrainPage', () => {
 
     it('mounts the training panel in form layout with the task shape and the extra sections', () => {
         renderAt('/project/31/train');
-        expect(screen.getByTestId('training-panel')).toHaveTextContent('form open=null');
+        expect(screen.getByTestId('training-panel')).toHaveTextContent('open=null');
         expect(screen.getByTestId('docs-qa')).toBeInTheDocument();
         expect(panelProps.last?.taskShapeLabel).toBe('Span extraction (span-extraction)');
         const ids = (panelProps.last?.moreOptions as Array<{ id: string }>).map((s) => s.id);

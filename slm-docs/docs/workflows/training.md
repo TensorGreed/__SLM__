@@ -153,7 +153,7 @@ Continued pretraining teaches the model your documents' language; it does not ma
 | **retrieval promising** | gain beyond noise, judge score ≥ 0.4, but misses the "ready" bar | training goes ahead with a note; the lift check then judges the fine-tune against this retrieval on the same rows |
 | **retrieval weak** | otherwise | training goes ahead |
 
-If the check ran without a judge model it cannot call the gate (`not judged`), and if it failed, training goes ahead and the card says which. The Coach's Training stage carries the same verdict until a run exists — "Retrieval already answers 12 of 19 — reroute to RAG before training?" (warning) or "Retrieval already gets 8 of 19 right — train, then compare" (info) — and the Results page's summary card shows the base + passages numbers with a note that nothing has been trained yet. API: `passages_check` (default on) and `train_if_retrieval_ready` on `POST /projects/{id}/flows/documents-to-qa`.
+If the check ran without a judge model it cannot call the gate (`not judged`), and if it failed, training goes ahead and the card says which. The **Train** page's notices carry the same verdict until a run exists — "Retrieval already answers 12 of 19 — reroute to RAG before training?" (warning) or "Retrieval already gets 8 of 19 right — train, then compare" (info) — and the Results page's summary card shows the base + passages numbers with a note that nothing has been trained yet. API: `passages_check` (default on) and `train_if_retrieval_ready` on `POST /projects/{id}/flows/documents-to-qa`.
 
 *Why those numbers.* Calibrated on two cases with `gemma4:12b` judging, 19–21 test examples each:
 
@@ -249,9 +249,9 @@ The sweep's `best_label` is whoever has the highest `quality_score`, even if tha
 
 A pack with zero gates would trivially return `passed=True` for every cell — that's exactly the vanity case the honesty pass is preventing. The annotator detects `gate_count == 0` and treats the cell as "not measurable" (`gate_passed=null`) rather than letting "no gates configured" masquerade as "winner found".
 
-#### Coach handoff on `inconclusive`
+#### Notice on `inconclusive`
 
-The inconclusive verdict also surfaces as a **Coach Mode** card on the training stage (`coach_service._inconclusive_sweep_nudge`), so a user who has the coach strip open doesn't have to keep the sweep panel mounted to learn that nobody cleared the gate. The card carries:
+The inconclusive verdict also surfaces as a suggestion notice on the **Train** page (`coach_service._inconclusive_sweep_nudge`), so a user doesn't have to keep the sweep panel mounted to learn that nobody cleared the gate. The card carries:
 
 - Severity `warning`.
 - Title: *"Sweep inconclusive — N/M cells, none cleared gate"*.

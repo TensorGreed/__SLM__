@@ -499,7 +499,7 @@ describe('FailureClustersPanel', () => {
         ).toBeInTheDocument();
     });
 
-    it('navigates to /pipeline/goldset with focus + trap params on click', async () => {
+    it('navigates to the gold-set step with focus + trap params on click', async () => {
         apiMock.get.mockResolvedValue({ data: CLUSTER_RESPONSE });
         navigateMock.mockReset();
         renderPanel(<FailureClustersPanel projectId={3} evalResults={EVAL_RESULTS} />);
@@ -516,8 +516,9 @@ describe('FailureClustersPanel', () => {
 
         expect(navigateMock).toHaveBeenCalledTimes(1);
         const target = String(navigateMock.mock.calls[0][0]);
-        expect(target.startsWith('/project/3/pipeline/goldset?')).toBe(true);
+        expect(target.startsWith('/project/3/data?')).toBe(true);
         const params = new URLSearchParams(target.split('?')[1]);
+        expect(params.get('step')).toBe('goldset');
         expect(params.get('focus_cluster_id')).toBe('cluster-1');
         expect(params.get('trap_count')).toBe('5');
         // The hint inherits the classifier_reason — the LLM-gen panel

@@ -21,6 +21,9 @@ import SyntheticPanel from '../components/data/SyntheticPanel';
 import DatasetPrepPanel from '../components/data/DatasetPrepPanel';
 import LabellingConventionsCard, { isSpanProject } from '../components/data/LabellingConventionsCard';
 import TaskShapeCard from '../components/data/TaskShapeCard';
+import CoachNotices from '../components/coach/CoachNotices';
+import StepHelp from '../components/coach/StepHelp';
+import type { CoachStage } from '../api/coach';
 import DataStudioOverviewPanel from '../components/data/DataStudioOverviewPanel';
 import DataStudioSourcesSummaryPanel from '../components/data/DataStudioSourcesSummaryPanel';
 import DataStudioAssistPanel from '../components/data/DataStudioAssistPanel';
@@ -45,6 +48,7 @@ import {
     nextTab,
     projectPath,
     resolveStep,
+    settingsPath,
     stagePath,
     STEP_LABEL,
     STEPS_BY_DESTINATION,
@@ -59,6 +63,10 @@ const STEP_HINT: Record<string, string> = {
     goldset: 'What gets labelled, how, and the answer key every run is scored against.',
     synthetic: 'More rows where the data is thin; relabel under the current conventions.',
     dataprep: 'Cut train, validation and test; keep the test examples; watch for leakage.',
+};
+
+const COACH_STAGE_BY_STEP: Partial<Record<TabKey, CoachStage>> = {
+    data: 'data', cleaning: 'cleaning', goldset: 'gold_set', synthetic: 'synthetic', dataprep: 'dataprep',
 };
 
 const TAB_TARGET_STAGE: Record<TabKey, string> = {
@@ -77,9 +85,8 @@ export function dataStudioTargetPath(projectId: number, target: string, sectionI
     if (landing) return dataStepPath(projectId, landing.step, landing.open, query);
     if (isTabKey(base)) return stagePath(projectId, base, query);
     if (base === 'annotate') return dataStepPath(projectId, 'goldset', 'annotation', query);
-    if (base === 'domain') return `${projectPath(projectId)}/domain${query ? `?${query}` : ''}`;
-    if (base === 'domain-packs') return `${projectPath(projectId)}/domain/packs`;
-    if (base === 'domain-profiles') return `${projectPath(projectId)}/domain/profiles`;
+    if (base === 'domain' || base === 'domain-packs') return settingsPath(projectId, 'domain-packs');
+    if (base === 'domain-profiles') return settingsPath(projectId, 'domain-profiles');
     return projectPath(projectId, 'data');
 }
 
@@ -148,21 +155,21 @@ export default function ProjectDataPage() {
     const renderStep = () => {
         switch (step) {
             case 'data':
-                return <IngestionPanel projectId={projectId} onNextStep={goToNextTab} layout="stepper" extraDetails={sourcesDetails} openSection={openSection} />;
+                return <IngestionPanel projectId={projectId} onNextStep={goToNextTab} extraDetails={sourcesDetails} openSection={openSection} />;
             case 'cleaning':
-                return <CleaningPanel projectId={projectId} onNextStep={goToNextTab} layout="stepper" extraDetails={prepareDetails} openSection={openSection} />;
+                return <CleaningPanel projectId={projectId} onNextStep={goToNextTab} extraDetails={prepareDetails} openSection={openSection} />;
             case 'goldset':
                 return (
                     <div className="stage-page__stack">
                         <TaskShapeCard projectId={projectId} />
                         {isSpanProject(project) && <LabellingConventionsCard projectId={projectId} />}
-                        <GoldSetPanel projectId={projectId} onNextStep={goToNextTab} layout="stepper" extraDetails={labelsDetails} openSection={openSection} />
+                        <GoldSetPanel projectId={projectId} onNextStep={goToNextTab} extraDetails={labelsDetails} openSection={openSection} />
                     </div>
                 );
             case 'synthetic':
-                return <SyntheticPanel projectId={projectId} onNextStep={goToNextTab} layout="stepper" extraDetails={generateDetails} openSection={openSection} />;
+                return <SyntheticPanel projectId={projectId} onNextStep={goToNextTab} extraDetails={generateDetails} openSection={openSection} />;
             case 'dataprep':
-                return <DatasetPrepPanel projectId={projectId} onNextStep={goToNextTab} layout="stepper" extraDetails={splitDetails} openSection={openSection} />;
+                return <DatasetPrepPanel projectId={projectId} onNextStep={goToNextTab} extraDetails={splitDetails} openSection={openSection} />;
             default:
                 return null;
         }
@@ -194,6 +201,10 @@ export default function ProjectDataPage() {
                 ))}
             </div>
 
+            <StepHelp projectId={projectId} tab={step} />
+            {COACH_STAGE_BY_STEP[step] && (
+                <CoachNotices projectId={projectId} stage={COACH_STAGE_BY_STEP[step]!} onActionCompleted={() => { void refreshPipelineStatus(); }} />
+            )}
             <div className="stage-page__content">{renderStep()}</div>
         </div>
     );

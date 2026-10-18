@@ -17,6 +17,7 @@ import { Link } from 'react-router-dom';
 import { CheckCircle2, AlertTriangle, ArrowRight } from 'lucide-react';
 
 import './DatasetFitCard.css';
+import { trainSectionPath } from '../../utils/workspaceRoutes';
 
 interface DatasetContract {
     task_type?: string;
@@ -212,7 +213,7 @@ export default function DatasetFitCard({ contract, projectId }: DatasetFitCardPr
                     <div className="dataset-fit-card__branches-list">
                         <Link
                             className="dataset-fit-card__branch"
-                            to={`/project/${projectId}/adapter-studio`}
+                            to={trainSectionPath(Number(projectId), 'adapters')}
                         >
                             <span>
                                 <strong>Map your columns</strong>
@@ -227,7 +228,7 @@ export default function DatasetFitCard({ contract, projectId }: DatasetFitCardPr
                         {alt && (
                             <Link
                                 className="dataset-fit-card__branch"
-                                to={`/project/${projectId}/training-config`}
+                                to={trainSectionPath(Number(projectId), 'plan')}
                             >
                                 <span>
                                     <strong>

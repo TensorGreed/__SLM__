@@ -16,6 +16,8 @@ import CompressionPanel from '../components/compression/CompressionPanel';
 import SeedShipTable from '../components/evaluation/SeedShipTable';
 import ExportPanel from '../components/export/ExportPanel';
 import DetailsDrawer from '../components/shared/DetailsDrawer';
+import CoachNotices from '../components/coach/CoachNotices';
+import StepHelp from '../components/coach/StepHelp';
 import { fetchEvalSummary, type EvalSummary } from '../api/evalSummary';
 import { isShipStage, SHIP_STAGES, shipPath, type ShipStageId } from '../utils/workspaceRoutes';
 import ProjectDeploymentsPage from './ProjectDeploymentsPage';
@@ -103,6 +105,8 @@ export default function ProjectShipPage() {
                 ))}
             </div>
 
+            <StepHelp projectId={projectId} tab="export" />
+            <CoachNotices projectId={projectId} stage="export" />
             <div className="stage-page__content stage-page__stack">
                 {stage === 'package' && <SeedPickCard projectId={projectId} />}
 

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import type { ReactElement } from 'react';
+import { cloneElement, type ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { apiMock } = vi.hoisted(() => ({
@@ -35,7 +35,8 @@ function renderPanel(element: ReactElement, opts: { search?: string } = {}) {
     const path = `/route${opts.search ?? ''}`;
     return render(
         <MemoryRouter initialEntries={[path]}>
-            {element}
+            {/* The entries list lives in the Details drawer; open it on mount. */}
+            {cloneElement(element as ReactElement<{ openSection?: string }>, { openSection: 'entries' })}
         </MemoryRouter>,
     );
 }
