@@ -1,5 +1,5 @@
 ---
-sidebar_position: 34
+sidebar_position: 51
 title: Quickstart
 ---
 
@@ -30,11 +30,16 @@ Requires:
 Returns the synthetic experiment_id + the eval result dict so
 the UI tile can show "Baseline F1: 0.32" immediately.
 
+Pass ``?async_job=true`` to fire the eval through the Jobs
+framework — endpoint returns 202 + Job stub; the notification
+bell tracks progress.
+
 **Parameters**
 
 | Name | In | Type | Required | Description |
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
+| `async_job` | `query` | `boolean` | no |  |
 
 **Responses**
 
@@ -52,11 +57,16 @@ Find the most recent completed (or running) training experiment
 in the project and run a heldout evaluation against the gold/test
 split.
 
+Pass ``?async_job=true`` to fire the eval through the Jobs
+framework — the endpoint returns 202 + Job stub and the
+notification bell tracks progress.
+
 **Parameters**
 
 | Name | In | Type | Required | Description |
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
+| `async_job` | `query` | `boolean` | no |  |
 
 **Responses**
 

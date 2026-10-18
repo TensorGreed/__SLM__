@@ -13,8 +13,13 @@ From the repo root:
 
 ```sh
 # 1. Dump the current OpenAPI spec to a file the docs script will read.
+#    The dump runs the app lifespan (startup sweep included), so pin the DB
+#    and data dir to a scratch location — never let it boot against
+#    data/slm_platform.db.
 cd backend
-PYTHONPATH=. python scripts/dump_openapi.py --out ../slm-docs/openapi.json
+SCRATCH=$(mktemp -d)
+DATABASE_URL="sqlite+aiosqlite:///$SCRATCH/openapi.db" DATA_DIR="$SCRATCH/data" \
+  PYTHONPATH=. .venv/bin/python scripts/dump_openapi.py --out ../slm-docs/openapi.json
 
 # 2. Generate the API reference Markdown.
 cd ../slm-docs
@@ -47,6 +52,7 @@ The curated docs (`docs/reference/api-surface.md`, `docs/reference/cli.md`) are 
 
 - `dump_openapi.py` (under `backend/scripts/`) imports the FastAPI app and calls `app.openapi()`. It uses an in-memory SQLite DB + a tmp DATA_DIR so the call is side-effect free — no real schema, no real artifacts created.
 - `generate_api_ref.py` resolves `$ref` pointers up to depth 3 to keep recursive schemas tractable. It produces flat Markdown tables, not nested JSON dumps, so the result is greppable and small.
+- MDX 3 reads a bare `<reason>` as a JSX tag and `{…}` as an expression. Table cells go through `_markdown_safe`; endpoint descriptions (docstrings) go through `_prose_safe`, which escapes `<` `>` `{` `}` outside backtick code spans and leaves code spans as written. Run `npx docusaurus build` after regenerating — an unescaped docstring fails the whole build.
 - `generate_cli_ref.py` runs `brewslm <cmd> --help` with `COLUMNS=120` and parses out nested subparsers one level deep. Top-level + subcommand help text gets fenced into code blocks.
 
 Both scripts are idempotent: re-running with no API/CLI changes produces byte-identical output.

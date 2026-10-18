@@ -1,5 +1,5 @@
 ---
-sidebar_position: 20
+sidebar_position: 32
 title: Evaluation
 ---
 
@@ -7,11 +7,114 @@ title: Evaluation
 
 # Evaluation
 
-Auto-generated reference for the **Evaluation** API. 21 endpoint(s).
+Auto-generated reference for the **Evaluation** API. 34 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
 [Observability](../../observability/run-events.md), or [Extensions](../../extensions/contracts.md).
+
+### `POST /api/projects/{project_id}/evaluation/adopt-gate-from-cluster`
+
+**Adopt Gate From Cluster Endpoint**
+
+Gap-#5 slice 3 — one-click "Adopt this gate" CTA on failure
+clusters. Derives a starter gate from the cluster's reason_code,
+appends it to the project's scaffolded eval pack (or scaffolds a
+fresh one if none is persisted), and returns the updated pack +
+the new gate's full shape so the FE can deep-link to the editor.
+
+Errors:
+  * 404 — project / cluster missing.
+  * 400 — reason_code has no catalog suggestion AND no metric_id
+    override was supplied, OR the resulting pack fails the
+    slice-1 validator (e.g. ``duplicate_gate_id:<id>``).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `_AdoptGateFromClusterRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `cluster_id` | `integer` | yes |  |
+| `metric_id` | `string \\| null` | no |  |
+| `operator` | `string \\| null` | no |  |
+| `threshold` | `number \\| null` | no |  |
+| `required` | `boolean \\| null` | no |  |
+| `gate_id` | `string \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `201` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/evaluation/compare`
+
+**Compare Two Experiments**
+
+Side-by-side eval comparison for two experiments (E3).
+
+Returns per-metric deltas, failure-cluster diff (only-in-A,
+only-in-B, shared with delta), and a config diff (primary fields
+always present, other changed fields surfaced). The ``regressed``
+flag fires when B's pass_rate is below A's — drives the
+"Fix the gap" CTA in the comparison page.
+
+400 — same experiment passed for a + b (no comparison to make).
+404 — either experiment missing / not in the project.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `a` | `query` | `integer` | yes |  |
+| `b` | `query` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/evaluation/gate-options`
+
+**Get Gate Options**
+
+Recipe-aware gate editor catalog (Gap-#5 slice 1).
+
+Returns the operators the eval engine implements and the metrics
+a user can pick when adding/editing a custom gate, with the
+``recommended`` flag set for the metrics that match the project's
+selected recipe. The frontend gate editor uses this as the single
+source of truth for its dropdowns + 'recommended' badges.
+
+Errors:
+  * 404 — project not found.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
 
 ### `POST /api/projects/{project_id}/evaluation/llm-judge`
 
@@ -19,11 +122,18 @@ For curated narrative + UI / CLI walkthroughs see the corresponding section unde
 
 Run LLM-as-a-judge evaluation.
 
+Pass ``?async_job=true`` to fire the eval as a background Job —
+the endpoint returns 202 + Job stub immediately and the
+notification bell tracks progress. LLM-judge calls the judge
+model once per prediction, so a 100-row eval against a remote
+judge can run multiple minutes.
+
 **Parameters**
 
 | Name | In | Type | Required | Description |
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
+| `async_job` | `query` | `boolean` | no |  |
 
 **Request body** (required)
 
@@ -92,6 +202,70 @@ Content type: `application/json` — `EvaluationPackPreferenceUpdateRequest`
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `GET /api/projects/{project_id}/evaluation/pack-scaffold`
+
+**Get Pack Scaffold**
+
+Recipe-aware eval-pack scaffold (E5).
+
+Returns a draft pack tailored to the project's selected recipe +
+gold-set shape. NOT persisted — the frontend lets the user edit
+the draft inline + POST to /pack-scaffold to save.
+
+Errors:
+  * 404 — project not found.
+  * 400 — project has no recipe selected.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/evaluation/pack-scaffold`
+
+**Save Pack Scaffold**
+
+Persist the user's edited scaffold draft (E5). Flips
+``evaluation_preferred_pack_id`` to ``evalpack.project.scaffolded``
+so the new pack becomes the active one on the next eval run.
+
+Errors:
+  * 404 — project not found.
+  * 400 — draft is missing required keys (e.g. no task_specs) or
+    a gate has an invalid operator / unknown metric / duplicate
+    gate_id / out-of-range threshold (Gap-#5 slice 1).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `_PackScaffoldSaveRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `draft_pack` | `object` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `201` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `GET /api/projects/{project_id}/evaluation/packs`
 
 **List Eval Packs**
@@ -104,6 +278,37 @@ List built-in evaluation packs and project-resolved active pack.
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
 | `include_gates` | `query` | `boolean` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/evaluation/per-class-metric-options`
+
+**Get Per Class Metric Options**
+
+Gap #6 slice 1 — return the per-class metric IDs the project's
+latest classification eval is currently emitting.
+
+The static gate-options catalog can't enumerate per-class metrics
+because class names are project-specific (and even shift between
+eval runs). This endpoint discovers them dynamically from the
+project's latest classification-shaped eval result so the eval
+pack editor's gate dropdown can group ``precision_<class>`` /
+``recall_<class>`` / ``f1_<class>`` under a "Per-class" section.
+
+Errors:
+  * 404 — project not found.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
 
 **Responses**
 
@@ -173,11 +378,19 @@ Content type: `application/json` — `EvalRunRequest`
 
 Run end-to-end evaluation by generating predictions from held-out dataset rows.
 
+Pass ``?async_job=true`` to fire the eval as a background Job —
+the endpoint returns 202 + Job stub immediately and the
+notification bell tracks progress via an elapsed-time heartbeat.
+Held-out eval on a 200-row gold set typically takes 10–20 min on
+a local GPU; in the sync path the browser holds the connection
+open the whole time, in the async path it doesn't.
+
 **Parameters**
 
 | Name | In | Type | Required | Description |
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
+| `async_job` | `query` | `boolean` | no |  |
 
 **Request body** (required)
 
@@ -207,7 +420,7 @@ Content type: `application/json` — `HeldoutEvalRunRequest`
 **Get Sft Lift Summary**
 
 Compute the baseline → trained lift summary for this project.
-Used by the Results page's "Did SFT help?" panel. Returns
+Used by the Eval tab's "Did SFT help?" panel. Returns
 `status="no_baseline"` / `"no_trained"` / `"no_overlap"` when
 the comparison can't be built — never 404 unless the project is
 missing — so the UI can render an informative fallback.
@@ -217,6 +430,63 @@ missing — so the UI can render an informative fallback.
 | Name | In | Type | Required | Description |
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
+| `experiment_id` | `query` | `integer \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/evaluation/summary`
+
+**Get Eval Summary**
+
+The Eval tab's default card: better than the base model? by how
+much? five failing examples. ``experiment_id`` defaults to the latest
+completed trained run.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `experiment_id` | `query` | `integer \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/evaluation/frontier-comparison/{experiment_id}`
+
+**Get Frontier Comparison**
+
+SLM-vs-frontier benchmark report (Track 1 Epic D): "X% as good as
+gpt-4o-mini at Y% cost, Z× latency" + a per-metric table.
+
+Quality is a pure ratio over stored EvalResult rows and needs a frontier
+baseline eval on the same set (resolved from `?frontier_run_id=`, the
+experiment's `config.frontier_baseline_run_id`, or the eval pack); without
+one it soft-falls-back to `no_frontier_eval` (we never fabricate quality).
+Cost + latency always render with explicit provenance (published frontier
+reference vs the project's benchmark-sweep estimate). `?frontier_model_id=`
+picks the frontier model (default gpt-4o-mini). 404 only for a missing
+project or experiment.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `experiment_id` | `path` | `integer` | yes |  |
+| `frontier_model_id` | `query` | `string \\| null` | no |  |
+| `frontier_run_id` | `query` | `integer \\| null` | no |  |
 
 **Responses**
 
@@ -423,6 +693,138 @@ Detailed scorecard for a specific experiment including Ship/No-Ship decision.
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `GET /api/projects/{project_id}/evaluation/seed-group/{seed_group_id}`
+
+**Get Seed Group Drilldown**
+
+Quality-Lift phase 8 slice 1 — per-seed drill-down for an
+aggregate EvalResult.
+
+The EvalPanel renders an AggregateRunBadge in the result header
+when the row is ``is_aggregate=True``. This endpoint surfaces the
+underlying per-seed scalars so the user can verify the mean ± std
+against the individual seeds that produced it (picked-data-
+provenance rule).
+
+``dataset_name`` + ``eval_type`` are optional filters. When the
+leader has multiple aggregate rows (e.g. one per eval pack), the
+caller passes the pair to scope the drill-down to the same row
+the badge surfaced. When omitted we return every child's scalar
+rows unfiltered.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `seed_group_id` | `path` | `string` | yes |  |
+| `dataset_name` | `query` | `string \\| null` | no |  |
+| `eval_type` | `query` | `string \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `SeedGroupDrillDownResponse` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/evaluation/student-teacher-comparison/{experiment_id}`
+
+**Get Student Teacher Comparison**
+
+Compare a student experiment's eval results against a teacher baseline
+run (Track 1 Epic A slice 3). Returns `quality_retained = student/teacher`
+per metric + per slice. Reuses stored EvalResult rows — no new model calls.
+
+`?teacher_run_id=` overrides the teacher resolved from the student
+experiment's config or the project's eval pack. Non-ready states come back
+as `status` (`no_teacher_baseline` / `no_student_eval` / `no_teacher_eval`
+/ `no_overlap`) so the UI renders a soft fallback; 404 only for a missing
+project or experiment.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `experiment_id` | `path` | `integer` | yes |  |
+| `teacher_run_id` | `query` | `integer \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/evaluation/summary/check-seeds`
+
+**Check Lift Across Seeds**
+
+The multi-seed option for the lift check: re-train ``experiment_id``'s
+exact config with ``num_seeds`` different seeds as one seed group. When
+the group finishes, the automatic lift check scores every seed against
+the base model and reports whether the lift holds across seeds (the
+row-level "within noise" check only covers which rows were sampled).
+Returns the new leader run; the bell tracks training and the check.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `CheckSeedsRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `experiment_id` | `integer` | yes |  |
+| `num_seeds` | `integer` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `201` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/evaluation/summary/lift-check`
+
+**Rerun Lift Check**
+
+Run (or re-run) the lift check for a trained run as a background Job:
+base model + fine-tuned run on the test examples, paired row by row —
+the same Job the training watcher spawns. Re-running picks up a judge
+model configured since (``answer_judge_service``) and re-evaluates the
+base model when its cached result was not judged by the same judge.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `LiftCheckRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `experiment_id` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `202` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `GET /api/projects/{project_id}/evaluation/{eval_result_id}/failure-clusters`
 
 **Failure Clusters**
@@ -437,6 +839,36 @@ Cluster row-level eval failures by `(reason_code, output_pattern)` (P12).
 | `eval_result_id` | `path` | `integer` | yes |  |
 | `max_failures` | `query` | `integer` | no |  |
 | `max_exemplars_per_cluster` | `query` | `integer` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/evaluation/{eval_result_id}/reroute-analysis`
+
+**Get Reroute Analysis**
+
+USER-SUCCESS Epic 7 Phase 7a — post-eval decision-engine analysis.
+
+Inspects the eval, the project brief, and the gold-set shape and
+returns a categorical reroute recommendation
+(try_rag / try_prompt_engineering / expand_data / stay_the_course)
+plus the three signal verdicts that drove it.
+
+Result is cached on ``EvalResult.details["reroute_analysis"]``.
+Pass ``?refresh=true`` to recompute and overwrite the cache.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `eval_result_id` | `path` | `integer` | yes |  |
+| `refresh` | `query` | `boolean` | no |  |
 
 **Responses**
 
@@ -483,7 +915,7 @@ Content type: `application/json` — `ActiveLearningPromoteRequest`
 
 Propose up to `max_rows` failed eval rows for the given
 experiment, ranked by failure severity. Used by the
-'Add these N examples to improve most' panel on the Results page.
+'Add these N examples to improve most' panel on the Eval tab.
 
 **Parameters**
 
@@ -518,6 +950,11 @@ review queue before entering training.
 Returns the PlaybookResult dict (rows + backend_used +
 elapsed_sec + prompt_snippet).
 
+Hardening — pass ``?async_job=true`` to fire the generation as a
+background Job. Endpoint returns 202 + Job stub immediately; the
+bell tracks progress with an elapsed-time heartbeat and flips to
+FAILED when 0 rows are produced (silent-failure guard).
+
 503 when no synth backend is reachable. 404 when the eval /
 cluster / project isn't found. 400 for everything else.
 
@@ -530,6 +967,7 @@ cluster / project isn't found. 400 for everything else.
 | `cluster_id` | `path` | `string` | yes |  |
 | `target_count` | `query` | `integer` | no |  |
 | `backend` | `query` | `string \\| null` | no |  |
+| `async_job` | `query` | `boolean` | no |  |
 
 **Responses**
 
@@ -544,7 +982,7 @@ cluster / project isn't found. 400 for everything else.
 **Explain Failure Cluster Endpoint**
 
 Generate (or return cached) a one-line LLM-judge explanation
-for a failure cluster. Used by the Results page's
+for a failure cluster. Used by the Eval tab's
 `FailureClustersPanel` when the user expands a cluster.
 
 Returns 200 with `status="judge_unavailable"` when no judge

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 3
+sidebar_position: 5
 title: Annotation
 ---
 
@@ -147,6 +147,7 @@ Content type: `application/json` — `NextRowRequest`
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `user_id` | `integer \\| null` | no | Reviewer being assigned the row. Optional in auth-disabled local-dev setups; required when AUTH_ENABLED. |
+| `strategy` | `string` | no | Row-selection strategy. ``fifo`` (default) hands out rows in insertion order; ``active`` ranks the unassigned tail by classifier-head softmax entropy from the project's most recent completed classification experiment, so the labeler spends budget on rows the model is least sure about. Falls back to FIFO silently when no scoreable experiment is available or the job's task shape isn't supported yet. |
 
 **Responses**
 

@@ -153,6 +153,8 @@
 }
 
 .failure-cluster-caret {
+    display: inline-flex;
+    justify-content: center;
     width: 14px;
     text-align: center;
 }

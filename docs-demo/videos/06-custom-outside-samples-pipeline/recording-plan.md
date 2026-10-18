@@ -1,5 +1,7 @@
 # Video 06 — BYO Custom Samples · Recording Plan
 
+> **2026-10-18**: routes below are the Epic U workspace URLs. The narrated spec `tests/demo-recordings/06-*-narrated.spec.ts` was ported to the new layout (Overview, Data steps, Train form, Results, Ship); the tab and panel names in the older prose below describe the retired layout.
+
 Status: **shipped 2026-05-20**. Demonstrates the "bring your own
 data" path: create a fresh non-demo project, upload a tiny custom
 CSV, and confirm the file is staged in the project's ingestion
@@ -30,15 +32,11 @@ treating it as new data, not just re-importing a known shape.
 1. **Pre-roll**: log in, capture JWT for API-driven upload (same
    pattern as V09 / V11).
 2. **Cold open** — project list view.
-3. **New project** — click **+ New Project**, switch to **Advanced
-   Mode** (the default is the Beginner 3-step brief wizard which
-   doesn't fit this short demo), fill Name + Description, click
-   Create.
-4. **Empty Data tab** — direct navigation to
-   `/project/<id>/pipeline/data`. Fresh projects render the
-   `GettingStartedWizard` because `progress_percent === 0` — the
-   recording shows that welcome card with the "Ingest Data" step
-   highlighted.
+3. **New project** - click **+ New Project**, fill the name and the
+   "what problem should this model solve" brief (both required),
+   click **Create project**; the app lands on the project Overview.
+4. **Empty Data · Sources** - click Data in the sidebar
+   (`/project/<id>/data`); the upload zone is empty and spotlighted.
 5. **Upload CSV** — `POST /ingestion/upload-batch` via the
    Playwright `request` fixture with a multipart payload. The
    spec then fetches the new document id and calls

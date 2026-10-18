@@ -362,3 +362,14 @@
   color: var(--accent);
   border-top: 2px solid var(--accent);
 }
+
+.scorecard-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.scorecard-status--pass { color: var(--color-success); }
+.scorecard-status--fail { color: var(--color-error); }
+.scorecard-status--warn { color: var(--color-warning); }
+.scorecard-status--skip { color: var(--text-tertiary); }

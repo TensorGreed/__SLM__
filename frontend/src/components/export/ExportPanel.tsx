@@ -3,6 +3,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 import api from '../../api/client';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import './ExportPanel.css';
@@ -1713,7 +1714,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                                     return (
                                         <React.Fragment key={exp.id}>
                                             <tr className={`export-row u-pointer ${isExpanded ? 'expanded' : ''}`} onClick={() => toggleExpand(exp.id)}>
-                                                <td className="u-text-center"><span className="expand-icon export-expand-icon">▼</span></td>
+                                                <td className="u-text-center"><ChevronDown className="u-icon expand-icon export-expand-icon" aria-hidden="true" /></td>
                                                 <td className="u-semibold">{String(exp.export_format || exp.format || 'unknown').toUpperCase()}</td>
                                                 <td>{exp.quantization || 'None'}</td>
                                                 <td>{formatBytes(exp.file_size_bytes)}</td>

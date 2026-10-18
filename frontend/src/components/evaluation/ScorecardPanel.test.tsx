@@ -113,7 +113,7 @@ describe('ScorecardPanel', () => {
     // No ± character anywhere — single-seed row stayed on the scalar path.
     expect(screen.queryByText(/±/)).toBeNull();
     // No expand caret on a non-aggregate row.
-    expect(screen.queryByText('▸')).toBeNull();
+    expect(screen.queryByLabelText('expand')).toBeNull();
   });
 
   it('renders mean ± std (n=N) and gate_value when policy=lower_bound', async () => {
@@ -132,7 +132,7 @@ describe('ScorecardPanel', () => {
     // Variance-specific failure label, NOT the generic "Fail".
     expect(screen.getByText(/Fail \(variance\)/)).toBeInTheDocument();
     // Expand caret present, collapsed by default.
-    expect(screen.getByText('▸')).toBeInTheDocument();
+    expect(screen.getByLabelText('expand')).toBeInTheDocument();
     // Drill-down content NOT rendered until click.
     expect(screen.queryByText(/Per-seed runs/)).toBeNull();
   });
@@ -164,12 +164,12 @@ describe('ScorecardPanel', () => {
       screen.getByText(/lower-bound policy applies the std/i)
     ).toBeInTheDocument();
     // Caret flipped to expanded state.
-    expect(screen.getByText('▾')).toBeInTheDocument();
+    expect(screen.getByLabelText('collapse')).toBeInTheDocument();
 
     // Click again collapses.
     await user.click(row);
     expect(screen.queryByText(/Per-seed runs/)).toBeNull();
-    expect(screen.getByText('▸')).toBeInTheDocument();
+    expect(screen.getByLabelText('expand')).toBeInTheDocument();
   });
 
   // ────────────────────────────────────────────────────────────────────
@@ -656,8 +656,8 @@ describe('ScorecardPanel', () => {
     render(<ScorecardPanel projectId={1} experimentId={9} />);
 
     await waitFor(() => expect(screen.getByText('NO-SHIP')).toBeInTheDocument());
-    // Generic ❌ Fail label, not the variance variant.
-    expect(screen.getByText(/❌ Fail/)).toBeInTheDocument();
+    // Generic Fail label, not the variance variant.
+    expect(screen.getByText(/^\s*Fail$/)).toBeInTheDocument();
     expect(screen.queryByText(/Fail \(variance\)/)).toBeNull();
 
     const row = screen.getByText('min_f1').closest('tr')!;

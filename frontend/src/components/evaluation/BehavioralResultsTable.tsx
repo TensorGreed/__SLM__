@@ -243,7 +243,7 @@ export default function BehavioralResultsTable({ metrics }: BehavioralResultsTab
                 <p className="behavioral-results__hint">
                     Pass rate per check from the custom-check runner —
                     one row per authored check, independent of whether
-                    a pass/fail rule references it. Click <code>▶</code> on a
+                    a pass/fail rule references it. Click the chevron on a
                     row to see the per-slice breakdown.
                 </p>
             </header>

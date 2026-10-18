@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
 
 import type {
     CostEstimate,
@@ -322,7 +323,7 @@ function ForecastHistoryStrip({ history }: { history: ForecastSnapshot[] }) {
                 data-testid="trainability-forecast-deltas"
             >
                 {deltas.map((d) => {
-                    const arrow = d.delta > 0 ? '▲' : d.delta < 0 ? '▼' : '·';
+                    const Arrow = d.delta > 0 ? ArrowUp : d.delta < 0 ? ArrowDown : Minus;
                     const tone = d.delta > 0 ? 'up' : d.delta < 0 ? 'down' : 'flat';
                     return (
                         <li
@@ -331,7 +332,7 @@ function ForecastHistoryStrip({ history }: { history: ForecastSnapshot[] }) {
                             data-testid="trainability-forecast-delta-chip"
                         >
                             <span className="trainability-forecast__delta-arrow" aria-hidden="true">
-                                {arrow}
+                                <Arrow className="u-icon" />
                             </span>
                             <span>
                                 {d.delta > 0 ? '+' : ''}

@@ -26,54 +26,57 @@ SECTIONS: list[tuple[str, str, str]] = [
     (
         "01-cold-open",
         "cold_open",
-        "Bring your own data. The three sample projects are useful "
-        "for learning the platform, but the real point is to use "
-        "your own dataset. This video shows the shortest path "
-        "from a CSV on your laptop to rows on the Data tab.",
+        "Bring your own data. The sample projects are useful for "
+        "learning the platform, but the real point is to use your own "
+        "dataset. This video shows the shortest path from a CSV on your "
+        "laptop to rows listed under Data, Sources.",
     ),
     (
         "02-new-project",
         "new_project",
-        "From the project list, click New Project. Give it a name "
-        "and a one-line description. The starter pack is optional — "
-        "the platform has reasonable defaults for the common task "
-        "shapes. Click Create.",
+        "From the project list, click New Project. Give it a name, and "
+        "say in a sentence or two what you want the model to do. The "
+        "platform reads that and sets sensible defaults — base model, "
+        "task shape, output schema — and you can change any of it "
+        "later. Click Create project, and you land on the project's "
+        "Overview.",
     ),
     (
         "03-empty-data-tab",
         "empty_data_tab",
-        "Project created. We land on the Data tab. Empty. No "
-        "rows, no documents, no gold set. This is what a fresh "
-        "project looks like before any data is imported.",
+        "Project created. Open Data. The first step is Sources, and "
+        "it's empty. No documents, no rows, no answer key. This is what "
+        "a fresh project looks like before any data is imported. The "
+        "upload zone is right there.",
     ),
     (
         "04-upload-csv",
         "upload_csv",
-        "The Data tab's upload zone accepts files directly from "
-        "the local filesystem. Supported formats include CSV, "
-        "JSON, JSONL, PDF, DOCX, plain text, and Markdown. For "
-        "this video the file is a tiny six-row coffee-shop FAQ "
-        "in CSV form. Drop it on the upload zone or pick it via "
-        "the file picker.",
+        "The upload zone accepts files straight from your computer. "
+        "Documents — PDF, Word, HTML, text, Markdown — and row files — "
+        "CSV, TSV, Excel, JSON, JSONL, Parquet — in any encoding. For "
+        "this video the file is a tiny six-row coffee-shop FAQ in CSV "
+        "form. Drop it on the zone or choose it with the file picker.",
     ),
     (
         "05-rows-imported",
         "rows_imported",
-        "And the rows are in. Six raw documents, one per CSV row, "
-        "each one a question and an answer. The platform "
-        "auto-detected the columns and matched them to the standard "
-        "Q-and-A shape. From here the project goes through the "
-        "same pipeline you saw on the seeded samples: clean, gold, "
-        "synthetic, prep, train, eval, compress, serve.",
+        "And the rows are in. Under ingested documents, the file is "
+        "listed, and expanding it shows its question and answer "
+        "columns, kept as columns all the way to training. From here "
+        "the project goes through the same steps you saw on the "
+        "samples: prepare, labels, generate, split, then train, results "
+        "and ship.",
     ),
     (
         "06-wrap",
         "wrap",
-        "That's the bring-your-own-data path. The rest of the "
-        "lifecycle for a custom project is identical to what the "
-        "demo videos walked. Same tabs, same artifacts, same "
-        "training and serving pipeline. The only difference is "
-        "the row at the start.",
+        "That's the bring-your-own-data path. The Overview now shows "
+        "where this project is and what the next step is. The rest of "
+        "the workflow for a custom project is identical to what the "
+        "sample videos walked. Same workspace, same artifacts, same "
+        "training and serving. The only difference is the file at the "
+        "start.",
     ),
 ]
 

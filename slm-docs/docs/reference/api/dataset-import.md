@@ -1,5 +1,5 @@
 ---
-sidebar_position: 13
+sidebar_position: 22
 title: Dataset Import
 ---
 
@@ -7,7 +7,7 @@ title: Dataset Import
 
 # Dataset Import
 
-Auto-generated reference for the **Dataset Import** API. 9 endpoint(s).
+Auto-generated reference for the **Dataset Import** API. 10 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -22,7 +22,7 @@ Sniff the dataset behind ``locator`` and propose a mapping.
 Returns ranked hypotheses + a ``proposal`` block ready to feed into
 ``/preview`` once the user confirms. Per the no-silent-auto-mapping
 rule, callers MUST check ``proposal.needs_force`` and require an
-explicit override when confidence < threshold.
+explicit override when confidence &lt; threshold.
 
 **Request body** (required)
 
@@ -126,7 +126,7 @@ Content type: `application/json` — `ConfigCreateRequest`
 
 **Request body** (required)
 
-Content type: `application/json` — `PreviewRequest`
+Content type: `application/json` — `app__api__dataset_import__PreviewRequest`
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -172,6 +172,37 @@ Content type: `application/json` — `ImportRequest`
 | Status | Schema | Description |
 |---|---|---|
 | `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/dataset-import/upload`
+
+**Upload Import File**
+
+Stage a browser-uploaded row file (CSV/TSV/JSONL/JSON/XLSX/Parquet)
+under the project and introspect it — the wizard then previews/runs the
+returned ``file:`` locator exactly like a server path. No more typing a
+server file path.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `multipart/form-data` — `Body_upload_import_file_api_projects__project_id__dataset_import_upload_post`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `file` | `string` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `201` | `object` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 

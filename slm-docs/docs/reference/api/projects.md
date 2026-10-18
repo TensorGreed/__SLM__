@@ -1,5 +1,5 @@
 ---
-sidebar_position: 33
+sidebar_position: 50
 title: Projects
 ---
 
@@ -7,7 +7,7 @@ title: Projects
 
 # Projects
 
-Auto-generated reference for the **Projects** API. 15 endpoint(s).
+Auto-generated reference for the **Projects** API. 26 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -270,6 +270,57 @@ Check if the project is ready for deployment/export based on gates.
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `PUT /api/projects/{project_id}/goal`
+
+**Set Project Goal**
+
+Persist the user's stated goal on the project.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `GoalSetRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `target_metric` | `string` | yes |  |
+| `target_threshold` | `number` | yes |  |
+| `deadline` | `string \\| null` | no |  |
+| `title` | `string \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `DELETE /api/projects/{project_id}/goal`
+
+**Clear Project Goal**
+
+Drop the project's stated goal. Idempotent.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `GET /api/projects/{project_id}/prepared-manifest`
 
 **Get Prepared Manifest**
@@ -343,6 +394,189 @@ Clear the recipe snapshot from a project. Does not roll back
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `GET /api/projects/{project_id}/refine-plan`
+
+**Get Pipeline Plan Refinement**
+
+Phase 1 — deterministic plan-refinement report: the current pipeline plan,
+a privacy-safe aggregate data profile, and a plan-fit roll-up (does the plan
+suit the measured data?). No cloud call; ``cloud_refinement.available`` is
+False. The aggregate profile is the only thing a later cloud pass may send
+off-box — never the user's ingested rows.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/reroute-to-rag`
+
+**Reroute To Rag**
+
+USER-SUCCESS Epic 7 Phase 7b — clone a qa-sft project into a
+RAG-first sibling.
+
+The new project carries the source's gold set + raw + prepared
+splits forward, has ``runtime_config.rag_first=true`` so the
+playground answers via base model + retrieval (no training run
+needed), and links back via ``parent_project_id`` for the UI's
+provenance chip.
+
+Phase 7d adds a 1-hour idempotency guard: a second clone of the
+same source within the window returns 429 + the existing clone's
+id so the UI can navigate to it instead of creating a duplicate.
+
+Status codes:
+  * 201 — clone succeeded; body carries the new project id.
+  * 400 — source recipe isn't eligible (only qa-sft today) OR
+    source has no recipe selected.
+  * 404 — source project doesn't exist.
+  * 429 — another RAG clone of this source was created within
+    the last hour; body carries the existing clone's id so the
+    UI can navigate there instead.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `async_job` | `query` | `boolean` | no |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `ProjectRerouteToRagRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name_suffix` | `string` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `201` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/slice-definitions`
+
+**Get Project Slice Definitions**
+
+Read this project's slice definitions. Returns ``{"slices": []}``
+when none configured so the editor has a stable shape to render.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `SliceDefinitionsResponse` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `PUT /api/projects/{project_id}/slice-definitions`
+
+**Set Project Slice Definitions**
+
+Replace this project's slice definitions in one shot.
+
+The Pydantic schemas are intentionally thin — closed-set op
+validation, slice_id regex, per-project caps, and regex
+compilability all live in
+``slice_definitions_service.validate_slice_definitions`` so the same
+code-path runs whether the payload arrives here or via a future
+bulk-import flow. A ``SliceValidationError`` surfaces verbatim
+to the editor so the user sees a precise inline error
+("slice ``long_input``: regex ``[`` is invalid").
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `SliceDefinitionsPayload`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `slices` | `SliceDefinitionSchema[]` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `SliceDefinitionsResponse` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `DELETE /api/projects/{project_id}/slice-definitions`
+
+**Clear Project Slice Definitions**
+
+Drop all slice definitions. Idempotent — clearing an already-empty
+column is a 200 with the empty payload, not a 404.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `SliceDefinitionsResponse` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/smoke-test`
+
+**Run Project Smoke Test**
+
+Run a parallel, read-only health check across every project
+surface (recipe / gold / data-health / forecast / synth /
+experiments / etc.).
+
+Diagnostics Intervention C — one button that answers "is anything
+obviously broken before I commit to a real run?". Each check
+returns a structured result; failures carry the same envelope
+shape ``<ErrorPanel>`` renders elsewhere so the frontend can show
+the troubleshooting_id + remediation copy inline.
+
+Read-only by design — no writes, no GPU, no expensive LLM calls.
+Safe to re-run as often as the user wants.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `GET /api/projects/{project_id}/stats`
 
 **Get Project Stats**
@@ -360,6 +594,89 @@ Get project statistics overview.
 | Status | Schema | Description |
 |---|---|---|
 | `200` | `ProjectStatsResponse` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/goal/progress`
+
+**Get Project Goal Progress**
+
+Return the goal progress ledger for the project.
+
+Always returns a fully-formed payload: when no goal is set, the
+service falls back to a sensible default (f1 ≥ 0.70) and the
+response carries ``has_explicit_goal: false`` so the UI can prompt
+the user to state their own goal.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/refine-plan/apply`
+
+**Apply Plan Refinement**
+
+Phase 3 — accept/apply selected items of the cached, validated refinement
+through the canonical machinery (recipe blueprint, adapter preference, base
+model, training-config patches). The client may only choose WHICH validated
+items to apply, never inject new ones. Directional patches land only when
+the deterministic gap scanner currently agrees. All reversible.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `ApplyRefinementRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `plan_delta_fields` | `string[] \\| null` | no |  |
+| `directional_kinds` | `string[] \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/refine-plan/cloud`
+
+**Run Cloud Plan Refinement**
+
+Phase 2 — run the cloud-LLM strategy pass: send ONLY the aggregate
+cloud-safe profile to a configured model (Anthropic/OpenAI/DeepSeek/Qwen),
+validate the returned strategy against the deterministic engine, and return
+it. Best-effort: returns ``{available: false}`` when no provider is
+configured or the call fails — the deterministic report (GET) still stands.
+Cached by data profile so repeat calls on unchanged data don't re-bill.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 42
+sidebar_position: 62
 title: Synthetic
 ---
 
@@ -7,7 +7,7 @@ title: Synthetic
 
 # Synthetic
 
-Auto-generated reference for the **Synthetic** API. 15 endpoint(s).
+Auto-generated reference for the **Synthetic** API. 31 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -87,6 +87,9 @@ Lifts the 50-pair cap that the sync ``/generate`` endpoint enforces:
 the server batches into ``PER_BATCH_ROW_CAP`` chunks and (when
 ``use_all_chunks`` is set) samples fresh source text per batch.
 
+Hardening Phase H2 — also spawns a shadow Job mirroring progress
+into the top-bar notification bell.
+
 **Parameters**
 
 | Name | In | Type | Required | Description |
@@ -156,6 +159,9 @@ Kick off a batched multi-turn conversation generation job.
 Conversations are heavier than QA pairs, so the per-batch cap is
 ``PER_BATCH_CONVERSATION_CAP`` rather than ``PER_BATCH_ROW_CAP``.
 
+Hardening Phase H2 — also spawns a shadow Job mirroring progress
+into the top-bar notification bell.
+
 **Parameters**
 
 | Name | In | Type | Required | Description |
@@ -212,6 +218,7 @@ Content type: `application/json` — `GenerateSpanRequest`
 | `api_url` | `string` | no |  |
 | `api_key` | `string` | no |  |
 | `model_name` | `string` | no |  |
+| `ignore_benchmark_values` | `boolean` | no |  |
 
 **Responses**
 
@@ -228,6 +235,9 @@ Content type: `application/json` — `GenerateSpanRequest`
 Kick off a batched span-generation job. Returns immediately with
 a ``task_id``; clients poll ``GET /synthetic/tasks/{task_id}`` for
 progress + accumulated rows.
+
+Hardening Phase H2 — also spawns a shadow Job that mirrors the
+legacy task's progress into the top-bar notification bell.
 
 **Parameters**
 
@@ -246,6 +256,9 @@ Content type: `application/json` — `GenerateSpanAsyncRequest`
 | `api_url` | `string` | no |  |
 | `api_key` | `string` | no |  |
 | `model_name` | `string` | no |  |
+| `backend` | `string \\| null` | no |  |
+| `focus_types` | `string[]` | no |  |
+| `ignore_benchmark_values` | `boolean` | no |  |
 | `use_all_chunks` | `boolean` | no | When true, source text for each batch is a fresh random sample (~4–8k tokens) of the project's cleaned chunks. When false, ``source_text`` is reused verbatim for every batch. |
 | `source_text` | `string` | no |  |
 
@@ -261,8 +274,18 @@ Content type: `application/json` — `GenerateSpanAsyncRequest`
 
 **List Synth Playbooks**
 
-Catalog of registered playbooks; if the project has a selected
-recipe, filter to playbooks compatible with that recipe.
+Catalog of registered playbooks compatible with the project's
+selected recipe.
+
+When the project has no recipe selected (legacy projects pre-dating
+the auto-apply-on-create fix), this returns an empty list plus
+``recipe_required=True`` so the UI can render a "pick a recipe
+first" prompt instead of a confusing dump of every playbook
+across every task shape — none of which would actually run, since
+``run_playbook`` requires ``selected_recipe`` to dispatch.
+Brief-driven + magic-create projects always have a recipe applied
+at creation time (see ``recipe_service.default_recipe_for_*``)
+so this branch is now legacy-only.
 
 **Parameters**
 
@@ -278,12 +301,72 @@ recipe, filter to playbooks compatible with that recipe.
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `POST /api/projects/{project_id}/synthetic/prompt-check`
+
+**Prompt Check**
+
+Does this prompt text carry a value from a benchmark's gold rows?
+``{clean, offending: [{value, type, benchmarks, fields}], offending_total,
+values_checked, benchmarks, fields}`` — nothing is generated.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `PromptCheckRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `fields` | `object` | no |  |
+| `include_conventions` | `boolean` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/relabel-answer-key`
+
+**Relabel Answer Key**
+
+Start the ``span_relabel`` Job: label the split's texts with the
+chosen model (texts unchanged, offsets verified), write
+``gold/gold_test.jsonl`` + the GOLD_TEST dataset the evaluation's
+``gold_test`` alias resolves, and report the agreement between the
+old labels and the new key.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (optional)
+
+Content type: `application/json` — `RelabelAnswerKeyRequest \| null`
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `202` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `GET /api/projects/{project_id}/synthetic/review-queue`
 
 **List Synth Review Queue**
 
 List pending synthetic rows for the project, grouped by
-`synth_source` (USER-SUCCESS Epic 2b).
+`synth_source` (USER-SUCCESS Epic 2b) — or by class label with
+`?group_by=class` (Epic E).
 
 Pending rows are gated out of dataset prep — they don't enter
 training until the user accepts them via `/review-queue/bulk-update`
@@ -294,6 +377,7 @@ training until the user accepts them via `/review-queue/bulk-update`
 | Name | In | Type | Required | Description |
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
+| `group_by` | `query` | `string` | no |  |
 
 **Responses**
 
@@ -314,11 +398,19 @@ project's synthetic dataset.
 Returns a PlaybookResult: rows + backend_used + elapsed_sec +
 prompt_snippet.
 
+Hardening Phase H1 — pass ``?async_job=true`` to enqueue the
+playbook as a background Job. The endpoint returns 202 +
+``{job_id: ...}`` immediately and the user tracks progress in
+the notification bell. The synchronous path is preserved for
+backward compatibility and for short, low-volume runs where a
+spinner is fine.
+
 **Parameters**
 
 | Name | In | Type | Required | Description |
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
+| `async_job` | `query` | `boolean` | no |  |
 
 **Request body** (required)
 
@@ -426,13 +518,142 @@ Content type: `application/json` — `SaveSpanBatchRequest`
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `GET /api/projects/{project_id}/synthetic/type-definitions`
+
+**Get Type Definitions**
+
+The project's entity-type definitions (what the span generator and
+the answer-key relabeller both put in their prompts), the types the
+project's data uses, and suggested starting wording for those that
+have none.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `PUT /api/projects/{project_id}/synthetic/type-definitions`
+
+**Put Type Definitions**
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `TypeDefinitionsRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `definitions` | `object \\| null` | no |  |
+| `scan_tolerant` | `boolean \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/synthetic/type-patterns`
+
+**Get Type Patterns**
+
+The project's custom regex patterns (custom infotypes), any stored
+entries that no longer validate, the built-in regex types they run
+beside, and the validation limits.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `PUT /api/projects/{project_id}/synthetic/type-patterns`
+
+**Put Type Patterns**
+
+Validate (compile, length, no empty match, backtracking guard) and
+store the project's custom patterns. 422 ``INVALID_TYPE_PATTERN`` with
+per-entry ``metadata.errors`` when any entry fails — nothing is saved.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `TypePatternsRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `patterns` | `TypePatternItem[]` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/synthetic/weak-types`
+
+**Get Weak Entity Types**
+
+The entity types the latest span_set evaluation scored under
+``threshold`` (weakest first) with the evaluation's provenance and a
+suggested row count — what the Synthetic tab's "Refine weak types"
+button points the span generator at.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `threshold` | `query` | `number` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `POST /api/projects/{project_id}/synthetic/review-queue/bulk-update`
 
 **Bulk Update Synth Review Queue**
 
 Bulk accept or reject pending synth rows. Accepted rows flip
-to `review_status="accepted"` and become eligible for training;
-rejected rows are removed from synthetic.jsonl permanently.
+to ``review_status="accepted"`` and become eligible for
+training; rejected rows flip to ``review_status="rejected"``
+(Arc 5 soft-reject) and stay on disk for review + bulk-purge.
+Pass ``reject_reason`` to tag each rejected row with a label
+the Rejected section's group-by-reason UI uses.
 
 **Parameters**
 
@@ -448,12 +669,220 @@ Content type: `application/json` — `BulkReviewQueueRequest`
 |---|---|---|---|
 | `row_ids` | `integer[]` | yes | IDs of pending synth rows to update. |
 | `action` | `string` | yes | 'accept' or 'reject'. |
+| `reject_reason` | `string \\| null` | no | Optional label for a bulk reject (e.g. 'duplicate', 'schema_invalid'). Stamped on each rejected row so the Rejected section can group + purge by reason. |
 
 **Responses**
 
 | Status | Schema | Description |
 |---|---|---|
 | `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/review-queue/bulk-update-by-source`
+
+**Bulk Update Synth Review Queue By Source**
+
+Accept or reject *every pending row* in one ``synth_source`` group by
+key. Powers the one-click "Accept all (N)" / "Reject all (N)" on the Data
+Studio review-queue panel's pending groups (Epic E — actionable workbench),
+reusing the same soft-reject + record-count sync as ``/bulk-update``.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `BulkReviewQueueBySourceRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `source` | `string` | yes | The ``synth_source`` group key whose pending rows to update (e.g. 'playbook:classification:hard_negatives'). Every pending row in the group is affected — no row-id enumeration needed. |
+| `action` | `string` | yes | 'accept' or 'reject'. |
+| `reject_reason` | `string \\| null` | no | Optional label stamped on each rejected row (reject only). |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/review-queue/mark-conventions-current`
+
+**Mark Synth Group Conventions Current**
+
+"Mark as current" on a review-queue group flagged as labelled under
+older conventions: the user attests it already follows the current
+ones (no relabel). See ``mark_conventions_current``.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `MarkConventionsCurrentRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `source` | `string` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/review-queue/purge`
+
+**Purge Rejected Synth Rows**
+
+Physically remove rejected synth rows from synthetic.jsonl.
+Arc-5 soft-reject keeps rejected rows around for review; this
+is the explicit "I've reviewed the rejected pile, drop it"
+step. Pass ``reasons`` to purge a specific reason cohort
+(e.g. just the ``duplicate`` rows); omit to purge every
+rejected row.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `PurgeRejectedRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `reasons` | `string[] \\| null` | no | When set, only rejected rows whose ``reject_reason`` is in this list get physically removed. When omitted (or empty), all rejected rows are purged. |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/review-queue/retire-group`
+
+**Retire Synth Group**
+
+"Retire group" / "Restore" on the review queue: take an accepted
+source group out of training (soft — rows stay on disk as rejected with
+reason "retired") or put it back. See ``set_group_retired``.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `RetireGroupRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `source` | `string` | yes |  |
+| `retired` | `boolean` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/run-playbook/dry-run`
+
+**Dry Run Synth Playbook**
+
+Pre-flight a playbook with target_count=1 against the chosen
+model — **without persisting** any rows. The frontend calls this
+before kicking the real async job so a refusal or empty-output
+failure surfaces in &lt;10s inline on the panel, instead of after a
+60-180s job that ends in a notification-bell error.
+
+Returns the same envelope as ``/run-playbook`` plus:
+
+  - ``accepted_count``: number of rows that passed validation.
+  - ``refusal_detected``: True when the LLM returned a short
+    non-JSON apology that ``_looks_like_refusal`` recognised.
+  - ``raw_llm_snippet``: first ~280 chars of the model's response
+    so the user can see exactly what came back.
+  - ``ok``: convenience flag — True only when accepted_count &gt;= 1
+    AND refusal_detected is False.
+
+Never raises for refusals or 0-row outputs — those land as
+``ok: False`` in a 200 response so the frontend can render an
+inline error + retry-with-different-model affordance. 4xx is
+reserved for genuine input errors (unknown mode, missing recipe,
+missing gold set) and 5xx for backend transport failures.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `RunPlaybookRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `mode` | `string` | yes | Synth mode, e.g. 'positives_paraphrase'. |
+| `target_count` | `integer` | no |  |
+| `target_class` | `string \\| null` | no |  |
+| `backend` | `string \\| null` | no | Optional backend pin, e.g. 'ollama:llama3.1:8b'. |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/spans/regex-augment`
+
+**Regex Augment Saved Spans**
+
+Add regex-detected entities (email / phone / card / IP / … and the
+project's custom patterns) to every saved synthetic span row where
+they're missing. Deterministic and idempotent — the fix for rows
+generated under a restricted type list, or saved before a custom
+pattern existed. Body: ``{"entity_types": [...]}`` optional (defaults
+to every pattern).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (optional)
+
+Content type: `application/json` — `object \| null`
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 
@@ -472,6 +901,99 @@ field on the response disambiguates the row shape for the client.
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
 | `task_id` | `path` | `string` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/type-patterns/test`
+
+**Try Type Pattern**
+
+Try a pattern before saving it: validation result plus the matches
+in a sample of the project's saved span rows and cleaned passages
+(count, and the first matches with offsets and surrounding text).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `TypePatternTestRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `pattern` | `string` | yes |  |
+| `type` | `string` | no |  |
+| `flags` | `string` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/synthetic/backends/cloud/models`
+
+**List Cloud Models**
+
+Curated cloud-LLM catalog (OpenAI / Anthropic / Deepseek) +
+which providers have an API key saved for THIS project. Drives
+the synth panel's cloud picker so the user sees:
+
+  - all three providers + curated model lists
+  - a green check + "Key saved" badge for providers with creds
+  - a "Save key first" prompt for providers without creds
+
+Project secrets live under ``cloud_llm_<provider>:api_key`` (the
+same coordinates the gold-generate flow uses), so a user who's
+already saved a key in one panel sees it pre-filled in the other.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/synthetic/backends/ollama/models`
+
+**List Ollama Models**
+
+List the Ollama models installed on the local daemon, used by
+the Synth panel's model-picker dropdown.
+
+Returns ``{models: [...], default: <pattern-matched-model>}``.
+The ``default`` reflects what the platform's auto-pick would
+choose given current `PREFERRED_MODEL_PATTERNS` so the picker
+can label it ``"Auto (qwen2.5:14b...)"``.
+
+Best-effort — if Ollama isn't reachable, returns
+``{models: [], ollama_available: false, error: ...}`` with a
+200 so the picker can render a 'No Ollama models found' state
+rather than failing the panel load.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
 
 **Responses**
 

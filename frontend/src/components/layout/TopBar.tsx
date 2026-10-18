@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { CircleHelp } from 'lucide-react';
+import { ChevronDown, CircleHelp } from 'lucide-react';
 
 import api from '../../api/client';
 import NotificationBell from './NotificationBell';
@@ -196,7 +196,7 @@ export default function TopBar({ title, subtitle, actions, withSidebar = false }
                             onClick={() => setMenuOpen((prev) => !prev)}
                         >
                             <span className="topbar-user-name">{currentUser?.username || 'User'}</span>
-                            <span className="topbar-user-caret">▾</span>
+                            <ChevronDown className="topbar-user-caret u-icon" aria-hidden="true" />
                         </button>
                         {menuOpen && (
                             <div className="topbar-user-menu">

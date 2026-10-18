@@ -178,14 +178,14 @@ a structured output. Same word, very different feature.
 
 Chapters:
 00:00 Intro
-00:18 Data tab
-00:32 Cleaning (PII disambiguation)
-00:53 Gold Set
-01:04 Synthetic (span mode)
-01:25 Dataset Prep (span_set schema)
-01:40 Tokenization
-01:49 Training Config (LoRA for spans)
-02:08 Evaluation & wrap
+00:18 Data · Sources
+00:32 Prepare (PII disambiguation)
+00:53 Labels (answer key)
+01:04 Generate (span mode)
+01:25 Split (span set)
+01:40 Train · Tokenization
+01:49 Train · LoRA for spans
+02:08 Results & wrap
 
 #PII #SpanExtraction #SmallLanguageModel #FineTuning #LLM
 ```
@@ -224,13 +224,13 @@ for a small mobile footprint.
 
 Chapters:
 00:00 Intro
-00:14 Data tab (10/10/10 balance)
-00:32 Gold Set (70/65/65 distribution)
-00:50 Dataset Prep
-01:06 Tokenization (mobile target)
-01:20 Training Config (mobile_cpu)
-01:36 Evaluation
-01:49 Compression & Export (ONNX path)
+00:14 Data · Sources (10/10/10 balance)
+00:32 Data · Labels (70/65/65 distribution)
+00:50 Data · Split
+01:06 Train · Tokenization (mobile target)
+01:20 Train · LoRA (mobile_cpu)
+01:36 Results
+01:49 Ship · Compress & export (ONNX path)
 02:07 Wrap
 
 #SentimentAnalysis #SmallLanguageModel #ONNX #FineTuning #LLM

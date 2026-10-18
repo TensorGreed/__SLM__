@@ -1,5 +1,5 @@
 ---
-sidebar_position: 46
+sidebar_position: 67
 title: Training
 ---
 
@@ -7,7 +7,7 @@ title: Training
 
 # Training
 
-Auto-generated reference for the **Training** API. 82 endpoint(s).
+Auto-generated reference for the **Training** API. 88 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -193,6 +193,59 @@ List registered training runtime plugins and server default runtime.
 | Name | In | Type | Required | Description |
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/training/sweeps`
+
+**List Training Sweeps**
+
+List hyperparameter sweeps for the project.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/training/sweeps`
+
+**Start Training Sweep**
+
+Launch a hyperparameter grid bake-off: one real Experiment per cell.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `HyperparameterSweepRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `base_model` | `string` | yes |  |
+| `base_config` | `object` | no |  |
+| `lora_r_values` | `integer[]` | no |  |
+| `learning_rate_values` | `number[]` | no |  |
+| `base_model_values` | `string[]` | no |  |
+| `quality_target` | `number \\| null` | no |  |
 
 **Responses**
 
@@ -649,6 +702,40 @@ dir gone for good. Refuses RUNNING experiments.
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `GET /api/projects/{project_id}/training/forecast/history`
+
+**Get Training Forecast History**
+
+Recent trainability-forecast snapshots for the project,
+newest-first. USER-SUCCESS Epic 1 (T2).
+
+One row per cache-miss compute (cache hits do NOT add to history —
+a recomputation with identical inputs would just dilute the
+sparkline without telling the user anything new). Snapshots
+older than 60 days are pruned on insert.
+
+Used by the panel sparkline + last-3 verdict-delta strip so the
+user can see whether their last gold-set edit moved the
+``confidence_pct`` needle.
+
+Limit is clamped to [1, 100]; default 10 matches the panel's
+sparkline width.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `limit` | `query` | `integer` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `POST /api/projects/{project_id}/training/model-selection/benchmark-sweep`
 
 **Model Selection Benchmark Sweep**
@@ -950,6 +1037,13 @@ Content type: `application/json` — `PlaygroundChatRequest`
 | `session_title` | `string \\| null` | no |  |
 | `save_history` | `boolean` | no |  |
 | `messages` | `PlaygroundChatMessage[]` | no |  |
+| `auto_rag` | `boolean` | no |  |
+| `auto_rag_k` | `integer \\| null` | no |  |
+| `auto_rag_corpus` | `enum("qa", "documents", "auto") \\| null` | no |  |
+| `auto_rag_reranker` | `string \\| null` | no |  |
+| `auto_rag_pool` | `integer \\| null` | no |  |
+| `auto_rag_chunk_size` | `integer \\| null` | no |  |
+| `experiment_id` | `integer \\| null` | no |  |
 
 **Responses**
 
@@ -1203,6 +1297,66 @@ Content type: `application/json` — `_CompareRunsRequest`
 | `baseline_experiment_id` | `integer` | yes |  |
 | `candidate_experiment_id` | `integer` | yes |  |
 | `tolerance` | `number` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/training/sweeps/preflight-budget`
+
+**Sweep Preflight Budget**
+
+Return a wall-clock estimate for a planned sweep, with the basis
+explaining how rough the number is (no-history → conservative default,
+same-base+recipe → tightest).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `SweepPreflightBudgetRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `base_model` | `string` | yes |  |
+| `lora_r_values` | `integer[]` | no |  |
+| `learning_rate_values` | `number[]` | no |  |
+| `base_model_values` | `string[]` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/training/sweeps/{sweep_id}`
+
+**Get Training Sweep**
+
+Return a sweep's cells annotated with the quality-vs-cost Pareto frontier.
+
+``cost_kind`` picks the cost axis: ``wall_clock_seconds`` (default, the
+honest measured-duration axis), ``lora_r`` (adapter footprint proxy), or
+``base_params_m`` (base-model parameter count, useful for cross-model
+sweeps). Unknown values return 400 rather than silently falling back.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `sweep_id` | `path` | `string` | yes |  |
+| `cost_kind` | `query` | `string` | no |  |
 
 **Responses**
 
@@ -1610,7 +1764,11 @@ Content type: `application/json` — `TrainingEffectiveConfigRequest`
 
 **Cancel**
 
-Cancel a running training experiment.
+Cancel a running training experiment and stop its process.
+
+External runs: SIGTERM → SIGKILL the recorded process group; the
+response's ``cancel_status`` says what happened (see
+``training_service.cancel_training``).
 
 **Parameters**
 
@@ -1624,6 +1782,38 @@ Cancel a running training experiment.
 | Status | Schema | Description |
 |---|---|---|
 | `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/training/experiments/{experiment_id}/clone`
+
+**Clone Experiment**
+
+Clone an experiment into a new PENDING one with the same
+config + a derived name. Used by the bell's kill-switch flow:
+after cancelling a diverging run, the user can immediately
+re-launch the same setup (which is usually what they want —
+bad seed, transient OOM, etc. — rather than rebuilding the
+config from scratch). The new experiment is created in
+PENDING state; the caller decides whether to start it.
+
+Naming: if the original is ``"foo"``, the clone becomes
+``"foo (retry)"`` for the first retry, ``"foo (retry 2)"``,
+``"foo (retry 3)"``, … so a series of failed runs stay
+grouped + ordered in the experiments list.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `experiment_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `201` | `ExperimentResponse` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 
@@ -1653,7 +1843,7 @@ Run preflight checks for an existing experiment config.
 **Reset**
 
 Flip a FAILED experiment back to PENDING and clear stale state
-(archive the output dir to a `.bak.TIMESTAMP` sibling, drop its checkpoint rows).
+(archive the output dir to a .bak.TIMESTAMP sibling, drop its checkpoint rows).
 Idempotent. Refuses RUNNING experiments — cancel first.
 
 **Parameters**
@@ -1784,6 +1974,13 @@ Content type: `application/json` — `PlaygroundChatRequest`
 | `session_title` | `string \\| null` | no |  |
 | `save_history` | `boolean` | no |  |
 | `messages` | `PlaygroundChatMessage[]` | no |  |
+| `auto_rag` | `boolean` | no |  |
+| `auto_rag_k` | `integer \\| null` | no |  |
+| `auto_rag_corpus` | `enum("qa", "documents", "auto") \\| null` | no |  |
+| `auto_rag_reranker` | `string \\| null` | no |  |
+| `auto_rag_pool` | `integer \\| null` | no |  |
+| `auto_rag_chunk_size` | `integer \\| null` | no |  |
+| `experiment_id` | `integer \\| null` | no |  |
 
 **Responses**
 

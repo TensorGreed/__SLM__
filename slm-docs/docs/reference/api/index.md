@@ -7,7 +7,7 @@ title: Auto API index
 
 # Auto-generated API reference
 
-**SLM Platform** — version `0.1.0`. 381 endpoint(s) across 45 tag(s).
+**SLM Platform** — version `0.1.0`. 531 endpoint(s) across 67 tag(s).
 
 This section is auto-generated from the FastAPI OpenAPI spec. For curated narrative
 + UI / CLI walkthroughs see the linked workflow pages. The live Swagger UI is at
@@ -17,47 +17,70 @@ This section is auto-generated from the FastAPI OpenAPI spec. For curated narrat
 
 | Tag | Endpoints |
 |---|---|
+| [ActiveLearning](activelearning.md) | 1 |
 | [Adapter Studio](adapter-studio.md) | 9 |
+| [Admin](admin.md) | 2 |
 | [Annotation](annotation.md) | 10 |
+| [Archetypes](archetypes.md) | 2 |
 | [Artifacts](artifacts.md) | 5 |
 | [Audit](audit.md) | 1 |
 | [Auth](auth.md) | 8 |
 | [Autopilot](autopilot.md) | 10 |
+| [AutoRAG](autorag.md) | 8 |
 | [Base Models](base-models.md) | 7 |
+| [BehavioralTests](behavioraltests.md) | 2 |
 | [Cleaning](cleaning.md) | 5 |
 | [Coach](coach.md) | 1 |
 | [Comparison](comparison.md) | 1 |
+| [Compliance](compliance.md) | 3 |
 | [Compression](compression.md) | 7 |
-| [Dataset Import](dataset-import.md) | 9 |
+| [Curriculum](curriculum.md) | 1 |
+| [Data Health](data-health.md) | 4 |
+| [Data Studio](data-studio.md) | 21 |
+| [Dataset Import](dataset-import.md) | 10 |
 | [Dataset Prep](dataset-prep.md) | 13 |
-| [DemoProjects](demoprojects.md) | 2 |
+| [DemoProjects](demoprojects.md) | 3 |
 | [Deployments](deployments.md) | 15 |
+| [Distillation](distillation.md) | 2 |
 | [Domain Blueprints](domain-blueprints.md) | 10 |
 | [Domain Packs](domain-packs.md) | 7 |
 | [Domain Profiles](domain-profiles.md) | 5 |
-| [Evaluation](evaluation.md) | 21 |
-| [Export](export.md) | 15 |
+| [Drift](drift.md) | 5 |
+| [Eval Gaps](eval-gaps.md) | 3 |
+| [Evaluation](evaluation.md) | 34 |
+| [Export](export.md) | 16 |
 | [Extensions](extensions.md) | 4 |
+| [External benchmarks](external-benchmarks.md) | 7 |
 | [FailureClusters](failureclusters.md) | 2 |
-| [Gold Dataset](gold-dataset.md) | 4 |
+| [Flows](flows.md) | 4 |
+| [Gold Dataset](gold-dataset.md) | 13 |
 | [Gold Set Workbench](gold-set-workbench.md) | 4 |
 | [Hardware](hardware.md) | 2 |
 | [Ingestion](ingestion.md) | 14 |
+| [Jobs](jobs.md) | 4 |
+| [LabelNoise](labelnoise.md) | 5 |
+| [LLM spend](llm-spend.md) | 3 |
 | [Manifest](manifest.md) | 8 |
 | [Misc](misc.md) | 1 |
 | [Pipeline](pipeline.md) | 30 |
+| [Probe Pack](probe-pack.md) | 3 |
 | [Project Templates](project-templates.md) | 3 |
-| [Projects](projects.md) | 15 |
+| [Projects](projects.md) | 26 |
 | [Quickstart](quickstart.md) | 4 |
 | [Recipes](recipes.md) | 3 |
+| [Redaction](redaction.md) | 4 |
 | [Registry](registry.md) | 7 |
+| [Remediation](remediation.md) | 1 |
 | [RunEvents](runevents.md) | 2 |
 | [Secrets](secrets.md) | 3 |
+| [Seed groups](seed-groups.md) | 2 |
 | [Settings](settings.md) | 2 |
 | [Starter Packs](starter-packs.md) | 4 |
 | [SupportBundles](supportbundles.md) | 3 |
-| [Synthetic](synthetic.md) | 15 |
+| [Synthetic](synthetic.md) | 31 |
 | [Targets](targets.md) | 3 |
+| [Task Shape](task-shape.md) | 2 |
 | [Timeline](timeline.md) | 1 |
-| [Tokenization](tokenization.md) | 2 |
-| [Training](training.md) | 82 |
+| [Tokenization](tokenization.md) | 3 |
+| [Training](training.md) | 88 |
+| [Training Config Gaps](training-config-gaps.md) | 4 |

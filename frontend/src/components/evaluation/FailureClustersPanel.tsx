@@ -8,6 +8,7 @@ import api from '../../api/client';
 import { recordRemediationEvent } from '../../api/remediation';
 import { augmentFromCluster } from '../../api/synthPlaybook';
 import { routeClusterFix } from '../../utils/clusterFixRouter';
+import { Check, ChevronDown, ChevronRight, Lightbulb, X } from 'lucide-react';
 import './FailureClustersPanel.css';
 
 interface AugmentState {
@@ -366,7 +367,7 @@ export default function FailureClustersPanel({
                                     <span className="failure-cluster-stats">
                                         <span><strong>{cluster.failure_count}</strong> rows</span>
                                         <span>{Math.round(cluster.share_of_total * 100)}%</span>
-                                        <span className="failure-cluster-caret">{expanded ? '▾' : '▸'}</span>
+                                        <span className="failure-cluster-caret">{expanded ? <ChevronDown className="u-icon" aria-hidden="true" /> : <ChevronRight className="u-icon" aria-hidden="true" />}</span>
                                     </span>
                                 </button>
                                 {expanded && (
@@ -532,7 +533,7 @@ export default function FailureClustersPanel({
                                                                             className="failure-cluster-ex-flag"
                                                                             data-testid="exemplar-rag-unfaithful"
                                                                         >
-                                                                            ✗ answer NOT supported by context
+                                                                            <X className="u-icon" aria-hidden="true" /> answer NOT supported by context
                                                                         </span>
                                                                     )}
                                                                 </div>
@@ -555,7 +556,7 @@ export default function FailureClustersPanel({
                                                                     className="failure-cluster-ex-flag"
                                                                     data-testid="exemplar-alignment-wrong"
                                                                 >
-                                                                    ✗ preferred rejected
+                                                                    <X className="u-icon" aria-hidden="true" /> preferred rejected
                                                                 </span>
                                                             )}
                                                             {ex.alignment_chosen && (
@@ -616,7 +617,7 @@ export default function FailureClustersPanel({
                                                                     className="failure-cluster-ex-flag"
                                                                     data-testid="exemplar-json-invalid"
                                                                 >
-                                                                    ✗ malformed JSON
+                                                                    <X className="u-icon" aria-hidden="true" /> malformed JSON
                                                                 </span>
                                                             )}
                                                             {ex.is_valid_json === true && (
@@ -707,7 +708,7 @@ function ClusterExplanationChip({
                 className="failure-cluster-explanation failure-cluster-explanation-loading"
                 data-testid="cluster-explanation-loading"
             >
-                💡 Analyzing the cluster…
+                <Lightbulb className="u-icon" aria-hidden="true" /> Analyzing the cluster…
             </p>
         );
     }
@@ -717,7 +718,7 @@ function ClusterExplanationChip({
                 className="failure-cluster-explanation failure-cluster-explanation-ok"
                 data-testid="cluster-explanation-ok"
             >
-                <span aria-hidden="true">💡 </span>
+                <Lightbulb className="u-icon" aria-hidden="true" /> 
                 <strong>{explanation.text}</strong>
                 {explanation.cached && (
                     <span
@@ -741,7 +742,7 @@ function ClusterExplanationChip({
                 className="failure-cluster-explanation failure-cluster-explanation-soft"
                 data-testid="cluster-explanation-judge-unavailable"
             >
-                💡 No judge model configured — explanations skipped.
+                <Lightbulb className="u-icon" aria-hidden="true" /> No judge model configured — explanations skipped.
                 {explanation.note && (
                     <span className="failure-cluster-explanation-note">
                         {' '}{explanation.note}
@@ -756,7 +757,7 @@ function ClusterExplanationChip({
                 className="failure-cluster-explanation failure-cluster-explanation-soft"
                 data-testid="cluster-explanation-missing"
             >
-                💡 Cluster no longer present in this eval result.
+                <Lightbulb className="u-icon" aria-hidden="true" /> Cluster no longer present in this eval result.
             </p>
         );
     }
@@ -766,7 +767,7 @@ function ClusterExplanationChip({
             className="failure-cluster-explanation failure-cluster-explanation-error"
             data-testid="cluster-explanation-error"
         >
-            💡 Couldn't generate explanation
+            <Lightbulb className="u-icon" aria-hidden="true" /> Couldn't generate explanation
             {explanation.note ? `: ${explanation.note}` : '.'}
             {' '}
             <button
@@ -866,7 +867,7 @@ function ClusterAugmentControl({
                     className="failure-cluster-augment-result"
                     data-testid={`failure-cluster-augment-ok-${clusterId}`}
                 >
-                    ✓ Generated {state.rows} rows via <code>{state.backend}</code> in {state.elapsed?.toFixed(2)}s.
+                    <Check className="u-icon" aria-hidden="true" /> Generated {state.rows} rows via <code>{state.backend}</code> in {state.elapsed?.toFixed(2)}s.
                     Pending review on the Synthetic tab.
                 </p>
             )}

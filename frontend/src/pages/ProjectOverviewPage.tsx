@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { FlaskConical, Package } from 'lucide-react';
+import { ChevronDown, ChevronRight, FlaskConical, Package } from 'lucide-react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 
 import { fetchCoachSuggestions, type CoachStage, type CoachSuggestion } from '../api/coach';
@@ -215,7 +215,7 @@ export default function ProjectOverviewPage() {
                     aria-expanded={planOpen ? 'true' : 'false'}
                     data-testid="overview-plan-toggle"
                 >
-                    {planOpen ? '▾' : '▸'} Full plan
+                    {planOpen ? <ChevronDown className="u-icon" aria-hidden="true" /> : <ChevronRight className="u-icon" aria-hidden="true" />} Full plan
                 </button>
                 {planOpen && (
                     <div className="overview-plan__body">

@@ -25,6 +25,7 @@ import {
 } from '../../api/rerouteAnalysis';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
+import { ChevronRight } from 'lucide-react';
 import './RerouteRecommendationPanel.css';
 import { resultsPath, stagePath } from '../../utils/workspaceRoutes';
 
@@ -442,7 +443,9 @@ function SignalEvidence({ signal }: { signal: RerouteSignal }) {
             className="reroute-card__signal-evidence"
             data-testid={`reroute-card-signal-evidence-${signal.id}`}
         >
-            <summary>Why this fired?</summary>
+            <summary>
+                <ChevronRight className="u-icon reroute-card__signal-caret" aria-hidden="true" /> Why this fired?
+            </summary>
             <dl>
                 {entries.map(([key, value]) => (
                     <div

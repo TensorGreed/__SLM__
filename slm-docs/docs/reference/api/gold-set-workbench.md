@@ -1,5 +1,5 @@
 ---
-sidebar_position: 26
+sidebar_position: 39
 title: Gold Set Workbench
 ---
 

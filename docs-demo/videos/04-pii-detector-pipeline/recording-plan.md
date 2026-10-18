@@ -1,5 +1,7 @@
 # Video 04 — PII Detector Sample · Full Pipeline · Recording Plan
 
+> **2026-10-18**: routes below are the Epic U workspace URLs. The narrated spec `tests/demo-recordings/04-*-narrated.spec.ts` was ported to the new layout (Overview, Data steps, Train form, Results, Ship); the tab and panel names in the older prose below describe the retired layout.
+
 Status: **partial** — every UI surface verified by selector pass on
 2026-05-19. Real synthetic span generation requires a teacher
 endpoint (open Q21).
@@ -30,7 +32,7 @@ Intermediate.
 2. Logged in.
 3. Seed via UI tile (`Demo · PII / PCI Detector`) **or** curl
    `POST /api/demo-projects/pii-detector`.
-4. Browser at `/project/<id>/pipeline/data`.
+4. Browser at `/project/<id>/data?step=data`.
 5. Confirm 61 ingested documents on Data tab.
 
 ## Sample files involved
@@ -71,14 +73,14 @@ Counts in gold (per `06-official-demo-samples-map.md`):
 
 | # | Route | Component | Focal selector | Status |
 |---|---|---|---|---|
-| 1 | `/project/<id>/pipeline/data` | `IngestionPanel` | `[data-testid="expand-doc-61"]` (concrete observed) | verified |
-| 2 | `/project/<id>/pipeline/cleaning` | `CleaningPanel` | `button.tab[title="Cleaning"]`; **show redaction toggles** | verified |
-| 3 | `/project/<id>/pipeline/goldset` | `GoldSetPanel` | "Entries 200" | verified |
-| 4 | `/project/<id>/pipeline/synthetic` | `SyntheticPanel` | Span mode auto-selected from prepared manifest | partial (runtime) |
-| 5 | `/project/<id>/pipeline/dataprep` | `DatasetPrepPanel` | Schema profile shows `output_schema.scoring_mode=span_set` | verified |
-| 6 | `/project/<id>/pipeline/training` | `TrainingPanel` | Empty state | verified surface |
+| 1 | `/project/<id>/data?step=data` | `IngestionPanel` | `[data-testid="expand-doc-61"]` (concrete observed) | verified |
+| 2 | `/project/<id>/data?step=cleaning` | `CleaningPanel` | `button.tab[title="Cleaning"]`; **show redaction toggles** | verified |
+| 3 | `/project/<id>/data?step=goldset` | `GoldSetPanel` | "Entries 200" | verified |
+| 4 | `/project/<id>/data?step=synthetic` | `SyntheticPanel` | Span mode auto-selected from prepared manifest | partial (runtime) |
+| 5 | `/project/<id>/data?step=dataprep` | `DatasetPrepPanel` | Schema profile shows `output_schema.scoring_mode=span_set` | verified |
+| 6 | `/project/<id>/train` | `TrainingPanel` | Empty state | verified surface |
 | 7 | `/project/<id>/training-config` | `ProjectTrainingConfigPage` | Essentials → Advanced → Power Tools | verified |
-| 8 | `/project/<id>/pipeline/eval` | `EvalPanel` | Empty state | verified surface |
+| 8 | `/project/<id>/results` | `EvalPanel` | Empty state | verified surface |
 
 ## API calls observed during selector pass
 

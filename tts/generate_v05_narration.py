@@ -31,86 +31,86 @@ SECTIONS: list[tuple[str, str, str]] = [
     (
         "01-cold-open",
         "cold_open",
-        "Welcome to the Sentiment Classifier pipeline walkthrough. "
-        "This is the simplest of the three samples — three-way "
-        "classification with the labels positive, neutral, and "
-        "negative. Thirty source rows, perfectly balanced ten, ten, "
-        "ten. Each row is text and a single label.",
+        "Welcome to the Sentiment Classifier walkthrough. This is the "
+        "simplest of the three samples — three-way classification with "
+        "the labels positive, neutral, and negative. Thirty source "
+        "rows, perfectly balanced ten, ten, ten. Each row is text and a "
+        "single label. We start on the Overview, then visit Data, "
+        "Train, Results and Ship.",
     ),
     (
         "02-data",
         "data",
-        "Data tab. Thirty source reviews. Each row has two columns: "
-        "the text, and the gold label. Expand one. You see exactly "
-        "the shape the model has to learn — read a review, emit one "
-        "of three labels. The balance matters: ten of each class "
-        "means the model never gets to cheat by always predicting "
-        "the majority.",
+        "Data, Sources. Thirty source reviews. Each row has two "
+        "columns: the text, and the label. Expand one. You see exactly "
+        "the shape the model has to learn — read a review, emit one of "
+        "three labels. The balance matters: ten of each class means the "
+        "model never gets to cheat by always predicting the majority.",
     ),
     (
         "03-goldset",
         "goldset",
-        "Gold Set. Two hundred entries. The distribution is "
-        "seventy positive, sixty-five neutral, sixty-five negative. "
-        "Slightly skewed positive — typical of real-world reviews. "
-        "The eval handler measures per-class precision and recall "
-        "against this gold, so under-represented classes still get "
-        "measured.",
+        "Labels. The answer key has two hundred entries, and the mix "
+        "summary shows the distribution — seventy positive, sixty-five "
+        "neutral, sixty-five negative. Slightly skewed positive, "
+        "typical of real-world reviews. Scoring measures per-class "
+        "precision and recall against this answer key, so "
+        "under-represented classes still get measured.",
     ),
     (
         "04-dataprep",
         "dataprep",
-        "Dataset Prep. Schema Profile shows the three labels. The "
-        "adapter is classification-label — it canonicalizes every "
-        "prepared row to a text column and a label column. Splits "
-        "are twenty-two train, four validation, four test. Small, "
-        "but enough to verify the loop end to end.",
+        "Split. The task shape is classification with a text column and "
+        "a label column, and every prepared row is canonicalised to "
+        "that. The split gives twenty-two training rows, four for "
+        "validation and four test examples. Small, but enough to verify "
+        "the loop end to end.",
     ),
     (
         "05-tokenization",
         "tokenization",
-        "Tokenization. Same idea as the previous samples. The "
-        "twist for this sample: target profile is mobile CPU, so "
-        "max sequence length matters more than usual. Short "
-        "sequences mean a smaller model footprint and faster "
-        "inference on-device.",
+        "On to Train. Under More options, Tokenization. The twist for "
+        "this sample: the target profile is mobile CPU, so maximum "
+        "sequence length matters more than usual. Short sequences mean "
+        "a smaller model footprint and faster inference on-device.",
     ),
     (
         "06-training-config",
         "training_config",
-        "Training tab — empty, expected. Into the Training Config "
-        "page. Flip to Advanced. The Training Config picks up the "
-        "mobile CPU target profile from the manifest — that hints "
-        "at smaller batches, shorter sequences, and a tighter "
-        "model footprint on export. Defaults are tuned for mobile.",
+        "The Train form. Base model, task shape, seeds, readiness, and "
+        "one Train button. Under More options, LoRA and advanced "
+        "training. The project's mobile CPU target hints at smaller "
+        "batches, shorter sequences, and a tighter model footprint on "
+        "export. The defaults are tuned for it.",
     ),
     (
         "07-eval",
         "eval",
-        "Evaluation tab. Empty until we have an experiment. For "
-        "this sample the eval pack is the classification default — "
-        "accuracy and macro-F1 in the headline, per-class "
-        "precision and recall in the detail panel.",
+        "Results. Empty until we have a finished run. For this sample "
+        "the checks are the classification defaults — accuracy and "
+        "macro-F1 in the headline, per-class precision and recall in "
+        "the detail. The Verdict tab is where they land.",
     ),
     (
         "08-compression-export",
         "compression_export",
-        "Compression and Export. The natural target for this "
-        "sample is ONNX with eight-bit quantization, which would "
-        "give us a fast on-device model. ONNX is in the export "
-        "format list, but the end-to-end story for this sample "
-        "isn't validated yet — that's Video Eleven. For now we're "
-        "just confirming the shape of the export surface.",
+        "Ship, Package. Under Options, compress first, then the export "
+        "form. The natural target for this sample is ONNX with "
+        "eight-bit quantization, which would give us a fast on-device "
+        "model. ONNX is in the export format list, but the end-to-end "
+        "story for this sample isn't validated yet — that's Video "
+        "Eleven. For now we're just confirming the shape of the export "
+        "surface.",
     ),
     (
         "09-wrap",
         "wrap",
-        "And that's the third sample. Three task profiles, three "
-        "scoring contracts, one shared pipeline. Quickstart, "
-        "support FAQ, PII detector, sentiment classifier — that's "
-        "the inspection arc complete. Next videos pick up the "
-        "runtime-heavy side: actually launching a training run, "
-        "scoring against gold, compressing, and serving.",
+        "And that's the third sample. Three task shapes, three scoring "
+        "contracts, one shared workspace. Quickstart, support FAQ, PII "
+        "detector, sentiment classifier — that's the inspection arc "
+        "complete. Next videos pick up the runtime-heavy side: actually "
+        "launching a training run, scoring against the answer key, "
+        "compressing, and serving.",
     ),
 ]
 

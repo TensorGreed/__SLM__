@@ -1,5 +1,5 @@
 ---
-sidebar_position: 25
+sidebar_position: 38
 title: Gold Dataset
 ---
 
@@ -7,7 +7,7 @@ title: Gold Dataset
 
 # Gold Dataset
 
-Auto-generated reference for the **Gold Dataset** API. 4 endpoint(s).
+Auto-generated reference for the **Gold Dataset** API. 13 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -17,7 +17,10 @@ For curated narrative + UI / CLI walkthroughs see the corresponding section unde
 
 **Add Pair**
 
-Add a Q&A pair to the gold dataset.
+Add a single gold row in any recipe shape (qa-sft Q+A,
+classification text+label, span-extraction text+entities,
+summarization document+summary). Recipe-shaped extras flow
+through ``extra=allow`` and round-trip into the JSONL.
 
 **Parameters**
 
@@ -27,12 +30,10 @@ Add a Q&A pair to the gold dataset.
 
 **Request body** (required)
 
-Content type: `application/json` — `QAPairCreate`
+Content type: `application/json` — `GoldRowCreate`
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `question` | `string` | yes |  |
-| `answer` | `string` | yes |  |
 | `dataset_type` | `string` | no |  |
 | `difficulty` | `string` | no |  |
 | `criticality` | `string` | no |  |
@@ -43,6 +44,34 @@ Content type: `application/json` — `QAPairCreate`
 | Status | Schema | Description |
 |---|---|---|
 | `201` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/gold/diagnostics`
+
+**Gold Set Diagnostics**
+
+V4 ML-native viz — class-balance bars + class-similarity heatmap.
+
+Returns a single payload the ``GoldSetDiagnosticsPanel`` consumes:
+``{class_balance: {labels, total, entropy_nats}, similarity:
+{labels, matrix, insufficient_labels}, total_rows,
+classification_eligible}``. ``classification_eligible=false`` for
+non-classification recipes (the UI renders an empty-state hint
+rather than a misleading single-class chart).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `sample_per_class` | `query` | `integer` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 
@@ -58,6 +87,60 @@ List all gold dataset entries.
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
 | `dataset_type` | `query` | `string` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/gold/generate-via-llm`
+
+**Generate Via Llm**
+
+Generate Q&A pairs via a flagship cloud LLM (OpenAI or Anthropic)
+using the project's domain blueprint + selected recipe as context.
+
+Returns the generated rows for **preview** — does NOT persist.
+The caller renders the rows for user review and writes accepted
+rows via the existing ``POST /gold/import`` endpoint.
+
+Status codes:
+  * 200 — rows generated + returned in the payload.
+  * 400 — structured error (RECIPE_REQUIRED, RECIPE_NOT_SUPPORTED,
+    API_KEY_REQUIRED, COUNT_OUT_OF_RANGE, DISTRIBUTION_OUT_OF_RANGE,
+    LLM_RESPONSE_UNPARSEABLE — no usable row at all).
+    A response with fewer (or more) usable rows than asked is a 200
+    carrying ``warnings`` (count drift, rows dropped, span offsets
+    repaired) — the call is paid for and the preview lets the user
+    review every row, so a short result is never thrown away.
+  * 502 — upstream provider failure (rate limit, bad key, model
+    not found). Body has the provider's error text.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `GenerateViaLlmRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `provider` | `enum("openai", "anthropic")` | yes | Cloud LLM provider. 'openai' also covers Deepseek + any OpenAI-compatible endpoint via the optional api_url. |
+| `model` | `string` | yes | Model name (e.g. 'gpt-4o-mini', 'claude-haiku-4-5-20251001'). |
+| `count` | `integer` | no |  |
+| `focus_hint` | `string` | no | Optional user direction — 'focus on edge cases', 'cover refund policy questions', etc. |
+| `api_key` | `string \\| null` | no | Inline API key (one-shot, not persisted). When omitted, falls back to the stored project secret for this provider. |
+| `api_url` | `string \\| null` | no | Override for OpenAI-compatible endpoints (e.g. Deepseek). Ignored for Anthropic. |
+| `ground_in_source` | `boolean` | no | When True (recommended), include a strict-budget sample of the project's cleaned chunks in the prompt and ask the LLM to ground each answer in them. Falls back to ungrounded when the project hasn't imported any data yet. |
+| `user_prompt_override` | `string \\| null` | no | Optional verbatim replacement for the user prompt. When set, the service skips its own prompt construction (project/blueprint/grounding/labels) and sends this string instead. Powers the panel's 'review & edit prompt before sending' UX. Triggers a second behavior change: the classification vocab filter on parse is suspended (the user took control of the LLM contract, so we trust their label space). |
+| `system_prompt_override` | `string \\| null` | no | Optional verbatim replacement for the system prompt. Independent of user_prompt_override — caller can override one, both, or neither. |
+| `distribution` | `RowDistribution \\| null` | no | Optional explicit row-count distribution by difficulty + hallucination-trap. When set, the sum replaces ``count`` and the prompt enumerates the mix to the LLM. qa-sft only — silently ignored for other recipes (their gold_template lacks difficulty / trap fields). |
 
 **Responses**
 
@@ -114,4 +197,223 @@ Lock a gold dataset (make immutable).
 | Status | Schema | Description |
 |---|---|---|
 | `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/gold/review`
+
+**Answer Key Review Queue**
+
+The answer key as a human review queue: rows unreviewed-first, the
+ones the project's latest span run disagrees with most at the top
+(``agreement`` = strict span F1 between key and model; ``predicted``
+= the model's spans). ``compare=false`` skips the model.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `dataset_type` | `query` | `enum("gold_test", "gold_dev")` | no |  |
+| `experiment_id` | `query` | `integer \\| null` | no |  |
+| `compare` | `query` | `boolean` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `PUT /api/projects/{project_id}/gold/review`
+
+**Answer Key Review Verdict**
+
+Record a reviewer's verdict on one row (``verdict`` null clears it
+and restores the model's labels). A ``corrected`` verdict replaces the
+row's answer fields (``entities`` validated against the text).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `ReviewVerdictRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `dataset_type` | `enum("gold_test", "gold_dev")` | no |  |
+| `index` | `integer` | yes |  |
+| `key` | `string \\| null` | no |  |
+| `verdict` | `enum("accepted", "corrected", "rejected") \\| null` | no |  |
+| `corrected` | `object \\| null` | no |  |
+| `note` | `string` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/gold/generate-via-llm/cost-estimate`
+
+**Generate Via Llm Cost Estimate**
+
+Pre-call cost estimate for the LLM-assisted generate flow —
+powers the "≈ $X.YY" badge next to the Generate button so the
+user has price awareness before clicking.
+
+Cheap: no provider calls. Counts characters in the project's
+cleaned chunks (capped at the same budget the real call uses)
+and prices the resulting prompt + projected completion against
+the model's per-token price. Approximate (≈ ±25%) — actual cost
+surfaces in the response after the real call lands.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `CostEstimateRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `provider` | `enum("openai", "anthropic")` | yes |  |
+| `model` | `string` | yes |  |
+| `count` | `integer` | no |  |
+| `ground_in_source` | `boolean` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/gold/generate-via-llm/preview-prompt`
+
+**Generate Via Llm Preview Prompt**
+
+Return the user + system prompts the service WOULD send to the
+LLM for this project / recipe / grounding combo, without actually
+calling the LLM. Powers the "review & edit prompt before sending"
+UX for advanced users.
+
+Shape-identical to what ``/generate-via-llm`` constructs internally,
+so the user can copy the returned strings into the override fields
+on the generate call after editing.
+
+Status codes:
+  * 200 — preview returned in the payload.
+  * 400 — same caller-fixable cases as the generate endpoint
+    (RECIPE_REQUIRED, RECIPE_NOT_SUPPORTED, COUNT_OUT_OF_RANGE,
+    PROJECT_NOT_FOUND).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `PreviewPromptRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `count` | `integer` | no |  |
+| `focus_hint` | `string` | no |  |
+| `ground_in_source` | `boolean` | no |  |
+| `distribution` | `RowDistribution \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/gold/generate-via-llm/saved-key`
+
+**Get Saved Llm Key**
+
+Report whether a stored API key exists for this project +
+provider, returning only the masked hint (never the raw value).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `provider` | `query` | `enum("openai", "anthropic", "deepseek")` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `SavedKeyResponse` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `PUT /api/projects/{project_id}/gold/generate-via-llm/saved-key`
+
+**Put Saved Llm Key**
+
+Store (or replace) the API key for this project + provider.
+Only the masked hint is returned — the raw value stays server-side.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `SavedKeyUpsert`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `provider` | `enum("openai", "anthropic", "deepseek")` | yes |  |
+| `api_key` | `string` | yes | Raw API key. Validated as non-empty + reasonable length here so the panel can't silently overwrite a real key with a typo'd stub. |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `SavedKeyResponse` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `DELETE /api/projects/{project_id}/gold/generate-via-llm/saved-key`
+
+**Delete Saved Llm Key**
+
+Clear the stored API key for this project + provider. Idempotent
+— returns 204 whether or not a row existed, so the panel's
+"Remove" button never lies after a stale cache.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `provider` | `query` | `enum("openai", "anthropic", "deepseek")` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `204` | `—` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |

@@ -4,6 +4,8 @@
  * Reads/writes the shared config form; TrainingPanel owns loading + payload.
  */
 
+import { ChevronDown, ChevronRight } from 'lucide-react';
+
 import type {
 } from './trainingPanelTypes';
 import type { TrainingConfigForm } from './useTrainingConfigForm';
@@ -46,7 +48,7 @@ export default function TrainingMultiSeedSection({
               aria-label={multiSeedExpanded ? 'Collapse multi-seed section' : 'Expand multi-seed section'}
               data-testid="training-multi-seed-toggle"
             >
-              {multiSeedExpanded ? '▼' : '▶'}
+              {multiSeedExpanded ? <ChevronDown className="u-icon" aria-hidden="true" /> : <ChevronRight className="u-icon" aria-hidden="true" />}
             </button>
             Multi-seed variance (Quality-Lift phase 1)
             {numSeeds > 1 && (

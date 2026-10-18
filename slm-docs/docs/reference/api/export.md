@@ -1,5 +1,5 @@
 ---
-sidebar_position: 21
+sidebar_position: 33
 title: Export
 ---
 
@@ -7,7 +7,7 @@ title: Export
 
 # Export
 
-Auto-generated reference for the **Export** API. 15 endpoint(s).
+Auto-generated reference for the **Export** API. 16 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -182,6 +182,41 @@ Run deployment target validation/smoke checks on an existing export run.
 **Request body** (optional)
 
 Content type: `application/json` — `ExportDeploymentValidateRequest \| null`
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/export/{export_id}/publish-hub`
+
+**Publish Hub**
+
+Publish a completed Hugging Face-format export to the Hugging Face
+Hub (model/ as the repo root, manifest + release notes under brewslm/).
+The token is used for this call only, never stored.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `export_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `ExportPublishHubRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `repo_id` | `string` | yes |  |
+| `private` | `boolean` | no |  |
+| `token` | `string \\| null` | no |  |
+| `license` | `string \\| null` | no |  |
+| `commit_message` | `string \\| null` | no |  |
 
 **Responses**
 

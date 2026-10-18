@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import api from '../../api/client';
 
 interface ExperimentSummary {
@@ -374,7 +375,15 @@ export default function WhyThisPlanPanel({
                     onClick={handleToggleManifest}
                     aria-expanded={manifestExpanded}
                 >
-                    {manifestExpanded ? '▼ Hide the manifest' : '▶ Show the manifest'}
+                    {manifestExpanded ? (
+                        <>
+                            <ChevronDown className="u-icon" aria-hidden="true" /> Hide the manifest
+                        </>
+                    ) : (
+                        <>
+                            <ChevronRight className="u-icon" aria-hidden="true" /> Show the manifest
+                        </>
+                    )}
                 </button>
                 {manifestExpanded && (
                     <div className="why-this-plan__manifest-body">

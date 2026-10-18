@@ -104,13 +104,13 @@
     user-select: none;
 }
 
-.reroute-card__signal-evidence summary::before {
-    content: '▸ ';
+.reroute-card__signal-caret {
     color: var(--text-tertiary);
+    transition: transform 0.15s ease;
 }
 
-.reroute-card__signal-evidence[open] summary::before {
-    content: '▾ ';
+.reroute-card__signal-evidence[open] .reroute-card__signal-caret {
+    transform: rotate(90deg);
 }
 
 .reroute-card__signal-evidence dl {

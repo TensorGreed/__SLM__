@@ -4,7 +4,8 @@
  * The pages and panels the workspace IA touched carry no inline
  * ``style={{ … }}`` objects and no emoji glyphs (icons are lucide), and no
  * component or stylesheet other than ``index.css`` writes a colour literal —
- * every colour is a token (charts: ``--chart-*``), so the dark theme covers it. Add a file to the lists when it
+ * every colour is a token (charts: ``--chart-*``), so the dark theme covers it. No file anywhere
+ * draws a disclosure triangle glyph — chevrons are lucide ``ChevronRight`` / ``ChevronDown``. Add a file to the lists when it
  * joins the clean set; never remove one.
  */
 
@@ -35,6 +36,9 @@ export const CLEAN_FILES = [
     'components/evaluation/EvalGapsPanel.tsx',
     'components/evaluation/EvalPanel.tsx',
     'components/evaluation/ExternalBenchmarksPanel.tsx',
+    'components/evaluation/FailureClustersPanel.tsx',
+    'components/evaluation/RerouteRecommendationPanel.tsx',
+    'components/evaluation/ScorecardPanel.tsx',
     'components/evaluation/SeedShipTable.tsx',
     'components/evaluation/SftLiftPanel.tsx',
     'components/export/ExportPanel.tsx',
@@ -42,6 +46,7 @@ export const CLEAN_FILES = [
     'components/layout/CommandPalette.tsx',
     'components/layout/TopBar.tsx',
     'components/layout/ProjectSidebar.tsx',
+    'components/observability/TimelineTree.tsx',
     'components/projects/ProjectTemplateGallery.tsx',
     'components/shared/DetailsDrawer.tsx',
     'components/shared/EmptyState.tsx',
@@ -82,15 +87,19 @@ const EMOJI = /[\p{Extended_Pictographic}✓✔✕✖✗★☆⏳⭐]/u;
 const HEX_COLOUR = /#[0-9a-fA-F]{3,8}\b/;
 /** A colour literal in a component: hex, rgb()/rgba(), hsl(). */
 const COLOUR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
+/** Disclosure / arrow triangles (U+25B2–U+25C5) — use lucide chevrons and arrows. */
+const DISCLOSURE_GLYPH = /[\u25B2-\u25C5]/;
 
-function walkCss(dir: string, out: string[] = []): string[] {
+function walkFiles(dir: string, extensions: string[], out: string[] = []): string[] {
     for (const entry of readdirSync(dir)) {
         const full = join(dir, entry);
-        if (statSync(full).isDirectory()) walkCss(full, out);
-        else if (entry.endsWith('.css')) out.push(full);
+        if (statSync(full).isDirectory()) walkFiles(full, extensions, out);
+        else if (extensions.some((ext) => entry.endsWith(ext))) out.push(full);
     }
     return out;
 }
+
+const walkCss = (dir: string): string[] => walkFiles(dir, ['.css']);
 
 function offendingLines(text: string, pattern: RegExp): string[] {
     return text
@@ -133,6 +142,16 @@ describe('visual pass (U7)', () => {
             const rel = relative(SRC, file);
             if (rel === 'index.css') continue;
             const lines = offendingLines(readFileSync(file, 'utf8'), HEX_COLOUR);
+            if (lines.length) report[rel] = lines;
+        }
+        expect(report).toEqual({});
+    });
+
+    it('no component or stylesheet draws a disclosure glyph (chevrons are lucide)', () => {
+        const report: Record<string, string[]> = {};
+        for (const file of walkFiles(SRC, ['.tsx', '.ts', '.css'])) {
+            const rel = relative(SRC, file);
+            const lines = offendingLines(readFileSync(file, 'utf8'), DISCLOSURE_GLYPH);
             if (lines.length) report[rel] = lines;
         }
         expect(report).toEqual({});

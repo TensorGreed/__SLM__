@@ -576,12 +576,24 @@ runs real CPU inference). ~4 min locally.
   file. Template icons are lucide NAMES in each
   `backend/data/project_templates/*/manifest.json` (`"icon": "mail"`,
   default `package`; `ProjectTemplateGallery.TEMPLATE_ICONS` maps them,
-  unknown → `Package`). Leftover: `▸/▾` disclosure glyphs. Demo videos
+  unknown → `Package`). **Disclosure glyphs**: no file under `src` draws a
+  triangle (U+25B2–U+25C5: ▸ ▾ ▶ ▼ ▲ …) — chevrons are lucide
+  `ChevronRight` / `ChevronDown` (`className="u-icon" aria-hidden="true"`;
+  a `<details>` summary rotates one `ChevronRight` on `[open]`), trend arrows
+  `ArrowUp` / `ArrowDown`; the lock-in test scans every .ts/.tsx/.css. Gate
+  status text (ScorecardPanel) = `StatusText` (tone class + lucide icon), no
+  emoji. Demo videos
   02 (quickstart) and 03 (pipeline walkthrough — the in-app "Watch the
   walkthrough" catalogue `data/tabVideos.ts`) were re-recorded on the new
   workspace via `tests/demo-recordings/0{2,3}-*-narrated.spec.ts` +
   `tts/narration_tts.py` (Orpheus through Ollama, no FastAPI bridge);
   outputs under `docs-demo/recordings/` (gitignored), upload is manual.
+  Specs 04–06 (PII detector, sentiment, bring-your-own samples) are ported
+  to the workspace too (2026-10-18; narration text in `tts/generate_v0{4,5,6}_narration.py`
+  rewritten, audio + `*-durations.json` NOT regenerated, not re-recorded);
+  09–14 still script `/pipeline/<tab>`. API reference pages
+  (`slm-docs/docs/reference/api/`) are regenerated per `slm-docs/scripts/README.md`
+  (dump with DATABASE_URL/DATA_DIR on a scratch DB, then `npx docusaurus build`).
 - **Synthetic data** — two paths: (a) modern `synth_playbook_service`
   with recipe-aware playbooks + per-row `review_status="pending"`;
   (b) legacy `synthetic_service` with task framework + bridge to Jobs.

@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import './DetailsDrawer.css';
 
@@ -76,7 +77,7 @@ export default function DetailsDrawer({
                 aria-expanded={drawerOpen ? 'true' : 'false'}
                 data-testid={`${testId}-toggle`}
             >
-                {drawerOpen ? '▾' : '▸'} {title}
+                {drawerOpen ? <ChevronDown className="u-icon" aria-hidden="true" /> : <ChevronRight className="u-icon" aria-hidden="true" />} {title}
                 {hint && <small>{hint}</small>}
             </button>
             {drawerOpen && (

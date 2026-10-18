@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import type { TrainFormSection } from './trainingPanelTypes';
 import { readinessText, type TrainReadiness } from './trainFormText';
@@ -199,7 +200,7 @@ export default function TrainForm({
                     aria-expanded={moreOpen ? 'true' : 'false'}
                     data-testid="train-form-more"
                 >
-                    {moreOpen ? '▾' : '▸'} More options
+                    {moreOpen ? <ChevronDown className="u-icon" aria-hidden="true" /> : <ChevronRight className="u-icon" aria-hidden="true" />} More options
                     <small>LoRA, epochs, cloud burst, OCR copies, presets, checks, the model registry…</small>
                 </button>
                 {moreOpen && (

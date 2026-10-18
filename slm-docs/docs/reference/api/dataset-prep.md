@@ -1,5 +1,5 @@
 ---
-sidebar_position: 14
+sidebar_position: 23
 title: Dataset Prep
 ---
 
@@ -146,6 +146,11 @@ Content type: `application/json` — `SplitRequest`
 | `adapter_config` | `object \\| null` | no |  |
 | `field_mapping` | `object \\| null` | no |  |
 | `task_profile` | `string \\| null` | no |  |
+| `stratify_by` | `string \\| null` | no |  |
+| `disjoint_by` | `string \\| null` | no |  |
+| `dedup_rows` | `boolean` | no |  |
+| `auto_stratify` | `boolean` | no |  |
+| `keep_test` | `boolean` | no |  |
 
 **Responses**
 

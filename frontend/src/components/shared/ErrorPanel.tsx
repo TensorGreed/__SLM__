@@ -18,7 +18,7 @@
  *   ┌─[Status badge] Message headline ─────────────────[× dismiss]┐
  *   │ Actionable fix sentence.                                    │
  *   │                                                              │
- *   │ ▶ Show technical details                                     │
+ *   │ > Show technical details                                     │
  *   │ (collapsed by default; expands to show metadata + stage)    │
  *   │                                                              │
  *   │ Troubleshooting id: err_a3f8d4e2  [copy]   [Docs ↗]         │
@@ -31,6 +31,7 @@
  */
 
 import { Fragment, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import type { ErrorEnvelope } from '../../api/errors';
 import './ErrorPanel.css';
@@ -135,7 +136,7 @@ export default function ErrorPanel({
                     data-testid={`${testIdPrefix}-details`}
                 >
                     <summary>
-                        {detailsOpen ? '▼' : '▶'} Technical details
+                        {detailsOpen ? <ChevronDown className="u-icon" aria-hidden="true" /> : <ChevronRight className="u-icon" aria-hidden="true" />} Technical details
                     </summary>
                     <dl className="error-panel__details-grid">
                         <dt>Stage</dt><dd>{envelope.stage}</dd>

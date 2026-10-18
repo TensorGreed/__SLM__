@@ -1,5 +1,7 @@
 # Video 05 — Sentiment Classifier Sample · Full Pipeline · Recording Plan
 
+> **2026-10-18**: routes below are the Epic U workspace URLs. The narrated spec `tests/demo-recordings/05-*-narrated.spec.ts` was ported to the new layout (Overview, Data steps, Train form, Results, Ship); the tab and panel names in the older prose below describe the retired layout.
+
 Status: **partial** — every UI surface verified by selector pass on
 2026-05-19.
 
@@ -30,7 +32,7 @@ Beginner / early intermediate.
 2. Logged in.
 3. Seed via UI tile (`Demo · Sentiment classifier`) or curl
    `POST /api/demo-projects/sentiment-classifier`.
-4. Browser at `/project/<id>/pipeline/data`.
+4. Browser at `/project/<id>/data?step=data`.
 5. Confirm 30 ingested documents on Data tab.
 
 ## Sample files involved
@@ -54,15 +56,15 @@ CSV distribution: 10 / 10 / 10. Gold distribution: 70 / 65 / 65.
 
 | # | Route | Component | Focal selector | Status |
 |---|---|---|---|---|
-| 1 | `/project/<id>/pipeline/data` | `IngestionPanel` | `[data-testid="expand-doc-91"]` (concrete observed) | verified |
-| 2 | `/project/<id>/pipeline/cleaning` | `CleaningPanel` | "Cleaning Configuration" | verified surface only |
-| 3 | `/project/<id>/pipeline/goldset` | `GoldSetPanel` | "Entries 200"; label distribution callout | verified |
-| 4 | `/project/<id>/pipeline/dataprep` | `DatasetPrepPanel` | Schema Profile shows `labels: positive, neutral, negative` | verified |
-| 5 | `/project/<id>/pipeline/tokenization` | `TokenizationPanel` | Surface tour | verified surface only |
+| 1 | `/project/<id>/data?step=data` | `IngestionPanel` | `[data-testid="expand-doc-91"]` (concrete observed) | verified |
+| 2 | `/project/<id>/data?step=cleaning` | `CleaningPanel` | "Cleaning Configuration" | verified surface only |
+| 3 | `/project/<id>/data?step=goldset` | `GoldSetPanel` | "Entries 200"; label distribution callout | verified |
+| 4 | `/project/<id>/data?step=dataprep` | `DatasetPrepPanel` | Schema Profile shows `labels: positive, neutral, negative` | verified |
+| 5 | `/project/<id>/train?open=tokenization` | `TokenizationPanel` | Surface tour | verified surface only |
 | 6 | `/project/<id>/training-config` | `ProjectTrainingConfigPage` | `target_profile=mobile_cpu` should influence recipe defaults | verified |
-| 7 | `/project/<id>/pipeline/eval` | `EvalPanel` | Empty state; `evalpack.classification.default` callout | verified surface |
-| 8 | `/project/<id>/pipeline/compression` | `CompressionPanel` | ONNX/INT8 callout; **do not run** | verified surface |
-| 9 | `/project/<id>/pipeline/export` | `ExportPanel` | Show that `onnx` is in the format enum | verified surface |
+| 7 | `/project/<id>/results` | `EvalPanel` | Empty state; `evalpack.classification.default` callout | verified surface |
+| 8 | `/project/<id>/ship?open=compress` | `CompressionPanel` | ONNX/INT8 callout; **do not run** | verified surface |
+| 9 | `/project/<id>/ship` | `ExportPanel` | Show that `onnx` is in the format enum | verified surface |
 
 ## API calls observed
 

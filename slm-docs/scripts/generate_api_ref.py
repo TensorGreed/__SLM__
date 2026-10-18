@@ -43,6 +43,36 @@ def _slugify(value: str) -> str:
     return token.strip("-") or "untagged"
 
 
+_CODE_SPAN = re.compile(r"(`+)(?:.+?)\1", re.DOTALL)
+
+
+def _escape_prose(text: str) -> str:
+    return (
+        text.replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("{", "\\{")
+        .replace("}", "\\}")
+    )
+
+
+def _prose_safe(value: str) -> str:
+    """Escape MDX-significant characters in a free-text description.
+
+    Endpoint docstrings land as prose, where MDX 3 reads ``<reason>`` as a
+    JSX tag and ``{…}`` as an expression. Code spans are literal in MDX, so
+    they are left untouched; only the text between them is escaped.
+    """
+
+    out: list[str] = []
+    last = 0
+    for match in _CODE_SPAN.finditer(value):
+        out.append(_escape_prose(value[last:match.start()]))
+        out.append(match.group(0))
+        last = match.end()
+    out.append(_escape_prose(value[last:]))
+    return "".join(out)
+
+
 def _markdown_safe(value: str) -> str:
     """Escape characters that confuse MDX inside a table cell.
 
@@ -238,7 +268,7 @@ def _render_endpoint(
     sections.append(f"**{summary}**")
     if description:
         sections.append("")
-        sections.append(description.strip())
+        sections.append(_prose_safe(description.strip()))
 
     params_block = _format_parameters(op.get("parameters"))
     if params_block:

@@ -16,6 +16,7 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/client';
 import { Term } from '../shared/Term';
+import { ChevronDown, ChevronRight, CircleCheck, CircleX, SkipForward, TriangleAlert } from 'lucide-react';
 import './ScorecardPanel.css';
 
 interface PerSeedEntry {
@@ -163,12 +164,26 @@ const BEHAVIORAL_KIND_COPY: Record<'INV' | 'DIR' | 'MFT', { label: string; expla
   },
 };
 
-const formatStatusLabel = (gate: GateCheck, notMeasured: boolean): string => {
+type StatusTone = 'pass' | 'fail' | 'warn' | 'skip';
+
+interface StatusLabel {
+  text: string;
+  tone: StatusTone;
+}
+
+const STATUS_ICONS: Record<StatusTone, typeof CircleCheck> = {
+  pass: CircleCheck,
+  fail: CircleX,
+  warn: TriangleAlert,
+  skip: SkipForward,
+};
+
+const formatStatusLabel = (gate: GateCheck, notMeasured: boolean): StatusLabel => {
   if (notMeasured) {
-    return gate.required ? '⚠️ Not measured' : '⏭️ Skipped';
+    return gate.required ? { text: 'Not measured', tone: 'warn' } : { text: 'Skipped', tone: 'skip' };
   }
   if (gate.passed) {
-    return '✅ Pass';
+    return { text: 'Pass', tone: 'pass' };
   }
   if (
     gate.reason === 'worst_slice_below_threshold' ||
@@ -178,7 +193,9 @@ const formatStatusLabel = (gate: GateCheck, notMeasured: boolean): string => {
     // the gate. Name it directly in the status so the user can act
     // without expanding the drill-down.
     const sliceTag = gate.worst_slice_id ? ` (${gate.worst_slice_id})` : '';
-    return gate.required ? `❌ Worst slice fails${sliceTag}` : `⚠️ Worst slice${sliceTag}`;
+    return gate.required
+      ? { text: `Worst slice fails${sliceTag}`, tone: 'fail' }
+      : { text: `Worst slice${sliceTag}`, tone: 'warn' };
   }
   if (
     gate.reason === 'variance_below_threshold' ||
@@ -186,12 +203,23 @@ const formatStatusLabel = (gate: GateCheck, notMeasured: boolean): string => {
   ) {
     // Honest-metrics surfacing: mean cleared the gate but the spread
     // squeezed the lower / upper bound past the threshold.
-    return gate.required ? '❌ Fail (variance)' : '⚠️ Variance';
+    return gate.required ? { text: 'Fail (variance)', tone: 'fail' } : { text: 'Variance', tone: 'warn' };
   }
   if (gate.reason === 'no_eligible_slices_required' || gate.reason === 'no_eligible_slices_optional') {
-    return gate.required ? '⚠️ No eligible slices' : '⏭️ No eligible slices';
+    return gate.required
+      ? { text: 'No eligible slices', tone: 'warn' }
+      : { text: 'No eligible slices', tone: 'skip' };
   }
-  return gate.required ? '❌ Fail' : '⚠️ Low';
+  return gate.required ? { text: 'Fail', tone: 'fail' } : { text: 'Low', tone: 'warn' };
+};
+
+const StatusText: React.FC<{ status: StatusLabel }> = ({ status }) => {
+  const Icon = STATUS_ICONS[status.tone];
+  return (
+    <span className={`scorecard-status scorecard-status--${status.tone}`}>
+      <Icon className="u-icon" aria-hidden="true" /> {status.text}
+    </span>
+  );
 };
 
 const formatMetricLabel = (gate: GateCheck): string => {
@@ -351,10 +379,10 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                         )}
                       </td>
                       <td>
-                        {statusLabel}
+                        <StatusText status={statusLabel} />
                         {canExpand && (
                           <span className="scorecard-expand-caret" aria-label={isExpanded ? 'collapse' : 'expand'}>
-                            {' '}{isExpanded ? '▾' : '▸'}
+                            {isExpanded ? <ChevronDown className="u-icon" aria-hidden="true" /> : <ChevronRight className="u-icon" aria-hidden="true" />}
                           </span>
                         )}
                         {probeGate && !gate.passed && (
@@ -446,8 +474,8 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                                       const verdict = sv.below_min_support
                                         ? `↳ below min support (n=${sv.support})`
                                         : sv.passes
-                                        ? '✅ passes'
-                                        : '❌ fails';
+                                        ? 'passes'
+                                        : 'fails';
                                       return (
                                         <tr
                                           key={`${gate.gate_id}-slice-${sv.slice_id}`}
@@ -605,10 +633,10 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                           {notMeasured ? 'N/A' : (gate.actual! * 100).toFixed(1) + '%'}
                         </td>
                         <td>
-                          {statusLabel}
+                          <StatusText status={statusLabel} />
                           {canExpand && (
                             <span className="scorecard-expand-caret" aria-label={isExpanded ? 'collapse' : 'expand'}>
-                              {' '}{isExpanded ? '▾' : '▸'}
+                              {isExpanded ? <ChevronDown className="u-icon" aria-hidden="true" /> : <ChevronRight className="u-icon" aria-hidden="true" />}
                             </span>
                           )}
                         </td>

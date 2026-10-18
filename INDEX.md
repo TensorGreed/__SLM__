@@ -779,6 +779,7 @@ session-start guidance.
 - `backend/tests/test_failure_cluster_handler_drilldown.py` — Arc 2 — failure-cluster drill-down backend pass-through.
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_frontier_comparison.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
+- `backend/tests/test_generate_api_ref.py` — The API-reference generator escapes MDX-significant prose in docstrings.
 - `backend/tests/test_generic_intake.py` — Generic intake (Wave 2a): any file a newcomer brings lands correctly.
 - `backend/tests/test_goal_service.py` — Tests for goal_service + the /goal/progress + /goal endpoints (Arc H).
 - `backend/tests/test_gold_add_per_recipe.py` — Endpoint tests for ``POST /api/projects/{id}/gold/add`` after the

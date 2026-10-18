@@ -1,5 +1,5 @@
 ---
-sidebar_position: 45
+sidebar_position: 66
 title: Tokenization
 ---
 
@@ -7,7 +7,7 @@ title: Tokenization
 
 # Tokenization
 
-Auto-generated reference for the **Tokenization** API. 2 endpoint(s).
+Auto-generated reference for the **Tokenization** API. 3 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -33,6 +33,45 @@ Content type: `application/json` — `AnalyzeRequest`
 |---|---|---|---|
 | `model_name` | `string` | yes |  |
 | `split` | `string` | no |  |
+| `max_seq_length` | `integer` | no |  |
+| `text_field` | `string` | no |  |
+| `question_field` | `string` | no |  |
+| `answer_field` | `string` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/tokenization/analyze-splits`
+
+**Analyze Splits**
+
+Run token-length analysis across every prepared split that exists.
+
+Returns ``{splits: {train: <result>, validation: <result>, test:
+<result>}, missing_splits: [...]}``. Each split's payload is the
+same shape ``analyze_dataset_tokens`` returns for a single dataset.
+Missing splits are reported, not 404'd — the panel can render an
+overlay as soon as one split is ready (train is the first to
+materialise during dataset prep).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `AnalyzeSplitsRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `model_name` | `string` | yes |  |
 | `max_seq_length` | `integer` | no |  |
 | `text_field` | `string` | no |  |
 | `question_field` | `string` | no |  |

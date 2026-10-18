@@ -1,5 +1,5 @@
 ---
-sidebar_position: 15
+sidebar_position: 24
 title: DemoProjects
 ---
 
@@ -7,7 +7,7 @@ title: DemoProjects
 
 # DemoProjects
 
-Auto-generated reference for the **DemoProjects** API. 2 endpoint(s).
+Auto-generated reference for the **DemoProjects** API. 3 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -27,6 +27,26 @@ For curated narrative + UI / CLI walkthroughs see the corresponding section unde
 ### `POST /api/demo-projects/{slug}`
 
 **Seed Demo**
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `slug` | `path` | `string` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/demo-projects/{slug}/reset`
+
+**Reset Demo**
+
+Drop the existing demo project for ``slug`` and re-seed a fresh copy.
 
 **Parameters**
 

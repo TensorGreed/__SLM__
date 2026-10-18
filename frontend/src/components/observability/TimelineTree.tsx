@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, Dot } from 'lucide-react';
 
 import type { TimelineNode } from '../../types/observability';
 
@@ -26,6 +27,9 @@ interface Props {
      */
     defaultAllExpanded?: boolean;
 }
+
+/** Rows deeper than this share its indent (bucketed CSS classes). */
+const MAX_INDENT_DEPTH = 8;
 
 function severityBadgeClass(severity: string): string {
     switch (severity) {
@@ -88,8 +92,7 @@ function TimelineRow({
             data-run-id={node.run_id}
         >
             <div
-                className="timeline-row-body"
-                style={{ paddingLeft: `${depth * 16}px` }}
+                className={`timeline-row-body timeline-row-body--depth-${Math.min(depth, MAX_INDENT_DEPTH)}`}
             >
                 <button
                     type="button"
@@ -104,7 +107,15 @@ function TimelineRow({
                     onClick={() => hasChildren && toggleExpand(node.run_id)}
                     disabled={!hasChildren}
                 >
-                    {hasChildren ? (isOpen ? '▾' : '▸') : '·'}
+                    {hasChildren ? (
+                        isOpen ? (
+                            <ChevronDown className="u-icon" aria-hidden="true" />
+                        ) : (
+                            <ChevronRight className="u-icon" aria-hidden="true" />
+                        )
+                    ) : (
+                        <Dot className="u-icon" aria-hidden="true" />
+                    )}
                 </button>
                 <span className={severityBadgeClass(String(node.highest_severity))}>
                     {String(node.highest_severity)}
