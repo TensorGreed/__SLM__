@@ -1001,6 +1001,7 @@ session-start guidance.
 - `backend/tests/test_training_config_gaps_coach_rollup.py` — Coach-stage-2 phase 1 — Coach training-stage roll-up nudge.
 - `backend/tests/test_training_correctness.py` — Training-correctness regression net (fresh-look audit, Wave 1).
 - `backend/tests/test_training_data_gate.py` — Pre-training data-shape gate (training_data_gate).
+- `backend/tests/test_training_memory_defaults.py` — Memory defaults for long-prompt runs: gradient checkpointing "auto" looks
 - `backend/tests/test_training_reproducibility.py` — Training reproducibility: one config + one dataset → the same weights.
 - `backend/tests/test_unlabeled_pool_scoring_slice1.py` — Quality-Lift phase 3 slice 1 — Unlabeled-pool scoring service.
 - `backend/tests/test_vision_language_adapter_prompt_wrap.py` — ι-fix tests — vision-language-pair adapter writes the

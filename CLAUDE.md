@@ -1045,7 +1045,14 @@ runs real CPU inference). ~4 min locally.
   a string — don't `.join()` it blindly in the UI.
   **`gradient_checkpointing` defaults to `"auto"`**
   (`services/gradient_checkpointing_policy.py`): off ≤ 2B params (30 s → 19 s
-  per default run on the GB10, same loss), on above; explicit bool honoured.
+  per default run on the GB10, same loss), on above — and on whatever the size
+  when the longest tokenized training row (capped by max_seq_length) is >
+  `AUTO_CHECKPOINT_MAX_SEQ_TOKENS` 1024 (`train._longest_row_tokens`; report
+  `runtime_environment.gradient_checkpointing.sequence_tokens`); explicit bool honoured.
+  Passage-prompt runs with no `use_lora` default to LoRA (`train._resolve_use_lora`,
+  report `runtime_environment.use_lora`) — a 1.5B full fine-tune on ~1k-token passage
+  prompts sat near 90 GB. NB a run's training_config.json holds only the fields set, so an
+  unset `use_lora` is a FULL fine-tune in train.py (the schema's True default isn't applied).
   The report's `runtime_environment` now also records `model_dtype`,
   `attn_implementation` (flash_attention_2 → `sdpa` fallback) and
   `optimizer_effective` (`paged_adamw_8bit` → `adamw_torch` without

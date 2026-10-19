@@ -740,6 +740,39 @@ def _rewrap_prompt_completion_row(row: dict[str, Any], tokenizer: Any) -> dict[s
     }
 
 
+def _longest_row_tokens(dataset: Any, tokenizer: Any, max_seq_length: int, *, sample: int = 2000) -> int | None:
+    """Longest training row in tokens (over the first ``sample`` rows),
+    capped at ``max_seq_length`` — the activation-memory input of the
+    gradient-checkpointing policy. None when it can't be measured."""
+    if dataset is None or tokenizer is None:
+        return None
+    try:
+        texts = dataset["text"][:sample]
+    except Exception:  # noqa: BLE001
+        return None
+    longest = 0
+    for text in texts:
+        if isinstance(text, str) and text:
+            try:
+                longest = max(longest, len(tokenizer(text, truncation=False, padding=False)["input_ids"]))
+            except Exception:  # noqa: BLE001
+                return None
+    return min(longest, int(max_seq_length)) if longest else None
+
+
+def _resolve_use_lora(config: dict[str, Any]) -> tuple[bool, str | None]:
+    """``(use_lora, reason-when-defaulted)``. An explicit ``use_lora`` always
+    wins (a full fine-tune is ``use_lora: false``). Passage-prompt runs
+    (``passage_prompts``: ~1k-token prompts) default to LoRA — a full
+    fine-tune of a 1.5B model on those rows sat near 90 GB on 2026-10-19.
+    Anything else keeps the old unset default (full fine-tune)."""
+    if "use_lora" in config and config.get("use_lora") is not None:
+        return _coerce_bool(config.get("use_lora"), False), None
+    if _coerce_bool(config.get("passage_prompts"), False):
+        return True, "passage-prompt run with no use_lora set: LoRA (long prompts make a full fine-tune memory-heavy)"
+    return False, None
+
+
 def _encode_causal_lm_example(
     tokenizer: Any,
     text: str,
@@ -1612,7 +1645,7 @@ def _run_training_attempt(
     lr_scheduler = str(config.get("lr_scheduler", "cosine"))
     optimizer = str(config.get("optimizer", "adamw_torch"))
     seed = _coerce_int(config.get("seed"), args.seed, minimum=0)
-    use_lora = _coerce_bool(config.get("use_lora"), False)
+    use_lora, lora_default_reason = _resolve_use_lora(config)
     lora_r = _coerce_int(config.get("lora_r"), 16, minimum=1)
     lora_alpha = _coerce_int(config.get("lora_alpha"), 32, minimum=1)
     lora_dropout = _coerce_float(config.get("lora_dropout"), 0.05, minimum=0.0)
@@ -1968,6 +2001,14 @@ def _run_training_attempt(
 
     use_cuda = torch.cuda.is_available()
     runtime_environment = _collect_runtime_environment(torch, use_cuda, warnings)
+    runtime_environment["use_lora"] = {
+        "enabled": bool(use_lora),
+        "requested": config.get("use_lora"),
+        "auto": lora_default_reason is not None,
+        "reason": lora_default_reason or ("explicit setting" if config.get("use_lora") is not None else "default"),
+    }
+    if lora_default_reason:
+        warnings.append(f"LoRA: {lora_default_reason}")
     runtime_environment["distillation_enabled"] = bool(distillation_enabled)
     runtime_environment["observability_enabled"] = bool(observability_enabled)
     runtime_environment["observability_log_steps"] = int(observability_log_steps)
@@ -2195,6 +2236,7 @@ def _run_training_attempt(
         checkpoint_plan = resolve_gradient_checkpointing(
             gradient_checkpointing_requested,
             model_params=sum(p.numel() for p in model.parameters()),
+            sequence_tokens=_longest_row_tokens(train_text, processor_tokenizer, max_seq_length),
         )
         gradient_checkpointing = bool(checkpoint_plan["enabled"])
         runtime_environment["gradient_checkpointing"] = checkpoint_plan
@@ -3787,8 +3829,9 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             {
                 "attempt": attempt_index + 1,
                 "total_attempts": total_attempts,
-                "batch_size": _coerce_int(attempt_config.get("batch_size"), 1, minimum=1),
-                "max_seq_length": _coerce_int(attempt_config.get("max_seq_length"), 128, minimum=128),
+                # Same defaults as _run_training_attempt (the event used to say 1 / 128 for unset fields).
+                "batch_size": _coerce_int(attempt_config.get("batch_size"), 4, minimum=1),
+                "max_seq_length": _coerce_int(attempt_config.get("max_seq_length"), 2048, minimum=128),
                 "trainer_backend": str(attempt_config.get("trainer_backend", "auto")),
             },
         )
