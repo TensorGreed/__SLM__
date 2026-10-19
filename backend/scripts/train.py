@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+import os
 import sys
 import traceback
 from datetime import datetime, timezone
@@ -1530,6 +1531,7 @@ def _collect_runtime_environment(torch_mod, use_cuda: bool, warnings: list[str])
         "device_name": None,
         "device_capability": None,
         "supported_sm": [],
+        "cuda_alloc_conf": os.environ.get("PYTORCH_CUDA_ALLOC_CONF"),
     }
     if not use_cuda:
         return runtime_env
@@ -1611,6 +1613,20 @@ def _load_training_runtime_dependencies() -> dict[str, Any]:
 
 
 CUBLAS_DETERMINISTIC_WORKSPACE = ":4096:8"
+# The caching allocator's default carves fixed-size segments; a run whose rows
+# all have different lengths (micro-batch 1 over long passage prompts) keeps
+# reserving new segments it cannot reuse — run #154 (Qwen2.5-1.5B LoRA, 3092
+# rows of ~2k tokens) stepped 19 → 33 GB reserved in its first ten minutes and
+# held it, for a working set under 20 GB. Expandable segments grow in place.
+# Must be set before the first CUDA allocation; an explicit env value wins.
+CUDA_ALLOC_CONF_DEFAULT = "expandable_segments:True"
+
+
+def configure_cuda_allocator(env: Any) -> str:
+    """Pure over ``env`` (an os.environ-like mapping): set the allocator
+    default unless the caller chose one. Returns the effective value."""
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", CUDA_ALLOC_CONF_DEFAULT)
+    return str(env.get("PYTORCH_CUDA_ALLOC_CONF") or "")
 
 
 def enable_deterministic_training(torch_module: Any, enabled: bool) -> dict[str, Any]:
@@ -4016,6 +4032,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> int:
     args = parse_args()
+    configure_cuda_allocator(os.environ)  # before torch touches CUDA
     try:
         report = run_training(args)
         print(json.dumps({"status": "completed", "report": report}))

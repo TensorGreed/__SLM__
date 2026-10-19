@@ -59,3 +59,22 @@ class TrainSplitLoadingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CudaAllocatorConfigTests(unittest.TestCase):
+    """train.py defaults PYTORCH_CUDA_ALLOC_CONF to expandable segments before
+    torch touches CUDA (run #154 reserved 33 GB for a < 20 GB working set);
+    an explicit value is never overridden."""
+
+    def test_default_set_when_unset(self):
+        from scripts.train import CUDA_ALLOC_CONF_DEFAULT, configure_cuda_allocator
+
+        env: dict[str, str] = {}
+        self.assertEqual(configure_cuda_allocator(env), CUDA_ALLOC_CONF_DEFAULT)
+        self.assertEqual(env["PYTORCH_CUDA_ALLOC_CONF"], CUDA_ALLOC_CONF_DEFAULT)
+
+    def test_explicit_value_kept(self):
+        from scripts.train import configure_cuda_allocator
+
+        env = {"PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"}
+        self.assertEqual(configure_cuda_allocator(env), "max_split_size_mb:128")

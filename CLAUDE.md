@@ -1078,7 +1078,11 @@ runs real CPU inference). ~4 min locally.
   `task_id` was never persisted. Verified live 2026-10-14 (run #68: cancel →
   process_terminated, train.py gone, GPU freed, stays CANCELLED). Tests:
   `tests/test_training_cancel_external.py`.
-  `scripts/train.py` loads train and validation JSONL in SEPARATE `load_dataset`
+  `scripts/train.py` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
+  (`configure_cuda_allocator`, setdefault at the top of `main()`, report
+  `runtime_environment.cuda_alloc_conf`): micro-batch-1 rows of many lengths made
+  the default allocator reserve 33 GB for a < 20 GB working set (run #154).
+  It loads train and validation JSONL in SEPARATE `load_dataset`
   calls (`_load_jsonl_splits`): one call over both files casts them to one Arrow
   schema and dies on different columns (an eval-only answer-key val file next to
   synthetic train rows killed run #154 on 2026-10-19; `tests/test_train_split_loading.py`).
