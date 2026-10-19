@@ -337,6 +337,7 @@ async def _maybe_apply_passage_prompts(
         output_dir=output_dir,
         withheld=pps.withheld_fraction(resolved_config),
         seed=seed,
+        target_mode=pps.targets(resolved_config),
     )
 
 

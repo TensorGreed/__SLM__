@@ -106,6 +106,14 @@ class TrainingConfig(BaseModel):
             "and whose target becomes \"the passages don't say\" (RAFT-style)."
         ),
     )
+    passage_prompts_targets: Literal["reference", "teacher"] = Field(
+        "reference",
+        description=(
+            "With passage_prompts: \"reference\" trains on the pairs' own answers (RAFT-style); "
+            "\"teacher\" on cached teacher answers to exactly the served passages "
+            "(teacher_passage_answers_service, written by the documents → Q&A flow)."
+        ),
+    )
     warmup_ratio: float = Field(0.03, ge=0, le=1)
     weight_decay: float = Field(0.01, ge=0)
     sequence_packing: bool = Field(True, description="Pack multiple sequences up to max_seq_length")

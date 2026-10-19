@@ -1085,6 +1085,51 @@ def _entry_text_key(entry: Any) -> str:
     return " ".join(" ".join(parts).split()).lower()
 
 
+def _question_text(entry: Any) -> str:
+    """The question a Q&A-shaped row asks (else its input text)."""
+    if not isinstance(entry, dict):
+        return ""
+    for key in ("question", "prompt", "instruction", "input", "source_text"):
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
+def question_leakage_filter(
+    rows: list[dict[str, Any]], test_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Drop every row whose question is the same as a test question — exact
+    (normalised) or near-identical (token-set Jaccard ≥ the leakage scan's
+    ``LEAKAGE_FUZZY_THRESHOLD``), the train↔gold leakage matcher. Returns the
+    kept rows and a report (counts + a few examples)."""
+    from app.services.data_health_service import (
+        LEAKAGE_FUZZY_THRESHOLD,
+        _build_leakage_index,
+        _match_row_against_index,
+    )
+
+    test_questions = [{"text": _question_text(r)} for r in test_rows if _question_text(r)]
+    report: dict[str, Any] = {"checked": len(rows), "test_questions": len(test_questions), "exact": 0,
+                              "near_duplicate": 0, "threshold": LEAKAGE_FUZZY_THRESHOLD, "examples": []}
+    if not test_questions:
+        return list(rows), report
+    index = _build_leakage_index(test_questions)
+    kept: list[dict[str, Any]] = []
+    for row in rows:
+        question = _question_text(row)
+        kind, score, idx = _match_row_against_index(question, index) if question else (None, 0.0, -1)
+        if kind is None:
+            kept.append(row)
+            continue
+        report["exact" if kind == "exact" else "near_duplicate"] += 1
+        if len(report["examples"]) < 10:
+            report["examples"].append({"question": question[:200], "test_question": index["texts"][idx][:200],
+                                       "match": kind, "jaccard": score})
+    report["dropped"] = report["exact"] + report["near_duplicate"]
+    return kept, report
+
+
 def _keep_test_rows(
     project_id: int,
     splits: dict[str, list[dict[str, Any]]],
@@ -1092,10 +1137,22 @@ def _keep_test_rows(
     train_ratio: float,
     val_ratio: float,
     seed: int,
+    additions: list[dict[str, Any]] | None = None,
+    val_rows: int | None = None,
+    fixed_val: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     """``split_dataset(keep_test=True)``: the active test rows stay as they
     are; every other row (old and new) is re-divided train / val by their
-    ratio; rows matching a test row's text never reach train or val."""
+    ratio; rows matching a test row's text never reach train or val.
+
+    ``additions``: prepared rows appended to the kept test rows (growing the
+    test set to a sized target — the documents → Q&A flow's answer-key
+    questions). With additions, train / val rows whose QUESTION matches any
+    test question exactly or near-identically (``question_leakage_filter``)
+    are dropped too. ``val_rows``: the validation size (else by ratio).
+    ``fixed_val``: prepared rows that ARE the validation set (eval-only rows
+    such as answer-key questions); everything else goes to train, and train
+    questions matching a validation question are dropped too."""
     test_path = _prep_dir(project_id) / "test.jsonl"
     if not test_path.exists():
         return splits, {"applied": False, "reason": "no active test split"}
@@ -1110,7 +1167,15 @@ def _keep_test_rows(
                 kept.append(row)
     if not kept:
         return splits, {"applied": False, "reason": "the active test split is empty"}
+    kept_count = len(kept)
     test_keys = {_entry_text_key(r) for r in kept}
+    added = 0
+    for row in additions or []:
+        key = _entry_text_key(row)
+        if key and key not in test_keys:
+            kept.append(row)
+            test_keys.add(key)
+            added += 1
     pool: list[dict[str, Any]] = []
     excluded = 0
     seen: set[str] = set()
@@ -1124,17 +1189,33 @@ def _keep_test_rows(
                 continue
             seen.add(key)
             pool.append(entry)
+    if fixed_val is not None:
+        val_keys = {_entry_text_key(r) for r in fixed_val}
+        before = len(pool)
+        pool = [r for r in pool if _entry_text_key(r) not in val_keys]
+        excluded += before - len(pool)
+    leakage: dict[str, Any] | None = None
+    if additions is not None or fixed_val is not None:
+        pool, leakage = question_leakage_filter(pool, kept + list(fixed_val or []))
     rng = random.Random(seed)
     rng.shuffle(pool)
     share = val_ratio / (train_ratio + val_ratio) if (train_ratio + val_ratio) > 0 else 0.0
-    n_val = int(round(len(pool) * share))
+    n_val = int(round(len(pool) * share)) if val_rows is None else max(0, min(int(val_rows), len(pool) - 1))
+    if fixed_val is not None:
+        n_val = 0
     report = {
         "applied": True,
-        "test_rows_kept": len(kept),
+        "test_rows_kept": kept_count,
+        "test_rows_added": added,
+        "test_rows": len(kept),
         "rows_matching_test_excluded": excluded,
         "train_val_pool": len(pool),
+        "val_rows_requested": val_rows,
+        "question_leakage": leakage,
+        "fixed_val_rows": None if fixed_val is None else len(fixed_val),
     }
-    return {"train": pool[n_val:], "val": pool[:n_val], "test": kept}, report
+    val = list(fixed_val) if fixed_val is not None else pool[:n_val]
+    return {"train": pool[n_val:], "val": val, "test": kept}, report
 
 
 async def split_dataset(
@@ -1155,8 +1236,22 @@ async def split_dataset(
     dedup_rows: bool = True,
     auto_stratify: bool = True,
     keep_test: bool = False,
+    test_additions: list[dict[str, Any]] | None = None,
+    val_rows: int | None = None,
+    val_from: list[dict[str, Any]] | None = None,
+    keep_val: bool = False,
 ) -> dict:
     """Split combined data into train/val/test and save as JSONL.
+
+    ``test_additions`` (with ``keep_test``): raw rows (e.g. answer-key
+    questions) appended to the kept test examples after the same adapter
+    normalisation; train / val questions matching any test question (exact
+    or near-identical) are then dropped (``keep_test.question_leakage``).
+    ``val_rows`` (with ``keep_test``): the validation size instead of the
+    ratio. ``val_from`` (with ``keep_test``): raw rows that become the whole
+    validation set (eval-only rows); ``keep_val``: keep the active
+    ``prepared/val.jsonl`` verbatim as the validation set. Either way every
+    other row trains, minus questions matching a test / validation one.
 
     ``keep_test``: keep the active test examples exactly (the current
     ``prepared/test.jsonl`` rows, verbatim) and split everything else into
@@ -1306,9 +1401,47 @@ async def split_dataset(
 
     keep_test_report: dict[str, Any] | None = None
     if keep_test:
+        additions = None
+        if test_additions is not None:
+            additions = _normalize_rows_for_training(
+                list(test_additions),
+                DatasetType.SYNTHETIC,
+                chat_template,
+                adapter_id=adapter_id,
+                adapter_config=adapter_config,
+                field_mapping=field_mapping,
+                task_profile=task_profile,
+            )
+            for row in additions:
+                row["_source_dataset"] = "answer_key"
+        fixed_val = None
+        if keep_val:
+            val_path = _prep_dir(project_id) / "val.jsonl"
+            fixed_val = []
+            if val_path.exists():
+                with val_path.open(encoding="utf-8") as handle:
+                    for line in handle:
+                        try:
+                            row = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(row, dict):
+                            fixed_val.append(row)
+            if not fixed_val:
+                raise ValueError("keep_val needs an active prepared validation split.")
+        elif val_from is not None:
+            fixed_val = _normalize_rows_for_training(
+                list(val_from), DatasetType.SYNTHETIC, chat_template,
+                adapter_id=adapter_id, adapter_config=adapter_config, field_mapping=field_mapping, task_profile=task_profile,
+            )
+            for row in fixed_val:
+                row["_source_dataset"] = "answer_key"
         splits, keep_test_report = _keep_test_rows(
             project_id, splits, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed,
+            additions=additions, val_rows=val_rows, fixed_val=fixed_val,
         )
+        if keep_test_report is not None:
+            keep_test_report["val_kept_verbatim"] = bool(keep_val)
 
     prep_dir = _prep_dir(project_id)
     file_paths: dict[str, str] = {}

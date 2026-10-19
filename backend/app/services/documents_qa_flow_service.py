@@ -80,7 +80,7 @@ DIFF_SD = 0.5
 # split's default (0.1) only when the documents can't supply enough passages.
 TEST_RATIO = 0.1
 MAX_TEST_RATIO = 0.3
-MAX_PASSAGES_CAP = 500
+MAX_PASSAGES_CAP = 2000
 MIN_TEST_ROWS = 5
 
 
@@ -346,9 +346,11 @@ class FlowSummary:
     passages_gate: dict[str, Any] | None = None
     # The run was trained to answer from the retrieved passages.
     train_with_passages: bool = False
+    # The teacher step (answers_from_teacher): counts, filter, usage.
+    teacher: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "project_id": self.project_id,
             "passages_total": self.passages_total,
             "passages_used": self.passages_used,
@@ -365,11 +367,32 @@ class FlowSummary:
             "warnings": list(self.warnings),
             "passages_gate": self.passages_gate,
             "train_with_passages": self.train_with_passages,
+            "teacher": self.teacher,
         }
+        # Cloud spend of the generation + teacher calls: batch calls are not
+        # seen by the Job's meter, so the flow reports its own usage list.
+        usage = self._usage()
+        if usage:
+            out["usage"] = usage
+            out["cost_usd"] = round(sum(u.get("usd") or 0 for u in usage), 4)
+            out["tokens"] = sum(int(u.get("total_tokens") or 0) for u in usage)
+        return out
+
+    _llms: list[Any] = field(default_factory=list, repr=False)
+
+    def _usage(self) -> list[dict[str, Any]] | None:
+        from app.services.span_relabel_service import usage_block
+
+        seen: list[Any] = []
+        for llm in self._llms:
+            if llm is not None and all(llm is not s for s in seen):
+                seen.append(llm)
+        block = usage_block(*seen) if seen else []
+        return block or None
 
 
 async def preview_documents_qa_flow(
-    db: AsyncSession, project_id: int, *, backend: str | None = None,
+    db: AsyncSession, project_id: int, *, backend: str | None = None, decision_gap: float = DECISION_GAP,
 ) -> dict[str, Any]:
     """Can this project run the flow, and what would it cost? Read-only.
 
@@ -426,7 +449,7 @@ async def preview_documents_qa_flow(
             "TEACHER_MODEL_API_URL to an OpenAI-compatible endpoint, or pick a cloud "
             "model whose API key is saved on the project."
         )
-    sizing = size_for_decision(len(passages), DEFAULT_PAIRS_PER_PASSAGE)
+    sizing = size_for_decision(len(passages), DEFAULT_PAIRS_PER_PASSAGE, gap=decision_gap)
     max_passages = sizing["passages"]
     return {
         "project_id": project_id,
@@ -461,6 +484,144 @@ def _active_split_ratios(project_id: int) -> float | None:
     ratios = manifest.get("ratios") if isinstance(manifest, dict) else None
     test = (ratios or {}).get("test") if isinstance(ratios, dict) else None
     return float(test) if isinstance(test, (int, float)) and 0 < float(test) < 1 else None
+
+
+def _enable_batch(llm: Any) -> None:
+    """Ask a backend for Message Batches; ``ValueError`` when it can't."""
+    if not getattr(llm, "supports_batch", False) or not hasattr(llm, "complete_batch"):
+        label = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
+        raise ValueError(f"use_batch needs an Anthropic cloud backend (cloud:anthropic:<model>); {label} can't batch.")
+    llm.use_batch = True
+
+
+def _generation_call(passage_text: str, pairs_per_passage: int, domain_hint: str, llm: Any) -> dict[str, Any]:
+    if getattr(llm, "supports_prompt_cache", False):
+        # A cloud backend: the per-run instructions are the cached block,
+        # only the passage varies between calls.
+        stable, varying = passage_prompt_parts(passage_text, pairs_per_passage, domain_hint=domain_hint)
+        extra: dict[str, Any] = {"cache_prefix": stable}
+    else:
+        varying = build_passage_prompt(passage_text, pairs_per_passage, domain_hint=domain_hint)
+        extra = {}
+    return {"prompt": varying, "system_prompt": _SYSTEM_PROMPT, "max_tokens": 1600, "temperature": 0.4, **extra}
+
+
+async def _generate_replies(
+    llm: Any,
+    chosen: list[dict[str, Any]],
+    pairs_per_passage: int,
+    domain_hint: str,
+    report: Callable[[float, str], Awaitable[None]],
+    backend_label: str,
+) -> list[str | None]:
+    """One reply per passage (None where the call failed). With the backend's
+    ``use_batch`` on, every call goes as ONE Message Batch first; requests it
+    didn't answer are retried directly."""
+    from app.services.span_relabel_service import uses_message_batch
+
+    calls = [_generation_call(p["text"], pairs_per_passage, domain_hint, llm) for p in chosen]
+    raws: list[str | None] = [None] * len(chosen)
+    if chosen and uses_message_batch(llm):
+        async def _progress(message: str, done: int, total: int) -> None:
+            await report(0.05 + 0.5 * done / max(1, total), f"Writing questions for {total} passages ({backend_label}): {message}")
+
+        try:
+            raws = await llm.complete_batch(calls, progress=_progress)
+        except SynthBackendError as exc:
+            _LOG.warning("documents_qa_flow: message batch failed, generating directly: %s", exc)
+            raws = [None] * len(chosen)
+    pending = [i for i, raw in enumerate(raws) if raw is None]
+    for n, index in enumerate(pending):
+        await report(
+            0.05 + 0.55 * n / max(1, len(pending)),
+            f"Writing questions for passage {index + 1}/{len(chosen)} ({backend_label})",
+        )
+        args = dict(calls[index])
+        prompt = args.pop("prompt")
+        try:
+            raws[index] = await llm.complete(prompt, **args, response_schema=_RESPONSE_SCHEMA)
+        except SynthBackendError as exc:
+            _LOG.warning("documents_qa_flow passage %s failed: %s", chosen[index].get("id"), exc)
+            raws[index] = None
+    return raws
+
+
+def grow_test_set(
+    kept_test: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    target: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Pure: the answer-key rows to add to ``kept_test`` so it reaches
+    ``target`` rows. Candidates whose question is already a test question
+    are skipped; passages that already back a test row are used last; the
+    rest are spread evenly over the documents (``spread_passages``, in
+    document order). Returns ``(additions, report)``."""
+    def _norm(text: Any) -> str:
+        return " ".join(str(text or "").split()).lower()
+
+    have = {_norm(r.get("question")) for r in kept_test}
+    used_passages = {(r.get("source_document_id"), r.get("chunk_id")) for r in kept_test}
+    need = max(0, int(target) - len(kept_test))
+    pool: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in candidates:
+        q = _norm(row.get("question"))
+        if not q or q in have or q in seen:
+            continue
+        seen.add(q)
+        pool.append(row)
+    order = lambda r: (str(r.get("source_document_id") or ""), int(r.get("chunk_id") or 0) if str(r.get("chunk_id") or "0").lstrip("-").isdigit() else 0)  # noqa: E731
+    fresh = sorted((r for r in pool if (r.get("source_document_id"), r.get("chunk_id")) not in used_passages), key=order)
+    reused = sorted((r for r in pool if (r.get("source_document_id"), r.get("chunk_id")) in used_passages), key=order)
+    additions = spread_passages(fresh, need) if need else []
+    if len(additions) < need:
+        additions += spread_passages(reused, need - len(additions))
+    return additions, {
+        "target": int(target),
+        "kept": len(kept_test),
+        "added": len(additions),
+        "candidates": len(pool),
+        "from_new_passages": sum(1 for r in additions if (r.get("source_document_id"), r.get("chunk_id")) not in used_passages),
+        "reaches_target": len(kept_test) + len(additions) >= int(target),
+    }
+
+
+def _used_local_ollama(summary: "FlowSummary") -> bool:
+    """Did this flow run a model in the local Ollama (generation, teacher, or
+    the teacher filter's judge)?"""
+    from app.services.synth_backends.ollama import OllamaBackend
+
+    if any(isinstance(llm, OllamaBackend) for llm in summary._llms):
+        return True
+    judge = ((summary.teacher or {}).get("filter") or {}).get("judge")
+    return str(judge or "").startswith("ollama")
+
+
+def _answer_key_row(row: dict[str, Any]) -> dict[str, Any]:
+    out = {k: row.get(k) for k in ("question", "answer", "source_doc", "source_document_id", "chunk_id", "generated_by")}
+    out["answer_key_source"] = FLOW_SOURCE
+    return out
+
+
+def _read_jsonl_rows(path: Any) -> list[dict[str, Any]]:
+    from pathlib import Path as _Path
+
+    path = _Path(path)
+    if not path.exists():
+        return []
+    rows = []
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
 
 
 async def _count_gold_flow_rows(db: AsyncSession, project_id: int) -> int:
@@ -500,6 +661,16 @@ async def run_documents_qa_flow(
     train_if_retrieval_ready: bool = False,
     train_with_passages: bool = False,
     passages_withheld_fraction: float | None = None,
+    decision_gap: float = DECISION_GAP,
+    keep_test: bool = False,
+    sweep_split: str = "val",
+    answers_from_teacher: bool = False,
+    teacher_backend: str | None = None,
+    teacher_backend_override: SynthBackend | None = None,
+    teacher_filter: bool = True,
+    teacher_filter_judge: Any = None,
+    teacher_retrieve_fn: Callable[..., list[dict[str, Any]]] | None = None,
+    use_batch: bool = False,
     progress: ProgressFn | None = None,
     start_training: Callable[..., Awaitable[dict[str, Any]]] | None = None,
     passages_check_fn: Callable[..., dict[str, Any]] | None = None,
@@ -526,7 +697,31 @@ async def run_documents_qa_flow(
     their answer passage removed and "the passages don't say" as target).
     Its lift check then scores it with the passages against the base model
     + the same passages. With ``reuse_existing`` it trains the same pairs on
-    the same split."""
+    the same split.
+
+    ``decision_gap``: the judge-score difference the test examples must be
+    able to resolve (``size_for_decision``; 0.15 → 45 rows, 0.08 → 157).
+
+    ``keep_test``: keep the active test examples verbatim (pre-registered
+    rows stay comparable) and grow them to ``target_test_rows(decision_gap)``
+    with this flow's answer-key questions, spread over the documents
+    (``grow_test_set``); validation is sized to the same target; train / val
+    questions matching any test question (exact or near-identical) are
+    dropped and counted (``split.keep_test.question_leakage``).
+
+    ``sweep_split``: the rows the pre-training gate's retrieval sweep picks
+    on — ``"val"`` (default): the sweep chooses on validation, then the
+    chosen retrieval is scored ONCE on the test examples (the gate reads
+    that); ``"test"``: the older behaviour (sweep and gate on test).
+
+    ``answers_from_teacher`` (implies ``train_with_passages``, no withheld
+    rows): after the gate, a teacher backend (``teacher_backend`` pin /
+    ``teacher_backend_override``, else the generation backend) answers every
+    train / val question from exactly the passages the served retrieval
+    returns (``teacher_passage_answers_service``); those answers are the
+    targets. ``teacher_filter``: drop training answers the local answer judge
+    grades wrong against the pair's reference. ``use_batch``: send the
+    generation and the teacher calls as Anthropic Message Batches."""
     from app.services.auto_rag_service import load_document_passages
     from app.services.synth_backends import pick_backend
 
@@ -542,6 +737,12 @@ async def run_documents_qa_flow(
         raise ValueError(f"max_passages must be between 1 and {MAX_PASSAGES_CAP}")
     if pairs_per_passage < 1 or pairs_per_passage > 10:
         raise ValueError("pairs_per_passage must be between 1 and 10")
+    if not (0.01 <= float(decision_gap) <= 1.0):
+        raise ValueError("decision_gap must be between 0.01 and 1")
+    if sweep_split not in {"val", "test"}:
+        raise ValueError("sweep_split must be 'val' or 'test'")
+    if answers_from_teacher:
+        train_with_passages = True
 
     project = await db.get(Project, project_id)
     if project is None:
@@ -554,7 +755,7 @@ async def run_documents_qa_flow(
             "Import documents and run cleaning first."
         )
     if max_passages is None:
-        sizing = size_for_decision(len(passages), pairs_per_passage)
+        sizing = size_for_decision(len(passages), pairs_per_passage, gap=decision_gap)
         max_passages = sizing["passages"]
     test_ratio = sizing["test_ratio"] if sizing else TEST_RATIO
     existing_pairs = await _count_flow_rows(project_id) if reuse_existing else 0
@@ -573,6 +774,8 @@ async def run_documents_qa_flow(
     else:
         llm = backend_override or pick_backend(backend)
         backend_label = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
+        if use_batch:
+            _enable_batch(llm)
     domain_hint = str(project.description or project.name or "").strip()[:200]
 
     # ── 1 + 2: generate per passage ───────────────────────────────────────
@@ -583,31 +786,11 @@ async def run_documents_qa_flow(
     empty_replies = 0
     # Evaluation pairs the quotable gate dropped, by reason.
     eval_rejected: dict[str, int] = {}
+    raws = await _generate_replies(llm, chosen, pairs_per_passage, domain_hint, report, backend_label)
     for index, passage in enumerate(chosen):
-        await report(
-            0.05 + 0.55 * index / max(1, len(chosen)),
-            f"Writing questions for passage {index + 1}/{len(chosen)} ({backend_label})",
-        )
-        try:
-            if getattr(llm, "supports_prompt_cache", False):
-                # A cloud backend: the per-run instructions are the cached
-                # block, only the passage varies between calls.
-                stable, varying = passage_prompt_parts(passage["text"], pairs_per_passage, domain_hint=domain_hint)
-                prompt_kwargs: dict[str, Any] = {"cache_prefix": stable}
-            else:
-                varying = build_passage_prompt(passage["text"], pairs_per_passage, domain_hint=domain_hint)
-                prompt_kwargs = {}
-            raw = await llm.complete(
-                varying,
-                system_prompt=_SYSTEM_PROMPT,
-                max_tokens=1600,
-                temperature=0.4,
-                response_schema=_RESPONSE_SCHEMA,
-                **prompt_kwargs,
-            )
-        except SynthBackendError as exc:
+        raw = raws[index]
+        if raw is None:
             failed += 1
-            _LOG.warning("documents_qa_flow passage %s failed: %s", passage["id"], exc)
             continue
         pairs, eval_pair = parse_passage_output(raw, pairs_per_passage)
         if not pairs and eval_pair is None:
@@ -621,6 +804,8 @@ async def run_documents_qa_flow(
             "source_doc": passage.get("source_doc"),
             "source_document_id": passage.get("source_document_id"),
             "chunk_id": passage.get("chunk_id"),
+            # Which model wrote the question / answer (model-card provenance).
+            "generated_by": backend_label,
         }
         for pair in pairs:
             training_pairs.append({**pair, **provenance})
@@ -642,6 +827,7 @@ async def run_documents_qa_flow(
         backend=backend_label,
         eval_rejected=dict(eval_rejected),
     )
+    summary._llms.append(llm)
     if eval_rejected:
         parts = []
         if eval_rejected.get("deictic"):
@@ -706,6 +892,36 @@ async def run_documents_qa_flow(
     await report(0.75, "Splitting into train / validation / test examples")
     from app.services.dataset_service import DEFAULT_TRAINING_SOURCE_TYPES, split_dataset
 
+    split_kwargs: dict[str, Any] = {}
+    growth: dict[str, Any] | None = None
+    if keep_test:
+        kept_test = _read_jsonl_rows(settings.DATA_DIR / "projects" / str(project_id) / "prepared" / "test.jsonl")
+        if not kept_test:
+            raise ValueError("keep_test needs an active prepared test split to keep; run the flow once without it.")
+        from app.services.gold_service import get_gold_entries
+
+        candidates = [
+            row for row in await get_gold_entries(db, project_id, DatasetType.GOLD_DEV)
+            if str(row.get("source") or "") == FLOW_SOURCE
+        ]
+        target = target_test_rows(decision_gap)
+        additions, growth = grow_test_set(kept_test, candidates, target)
+        # Validation = eval-only answer-key questions too (sized to the same
+        # target): kept verbatim once it is, else drawn from the answer key's
+        # remaining questions, preferring passages no test row uses.
+        kept_val = _read_jsonl_rows(settings.DATA_DIR / "projects" / str(project_id) / "prepared" / "val.jsonl")
+        keep_val = bool(kept_val) and len(kept_val) >= target and all(
+            r.get("_source_dataset") == "answer_key" for r in kept_val
+        )
+        val_from: list[dict[str, Any]] | None = None
+        if not keep_val:
+            taken = kept_test + additions
+            val_pick, _ = grow_test_set(taken, candidates, len(taken) + target)
+            val_from = [_answer_key_row(row) for row in val_pick]
+        growth["val"] = {"kept_verbatim": keep_val, "rows": len(kept_val) if keep_val else len(val_from or [])}
+        additions = [_answer_key_row(row) for row in additions]
+        split_kwargs = {"keep_test": True, "test_additions": additions, "keep_val": keep_val, "val_from": val_from}
+        await report(0.75, f"Keeping the {len(kept_test)} test examples and adding {len(additions)} answer-key questions (target {target})")
     manifest = await split_dataset(
         db,
         project_id,
@@ -715,6 +931,7 @@ async def run_documents_qa_flow(
         train_ratio=round(1.0 - test_ratio - 0.1, 3),
         val_ratio=0.1,
         test_ratio=test_ratio,
+        **split_kwargs,
     )
     await db.commit()
     splits = manifest.get("splits") if isinstance(manifest, dict) else None
@@ -724,8 +941,14 @@ async def run_documents_qa_flow(
         "test": (splits or {}).get("test"),
         "test_ratio": test_ratio,
         "sized_for": sizing,
+        "decision_gap": decision_gap,
         "dedup_dropped": (manifest.get("dedup_report") or {}).get("dropped_count") if isinstance(manifest, dict) else None,
     }
+    if keep_test:
+        summary.split["test_growth"] = growth
+        summary.split["keep_test"] = manifest.get("keep_test") if isinstance(manifest, dict) else None
+        summary.split["test_sha256"] = ((manifest.get("file_hashes") or {}).get("test")) if isinstance(manifest, dict) else None
+        summary.split["val_sha256"] = ((manifest.get("file_hashes") or {}).get("val")) if isinstance(manifest, dict) else None
     if not train:
         summary.stopped_reason = "training skipped (train=False)"
         return summary
@@ -733,7 +956,7 @@ async def run_documents_qa_flow(
     # ── 4b: the pre-training gate — what retrieval alone gets right ───────
     if passages_check:
         await report(0.78, "Before training: scoring the base model with and without your passages (judged)")
-        summary.passages_gate = await _run_passages_gate(project_id, report, passages_check_fn)
+        summary.passages_gate = await _run_passages_gate(project_id, report, passages_check_fn, sweep_split=sweep_split)
         gate = summary.passages_gate or {}
         if gate.get("status") == "retrieval_ready" and not train_if_retrieval_ready:
             summary.stopped_reason = (
@@ -746,6 +969,19 @@ async def run_documents_qa_flow(
             summary.warnings.append(
                 f"Before training, retrieval alone was promising: {gate.get('reason')}."
             )
+
+    # ── 4c: teacher answers from the same passages ────────────────────────
+    if answers_from_teacher:
+        teacher_llm = teacher_backend_override or (llm if teacher_backend is None and llm is not None else None) or pick_backend(teacher_backend)
+        summary._llms.append(teacher_llm)
+        summary.teacher = await _run_teacher_step(
+            db, project_id, report,
+            llm=teacher_llm,
+            use_batch=use_batch,
+            teacher_filter=teacher_filter,
+            filter_judge=teacher_filter_judge,
+            retrieve_fn=teacher_retrieve_fn,
+        )
 
     # ── 5: train (the watcher Job runs the lift check afterwards) ─────────
     await report(0.85, "Starting the training run")
@@ -770,6 +1006,12 @@ async def run_documents_qa_flow(
             DEFAULT_WITHHELD_FRACTION if passages_withheld_fraction is None else float(passages_withheld_fraction)
         )
         run_name += " · reads your passages"
+        if answers_from_teacher:
+            from app.services.passage_prompts_service import CONFIG_TARGETS, TARGETS_TEACHER
+
+            run_config[CONFIG_TARGETS] = TARGETS_TEACHER
+            run_config[CONFIG_WITHHELD] = 0.0
+            run_name += " · teacher answers"
     experiment = await create_experiment(
         db,
         project_id,
@@ -777,7 +1019,8 @@ async def run_documents_qa_flow(
         base_model,
         run_config,
         f"Started by the documents → Q&A flow ({len(chosen)} passages, {backend_label})"
-        + (", trained to answer from the retrieved passages." if train_with_passages else "."),
+        + (", trained to answer from the retrieved passages" if train_with_passages else "")
+        + (f" with {summary.teacher.get('teacher')}'s answers to them." if answers_from_teacher and summary.teacher else "."),
     )
     await db.commit()
     summary.experiment_id = experiment.id
@@ -787,6 +1030,14 @@ async def run_documents_qa_flow(
         from app.api.training import start as api_start
 
         launcher = api_start
+    if _used_local_ollama(summary):
+        # A local generation / teacher / judge model would sit on the memory
+        # the training run needs (a 120B model holds ~65 GB): unload first.
+        from app.services.synth_backends.ollama import unload_loaded_models
+
+        unloaded = await unload_loaded_models()
+        if unloaded:
+            summary.warnings.append(f"Unloaded {', '.join(unloaded)} from Ollama before training.")
     summary.training = await launcher(project_id, experiment.id, db)
     await report(0.98, f"Training run #{experiment.id} started — the lift check follows automatically")
     return summary
@@ -796,13 +1047,21 @@ async def _run_passages_gate(
     project_id: int,
     report: Callable[[float, str], Awaitable[None]],
     check_fn: Callable[..., dict[str, Any]] | None,
+    *,
+    sweep_split: str = "val",
 ) -> dict[str, Any]:
-    """Run the judged base + document-passages comparison on the test split
-    as a RETRIEVAL SWEEP (top-3 / top-5, each ± the cross-encoder reranker;
-    the auto-RAG harness on a worker thread), keep the retrieval the judge
-    scores highest as the project's setting, and read the gate from it — the
-    gate judges the best retrieval the project can serve, not plain top-3.
-    Best-effort: a failure yields ``status="error"`` and the flow trains."""
+    """Run the judged base + document-passages comparison as a RETRIEVAL
+    SWEEP (the auto-RAG harness on a worker thread), keep the retrieval the
+    judge scores highest as the project's setting, and read the gate.
+
+    ``sweep_split="val"``: the sweep picks on the validation rows, then the
+    chosen retrieval is scored ONCE on the test examples (no sweep) — the
+    gate reads that test score, so the retrieval is never selected on the
+    rows it is reported on. ``gate["sweep"]`` keeps the validation side
+    (split, rows, chosen arm's score). ``"test"``: sweep and gate both on
+    test (older behaviour). ``check_fn(progress_callback=, split=,
+    sweep_retrieval=)`` injects the comparison (tests). Best-effort: a
+    failure yields ``status="error"`` and the flow trains."""
     import asyncio
 
     from app.services.passage_rag_verdict_service import read_passages_gate
@@ -816,32 +1075,58 @@ async def _run_passages_gate(
             _sys.path.insert(0, backend_root)
         from scripts.auto_rag_ab import run_project_comparison
 
-        return run_project_comparison(
-            project_id, base_only=True, corpus="documents", split="test", sweep_retrieval=True, **kwargs
-        )
+        return run_project_comparison(project_id, base_only=True, corpus="documents", **kwargs)
 
     loop = asyncio.get_running_loop()
-    state: dict[str, Any] = {"scored": 0, "total": 0, "label": ""}
+    state: dict[str, Any] = {"scored": 0, "total": 0, "label": "", "phase": ""}
 
     def _cb(scored: int, total: int, label: str) -> None:
         state.update(scored=scored, total=total, label=label)
 
     async def _drain(stop: asyncio.Event) -> None:
         while not stop.is_set():
+            phase = state["phase"]
             if state["total"]:
                 frac = 0.78 + 0.12 * min(1.0, state["scored"] / max(1, 2 * state["total"]))
-                await report(frac, f"Pre-training check: scoring row {state['scored']}/{state['total']} ({state['label']})")
+                await report(frac, f"Pre-training check{phase}: scoring row {state['scored']}/{state['total']} ({state['label']})")
             elif state["label"]:
-                await report(0.88, f"Pre-training check: {state['label']}")
+                await report(0.88, f"Pre-training check{phase}: {state['label']}")
             try:
                 await asyncio.wait_for(stop.wait(), timeout=3.0)
             except asyncio.TimeoutError:
                 pass
 
+    fn = check_fn or _default_check
     stop = asyncio.Event()
     drainer = loop.create_task(_drain(stop))
+    sweep_block: dict[str, Any] | None = None
+    summary: Any = None
+    applied: Any = None
     try:
-        payload = await asyncio.to_thread(check_fn or _default_check, progress_callback=_cb)
+        state["phase"] = f" (retrieval sweep on {sweep_split})"
+        payload = await asyncio.to_thread(fn, progress_callback=_cb, split=sweep_split, sweep_retrieval=True)
+        summary = (payload or {}).get("summary") if isinstance(payload, dict) else None
+        retrieval = (summary or {}).get("retrieval") if isinstance(summary, dict) else None
+        applied = None
+        if isinstance(retrieval, dict):
+            from app.services.auto_rag_comparison_job_service import apply_retrieval_choice
+
+            applied = await apply_retrieval_choice(project_id, retrieval) or retrieval
+        if sweep_split != "test":
+            judge = (summary or {}).get("judge") if isinstance(summary, dict) else None
+            on = (judge or {}).get("with_rag") if isinstance(judge, dict) else None
+            off = (judge or {}).get("without_rag") if isinstance(judge, dict) else None
+            sweep_block = {
+                "split": sweep_split,
+                "rows": (summary or {}).get("n_val_rows") if isinstance(summary, dict) else None,
+                "chosen_score": (on or {}).get("score") if isinstance(on, dict) else None,
+                "chosen_counts": (on or {}).get("counts") if isinstance(on, dict) else None,
+                "without_retrieval_score": (off or {}).get("score") if isinstance(off, dict) else None,
+            }
+            # The chosen retrieval (now the project's setting), scored once
+            # on the test examples.
+            state.update(scored=0, total=0, label="", phase=" (chosen retrieval on test)")
+            await asyncio.to_thread(fn, progress_callback=_cb, split="test", sweep_retrieval=False)
     except Exception as exc:  # noqa: BLE001 — the gate never blocks the flow
         _LOG.warning("documents_qa_flow passages check failed: %s", exc)
         return {"status": "error", "reason": f"{exc.__class__.__name__}: {exc}"[:300]}
@@ -852,23 +1137,65 @@ async def _run_passages_gate(
         except Exception:  # noqa: BLE001
             pass
     gate = read_passages_gate(project_id)
-    # The sweep's winner becomes what the project (and a RAG sibling cloned
-    # from it) serves; the gate says which retrieval it judged.
-    summary = (payload or {}).get("summary") if isinstance(payload, dict) else None
-    retrieval = (summary or {}).get("retrieval") if isinstance(summary, dict) else None
-    if isinstance(retrieval, dict):
-        from app.services.auto_rag_comparison_job_service import apply_retrieval_choice
-
-        gate["retrieval"] = await apply_retrieval_choice(project_id, retrieval) or retrieval
-        sweep = (summary or {}).get("retrieval_sweep")
+    if applied is not None:
+        gate["retrieval"] = applied
+    if isinstance(summary, dict):
+        sweep = summary.get("retrieval_sweep")
         if isinstance(sweep, list):
             gate["retrieval_sweep"] = [
                 {k: arm.get(k) for k in ("label", "judge_score", "chosen", "current", "vs_current")}
                 for arm in sweep if isinstance(arm, dict)
             ]
-        if isinstance((summary or {}).get("retrieval_decision"), dict):
+        if isinstance(summary.get("retrieval_decision"), dict):
             gate["retrieval_decision"] = summary["retrieval_decision"]
+    gate["sweep_split"] = sweep_split
+    if sweep_block is not None:
+        gate["sweep"] = sweep_block
     return gate
+
+
+async def _run_teacher_step(
+    db: AsyncSession,
+    project_id: int,
+    report: Callable[[float, str], Awaitable[None]],
+    *,
+    llm: Any,
+    use_batch: bool,
+    teacher_filter: bool,
+    filter_judge: Any,
+    retrieve_fn: Callable[..., list[dict[str, Any]]] | None,
+) -> dict[str, Any]:
+    """Teacher answers for the prepared train + val rows, from the project's
+    served retrieval (set by the gate). Never reads the test rows."""
+    from app.services.auto_rag_service import retrieval_settings
+    from app.services.teacher_passage_answers_service import write_teacher_answers
+
+    if use_batch and not getattr(llm, "use_batch", False):
+        _enable_batch(llm)
+    project = await db.get(Project, project_id)
+    await db.refresh(project)
+    retrieval = retrieval_settings(project)
+    prepared = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
+    rows_by_split = {
+        "train": _read_jsonl_rows(prepared / "train.jsonl"),
+        "val": _read_jsonl_rows(prepared / "val.jsonl"),
+    }
+    judge = filter_judge
+    if teacher_filter and judge is None:
+        from app.services.answer_judge_service import resolve_answer_judge
+
+        judge = await resolve_answer_judge(db, project_id, project)
+    return await write_teacher_answers(
+        project_id,
+        rows_by_split,
+        retrieval=retrieval,
+        llm=llm,
+        retrieve_fn=retrieve_fn,
+        report=report,
+        filter_judge=judge if teacher_filter else None,
+        start=0.8,
+        span=0.05,
+    )
 
 
 async def _save_training_pairs(db: AsyncSession, project_id: int, pairs: list[dict[str, Any]]) -> None:

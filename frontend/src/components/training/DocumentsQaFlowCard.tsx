@@ -41,6 +41,13 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
     /** The generation model: null = the first reachable local one, or a
      *  `cloud:<provider>:<model>` pin using the project's saved key. */
     const [backend, setBackend] = useState<string | null>(null);
+    /** Targets = a teacher model's answers to the same served passages. */
+    const [teacherAnswers, setTeacherAnswers] = useState(false);
+    const [teacherBackend, setTeacherBackend] = useState<string | null>(null);
+    const [useBatch, setUseBatch] = useState(false);
+    /** Keep the current test examples and grow them to resolve `decisionGap`. */
+    const [keepTest, setKeepTest] = useState(false);
+    const [decisionGap, setDecisionGap] = useState(0.15);
 
     const jobs = useJobsStore((state) => state.jobs);
     const flowJobs = (jobs || []).filter((job) => job.kind === 'documents_qa_flow' && job.project_id === projectId);
@@ -84,7 +91,12 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                 train: !reviewFirst,
                 reuseExisting,
                 trainIfRetrievalReady,
-                trainWithPassages: withPassages,
+                trainWithPassages: withPassages || teacherAnswers,
+                answersFromTeacher: teacherAnswers,
+                teacherBackend: teacherAnswers ? (teacherBackend ?? backend) : null,
+                useBatch,
+                keepTest,
+                ...(keepTest ? { decisionGap } : {}),
                 // "Train anyway" answers a gate that already ran on these rows;
                 // re-running it repeats the whole retrieval sweep (~an hour).
                 ...(trainIfRetrievalReady ? { passagesCheck: false } : {}),
@@ -126,6 +138,40 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
     const generatedBefore = preview.already_generated > 0 && !finished && !inFlight && !result;
 
     const plan = preview.plan;
+    const options = (
+        <div className="documents-qa-flow__options" data-testid="documents-qa-flow-options">
+            <label className="documents-qa-flow__option" title="Each training pair's prompt becomes what serving sends: the passages your retrieval finds for the question, then the question. The run is then scored with the passages against the base model + the same passages.">
+                <input type="checkbox" checked={withPassages || teacherAnswers} disabled={teacherAnswers} onChange={(e) => setWithPassages(e.target.checked)} data-testid="documents-qa-flow-with-passages" />
+                {' '}Train the model to answer from your passages
+            </label>
+            <label className="documents-qa-flow__option" title="A teacher model answers every training question from exactly the passages your retrieval serves for it; its answer becomes the target, so training matches serving. When the teacher says the passages don't cover it, that answer is kept. Training answers the judge grades wrong against the pair's reference are dropped.">
+                <input type="checkbox" checked={teacherAnswers} onChange={(e) => setTeacherAnswers(e.target.checked)} data-testid="documents-qa-flow-teacher" />
+                {' '}Use a teacher model's answers to the same passages as the targets
+            </label>
+            {teacherAnswers && (
+                <GenerationModelPicker
+                    projectId={projectId}
+                    value={teacherBackend ?? backend}
+                    onChange={setTeacherBackend}
+                    disabled={starting}
+                    testIdPrefix="documents-qa-flow-teacher"
+                />
+            )}
+            <label className="documents-qa-flow__option" title="Anthropic models only: every call goes as one Message Batch — half the price, can take up to a few hours.">
+                <input type="checkbox" checked={useBatch} onChange={(e) => setUseBatch(e.target.checked)} data-testid="documents-qa-flow-batch" />
+                {' '}Batch (half price, slower)
+            </label>
+            <label className="documents-qa-flow__option" title="The current test examples stay exactly as they are (earlier runs stay comparable); new answer-key questions spread over your documents are added until the test set can resolve the gap. Training and validation questions that match a test question are dropped.">
+                <input type="checkbox" checked={keepTest} onChange={(e) => setKeepTest(e.target.checked)} data-testid="documents-qa-flow-keep-test" />
+                {' '}Keep the current test examples and grow them to resolve a gap of{' '}
+                <select value={decisionGap} onChange={(e) => setDecisionGap(Number(e.target.value))} aria-label="Decision gap" data-testid="documents-qa-flow-gap">
+                    <option value={0.15}>0.15 (45 rows)</option>
+                    <option value={0.1}>0.10 (100 rows)</option>
+                    <option value={0.08}>0.08 (157 rows)</option>
+                </select>
+            </label>
+        </div>
+    );
     return (
         <section className="card documents-qa-flow" id="documents-qa-flow" data-testid="documents-qa-flow">
             <h3 className="documents-qa-flow__title">Turn your documents into a Q&A assistant</h3>
@@ -168,6 +214,13 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                             : result.stopped_reason
                                 ? `. Stopped before training: ${result.stopped_reason}`
                                 : '.'}
+                    {result.teacher && (
+                        <span data-testid="documents-qa-flow-teacher-result">
+                            {' '}Teacher ({result.teacher.teacher}): {result.teacher.usable} usable answers
+                            {result.teacher.counts.train ? ` — ${result.teacher.counts.train.abstained} training answers say the passages don't cover it` : ''}
+                            {result.teacher.filter.applied && result.teacher.counts.train ? `, ${result.teacher.counts.train.filter_dropped} dropped as wrong by ${result.teacher.filter.judge}` : ''}.
+                        </span>
+                    )}
                     {result.warnings.length > 0 && (
                         <span className="documents-qa-flow__warnings"> {result.warnings.join(' ')}</span>
                     )}
@@ -184,6 +237,12 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                     data-status={result.passages_gate.status}
                 >
                     <strong>Before training</strong>
+                    {result.passages_gate.sweep && (
+                        <span data-testid="documents-qa-flow-gate-sweep">
+                            {' '}(retrieval chosen on {result.passages_gate.sweep.rows ?? '?'} validation rows
+                            {result.passages_gate.sweep.chosen_score != null ? `, ${result.passages_gate.sweep.chosen_score.toFixed(2)} there` : ''}; scored once on the test examples)
+                        </span>
+                    )}
                     {result.passages_gate.status === 'retrieval_ready' && (
                         <>
                             {' '}— the untouched base model answering from your passages already got{' '}
@@ -272,10 +331,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                         <li>Otherwise a training run with your current defaults.</li>
                         <li>The automatic lift check scores it against the base model.</li>
                     </ul>
-                    <label className="documents-qa-flow__option" title="Each training pair's prompt becomes what serving sends: the passages your retrieval finds for the question, then the question. Some rows have the answer passage removed and learn to say the passages don't say. The run is then scored with the passages against the base model + the same passages.">
-                        <input type="checkbox" checked={withPassages} onChange={(e) => setWithPassages(e.target.checked)} data-testid="documents-qa-flow-with-passages" />
-                        {' '}Train the model to answer from your passages
-                    </label>
+                    {options}
                     <label className="documents-qa-flow__option">
                         <input type="checkbox" checked={reviewFirst} onChange={(e) => setReviewFirst(e.target.checked)} data-testid="documents-qa-flow-review-first" />
                         {' '}Stop after generating so I can review the rows before training
@@ -295,16 +351,13 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                 </>
             )}
             {!inFlight && (result || generatedBefore) && (result?.training_pairs ?? preview.already_generated) > 0 && (
-                <label className="documents-qa-flow__option" title="Each training pair's prompt becomes what serving sends: the passages your retrieval finds for the question, then the question. Some rows have the answer passage removed and learn to say the passages don't say. The run is then scored with the passages against the base model + the same passages.">
-                    <input type="checkbox" checked={withPassages} onChange={(e) => setWithPassages(e.target.checked)} data-testid="documents-qa-flow-with-passages" />
-                    {' '}Train the model to answer from your passages
-                </label>
+                options
             )}
             {!inFlight && (result || generatedBefore) && (
                 <div className="documents-qa-flow__actions">
                     {(result?.training_pairs ?? preview.already_generated) > 0 && (
                         <button type="button" className="btn btn-primary" onClick={() => void start(true)} disabled={starting} data-testid="documents-qa-flow-retrain">
-                            {starting ? 'Starting…' : withPassages ? 'Train again on the current base model, reading your passages' : 'Train again on the current base model'}
+                            {starting ? 'Starting…' : teacherAnswers ? "Train again on the teacher's answers to your passages" : withPassages ? 'Train again on the current base model, reading your passages' : 'Train again on the current base model'}
                         </button>
                     )}
                     {preview.eligible && (

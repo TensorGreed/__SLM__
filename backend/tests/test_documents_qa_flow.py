@@ -246,7 +246,7 @@ class DocumentsQaFlowTests(unittest.TestCase):
 
     def _fake_passages_check(self, *, with_score: float, correct: int, partial: int, wrong: int):
         """Writes the cached comparison the gate reads, like the harness would."""
-        def _check(progress_callback=None):
+        def _check(progress_callback=None, **kwargs):
             n = correct + partial + wrong
             verdicts = ["correct"] * correct + ["partial"] * partial + ["wrong"] * wrong
             score = {"correct": 1.0, "partial": 0.5, "wrong": 0.0}
@@ -340,7 +340,7 @@ class DocumentsQaFlowTests(unittest.TestCase):
         self.assertIsNotNone(promising.experiment_id)
         self.assertTrue(any("retrieval alone was promising" in w for w in promising.warnings))
 
-        def _broken(progress_callback=None):
+        def _broken(progress_callback=None, **kwargs):
             raise RuntimeError("no GPU")
 
         errored = self._run(train=True, reuse_existing=True, start_training=_launcher, passages_check=True, passages_check_fn=_broken)
@@ -533,3 +533,278 @@ class DocumentsQaFlowTests(unittest.TestCase):
         self.assertEqual(len(pairs), 1)
         self.assertIsNone(eval_pair)  # the eval question repeated a training one
         self.assertEqual(flow.parse_passage_output("not json at all", 3), ([], None))
+
+
+class FakeTeacher:
+    """Answers from the system message it is given; abstains on notice-period
+    questions (as if the passages didn't cover them)."""
+
+    name = "fake-teacher"
+    asked: list[dict] = []
+
+    def describe(self) -> str:
+        return "fake:teacher"
+
+    async def complete(self, prompt, *, system_prompt=None, max_tokens=1024, temperature=0.7, **kwargs):
+        FakeTeacher.asked.append({"question": prompt, "system_prompt": system_prompt})
+        if "notice period" in prompt:
+            return "The passages don't say, so I don't know."
+        return f"From the passages: {prompt[:40]} [1]"
+
+
+def _fake_retrieve(question, retrieval):
+    return [
+        {"payload": {"text": f"Passage {i} about {question}", "source_doc": "policy.docx", "chunk_id": i}, "score": 1.0}
+        for i in range(int(retrieval.get("k") or 3))
+    ]
+
+
+class FlowGrowthSweepTeacherTests(DocumentsQaFlowTests.__bases__[0]):
+    """keep_test growth, the val sweep and the teacher step (fakes only)."""
+
+    setUp = DocumentsQaFlowTests.setUp
+    _ingest = DocumentsQaFlowTests._ingest
+    _run = DocumentsQaFlowTests._run
+    _rows = DocumentsQaFlowTests._rows
+
+    def test_grow_test_set_spreads_new_passages_and_skips_known_questions(self):
+        kept = [{"question": "Q kept", "source_document_id": 1, "chunk_id": 0}]
+        candidates = [{"question": "Q kept", "source_document_id": 1, "chunk_id": 9}] + [
+            {"question": f"Q{i}", "source_document_id": 1, "chunk_id": i} for i in range(10)
+        ]
+        additions, report = flow.grow_test_set(kept, candidates, 5)
+        self.assertEqual(len(additions), 4)
+        self.assertNotIn("Q kept", [a["question"] for a in additions])
+        self.assertNotIn(0, [a["chunk_id"] for a in additions], "a passage that backs a test row is used last")
+        self.assertEqual(report["added"], 4)
+        self.assertTrue(report["reaches_target"])
+        self.assertEqual(flow.target_test_rows(0.08), 157)
+
+    def test_question_leakage_filter_drops_exact_and_near_matches(self):
+        from app.services.dataset_service import question_leakage_filter
+
+        test = [{"question": "How many vacation days does an employee accrue after three years of service?"}]
+        rows = [
+            {"question": "How many vacation days does an employee accrue after three years of service?"},
+            {"question": "how many vacation days does an employee accrue after three years of service"},
+            {"question": "What is the notice period for remote work requests to the team lead?"},
+        ]
+        kept, report = question_leakage_filter(rows, test)
+        self.assertEqual([r["question"] for r in kept], [rows[2]["question"]])
+        self.assertEqual(report["dropped"], 2)
+
+    def test_keep_test_keeps_the_rows_verbatim_and_grows_them(self):
+        self._ingest("policy.docx", POLICY)
+        first = self._run(train=False, max_passages=20)
+        test_path = self.root / "prepared" / "test.jsonl"
+        before = test_path.read_text(encoding="utf-8").splitlines()
+        target = flow.target_test_rows(0.3)  # 12
+        self.assertLess(len(before), target)
+        grown = self._run(train=False, reuse_existing=True, keep_test=True, decision_gap=0.3)
+        after = test_path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(after[: len(before)], before, "the kept test rows are byte-identical, first")
+        self.assertEqual(len(after), target)
+        self.assertEqual(grown.split["test"], target)
+        self.assertEqual(grown.split["val"], target)
+        self.assertEqual(grown.split["test_growth"]["added"], target - len(before))
+        added = [json.loads(line) for line in after[len(before):]]
+        self.assertTrue(all(r.get("_source_dataset") == "answer_key" for r in added))
+        self.assertTrue(all(r.get("question") and r.get("answer") for r in added))
+        test_questions = {json.loads(line)["question"].lower() for line in after}
+        for split in ("train", "val"):
+            self.assertFalse(test_questions & {r["question"].lower() for r in self._rows(f"prepared/{split}.jsonl")})
+        self.assertIn("question_leakage", grown.split["keep_test"])
+        self.assertEqual(grown.split["test_sha256"], __import__("hashlib").sha256(test_path.read_bytes()).hexdigest())
+        # Validation = eval-only answer-key questions, none of them a test question.
+        val = self._rows("prepared/val.jsonl")
+        self.assertTrue(all(r.get("_source_dataset") == "answer_key" for r in val))
+        self.assertFalse(test_questions & {r["question"].lower() for r in val})
+        self.assertTrue(all(r.get("_source_dataset") != "answer_key" for r in self._rows("prepared/train.jsonl")))
+        # Re-running with the target already met keeps both files byte-identical.
+        sha = grown.split["test_sha256"]
+        again = self._run(train=False, reuse_existing=True, keep_test=True, decision_gap=0.3)
+        self.assertEqual(again.split["test_sha256"], sha)
+        self.assertEqual(again.split["val_sha256"], grown.split["val_sha256"])
+        self.assertTrue(again.split["test_growth"]["val"]["kept_verbatim"])
+        self.assertEqual(again.split["test_growth"]["added"], 0)
+        self.assertGreater(first.split["test"], 0)
+
+    def test_sweep_picks_on_val_and_scores_once_on_test(self):
+        self._ingest("policy.docx", POLICY)
+        self._run(train=False, max_passages=20)
+        calls: list[dict] = []
+
+        def _check(progress_callback=None, **kwargs):
+            calls.append(kwargs)
+            split = kwargs.get("split")
+            n = 10
+            path = self.root / "auto_rag" / "comparison_base_documents.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            score = {"correct": 1.0, "wrong": 0.0}
+            verdicts = ["correct"] * 8 + ["wrong"] * 2 if split == "test" else ["correct"] * 6 + ["wrong"] * 4
+            rows = [{"question": f"Q{i}?", "reference": "A long enough reference answer for the judge to read here.",
+                     "without_rag": {"generated": "x", "judge": {"score": 0.0, "verdict": "wrong"}},
+                     "with_rag": {"generated": "y", "judge": {"score": score[v], "verdict": v}}} for i, v in enumerate(verdicts)]
+            counts = {"correct": verdicts.count("correct"), "partial": 0, "wrong": verdicts.count("wrong")}
+            judge = {"judge": "fake:judge", "without_rag": {"score": 0.0, "counts": {"correct": 0, "partial": 0, "wrong": n}},
+                     "with_rag": {"score": counts["correct"] / n, "judged": n, "counts": counts}}
+            path.write_text(json.dumps({"model": "base", "corpus": "documents", "split": split, "base_model": "m",
+                                        "summary": {"n_val_rows": n, "judge": judge}, "rows": rows}), encoding="utf-8")
+            return {"summary": {"n_val_rows": n, "judge": judge, "retrieval": {"k": 5, "reranker": None},
+                                "retrieval_sweep": [{"label": "top-5", "judge_score": 0.6, "chosen": True}] if kwargs.get("sweep_retrieval") else None}}
+
+        async def _launcher(project_id, experiment_id, db):
+            return {"status": "running"}
+
+        summary = self._run(train=True, reuse_existing=True, start_training=_launcher, passages_check=True, passages_check_fn=_check)
+        self.assertEqual([(c["split"], c["sweep_retrieval"]) for c in calls], [("val", True), ("test", False)])
+        gate = summary.passages_gate
+        self.assertEqual(gate["sweep_split"], "val")
+        self.assertEqual(gate["sweep"]["split"], "val")
+        self.assertEqual(gate["sweep"]["chosen_score"], 0.6)
+        self.assertEqual(gate["split"], "test")
+        self.assertEqual(gate["score"], 0.8, "the gate reads the single test score, not the sweep's")
+        self.assertEqual(gate["retrieval"]["k"], 5)
+        # The older behaviour stays available.
+        calls.clear()
+        self._run(train=True, reuse_existing=True, start_training=_launcher, passages_check=True, passages_check_fn=_check, sweep_split="test")
+        self.assertEqual([(c["split"], c["sweep_retrieval"]) for c in calls], [("test", True)])
+
+    def test_teacher_answers_the_served_passages_and_become_the_targets(self):
+        from app.services import passage_prompts_service as pps
+        from app.services import teacher_passage_answers_service as tpa
+        from app.services.answer_judge_service import ResolvedJudge
+
+        self._ingest("policy.docx", POLICY)
+        self._run(train=False, max_passages=20)
+        FakeTeacher.asked = []
+
+        async def _judge(question, reference, prediction):
+            if "carries" in question.lower():
+                return 0.0, "wrong", "contradicts the reference", 0
+            return 1.0, "correct", "matches", 0
+
+        launched: dict = {}
+
+        async def _launcher(project_id, experiment_id, db):
+            launched["experiment_id"] = experiment_id
+            return {"status": "running"}
+
+        summary = self._run(
+            train=True, reuse_existing=True, start_training=_launcher,
+            answers_from_teacher=True, teacher_backend_override=FakeTeacher(),
+            teacher_retrieve_fn=_fake_retrieve,
+            teacher_filter_judge=ResolvedJudge(label="fake:judge", judge=_judge),
+        )
+        teacher = summary.teacher
+        train_rows = self._rows("prepared/train.jsonl")
+        val_rows = self._rows("prepared/val.jsonl")
+        test_rows = self._rows("prepared/test.jsonl")
+        self.assertEqual(teacher["counts"]["train"]["rows"], len(train_rows))
+        self.assertEqual(teacher["counts"]["val"]["rows"], len(val_rows))
+        asked = {a["question"] for a in FakeTeacher.asked}
+        self.assertFalse(asked & {r["question"] for r in test_rows}, "the teacher never sees a test question")
+        # The teacher read the serving preamble (+ the style note only).
+        first = FakeTeacher.asked[0]
+        self.assertTrue(first["system_prompt"].startswith("Passages from this project's documents:"))
+        self.assertTrue(first["system_prompt"].endswith(tpa.TEACHER_STYLE_NOTE))
+        self.assertGreater(teacher["counts"]["train"]["abstained"], 0, "notice-period answers are natural abstentions")
+        self.assertGreater(teacher["counts"]["train"]["filter_dropped"], 0)
+        self.assertEqual(teacher["counts"]["val"]["filter_judged"], 0, "the filter only judges training rows")
+        exp = next(e for e in client.get(f"/api/projects/{self.pid}/training/experiments").json() if e["id"] == launched["experiment_id"])
+        self.assertTrue(exp["config"]["passage_prompts"])
+        self.assertEqual(exp["config"]["passage_prompts_targets"], "teacher")
+        self.assertEqual(exp["config"]["passage_prompts_withheld_fraction"], 0.0)
+        self.assertIn("teacher answers", exp["name"])
+
+        # Training rows: prompt = the preamble the teacher read, target = its answer.
+        out_dir = self.root / "scratch-run"
+        block = pps.apply_passage_prompts(
+            self.pid, retrieval={"k": 3}, train_file=self.root / "prepared" / "train.jsonl",
+            val_file=self.root / "prepared" / "val.jsonl", output_dir=out_dir, target_mode="teacher",
+        )
+        self.assertEqual(block["targets"], "teacher")
+        rows = [json.loads(l) for l in Path(block["train_file"]).read_text(encoding="utf-8").splitlines()]
+        by_q = {a["question"]: a for a in FakeTeacher.asked}
+        for row in rows:
+            self.assertEqual(row["system_prompt"] + "\n\n" + tpa.TEACHER_STYLE_NOTE, by_q[row["question"]]["system_prompt"])
+            self.assertNotIn("carries", row["question"].lower(), "answers the judge graded wrong are dropped")
+        self.assertEqual(block["counts"]["train"]["filtered"], teacher["counts"]["train"]["filter_dropped"])
+
+        # A re-run reuses every cached answer: no new teacher calls.
+        FakeTeacher.asked = []
+        again = self._run(
+            train=True, reuse_existing=True, start_training=_launcher,
+            answers_from_teacher=True, teacher_backend_override=FakeTeacher(),
+            teacher_retrieve_fn=_fake_retrieve, teacher_filter_judge=ResolvedJudge(label="fake:judge", judge=_judge),
+        )
+        self.assertEqual(FakeTeacher.asked, [])
+        self.assertEqual(again.teacher["counts"]["train"]["reused"], len(train_rows))
+
+    def test_generation_goes_through_one_message_batch(self):
+        self._ingest("policy.docx", POLICY)
+
+        class BatchBackend(FakeBackend):
+            supports_batch = True
+            use_batch = False
+            batches: list[int] = []
+
+            async def complete_batch(self, requests, *, progress=None):
+                BatchBackend.batches.append(len(requests))
+                out = [await FakeBackend.complete(self, r["prompt"]) for r in requests]
+                out[0] = None  # an errored request falls back to a direct call
+                return out
+
+        backend = BatchBackend()
+        summary = self._run(train=False, max_passages=20, backend_override=backend, use_batch=True)
+        self.assertTrue(backend.use_batch)
+        self.assertEqual(BatchBackend.batches, [20])
+        self.assertEqual(summary.passages_used, 20)
+        self.assertEqual(summary.training_pairs, 60)
+        with self.assertRaises(ValueError):
+            self._run(train=False, max_passages=20, use_batch=True)  # the plain fake can't batch
+
+    def test_abstention_phrases(self):
+        from app.services.teacher_passage_answers_service import is_abstention
+
+        self.assertTrue(is_abstention("The passages don't say, so I don't know."))
+        self.assertTrue(is_abstention("The provided passages do not contain information about that."))
+        self.assertTrue(is_abstention("That is not covered in the passages."))
+        self.assertFalse(is_abstention("You can deduct up to $2,500 of student loan interest [2]."))
+
+
+class FlowRequestValidationTests(unittest.TestCase):
+    def test_batch_needs_an_anthropic_pin(self):
+        pid = int(client.post("/api/projects", json={"name": f"flow-{uuid4().hex[:6]}"}).json()["id"])
+        resp = client.post(f"/api/projects/{pid}/flows/documents-to-qa", json={"use_batch": True, "backend": "ollama"})
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertEqual(resp.json()["error_code"], "BATCH_NEEDS_ANTHROPIC")
+        bad = client.post(f"/api/projects/{pid}/flows/documents-to-qa", json={"sweep_split": "train"})
+        self.assertEqual(bad.status_code, 422)
+
+
+class TeacherFormatTests(unittest.TestCase):
+    def test_teacher_answer_is_normalised_to_the_serving_cite_format(self):
+        from app.services.teacher_passage_answers_service import normalize_teacher_answer
+
+        self.assertEqual(normalize_teacher_answer("It is **$31,500** 【1】."), "It is $31,500 [1].")
+        self.assertEqual(normalize_teacher_answer("See 【2, 3】"), "See [2][3]")
+
+    def test_gpt_oss_gets_low_reasoning_others_none(self):
+        from app.services.synth_backends.ollama import think_setting
+
+        self.assertEqual(think_setting("gpt-oss:120b"), "low")
+        self.assertIs(think_setting("gemma4:12b"), False)
+
+    def test_flow_unloads_ollama_only_when_it_used_it(self):
+        from app.services.synth_backends.ollama import OllamaBackend
+
+        summary = flow.FlowSummary(project_id=1, passages_total=0, passages_used=0, passages_failed=0,
+                                   training_pairs=0, answer_key_rows=0, backend="x")
+        self.assertFalse(flow._used_local_ollama(summary))
+        summary._llms.append(OllamaBackend(model="gpt-oss:120b"))
+        self.assertTrue(flow._used_local_ollama(summary))
+        judged = flow.FlowSummary(project_id=1, passages_total=0, passages_used=0, passages_failed=0,
+                                  training_pairs=0, answer_key_rows=0, backend="x",
+                                  teacher={"filter": {"applied": True, "judge": "ollama:gemma4:12b"}})
+        self.assertTrue(flow._used_local_ollama(judged))

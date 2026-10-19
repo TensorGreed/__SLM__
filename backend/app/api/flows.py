@@ -52,7 +52,7 @@ async def _cloud_backend_or_http(db: AsyncSession, project_id: int, pin: str | N
 class DocumentsQaFlowRequest(BaseModel):
     # Unset → sized to the decision: enough test examples that a 0.15
     # judge-score gap clears noise (documents_qa_flow_service.size_for_decision).
-    max_passages: int | None = Field(None, ge=1, le=500)
+    max_passages: int | None = Field(None, ge=1, le=2000)
     pairs_per_passage: int = Field(DEFAULT_PAIRS_PER_PASSAGE, ge=1, le=10)
     backend: str | None = None
     # False: generate + split only, so the rows can be reviewed before training.
@@ -70,12 +70,35 @@ class DocumentsQaFlowRequest(BaseModel):
     # against the base model + the same passages.
     train_with_passages: bool = False
     passages_withheld_fraction: float | None = Field(None, ge=0.0, le=0.5)
+    # The judge-score difference the test examples must resolve: sizes the
+    # test (and, with keep_test, validation) set — 0.15 → 45 rows, 0.08 → 157.
+    decision_gap: float = Field(0.15, ge=0.01, le=1.0)
+    # Keep the active test examples verbatim and grow them to the sized
+    # target with this flow's answer-key questions (spread over the
+    # documents); train / val questions matching a test question are dropped.
+    keep_test: bool = False
+    # The rows the pre-training retrieval sweep picks on: "val" (then the
+    # chosen retrieval is scored once on test) or "test" (older behaviour).
+    sweep_split: str = Field("val", pattern="^(val|test)$")
+    # Train on a teacher model's answers to exactly the served passages
+    # (implies train_with_passages, no withheld rows).
+    answers_from_teacher: bool = False
+    # The teacher: a cloud pin (the project's saved key) or a synth backend
+    # name; unset → the generation backend.
+    teacher_backend: str | None = None
+    # Drop training answers the local answer judge grades wrong against the
+    # pair's reference.
+    teacher_filter: bool = True
+    # Anthropic Message Batches (half price, slower) for the generation and
+    # the teacher calls.
+    use_batch: bool = False
 
 
 @router.get("/documents-to-qa/preview")
 async def documents_to_qa_preview(
     project_id: int,
     backend: str | None = None,
+    decision_gap: float = 0.15,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Can this project run the flow (enough cleaned passages, a reachable
@@ -83,7 +106,9 @@ async def documents_to_qa_preview(
     user picked (a ``cloud:<provider>:<model>`` pin counts when the project
     has its key saved)."""
     try:
-        return await preview_documents_qa_flow(db, project_id, backend=backend)
+        if not (0.01 <= float(decision_gap) <= 1.0):
+            raise ValueError("decision_gap must be between 0.01 and 1")
+        return await preview_documents_qa_flow(db, project_id, backend=backend, decision_gap=float(decision_gap))
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 
@@ -105,7 +130,17 @@ async def start_documents_to_qa(
     req = data or DocumentsQaFlowRequest()
     # A cloud pin needs the project's saved key: 400 malformed, 402 no key.
     cloud_backend = await _cloud_backend_or_http(db, project_id, req.backend)
-    preview = await documents_to_qa_preview(project_id, req.backend, db)
+    teacher_backend = await _cloud_backend_or_http(db, project_id, req.teacher_backend) if req.answers_from_teacher else None
+    if req.use_batch:
+        pins = [req.backend] if not req.reuse_existing else []
+        if req.answers_from_teacher:
+            pins.append(req.teacher_backend or req.backend)
+        if not pins or any(not str(pin or "").startswith("cloud:anthropic:") for pin in pins):
+            raise HTTPException(400, {
+                "error_code": "BATCH_NEEDS_ANTHROPIC",
+                "message": "use_batch needs an Anthropic cloud model (cloud:anthropic:<model>) for every model it sends calls to.",
+            })
+    preview = await documents_to_qa_preview(project_id, req.backend, req.decision_gap, db)
     if not preview["eligible"]:
         raise HTTPException(400, {"error_code": "FLOW_NOT_ELIGIBLE", "message": " ".join(preview["blockers"])})
     in_flight = (
@@ -147,6 +182,14 @@ async def start_documents_to_qa(
                     train_if_retrieval_ready=req.train_if_retrieval_ready,
                     train_with_passages=req.train_with_passages,
                     passages_withheld_fraction=req.passages_withheld_fraction,
+                    decision_gap=req.decision_gap,
+                    keep_test=req.keep_test,
+                    sweep_split=req.sweep_split,
+                    answers_from_teacher=req.answers_from_teacher,
+                    teacher_backend=req.teacher_backend,
+                    teacher_backend_override=teacher_backend,
+                    teacher_filter=req.teacher_filter,
+                    use_batch=req.use_batch,
                     progress=_progress,
                 )
             except SynthBackendError as exc:
@@ -166,6 +209,12 @@ async def start_documents_to_qa(
             "train": req.train,
             "backend": req.backend,
             "train_with_passages": req.train_with_passages,
+            "decision_gap": req.decision_gap,
+            "keep_test": req.keep_test,
+            "sweep_split": req.sweep_split,
+            "answers_from_teacher": req.answers_from_teacher,
+            "teacher_backend": req.teacher_backend,
+            "use_batch": req.use_batch,
         },
     )
     return serialize_job(job)

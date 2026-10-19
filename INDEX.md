@@ -299,6 +299,7 @@ session-start guidance.
 - `backend/app/services/synthetic_service.py` — Synthetic data generation service — teacher model integration.
 - `backend/app/services/target_profile_service.py` — Plugin-extensible registry of deployment target profiles with constraint validation and HF-introspection compatibility checks.
 - `backend/app/services/task_shape_service.py` — One task-shape detector + one vocabulary (Wave 2b).
+- `backend/app/services/teacher_passage_answers_service.py` — Teacher answers from the same passages (passage-prompt distillation).
 - `backend/app/services/timeline_service.py` — Unified timeline service (priority.md P32, Wave G).
 - `backend/app/services/tokenization_service.py` — Tokenization service — tokenizer management and dataset statistics.
 - `backend/app/services/trainability_forecast_service.py` — Trainability forecast service — USER-SUCCESS Epic 1.

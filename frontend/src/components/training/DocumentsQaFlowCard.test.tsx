@@ -193,4 +193,41 @@ describe('DocumentsQaFlowCard', () => {
             { max_passages: 60, pairs_per_passage: 3, train: true, backend: 'cloud:anthropic:claude-sonnet-5-5' },
         ));
     });
+
+    it('trains on a teacher model\'s answers to the same passages, keeping and growing the test examples', async () => {
+        apiMock.get.mockResolvedValue({ data: { ...ELIGIBLE, already_generated: 120 } });
+        apiMock.post.mockResolvedValue({ data: { id: 14 } });
+        const user = userEvent.setup();
+        render(<DocumentsQaFlowCard projectId={1} />);
+        await user.click(await screen.findByTestId('documents-qa-flow-teacher'));
+        expect(screen.getByTestId('documents-qa-flow-with-passages')).toBeChecked();
+        expect(screen.getByTestId('documents-qa-flow-retrain')).toHaveTextContent("teacher's answers");
+        await user.click(screen.getByTestId('documents-qa-flow-keep-test'));
+        await user.selectOptions(screen.getByTestId('documents-qa-flow-gap'), '0.08');
+        await user.click(screen.getByTestId('documents-qa-flow-retrain'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith('/projects/1/flows/documents-to-qa', expect.objectContaining({
+                reuse_existing: true, train_with_passages: true, answers_from_teacher: true, keep_test: true, decision_gap: 0.08,
+            }));
+        });
+    });
+
+    it('says how the teacher step and the val-chosen retrieval went', async () => {
+        apiMock.get.mockResolvedValue({ data: { ...ELIGIBLE, already_generated: 120 } });
+        jobsState.jobs = [{
+            id: 20, kind: 'documents_qa_flow', project_id: 1, status: 'succeeded',
+            result: {
+                project_id: 1, passages_total: 10, passages_used: 0, passages_failed: 0, training_pairs: 120, answer_key_rows: 10,
+                backend: 'reused', split: { train: 90, val: 20, test: 20, dedup_dropped: 0 }, experiment_id: 7, stopped_reason: null, warnings: [],
+                train_with_passages: true,
+                teacher: { teacher: 'ollama:gpt-oss:120b', usable: 100, filter: { applied: true, judge: 'ollama:gemma4:12b' },
+                           counts: { train: { rows: 90, reused: 0, asked: 90, answered: 90, failed: 0, abstained: 6, filter_judged: 84, filter_dropped: 4 } } },
+                passages_gate: { status: 'retrieval_promising', correct: 10, judged: 20, wrong: 6, partial: 4, score: 0.6, split: 'test',
+                                 sweep_split: 'val', sweep: { split: 'val', rows: 20, chosen_score: 0.62 } },
+            },
+        }];
+        render(<DocumentsQaFlowCard projectId={1} />);
+        expect(await screen.findByTestId('documents-qa-flow-teacher-result')).toHaveTextContent('6 training answers say the passages don\'t cover it, 4 dropped as wrong');
+        expect(screen.getByTestId('documents-qa-flow-gate-sweep')).toHaveTextContent('chosen on 20 validation rows, 0.62 there; scored once on the test examples');
+    });
 });

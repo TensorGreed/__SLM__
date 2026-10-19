@@ -80,6 +80,37 @@ def context_window_for(prompt: str, system_prompt: str | None, max_tokens: int) 
     return CONTEXT_BUCKETS[-1]
 
 
+def think_setting(model: str) -> Any:
+    """``think`` for the native chat API: off (False) — except for models that
+    can't turn reasoning off (gpt-oss takes a level, low / medium / high, and
+    ignores False), which get ``"low"`` so reasoning stays short; it comes back
+    in ``message.thinking`` and never in the content."""
+    return "low" if str(model or "").lower().startswith("gpt-oss") else False
+
+
+async def unload_loaded_models(host: str = DEFAULT_OLLAMA_HOST) -> list[str]:
+    """Ask Ollama to unload every model it holds in memory (``keep_alive: 0``)
+    — before GPU training, so a local generation / judge model doesn't sit on
+    the memory a training run needs (a 120B model holds ~65 GB). Best-effort;
+    returns the models it asked to unload."""
+    if httpx is None:
+        return []
+    unloaded: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(f"{host.rstrip('/')}/api/ps")
+            resp.raise_for_status()
+            for item in (resp.json() or {}).get("models") or []:
+                name = str(item.get("name") or item.get("model") or "")
+                if not name:
+                    continue
+                await client.post(f"{host.rstrip('/')}/api/generate", json={"model": name, "keep_alive": 0})
+                unloaded.append(name)
+    except Exception:  # noqa: BLE001 — best-effort
+        return unloaded
+    return unloaded
+
+
 class OllamaBackend:
     """Ollama chat backend (native /api/chat: thinking off, JSON-schema ``format``)."""
 
@@ -176,7 +207,7 @@ class OllamaBackend:
             "model": model,
             "messages": messages,
             "stream": False,
-            "think": False,
+            "think": think_setting(model),
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,

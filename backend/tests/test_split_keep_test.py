@@ -39,7 +39,9 @@ class KeepTestTests(unittest.TestCase):
                 self.assertFalse(any(ds._entry_text_key(r) in test_keys for r in out[name]), name)
             self.assertEqual(len(out["train"]) + len(out["val"]), 51, "40 + 5 + 6 new, minus nothing else")
             self.assertEqual(len(out["val"]), round(51 / 9))
-            self.assertEqual(report, {"applied": True, "test_rows_kept": 5, "rows_matching_test_excluded": 2, "train_val_pool": 51})
+            self.assertEqual(report, {"applied": True, "test_rows_kept": 5, "test_rows_added": 0, "test_rows": 5,
+                                  "rows_matching_test_excluded": 2, "train_val_pool": 51,
+                                  "val_rows_requested": None, "question_leakage": None, "fixed_val_rows": None})
 
     def test_no_active_test_split_is_a_reported_no_op(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(settings, "DATA_DIR", Path(tmp)):

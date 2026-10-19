@@ -53,6 +53,14 @@ export interface DocumentsQaFlowResult {
     warnings: string[];
     /** The run was trained to answer from the retrieved passages. */
     train_with_passages?: boolean;
+    /** The teacher step (answers_from_teacher): per-split counts, the
+     *  quality filter and the cloud usage. */
+    teacher?: {
+        teacher: string;
+        usable: number;
+        counts: Record<string, { rows: number; reused: number; asked: number; answered: number; failed: number; abstained: number; filter_judged: number; filter_dropped: number }>;
+        filter: { applied: boolean; judge?: string; reason?: string };
+    } | null;
     /** The pre-training gate: what the base model + document passages got
      *  right on the test examples, judged, before any training. */
     passages_gate?: {
@@ -68,6 +76,10 @@ export interface DocumentsQaFlowResult {
         judged?: number;
         judge?: string | null;
         split?: string | null;
+        /** "val": the sweep chose on validation rows; the gate's numbers are
+         *  the chosen retrieval scored once on the test examples. */
+        sweep_split?: 'val' | 'test';
+        sweep?: { split: string; rows: number | null; chosen_score: number | null } | null;
     } | null;
 }
 
@@ -96,6 +108,15 @@ export async function startDocumentsQaFlow(
         trainWithPassages?: boolean;
         /** `cloud:<provider>:<model>` (the project's saved key) or a local backend name. */
         backend?: string | null;
+        /** Judge-score gap the test examples must resolve (0.15 → 45 rows, 0.08 → 157). */
+        decisionGap?: number;
+        /** Keep the current test examples verbatim and grow them to the sized target. */
+        keepTest?: boolean;
+        /** Targets = a teacher model's answers to exactly the served passages. */
+        answersFromTeacher?: boolean;
+        teacherBackend?: string | null;
+        /** Anthropic Message Batches (half price, slower). */
+        useBatch?: boolean;
     } = {},
 ): Promise<Job> {
     const body: Record<string, unknown> = {};
@@ -107,6 +128,13 @@ export async function startDocumentsQaFlow(
     if (options.passagesCheck != null) body.passages_check = options.passagesCheck;
     if (options.trainIfRetrievalReady) body.train_if_retrieval_ready = true;
     if (options.trainWithPassages) body.train_with_passages = true;
+    if (options.decisionGap != null) body.decision_gap = options.decisionGap;
+    if (options.keepTest) body.keep_test = true;
+    if (options.answersFromTeacher) {
+        body.answers_from_teacher = true;
+        if (options.teacherBackend) body.teacher_backend = options.teacherBackend;
+    }
+    if (options.useBatch) body.use_batch = true;
     const res = await api.post<Job>(`/projects/${projectId}/flows/documents-to-qa`, body);
     return res.data;
 }

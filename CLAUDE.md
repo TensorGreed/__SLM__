@@ -1978,6 +1978,33 @@ runs real CPU inference). ~4 min locally.
   model — `passages_vs_finetune` returns `different_base_model` when the bar's base ≠ the run's
   (2026-10-19: switching 33 to 1.5B overwrote its 3B bar), and the comparison GET flags
   `base_model_mismatch`.
+  **Teacher targets** (`services/teacher_passage_answers_service.py`, flow
+  `answers_from_teacher` + `teacher_backend` (cloud pin or local name, e.g. `ollama:qwen3:32b`)
+  + `teacher_filter` + `use_batch`, card "Use a teacher model's answers to the same passages"):
+  after the gate, `write_teacher_answers` retrieves every TRAIN/VAL question with the served
+  retrieval (`passage_prompts_service.served_retrieve_fn`), sends `document_preamble(hits)` +
+  `TEACHER_STYLE_NOTE` as system + the question (one Message Batch with `use_batch`, else 4
+  concurrent calls), caches `{answer, abstained (is_abstention), system_prompt, sources, teacher,
+  filter}` in `teacher_answers/answers.jsonl` keyed by `answer_key(question, retrieval)`; the
+  filter = local answer judge vs the reference on train rows, `wrong` → `dropped`. Run config
+  `passage_prompts_targets: "teacher"`, withheld 0 → `apply_passage_prompts(target_mode="teacher")`
+  → `teacher_rows` (cached preamble verbatim as `system_prompt`, teacher answer as target;
+  `no_teacher_answer` / `filtered` counted). Generated pairs carry `generated_by`. Flow result
+  `teacher` + its own `usage` list (batch calls bypass the Job meter). `train.py
+  _fit_passage_seq_length`: passage-prompt runs raise `max_seq_length` to the longest row (≤
+  `PASSAGE_MAX_SEQ_CAP` 4096; report `max_seq_length_fit`). **Sized + pre-registered test**:
+  flow `decision_gap` (0.15 → 45, 0.08 → 157; preview `?decision_gap=`), `keep_test` →
+  `grow_test_set` (answer-key rows spread over new passages) → `split_dataset(keep_test,
+  test_additions=, val_rows=)` (`_keep_test_rows`: kept rows verbatim first, additions
+  `_source_dataset="answer_key"`, val sized to the target, `question_leakage_filter` drops
+  train/val questions exact / Jaccard ≥ 0.9 to any test question) → `split.test_sha256`.
+  **Val sweep**: `sweep_split` (default `val`): `_run_passages_gate` sweeps on val, applies the
+  winner, scores it once on test (no sweep) — the gate + reader-eval bar read the test file;
+  `gate.sweep` = the val side. `MAX_PASSAGES_CAP` 2000. With `keep_test` the VAL set is eval-only answer-key rows too
+  (`val_from` / `keep_val` on `split_dataset`, `fixed_val` in `_keep_test_rows`; `split.val_sha256`).
+  Local teacher: `synth_backends/ollama.think_setting` (gpt-oss → `"low"`), `normalize_teacher_answer`
+  (【n】 → [n], no `**`), `unload_loaded_models` before training when `_used_local_ollama`. Tests in `test_documents_qa_flow.py`
+  (`FlowGrowthSweepTeacherTests`), `test_training_memory_defaults.py`.
 - **External benchmarks (G-B1)** (`services/external_benchmark_service.py`,
   `api/benchmarks.py`, `DatasetType.BENCHMARK`, migration 0049): any
   dataset-import locator (`hf:<id>[:<split>[:<revision>]]`, or a file under

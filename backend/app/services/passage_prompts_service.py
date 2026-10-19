@@ -49,6 +49,12 @@ from typing import Any, Callable
 # TrainingConfig fields (flat, like the other TrainingConfig switches).
 CONFIG_FLAG = "passage_prompts"
 CONFIG_WITHHELD = "passage_prompts_withheld_fraction"
+# "reference" (default): the pair's own answer, RAFT-style gold insertion /
+# withholding. "teacher": the cached teacher answer to exactly the served
+# passages (teacher_passage_answers_service), prompt = the cached preamble.
+CONFIG_TARGETS = "passage_prompts_targets"
+TARGETS_REFERENCE = "reference"
+TARGETS_TEACHER = "teacher"
 DEFAULT_WITHHELD_FRACTION = 0.2
 MAX_WITHHELD_FRACTION = 0.5
 # The target for a row whose passages were withheld.
@@ -65,6 +71,41 @@ RetrieveFn = Callable[[str, dict[str, Any]], list[dict[str, Any]]]
 
 def is_enabled(config: Any) -> bool:
     return isinstance(config, dict) and bool(config.get(CONFIG_FLAG))
+
+
+def targets(config: Any) -> str:
+    raw = str((config or {}).get(CONFIG_TARGETS) or "").strip().lower() if isinstance(config, dict) else ""
+    return TARGETS_TEACHER if raw == TARGETS_TEACHER else TARGETS_REFERENCE
+
+
+def served_retrieve_fn(project_id: int) -> RetrieveFn:
+    """``fn(question, retrieval) -> hits`` over the project's document index
+    (the ``chunk_size`` variant when set) — the retrieval serving uses. The
+    index is built / checked once, on the first call."""
+    from app.services.auto_rag_service import (
+        AutoRagUnavailable,
+        document_index_dir,
+        normalize_retrieval,
+        retrieve_document_passages,
+        retrieve_ranked,
+    )
+
+    checked: list[bool] = []
+
+    def _retrieve(question: str, config: dict[str, Any]) -> list[dict[str, Any]]:
+        try:
+            if not checked:
+                retrieve_document_passages(project_id, question, config)
+                checked.append(True)
+            r = normalize_retrieval(config)
+            return list(retrieve_ranked(
+                question, index_dir=document_index_dir(project_id, r["chunk_size"]),
+                k=r["k"], reranker=r["reranker"], pool=r["pool"],
+            ))
+        except AutoRagUnavailable as exc:
+            raise ValueError(str(exc)) from exc
+
+    return _retrieve
 
 
 def withheld_fraction(config: Any) -> float:
@@ -268,25 +309,31 @@ def apply_passage_prompts(
     withheld: float = DEFAULT_WITHHELD_FRACTION,
     seed: int = 42,
     retrieve_fn: RetrieveFn | None = None,
+    target_mode: str = TARGETS_REFERENCE,
 ) -> dict[str, Any]:
     """Write the run's passage-prompt train / validation files under
     ``output_dir/passage_prompts/`` and return the block training_service
     records on the run (paths, retrieval, counts). Sync (retrieval runs the
     reranker); raises ``ValueError`` when the project has no document
     passages or no row could be rewritten — an opt-in that silently trained
-    on bare prompts would mislead."""
+    on bare prompts would mislead.
+
+    ``target_mode="teacher"``: the targets are the cached teacher answers to
+    exactly the served passages (``teacher_passage_answers_service``) and the
+    prompt is the preamble the teacher read — no gold insertion, no withheld
+    rows; rows without a usable teacher answer are left out (counted)."""
     from app.services.auto_rag_service import (
-        AutoRagUnavailable,
-        document_index_dir,
         load_document_passages,
         load_rechunked_passages,
         normalize_retrieval,
-        retrieve_document_passages,
-        retrieve_ranked,
         retrieval_label,
     )
 
     served = normalize_retrieval(retrieval)
+    if target_mode == TARGETS_TEACHER:
+        return _apply_teacher_targets(
+            project_id, retrieval=served, train_file=train_file, val_file=val_file, output_dir=output_dir,
+        )
     source_passages = load_document_passages(project_id)
     if not source_passages:
         raise ValueError(
@@ -296,23 +343,7 @@ def apply_passage_prompts(
         load_rechunked_passages(project_id, served["chunk_size"]) if served["chunk_size"] else source_passages
     )
 
-    def _default_retrieve(question: str, config: dict[str, Any]) -> list[dict[str, Any]]:
-        try:
-            if retrieve_fn is None and not index_checked:
-                # Build / check the served index once, not per row.
-                retrieve_document_passages(project_id, question, config)
-                index_checked.append(True)
-            r = normalize_retrieval(config)
-            return list(retrieve_ranked(
-                question, index_dir=document_index_dir(project_id, r["chunk_size"]),
-                k=r["k"], reranker=r["reranker"], pool=r["pool"],
-            ))
-        except AutoRagUnavailable as exc:
-            raise ValueError(str(exc)) from exc
-
-    index_checked: list[bool] = []
-
-    fn = retrieve_fn or _default_retrieve
+    fn = retrieve_fn or served_retrieve_fn(project_id)
     target_dir = output_dir / "passage_prompts"
     files: dict[str, str | None] = {"train_file": None, "val_file": None}
     counts: dict[str, dict[str, int]] = {}
@@ -350,5 +381,55 @@ def apply_passage_prompts(
         # retrieval missed and the transform put back.
         "gold_inserted_share": round(train_counts.get("inserted", 0) / shown, 4),
     }
+    (target_dir / "report.json").write_text(json.dumps(block, indent=2), encoding="utf-8")
+    return block
+
+
+def _apply_teacher_targets(
+    project_id: int,
+    *,
+    retrieval: dict[str, Any],
+    train_file: Path,
+    val_file: Path | None,
+    output_dir: Path,
+) -> dict[str, Any]:
+    from app.services.auto_rag_service import retrieval_label
+    from app.services.teacher_passage_answers_service import TEACHER_STYLE_NOTE, load_answers, teacher_rows
+
+    answers = load_answers(project_id)
+    if not answers:
+        raise ValueError(
+            "Training on teacher answers needs the project's cached teacher answers; run the documents → Q&A "
+            "flow with answers_from_teacher first."
+        )
+    target_dir = output_dir / "passage_prompts"
+    files: dict[str, str | None] = {"train_file": None, "val_file": None}
+    counts: dict[str, dict[str, int]] = {}
+    for split, path in (("train", train_file), ("val", val_file)):
+        if path is None or not Path(path).exists():
+            continue
+        rows, split_counts = teacher_rows(_read_jsonl(Path(path)), answers, retrieval)
+        if split == "train" and not rows:
+            raise ValueError(
+                "No training row has a teacher answer for the retrieval the project serves now "
+                f"({retrieval_label(retrieval)}); re-run the teacher step."
+            )
+        out = target_dir / f"{split}.jsonl"
+        _write_jsonl(out, rows)
+        files[f"{split}_file"] = str(out)
+        counts[split] = split_counts
+    teachers = sorted({str(a.get("teacher")) for a in answers.values() if a.get("teacher")})
+    block = {
+        "applied": True,
+        "targets": TARGETS_TEACHER,
+        "teacher": teachers[0] if len(teachers) == 1 else teachers,
+        "teacher_style_note": TEACHER_STYLE_NOTE,
+        "retrieval": retrieval,
+        "retrieval_label": retrieval_label(retrieval),
+        "withheld_fraction": 0.0,
+        **files,
+        "counts": counts,
+    }
+    target_dir.mkdir(parents=True, exist_ok=True)
     (target_dir / "report.json").write_text(json.dumps(block, indent=2), encoding="utf-8")
     return block

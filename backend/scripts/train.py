@@ -760,6 +760,50 @@ def _longest_row_tokens(dataset: Any, tokenizer: Any, max_seq_length: int, *, sa
     return min(longest, int(max_seq_length)) if longest else None
 
 
+
+# Passage-prompt runs raise max_seq_length up to this to fit their longest row.
+PASSAGE_MAX_SEQ_CAP = 4096
+
+
+def _fit_passage_seq_length(config: dict[str, Any], dataset: Any, tokenizer: Any, max_seq_length: int) -> dict[str, Any] | None:
+    """Passage-prompt runs (``passage_prompts``) with
+    ``passage_prompts_fit_max_seq_length`` (default on): raise — never lower —
+    ``max_seq_length`` to the longest training row (+1 for EOS, rounded up
+    to 64), at most ``PASSAGE_MAX_SEQ_CAP``. Rows still longer are counted
+    (they lose their answer and drop out of the loss). None when it doesn't
+    apply or can't be measured."""
+    if not _coerce_bool(config.get("passage_prompts"), False):
+        return None
+    if not _coerce_bool(config.get("passage_prompts_fit_max_seq_length"), True):
+        return None
+    longest = _longest_row_tokens(dataset, tokenizer, 10**9, sample=100000)
+    if not longest:
+        return None
+    needed = ((int(longest) + 1 + 63) // 64) * 64
+    target = max(int(max_seq_length), min(PASSAGE_MAX_SEQ_CAP, needed))
+    over = 0
+    if needed > PASSAGE_MAX_SEQ_CAP:
+        try:
+            over = sum(
+                1 for text in dataset["text"]
+                if isinstance(text, str) and len(tokenizer(text, truncation=False, padding=False)["input_ids"]) + 1 > target
+            )
+        except Exception:  # noqa: BLE001
+            over = -1
+    return {
+        "from": int(max_seq_length),
+        "to": int(target),
+        "longest_row_tokens": int(longest),
+        "cap": PASSAGE_MAX_SEQ_CAP,
+        "rows_over_cap": over,
+        "reason": (
+            f"passage-prompt rows up to {longest} tokens: {max_seq_length} → {target}"
+            + (f" (cap {PASSAGE_MAX_SEQ_CAP}; {over} row(s) still longer)" if over else "")
+            if target != max_seq_length else f"longest passage-prompt row {longest} tokens fits {max_seq_length}"
+        ),
+    }
+
+
 def _resolve_use_lora(config: dict[str, Any]) -> tuple[bool, str | None]:
     """``(use_lora, reason-when-defaulted)``. An explicit ``use_lora`` always
     wins (a full fine-tune is ``use_lora: false``). Passage-prompt runs
@@ -2144,6 +2188,16 @@ def _run_training_attempt(
     # Long rows: the logits alone are batch × tokens × vocab (4 × 2048 ×
     # 152k ≈ 5 GB in fp32, several copies through the loss) — an unset batch
     # size becomes micro-batches of 1 with the same effective batch.
+    # Passage-prompt rows carry ~5 retrieved passages; tables tokenise badly
+    # and a row past max_seq_length loses its answer (26 of 323 rows on
+    # 2026-10-19). Fit the window to the longest row, bounded.
+    seq_fit = _fit_passage_seq_length(config, train_text, processor_tokenizer, max_seq_length) if packed_train is None else None
+    if seq_fit is not None:
+        runtime_environment["max_seq_length_fit"] = seq_fit
+        if seq_fit["to"] != max_seq_length:
+            max_seq_length = int(seq_fit["to"])
+            config["max_seq_length"] = max_seq_length
+            warnings.append(f"max_seq_length: {seq_fit['reason']}")
     longest_row_tokens = (
         _longest_row_tokens(train_text, processor_tokenizer, max_seq_length)
         if train_text is not None and packed_train is None else None
