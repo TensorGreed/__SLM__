@@ -36,6 +36,8 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
     const [hidden, setHidden] = useState(false);
     const [starting, setStarting] = useState(false);
     const [reviewFirst, setReviewFirst] = useState(false);
+    /** Train on the served retrieval prompt (the passages in front of the question). */
+    const [withPassages, setWithPassages] = useState(false);
     /** The generation model: null = the first reachable local one, or a
      *  `cloud:<provider>:<model>` pin using the project's saved key. */
     const [backend, setBackend] = useState<string | null>(null);
@@ -82,6 +84,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                 train: !reviewFirst,
                 reuseExisting,
                 trainIfRetrievalReady,
+                trainWithPassages: withPassages,
                 // "Train anyway" answers a gate that already ran on these rows;
                 // re-running it repeats the whole retrieval sweep (~an hour).
                 ...(trainIfRetrievalReady ? { passagesCheck: false } : {}),
@@ -89,7 +92,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
             });
             toast.info(
                 reuseExisting
-                    ? `Training the generated pairs again — track it in the bell (job #${job.id}).`
+                    ? `Training the generated pairs again${withPassages ? ', reading your passages' : ''} — track it in the bell (job #${job.id}).`
                     : `Building the Q&A assistant — track it in the bell (job #${job.id}).`,
                 5000,
             );
@@ -157,7 +160,9 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                         ? `, split ${result.split.train ?? '?'} / ${result.split.val ?? '?'} / ${result.split.test ?? '?'} (train / val / test)`
                         : ''}
                     {result.experiment_id != null
-                        ? `. Training run #${result.experiment_id} started — the lift check follows on Results → Verdict.`
+                        ? result.train_with_passages
+                            ? `. Training run #${result.experiment_id} started, trained to answer from your passages — its check (fine-tuned + passages vs base + the same passages) follows on Results → Verdict.`
+                            : `. Training run #${result.experiment_id} started — the lift check follows on Results → Verdict.`
                         : result.passages_gate?.status === 'retrieval_ready'
                             ? '.'
                             : result.stopped_reason
@@ -267,6 +272,10 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                         <li>Otherwise a training run with your current defaults.</li>
                         <li>The automatic lift check scores it against the base model.</li>
                     </ul>
+                    <label className="documents-qa-flow__option" title="Each training pair's prompt becomes what serving sends: the passages your retrieval finds for the question, then the question. Some rows have the answer passage removed and learn to say the passages don't say. The run is then scored with the passages against the base model + the same passages.">
+                        <input type="checkbox" checked={withPassages} onChange={(e) => setWithPassages(e.target.checked)} data-testid="documents-qa-flow-with-passages" />
+                        {' '}Train the model to answer from your passages
+                    </label>
                     <label className="documents-qa-flow__option">
                         <input type="checkbox" checked={reviewFirst} onChange={(e) => setReviewFirst(e.target.checked)} data-testid="documents-qa-flow-review-first" />
                         {' '}Stop after generating so I can review the rows before training
@@ -285,11 +294,17 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                     </p>
                 </>
             )}
+            {!inFlight && (result || generatedBefore) && (result?.training_pairs ?? preview.already_generated) > 0 && (
+                <label className="documents-qa-flow__option" title="Each training pair's prompt becomes what serving sends: the passages your retrieval finds for the question, then the question. Some rows have the answer passage removed and learn to say the passages don't say. The run is then scored with the passages against the base model + the same passages.">
+                    <input type="checkbox" checked={withPassages} onChange={(e) => setWithPassages(e.target.checked)} data-testid="documents-qa-flow-with-passages" />
+                    {' '}Train the model to answer from your passages
+                </label>
+            )}
             {!inFlight && (result || generatedBefore) && (
                 <div className="documents-qa-flow__actions">
                     {(result?.training_pairs ?? preview.already_generated) > 0 && (
                         <button type="button" className="btn btn-primary" onClick={() => void start(true)} disabled={starting} data-testid="documents-qa-flow-retrain">
-                            {starting ? 'Starting…' : 'Train again on the current base model'}
+                            {starting ? 'Starting…' : withPassages ? 'Train again on the current base model, reading your passages' : 'Train again on the current base model'}
                         </button>
                     )}
                     {preview.eligible && (

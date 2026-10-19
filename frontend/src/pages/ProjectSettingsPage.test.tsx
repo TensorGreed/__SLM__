@@ -88,6 +88,16 @@ describe('ProjectSettingsPage', () => {
         expect(setActiveProjectMock).toHaveBeenCalledWith({ id: 31, name: 'Tagger', beginner_mode: false });
     });
 
+    it('duplicates the project onto another base model and opens the copy', async () => {
+        const user = userEvent.setup();
+        apiMock.post.mockResolvedValue({ data: { id: 77, name: 'Tagger (copy)' } });
+        renderSettings();
+        await user.type(screen.getByTestId('settings-duplicate-model'), 'org/small');
+        await user.click(screen.getByTestId('settings-duplicate-button'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/31/duplicate', { base_model_name: 'org/small' }));
+        await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/project/77'));
+    });
+
     it('holds the long tail as sections that load only when opened; ?open= opens one', async () => {
         const user = userEvent.setup();
         renderSettings();

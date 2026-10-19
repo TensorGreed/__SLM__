@@ -59,6 +59,8 @@ export default function ProjectSettingsPage() {
     const setThemePreference = useThemeStore((s) => s.setPreference);
     const [savingBeginner, setSavingBeginner] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [copyModel, setCopyModel] = useState('');
+    const [duplicating, setDuplicating] = useState(false);
     const open = searchParams.get('open');
     const openSection = isSettingsSection(open) ? open : null;
 
@@ -73,6 +75,22 @@ export default function ProjectSettingsPage() {
             setError(typeof detail === 'string' ? detail : 'Could not save the setting.');
         } finally {
             setSavingBeginner(false);
+        }
+    };
+
+    // A copy keeps the data and the split; runs and comparisons stay here,
+    // so trying another base model never replaces this project's bar.
+    const duplicate = async () => {
+        setDuplicating(true);
+        setError(null);
+        try {
+            const res = await api.post(`/projects/${projectId}/duplicate`, copyModel.trim() ? { base_model_name: copyModel.trim() } : {});
+            navigate(`/project/${res.data.id}`);
+        } catch (err) {
+            const detail = (err as { response?: { data?: { detail?: string; message?: string } } })?.response?.data;
+            setError(detail?.message ?? (typeof detail?.detail === 'string' ? detail.detail : 'Could not duplicate the project.'));
+        } finally {
+            setDuplicating(false);
         }
     };
 
@@ -149,6 +167,33 @@ export default function ProjectSettingsPage() {
                         <small>A brewslm.yaml of this project's configuration.</small>
                     </span>
                     <ManifestExportButton projectId={projectId} projectName={project.name} size="sm" />
+                </div>
+                <div className="settings-row settings-row--actions" data-testid="settings-duplicate">
+                    <span>
+                        <strong>Duplicate this project</strong>
+                        <small>
+                            Same documents, rows, answer key and split (the test examples stay identical), optionally on
+                            another base model. Runs and comparisons stay here, so this project's results keep their bar.
+                        </small>
+                        <input
+                            type="text"
+                            className="input"
+                            placeholder={`Base model (default ${project.base_model_name || 'the same'})`}
+                            value={copyModel}
+                            onChange={(e) => setCopyModel(e.target.value)}
+                            aria-label="Base model for the copy"
+                            data-testid="settings-duplicate-model"
+                        />
+                    </span>
+                    <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => { void duplicate(); }}
+                        disabled={duplicating}
+                        data-testid="settings-duplicate-button"
+                    >
+                        {duplicating ? 'Copying…' : 'Duplicate'}
+                    </button>
                 </div>
             </section>
 

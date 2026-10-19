@@ -241,6 +241,16 @@ function jobOutcomeSummaryCore(job: Job): string | null {
                 .map(([label, b]) => `span F1 ${(b as { f1: number }).f1.toFixed(2)} on the ${label}`);
             return parts.length ? parts.join(' · ') : 'span evaluation done';
         }
+        if (r.kind === 'passage_reader_eval') {
+            // Trained to answer from the passages: both arms WITH the same passages.
+            const base = (r.base_with_passages || {}) as { score?: number };
+            const ft = (r.finetune_with_passages || {}) as { score?: number };
+            const ev = (r.evidence || {}) as { verdict?: string; better?: number; worse?: number };
+            if (typeof base.score !== 'number' || typeof ft.score !== 'number') return 'passages check done';
+            const verb = ev.verdict === 'better' ? 'better' : ev.verdict === 'worse' ? 'worse' : ev.verdict === 'too_few_rows' ? 'too few rows to tell' : 'within noise';
+            const counts = typeof ev.better === 'number' && typeof ev.worse === 'number' ? ` · ${ev.better} better, ${ev.worse} worse` : '';
+            return `judge score with passages: base ${base.score.toFixed(3)} → fine-tuned ${ft.score.toFixed(3)} (${verb}${counts})`;
+        }
         if (r.kind === 'head_eval') {
             // Classifier head on an encoder: scored alone (no zero-shot base model to compare with).
             const acc = typeof r.accuracy === 'number' ? `accuracy ${r.accuracy.toFixed(2)}` : null;

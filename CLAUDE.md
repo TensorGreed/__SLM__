@@ -1945,6 +1945,29 @@ runs real CPU inference). ~4 min locally.
   action) via `_retrieval_ready_nudge` (quiet once a run exists / rag_first);
   `build_eval_summary` for an untrained non-RAG project returns the
   passages summary with `pretraining_gate` + a "nothing trained yet" message.
+- **Train with retrieved passages (RAFT)** (`services/passage_prompts_service.py`,
+  `TrainingConfig.passage_prompts` + `passage_prompts_withheld_fraction` 0.2; flow
+  `train_with_passages`, card checkbox "Train the model to answer from your passages"):
+  `training_service._maybe_apply_passage_prompts` (after curriculum) rewrites the run's
+  train/val into `<output_dir>/passage_prompts/` — the project's served retrieval over the
+  DOCUMENT passages (`auto_rag_service.retrieve_document_passages`, k+3 hits) becomes the row's
+  `system_prompt` = `document_preamble(hits)` (the one string serving + harness use); answer
+  passage (`answer_support` ≥ 0.7) cited `[n]`, put back when missed (`inserted`); withheld rows
+  → `NOT_IN_PASSAGES_ANSWER`. `train.py` carries `system_prompt` through `to_text_record` (only
+  when the column exists) and `_rewrap_prompt_completion_row` renders it as the system message.
+  Lift check (`passage_reader_eval_service.run_passage_reader_evaluation`, routed from
+  `run_post_training_lift_eval` by `is_passage_trained`): base + passages (cached
+  comparison_base_documents.json reused only when `base_comparison_usable`: judged, test, same
+  base model + retrieval + row count) vs harness `run_project_comparison(experiment_id=…,
+  corpus="documents", split="test")` → `auto_rag/passage_reader/<run>.json` (paired judge
+  evidence, both arms' retrieval splits); summary `kind="passage_reader"`; verdict `arms`
+  `base_with_passages` vs `finetune_with_passages`. Seed groups refuse. Tests `test_passage_prompts.py`.
+  **Duplicate project** (`project_duplicate_service`, `POST /projects/{id}/duplicate`
+  {name?, base_model_name?}, Settings → "Duplicate this project"): raw/cleaned/gold/prepared/
+  synthetic + datasets + documents, never runs / evals / auto_rag. Use it to try another base
+  model — `passages_vs_finetune` returns `different_base_model` when the bar's base ≠ the run's
+  (2026-10-19: switching 33 to 1.5B overwrote its 3B bar), and the comparison GET flags
+  `base_model_mismatch`.
 - **External benchmarks (G-B1)** (`services/external_benchmark_service.py`,
   `api/benchmarks.py`, `DatasetType.BENCHMARK`, migration 0049): any
   dataset-import locator (`hf:<id>[:<split>[:<revision>]]`, or a file under

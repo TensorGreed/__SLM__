@@ -780,3 +780,17 @@ describe('NotificationBell cloud spend line', () => {
         expect(cloudSpendText({ tokens: 0 })).toBeNull();
     });
 });
+
+describe('NotificationBell passage-trained lift check', () => {
+    it('names both with-passages arms and the row evidence', () => {
+        const job = jobFixture({
+            kind: 'post_training_lift_eval', status: 'succeeded',
+            result: {
+                kind: 'passage_reader_eval',
+                base_with_passages: { score: 0.585 }, finetune_with_passages: { score: 0.7 },
+                evidence: { verdict: 'within_noise', better: 6, worse: 3 },
+            },
+        });
+        expect(jobOutcomeSummary(job as never)).toBe('judge score with passages: base 0.585 → fine-tuned 0.700 (within noise · 6 better, 3 worse)');
+    });
+});

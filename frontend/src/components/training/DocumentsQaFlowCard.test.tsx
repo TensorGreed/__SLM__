@@ -88,6 +88,19 @@ describe('DocumentsQaFlowCard', () => {
         expect(screen.getByTestId('documents-qa-flow-rerun')).toHaveTextContent('Run again (write new pairs)');
     });
 
+    it('trains the generated pairs again to answer from the passages', async () => {
+        apiMock.get.mockResolvedValue({ data: { ...ELIGIBLE, already_generated: 120 } });
+        apiMock.post.mockResolvedValue({ data: { id: 13 } });
+        const user = userEvent.setup();
+        render(<DocumentsQaFlowCard projectId={1} />);
+        await user.click(await screen.findByTestId('documents-qa-flow-with-passages'));
+        expect(screen.getByTestId('documents-qa-flow-retrain')).toHaveTextContent('reading your passages');
+        await user.click(screen.getByTestId('documents-qa-flow-retrain'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith('/projects/1/flows/documents-to-qa', expect.objectContaining({ reuse_existing: true, train_with_passages: true }));
+        });
+    });
+
     it('shows progress while the Job runs and the result when it finishes', async () => {
         apiMock.get.mockResolvedValue({ data: ELIGIBLE });
         jobsState.jobs = [{ id: 11, kind: 'documents_qa_flow', project_id: 1, status: 'running', progress_message: 'Writing questions for passage 12/60 (ollama:qwen2.5)' }];

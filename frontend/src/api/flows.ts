@@ -51,6 +51,8 @@ export interface DocumentsQaFlowResult {
     experiment_id: number | null;
     stopped_reason: string | null;
     warnings: string[];
+    /** The run was trained to answer from the retrieved passages. */
+    train_with_passages?: boolean;
     /** The pre-training gate: what the base model + document passages got
      *  right on the test examples, judged, before any training. */
     passages_gate?: {
@@ -88,6 +90,10 @@ export async function startDocumentsQaFlow(
         reuseExisting?: boolean;
         passagesCheck?: boolean;
         trainIfRetrievalReady?: boolean;
+        /** Train the model to answer FROM the retrieved passages (the served
+         *  retrieval prompt); its lift check scores it with them against the
+         *  base model + the same passages. */
+        trainWithPassages?: boolean;
         /** `cloud:<provider>:<model>` (the project's saved key) or a local backend name. */
         backend?: string | null;
     } = {},
@@ -100,6 +106,7 @@ export async function startDocumentsQaFlow(
     if (options.reuseExisting) body.reuse_existing = true;
     if (options.passagesCheck != null) body.passages_check = options.passagesCheck;
     if (options.trainIfRetrievalReady) body.train_if_retrieval_ready = true;
+    if (options.trainWithPassages) body.train_with_passages = true;
     const res = await api.post<Job>(`/projects/${projectId}/flows/documents-to-qa`, body);
     return res.data;
 }

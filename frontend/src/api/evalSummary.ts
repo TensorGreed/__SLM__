@@ -172,7 +172,18 @@ export interface EvalSummary {
     /** 'rag_passages': a RAG-first project — the "run" is the base model +
      *  document-passage retrieval, scored by the judge against the base
      *  model alone (no training). Absent for trained runs. */
-    kind?: 'rag_passages' | 'span_eval' | 'head_eval';
+    kind?: 'rag_passages' | 'span_eval' | 'head_eval' | 'passage_reader';
+    /** kind 'passage_reader': a run trained to answer from the retrieved
+     *  passages, scored WITH them against the base model + the same passages
+     *  (same rows, judge and retrieval). The headline's baseline is the base
+     *  + passages arm. */
+    passage_reader?: {
+        comparable: boolean | null;
+        base_reused?: boolean | null;
+        base_with_passages: { score: number | null; counts: Record<string, number>; retrieval?: RetrievalSplit | null };
+        finetune_with_passages: { score: number | null; counts: Record<string, number>; retrieval?: RetrievalSplit | null };
+        finetune_without_passages: { score: number | null; counts: Record<string, number> };
+    } | null;
     /** kind 'head_eval': a classifier head on an encoder, scored on its own. */
     head?: { accuracy: number | null; macro_f1: number | null; rows: number | null; per_class?: Record<string, { f1?: number }> };
     /** span_eval: scores on the answer key written by a second model (the

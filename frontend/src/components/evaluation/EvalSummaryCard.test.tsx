@@ -231,6 +231,35 @@ describe('EvalSummaryCard', () => {
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/21/auto-rag/comparison/run', null, { params: { model: 'base', corpus: 'documents', split: 'test' } }));
     });
 
+    it('reads a passage-trained run against the base model + the same passages', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 35, experiment_id: 150, kind: 'passage_reader', verdict: 'better', message: null,
+                headline: { metric_id: 'judge_correct', baseline_value: 0.59, trained_value: 0.76, absolute_delta: 0.17, relative_delta_pct: 28.8, direction: 'improved' },
+                evidence: { n: 41, better: 9, worse: 2, same: 30, mean_diff: 0.17, ci_low: 0.04, ci_high: 0.3, verdict: 'better', metric_id: 'judge_correct' },
+                baseline: { experiment_id: null, base_model: 'Qwen/Qwen2.5-1.5B-Instruct', arm: 'base_with_passages' },
+                trained: { experiment_id: 150, experiment_name: 'reads your passages', arm: 'finetune_with_passages' },
+                eval_type: 'passage_reader', evaluated_samples: 41, split: 'test',
+                judge: { judge: 'ollama:gemma4:12b', score: 0.76, judged: 41, unjudged: 0, correct: 30, partial: 2, wrong: 9 },
+                failures: [], failed_count: 11,
+                retrieval: { k: 5, reranker: 'BAAI/bge-reranker-v2-m3', pool: 50, chunk_size: 600 },
+                passage_reader: {
+                    comparable: true,
+                    base_with_passages: { score: 0.59, counts: { correct: 23, partial: 2, wrong: 16 } },
+                    finetune_with_passages: { score: 0.76, counts: { correct: 30, partial: 2, wrong: 9 } },
+                    finetune_without_passages: { score: 0.1, counts: { correct: 3, partial: 2, wrong: 36 } },
+                },
+            },
+        });
+        render(<EvalSummaryCard projectId={35} experimentId={150} />);
+        await screen.findByTestId('eval-summary');
+        expect(screen.getByText('Better than the base model + your passages')).toBeInTheDocument();
+        expect(screen.getByTestId('eval-summary-headline')).toHaveTextContent('0.590 (base + your passages) → 0.760 (fine-tuned + the same passages)');
+        expect(screen.getByTestId('eval-summary-reader-arms')).toHaveTextContent('Base + passages: 23 correct, 2 partial, 16 wrong. Fine-tuned + passages: 30 correct, 2 partial, 9 wrong. Without passages the fine-tune scores 0.100.');
+        expect(screen.getByTestId('eval-summary-retrieval')).toHaveTextContent('Retrieval served: top-5 + reranker bge-reranker-v2-m3');
+        expect(screen.queryByTestId('eval-summary-check-seeds')).not.toBeInTheDocument();
+    });
+
     it('explains a noise-checked sweep: kept or switched, with each arm vs the current retrieval', async () => {
         apiMock.get.mockResolvedValue({
             data: {

@@ -206,6 +206,12 @@ function titleFor(
     return base;
 }
 
+/** "28 correct, 4 partial, 9 wrong" from a judge counts block. */
+function countsText(counts: Record<string, number> | null | undefined): string {
+    const c = counts || {};
+    return `${c.correct ?? 0} correct, ${c.partial ?? 0} partial, ${c.wrong ?? 0} wrong`;
+}
+
 function fmt(value: number): string {
     if (Math.abs(value) >= 10) return value.toFixed(1);
     return value.toFixed(3);
@@ -287,9 +293,15 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
 
     const evidence = summary.evidence ?? null;
     const seedEvidence = summary.seed_evidence ?? null;
-    const verdict = titleFor(summary.verdict, evidence, seedEvidence);
+    const plainVerdict = titleFor(summary.verdict, evidence, seedEvidence);
+    // A passage-trained run's bar is the base model WITH the same passages.
+    const verdict = summary.kind === 'passage_reader'
+        ? { ...plainVerdict, title: plainVerdict.title.replace(/the base model/g, 'the base model + your passages') }
+        : plainVerdict;
     const unit = metricUnit(seedEvidence?.metric_id ?? evidence?.metric_id ?? summary.headline?.metric_id);
     const isPassages = summary.kind === 'rag_passages';
+    const isReader = summary.kind === 'passage_reader';
+    const reader = isReader ? summary.passage_reader ?? null : null;
     const isSpan = summary.kind === 'span_eval';
     const isHead = summary.kind === 'head_eval';
     const note = evidence ? evidenceNote(evidence, { trained: !seedEvidence && !isPassages, unit }) : null;
@@ -300,7 +312,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     const isSeedGroup = (summary.n_seeds ?? 1) > 1;
     // The multi-seed option: a single evaluated run can be re-trained with
     // 3 seeds so the verdict also covers run-to-run variance.
-    const canCheckSeeds = runId != null && !isSeedGroup
+    const canCheckSeeds = runId != null && !isSeedGroup && !isReader
         && (summary.verdict === 'better' || summary.verdict === 'worse' || summary.verdict === 'same');
 
     const checkSeeds = async (sourceExperimentId: number) => {
@@ -344,6 +356,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                             {isSpan ? ' · token classification, scored on its own (its base is an untrained head)' : ''}
                             {isHead ? ' · classifier head on an encoder, scored on its own (no zero-shot base model to compare)' : ''}
                             {!isSpan && summary.evaluated_samples ? ` · ${summary.evaluated_samples} test examples` : ''}
+                            {isReader ? ' · trained to answer from your passages, so both are scored WITH the same retrieved passages' : ''}
                         </p>
                     )}
                 </div>
@@ -421,9 +434,9 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
 
             {head && (
                 <p className="eval-summary__metric" data-testid="eval-summary-headline">
-                    <code>{metricDisplayName(head.metric_id)}</code>: {fmt(head.baseline_value)} (base) → <strong>{fmt(head.trained_value)}</strong>
+                    <code>{metricDisplayName(head.metric_id)}</code>: {fmt(head.baseline_value)} ({isReader ? 'base + your passages' : 'base'}) → <strong>{fmt(head.trained_value)}</strong>
                     {head.trained_std != null ? ` ± ${fmt(head.trained_std)}` : ''}{' '}
-                    ({isPassages ? 'base + your passages' : isSeedGroup ? `fine-tuned, mean of ${head.n_seeds ?? summary.n_seeds} seeds` : 'fine-tuned'})
+                    ({isPassages ? 'base + your passages' : isReader ? 'fine-tuned + the same passages' : isSeedGroup ? `fine-tuned, mean of ${head.n_seeds ?? summary.n_seeds} seeds` : 'fine-tuned'})
                     <span className={`eval-summary__delta eval-summary__delta--${head.direction}`}>
                         {' '}{head.absolute_delta > 0 ? '+' : ''}{fmt(head.absolute_delta)}
                         {head.relative_delta_pct != null ? ` (${head.relative_delta_pct > 0 ? '+' : ''}${head.relative_delta_pct}%)` : ''}
@@ -469,7 +482,19 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     <span>{note.text}</span>
                 </p>
             )}
-            {isPassages && summary.retrieval && (
+            {reader && (
+                <p className="eval-summary__judge" data-testid="eval-summary-reader-arms">
+                    Base + passages: {countsText(reader.base_with_passages.counts)}
+                    {reader.base_with_passages.retrieval ? ` (${retrievalSplitText(reader.base_with_passages.retrieval)})` : ''}.
+                    {' '}Fine-tuned + passages: {countsText(reader.finetune_with_passages.counts)}
+                    {reader.finetune_with_passages.retrieval ? ` (${retrievalSplitText(reader.finetune_with_passages.retrieval)})` : ''}.
+                    {reader.finetune_without_passages.score != null
+                        ? ` Without passages the fine-tune scores ${fmt(reader.finetune_without_passages.score)}.`
+                        : ''}
+                    {reader.comparable === false ? ' The two arms differ in judge, retrieval or rows — not a like-for-like comparison.' : ''}
+                </p>
+            )}
+            {(isPassages || isReader) && summary.retrieval && (
                 <p className="eval-summary__judge" data-testid="eval-summary-retrieval">
                     Retrieval served: {retrievalLabel(summary.retrieval)}
                     {summary.retrieval_decision
