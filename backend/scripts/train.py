@@ -291,6 +291,23 @@ def _qa_to_chat_text(question: str, answer: str, template_name: str) -> str:
     return f"User: {q}\nAssistant: {a}"
 
 
+def _load_jsonl_splits(load_dataset: Any, train_file: Any, val_file: Any = None) -> dict[str, Any]:
+    """Load the train and validation JSONL files in SEPARATE ``load_dataset``
+    calls. One call over ``{"train": …, "validation": …}`` casts both files to
+    the first file's Arrow schema and dies with ``CastError: column names
+    don't match`` when the files carry different columns — which they do
+    since the validation split became eval-only answer-key rows (no ``id`` /
+    ``synth_*`` / ``status`` columns next to synthetic training rows). The
+    row-level adapters only read the fields they need, so per-file schemas
+    are fine."""
+    splits: dict[str, Any] = {"train": load_dataset("json", data_files={"train": str(train_file)}, split="train")}
+    if val_file is not None:
+        splits["validation"] = load_dataset(
+            "json", data_files={"validation": str(val_file)}, split="validation"
+        )
+    return splits
+
+
 def _build_data_adapter_contract(task_type: str, chat_template: str) -> dict[str, Any]:
     task = task_type.strip().lower()
     if task not in SUPPORTED_TASK_TYPES:
@@ -1889,13 +1906,10 @@ def _run_training_attempt(
     data_contract = _build_data_adapter_contract(normalized_task_type, chat_template)
 
     # Load JSONL datasets.
-    data_files: dict[str, str] = {"train": str(train_file)}
-    if val_file is not None:
-        data_files["validation"] = str(val_file)
-    raw_ds = load_dataset("json", data_files=data_files)
+    raw_ds = _load_jsonl_splits(load_dataset, train_file, val_file)
 
     train_ds = raw_ds["train"]
-    eval_ds = raw_ds["validation"] if "validation" in raw_ds else None
+    eval_ds = raw_ds.get("validation")
     if max_train_samples > 0:
         train_ds = train_ds.select(range(min(len(train_ds), max_train_samples)))
     if eval_ds is not None and max_eval_samples > 0:

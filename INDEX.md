@@ -993,6 +993,7 @@ session-start guidance.
 - `backend/tests/test_theme5_epic1_video_flow_cli.py` — Theme 5 Epic 1 — brewslm CLI gap-fill commands for the 11-video flow.
 - `backend/tests/test_tokenization_analyze_splits.py` — V3 of the ML-native visualisations arc — POST /tokenization/analyze-splits.
 - `backend/tests/test_train_script_standalone.py` — ``scripts/train.py`` is launched as a standalone script by the training
+- `backend/tests/test_train_split_loading.py` — ``scripts/train.py`` loads the train and validation JSONL files in separate
 - `backend/tests/test_train_token_classification.py` — Token classification for span extraction — the pure parts:
 - `backend/tests/test_trainability_forecast_service.py` — Tests for the trainability forecast service (USER-SUCCESS Epic 1).
 - `backend/tests/test_training_cancel_external.py` — Cancelling an external training run stops its process.
