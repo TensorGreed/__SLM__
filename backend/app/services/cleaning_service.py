@@ -18,6 +18,7 @@ from app.config import settings
 from app.utils.tabular_io import is_tabular, load_rows, read_text_file
 from app.database import async_session_factory
 from app.models.dataset import Dataset, DatasetType, RawDocument
+from app.services import page_furniture
 
 
 # ── PII / Secret Patterns ──────────────────────────────────────────────
@@ -523,6 +524,10 @@ async def _clean_structured_document(
 
 # ── Main Cleaning Pipeline ─────────────────────────────────────────────
 
+# Repeated page headers / footers / page numbers are dropped unless the
+# caller turns it off (a span tagger that must read page layout does).
+DEFAULT_REMOVE_PAGE_FURNITURE = True
+
 async def clean_document(
     db: AsyncSession,
     project_id: int,
@@ -531,8 +536,15 @@ async def clean_document(
     chunk_overlap: int = 100,
     redact: bool = True,
     redact_toxic: bool = False,
+    remove_page_furniture: bool | None = None,
 ) -> dict:
-    """Run full cleaning pipeline on a document."""
+    """Run full cleaning pipeline on a document.
+
+    ``remove_page_furniture`` drops repeated page headers / footers / page
+    numbers (``services/page_furniture``) before chunking — documents with
+    page breaks only (PDFs); row files are never touched. ``None`` keeps
+    what this document was last cleaned with, else
+    :data:`DEFAULT_REMOVE_PAGE_FURNITURE` (on)."""
     result = await db.execute(
         select(RawDocument)
         .join(Dataset, Dataset.id == RawDocument.dataset_id)
@@ -574,8 +586,27 @@ async def clean_document(
     if not raw_text.strip():
         raise ValueError("Document extracted text is empty. Re-process or re-import the document.")
 
+    # Step 0: page furniture (repeated headers / footers / page numbers),
+    # found per page — so before anything joins the pages.
+    if remove_page_furniture is None:
+        previous = (doc.metadata_ or {}).get("page_furniture")
+        remove_page_furniture = (
+            bool(previous.get("enabled")) if isinstance(previous, dict) and "enabled" in previous
+            else DEFAULT_REMOVE_PAGE_FURNITURE
+        )
+    furniture: dict = {"enabled": bool(remove_page_furniture), "furniture_lines_removed": 0}
+    if page_furniture.has_page_breaks(raw_text):
+        if remove_page_furniture:
+            text, report = page_furniture.remove_page_furniture(raw_text)
+            furniture.update(report.as_dict())
+        else:
+            text = page_furniture.join_pages(page_furniture.split_pages(raw_text))
+            furniture["pages"] = raw_text.count("\f") + 1
+    else:
+        text = raw_text
+
     # Step 1: Remove boilerplate
-    cleaned = remove_boilerplate(raw_text)
+    cleaned = remove_boilerplate(text)
 
     # Step 2: PII detection
     pii_findings = detect_pii(cleaned)
@@ -634,6 +665,7 @@ async def clean_document(
         "original_chars": len(raw_text),
         "cleaned_chars": len(cleaned),
         "chunk_count": len(chunks),
+        "page_furniture": furniture,
     }
     await db.flush()
     await db.refresh(doc)
@@ -647,6 +679,8 @@ async def clean_document(
         "original_chars": len(raw_text),
         "cleaned_chars": len(cleaned),
         "text_hash": text_hash,
+        "furniture_lines_removed": int(furniture.get("furniture_lines_removed") or 0),
+        "page_furniture": furniture,
     }
 
 
@@ -681,6 +715,7 @@ class CleaningTask:
     chunk_overlap: int
     redact_pii: bool
     redact_toxicity: bool
+    remove_page_furniture: bool | None = None
 
     status: str = "pending"  # pending | running | completed | failed
     completed: int = 0
@@ -769,6 +804,7 @@ async def _run_cleaning_task(task: CleaningTask) -> None:
                         task.chunk_overlap,
                         task.redact_pii,
                         task.redact_toxicity,
+                        remove_page_furniture=task.remove_page_furniture,
                     )
                     await db.commit()
                     task.results.append(result)
@@ -798,6 +834,7 @@ def start_clean_batch_task(
     chunk_overlap: int,
     redact_pii: bool,
     redact_toxicity: bool,
+    remove_page_furniture: bool | None = None,
 ) -> CleaningTask:
     """Register a new cleaning task + start it on the event loop.
 
@@ -815,6 +852,7 @@ def start_clean_batch_task(
         chunk_overlap=chunk_overlap,
         redact_pii=redact_pii,
         redact_toxicity=redact_toxicity,
+        remove_page_furniture=remove_page_furniture,
     )
     with _CLEANING_TASKS_LOCK:
         _CLEANING_TASKS[task.task_id] = task

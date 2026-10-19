@@ -209,6 +209,7 @@ session-start guidance.
 - `backend/app/services/newbie_autopilot_service.py` — Newbie autopilot intent mapping for zero-knowledge training UX.
 - `backend/app/services/nl2pipeline_service.py` — Natural Language to Pipeline (Magic Create) service.
 - `backend/app/services/pack_generation_service.py` — Auto-generate a starter evaluation pack from blueprint + dataset + adapter.
+- `backend/app/services/page_furniture.py` — Page furniture: repeated page headers / footers / page numbers.
 - `backend/app/services/paired_comparison_stats.py` — Is a before/after difference on the same rows more than noise?
 - `backend/app/services/passage_rag_verdict_service.py` — Did retrieval over the documents beat fine-tuning? (documents projects)
 - `backend/app/services/pipeline_recipe_service.py` — End-to-end pipeline recipe (blueprint) service.
@@ -801,6 +802,7 @@ session-start guidance.
 - `backend/tests/test_multi_seed_schema.py` — Tests for Quality-Lift phase 1, slice 1 — multi-seed schema foundation.
 - `backend/tests/test_multi_seed_variance_nudge.py` — Quality-Lift phase 7 slice 3 — Coach Mode multi-seed variance nudge.
 - `backend/tests/test_nl2pipeline.py` — Tests for natural language to pipeline recipe creation.
+- `backend/tests/test_page_furniture.py` — Page furniture: repeated page headers / footers / page numbers are dropped
 - `backend/tests/test_paired_comparison_stats.py` — Paired before/after evidence: row counts + "is it more than noise?".
 - `backend/tests/test_pareto_frontier.py` — Unit tests for the model-sweep Pareto frontier annotation (Epic C).
 - `backend/tests/test_passage_rag_verdict.py` — Did retrieval over the documents beat fine-tuning? (passage_rag_verdict_service)
@@ -1015,6 +1017,7 @@ session-start guidance.
 - `frontend/src/components/dashboard/DemoProjectTiles.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/AnswerKeyReviewPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/AutofixPreviewModal.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/CleaningPanel.test.tsx` — Data → Prepare: the "Remove repeated page headers and footers" option is
 - `frontend/src/components/data/ComplianceBundlePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataHealthReportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataPanels.stepper.test.tsx` — Epic U phase U4: each data panel in ``layout="stepper"`` keeps its short

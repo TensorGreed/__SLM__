@@ -35,6 +35,27 @@ interface CleaningResult {
     chunk_count: number;
     original_chars: number;
     cleaned_chars: number;
+    /** Repeated page headers / footers / page numbers dropped (documents with pages). */
+    furniture_lines_removed?: number;
+    page_furniture?: {
+        enabled?: boolean;
+        pages?: number;
+        furniture_lines_removed?: number;
+        furniture_segments_trimmed?: number;
+        examples?: string[];
+    };
+}
+
+/** One line on what page-furniture removal did to a cleaned document. */
+function furnitureText(r: CleaningResult): string | null {
+    const pf = r.page_furniture;
+    if (!pf || !pf.pages || pf.pages < 2) return null;
+    if (!pf.enabled) return `${pf.pages} pages · headers and footers kept`;
+    const lines = pf.furniture_lines_removed ?? r.furniture_lines_removed ?? 0;
+    const trimmed = pf.furniture_segments_trimmed ?? 0;
+    const parts = [`${lines.toLocaleString()} header/footer line${lines === 1 ? '' : 's'} removed`];
+    if (trimmed > 0) parts.push(`${trimmed.toLocaleString()} trimmed off body lines`);
+    return `${pf.pages} pages · ${parts.join(' · ')}`;
 }
 
 interface CleaningBatchError {
@@ -94,6 +115,7 @@ export default function CleaningPanel({ projectId, onNextStep , extraDetails = [
     const [chunkSize, setChunkSize] = useState(1000);
     const [redactPii, setRedactPii] = useState(true);
     const [redactToxicity, setRedactToxicity] = useState(false);
+    const [removePageFurniture, setRemovePageFurniture] = useState(true);
     const [cleaningResults, setCleaningResults] = useState<CleaningResult[]>([]);
     const [cleaningErrors, setCleaningErrors] = useState<CleaningBatchError[]>([]);
     const [isCleaning, setIsCleaning] = useState(false);
@@ -142,6 +164,7 @@ export default function CleaningPanel({ projectId, onNextStep , extraDetails = [
                     chunk_size: chunkSize,
                     redact_pii: redactPii,
                     redact_toxicity: redactToxicity,
+                    remove_page_furniture: removePageFurniture,
                 },
             );
             const taskId = start.data.task_id;
@@ -224,6 +247,21 @@ export default function CleaningPanel({ projectId, onNextStep , extraDetails = [
                             {' '}Mask Toxic Language
                         </label>
                     </div>
+                    <div className="form-group">
+                        <label className="form-label">
+                            <input
+                                type="checkbox"
+                                data-testid="cleaning-remove-page-furniture"
+                                checked={removePageFurniture}
+                                onChange={e => setRemovePageFurniture(e.target.checked)}
+                            />
+                            {' '}Remove repeated page headers and footers
+                        </label>
+                        <div className="form-hint">
+                            Lines that repeat at the top or bottom of most pages of a PDF, and page numbers.
+                            Turn off to keep the page layout (e.g. for a tagger that must read letterheads).
+                        </div>
+                    </div>
                 </div>
                 <button className="btn btn-primary" onClick={handleCleanAll} disabled={!documents.length}>
                     {isCleaning ? 'Cleaning...' : 'Clean All Documents'}
@@ -258,7 +296,20 @@ export default function CleaningPanel({ projectId, onNextStep , extraDetails = [
                                     <div><strong>{r.pii_findings?.length || 0}</strong> PII found</div>
                                     <div><strong>{r.toxicity_findings?.length || 0}</strong> toxicity spans</div>
                                     <div>{r.original_chars?.toLocaleString()} → {r.cleaned_chars?.toLocaleString()} chars</div>
+                                    {furnitureText(r) && (
+                                        <div data-testid={`cleaning-furniture-${r.document_id}`}>{furnitureText(r)}</div>
+                                    )}
                                 </div>
+                                {r.page_furniture?.enabled && (r.page_furniture.examples?.length ?? 0) > 0 && (
+                                    <details className="u-mt-sm">
+                                        <summary className="u-meta">Removed, for example</summary>
+                                        <ul className="u-m0">
+                                            {r.page_furniture.examples!.map((ex) => (
+                                                <li key={ex} className="u-meta">{ex}</li>
+                                            ))}
+                                        </ul>
+                                    </details>
+                                )}
                             </div>
                         ))}
                     </div>

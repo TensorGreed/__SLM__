@@ -20,6 +20,9 @@ class CleanRequest(BaseModel):
     chunk_overlap: int = Field(100, ge=0, le=500)
     redact_pii: bool = True
     redact_toxicity: bool = False
+    # Drop repeated page headers / footers / page numbers (documents with
+    # page breaks). None = what the document was last cleaned with, else on.
+    remove_page_furniture: bool | None = None
 
     @model_validator(mode="after")
     def validate_overlap(self):
@@ -34,6 +37,9 @@ class CleanBatchRequest(BaseModel):
     chunk_overlap: int = Field(100, ge=0, le=500)
     redact_pii: bool = True
     redact_toxicity: bool = False
+    # Drop repeated page headers / footers / page numbers (documents with
+    # page breaks). None = what the document was last cleaned with, else on.
+    remove_page_furniture: bool | None = None
 
     @model_validator(mode="after")
     def validate_overlap(self):
@@ -58,6 +64,7 @@ async def clean_single(
             req.chunk_overlap,
             req.redact_pii,
             req.redact_toxicity,
+            remove_page_furniture=req.remove_page_furniture,
         )
         return result
     except ValueError as e:
@@ -83,6 +90,7 @@ async def clean_batch(
                 req.chunk_overlap,
                 req.redact_pii,
                 req.redact_toxicity,
+                remove_page_furniture=req.remove_page_furniture,
             )
             results.append(result)
         except Exception as e:
@@ -118,6 +126,7 @@ async def clean_batch_async(
         chunk_overlap=req.chunk_overlap,
         redact_pii=req.redact_pii,
         redact_toxicity=req.redact_toxicity,
+        remove_page_furniture=req.remove_page_furniture,
     )
     return task.to_dict()
 

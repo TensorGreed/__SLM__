@@ -378,9 +378,13 @@ async def run_seed_documents(
     # The documents are invented by construction, so cleaning must NOT
     # redact the "PII" in them — a span project needs it in the text, and a
     # redacted seed corpus taught the span synthesiser to write
-    # "[REDACTED_EMAIL]".
+    # "[REDACTED_EMAIL]". Page furniture stays too: the paged / scanned
+    # layouts put headers and footers in on purpose, for a span tagger to
+    # learn to read (a scanned PDF has page breaks, so cleaning's default
+    # would drop them).
     cleaned = await clean_document(
         db, project_id, doc.id, chunk_size=chunk_size, chunk_overlap=chunk_overlap, redact=False,
+        remove_page_furniture=False,
     )
     summary.filename = filename
     summary.document_id = int(doc.id)

@@ -90,9 +90,17 @@ def ocr_pdf_pages(file_path: Path, pages: list[int]) -> dict[int, str]:
     return out
 
 
+PAGE_SEPARATOR = "\n\f\n"
+"""How :func:`parse_pdf` joins pages: a form feed on its own line, so
+cleaning can find page headers / footers per page
+(``services/page_furniture``). Cleaning turns it into a blank line — the
+join used before — so the cleaned text reads the same."""
+
+
 def parse_pdf(file_path: Path) -> str:
     """Extract text from a PDF with PyPDF2; pages without a text layer
-    (scanned) are OCR'd when tesseract + pdftoppm are installed."""
+    (scanned) are OCR'd when tesseract + pdftoppm are installed. Pages are
+    joined with :data:`PAGE_SEPARATOR`."""
     try:
         from PyPDF2 import PdfReader
     except ImportError as exc:
@@ -112,7 +120,7 @@ def parse_pdf(file_path: Path) -> str:
             ocr = {}
         for page, text in ocr.items():
             pages[page - 1] = text
-    text = "\n\n".join(p for p in pages if p)
+    text = PAGE_SEPARATOR.join(p for p in pages if p)
     if not text.strip():
         raise DocumentParseError(
             "This PDF has no extractable text — it looks like a scanned/image PDF. "

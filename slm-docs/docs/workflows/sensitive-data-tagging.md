@@ -910,6 +910,13 @@ one: train on documents that carry headers and footers.
 
 ### Page headers and footers: train on real layout
 
+
+Cleaning removes repeated page headers and footers from uploaded PDFs by
+default (see [Data ingestion → Clean](data-ingestion.md#step-2--clean)).
+For a tagger that has to learn page layout, untick **Remove repeated page
+headers and footers** on **Data** → **Prepare** before cleaning your own
+multi-page documents; sample documents are always cleaned with it off.
+
 Three pieces, all in the UI:
 
 1. **Write sample documents → "Multi-page, with headers and footers"**

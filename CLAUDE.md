@@ -677,6 +677,22 @@ runs real CPU inference). ~4 min locally.
   `asyncio.to_thread` — OCR inline froze the whole backend for minutes. Import wizard
   takes browser uploads: `POST /projects/{id}/dataset-import/upload` stages
   under `projects/{id}/imports/` → `file:` locator (`sources/file.py`).
+  **Page furniture** (`services/page_furniture.py`, pure): `parse_pdf` joins
+  pages with `file_parsers.PAGE_SEPARATOR` (`"\n\f\n"`; cleaning turns it into
+  the old blank line). `clean_document(remove_page_furniture=)` (None = the
+  doc's last `metadata_.page_furniture.enabled`, else
+  `DEFAULT_REMOVE_PAGE_FURNITURE` True; API `remove_page_furniture`, Prepare
+  checkbox "Remove repeated page headers and footers") runs
+  `remove_page_furniture(text)` before boilerplate/chunking: only the first /
+  last `EDGE_LINES` (4) non-empty lines of a page; rules `repeated`
+  (digit-normalised form on ≥ `FURNITURE_PAGE_SHARE` 0.5 of pages, min 3 — a
+  fused head/tail is cut off a body line when it has a number and ≥ 12 chars,
+  or is a whole line elsewhere), `page_number`, `running_head` (words repeat
+  on ≥ 3 pages, numbers change, ≥ 3 letters — a table row isn't one). Result
+  `furniture_lines_removed` + `page_furniture` {pages, segments trimmed,
+  by_rule, examples}. < 3 pages / no `\f` / row files untouched. The seeder
+  cleans with it OFF (paged / scanned layouts keep furniture on purpose).
+  IRS Pub 17: 173/1,103 passages with furniture → 1/1,063.
 - **Task shape (Wave 2b)** — `task_shape_service` is the single detector +
   vocabulary: `TASK_SHAPES` (canonical profile → adapter/recipe/mapper),
   `detect_task_shape(rows, intent=)` = introspector column rules (evidence) ×
