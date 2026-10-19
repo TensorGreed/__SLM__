@@ -1877,7 +1877,8 @@ runs real CPU inference). ~4 min locally.
   answers (the flow suite's FakeBackend quotes the passage).
   **Sizing** (`size_for_decision(available_passages, pairs_per_passage)`):
   `target_test_rows()` = ceil((2·`DIFF_SD` 0.5 / `DECISION_GAP` 0.15)²) = 45
-  paired rows; passages = ceil(45 / `TEST_RATIO` 0.1 / pairs) = 150, capped
+  paired rows; passages = ceil(45 / `TEST_RATIO` 0.1 / pairs) = 150 (taken by `spread_passages`:
+  evenly spaced over the corpus in document order, never the first N), capped
   by what's available; when capped the test share rises to ≤ `MAX_TEST_RATIO`
   0.3 (`reaches_target` False when even that is short). `max_passages=None`
   (API default) → sized; the preview's `plan.sized_for` explains it; the

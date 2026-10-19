@@ -91,6 +91,19 @@ def target_test_rows(gap: float = DECISION_GAP, diff_sd: float = DIFF_SD) -> int
     return max(MIN_TEST_ROWS, math.ceil((2.0 * diff_sd / gap) ** 2))
 
 
+def spread_passages(passages: list[Any], count: int) -> list[Any]:
+    """``count`` passages spread evenly over the whole corpus, in document
+    order. The flow used to take the first ``count`` — on a long document
+    (a 140-page guide cut into ~1,100 passages, 150 used) every question came
+    from its opening chapters, and the answer key measured those alone."""
+    total = len(passages)
+    if count >= total:
+        return list(passages)
+    if count <= 0:
+        return []
+    return [passages[(i * total) // count] for i in range(count)]
+
+
 def size_for_decision(
     available_passages: int,
     pairs_per_passage: int = DEFAULT_PAIRS_PER_PASSAGE,
@@ -550,7 +563,7 @@ async def run_documents_qa_flow(
     domain_hint = str(project.description or project.name or "").strip()[:200]
 
     # ── 1 + 2: generate per passage ───────────────────────────────────────
-    chosen = passages[:max_passages] if llm is not None else []
+    chosen = spread_passages(passages, max_passages) if llm is not None else []
     training_pairs: list[dict[str, Any]] = []
     answer_key: list[dict[str, Any]] = []
     failed = 0

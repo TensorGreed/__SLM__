@@ -420,6 +420,16 @@ class DocumentsQaFlowTests(unittest.TestCase):
         self.assertEqual(job["result"]["training_pairs"], 60)
         self.assertNotIn("sk-test-key", json.dumps(job))
 
+    def test_spread_passages_covers_the_whole_corpus_in_order(self):
+        items = list(range(1103))
+        chosen = flow.spread_passages(items, 150)
+        self.assertEqual(len(chosen), 150)
+        self.assertEqual(chosen, sorted(set(chosen)))
+        self.assertEqual(chosen[0], 0)
+        self.assertGreater(chosen[-1], 1090)
+        self.assertEqual(flow.spread_passages(items[:5], 10), items[:5])
+        self.assertEqual(flow.spread_passages(items, 0), [])
+
     def test_sizes_generation_to_the_decision_gap(self):
         """45 paired rows for a 0.15 judge-score gap to clear noise (SD 0.5);
         more passages first, a larger test share only when they run out."""
