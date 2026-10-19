@@ -55,6 +55,19 @@ FINETUNE = {"experiment_id": 35, "judged": True, "judge": "ollama:gemma4:12b", "
 
 
 class VerdictTests(unittest.TestCase):
+    def test_a_bar_measured_on_another_base_model_is_not_comparable(self):
+        # The project's base model was switched and the base + passages
+        # comparison re-run on the new one: the old run's fine-tune is not
+        # beaten (or beating) by a different model's bar.
+        verdict = svc.compare_passages_to_finetune(
+            PASSAGES, {**FINETUNE, "base_model": "Qwen/Qwen2.5-3B-Instruct"}
+        )
+        self.assertFalse(verdict["comparable"])
+        self.assertFalse(verdict["passages_win"])
+        self.assertEqual(verdict["reason"], "different_base_model")
+        same = svc.compare_passages_to_finetune(PASSAGES, {**FINETUNE, "base_model": PASSAGES["base_model"]})
+        self.assertTrue(same["comparable"])
+
     def test_passages_win_needs_same_judge_noise_free_gain_and_a_higher_score(self):
         win = svc.compare_passages_to_finetune(PASSAGES, FINETUNE)
         self.assertTrue(win["passages_win"])
@@ -301,7 +314,7 @@ class LatestJudgedLiftTests(unittest.TestCase):
                 for run in runs:
                     exp = Experiment(
                         project_id=pid, name=run["name"], status=ExperimentStatus.COMPLETED,
-                        training_mode=TrainingMode.SFT, base_model="m", output_dir="/tmp/x",
+                        training_mode=TrainingMode.SFT, base_model=PASSAGES["base_model"], output_dir="/tmp/x",
                         config=run.get("config") or {}, seed_group_id=run.get("seed_group_id"),
                         seed_value=run.get("seed_value"),
                     )

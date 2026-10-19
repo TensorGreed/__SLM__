@@ -275,6 +275,16 @@ async def get_auto_rag_comparison(
         "base": base,
         "base_documents": base_documents,
         "fine_tuned_documents": fine_tuned_documents,
+        # A base-model comparison measured on another model than the
+        # project's base model now (the base was changed after it ran): it is
+        # no longer the project's bar — re-run it, or duplicate the project
+        # to try another base model.
+        "project_base_model": project.base_model_name,
+        "base_model_mismatch": {
+            key: bool(payload and payload.get("base_model") and project.base_model_name
+                      and payload.get("base_model") != project.base_model_name)
+            for key, payload in (("base", base), ("base_documents", base_documents))
+        },
         # Judged verdict: did the base model + document passages beat the
         # fine-tuned run's judged lift? (passage_rag_verdict_service)
         "passages_vs_finetune": await _passages_verdict(db, project_id),

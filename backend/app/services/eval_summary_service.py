@@ -276,6 +276,12 @@ async def _build_eval_summary_core(
             head = await head_eval_summary(db, project_id, experiment)
             if head is not None:
                 return head
+        from app.services.passage_reader_eval_service import is_passage_trained, reader_summary
+
+        if is_passage_trained(experiment):
+            # Trained to answer from the passages: fine-tuned + passages vs
+            # base + the same passages, not vs the bare base model.
+            return reader_summary(project_id, experiment)
 
     latest = (
         await db.execute(

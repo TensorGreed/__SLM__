@@ -299,6 +299,47 @@ def _decide_curriculum_default(
     }
 
 
+async def _maybe_apply_passage_prompts(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    train_file: Path,
+    val_file: Path,
+    output_dir: Path,
+    resolved_config: dict,
+    training_mode: str,
+) -> dict:
+    """Passage-prompt training (``passage_prompts_service``, opt-in via
+    ``config.passage_prompts``): rewrite the train / validation rows into the
+    served retrieval prompt — the project's retrieval over its document
+    passages as the system message — under ``output_dir/passage_prompts/``.
+    The prepared split is never touched. Raises ``ValueError`` when the
+    switch is on but the project can't serve passages."""
+    from app.services import passage_prompts_service as pps
+
+    if not pps.is_enabled(resolved_config):
+        return {"applied": False}
+    if training_mode not in {"sft", ""}:
+        raise ValueError(
+            f"Training with retrieved passages rewrites supervised Q&A rows; it doesn't apply to {training_mode}."
+        )
+    from app.services.auto_rag_service import retrieval_settings
+
+    project = await db.get(Project, project_id)
+    retrieval = retrieval_settings(project)
+    seed = int(resolved_config.get("seed") or 42)
+    return await asyncio.to_thread(
+        pps.apply_passage_prompts,
+        project_id,
+        retrieval=retrieval,
+        train_file=train_file,
+        val_file=val_file if val_file.exists() else None,
+        output_dir=output_dir,
+        withheld=pps.withheld_fraction(resolved_config),
+        seed=seed,
+    )
+
+
 async def _maybe_apply_curriculum(
     *,
     db: AsyncSession,
@@ -1530,6 +1571,24 @@ async def start_training(
         # train.jsonl is preserved; the shard lives under output_dir
         # so eval / debugging can read it later.
         train_file = Path(str(curriculum_block["shard_path"]))
+
+    # ── Train with retrieved passages (opt-in) ──────────────────────
+    # The rows become the served retrieval prompt (system message = the
+    # retrieved document passages); the files live under output_dir.
+    passage_block = await _maybe_apply_passage_prompts(
+        db=db,
+        project_id=project_id,
+        train_file=train_file,
+        val_file=val_file,
+        output_dir=output_dir,
+        resolved_config=resolved_config,
+        training_mode=training_mode,
+    )
+    runtime_config["passage_prompts"] = passage_block
+    if passage_block.get("applied"):
+        train_file = Path(str(passage_block["train_file"]))
+        if passage_block.get("val_file"):
+            val_file = Path(str(passage_block["val_file"]))
 
     # ── Data-shape gate ─────────────────────────────────────────────
     # Refuse to launch an SFT run on domain-pretrain-shape data

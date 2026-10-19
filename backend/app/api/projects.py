@@ -418,6 +418,41 @@ async def magic_create_project(
     return project_response
 
 
+class ProjectDuplicateRequest(BaseModel):
+    name: str | None = None
+    # The copy's base model (e.g. try another model on the same data and
+    # split); unset = the source's.
+    base_model_name: str | None = None
+
+
+@router.post("/{project_id}/duplicate", response_model=ProjectResponse, status_code=201)
+async def duplicate_project_route(
+    project_id: int,
+    request: Request,
+    data: ProjectDuplicateRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Copy a project's documents, rows, answer key and prepared split
+    (test examples byte-identical) into a new project — runs, evaluations
+    and comparisons stay with the source (``project_duplicate_service``).
+    The way to try another base model without replacing the bar the
+    source's runs were measured against."""
+    from app.services.project_duplicate_service import duplicate_project
+    from app.services.rag_project_service import RagCloneError
+
+    req = data or ProjectDuplicateRequest()
+    try:
+        project = await duplicate_project(db, project_id, name=req.name, base_model_name=req.base_model_name)
+    except RagCloneError as exc:
+        raise HTTPException(404 if str(exc) == "source_project_not_found" else 400, str(exc)) from exc
+    principal = get_request_principal(request)
+    if settings.AUTH_ENABLED and principal:
+        await upsert_project_membership(db, project_id=project.id, user_id=principal.user_id, role=ProjectRole.OWNER)
+    await db.commit()
+    await db.refresh(project)
+    return ProjectResponse.model_validate(project)
+
+
 # USER-SUCCESS Epic 7 Phase 7d — idempotency window for reroute-to-rag.
 # We refuse a second clone of the same source within this many seconds
 # so a frantic double-click (or a duplicate request from a UI rerender)

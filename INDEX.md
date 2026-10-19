@@ -211,7 +211,9 @@ session-start guidance.
 - `backend/app/services/pack_generation_service.py` — Auto-generate a starter evaluation pack from blueprint + dataset + adapter.
 - `backend/app/services/page_furniture.py` — Page furniture: repeated page headers / footers / page numbers.
 - `backend/app/services/paired_comparison_stats.py` — Is a before/after difference on the same rows more than noise?
+- `backend/app/services/passage_prompts_service.py` — Train a model to answer FROM retrieved passages (passage-prompt training).
 - `backend/app/services/passage_rag_verdict_service.py` — Did retrieval over the documents beat fine-tuning? (documents projects)
+- `backend/app/services/passage_reader_eval_service.py` — The lift check for a run trained with retrieved passages.
 - `backend/app/services/pipeline_recipe_service.py` — End-to-end pipeline recipe (blueprint) service.
 - `backend/app/services/pipeline_refinement_service.py` — Pipeline plan refinement — Phase 1 (deterministic, no cloud LLM).
 - `backend/app/services/playbook_gap_service.py` — Gap-tied synthetic-playbook recommendations (Epic E).
@@ -224,6 +226,7 @@ session-start guidance.
 - `backend/app/services/post_training_eval_service.py` — Automatic baseline-vs-fine-tuned lift eval after every real training run.
 - `backend/app/services/probe_pack_service.py` — Platform-authored held-out probe packs (Coach-stage-2 phase 8).
 - `backend/app/services/probe_runner.py` — Probe runner — Coach-stage-2 phase 9.
+- `backend/app/services/project_duplicate_service.py` — Duplicate a project: the same documents, rows, answer key and prepared
 - `backend/app/services/project_smoke_test_service.py` — Project smoke-test service (Diagnostics Intervention C).
 - `backend/app/services/project_template_service.py` — Project templates — cloneable starting kits for new projects.
 - `backend/app/services/prompt_contamination_service.py` — Prompts must never carry a benchmark's own values.
@@ -805,6 +808,7 @@ session-start guidance.
 - `backend/tests/test_page_furniture.py` — Page furniture: repeated page headers / footers / page numbers are dropped
 - `backend/tests/test_paired_comparison_stats.py` — Paired before/after evidence: row counts + "is it more than noise?".
 - `backend/tests/test_pareto_frontier.py` — Unit tests for the model-sweep Pareto frontier annotation (Epic C).
+- `backend/tests/test_passage_prompts.py` — Train with retrieved passages (passage_prompts_service) and its lift check
 - `backend/tests/test_passage_rag_verdict.py` — Did retrieval over the documents beat fine-tuning? (passage_rag_verdict_service)
 - `backend/tests/test_phase100_handler_stop_sequences.py` — Phase 100 — handler stop sequences.
 - `backend/tests/test_phase101_dataset_import_cli.py` — Phase A — CLI surface for the dataset import pipeline.
@@ -934,6 +938,7 @@ session-start guidance.
 - `backend/tests/test_probe_pack_generative.py` — Coach-stage-2 phase 10 — generative predict_fn wiring for probes.
 - `backend/tests/test_probe_pack_service.py` — Coach-stage-2 phase 8 — platform-authored held-out probe packs.
 - `backend/tests/test_probe_runner.py` — Coach-stage-2 phase 9 — probe runner scoring + aggregation.
+- `backend/tests/test_project_duplicate.py` — Duplicate a project (project_duplicate_service, POST /projects/{id}/duplicate).
 - `backend/tests/test_project_smoke_test.py` — Tests for the project smoke-test service (Diagnostics Intervention C).
 - `backend/tests/test_project_template_service.py` — Tests for the project_template service + endpoints.
 - `backend/tests/test_prompt_contamination.py` — Seed-documents / span-synthesis prompts are refused when they carry a

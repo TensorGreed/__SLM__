@@ -110,11 +110,14 @@ async def _judged_run(db: AsyncSession, exp: Experiment) -> dict[str, Any] | Non
     """Judged lift for one trained run. A seed-group leader never evaluated
     itself: its children did — their judged scores (same judge) are averaged,
     counts summed, ``n_seeds`` recorded."""
+    from app.services.passage_reader_eval_service import is_passage_trained
     from app.services.post_training_eval_service import is_seed_group_leader, seed_group_children
 
+    if is_passage_trained(exp) and not is_seed_group_leader(exp):
+        return _judged_reader_run(exp)
     if not is_seed_group_leader(exp):
         judged = await _judged_test_eval(db, exp.id)
-        return {"experiment_id": exp.id, "judged": True, **judged} if judged else None
+        return {"experiment_id": exp.id, "base_model": exp.base_model, "judged": True, **judged} if judged else None
     per_seed = []
     for child in await seed_group_children(db, exp):
         judged = await _judged_test_eval(db, child.id)
@@ -128,6 +131,7 @@ async def _judged_run(db: AsyncSession, exp: Experiment) -> dict[str, Any] | Non
             counts[key] = counts.get(key, 0) + int(value or 0)
     return {
         "experiment_id": exp.id,
+        "base_model": exp.base_model,
         "judged": True,
         "judge": per_seed[0]["judge"],
         "score": sum(j["score"] for j in per_seed) / len(per_seed),
@@ -135,6 +139,39 @@ async def _judged_run(db: AsyncSession, exp: Experiment) -> dict[str, Any] | Non
         "n_rows": per_seed[0]["n_rows"],
         "n_seeds": len(per_seed),
         "eval_result_id": per_seed[0]["eval_result_id"],
+    }
+
+
+def _judged_reader_run(exp: Experiment) -> dict[str, Any] | None:
+    """A run trained to answer from the passages, scored WITH them
+    (``passage_reader_eval_service``): its judged score, plus the base +
+    passages arm scored in the same check (same rows, judge, retrieval) —
+    the verdict compares those two, not the gate's cached comparison."""
+    from app.services.passage_reader_eval_service import read_record
+
+    record = read_record(exp.project_id, exp.id)
+    if record is None:
+        return None
+    arms = record.get("arms") or {}
+    ft = arms.get("finetune_with_passages") or {}
+    base = arms.get("base_with_passages") or {}
+    if not isinstance(ft.get("score"), (int, float)):
+        return None
+    evidence = record.get("evidence") or {}
+    return {
+        "experiment_id": exp.id,
+        "base_model": exp.base_model,
+        "judged": True,
+        "judge": str(record.get("judge") or ""),
+        "score": float(ft["score"]),
+        "counts": ft.get("counts") or {},
+        "n_rows": int(record.get("n_rows") or 0),
+        "with_passages": True,
+        "comparable_arms": bool(record.get("comparable")),
+        # base + passages → fine-tuned + passages, per row.
+        "evidence": {k: evidence.get(k) for k in ("verdict", "n", "better", "worse", "same", "mean_diff", "ci_low", "ci_high")},
+        "base_with_passages": {"score": base.get("score"), "counts": base.get("counts") or {}},
+        "retrieval": record.get("retrieval"),
     }
 
 
@@ -164,7 +201,7 @@ async def _latest_judged_lift(db: AsyncSession, project_id: int) -> dict[str, An
             judged["latest_experiment_id"] = latest.id
             judged["finetune_is_latest"] = exp.id == latest.id
             return judged
-    return {"experiment_id": latest.id, "latest_experiment_id": latest.id, "judged": False, "finetune_is_latest": True}
+    return {"experiment_id": latest.id, "base_model": latest.base_model, "latest_experiment_id": latest.id, "judged": False, "finetune_is_latest": True}
 
 
 def compare_passages_to_finetune(
@@ -196,6 +233,36 @@ def compare_passages_to_finetune(
     if str(finetune.get("judge") or "") != str(passages.get("judge") or ""):
         verdict["reason"] = "different_judges"
         return verdict
+    if finetune.get("with_passages"):
+        # A run trained to read the passages, scored with them: the two arms
+        # come from the same check (same rows, judge, retrieval and base
+        # model), and the base arm is the one that check measured.
+        base_arm = finetune.get("base_with_passages") or {}
+        if isinstance(base_arm.get("score"), (int, float)):
+            verdict["passages"] = {
+                **passages, "base_model": finetune.get("base_model") or passages.get("base_model"),
+                "with_passages": float(base_arm["score"]), "with_passages_counts": base_arm.get("counts") or {},
+                "split": "test",
+            }
+    passages_base = str(verdict["passages"].get("base_model") or "")
+    finetune_base = str(finetune.get("base_model") or "")
+    if passages_base and finetune_base and passages_base != finetune_base:
+        # The passages bar was measured on another base model (the project's
+        # base model was changed after it ran): not the same question.
+        verdict["reason"] = "different_base_model"
+        return verdict
+    if finetune.get("with_passages"):
+        verdict["same_rows"] = True
+        verdict["arms"] = {"passages": "base_with_passages", "finetune": "finetune_with_passages"}
+        verdict["evidence"] = finetune.get("evidence")
+        if not finetune.get("comparable_arms", True):
+            verdict["reason"] = "arms_not_comparable"
+            return verdict
+        verdict["comparable"] = True
+        verdict["passages_win"] = float(verdict["passages"]["with_passages"]) > float(finetune["score"])
+        verdict["reason"] = "passages_ahead" if verdict["passages_win"] else "finetune_ahead"
+        return verdict
+    verdict["arms"] = {"passages": "base_with_passages", "finetune": "finetune_without_passages"}
     verdict["comparable"] = True
     verdict["passages_win"] = float(passages["with_passages"]) > float(finetune["score"])
     verdict["reason"] = "passages_ahead" if verdict["passages_win"] else "finetune_ahead"

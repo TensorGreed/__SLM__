@@ -93,6 +93,19 @@ class TrainingConfig(BaseModel):
         ),
     )
     max_seq_length: int = Field(2048, ge=128, le=32768)
+    # Train with retrieved passages (passage_prompts_service): each Q&A row's
+    # prompt becomes the served retrieval prompt — the project's retrieval
+    # over its document passages as the system message — so the model learns
+    # to read the passages it is served. The lift check then scores it with
+    # those passages against the base model + the same passages.
+    passage_prompts: bool = False
+    passage_prompts_withheld_fraction: float = Field(
+        0.2, ge=0.0, le=0.5,
+        description=(
+            "With passage_prompts: share of rows whose answer passage is removed "
+            "and whose target becomes \"the passages don't say\" (RAFT-style)."
+        ),
+    )
     warmup_ratio: float = Field(0.03, ge=0, le=1)
     weight_decay: float = Field(0.01, ge=0)
     sequence_packing: bool = Field(True, description="Pack multiple sequences up to max_seq_length")

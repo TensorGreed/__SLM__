@@ -405,8 +405,19 @@ async def run_post_training_lift_eval(
     reason = auto_lift_skip_reason(exp, project, manual=manual)
     if reason is not None:
         raise ValueError(f"Automatic lift eval skipped: {reason}")
+    from app.services.passage_reader_eval_service import is_passage_trained, run_passage_reader_evaluation
+
     if is_seed_group_leader(exp):
+        if is_passage_trained(exp):
+            raise ValueError(
+                "A multi-seed run trained with retrieved passages isn't lift-checked as a group yet; "
+                "evaluate each seed run on its own."
+            )
         return await _run_seed_group_lift_eval(db, project=project, leader=exp, report=_report)
+    if is_passage_trained(exp):
+        # Trained to answer from the served passages: scored WITH them,
+        # against the base model + the same passages (not the bare base).
+        return await run_passage_reader_evaluation(db, project=project, experiment=exp, report=_report)
     if is_token_classification(exp):
         return await run_span_evaluation(db, project_id=project_id, experiment=exp, report=_report)
     if is_encoder_classification(exp):
@@ -672,14 +683,20 @@ async def start_post_training_lift_job(
                     manual=manual,
                 )
 
+        from app.services.passage_reader_eval_service import is_passage_trained
+
         run_label = f"run #{experiment_id}"
         if is_seed_group_leader(exp):
             n_children = len(await seed_group_children(db, exp))
             run_label = f"run #{experiment_id} ({n_children} seeds)"
+        title = f"Did fine-tuning help? · {run_label} vs {short_model_name(exp.base_model)}"
+        if is_passage_trained(exp) and not is_seed_group_leader(exp):
+            # Scored with the served passages against the base model + the same passages.
+            title = f"Does it read your passages better? · {run_label} + passages vs {short_model_name(exp.base_model)} + passages"
         job = await start_job(
             db,
             kind="post_training_lift_eval",
-            title=f"Did fine-tuning help? · {run_label} vs {short_model_name(exp.base_model)}",
+            title=title,
             runner=_runner,
             project_id=project_id,
             params={"experiment_id": experiment_id, "base_model": exp.base_model},

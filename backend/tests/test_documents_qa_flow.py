@@ -194,6 +194,30 @@ class DocumentsQaFlowTests(unittest.TestCase):
         self.assertIn("Q&A assistant from documents", exp["name"])
         self.assertEqual(client.get(f"/api/projects/{self.pid}").json()["base_model_name"], "HuggingFaceTB/SmolLM2-360M-Instruct")
 
+    def test_train_with_passages_marks_the_run_for_passage_prompts(self):
+        self._ingest("policy.docx", POLICY)
+
+        async def _launcher(project_id, experiment_id, db):
+            return {"status": "running"}
+
+        first = self._run(train=False, max_passages=20)
+        test_before = (self.root / "prepared" / "test.jsonl").read_bytes()
+        summary = self._run(
+            train=True, reuse_existing=True, start_training=_launcher,
+            train_with_passages=True, passages_withheld_fraction=0.1,
+        )
+        self.assertTrue(summary.as_dict()["train_with_passages"])
+        self.assertEqual(summary.training_pairs, first.training_pairs)
+        # Same pairs, same split: the test examples are byte-identical.
+        self.assertEqual((self.root / "prepared" / "test.jsonl").read_bytes(), test_before)
+        exp = next(
+            e for e in client.get(f"/api/projects/{self.pid}/training/experiments").json()
+            if e["id"] == summary.experiment_id
+        )
+        self.assertIn("reads your passages", exp["name"])
+        self.assertTrue(exp["config"]["passage_prompts"])
+        self.assertEqual(exp["config"]["passage_prompts_withheld_fraction"], 0.1)
+
     def test_reuse_existing_retrains_the_same_pairs_on_a_new_model(self):
         self._ingest("policy.docx", POLICY)
         with self.assertRaises(ValueError):

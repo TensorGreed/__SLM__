@@ -344,6 +344,8 @@ class FlowSummary:
     eval_rejected: dict[str, int] = field(default_factory=dict)
     # The pre-training gate: what the base model + passages gets right.
     passages_gate: dict[str, Any] | None = None
+    # The run was trained to answer from the retrieved passages.
+    train_with_passages: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -362,6 +364,7 @@ class FlowSummary:
             "stopped_reason": self.stopped_reason,
             "warnings": list(self.warnings),
             "passages_gate": self.passages_gate,
+            "train_with_passages": self.train_with_passages,
         }
 
 
@@ -495,6 +498,8 @@ async def run_documents_qa_flow(
     reuse_existing: bool = False,
     passages_check: bool = True,
     train_if_retrieval_ready: bool = False,
+    train_with_passages: bool = False,
+    passages_withheld_fraction: float | None = None,
     progress: ProgressFn | None = None,
     start_training: Callable[..., Awaitable[dict[str, Any]]] | None = None,
     passages_check_fn: Callable[..., dict[str, Any]] | None = None,
@@ -513,7 +518,15 @@ async def run_documents_qa_flow(
     retrieval alone already answers well the flow stops there — training is
     the long way round — unless ``train_if_retrieval_ready``. The gate lands
     in ``summary.passages_gate`` either way. ``passages_check_fn`` injects
-    the comparison (tests); the default runs the auto-RAG harness."""
+    the comparison (tests); the default runs the auto-RAG harness.
+
+    ``train_with_passages``: train the model to answer FROM the retrieved
+    passages (``passage_prompts_service``: each pair's prompt becomes the
+    served retrieval prompt; ``passages_withheld_fraction`` of the rows get
+    their answer passage removed and "the passages don't say" as target).
+    Its lift check then scores it with the passages against the base model
+    + the same passages. With ``reuse_existing`` it trains the same pairs on
+    the same split."""
     from app.services.auto_rag_service import load_document_passages
     from app.services.synth_backends import pick_backend
 
@@ -743,16 +756,32 @@ async def run_documents_qa_flow(
     if not base_model:
         summary.stopped_reason = "Project has no base model to train; pick one on the Train page."
         return summary
+    run_config: dict[str, Any] = {"base_model": base_model, "task_type": "causal_lm", "training_mode": "sft"}
+    run_name = f"Q&A assistant from documents · {summary.training_pairs} pairs"
+    if train_with_passages:
+        from app.services.passage_prompts_service import (
+            CONFIG_FLAG,
+            CONFIG_WITHHELD,
+            DEFAULT_WITHHELD_FRACTION,
+        )
+
+        run_config[CONFIG_FLAG] = True
+        run_config[CONFIG_WITHHELD] = (
+            DEFAULT_WITHHELD_FRACTION if passages_withheld_fraction is None else float(passages_withheld_fraction)
+        )
+        run_name += " · reads your passages"
     experiment = await create_experiment(
         db,
         project_id,
-        f"Q&A assistant from documents · {summary.training_pairs} pairs"[:255],
+        run_name[:255],
         base_model,
-        {"base_model": base_model, "task_type": "causal_lm", "training_mode": "sft"},
-        f"Started by the documents → Q&A flow ({len(chosen)} passages, {backend_label}).",
+        run_config,
+        f"Started by the documents → Q&A flow ({len(chosen)} passages, {backend_label})"
+        + (", trained to answer from the retrieved passages." if train_with_passages else "."),
     )
     await db.commit()
     summary.experiment_id = experiment.id
+    summary.train_with_passages = bool(train_with_passages)
     launcher = start_training
     if launcher is None:
         from app.api.training import start as api_start

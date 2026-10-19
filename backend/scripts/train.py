@@ -714,11 +714,17 @@ def _rewrap_prompt_completion_row(row: dict[str, Any], tokenizer: Any) -> dict[s
     answer = str(row.get("target_text") or "").strip()
     if not question or not answer:
         return row
-    wrapped = f"{question}\n"
+    # Passage-prompt rows: the retrieved passages are the system message,
+    # exactly as serving and the auto-RAG harness send them.
+    system_prompt = str(row.get("system_prompt") or "").strip()
+    messages = [{"role": "user", "content": question}]
+    if system_prompt:
+        messages.insert(0, {"role": "system", "content": system_prompt})
+    wrapped = f"{system_prompt}\n\n{question}\n" if system_prompt else f"{question}\n"
     if _tokenizer_has_chat_template(tokenizer):
         try:
             rendered = tokenizer.apply_chat_template(
-                [{"role": "user", "content": question}],
+                messages,
                 tokenize=False,
                 add_generation_prompt=True,
             )
@@ -1821,8 +1827,17 @@ def _run_training_attempt(
             if len(eval_preference) == 0:
                 eval_preference = None
     else:
+        # Passage-prompt rows (passage_prompts_service) carry the retrieved
+        # passages as ``system_prompt``; it rides along so the chat-template
+        # re-wrap can render it as the system message serving sends. Only
+        # added when the file has the column (other datasets keep their shape).
+        carries_system_prompt = "system_prompt" in train_ds.column_names
+
         def to_text_record(row: dict[str, Any]) -> dict[str, Any]:
-            return _adapt_record_to_text(row, data_contract, chat_template)
+            mapped = _adapt_record_to_text(row, data_contract, chat_template)
+            if carries_system_prompt:
+                mapped["system_prompt"] = str(row.get("system_prompt") or "")
+            return mapped
 
         train_text = train_ds.map(to_text_record, remove_columns=train_ds.column_names)
         train_text = train_text.filter(lambda row: _is_valid_adapted_row(row, normalized_task_type))

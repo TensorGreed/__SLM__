@@ -65,6 +65,11 @@ class DocumentsQaFlowRequest(BaseModel):
     # stops there unless train_if_retrieval_ready.
     passages_check: bool = True
     train_if_retrieval_ready: bool = False
+    # Train the model to answer FROM the retrieved passages (the served
+    # retrieval prompt; passage_prompts_service). Scored with the passages
+    # against the base model + the same passages.
+    train_with_passages: bool = False
+    passages_withheld_fraction: float | None = Field(None, ge=0.0, le=0.5)
 
 
 @router.get("/documents-to-qa/preview")
@@ -140,6 +145,8 @@ async def start_documents_to_qa(
                     reuse_existing=req.reuse_existing,
                     passages_check=req.passages_check,
                     train_if_retrieval_ready=req.train_if_retrieval_ready,
+                    train_with_passages=req.train_with_passages,
+                    passages_withheld_fraction=req.passages_withheld_fraction,
                     progress=_progress,
                 )
             except SynthBackendError as exc:
@@ -158,6 +165,7 @@ async def start_documents_to_qa(
             "pairs_per_passage": req.pairs_per_passage,
             "train": req.train,
             "backend": req.backend,
+            "train_with_passages": req.train_with_passages,
         },
     )
     return serialize_job(job)

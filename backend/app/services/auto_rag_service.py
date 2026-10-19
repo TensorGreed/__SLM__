@@ -612,6 +612,30 @@ def _format_passage(idx: int, hit: RetrievedChunk) -> str:
     return f"[{idx}] ({where}) {text}"
 
 
+def document_preamble(hits: list[RetrievedChunk]) -> str:
+    """The cite-or-say-you-don't-know system message for retrieved document
+    passages — the one string serving (``build_preamble_from_query``), the
+    auto-RAG harness and passage-prompt training
+    (``passage_prompts_service``) all put in front of the question, so a
+    model trained on it sees exactly what it is served."""
+    passages_text = "\n\n".join(_format_passage(idx, hit) for idx, hit in enumerate(hits, start=1))
+    return _DOCUMENT_PREAMBLE_TEMPLATE.format(passages=passages_text)
+
+
+def retrieve_document_passages(project_id: int, query: str, retrieval: Any) -> list[RetrievedChunk]:
+    """The passages a retrieval setting (``normalize_retrieval``) returns for
+    ``query`` from the project's document index (the ``chunk_size`` variant
+    when set, built on demand). Sync; raises ``AutoRagUnavailable`` when no
+    index can be built."""
+    r = normalize_retrieval(retrieval)
+    chunk_size = r["chunk_size"]
+    if not ensure_document_index(project_id, chunk_size).get("available"):
+        raise AutoRagUnavailable(f"Project {project_id} has no document passages to retrieve from.")
+    return retrieve_ranked(
+        query, index_dir=document_index_dir(project_id, chunk_size), k=r["k"], reranker=r["reranker"], pool=r["pool"]
+    )
+
+
 def _qa_index_usable(project: Any, project_id: int) -> bool:
     from app.config import settings
 
@@ -778,9 +802,8 @@ async def build_preamble_from_query(
         return None
     if not hits:
         return None
-    passages_text = "\n\n".join(_format_passage(idx, hit) for idx, hit in enumerate(hits, start=1))
     return {
-        "preamble_text": _DOCUMENT_PREAMBLE_TEMPLATE.format(passages=passages_text),
+        "preamble_text": document_preamble(hits),
         "retrieved": hits,
         "corpus": DOCUMENTS_CORPUS,
         "retrieval": retrieval,

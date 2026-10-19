@@ -690,16 +690,12 @@ def evaluate_with_inference(
             except AutoRagUnavailable:
                 hits = []
             if use_documents:
-                from app.services.auto_rag_service import (
-                    _DOCUMENT_PREAMBLE_TEMPLATE,
-                    _format_passage,
-                )
+                from app.services.auto_rag_service import document_preamble
 
                 if hits:
-                    passages_text = "\n\n".join(
-                        _format_passage(idx, hit) for idx, hit in enumerate(hits, start=1)
-                    )
-                    preamble = _DOCUMENT_PREAMBLE_TEMPLATE.format(passages=passages_text)
+                    # The same system message serving and passage-prompt
+                    # training use.
+                    preamble = document_preamble(hits)
                     for hit in hits:
                         payload = hit.get("payload") or {}
                         chunk = payload.get("chunk_id")
@@ -1067,6 +1063,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--experiment-id", type=int, default=None,
+        help="With --project (not --base-only): score this completed run instead of the latest one.",
+    )
+    parser.add_argument(
         "--split", choices=("val", "test"), default=None,
         help=(
             "With --project: rows to score. Default: val for Q&A-pair retrieval, "
@@ -1098,6 +1098,7 @@ def run_project_comparison(
     pool: int | None = None,
     chunk_size: int | None = None,
     sweep_retrieval: bool = False,
+    experiment_id: int | None = None,
 ) -> dict[str, Any]:
     """Phase 9d — generate the per-project comparison the Eval-tab
     panel reads. Reuses the per-row eval inference loop with the
@@ -1142,6 +1143,10 @@ def run_project_comparison(
     ``auto_rag/retrieval_sweep.json``. The chosen config is what the project
     should serve (``runtime_config.auto_rag_retrieval``).
 
+    ``experiment_id``: score that COMPLETED run instead of the latest one
+    (the latest completed experiment can be a lift-check baseline, which has
+    no weights of its own). Ignored with ``base_only``.
+
     This function is invoked from the CLI's ``--project`` mode (and
     can be called programmatically by a future API trigger if we
     decide to make the comparison runnable from the UI). For now,
@@ -1160,12 +1165,19 @@ def run_project_comparison(
         raise FileNotFoundError(f"Database not found at {db_path}")
     with sqlite3.connect(db_path) as con:
         con.row_factory = sqlite3.Row
-        cur = con.execute(
-            "SELECT id, output_dir, base_model FROM experiments "
-            "WHERE project_id = ? AND status = 'COMPLETED' "
-            "ORDER BY completed_at DESC LIMIT 1",
-            (project_id,),
-        )
+        if experiment_id is not None and not base_only:
+            cur = con.execute(
+                "SELECT id, output_dir, base_model FROM experiments "
+                "WHERE project_id = ? AND id = ? AND status = 'COMPLETED'",
+                (project_id, int(experiment_id)),
+            )
+        else:
+            cur = con.execute(
+                "SELECT id, output_dir, base_model FROM experiments "
+                "WHERE project_id = ? AND status = 'COMPLETED' "
+                "ORDER BY completed_at DESC LIMIT 1",
+                (project_id,),
+            )
         exp_row = cur.fetchone()
         project_row = con.execute(
             "SELECT base_model_name, runtime_config FROM projects WHERE id = ?", (project_id,)
@@ -1696,7 +1708,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = run_project_comparison(
             args.project, base_only=bool(args.base_only), corpus=str(args.corpus), split=args.split,
             rag_k=args.k, reranker=args.reranker, pool=args.pool, chunk_size=args.chunk_size,
-            sweep_retrieval=bool(args.sweep_retrieval),
+            sweep_retrieval=bool(args.sweep_retrieval), experiment_id=args.experiment_id,
         )
         if args.sweep_retrieval:
             chosen = (payload.get("summary") or {}).get("retrieval")
