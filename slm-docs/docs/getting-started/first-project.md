@@ -112,6 +112,8 @@ curl -X POST http://localhost:8000/api/projects/1/gold-sets/sample \
 
 The Base Model Registry lists candidates with **measured compatibility** for your project's target + license.
 
+A base model typed in the *+ New Project* dialog is kept: the task recipe applied from your brief only fills the base model when you left it empty.
+
 ### UI
 
 **Train** → **More options** → *Base model registry* (or **Browse** next to the base model field). Filter `family=qwen`, `context >= 4096`, `license=permissive`. Click **Validate for project** on a candidate — surfaces tokenizer / chat-template / runtime warnings. Click **Set as default** when you find one you like (e.g. `Qwen2.5-1.5B-Instruct`).

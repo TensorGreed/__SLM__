@@ -247,6 +247,21 @@ class BriefDrivenAutoApplyRecipeTests(unittest.TestCase):
         selected = project.get("selected_recipe") or {}
         self.assertEqual(selected.get("recipe_id"), "qa-sft", project)
 
+    def test_brief_driven_create_keeps_the_base_model_the_user_typed(self):
+        resp = self.client.post(
+            "/api/projects",
+            json={
+                "name": "auto-apply-keeps-model",
+                "description": "auto-apply",
+                "base_model_name": "Qwen/Qwen2.5-3B-Instruct",
+                "brief_text": "Build an assistant that answers questions from a policy handbook.",
+            },
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        project = resp.json()
+        self.assertEqual((project.get("selected_recipe") or {}).get("recipe_id"), "qa-sft", project)
+        self.assertEqual(project["base_model_name"], "Qwen/Qwen2.5-3B-Instruct")
+
     def test_brief_driven_create_with_classification_brief_applies_classification_recipe(self):
         resp = self.client.post(
             "/api/projects",

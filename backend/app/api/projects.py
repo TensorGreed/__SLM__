@@ -304,6 +304,12 @@ async def create_project(
                 project = await apply_recipe_to_project(
                     db, project.id, "generic-sft",
                 )
+            # The recipe adopts its suggested base model; a base model the
+            # user typed in the create dialog is the explicit pick and wins.
+            if resolved_base_model_name and project.base_model_name != resolved_base_model_name:
+                project.base_model_name = resolved_base_model_name
+                await db.flush()
+                await db.refresh(project)
 
     return ProjectResponse.model_validate(project)
 
