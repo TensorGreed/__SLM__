@@ -248,7 +248,7 @@ describe('EvalPanel remediation planner', () => {
     const user = userEvent.setup();
     render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
 
-    await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+    await user.click(await screen.findByRole('button', { name: /exp-21/ }));
     expect(await screen.findByText('Closed-Loop Remediation Planner')).toBeInTheDocument();
 
     expect(await screen.findByText(/Tighten answer grounding/i)).toBeInTheDocument();

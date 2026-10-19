@@ -169,7 +169,7 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         // Inline counts pick up the entity tallies.
         expect(await screen.findByText(/1 matched/i)).toBeInTheDocument();
@@ -205,7 +205,7 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         // The disclosure summary is present.
         expect(
@@ -246,7 +246,7 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         expect(await screen.findByText(/^missed$/i)).toBeInTheDocument();
         expect(screen.getByText(/^hallucinated$/i)).toBeInTheDocument();
@@ -279,7 +279,7 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         // The per-field count + disclosure render, NOT the entity-by-entity view.
         expect(await screen.findByText(/2\/2 fields/i)).toBeInTheDocument();

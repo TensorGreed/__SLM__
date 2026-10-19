@@ -40,6 +40,7 @@ export const CLEAN_FILES = [
     'components/evaluation/ExternalBenchmarksPanel.tsx',
     'components/evaluation/FailureClustersPanel.tsx',
     'components/evaluation/RerouteRecommendationPanel.tsx',
+    'components/evaluation/runSelection.ts',
     'components/evaluation/ScorecardPanel.tsx',
     'components/evaluation/SeedShipTable.tsx',
     'components/evaluation/SftLiftPanel.tsx',

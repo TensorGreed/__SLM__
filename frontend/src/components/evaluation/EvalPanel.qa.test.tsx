@@ -163,7 +163,7 @@ describe('EvalPanel — Sample Predictions card with QAHandler enrichment', () =
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         // Status column header appears alongside the standard columns.
         expect(await screen.findByRole('columnheader', { name: 'Score' })).toBeInTheDocument();
@@ -189,7 +189,7 @@ describe('EvalPanel — Sample Predictions card with QAHandler enrichment', () =
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         // The disclosure for extracted spans is present.
         expect(
@@ -211,7 +211,7 @@ describe('EvalPanel — Sample Predictions card with QAHandler enrichment', () =
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         // Wait for the predictions card to appear with a known prompt.
         expect(
@@ -240,7 +240,7 @@ describe('EvalPanel — Sample Predictions card with QAHandler enrichment', () =
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         expect(await screen.findByText('pass')).toBeInTheDocument();
         expect(

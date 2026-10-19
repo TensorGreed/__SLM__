@@ -150,7 +150,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         expect(await screen.findByText(/Preferred chosen/i)).toBeInTheDocument();
         // Sims inline so the researcher can see the actual numbers.
@@ -178,7 +178,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         expect(await screen.findByText(/Preferred rejected/i)).toBeInTheDocument();
     });
@@ -203,7 +203,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         expect(
             await screen.findByText(/Show chosen vs rejected completions/i),
@@ -225,7 +225,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         // Predictions card rendered.
         expect(await screen.findByText(/plain-qa-prompt/i)).toBeInTheDocument();
@@ -260,7 +260,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         expect(await screen.findByText(/Preferred chosen/i)).toBeInTheDocument();
         expect(screen.queryByTestId('eval-advanced-toggle')).not.toBeInTheDocument();

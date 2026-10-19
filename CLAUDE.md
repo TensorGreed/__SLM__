@@ -453,7 +453,16 @@ runs real CPU inference). ~4 min locally.
   (`?tab=`, `workspaceRoutes.RESULTS_TABS`; `resolveResultsTab(search, hash)`
   maps the old eval anchors via `RESULTS_TAB_BY_HASH`), one
   `<EvalPanel workflow={tab}>` kept mounted across tabs (the selected run and
-  its results persist). `EvalPanel` gates its blocks with `wf('<workflow>')`
+  its results persist). **One selected run** (2026-10-19): the panel opens on
+  `runSelection.defaultRunId` (newest COMPLETED run that is neither a
+  `config.is_baseline` lift-check baseline nor a seed child — the summary's
+  rule) on every tab; the summary card's `onResolved` re-syncs it until the
+  user picks a run (`userPickedRunRef`). The picker shows `#id · name` + a
+  "baseline" badge; the Verdict pass/fail headline (`eval-verdict-gate`) and
+  `ScorecardPanel runLabel` name the run (`runLabel`). The page-level
+  `pipelineStatus.auto_gate` card is gone (it named the newest experiment —
+  the baseline); `/pipeline/status` `auto_gate` now skips baselines / seed
+  children too. `EvalPanel` gates its blocks with `wf('<workflow>')`
   (`workflow` null = the old one-page layout the older tests still mount, with
   the Advanced toggle and the runs/workbench sub-tabs): Verdict = summary card
   (`hideTryBox`), run picker, Evaluate form, aggregate badge, SftLiftPanel,

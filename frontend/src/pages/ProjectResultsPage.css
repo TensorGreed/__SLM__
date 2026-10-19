@@ -49,41 +49,6 @@
     font-size: var(--font-size-sm);
 }
 
-.results-page__gate {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-}
-
-.results-page__gate-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.results-page__gate-head h3 {
-    margin: 0;
-    font-size: var(--font-size-md);
-    font-weight: 600;
-}
-
-.results-page__gate-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-md);
-    color: var(--text-secondary);
-    font-size: var(--font-size-sm);
-}
-
-.results-page__gate-warn {
-    font-size: var(--font-size-sm);
-    color: var(--color-warning);
-    background: var(--bg-tertiary);
-    border: 1px solid var(--color-warning);
-    border-radius: var(--radius-md);
-    padding: var(--space-sm) var(--space-md);
-}
-
 /* Collapsed authoring sections under Failures (answer-key review, workbench). */
 .eval-collapsible > summary {
     cursor: pointer;

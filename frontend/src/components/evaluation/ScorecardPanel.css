@@ -21,6 +21,12 @@
   margin-bottom: var(--space-lg);
 }
 
+.scorecard-run {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
 .decision-badge {
   padding: 8px 16px;
   border-radius: 9999px;

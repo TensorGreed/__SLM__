@@ -477,7 +477,7 @@ describe('EvalPanel Verdict workflow (one layout, no Advanced toggle)', () => {
     it('shows the summary card and selects the summarised run, without any disclosure toggle', async () => {
         render(<MemoryRouter><EvalPanel projectId={7} workflow="verdict" /></MemoryRouter>);
         expect(await screen.findByTestId('eval-summary')).toBeInTheDocument();
-        await waitFor(() => expect(screen.getByRole('button', { name: 'exp-21' })).toHaveClass('btn-primary'));
+        await waitFor(() => expect(screen.getByRole('button', { name: /exp-21/ })).toHaveClass('btn-primary'));
         expect(screen.queryByTestId('eval-advanced-toggle')).toBeNull();
         expect(screen.queryByRole('tablist', { name: 'Evaluation sections' })).not.toBeInTheDocument();
     });

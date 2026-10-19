@@ -47,9 +47,8 @@ export default function ProjectResultsPage() {
     const navigate = useNavigate();
     const location = useLocation();
     const [searchParams] = useSearchParams();
-    const { projectId, pipelineStatus } = useOutletContext<ProjectWorkspaceContextValue>();
+    const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
     const tab = useMemo(() => resolveResultsTab(location.search, location.hash), [location.search, location.hash]);
-    const autoGate = pipelineStatus?.auto_gate ?? null;
     const hasPair = Boolean(searchParams.get('a') && searchParams.get('b'));
 
     const goTo = (next: ResultsTab) => {
@@ -90,26 +89,6 @@ export default function ProjectResultsPage() {
 
             <StepHelp projectId={projectId} tab="eval" sub={tab} />
             <CoachNotices projectId={projectId} stage="eval" />
-
-            {tab === 'verdict' && autoGate && (
-                <div className="card results-page__gate" data-testid="results-auto-gate">
-                    <div className="results-page__gate-head">
-                        <h3>Pass/fail rules</h3>
-                        <span className={`badge ${autoGate.passed ? 'badge-success' : 'badge-error'}`}>{autoGate.passed ? 'PASS' : 'FAIL'}</span>
-                    </div>
-                    <div className="results-page__gate-meta">
-                        <span>Run <strong>#{autoGate.experiment_id}</strong></span>
-                        <span>Rule set <strong>{autoGate.pack_id || 'auto'}</strong></span>
-                        {autoGate.captured_at && <span>Checked <strong>{new Date(autoGate.captured_at).toLocaleString()}</strong></span>}
-                    </div>
-                    {autoGate.failed_gate_ids.length > 0 && (
-                        <div className="results-page__gate-warn">Failed required rules: {autoGate.failed_gate_ids.join(', ')}</div>
-                    )}
-                    {autoGate.missing_required_metrics.length > 0 && (
-                        <div className="results-page__gate-warn">Missing required metrics: {autoGate.missing_required_metrics.join(', ')}</div>
-                    )}
-                </div>
-            )}
 
             {tab === 'compare' && hasPair && (
                 <div data-testid="results-compare-pair">

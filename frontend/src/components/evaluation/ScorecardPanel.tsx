@@ -126,6 +126,8 @@ interface Scorecard {
 interface ScorecardPanelProps {
   projectId: number;
   experimentId: number;
+  /** "Run #12 · my-run" — which run this scorecard is for (provenance). */
+  runLabel?: string;
 }
 
 const isAggregateCheck = (gate: GateCheck): boolean =>
@@ -232,7 +234,7 @@ const formatMetricLabel = (gate: GateCheck): string => {
   return gate.metric_id;
 };
 
-const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId }) => {
+const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId, runLabel }) => {
   const [scorecard, setScorecard] = useState<Scorecard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -274,6 +276,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
       <div className="scorecard-header">
         <div className="decision-badge">{decision}</div>
         <h2>Experiment Scorecard</h2>
+        <span className="scorecard-run" data-testid="scorecard-run">{runLabel || `Run #${experimentId}`}</span>
       </div>
 
       {reasons.length > 0 && (

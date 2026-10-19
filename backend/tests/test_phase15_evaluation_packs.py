@@ -196,6 +196,27 @@ class Phase15EvaluationPackTests(unittest.TestCase):
         self.assertEqual(auto_gate.get("pack_id"), "evalpack.fast.iteration")
         self.assertTrue(auto_gate.get("passed"))
 
+    def test_pipeline_auto_gate_skips_the_lift_check_baseline(self):
+        """The auto lift check adds a baseline run after the trained one; the
+        Results tabs' gate must stay on the trained run, never the baseline."""
+        project_id = self._create_project("phase15-packs-baseline-1")
+        trained_id = self._create_experiment(project_id, name="trained-run")
+        baseline_id = self._create_experiment(project_id, name="Baseline · base")
+
+        async def _mark_baseline() -> None:
+            from app.database import async_session_factory
+            from app.models.experiment import Experiment
+
+            async with async_session_factory() as db:
+                exp = await db.get(Experiment, baseline_id)
+                exp.config = {"is_baseline": True, "source": "post_training.auto_lift"}
+                await db.commit()
+
+        self._client_cm.portal.call(_mark_baseline)
+        status = self.client.get(f"/api/projects/{project_id}/pipeline/status")
+        self.assertEqual(status.status_code, 200, status.text)
+        self.assertEqual(status.json()["auto_gate"]["experiment_id"], trained_id)
+
     def test_task_aware_gate_resolution_uses_experiment_task_profile_and_aliases(self):
         project_id = self._create_project("phase15-packs-task-aware-1")
         experiment_id = self._create_experiment(

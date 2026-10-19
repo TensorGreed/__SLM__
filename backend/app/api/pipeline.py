@@ -267,13 +267,25 @@ async def pipeline_status(project_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, "Project not found")
 
     auto_gate_summary = None
-    latest_exp = await db.execute(
-        select(Experiment.id)
-        .where(Experiment.project_id == project_id)
-        .order_by(Experiment.created_at.desc(), Experiment.id.desc())
-        .limit(1)
-    )
-    latest_experiment_id = latest_exp.scalar_one_or_none()
+    # The run the Results tabs show: the latest completed run that is not
+    # the auto lift check's baseline (the base model) nor one seed of a
+    # group — same rule as the eval summary — else the newest such run.
+    from app.services.eval_summary_service import _latest_trained_experiment_id
+
+    latest_experiment_id = await _latest_trained_experiment_id(db, project_id)
+    if latest_experiment_id is None:
+        for exp in (
+            await db.execute(
+                select(Experiment)
+                .where(Experiment.project_id == project_id)
+                .order_by(Experiment.created_at.desc(), Experiment.id.desc())
+            )
+        ).scalars():
+            cfg = exp.config if isinstance(exp.config, dict) else {}
+            if cfg.get("is_baseline") is True or (exp.seed_group_id and exp.seed_value is not None):
+                continue
+            latest_experiment_id = exp.id
+            break
     if latest_experiment_id is not None:
         try:
             gate_report = await evaluate_experiment_auto_gates(

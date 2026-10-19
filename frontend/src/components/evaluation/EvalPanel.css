@@ -651,6 +651,44 @@
 
 /* ── Epic U7: classes that replaced inline styles ── */
 .eval-panel__run-btn { max-width: 100%; white-space: normal; text-align: left; }
+.eval-panel__run-baseline { margin-left: var(--space-sm); }
+
+/* Verdict: the pass/fail headline for the selected run. */
+.eval-panel__gate {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.eval-panel__gate-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.eval-panel__gate-head h3 {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+}
+
+.eval-panel__gate-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.eval-panel__gate-warn {
+    font-size: var(--font-size-sm);
+    color: var(--color-warning);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--color-warning);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm) var(--space-md);
+}
+
 .eval-panel__error-card { border: 1px solid var(--color-error); color: var(--color-error); }
 .eval-panel__card--accent { border: 1px solid var(--accent); }
 .eval-panel__card--col { display: flex; flex-direction: column; }

@@ -74,15 +74,16 @@ describe('ProjectResultsPage', () => {
         expect(screen.getByTestId('results-compare-hint')).toBeInTheDocument();
     });
 
-    it('shows the pass/fail rules card on Verdict only', () => {
+    it('has no page-level pass/fail card: the gate follows the panel\'s selected run', () => {
+        // pipeline status' auto_gate names the latest experiment, which can be
+        // the lift check's baseline; the Verdict gate lives in EvalPanel now.
         contextState.pipelineStatus = {
             current_stage: 'evaluation',
             auto_gate: { experiment_id: 9, pack_id: 'auto', passed: false, failed_gate_ids: ['f1'], missing_required_metrics: [], captured_at: null },
         };
         renderAt('/project/31/results');
-        expect(screen.getByTestId('results-auto-gate')).toHaveTextContent('Failed required rules: f1');
-        renderAt('/project/31/results?tab=failures');
-        expect(screen.getAllByTestId('results-auto-gate')).toHaveLength(1);
+        expect(screen.queryByTestId('results-auto-gate')).toBeNull();
+        expect(screen.getByTestId('eval-panel')).toHaveTextContent('verdict');
     });
 
     it('resolveResultsTab maps the old eval anchors onto workflows', () => {

@@ -2,7 +2,7 @@
  * Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import { AlertTriangle, Check, X } from 'lucide-react';
@@ -37,6 +37,7 @@ import ExternalBenchmarksPanel from './ExternalBenchmarksPanel';
 import RedactionTryBox from './RedactionTryBox';
 import AnswerKeyReviewPanel from '../data/AnswerKeyReviewPanel';
 import { projectPath } from '../../utils/workspaceRoutes';
+import { defaultRunId, isBaselineRun, runLabel, type RunSummary } from './runSelection';
 
 
 /** Results workflows (Epic U phase U3). ``null`` = the one-page layout. */
@@ -53,10 +54,7 @@ interface EvalPanelProps {
 type Provider = 'hf' | 'ollama' | 'openai' | 'local_serve';
 type HeldoutEvalType = 'exact_match' | 'f1' | 'llm_judge';
 
-interface ExperimentSummary {
-    id: number;
-    name: string;
-}
+type ExperimentSummary = RunSummary;
 
 interface ScoredPrediction {
     prompt: string;
@@ -423,6 +421,10 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
     const wf = (name: EvalWorkflow) => workflow === name;
     const [experiments, setExperiments] = useState<ExperimentSummary[]>([]);
     const [selectedExp, setSelectedExp] = useState<number | null>(null);
+    // True once the user picked a run (picker, probe sparkline): the
+    // summary card's server-resolved run then no longer overrides it.
+    const userPickedRunRef = useRef(false);
+    const selectedExpRef = useRef<number | null>(null);
     const [evalResults, setEvalResults] = useState<EvalResult[]>([]);
     const [scorecard, setScorecard] = useState<SafetyScorecard | null>(null);
 
@@ -472,6 +474,8 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
 
     useEffect(() => {
         setSelectedExp(null);
+        selectedExpRef.current = null;
+        userPickedRunRef.current = false;
         setEvalResults([]);
         setScorecard(null);
         setErrorMessage(null);
@@ -508,7 +512,14 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
             try {
                 const res = await api.get<ExperimentSummary[]>(`/projects/${projectId}/training/experiments`);
                 if (active) {
-                    setExperiments(res.data);
+                    const runs = Array.isArray(res.data) ? res.data : [];
+                    setExperiments(runs);
+                    // Open on the summary's run (latest completed non-baseline)
+                    // on every tab, not only once the Verdict card resolves.
+                    const initial = defaultRunId(runs);
+                    if (initial != null && selectedExpRef.current == null) {
+                        void loadResults(initial);
+                    }
                 }
             } catch (error) {
                 if (active) {
@@ -696,6 +707,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
 
     const loadResults = async (expId: number) => {
         setErrorMessage(null);
+        selectedExpRef.current = expId;
         setSelectedExp(expId);
         try {
             await Promise.all([listResults(expId), loadGateReport(expId)]);
@@ -1016,9 +1028,28 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                     refreshToken={evalResults.length}
                     hideTryBox
                     onResolved={(expId) => {
-                        if (selectedExp == null) void loadResults(expId);
+                        if (!userPickedRunRef.current && expId !== selectedExpRef.current) void loadResults(expId);
                     }}
                 />
+            )}
+            {wf('verdict') && selectedExp != null && gateReport && (
+                <div className="card eval-panel__gate" data-testid="eval-verdict-gate">
+                    <div className="eval-panel__gate-head">
+                        <h3>Pass/fail rules</h3>
+                        <span className={`badge ${gateStatusBadge.className}`}>{gateStatusBadge.label}</span>
+                    </div>
+                    <div className="eval-panel__gate-meta">
+                        <span data-testid="eval-verdict-gate-run"><strong>{runLabel(experiments, selectedExp)}</strong></span>
+                        <span>Rule set <strong>{gateReport.pack?.display_name || gateReport.pack?.pack_id || 'auto'}</strong></span>
+                        {gateReport.captured_at && <span>Checked <strong>{new Date(gateReport.captured_at).toLocaleString()}</strong></span>}
+                    </div>
+                    {gateReport.failed_gate_ids.length > 0 && (
+                        <div className="eval-panel__gate-warn">Failed required rules: {gateReport.failed_gate_ids.join(', ')}</div>
+                    )}
+                    {gateReport.missing_required_metrics.length > 0 && (
+                        <div className="eval-panel__gate-warn">Missing required metrics: {gateReport.missing_required_metrics.join(', ')}</div>
+                    )}
+                </div>
             )}
             {wf('compare') && <ExternalBenchmarksPanel projectId={projectId} experimentId={selectedExp} />}
             {(<>
@@ -1037,10 +1068,16 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                         {experiments.map((experiment) => (
                             <button
                                 key={experiment.id}
+                                type="button"
                                 className={`btn ${selectedExp === experiment.id ? 'btn-primary' : 'btn-secondary'} eval-panel__run-btn`}
-                                onClick={() => void loadResults(experiment.id)}
+                                data-testid={`eval-run-${experiment.id}`}
+                                onClick={() => {
+                                    userPickedRunRef.current = true;
+                                    void loadResults(experiment.id);
+                                }}
                             >
-                                {experiment.name}
+                                #{experiment.id} · {experiment.name}
+                                {isBaselineRun(experiment) && <span className="badge badge-info eval-panel__run-baseline">baseline</span>}
                             </button>
                         ))}
                     </div>
@@ -1069,6 +1106,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
             <ProbePackPanel
                 projectId={projectId}
                 onOpenRun={(expId) => {
+                    userPickedRunRef.current = true;
                     void loadResults(expId);
                     // Best-effort scroll to the now-selected run's scorecard.
                     setTimeout(() => {
@@ -1105,9 +1143,11 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                             // by hand — this affordance covers the most common
                             // "did my latest run regress against the previous one?"
                             // question with one click.
-                            const sorted = [...experiments].sort(
-                                (a, b) => Number(b.id) - Number(a.id),
-                            );
+                            // Baseline runs are the base model, not a prior run
+                            // (the lift panel compares against it already).
+                            const sorted = [...experiments]
+                                .filter((e) => e.id === selectedExp || !isBaselineRun(e))
+                                .sort((a, b) => Number(b.id) - Number(a.id));
                             const selectedIdx = sorted.findIndex((e) => e.id === selectedExp);
                             const prior = sorted[selectedIdx + 1] ?? sorted[1];
                             if (!prior || prior.id === selectedExp) return null;
@@ -1830,7 +1870,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
 
             {selectedExp && wf('verdict') && (
                 <div id="experiment-scorecard">
-                    <ScorecardPanel projectId={projectId} experimentId={selectedExp} />
+                    <ScorecardPanel projectId={projectId} experimentId={selectedExp} runLabel={runLabel(experiments, selectedExp)} />
                 </div>
             )}
 

@@ -157,7 +157,7 @@ describe('EvalPanel — Sample Predictions with RAGHandler enrichment', () => {
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         // Faithful badge with the score.
         expect(await screen.findByText(/Faithful \(1\.00\)/i)).toBeInTheDocument();
@@ -184,7 +184,7 @@ describe('EvalPanel — Sample Predictions with RAGHandler enrichment', () => {
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         expect(
             await screen.findByText(/Hallucinated \(0\.00\)/i),
@@ -213,7 +213,7 @@ describe('EvalPanel — Sample Predictions with RAGHandler enrichment', () => {
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         expect(
             await screen.findByText(/Show retrieved context/i),
@@ -244,7 +244,7 @@ describe('EvalPanel — Sample Predictions with RAGHandler enrichment', () => {
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         expect(await screen.findByText(/Faithful/i)).toBeInTheDocument();
         // No unsupported-tokens note when 0.
@@ -269,7 +269,7 @@ describe('EvalPanel — Sample Predictions with RAGHandler enrichment', () => {
 
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         expect(await screen.findByText(/What is 2\+2/i)).toBeInTheDocument();
         // No Faithful / Hallucinated badges for non-RAG rows.

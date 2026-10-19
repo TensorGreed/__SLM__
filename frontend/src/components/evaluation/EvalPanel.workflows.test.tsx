@@ -60,7 +60,7 @@ function installApi(scoringMode: string | null = 'span_set') {
 async function renderWorkflow(workflow: 'verdict' | 'failures' | 'compare' | 'try') {
     render(<MemoryRouter><EvalPanel projectId={1} workflow={workflow} /></MemoryRouter>);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: 'exp-21' }));
+    await user.click(await screen.findByRole('button', { name: /exp-21/ }));
     await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith(expect.stringContaining('/evaluation/results/21')));
 }
 
@@ -112,7 +112,7 @@ describe('EvalPanel — Results workflows', () => {
         installApi('field_match');
         render(<MemoryRouter><EvalPanel projectId={2} workflow="try" /></MemoryRouter>);
         const user = userEvent.setup();
-        await user.click((await screen.findAllByRole('button', { name: 'exp-21' })).at(-1)!);
+        await user.click((await screen.findAllByRole('button', { name: /exp-21/ })).at(-1)!);
         expect((await screen.findAllByText(/Available for a span-tagging run/)).length).toBeGreaterThan(0);
     });
 });
