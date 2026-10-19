@@ -12,7 +12,7 @@ import * as path from 'path';
 // only fill a result card when the panel itself fires the request).
 // Pre-roll (not narrated): login + launch the sample, open Ship.
 //
-// Wall time: merge ~12 s, quantize ~5 s, export create + run ~3 s on the
+// Wall time: merge ~4 s, quantize ~4 s, export create + run ~3 s on the
 // GB10. Durations come from tts/audio/v11-durations.json
 // (tts/generate_v11_narration.py).
 
@@ -309,9 +309,12 @@ test('Video 11 — Compression + Export narrated', async ({ page }) => {
         headers: authHeader,
         data: { run_smoke_tests: false },
     });
-    // The run may fail validation when the GGUF is not placed in the export
-    // directory; the recording's value is the Releases surface, not success.
-    console.log(`[v11] export create id=${exportId} ok=${exportRunResp.ok()}`);
+    // The quantize above wrote the GGUF under this run's compressed/exp-<id>/,
+    // which is the only place export packages from — so the run must complete.
+    expect(exportRunResp.ok(), await exportRunResp.text()).toBeTruthy();
+    const exportRun = await exportRunResp.json();
+    console.log(`[v11] export id=${exportId} status=${exportRun.status} bytes=${exportRun.file_size_bytes}`);
+    expect(exportRun.status).toBe('completed');
     await page.goto(`/project/${projectId}/ship?stage=package`);
     await expect(page.locator('[data-testid="export-releases"]')).toBeVisible({ timeout: 20_000 });
     await page.waitForTimeout(1000);

@@ -88,8 +88,9 @@ SECTIONS: list[tuple[str, str, str]] = [
         "Running the export validates the file, writes a manifest with the "
         "model hash and a deployment plan, and registers everything against "
         "the run. It lands under Releases, with the exports table below: "
-        "format, status, size, and when. If an export fails validation, its "
-        "row says so. Whatever the status says is the truth.",
+        "format, status, size, and when. This one completed. It packaged "
+        "this run's own GGUF and nothing else: export never picks up a file "
+        "that was compressed from another run.",
     ),
     (
         "07-wrap",

@@ -36,7 +36,7 @@ SECTIONS: list[tuple[str, str, str]] = [
         "01-title",
         "title",
         "Architecture. A few minutes on what makes this platform work under "
-        "the hood, and why every piece runs on local hardware. This is the "
+        "the hood, and why every piece can run on local hardware. This is the "
         "closer for the series, so if you want to know why the other videos "
         "work the way they do, this is the one.",
     ),
@@ -65,9 +65,11 @@ SECTIONS: list[tuple[str, str, str]] = [
     (
         "04-where-things-run",
         "where_things_run",
-        "Where things run. The whole stack is local. There are no cloud "
-        "dependencies, though cloud models are an option when you choose "
-        "one. Training fires on the GPU through PyTorch. Inference for the "
+        "Where things run. Local by default: nothing here needs the cloud. "
+        "If you add a cloud provider key, a project can use a cloud model to "
+        "label data, write an answer key, or judge answers, and every one of "
+        "those calls is metered against the project's monthly budget. "
+        "Training fires on the GPU through PyTorch. Inference for the "
         "teacher, the judge, and the final model all goes through Ollama on "
         "the same GPU. Quantization shells out to llama dot c-p-p. Disk "
         "holds the artifacts. The frontend, on port five one seven three, "

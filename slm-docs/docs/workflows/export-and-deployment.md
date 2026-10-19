@@ -23,7 +23,7 @@ Optional. Quantises / prunes the trained checkpoint to fit a target's weight bud
 **Ship** → **Package** → **Options** → **Compress first** (the old Compression tab; `/pipeline/compression` now redirects there). Pick the **Training run** (only completed runs are listed); the model path fills in automatically. Then choose the format and bit width. The job is queued, and its status shows on the timeline.
 
 - **LoRA runs just work.** A LoRA run saves only an adapter. Compression detects that and merges it into its base model (the one recorded in `adapter_config.json`) before converting.
-- **Outputs are filed per run.** Anything converted from a run's weights lands in `data/projects/<id>/compressed/exp-<run>/`. Export reads that folder, which is why picking the run matters.
+- **Outputs are filed per run.** Anything converted from a run's weights lands in `data/projects/<id>/compressed/exp-<run>/`, and so does anything converted from that run's own outputs: merge the adapter first (`compressed/exp-<run>/merged/`), quantize the merged model, and the GGUF still lands under the run. Export reads that folder, which is why picking the run matters.
 
 ### CLI
 

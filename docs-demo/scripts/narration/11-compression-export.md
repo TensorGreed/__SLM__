@@ -84,8 +84,9 @@ Playwright logs in as `admin`, launches the sample, finds `v09-narrated-run`, cl
 > Running the export validates the file, writes a manifest with the
 > model hash and a deployment plan, and registers everything against the
 > run. It lands under Releases, with the exports table below: format,
-> status, size, and when. If an export fails validation, its row says
-> so. Whatever the status says is the truth.
+> status, size, and when. This one completed. It packaged this run's
+> own GGUF and nothing else: export never picks up a file that was
+> compressed from another run.
 
 ## Section 7 — Wrap (~02:31)
 
@@ -104,4 +105,4 @@ Playwright logs in as `admin`, launches the sample, finds `v09-narrated-run`, cl
 - Say "four-bit", not the literal quantization label.
 - Don't quote exact byte counts.
 - Don't say Ollama is serving it yet; that is Video 12.
-- The export run may fail validation if the GGUF is not in the export directory; the recording accepts either outcome and the narration says the status is the truth.
+- The export must complete (the spec asserts `completed`). Until 2026-10-18 it failed: quantizing the merged model wrote the GGUF to the project-wide `compressed/` root instead of `compressed/exp-<run>/`, and export only packages the run's own directory.

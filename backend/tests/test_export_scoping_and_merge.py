@@ -118,6 +118,37 @@ class CompressedScopingTests(unittest.TestCase):
             self.project_dir / "compressed",
         )
 
+    def test_quantizing_a_merged_model_stays_under_its_run(self):
+        # merge-lora writes compressed/exp-<id>/merged; quantizing that merged
+        # model used to drop the GGUF in the project-wide compressed/ root,
+        # where export (rightly) never looks — the export then failed.
+        merged = self.project_dir / "compressed" / "exp-7" / "merged"
+        merged.mkdir(parents=True)
+        self.assertEqual(
+            compression_service.experiment_id_for_model_path(self.project_id, str(merged)), 7
+        )
+        self.assertEqual(
+            compression_service._output_dir_for_source(self.project_id, str(merged)),
+            self.project_dir / "compressed" / "exp-7",
+        )
+        loose = self.project_dir / "compressed" / "merged"
+        loose.mkdir(parents=True)
+        self.assertIsNone(
+            compression_service.experiment_id_for_model_path(self.project_id, str(loose))
+        )
+
+    def test_merged_then_quantized_gguf_is_what_export_packages(self):
+        merged = self.project_dir / "compressed" / "exp-1" / "merged"
+        merged.mkdir(parents=True)
+        out_dir = compression_service._output_dir_for_source(self.project_id, str(merged))
+        gguf = out_dir / "quantized_4bit.gguf"
+        gguf.write_bytes(b"GGUF")
+        source, files, _ = _resolve_source_model_files(
+            self.project_id, self._exp(1), ExportFormat.GGUF, "Q4_K_M"
+        )
+        self.assertEqual(source, "compressed")
+        self.assertEqual(files, [gguf])
+
 
 class AdapterDetectionTests(unittest.TestCase):
     def test_adapter_config_and_base(self):

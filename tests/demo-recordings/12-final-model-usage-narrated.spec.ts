@@ -194,12 +194,20 @@ test('Video 12 — Final Model Usage narrated', async ({ page }) => {
 
     // Stage Video 11's GGUF + a one-line Modelfile and register it with
     // Ollama before the narration starts; the alias is what the video serves.
-    const ggufPath =
-        process.env.V12_GGUF_PATH ??
-        path.join(
-            process.env.DEMO_DATA_DIR ?? path.resolve(__dirname, '../../data'),
-            `projects/${projectId}/compressed/quantized_4bit.gguf`,
-        );
+    // Compression writes a run's GGUF under compressed/exp-<run>/ — take the
+    // newest one there (video 11 compresses exactly one run).
+    const compressedDir = path.join(
+        process.env.DEMO_DATA_DIR ?? path.resolve(__dirname, '../../data'),
+        `projects/${projectId}/compressed`,
+    );
+    const runGgufs = fs.existsSync(compressedDir)
+        ? fs.readdirSync(compressedDir)
+              .filter((name) => /^exp-\d+$/.test(name))
+              .map((name) => path.join(compressedDir, name, 'quantized_4bit.gguf'))
+              .filter((file) => fs.existsSync(file))
+              .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)
+        : [];
+    const ggufPath = process.env.V12_GGUF_PATH ?? runGgufs[0] ?? path.join(compressedDir, 'quantized_4bit.gguf');
     expect(fs.existsSync(ggufPath), `Video 11 GGUF artifact required at ${ggufPath}`).toBeTruthy();
     fs.mkdirSync(OLLAMA_STAGE_DIR, { recursive: true });
     fs.copyFileSync(ggufPath, `${OLLAMA_STAGE_DIR}/model.gguf`);

@@ -27,17 +27,26 @@ def _compression_dir(project_id: int) -> Path:
 
 def experiment_id_for_model_path(project_id: int, model_path: str | None) -> int | None:
     """The experiment id when ``model_path`` lives under this project's
-    ``experiments/<id>/`` tree (e.g. ``…/experiments/7/model``)."""
+    ``experiments/<id>/`` tree (e.g. ``…/experiments/7/model``) or is one of
+    that run's own compression outputs (``compressed/exp-<id>/…`` — the
+    merged model a quantize starts from), so a merge → quantize chain stays
+    under the run that export packages from."""
     if not model_path:
         return None
     try:
         path = Path(model_path).expanduser().resolve()
-        root = (settings.DATA_DIR / "projects" / str(project_id) / "experiments").resolve()
-        relative = path.relative_to(root)
     except (ValueError, OSError):
         return None
-    head = relative.parts[0] if relative.parts else ""
-    return int(head) if head.isdigit() else None
+    project_dir = (settings.DATA_DIR / "projects" / str(project_id)).resolve()
+    for tree, prefix in (("experiments", ""), ("compressed", "exp-")):
+        try:
+            relative = path.relative_to(project_dir / tree)
+        except ValueError:
+            continue
+        head = relative.parts[0] if relative.parts else ""
+        if head.startswith(prefix) and head[len(prefix):].isdigit():
+            return int(head[len(prefix):])
+    return None
 
 
 def experiment_compression_dir(project_id: int, experiment_id: int) -> Path:

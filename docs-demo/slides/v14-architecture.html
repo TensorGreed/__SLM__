@@ -115,7 +115,7 @@ body { display: flex; align-items: center; justify-content: center; }
 /* Where things run */
 .run-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 28px;
   margin-top: 24px;
 }
@@ -181,16 +181,16 @@ body { display: flex; align-items: center; justify-content: center; }
 <div class="deck">
 
 <section class="slide active" data-slide="1">
-  <div class="brand"><strong>BrewSLM</strong> · Video 14</div>
+  <div class="brand"><strong>BrewSLM</strong> · Video 11</div>
   <div class="title-block">
     <div class="slide-eyebrow">Architecture</div>
     <h1 class="slide-title">What makes this work?</h1>
-    <p class="slide-subtitle">Five processes, one machine, end-to-end on local hardware.</p>
+    <p class="slide-subtitle">Five processes, one machine, local by default.</p>
   </div>
 </section>
 
 <section class="slide" data-slide="2">
-  <div class="brand"><strong>BrewSLM</strong> · Video 14</div>
+  <div class="brand"><strong>BrewSLM</strong> · Video 11</div>
   <div class="slide-eyebrow">The Stack</div>
   <h1 class="slide-title">Five processes.</h1>
   <div class="stack-diagram">
@@ -223,14 +223,14 @@ body { display: flex; align-items: center; justify-content: center; }
 </section>
 
 <section class="slide" data-slide="3">
-  <div class="brand"><strong>BrewSLM</strong> · Video 14</div>
+  <div class="brand"><strong>BrewSLM</strong> · Video 11</div>
   <div class="slide-eyebrow">Data Flow</div>
   <h1 class="slide-title">Raw rows in. Served model out.</h1>
   <div class="flow-chain">
-    <div class="flow-row">Ingestion<span class="arrow">→</span>Cleaning<span class="arrow">→</span>Gold Set</div>
-    <div class="flow-row"><span class="arrow">→</span>Synthetic Generation<span class="arrow">→</span>Dataset Prep<span class="arrow">→</span>Tokenization</div>
+    <div class="flow-row">Sources<span class="arrow">→</span>Prepare (clean + chunk)<span class="arrow">→</span>Labels (answer key)</div>
+    <div class="flow-row"><span class="arrow">→</span>Generate (synthetic rows)<span class="arrow">→</span>Split<span class="arrow">→</span>Tokenization</div>
     <div class="flow-row"><span class="arrow">→</span>Training (Celery + PyTorch + LoRA)</div>
-    <div class="flow-row"><span class="arrow">→</span>Evaluation (gold set + scoring handler)</div>
+    <div class="flow-row"><span class="arrow">→</span>Results (answer key + test examples, scored)</div>
     <div class="flow-row"><span class="arrow">→</span>Compression (llama.cpp quantize)</div>
     <div class="flow-row"><span class="arrow">→</span>Export (manifest + deployment plan)</div>
     <div class="flow-row"><span class="arrow">→</span>Ollama serve → Try it</div>
@@ -238,9 +238,9 @@ body { display: flex; align-items: center; justify-content: center; }
 </section>
 
 <section class="slide" data-slide="4">
-  <div class="brand"><strong>BrewSLM</strong> · Video 14</div>
+  <div class="brand"><strong>BrewSLM</strong> · Video 11</div>
   <div class="slide-eyebrow">Where Things Run</div>
-  <h1 class="slide-title">All on the box. No cloud.</h1>
+  <h1 class="slide-title">Local by default. Cloud only if you add a key.</h1>
   <div class="run-grid">
     <div class="run-col">
       <h3>GPU work</h3>
@@ -260,11 +260,20 @@ body { display: flex; align-items: center; justify-content: center; }
         <li>Ollama models: <code>~/.ollama/models/</code></li>
       </ul>
     </div>
+    <div class="run-col">
+      <h3>Optional cloud</h3>
+      <ul>
+        <li>Off until you configure a provider key</li>
+        <li>Used for: labelling, answer keys, judging</li>
+        <li>Every call metered per project</li>
+        <li>Monthly budget with a warning</li>
+      </ul>
+    </div>
   </div>
 </section>
 
 <section class="slide" data-slide="5">
-  <div class="brand"><strong>BrewSLM</strong> · Video 14</div>
+  <div class="brand"><strong>BrewSLM</strong> · Video 11</div>
   <div class="slide-eyebrow">Trust Boundaries</div>
   <h1 class="slide-title">Two boundaries. Drawn deliberately.</h1>
   <div class="trust-diagram">
@@ -286,11 +295,11 @@ body { display: flex; align-items: center; justify-content: center; }
 </section>
 
 <section class="slide" data-slide="6">
-  <div class="brand"><strong>BrewSLM</strong> · Video 14</div>
+  <div class="brand"><strong>BrewSLM</strong> · Video 11</div>
   <div class="title-block">
     <div class="slide-eyebrow">End</div>
     <h1 class="slide-title">One backend. One frontend. One worker. One broker. One runtime.</h1>
-    <p class="slide-subtitle">Five processes, one machine, end-to-end. The other thirteen videos demonstrate every piece of this loop running for real.</p>
+    <p class="slide-subtitle">Five processes, one machine, end-to-end. The other videos in this series show every piece of this loop running for real.</p>
   </div>
 </section>
 

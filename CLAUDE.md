@@ -606,7 +606,10 @@ runs real CPU inference). ~4 min locally.
   replied) must be re-read against the recorded run — the 09–12 scripts had
   carried an older take's figures. 09–12 run in order on ONE `up --real`
   stack (10 scores 09's run, 11 compresses it, 12 serves 11's GGUF and
-  re-registers the host Ollama alias `slm-supportfaq`). The auto lift check
+  re-registers the host Ollama alias `slm-supportfaq`; 11 asserts the export
+  `completed`, 12 reads the GGUF from `compressed/exp-<run>/`). Spec 14 is
+  slides over `file://` and needs no stack (`DEMO_BASE_URL=http://localhost:5173`
+  just satisfies record-narrated's up-check). The auto lift check
   adds a baseline run above the trained one, so specs target a run by
   `data-testid="training-run-<id>"`, never the first row. API reference pages
   (`slm-docs/docs/reference/api/`) are regenerated per `slm-docs/scripts/README.md`
@@ -1323,7 +1326,10 @@ runs real CPU inference). ~4 min locally.
   `activeProject.beginner_mode`, open otherwise; ProbePack `onOpenRun` opens it.
 - **Export (Wave 1b)** — GGUF/ONNX/TensorRT export packages only
   `compressed/exp-<run>/` (compression_service files outputs there when the
-  source path is under `experiments/<run>/`); no raw-weights fallback under a
+  source path is under `experiments/<run>/` OR `compressed/exp-<run>/` — the
+  merge-lora → quantize chain; until 2026-10-18 quantizing the merged model
+  wrote the GGUF to the project-wide `compressed/` root and every GGUF export
+  of a merged run failed with "No Q4_K_M GGUF artifact"); no raw-weights fallback under a
   compressed label. HF/Docker export of a LoRA run merges the adapter
   (`adapter_merge_service.merge_adapter`: fp32 merge, saved in the base
   checkpoint's dtype read from `AutoConfig` — `from_pretrained(dtype=fp32)`
