@@ -58,8 +58,9 @@ SECTIONS: list[tuple[str, str, str]] = [
         "Open the settings. The default provider is a trained run from this "
         "project, but to serve through Ollama we pick OpenAI-compatible, "
         "which covers Ollama's compatibility endpoint. The model name is "
-        "the alias we just created. Temperature and max tokens can stay as "
-        "they are. That is all the configuration this needs. Nothing here "
+        "the alias we just created. Temperature goes to zero, so the model "
+        "gives its single most likely answer, the same one on every run. "
+        "That is all the configuration this needs. Nothing here "
         "is specific to this one model. Anything Ollama can serve shows up "
         "the same way.",
     ),
@@ -75,12 +76,14 @@ SECTIONS: list[tuple[str, str, str]] = [
     (
         "05-response",
         "response",
-        "And there it is. It sends you to Settings, then Security, "
-        "which is exactly where the training tickets point. Then it "
-        "drifts. The tickets describe an emailed link that lasts "
-        "fifteen minutes, and the model invents its own steps and a "
-        "thirty-day expiry. Half right, confidently worded, which is "
-        "what the evaluation's quarter F1 was telling us. And it all "
+        "And there it is. Settings, then Security, then a Reset button: "
+        "that much is exactly where the training tickets point. Then it "
+        "drifts. The tickets say you get an emailed one-time link that "
+        "expires after fifteen minutes. The model never mentions the email, "
+        "invents a choice between twelve months and thirty days, and sends "
+        "you to a keyring page that no ticket describes. Half right, "
+        "confidently worded, which is what the evaluation's quarter F1 was "
+        "telling us. And it all "
         "runs on a hundred megabytes of quantized weights.",
     ),
     (

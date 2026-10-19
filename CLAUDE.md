@@ -607,7 +607,12 @@ runs real CPU inference). ~4 min locally.
   carried an older take's figures. 09–12 run in order on ONE `up --real`
   stack (10 scores 09's run, 11 compresses it, 12 serves 11's GGUF and
   re-registers the host Ollama alias `slm-supportfaq`; 11 asserts the export
-  `completed`, 12 reads the GGUF from `compressed/exp-<run>/`). Spec 14 is
+  `completed`, 12 reads the GGUF from `compressed/exp-<run>/`, sets the playground
+  temperature to 0 (`data-testid="playground-temperature"`) and runs
+  `ollama stop` before the prompt, then logs `[v12] reply:` — greedy decoding
+  is repeatable only per Ollama STATE: a cold load and a warm model with the
+  prompt cached give two different (each repeatable) replies, so the spec
+  always asks a cold model; the narration quotes that reply). Spec 14 is
   slides over `file://` and needs no stack (`DEMO_BASE_URL=http://localhost:5173`
   just satisfies record-narrated's up-check). The auto lift check
   adds a baseline run above the trained one, so specs target a run by

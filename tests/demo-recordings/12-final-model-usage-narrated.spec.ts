@@ -214,6 +214,11 @@ test('Video 12 — Final Model Usage narrated', async ({ page }) => {
     fs.writeFileSync(`${OLLAMA_STAGE_DIR}/Modelfile`, 'FROM ./model.gguf\n');
     execSync(`ollama create ${OLLAMA_MODEL_ALIAS} -f Modelfile`, { cwd: OLLAMA_STAGE_DIR, encoding: 'utf-8' });
     console.log(`[v12] Ollama model "${OLLAMA_MODEL_ALIAS}" created from GGUF`);
+    // Unload it so the prompt below is answered by a fresh load. Even at
+    // temperature 0 the reply depends on Ollama's state: a warm model reuses
+    // the cached prompt and decodes a different (equally repeatable) reply.
+    // Cold every take = the same reply every take.
+    execSync(`ollama stop ${OLLAMA_MODEL_ALIAS}`, { encoding: 'utf-8' });
 
     await page.locator('[data-testid="nav-results"]').click();
     await page.waitForURL(/\/project\/\d+\/results/, { timeout: 15_000 });
@@ -249,11 +254,16 @@ test('Video 12 — Final Model Usage narrated', async ({ page }) => {
     const modelInput = page.locator('[data-testid="playground-model"]');
     await expect(modelInput).toBeVisible({ timeout: 10_000 });
     await modelInput.fill(OLLAMA_MODEL_ALIAS);
+    // Temperature 0 = greedy decoding: the same GGUF gives the same reply on
+    // every recording, so the narration can quote it (at the default 0.2 it
+    // drifted between takes).
+    await page.locator('[data-testid="playground-temperature"]').fill('0');
     await page.waitForTimeout(500);
     await screenshot(page, 'v12-playground-config');
     await walkthrough(page, remainingMs(sectionStart, dur.playground_setup), [
         ['[data-testid="playground-provider"]', 2],
         ['[data-testid="playground-model"]', 2],
+        ['[data-testid="playground-temperature"]', 2],
     ]);
     await padTo(page, sectionStart, dur.playground_setup);
 
@@ -273,6 +283,8 @@ test('Video 12 — Final Model Usage narrated', async ({ page }) => {
     await expect(page.locator('.playground-message.assistant').first()).toBeVisible({ timeout: 90_000 });
     await expect(page.getByRole('button', { name: /^Send$/ })).toBeVisible({ timeout: 90_000 }); // reply finished
     await page.waitForTimeout(800);
+    const reply = (await page.locator('.playground-message.assistant').first().innerText()).trim();
+    console.log(`[v12] reply: ${reply.replace(/\s+/g, ' ')}`);
     await screenshot(page, 'v12-response', true);
     await spotlight(page, '.playground-message.assistant', remainingMs(sectionStart, dur.response));
     await padTo(page, sectionStart, dur.response);

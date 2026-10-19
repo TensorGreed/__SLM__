@@ -1207,7 +1207,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
         )}
         <div className="form-group">
           <label className="form-label">Temperature</label>
-          <input className="input" value={temperature} onChange={(e) => setTemperature(e.target.value)} />
+          <input className="input" data-testid="playground-temperature" value={temperature} onChange={(e) => setTemperature(e.target.value)} />
         </div>
         <div className="form-group">
           <label className="form-label">Max Tokens</label>

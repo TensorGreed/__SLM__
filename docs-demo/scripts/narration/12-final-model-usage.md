@@ -47,13 +47,14 @@ Playwright logs in as `admin`, launches the sample, stages the GGUF (`V12_GGUF_P
 
 ## Section 3 — Playground setup (~00:51)
 
-**On screen**: Provider → *OpenAI-Compatible / Ollama*; Model → `slm-supportfaq` (spotlight each).
+**On screen**: Provider → *OpenAI-Compatible / Ollama*; Model → `slm-supportfaq`; Temperature → `0` (spotlight each).
 
 > Open the settings. The default provider is a trained run from this
 > project, but to serve through Ollama we pick OpenAI-compatible, which
 > covers Ollama's compatibility endpoint. The model name is the alias we
-> just created. Temperature and max tokens can stay as they are. That is
-> all the configuration this needs. Nothing here is specific to this one
+> just created. Temperature goes to zero, so the model gives its single
+> most likely answer, the same one on every run. That is all the
+> configuration this needs. Nothing here is specific to this one
 > model. Anything Ollama can serve shows up the same way.
 
 ## Section 4 — Send prompt (~01:20)
@@ -69,12 +70,22 @@ Playwright logs in as `admin`, launches the sample, stages the GGUF (`V12_GGUF_P
 
 **On screen**: wait for the assistant message and the end of the reply; spotlight it.
 
-> And there it is. It sends you to Settings, then Security, which is
-> exactly where the training tickets point. Then it drifts. The tickets
-> describe an emailed link that lasts fifteen minutes, and the model
-> invents its own steps and a thirty-day expiry. Half right, confidently
-> worded, which is what the evaluation's quarter F1 was telling us. And
-> it all runs on a hundred megabytes of quantized weights.
+> And there it is. Settings, then Security, then a Reset button: that
+> much is exactly where the training tickets point. Then it drifts. The
+> tickets say you get an emailed one-time link that expires after fifteen
+> minutes. The model never mentions the email, invents a choice between
+> twelve months and thirty days, and sends you to a keyring page that no
+> ticket describes. Half right, confidently worded, which is what the
+> evaluation's quarter F1 was telling us. And it all runs on a hundred
+> megabytes of quantized weights.
+
+The reply, at temperature 0 on the 2026-10-18 take (greedy decoding, so the
+same GGUF gives it on every take): *"Open Settings → Security → Password.
+Click the "Reset" button, and enter a new password for your account. You can
+choose from 12 months' old or 30 days after you create it. If you're using an
+external keyring, click the link in the top-right corner of Settings →
+Keyring."* The spec logs it as `[v12] reply:`; if the GGUF changes, re-read
+this section against the new line.
 
 ## Section 6 — Wrap (~02:02)
 

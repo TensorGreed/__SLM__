@@ -277,6 +277,29 @@ describe('ChatPlaygroundPanel', () => {
     expect(screen.queryByTestId(/playground-provenance-.*-rag/)).toBeNull();
   });
 
+  it('sends temperature 0 as 0 (greedy), not the 0.2 default', async () => {
+    const user = userEvent.setup();
+    apiMock.post.mockImplementation(async (url: string) => {
+      if (url.includes('/training/playground/chat') && !url.includes('/stream')) {
+        return { data: { reply: 'Settings → Security.' } };
+      }
+      return { data: {} };
+    });
+    render(<ChatPlaygroundPanel projectId={42} />);
+    await user.click(screen.getByRole('checkbox', { name: /Stream responses/i }));
+    const temperature = screen.getByTestId('playground-temperature');
+    await user.clear(temperature);
+    await user.type(temperature, '0');
+    await user.type(await screen.findByPlaceholderText(/Write your prompt/i), 'How do I reset my password?');
+    await user.click(screen.getByRole('button', { name: /^Send$/i }));
+    await waitFor(() => {
+      expect(apiMock.post).toHaveBeenCalledWith(
+        '/projects/42/training/playground/chat',
+        expect.objectContaining({ temperature: 0 }),
+      );
+    });
+  });
+
   it('opens on the latest completed run and chats with it in-process', async () => {
     const baseGet = apiMock.get.getMockImplementation();
     apiMock.get.mockImplementation(async (url: string) => {
