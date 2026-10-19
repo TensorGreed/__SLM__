@@ -773,6 +773,33 @@ def _resolve_use_lora(config: dict[str, Any]) -> tuple[bool, str | None]:
     return False, None
 
 
+# Rows longer than this many tokens train in micro-batches of 1 when the
+# config leaves batch_size unset (same threshold as gradient checkpointing).
+LONG_ROW_TOKENS = 1024
+
+
+def _resolve_micro_batch(
+    config: dict[str, Any], *, batch_size: int, gradient_accumulation_steps: int, sequence_tokens: int | None,
+) -> dict[str, Any] | None:
+    """Same effective batch, micro-batches of 1, for long rows when the
+    config didn't set ``batch_size``. None = keep the batch as it is."""
+    if config.get("batch_size") is not None or not sequence_tokens or sequence_tokens <= LONG_ROW_TOKENS:
+        return None
+    if batch_size <= 1:
+        return None
+    effective = batch_size * gradient_accumulation_steps
+    return {
+        "batch_size": 1,
+        "gradient_accumulation_steps": effective,
+        "effective_batch": effective,
+        "sequence_tokens": int(sequence_tokens),
+        "reason": (
+            f"training rows up to {sequence_tokens} tokens (> {LONG_ROW_TOKENS}): batch {batch_size} × "
+            f"accumulation {gradient_accumulation_steps} → 1 × {effective} (same effective batch, ~1/{batch_size} the logits memory)"
+        ),
+    }
+
+
 def _encode_causal_lm_example(
     tokenizer: Any,
     text: str,
@@ -2114,6 +2141,21 @@ def _run_training_attempt(
         grad_accum = int(epoch_plan["gradient_accumulation_steps"])
         runtime_environment["auto_epochs"] = epoch_plan
         warnings.append(f"Auto epochs: {epoch_plan['reason']}")
+    # Long rows: the logits alone are batch × tokens × vocab (4 × 2048 ×
+    # 152k ≈ 5 GB in fp32, several copies through the loss) — an unset batch
+    # size becomes micro-batches of 1 with the same effective batch.
+    longest_row_tokens = (
+        _longest_row_tokens(train_text, processor_tokenizer, max_seq_length)
+        if train_text is not None and packed_train is None else None
+    )
+    micro_plan = _resolve_micro_batch(
+        config, batch_size=batch_size, gradient_accumulation_steps=grad_accum, sequence_tokens=longest_row_tokens,
+    )
+    if micro_plan is not None:
+        batch_size = micro_plan["batch_size"]
+        grad_accum = micro_plan["gradient_accumulation_steps"]
+        runtime_environment["micro_batch"] = micro_plan
+        warnings.append(f"Micro-batch: {micro_plan['reason']}")
     use_bf16 = bool(use_cuda and want_bf16 and torch.cuda.is_bf16_supported())
     use_fp16 = bool(use_cuda and not use_bf16 and want_fp16)
     # Weights that TRAIN keep fp32 master copies (the Trainer's bf16 / fp16
@@ -2236,7 +2278,7 @@ def _run_training_attempt(
         checkpoint_plan = resolve_gradient_checkpointing(
             gradient_checkpointing_requested,
             model_params=sum(p.numel() for p in model.parameters()),
-            sequence_tokens=_longest_row_tokens(train_text, processor_tokenizer, max_seq_length),
+            sequence_tokens=longest_row_tokens,
         )
         gradient_checkpointing = bool(checkpoint_plan["enabled"])
         runtime_environment["gradient_checkpointing"] = checkpoint_plan

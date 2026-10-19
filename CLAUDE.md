@@ -1051,7 +1051,10 @@ runs real CPU inference). ~4 min locally.
   `runtime_environment.gradient_checkpointing.sequence_tokens`); explicit bool honoured.
   Passage-prompt runs with no `use_lora` default to LoRA (`train._resolve_use_lora`,
   report `runtime_environment.use_lora`) — a 1.5B full fine-tune on ~1k-token passage
-  prompts sat near 90 GB. NB a run's training_config.json holds only the fields set, so an
+  prompts sat near 90 GB. Rows > `train.LONG_ROW_TOKENS` 1024 with no `batch_size` set train in
+  micro-batches of 1 with the same effective batch (`_resolve_micro_batch`, after auto-epochs;
+  report `runtime_environment.micro_batch`) — batch 4 × 2048 × 152k-vocab logits held a LoRA +
+  checkpointing run at 55 GB. NB a run's training_config.json holds only the fields set, so an
   unset `use_lora` is a FULL fine-tune in train.py (the schema's True default isn't applied).
   The report's `runtime_environment` now also records `model_dtype`,
   `attn_implementation` (flash_attention_2 → `sdpa` fallback) and

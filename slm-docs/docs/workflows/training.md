@@ -173,7 +173,7 @@ Tick **Stop after generating so I can review the rows before training** to do st
 - for most rows the passage holding the answer is among the retrieved ones, and the target answer ends with its citation, `[n]`; when retrieval missed it, it is put back in place of the lowest-ranked hit (the run's `passage_prompts` report counts how often — `gold_inserted_share`);
 - for a fraction of the rows (default 20 %, `passages_withheld_fraction` 0–0.5) every passage holding the answer is removed and the target becomes *"The passages don't say, so I don't know."* — the abstention the instruction asks for.
 
-Passage prompts are long (~1k tokens), so such a run trains a LoRA adapter unless you chose a full fine-tune, and activation checkpointing switches on automatically for any run whose rows exceed 1,024 tokens (the training report's `runtime_environment` records both choices and why).
+Passage prompts are long (~1k tokens), so such a run trains a LoRA adapter unless you chose a full fine-tune, and activation checkpointing switches on — and an unset batch size becomes micro-batches of one with the same effective batch — automatically for any run whose rows exceed 1,024 tokens (the training report's `runtime_environment` records both choices and why).
 
 "Holds the answer" is the answer-key gate's own test (≥ 70 % of the answer's content words appear in the passage). Only the run's train and validation files are rewritten (under the run's output dir, `passage_prompts/`); the prepared split and its test examples are untouched. Retrieval reads the document passages only — never the Q&A pairs, the answer key or the validation / test rows.
 

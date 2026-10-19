@@ -9,7 +9,7 @@ from app.services.gradient_checkpointing_policy import (
     AUTO_CHECKPOINT_MAX_SEQ_TOKENS,
     resolve_gradient_checkpointing,
 )
-from scripts.train import _longest_row_tokens, _resolve_use_lora
+from scripts.train import LONG_ROW_TOKENS, _longest_row_tokens, _resolve_micro_batch, _resolve_use_lora
 
 
 class _Tok:
@@ -53,6 +53,18 @@ class PassagePromptLoraDefaultTests(unittest.TestCase):
     def test_other_runs_keep_the_unset_default(self):
         self.assertEqual(_resolve_use_lora({}), (False, None))
         self.assertEqual(_resolve_use_lora({"use_lora": True}), (True, None))
+
+
+class MicroBatchTests(unittest.TestCase):
+    def test_long_rows_keep_the_effective_batch_in_micro_batches(self):
+        plan = _resolve_micro_batch({}, batch_size=4, gradient_accumulation_steps=1, sequence_tokens=2048)
+        self.assertEqual((plan["batch_size"], plan["gradient_accumulation_steps"], plan["effective_batch"]), (1, 4, 4))
+
+    def test_short_rows_explicit_batch_or_batch_one_are_left_alone(self):
+        self.assertIsNone(_resolve_micro_batch({}, batch_size=4, gradient_accumulation_steps=4, sequence_tokens=LONG_ROW_TOKENS))
+        self.assertIsNone(_resolve_micro_batch({"batch_size": 4}, batch_size=4, gradient_accumulation_steps=4, sequence_tokens=3000))
+        self.assertIsNone(_resolve_micro_batch({}, batch_size=1, gradient_accumulation_steps=4, sequence_tokens=3000))
+        self.assertIsNone(_resolve_micro_batch({}, batch_size=4, gradient_accumulation_steps=4, sequence_tokens=None))
 
 
 if __name__ == "__main__":
