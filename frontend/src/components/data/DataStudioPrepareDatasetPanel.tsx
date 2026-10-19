@@ -282,7 +282,7 @@ export default function DataStudioPrepareDatasetPanel({
         >
             <div className="data-studio-prepare__header">
                 <div>
-                    <p className="data-studio-prepare__eyebrow">Data Prep</p>
+                    <p className="data-studio-prepare__eyebrow">Data → Split</p>
                     <h3>Prepare Dataset</h3>
                     <p>{verdict.detail}</p>
                 </div>

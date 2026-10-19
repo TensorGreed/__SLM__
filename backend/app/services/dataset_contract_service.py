@@ -200,7 +200,7 @@ def analyze_prepared_dataset_contract(
 
     if not train_file.exists():
         errors.append(
-            f"Prepared training dataset missing at {train_file}. Run Dataset Prep split before training."
+            f"Prepared training dataset missing at {train_file}. Run the split in Data → Split before training."
         )
         return {
             "ok": False,
@@ -276,10 +276,10 @@ def analyze_prepared_dataset_contract(
             )
         )
         hints.append(
-            f"Run Dataset Prep split with adapter '{suggested_adapter}' and re-run training preflight."
+            f"Run the split in Data → Split with adapter '{suggested_adapter}' and re-run training preflight."
         )
         hints.append(
-            "Use Adapter Lab auto-detect, then save adapter preset and re-split."
+            "Use auto-detect in Data → Split → Adapter preview, then save the adapter preset and re-split."
         )
         if not manifest_mapping:
             hints.append(
@@ -317,7 +317,7 @@ def analyze_prepared_dataset_contract(
             )
     elif coverage < float(min_coverage):
         hints.append(
-            "Set adapter task_profile in Adapter Lab/Split preset to tighten task-specific mapping."
+            "Set the adapter task_profile in Data → Split (adapter preview or split preset) to tighten task-specific mapping."
         )
 
     return {

@@ -143,10 +143,10 @@ const mappingPayload = {
                     ambiguous_count: 0,
                 },
                 apply_action: {
-                    label: 'Open Data Prep to apply',
+                    label: 'Open Data → Split to apply',
                     target_tab: 'dataprep',
                     requires_confirmation: true,
-                    description: 'Review and save/apply this mapping in Data Prep. Data Studio does not mutate project mapping.',
+                    description: 'Review and save/apply this mapping in Data → Split. This preview does not change the project mapping.',
                 },
             },
             {
@@ -194,18 +194,18 @@ const mappingPayload = {
                     ambiguous_count: 1,
                 },
                 apply_action: {
-                    label: 'Open Data Prep to apply',
+                    label: 'Open Data → Split to apply',
                     target_tab: 'dataprep',
                     requires_confirmation: true,
-                    description: 'Review and save/apply this mapping in Data Prep. Data Studio does not mutate project mapping.',
+                    description: 'Review and save/apply this mapping in Data → Split. This preview does not change the project mapping.',
                 },
             },
         ],
         entry_points: [
             {
-                label: 'Open Data Prep',
+                label: 'Open Data → Split',
                 target_tab: 'dataprep',
-                reason: 'Save or apply mapping templates only after reviewing them in Data Prep.',
+                reason: 'Save or apply mapping templates only after reviewing them in Data → Split.',
                 requires_confirmation: true,
             },
         ],
@@ -242,7 +242,7 @@ describe('DataStudioMappingPreviewPanel', () => {
         expect(screen.getByText('3 detected fields')).toBeInTheDocument();
         expect(screen.getAllByText('rationale').length).toBeGreaterThan(0);
 
-        fireEvent.click(screen.getAllByRole('button', { name: /Open Data Prep to apply/i })[0]);
+        fireEvent.click(screen.getAllByRole('button', { name: /Open Data → Split to apply/i })[0]);
 
         expect(onOpenTarget).toHaveBeenCalledWith('dataprep');
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/mapping-preview');

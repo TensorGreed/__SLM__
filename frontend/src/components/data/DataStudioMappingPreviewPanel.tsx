@@ -311,7 +311,7 @@ export default function DataStudioMappingPreviewPanel({
                     <div>
                         <h4>Mapping templates</h4>
                         <p>
-                            Compare task type, adapter, domain, and detected templates before saving mapping changes in Data Prep.
+                            Compare task type, adapter, domain, and detected templates before saving mapping changes in Data → Split.
                         </p>
                     </div>
                     <div className="data-studio-mapping__template-metrics">

@@ -578,7 +578,7 @@ def _analyze_multimodal_media_contract(
                 "but sampled train rows contain no image_path/image fields."
             )
         )
-        hints.append("Re-run Dataset Prep with a vision adapter or ensure image_path is present in mapped rows.")
+        hints.append("Re-run the split in Data → Split with a vision adapter or ensure image_path is present in mapped rows.")
     if expected_modality in {"audio_text", "multimodal"} and audio_rows <= 0:
         errors.append(
             (
@@ -586,7 +586,7 @@ def _analyze_multimodal_media_contract(
                 "but sampled train rows contain no audio_path/audio fields."
             )
         )
-        hints.append("Re-run Dataset Prep with an audio adapter or ensure audio_path is present in mapped rows.")
+        hints.append("Re-run the split in Data → Split with an audio adapter or ensure audio_path is present in mapped rows.")
 
     total_local_media_refs = (image_rows - remote_image_refs) + (audio_rows - remote_audio_refs)
     total_missing_local_refs = missing_local_images + missing_local_audios
@@ -952,7 +952,7 @@ def run_training_preflight(
                 )
             )
             hints.append(
-                "Run Dataset Prep split to exercise full data-contract checks before switching to non-simulated runtimes."
+                "Run the split in Data → Split to exercise full data-contract checks before switching to non-simulated runtimes."
             )
         else:
             errors.append(
@@ -962,7 +962,7 @@ def run_training_preflight(
                 )
             )
             hints.append(
-                "Go to Dataset Prep, run Split, and verify train.jsonl is created before starting training."
+                "Go to Data → Split, run the split, and verify train.jsonl is created before starting training."
             )
     if not val_exists:
         warnings.append(

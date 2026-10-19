@@ -77,7 +77,7 @@ const recommendationsPayload = {
             strategy: 'positive paraphrase',
             priority: 'medium',
             target_tab: 'synthetic',
-            action_label: 'Open Synthetic',
+            action_label: 'Open Data → Generate',
             rationale: 'This strategy follows from deterministic domain signals.',
             domain_reason: 'Support assistants need to recognize the same intent across messy customer wording.',
             evidence: [
@@ -109,9 +109,9 @@ const recommendationsPayload = {
     ],
     entry_points: [
         {
-            label: 'Open Synthetic workflow',
+            label: 'Open Data → Generate',
             target_tab: 'synthetic',
-            reason: 'Run playbooks in the existing Synthetic tab.',
+            reason: 'Run playbooks in Data → Generate.',
         },
         {
             label: 'Open answer key workflow',
@@ -145,7 +145,7 @@ describe('DataStudioSyntheticRecommendationsPanel', () => {
         expect(screen.getAllByText(/ollama:llama3/i).length).toBeGreaterThan(0);
         expect(screen.getByText('Review pending synthetic rows')).toBeInTheDocument();
 
-        fireEvent.click(screen.getByRole('button', { name: /^Open Synthetic$/i }));
+        fireEvent.click(screen.getAllByRole('button', { name: /^Open Data → Generate$/i })[0]);
         expect(onOpenTab).toHaveBeenCalledWith('synthetic');
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/synthetic-recommendations');
     });
@@ -229,7 +229,7 @@ describe('DataStudioSyntheticRecommendationsPanel', () => {
                         strategy: 'backend setup',
                         priority: 'medium',
                         target_tab: 'synthetic',
-                        action_label: 'Open Synthetic',
+                        action_label: 'Open Data → Generate',
                         domain_reason: 'Generic Domain recommendations can be executed locally once an Ollama model is reachable.',
                         generation_path: {
                             backend: 'ollama',

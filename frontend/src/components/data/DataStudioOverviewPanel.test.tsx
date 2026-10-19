@@ -50,7 +50,7 @@ const readyOverview = {
     },
     issues: [],
     primary_action: {
-        label: 'Open training',
+        label: 'Open Train',
         target_tab: 'training',
         reason: 'A prepared dataset is available.',
     },
@@ -76,7 +76,7 @@ describe('DataStudioOverviewPanel', () => {
         expect(screen.getByText('Classification')).toBeInTheDocument();
         expect(screen.getByText('Support FAQ')).toBeInTheDocument();
 
-        await userEvent.click(screen.getByRole('button', { name: 'Open training' }));
+        await userEvent.click(screen.getByRole('button', { name: 'Open Train' }));
         expect(onOpenTab).toHaveBeenCalledWith('training');
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/overview');
     });

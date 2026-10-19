@@ -534,14 +534,14 @@ def evaluate_newbie_autopilot_dataset_readiness(
 
     if not train_path.exists():
         blockers.append("Prepared training split is missing (`prepared/train.jsonl`).")
-        hints.append("Go to Data pipeline tab and run dataset split/prep before training.")
+        hints.append("Go to Data → Split and run the split before training.")
         auto_fixes.append(
             {
                 "id": "open_data_pipeline",
-                "label": "Open Data Prep",
-                "description": "Open data prep tab and create prepared train/val splits.",
+                "label": "Open Data → Split",
+                "description": "Open Data → Split and create prepared train/val splits.",
                 "action_type": "navigate",
-                "navigate_to": f"/project/{project_id}/pipeline/data",
+                "navigate_to": f"/project/{project_id}/data?step=dataprep",
             }
         )
     else:
@@ -571,8 +571,8 @@ def evaluate_newbie_autopilot_dataset_readiness(
             {
                 "id": "open_synthetic_data",
                 "label": "Generate Synthetic Data",
-                "description": "Open synthetic data tools to expand training examples.",
-                "navigate_to": f"/project/{project_id}/pipeline/synthetic",
+                "description": "Open Data → Generate to expand training examples.",
+                "navigate_to": f"/project/{project_id}/data?step=synthetic",
             }
         )
 

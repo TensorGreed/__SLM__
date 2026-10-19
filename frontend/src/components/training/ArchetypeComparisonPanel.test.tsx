@@ -284,7 +284,7 @@ describe('ArchetypeComparisonPanel', () => {
             screen.getByTestId('archetype-comparison-action-goldset_diversity'),
         );
         expect(locationAssignMock).toHaveBeenCalledWith(
-            '/project/4/data',
+            '/project/4/data?step=goldset',
         );
     });
 

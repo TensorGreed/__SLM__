@@ -179,7 +179,7 @@ const preparePayload = {
     ],
     issues: [],
     entry_point: {
-        label: 'Open Dataset Prep',
+        label: 'Open Data → Split',
         target_tab: 'dataprep',
         reason: 'Confirm adapter and split settings before writing prepared files.',
         requires_confirmation: true,
@@ -193,7 +193,7 @@ describe('DataStudioPrepareDatasetPanel', () => {
         apiMock.post.mockReset();
     });
 
-    it('renders split readiness and routes mutating work to Dataset Prep', async () => {
+    it('renders split readiness and routes mutating work to Data → Split', async () => {
         apiMock.get.mockResolvedValueOnce({ data: preparePayload });
         const onOpenTarget = vi.fn();
 
@@ -211,7 +211,7 @@ describe('DataStudioPrepareDatasetPanel', () => {
         expect(screen.getByText('Validation')).toBeInTheDocument();
         expect(screen.getByText('Test')).toBeInTheDocument();
 
-        fireEvent.click(screen.getByRole('button', { name: /Open Dataset Prep/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Open Data → Split/i }));
         expect(onOpenTarget).toHaveBeenCalledWith('dataprep');
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/prepare-dataset');
     });

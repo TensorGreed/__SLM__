@@ -142,7 +142,7 @@ const qualityPayload = {
             message: '2 synthetic rows are pending review before they can enter prepared datasets.',
             count: 2,
             target_tab: 'synthetic',
-            workflow_owner: 'Synthetic Review',
+            workflow_owner: 'Data → Generate',
             evidence: ['1 pending source group(s).'],
             action_label: 'Review synthetic rows',
         },
@@ -154,7 +154,7 @@ const qualityPayload = {
             message: '1 synthetic row is missing required recipe fields.',
             count: 1,
             target_tab: 'dataprep',
-            workflow_owner: 'Data Prep',
+            workflow_owner: 'Data → Split',
             evidence: ['Required fields: text, label.'],
             action_label: 'Review mapping',
         },
@@ -186,7 +186,7 @@ const qualityPayload = {
     ],
     entry_points: [
         {
-            label: 'Open Synthetic review',
+            label: 'Open the Generate review queue',
             target_tab: 'synthetic',
             reason: 'Accept, reject, or inspect synthetic rows.',
         },

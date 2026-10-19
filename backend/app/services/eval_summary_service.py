@@ -472,7 +472,7 @@ async def span_eval_summary(db: AsyncSession, project_id: int, experiment: Exper
         "message": (
             None if answer_key is not None else
             "Scored against the test examples, which the training-data teacher labelled. "
-            "Write an answer key with a second model (Synthetic tab) for a score that can see the teacher's mistakes."
+            "Write an answer key with a second model (Data → Generate) for a score that can see the teacher's mistakes."
         ),
         "headline": None,
         "answer_key": answer_key,

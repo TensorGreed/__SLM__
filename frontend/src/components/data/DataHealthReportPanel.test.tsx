@@ -41,7 +41,7 @@ const BLOCK_REPORT = {
                     headline: 'No documents uploaded yet.',
                     plain_english: "You haven't uploaded any source documents yet.",
                     why_it_matters: 'Training needs source text to learn from — the platform has nothing to work with.',
-                    suggested_action: { kind: 'navigate', label: 'Open Ingest tab', target: 'data' },
+                    suggested_action: { kind: 'navigate', label: 'Open Data → Sources', target: 'data' },
                     context: { document_count: 0 },
                 },
             ],

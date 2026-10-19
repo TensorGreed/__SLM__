@@ -166,7 +166,7 @@ def _qa_sft_recipe() -> Recipe:
         data_acquisition_hints=[
             "Export resolved tickets from Zendesk/Intercom/Salesforce as a CSV.",
             "Convert FAQ pages: question column + answer column from the page's Q&A pairs.",
-            "Generate synthetic Q&A from documentation using the Synthetic tab (requires a teacher model).",
+            "Generate synthetic Q&A from documentation in Data → Generate (requires a teacher model).",
         ],
         shape_signatures=[
             ShapeSignature(
@@ -316,7 +316,7 @@ def _span_extraction_recipe() -> Recipe:
         data_acquisition_hints=[
             "Convert annotated NER datasets (CoNLL, OntoNotes) to this JSON shape via a small script.",
             "Use spaCy / Prodigy / Doccano to label your own corpus, then export JSONL.",
-            "Synthesize examples from regex matches + a teacher model (Synthetic tab covers this).",
+            "Synthesize examples from regex matches + a teacher model (Data → Generate covers this).",
         ],
         shape_signatures=[
             ShapeSignature(

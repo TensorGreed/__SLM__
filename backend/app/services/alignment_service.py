@@ -368,7 +368,7 @@ def analyze_preference_dataset_contract(
             "errors": [
                 (
                     f"Prepared training dataset missing at {train_file}. "
-                    "Run Dataset Prep split with preference pairs before DPO/ORPO training."
+                    "Run the split in Data → Split with preference pairs before DPO/ORPO training."
                 )
             ],
             "warnings": [],
@@ -403,7 +403,7 @@ def analyze_preference_dataset_quality(
                 "errors": [
                     (
                         f"Prepared training dataset missing at {train_file}. "
-                        "Run Dataset Prep split with preference pairs before DPO/ORPO training."
+                        "Run the split in Data → Split with preference pairs before DPO/ORPO training."
                     )
                 ],
             },

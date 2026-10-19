@@ -378,7 +378,7 @@ export default function DataStudioSyntheticPlaybookCenterPanel({
                 </div>
                 <button type="button" className="btn btn-primary" onClick={onOpenSynthetic}>
                     <ExternalLink size={16} aria-hidden="true" />
-                    Open Synthetic workflow
+                    Open Data → Generate
                 </button>
             </div>
 

@@ -159,7 +159,7 @@ export default function ArchetypeComparisonPanel({ projectId }: Props) {
         if (kind === 'navigate') {
             const target = String(params['target'] || '');
             if (target === 'data-studio-diversity') {
-                navigateTo(stagePath(projectId, 'data'));
+                navigateTo(stagePath(projectId, 'goldset'));
                 return;
             }
             // Generic fallback — drop the user on the project page.

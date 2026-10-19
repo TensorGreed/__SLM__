@@ -526,7 +526,7 @@ async def _train_eval_label_kl_signal(
         ),
         suggested_action={
             "kind": "navigate",
-            "label": "Open Data Studio splits tab",
+            "label": "Open Data → Split",
             "target": "data-studio-splits",
             "params": {},
         },

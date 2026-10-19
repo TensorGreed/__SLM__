@@ -363,7 +363,7 @@ async def _ingestion_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
                 id="ingestion.no_documents",
                 severity="block",
                 headline="No documents or labelled rows ingested yet.",
-                suggested_action={"kind": "navigate", "label": "Open Ingest tab", "target": "data"},
+                suggested_action={"kind": "navigate", "label": "Open Data → Sources", "target": "data"},
                 context={"document_count": 0, "labelled_row_count": 0},
             ))
         else:
@@ -488,7 +488,7 @@ async def _cleaning_group(
             id="cleaning.not_run",
             severity="warn",
             headline=f"No documents have been cleaned yet — {total} uploaded, 0 cleaned.",
-            suggested_action={"kind": "navigate", "label": "Open Cleaning tab", "target": "cleaning"},
+            suggested_action={"kind": "navigate", "label": "Open Data → Prepare", "target": "cleaning"},
             context={"uploaded": total, "cleaned": 0},
         ))
         return {
@@ -901,7 +901,7 @@ async def _shape_group(db: AsyncSession, project: Project) -> dict[str, Any]:
             headline="No prepared train/val/test splits yet.",
             suggested_action={
                 "kind": "navigate",
-                "label": "Open Dataset prep",
+                "label": "Open Data → Split",
                 "target": "dataprep",
             },
             context={"recipe_id": recipe_id},

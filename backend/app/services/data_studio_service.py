@@ -901,7 +901,7 @@ def _generic_domain_profile_payload(candidate: dict[str, Any], profile_id: str) 
         "profile_id": profile_id,
         "version": "1.0.0",
         "display_name": f"{label} Profile",
-        "description": f"Draft profile generated from Data Studio detection for {label} projects.",
+        "description": f"Draft profile generated from domain detection for {label} projects.",
         "owner": "workspace",
         "status": "draft",
         "tasks": [
@@ -995,7 +995,7 @@ def _domain_setup_pack_payload(
         "version": "1.0.0",
         "display_name": f"{label} Pack",
         "description": (
-            f"Draft domain pack generated from Data Studio detection for {label}. "
+            f"Draft domain pack generated from domain detection for {label}. "
             "Review before assigning to the project."
         ),
         "owner": "workspace",
@@ -1065,7 +1065,7 @@ def _domain_setup_guidance(candidate: dict[str, Any]) -> list[dict[str, str]]:
                 "id": "activation",
                 "title": "Activation",
                 "recommendation": "Create drafts, review them, then assign the pack/profile from the Domain managers.",
-                "why": "Data Studio previews the setup but does not switch project defaults without you.",
+                "why": "This is a preview: project defaults stay as they are until you apply it.",
             },
         ]
     if domain_id == "pii_pci_detection":
@@ -1092,7 +1092,7 @@ def _domain_setup_guidance(candidate: dict[str, Any]) -> list[dict[str, str]]:
                 "id": "activation",
                 "title": "Activation",
                 "recommendation": "Create drafts, review them, then assign the pack/profile from the Domain managers.",
-                "why": "Data Studio previews the setup but does not switch project defaults without you.",
+                "why": "This is a preview: project defaults stay as they are until you apply it.",
             },
         ]
     label = str(candidate.get("label") or "this domain")
@@ -1119,7 +1119,7 @@ def _domain_setup_guidance(candidate: dict[str, Any]) -> list[dict[str, str]]:
             "id": "activation",
             "title": "Activation",
             "recommendation": "Create drafts, review them, then assign the pack/profile from the Domain managers.",
-            "why": "Data Studio previews the setup but does not switch project defaults without you.",
+            "why": "This is a preview: project defaults stay as they are until you apply it.",
         },
     ]
 
@@ -1196,7 +1196,7 @@ async def _domain_setup_preview(
             },
             {
                 "id": "power_user_managers",
-                "label": "Open pack/profile managers",
+                "label": "Open Settings → Tools → Domain Packs",
                 "target": "domain-packs",
                 "detail": "Review the full JSON contracts, hook defaults, overlays, and promotion gates.",
             },
@@ -1697,11 +1697,11 @@ def _quality_check_drilldown(
         "action": {
             "label": action_label,
             "target_tab": target_tab,
-            "workflow_owner": str(check.get("workflow_owner") or "Data Studio"),
+            "workflow_owner": str(check.get("workflow_owner") or "Data"),
             "requires_confirmation": True,
             "description": (
-                f"Open {check.get('workflow_owner') or 'the destination workflow'} for "
-                f"'{action_label}'. Data Studio only previews this finding."
+                f"'{action_label}' opens {check.get('workflow_owner') or 'the step that owns it'}. "
+                f"This check only previews the finding."
             ),
         },
         "empty_message": empty_message or "No affected row sample is available for this check yet.",
@@ -2191,7 +2191,7 @@ async def build_data_studio_gold_set_workbench(
                 "blocker",
                 "No answer key yet",
                 "Create a small trusted answer key before relying on evaluations or regression checks.",
-                action_label="Open Answer Key",
+                action_label="Open Data → Labels",
                 target_tab="goldset",
             )
         )
@@ -2294,7 +2294,7 @@ async def build_data_studio_gold_set_workbench(
         "coverage": aggregate_coverage,
         "issues": issues,
         "entry_point": {
-            "label": "Open Answer Key workflow",
+            "label": "Open Data → Labels",
             "target_tab": "goldset",
             "reason": "Use the existing answer-key panel to add, review, sample, or lock trusted examples.",
         },
@@ -2535,7 +2535,7 @@ def _synthetic_expected_output_shape(recipe_payload: dict[str, Any] | None, requ
         "payload_fields": payload_fields,
         "review_status": "pending",
         "notes": [
-            "Rows are generated in the existing Synthetic workflow, not in Data Studio.",
+            "Rows are generated in Data → Generate, not in this preview.",
             "Generated rows enter review before they can affect prepared datasets.",
         ],
     }
@@ -2759,10 +2759,10 @@ def _synthetic_domain_playbook_libraries(
                     "paid_required": False,
                 },
                 "generation_action": {
-                    "label": "Open Synthetic workflow",
+                    "label": "Open Data → Generate",
                     "target_tab": "synthetic",
                     "requires_confirmation": True,
-                    "description": "Run this library from the existing Synthetic workflow; Data Studio only previews the plan.",
+                    "description": "Run this library from Data → Generate; this card only previews the plan.",
                 },
             })
 
@@ -2838,9 +2838,9 @@ def _synthetic_domain_playbook_libraries(
         },
         "libraries": libraries,
         "entry_point": {
-            "label": "Open Synthetic workflow",
+            "label": "Open Data → Generate",
             "target_tab": "synthetic",
-            "reason": "Run domain-specific playbooks in the existing Synthetic tab; generation requires user confirmation there.",
+            "reason": "Run domain-specific playbooks in Data → Generate; generation requires user confirmation there.",
             "requires_confirmation": True,
         },
     }
@@ -2934,7 +2934,7 @@ async def build_data_studio_synthetic_playbook_center(
                 "blocker",
                 "No compatible playbooks",
                 f"The active task type '{recipe_id}' does not have a registered synthetic playbook.",
-                action_label="Open Synthetic",
+                action_label="Open Data → Generate",
                 target_tab="synthetic",
             )
         )
@@ -2973,7 +2973,7 @@ async def build_data_studio_synthetic_playbook_center(
                 "warning",
                 "Answer-key rows are not ready for playbooks",
                 "Current playbooks generate from answer-key rows; add or import trusted answer-key examples first.",
-                action_label="Open Answer Key",
+                action_label="Open Data → Labels",
                 target_tab="goldset",
             )
         )
@@ -3014,7 +3014,7 @@ async def build_data_studio_synthetic_playbook_center(
                 "warning",
                 "Local Ollama is not ready",
                 "BrewSLM can still show playbooks, but local free generation needs a reachable Ollama model.",
-                action_label="Open Synthetic",
+                action_label="Open Data → Generate",
                 target_tab="synthetic",
             )
         )
@@ -3026,7 +3026,7 @@ async def build_data_studio_synthetic_playbook_center(
                 "warning",
                 "No synthetic backend is available",
                 "Install or start Ollama for the default free local path, or configure an OpenAI-compatible endpoint.",
-                action_label="Open Synthetic",
+                action_label="Open Data → Generate",
                 target_tab="synthetic",
             )
         )
@@ -3088,9 +3088,9 @@ async def build_data_studio_synthetic_playbook_center(
         "review_queue": queue,
         "issues": issues,
         "entry_point": {
-            "label": "Open Synthetic workflow",
+            "label": "Open Data → Generate",
             "target_tab": "synthetic",
-            "reason": "Use the existing Synthetic tab and PlaybookPickerPanel to generate, review, and accept rows.",
+            "reason": "Use the playbooks in Data → Generate to generate, review, and accept rows.",
         },
     }
 
@@ -3450,7 +3450,7 @@ async def build_data_studio_synthetic_recommendations(
                 "warning",
                 "Local Ollama is not ready",
                 "Start Ollama or pull a local model before using the default free generation path.",
-                action_label="Open Synthetic",
+                action_label="Open Data → Generate",
                 target_tab="synthetic",
             )
         )
@@ -3461,10 +3461,10 @@ async def build_data_studio_synthetic_recommendations(
                 strategy="backend setup",
                 priority="medium",
                 target_tab="synthetic",
-                action_label="Open Synthetic",
+                action_label="Open Data → Generate",
                 rationale="BrewSLM defaults synthetic generation to a local Ollama-compatible backend.",
                 domain_reason=f"{domain_label} recommendations can be executed locally once an Ollama model is reachable.",
-                evidence=["Recommended backend is local Ollama.", "No paid backend is required by Data Studio."],
+                evidence=["Recommended backend is local Ollama.", "No paid backend is required."],
                 confidence=0.8,
                 playbook_mode=None,
                 playbook_available=False,
@@ -3508,7 +3508,7 @@ async def build_data_studio_synthetic_recommendations(
                     strategy=str(strategy["strategy"]),
                     priority="medium" if mode_available else "low",
                     target_tab="synthetic",
-                    action_label="Open Synthetic",
+                    action_label="Open Data → Generate",
                     rationale="This strategy follows from deterministic domain signals and current dataset readiness.",
                     domain_reason=str(strategy["domain_reason"]),
                     evidence=evidence,
@@ -3573,17 +3573,17 @@ async def build_data_studio_synthetic_recommendations(
         "issues": issues,
         "entry_points": [
             {
-                "label": "Open Synthetic workflow",
+                "label": "Open Data → Generate",
                 "target_tab": "synthetic",
-                "reason": "Run playbooks, generate rows, and review synthetic output in the existing Synthetic tab.",
+                "reason": "Run playbooks, generate rows, and review synthetic output in Data → Generate.",
             },
             {
-                "label": "Open Answer Key workflow",
+                "label": "Open Data → Labels",
                 "target_tab": "goldset",
                 "reason": "Improve trusted anchors before generating more rows.",
             },
             {
-                "label": "Open Data Prep",
+                "label": "Open Data → Split",
                 "target_tab": "dataprep",
                 "reason": "Fix schema mapping before synthetic data mirrors the wrong shape.",
             },
@@ -4046,7 +4046,7 @@ async def build_data_studio_synthetic_quality_analytics(
                 "info",
                 "No synthetic rows yet",
                 "Generate synthetic rows before synthetic quality analytics can score sources and review outcomes.",
-                action_label="Open Synthetic",
+                action_label="Open Data → Generate",
                 target_tab="synthetic",
             )
         )
@@ -4059,10 +4059,10 @@ async def build_data_studio_synthetic_quality_analytics(
             f"{pending_count} synthetic row(s) are pending review before they can enter prepared datasets.",
             count=pending_count,
             target_tab="synthetic",
-            owner="Synthetic Review",
+            owner="Data → Generate",
             evidence=[
                 f"{review_queue.get('pending_group_count', 0)} pending source group(s).",
-                "Accept or reject rows in the existing Synthetic workflow.",
+                "Accept or reject rows in the review queue on Data → Generate.",
             ],
             action_label="Review synthetic rows",
         ))
@@ -4075,7 +4075,7 @@ async def build_data_studio_synthetic_quality_analytics(
             f"{missing_required_count} synthetic row(s) are missing required task type fields.",
             count=missing_required_count,
             target_tab="dataprep",
-            owner="Data Prep",
+            owner="Data → Split",
             evidence=[f"Required fields: {', '.join(required_fields) or 'task type not selected'}."],
             action_label="Review mapping",
         ))
@@ -4090,7 +4090,7 @@ async def build_data_studio_synthetic_quality_analytics(
             target_tab="quality-safety",
             owner="Quality & Safety",
             evidence=["Repeated synthetic rows can inflate training volume without adding learning signal."],
-            action_label="Open Quality & Safety",
+            action_label="Open Data → Prepare",
         ))
     if low_confidence_count > 0 or unknown_confidence_count > 0:
         findings.append(_synthetic_quality_finding(
@@ -4101,7 +4101,7 @@ async def build_data_studio_synthetic_quality_analytics(
             f"{low_confidence_count} row(s) have low confidence and {unknown_confidence_count} row(s) have no confidence score.",
             count=low_confidence_count + unknown_confidence_count,
             target_tab="synthetic",
-            owner="Synthetic Review",
+            owner="Data → Generate",
             evidence=["Low-confidence synthetic rows should be reviewed before SFT."],
             action_label="Review synthetic rows",
         ))
@@ -4114,7 +4114,7 @@ async def build_data_studio_synthetic_quality_analytics(
             f"{low_quality_count} synthetic row(s) look empty, placeholder-like, or too short.",
             count=low_quality_count,
             target_tab="synthetic",
-            owner="Synthetic Review",
+            owner="Data → Generate",
             evidence=sorted(set(low_quality_by_index.values()))[:4],
             action_label="Review synthetic rows",
         ))
@@ -4129,7 +4129,7 @@ async def build_data_studio_synthetic_quality_analytics(
             target_tab="goldset",
             owner="Answer Key",
             evidence=["Add trusted examples to estimate whether synthetic rows are close to the target domain."],
-            action_label="Open Answer Key",
+            action_label="Open Data → Labels",
         ))
     elif low_gold_similarity > 0:
         findings.append(_synthetic_quality_finding(
@@ -4153,7 +4153,7 @@ async def build_data_studio_synthetic_quality_analytics(
             f"{high_gold_similarity} synthetic row(s) are very close to trusted answer-key examples.",
             count=high_gold_similarity,
             target_tab="synthetic",
-            owner="Synthetic Review",
+            owner="Data → Generate",
             evidence=["High overlap can be useful anchoring, but exact copies add less coverage."],
             action_label="Review synthetic rows",
         ))
@@ -4166,7 +4166,7 @@ async def build_data_studio_synthetic_quality_analytics(
             "Synthetic analytics are less useful until the training domain is confirmed.",
             count=total_rows,
             target_tab="domain",
-            owner="Domain Managers",
+            owner="Settings → Tools → Domain Packs",
             evidence=[f"Detected domain confidence is {round(domain_confidence * 100)}%."],
             action_label="Review domain",
         ))
@@ -4319,27 +4319,27 @@ async def build_data_studio_synthetic_quality_analytics(
         "issues": issues,
         "entry_points": [
             {
-                "label": "Open Synthetic review",
+                "label": "Open the Generate review queue",
                 "target_tab": "synthetic",
-                "reason": "Accept, reject, or inspect synthetic rows in the existing Synthetic workflow.",
+                "reason": "Accept, reject, or inspect synthetic rows in Data → Generate.",
             },
             {
                 "label": "Open Review Queue",
                 "target_tab": "review-queue",
-                "reason": "Use Data Studio review triage for synthetic, answer-key, and annotation review work.",
+                "reason": "Use the review queue in Data → Labels for synthetic, answer-key, and annotation review work.",
             },
             {
-                "label": "Open Answer Key",
+                "label": "Open Data → Labels",
                 "target_tab": "goldset",
                 "reason": "Strengthen trusted anchors used for similarity and review decisions.",
             },
             {
-                "label": "Open Data Prep",
+                "label": "Open Data → Split",
                 "target_tab": "dataprep",
                 "reason": "Fix missing required fields or mapping shape before preparing datasets.",
             },
             {
-                "label": "Open Quality & Safety",
+                "label": "Open Data → Prepare",
                 "target_tab": "quality-safety",
                 "reason": "Inspect duplicate, missing-field, and low-quality deterministic checks.",
             },
@@ -4591,7 +4591,7 @@ async def build_data_studio_review_queue(
                 priority="high",
                 count=synthetic_pending,
                 message="Accept good rows or reject weak rows before they enter the next prepared dataset.",
-                action_label="Open Synthetic review",
+                action_label="Open the Generate review queue",
                 target_tab="synthetic",
                 evidence=top_sources,
             )
@@ -4615,7 +4615,7 @@ async def build_data_studio_review_queue(
                 priority="high",
                 count=gold_review_needed,
                 message="Trusted evaluation examples should be reviewed before training and eval decisions depend on them.",
-                action_label="Open Answer Key",
+                action_label="Open Data → Labels",
                 target_tab="goldset",
                 evidence=[
                     f"{gold_trusted} trusted answer-key example(s) are ready.",
@@ -4631,7 +4631,7 @@ async def build_data_studio_review_queue(
                 "warning",
                 "Labeled annotation rows are not promoted",
                 f"{annotation_labeled_unpromoted} labeled annotation row(s) are waiting to be promoted into a training dataset.",
-                action_label="Open Annotation",
+                action_label="Open annotation jobs",
                 target_tab="annotate",
             )
         )
@@ -4642,7 +4642,7 @@ async def build_data_studio_review_queue(
                 priority="medium",
                 count=annotation_labeled_unpromoted,
                 message="Labels remain advisory until the annotation workflow promotes them into synthetic or gold data.",
-                action_label="Open Annotation",
+                action_label="Open annotation jobs",
                 target_tab="annotate",
                 evidence=[
                     f"{int(annotation_totals.get('labeled') or 0)} labeled row(s).",
@@ -4669,7 +4669,7 @@ async def build_data_studio_review_queue(
                 priority="medium",
                 count=annotation_review_needed,
                 message="Finish assigned and unlabeled rows so the labels can be reviewed and promoted.",
-                action_label="Open Annotation",
+                action_label="Open annotation jobs",
                 target_tab="annotate",
                 evidence=[
                     f"{annotation_assigned} assigned row(s).",
@@ -4686,7 +4686,7 @@ async def build_data_studio_review_queue(
                 priority="low",
                 count=accepted_or_promoted,
                 message="No open review queues are blocking the next dataset prep step.",
-                action_label="Open Data Prep",
+                action_label="Open Data → Split",
                 target_tab="dataprep",
                 evidence=[
                     f"{synthetic_accepted} accepted synthetic row(s).",
@@ -4703,7 +4703,7 @@ async def build_data_studio_review_queue(
                 "info",
                 "No review queue yet",
                 "Generate synthetic rows, add answer-key examples, or create annotation jobs to start review flow.",
-                action_label="Open Synthetic",
+                action_label="Open Data → Generate",
                 target_tab="synthetic",
             )
         )
@@ -4714,7 +4714,7 @@ async def build_data_studio_review_queue(
                 priority="low",
                 count=0,
                 message="Review queues appear after synthetic generation, answer-key sampling, or annotation seeding.",
-                action_label="Open Synthetic",
+                action_label="Open Data → Generate",
                 target_tab="synthetic",
                 evidence=[],
             )
@@ -4932,22 +4932,22 @@ async def build_data_studio_review_queue(
         "issues": issues,
         "entry_points": [
             {
-                "label": "Open Synthetic review",
+                "label": "Open the Generate review queue",
                 "target_tab": "synthetic",
-                "reason": "Accept or reject pending synthetic rows in the existing Synthetic tab.",
+                "reason": "Accept or reject pending synthetic rows in Data → Generate.",
             },
             {
-                "label": "Open Answer Key review",
+                "label": "Open Data → Labels",
                 "target_tab": "goldset",
                 "reason": "Review trusted examples and answer-key workbench rows in the existing answer-key workflow.",
             },
             {
-                "label": "Open Annotation workspace",
+                "label": "Open annotation jobs",
                 "target_tab": "annotate",
-                "reason": "Label, skip, or promote annotation rows in the existing Annotation workspace.",
+                "reason": "Label, skip, or promote annotation rows in Data → Labels → Annotation jobs.",
             },
             {
-                "label": "Open Eval active learning",
+                "label": "Open Results → Failures",
                 "target_tab": "eval",
                 "reason": "Review failed eval rows that can be promoted into training data.",
             },
@@ -5021,7 +5021,7 @@ def _assist_context_for_prompt(focus: AssistFocus, context: dict[str, Any]) -> d
 def _build_assist_prompt(focus: AssistFocus, context: dict[str, Any]) -> str:
     focus_label = "schema mapping" if focus == "mapping" else "domain detection"
     return (
-        "You are BrewSLM Data Studio LLM assist. Deterministic checks are the "
+        "You are the BrewSLM data assistant. Deterministic checks are the "
         "source of truth. Do not claim that you changed data, saved mappings, "
         "assigned a domain, generated rows, or applied any setting. Produce "
         "reviewable suggestions only.\n\n"
@@ -5048,7 +5048,7 @@ def _build_assist_prompt(focus: AssistFocus, context: dict[str, Any]) -> str:
         "- Omit suggested_field_mapping unless the focus is mapping and the mapping is explicit.\n"
         "- Include concrete evidence; avoid generic advice.\n"
         "- Never auto-apply anything.\n\n"
-        "Deterministic Data Studio context:\n"
+        "Deterministic data-check context:\n"
         f"{_jsonable_compact(_assist_context_for_prompt(focus, context))}"
     )
 
@@ -5153,7 +5153,7 @@ def _assist_unavailable_payload(
             "issues": context.get("issues", []),
         },
         "warnings": [
-            "LLM assist is optional. Deterministic Data Studio checks remain available.",
+            "LLM assist is optional. The deterministic data checks remain available.",
         ],
     }
 
@@ -5187,7 +5187,7 @@ async def build_data_studio_llm_assist(
             provider=normalized_provider,
             endpoint=endpoint,
             model_name=resolved_model,
-            message="No LLM endpoint is configured for Data Studio assist.",
+            message="No LLM endpoint is configured for the data assistant.",
             context=context,
         )
 
@@ -5248,7 +5248,7 @@ async def build_data_studio_llm_assist(
     suggestions = _normalize_assist_suggestions(parsed.get("suggestions"), focus=focus)
     summary = str(parsed.get("summary") or "").strip()
     if not summary:
-        summary = "The assistant produced reviewable suggestions from the deterministic Data Studio context."
+        summary = "The assistant produced reviewable suggestions from the deterministic data checks."
 
     return {
         "project_id": project_id,
@@ -5271,7 +5271,7 @@ async def build_data_studio_llm_assist(
         },
         "warnings": [
             "LLM suggestions are advisory and require user confirmation.",
-            "Deterministic Data Studio checks remain the source of truth.",
+            "The deterministic data checks remain the source of truth.",
         ],
     }
 
@@ -5290,7 +5290,7 @@ def _primary_action(
         }
     if prepared_rows > 0:
         return {
-            "label": "Open training",
+            "label": "Open Train",
             "target_tab": "training",
             "reason": "A prepared dataset is available.",
         }
@@ -5988,10 +5988,10 @@ def _mapping_template_from_fields(
             "ambiguous_count": int(status_counts.get("ambiguous", 0)),
         },
         "apply_action": {
-            "label": "Open Data Prep to apply",
+            "label": "Open Data → Split to apply",
             "target_tab": "dataprep",
             "requires_confirmation": True,
-            "description": "Review and save/apply this mapping in Data Prep. Data Studio does not mutate project mapping.",
+            "description": "Review and save/apply this mapping in Data → Split. This preview does not change the project mapping.",
         },
     }
 
@@ -6137,9 +6137,9 @@ def _mapping_build_templates(
         "templates": templates,
         "entry_points": [
             {
-                "label": "Open Data Prep",
+                "label": "Open Data → Split",
                 "target_tab": "dataprep",
-                "reason": "Save or apply mapping templates only after reviewing them in the existing Data Prep workflow.",
+                "reason": "Save or apply mapping templates only after reviewing them in Data → Split.",
                 "requires_confirmation": True,
             }
         ],
@@ -7208,7 +7208,7 @@ async def build_data_studio_prepare_dataset(
                 "warning",
                 "Answer-key review is open",
                 f"{gold_review_needed} answer-key row(s) still need review.",
-                action_label="Open Answer Key",
+                action_label="Open Data → Labels",
                 target_tab="goldset",
             )
         )
@@ -7230,7 +7230,7 @@ async def build_data_studio_prepare_dataset(
                 "warning",
                 "Annotation labels are not promoted",
                 f"{annotation_labeled_unpromoted} labeled annotation row(s) are waiting for promotion.",
-                action_label="Open Annotation",
+                action_label="Open annotation jobs",
                 target_tab="annotate",
             )
         )
@@ -7264,8 +7264,8 @@ async def build_data_studio_prepare_dataset(
                 "prepare_splits_missing",
                 "warning",
                 "Prepared splits are missing",
-                "Open Dataset Prep to create train, validation, and test files after confirming the split settings.",
-                action_label="Open Dataset Prep",
+                "Open Data → Split to create train, validation, and test files after confirming the split settings.",
+                action_label="Open Data → Split",
                 target_tab="dataprep",
             )
         )
@@ -7281,7 +7281,7 @@ async def build_data_studio_prepare_dataset(
                 "warning",
                 "Prepared splits are incomplete",
                 f"Missing rows for: {', '.join(missing_splits)}.",
-                action_label="Open Dataset Prep",
+                action_label="Open Data → Split",
                 target_tab="dataprep",
             )
         )
@@ -7292,8 +7292,8 @@ async def build_data_studio_prepare_dataset(
                 "prepare_manifest_missing",
                 "warning",
                 "Prepared manifest is missing or unreadable",
-                "Re-run Dataset Prep after confirming split settings so the manifest matches the split files.",
-                action_label="Open Dataset Prep",
+                "Re-run the split after confirming split settings so the manifest matches the split files.",
+                action_label="Open Data → Split",
                 target_tab="dataprep",
             )
         )
@@ -7305,7 +7305,7 @@ async def build_data_studio_prepare_dataset(
                 "warning",
                 "Prepared split versions are missing",
                 f"Missing DatasetVersion rows for: {', '.join(missing_dataset_versions)}.",
-                action_label="Open Dataset Prep",
+                action_label="Open Data → Split",
                 target_tab="dataprep",
             )
         )
@@ -7317,7 +7317,7 @@ async def build_data_studio_prepare_dataset(
                 "warning",
                 "Manifest version references are incomplete",
                 f"Manifest has no dataset version reference for: {', '.join(missing_manifest_versions)}.",
-                action_label="Open Dataset Prep",
+                action_label="Open Data → Split",
                 target_tab="dataprep",
             )
         )
@@ -7403,7 +7403,7 @@ async def build_data_studio_prepare_dataset(
             (
                 "Train, validation, and test splits are present."
                 if split_status == "ready"
-                else "Open Dataset Prep to create or refresh prepared split files."
+                else "Open Data → Split to create or refresh prepared split files."
             ),
             target_tab="dataprep",
         ),
@@ -7414,7 +7414,7 @@ async def build_data_studio_prepare_dataset(
             (
                 "Prepared manifest and DatasetVersion rows are aligned."
                 if manifest_status == "ready"
-                else "Prepared manifest/version records will be created when Dataset Prep runs."
+                else "Prepared manifest/version records will be created when the split runs."
             ),
             target_tab="dataprep",
         ),
@@ -7497,7 +7497,7 @@ async def build_data_studio_prepare_dataset(
         "checks": checks,
         "issues": issues,
         "entry_point": {
-            "label": "Open Dataset Prep",
+            "label": "Open Data → Split",
             "target_tab": "dataprep",
             "reason": "Confirm adapter and split settings before writing prepared files.",
             "requires_confirmation": True,
@@ -7874,7 +7874,7 @@ def _quality_domain_authored_checks(
                 ),
                 count=missing_records,
                 target_tab="data" if total_rows <= 0 else "synthetic",
-                workflow_owner="Domain Managers",
+                workflow_owner="Settings → Tools → Domain Packs",
                 source="Applied domain contract",
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -7923,7 +7923,7 @@ def _quality_domain_authored_checks(
                 "Applied domain contract requires stronger field coverage before training.",
                 count=len(coverage_gaps),
                 target_tab="dataprep",
-                workflow_owner="Domain Managers",
+                workflow_owner="Settings → Tools → Domain Packs",
                 source=_quality_top_source(missing_sources, "Applied domain contract"),
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -7942,7 +7942,7 @@ def _quality_domain_authored_checks(
                 "Applied domain-required fields meet configured coverage thresholds in the scanned sample.",
                 count=0,
                 target_tab="dataprep",
-                workflow_owner="Domain Managers",
+                workflow_owner="Settings → Tools → Domain Packs",
                 source="Applied domain contract",
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -7967,12 +7967,12 @@ def _quality_domain_authored_checks(
                     f"Duplicate signal ratio is {round(duplicate_ratio * 100)}%; domain threshold is {round(threshold * 100)}%.",
                     count=max(1, excess),
                     target_tab="dataprep",
-                    workflow_owner="Domain Managers",
+                    workflow_owner="Settings → Tools → Domain Packs",
                     source="Applied domain contract",
                     domain_id=domain_id,
                     domain_label=domain_label,
                     evidence=["Tune dedupe or refresh splits before relying on evaluation metrics."],
-                    action_label="Open Data Prep",
+                    action_label="Open Data → Split",
                 )
             )
 
@@ -7997,12 +7997,12 @@ def _quality_domain_authored_checks(
                 ),
                 count=leakage_overlap_count,
                 target_tab="dataprep",
-                workflow_owner="Domain Managers",
+                workflow_owner="Settings → Tools → Domain Packs",
                 source="Applied domain contract",
                 domain_id=domain_id,
                 domain_label=domain_label,
                 evidence=leakage_checks[:5],
-                action_label="Open Data Prep",
+                action_label="Open Data → Split",
             )
         )
 
@@ -8035,7 +8035,7 @@ def _quality_domain_authored_checks(
                         f"Applied domain contract found {match_count} row(s) with forbidden phrase matches.",
                         count=match_count,
                         target_tab="data",
-                        workflow_owner="Domain Managers",
+                        workflow_owner="Settings → Tools → Domain Packs",
                         source=_quality_top_source(match_sources),
                         domain_id=domain_id,
                         domain_label=domain_label,
@@ -8072,7 +8072,7 @@ def _quality_domain_authored_checks(
                     "Applied domain contract requires PII redaction, but sensitive patterns appear without redaction fields.",
                     count=pii_total,
                     target_tab="data",
-                    workflow_owner="Domain Managers",
+                    workflow_owner="Settings → Tools → Domain Packs",
                     source="Applied domain contract",
                     domain_id=domain_id,
                     domain_label=domain_label,
@@ -8091,12 +8091,12 @@ def _quality_domain_authored_checks(
                     "Applied domain privacy redaction gate is configured; no blocking unredacted PII signal was found.",
                     count=0,
                     target_tab="domain",
-                    workflow_owner="Domain Managers",
+                    workflow_owner="Settings → Tools → Domain Packs",
                     source="Applied domain contract",
                     domain_id=domain_id,
                     domain_label=domain_label,
                     evidence=[],
-                    action_label="Open Domain Managers",
+                    action_label="Open Settings → Tools → Domain Packs",
                 )
             )
 
@@ -8122,7 +8122,7 @@ def _quality_domain_authored_checks(
                 ),
                 count=review_gate_count,
                 target_tab="synthetic" if synthetic_pending else ("goldset" if gold_review_needed else "annotate"),
-                workflow_owner="Domain Managers",
+                workflow_owner="Settings → Tools → Domain Packs",
                 source="Applied domain contract",
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -8131,7 +8131,7 @@ def _quality_domain_authored_checks(
                     f"Answer-key review needed: {gold_review_needed}.",
                     f"Annotation review/promotion: {annotation_review_needed + annotation_unpromoted}.",
                 ],
-                action_label="Open Review",
+                action_label="Open the review queue",
             )
         )
 
@@ -8177,7 +8177,7 @@ def _quality_domain_authored_checks(
                 ),
                 count=missing,
                 target_tab="dataprep",
-                workflow_owner="Domain Managers",
+                workflow_owner="Settings → Tools → Domain Packs",
                 source=_quality_top_source(missing_sources, "Applied domain contract"),
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -8193,7 +8193,7 @@ def _quality_domain_authored_checks(
         label = str(check.get("label") or check.get("title") or check.get("id") or f"Domain check {index + 1}")
         severity = _quality_domain_severity(check.get("severity"), "warning")
         target_tab = str(check.get("target_tab") or check.get("target") or "domain")
-        action_label = str(check.get("action_label") or "Open Domain Managers")
+        action_label = str(check.get("action_label") or "Open Settings → Tools → Domain Packs")
 
         if check_type in {"required_field", "required_fields", "field_coverage"}:
             fields = [
@@ -8219,7 +8219,7 @@ def _quality_domain_authored_checks(
                     str(check.get("message") or ("Domain-authored field coverage check found gaps." if gaps else "Domain-authored field coverage check is clear.")),
                     count=len(gaps),
                     target_tab=target_tab if gaps else "domain",
-                    workflow_owner="Domain Managers",
+                    workflow_owner="Settings → Tools → Domain Packs",
                     source=_quality_top_source(missing_sources, "Applied domain contract"),
                     domain_id=domain_id,
                     domain_label=domain_label,
@@ -8249,12 +8249,12 @@ def _quality_domain_authored_checks(
                         f"Domain-authored regex could not compile: {str(exc)[:160]}",
                         count=1,
                         target_tab="domain",
-                        workflow_owner="Domain Managers",
+                        workflow_owner="Settings → Tools → Domain Packs",
                         source="Applied domain contract",
                         domain_id=domain_id,
                         domain_label=domain_label,
                         evidence=[],
-                        action_label="Open Domain Managers",
+                        action_label="Open Settings → Tools → Domain Packs",
                     )
                 )
                 continue
@@ -8278,7 +8278,7 @@ def _quality_domain_authored_checks(
                     str(check.get("message") or f"Domain-authored regex check {'found matches' if mode not in {'require', 'required', 'must_match'} else 'found missing matches'}."),
                     count=match_count,
                     target_tab=target_tab if match_count else "domain",
-                    workflow_owner="Domain Managers",
+                    workflow_owner="Settings → Tools → Domain Packs",
                     source=_quality_top_source(source_counts, "Applied domain contract"),
                     domain_id=domain_id,
                     domain_label=domain_label,
@@ -8312,7 +8312,7 @@ def _quality_domain_authored_checks(
                     str(check.get("message") or "Domain-authored forbidden phrase check completed."),
                     count=match_count,
                     target_tab=target_tab if match_count else "domain",
-                    workflow_owner="Domain Managers",
+                    workflow_owner="Settings → Tools → Domain Packs",
                     source=_quality_top_source(source_counts, "Applied domain contract"),
                     domain_id=domain_id,
                     domain_label=domain_label,
@@ -8672,7 +8672,7 @@ async def build_data_studio_quality_safety(
         severity_count = int(check.get("count") or 0)
         if severity_count <= 0:
             severity_count = 1
-        owner = str(check.get("workflow_owner") or "Data Studio")
+        owner = str(check.get("workflow_owner") or "Data")
         domain_key = str(check.get("domain_label") or domain_label)
         owner_groups.setdefault(owner, Counter())[severity] += severity_count
         owner_targets.setdefault(owner, str(check.get("target_tab") or "data"))
@@ -8700,10 +8700,10 @@ async def build_data_studio_quality_safety(
                 "safety",
                 status,
                 severity,
-                f"Found {pii_total} deterministic sensitive-data signal(s): {detected_types}. Values are not shown in Data Studio.",
+                f"Found {pii_total} deterministic sensitive-data signal(s): {detected_types}. Values are not shown here.",
                 count=pii_total,
                 target_tab="data",
-                workflow_owner="Source Ingestion",
+                workflow_owner="Data → Sources",
                 source=_quality_top_source(pii_by_source),
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -8726,12 +8726,12 @@ async def build_data_studio_quality_safety(
                 "Deterministic regex checks did not find common PII/PCI patterns in the scanned sample.",
                 count=0,
                 target_tab="data",
-                workflow_owner="Source Ingestion",
+                workflow_owner="Data → Sources",
                 source="Project sample",
                 domain_id=domain_id,
                 domain_label=domain_label,
                 evidence=["This does not replace human review for regulated data."],
-                action_label="Open sources",
+                action_label="Open Data → Sources",
             )
         )
 
@@ -8748,12 +8748,12 @@ async def build_data_studio_quality_safety(
                 f"Found {duplicate_count} exact duplicate row(s) and {near_duplicate_pairs} near-duplicate pair(s) in the scanned sample.",
                 count=duplicate_signal_count,
                 target_tab="dataprep",
-                workflow_owner="Data Prep",
+                workflow_owner="Data → Split",
                 source=_quality_top_source(duplicate_sources),
                 domain_id=domain_id,
                 domain_label=domain_label,
                 evidence=["Deduplicate before splitting so repeated examples do not inflate evaluation confidence."],
-                action_label="Open Data Prep",
+                action_label="Open Data → Split",
             ),
             duplicate_sources,
         )
@@ -8768,12 +8768,12 @@ async def build_data_studio_quality_safety(
                 "No exact or high-overlap near duplicates were found in the scanned sample.",
                 count=0,
                 target_tab="dataprep",
-                workflow_owner="Data Prep",
+                workflow_owner="Data → Split",
                 source="Project sample",
                 domain_id=domain_id,
                 domain_label=domain_label,
                 evidence=[],
-                action_label="Open Data Prep",
+                action_label="Open Data → Split",
             )
         )
 
@@ -8789,7 +8789,7 @@ async def build_data_studio_quality_safety(
                 f"Mapping coverage is incomplete for {gap_text}.",
                 count=max(required_missing_count, len(required_gaps)),
                 target_tab="dataprep",
-                workflow_owner="Data Prep",
+                workflow_owner="Data → Split",
                 source="Mapping preview",
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -8811,7 +8811,7 @@ async def build_data_studio_quality_safety(
                 "Required task type fields are present in the mapping preview.",
                 count=0,
                 target_tab="dataprep",
-                workflow_owner="Data Prep",
+                workflow_owner="Data → Split",
                 source="Mapping preview",
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -8831,7 +8831,7 @@ async def build_data_studio_quality_safety(
                 f"Found {leakage_overlap_count} overlapping row fingerprint(s) across prepared splits.",
                 count=leakage_overlap_count,
                 target_tab="dataprep",
-                workflow_owner="Data Prep",
+                workflow_owner="Data → Split",
                 source="Prepared splits",
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -8851,12 +8851,12 @@ async def build_data_studio_quality_safety(
                 "No identical row fingerprints were found across prepared train/validation/test files.",
                 count=0,
                 target_tab="dataprep",
-                workflow_owner="Data Prep",
+                workflow_owner="Data → Split",
                 source="Prepared splits",
                 domain_id=domain_id,
                 domain_label=domain_label,
                 evidence=[],
-                action_label="Open Data Prep",
+                action_label="Open Data → Split",
             )
         )
     else:
@@ -8867,15 +8867,15 @@ async def build_data_studio_quality_safety(
                 "leakage",
                 "ready",
                 "info",
-                "Leakage checks will run after Dataset Prep creates train, validation, and test files.",
+                "Leakage checks will run after the split creates train, validation, and test files.",
                 count=0,
                 target_tab="dataprep",
-                workflow_owner="Data Prep",
+                workflow_owner="Data → Split",
                 source="Prepared splits",
                 domain_id=domain_id,
                 domain_label=domain_label,
                 evidence=[],
-                action_label="Open Data Prep",
+                action_label="Open Data → Split",
             )
         )
 
@@ -8895,7 +8895,7 @@ async def build_data_studio_quality_safety(
                 f"Found {low_quality_total} low-quality row or document signal(s).",
                 count=low_quality_total,
                 target_tab="data",
-                workflow_owner="Source Ingestion",
+                workflow_owner="Data → Sources",
                 source=_quality_top_source(low_quality_by_source),
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -8915,12 +8915,12 @@ async def build_data_studio_quality_safety(
                 "No empty, placeholder, very short, or repeated-character rows were found in the scanned sample.",
                 count=0,
                 target_tab="data",
-                workflow_owner="Source Ingestion",
+                workflow_owner="Data → Sources",
                 source="Project sample",
                 domain_id=domain_id,
                 domain_label=domain_label,
                 evidence=[],
-                action_label="Open sources",
+                action_label="Open Data → Sources",
             )
         )
 
@@ -8945,7 +8945,7 @@ async def build_data_studio_quality_safety(
                 ),
                 count=synthetic_contamination_count,
                 target_tab="synthetic",
-                workflow_owner="Review",
+                workflow_owner="Data → Labels",
                 source="Synthetic review queue",
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -8965,12 +8965,12 @@ async def build_data_studio_quality_safety(
                 "No pending synthetic rows were found in the review queue or prepared split sample.",
                 count=0,
                 target_tab="synthetic",
-                workflow_owner="Review",
+                workflow_owner="Data → Labels",
                 source="Synthetic review queue",
                 domain_id=domain_id,
                 domain_label=domain_label,
                 evidence=[],
-                action_label="Open Synthetic",
+                action_label="Open Data → Generate",
             )
         )
 
@@ -8986,7 +8986,7 @@ async def build_data_studio_quality_safety(
                 f"{review_count} answer-key or annotation review item(s) still need attention.",
                 count=review_count,
                 target_tab="annotate" if annotation_review_needed or annotation_unpromoted else "goldset",
-                workflow_owner="Review",
+                workflow_owner="Data → Labels",
                 source="Review Queue",
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -8995,7 +8995,7 @@ async def build_data_studio_quality_safety(
                     f"Annotation review needed: {annotation_review_needed}.",
                     f"Annotation labels not promoted: {annotation_unpromoted}.",
                 ],
-                action_label="Open Review",
+                action_label="Open the review queue",
             )
         )
 
@@ -9021,12 +9021,12 @@ async def build_data_studio_quality_safety(
                     "Policy Q&A was detected, but scanned fields do not expose source section, context, or citation signals.",
                     count=1,
                     target_tab="domain",
-                    workflow_owner="Domain Managers",
+                    workflow_owner="Settings → Tools → Domain Packs",
                     source="Domain detection",
                     domain_id=domain_id,
                     domain_label=domain_label,
                     evidence=["Policy answers are safer when training rows preserve the governing policy context."],
-                    action_label="Open Domain Managers",
+                    action_label="Open Settings → Tools → Domain Packs",
                 )
             )
         else:
@@ -9040,12 +9040,12 @@ async def build_data_studio_quality_safety(
                     "Policy-specific fields include context, source, section, or citation signals.",
                     count=0,
                     target_tab="domain",
-                    workflow_owner="Domain Managers",
+                    workflow_owner="Settings → Tools → Domain Packs",
                     source="Domain detection",
                     domain_id=domain_id,
                     domain_label=domain_label,
                     evidence=[],
-                    action_label="Open Domain Managers",
+                    action_label="Open Settings → Tools → Domain Packs",
                 )
             )
     elif domain_confidence >= _DOMAIN_SETUP_MIN_CONFIDENCE and domain_id == "support_faq" and pii_total:
@@ -9059,12 +9059,12 @@ async def build_data_studio_quality_safety(
                 "Support FAQ data often contains account details; review detected PII/PCI signals before training.",
                 count=pii_total,
                 target_tab="domain",
-                workflow_owner="Domain Managers",
+                workflow_owner="Settings → Tools → Domain Packs",
                 source="Domain detection",
                 domain_id=domain_id,
                 domain_label=domain_label,
                 evidence=["Consider redaction, synthetic placeholders, and escalation examples."],
-                action_label="Open Domain Managers",
+                action_label="Open Settings → Tools → Domain Packs",
             )
         )
     elif domain_confidence >= _DOMAIN_SETUP_MIN_CONFIDENCE and domain_id == "pii_pci_detection":
@@ -9084,12 +9084,12 @@ async def build_data_studio_quality_safety(
                     "PII/PCI Detection was detected, but scanned fields do not expose entity, label, or redaction targets.",
                     count=1,
                     target_tab="domain",
-                    workflow_owner="Domain Managers",
+                    workflow_owner="Settings → Tools → Domain Packs",
                     source="Domain detection",
                     domain_id=domain_id,
                     domain_label=domain_label,
                     evidence=["Detection models need explicit labels or spans, not just raw sensitive text."],
-                    action_label="Open Domain Managers",
+                    action_label="Open Settings → Tools → Domain Packs",
                 )
             )
     elif domain_confidence < _DOMAIN_SETUP_MIN_CONFIDENCE:
@@ -9103,12 +9103,12 @@ async def build_data_studio_quality_safety(
                 "Domain-specific checks become more precise after BrewSLM sees stronger domain evidence or an applied domain pack.",
                 count=0,
                 target_tab="domain",
-                workflow_owner="Domain Managers",
+                workflow_owner="Settings → Tools → Domain Packs",
                 source="Domain detection",
                 domain_id=domain_id,
                 domain_label=domain_label,
                 evidence=[],
-                action_label="Open Domain Managers",
+                action_label="Open Settings → Tools → Domain Packs",
             )
         )
 
@@ -9140,7 +9140,7 @@ async def build_data_studio_quality_safety(
                 "Add source rows before BrewSLM can run deterministic quality and safety scans.",
                 count=1,
                 target_tab="data",
-                workflow_owner="Source Ingestion",
+                workflow_owner="Data → Sources",
                 source="Project sample",
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -9187,31 +9187,31 @@ async def build_data_studio_quality_safety(
 
     entry_points = [
         {
-            "label": "Open Source Ingestion",
+            "label": "Open Data → Sources",
             "target_tab": "data",
             "reason": "Inspect source rows and ingestion quality signals.",
             "requires_confirmation": True,
         },
         {
-            "label": "Open Data Prep",
+            "label": "Open Data → Split",
             "target_tab": "dataprep",
             "reason": "Review mapping, dedupe, split, and leakage checks.",
             "requires_confirmation": True,
         },
         {
-            "label": "Open Answer Key",
+            "label": "Open Data → Labels",
             "target_tab": "goldset",
             "reason": "Review trusted examples and field coverage before training decisions depend on them.",
             "requires_confirmation": True,
         },
         {
-            "label": "Open Review",
+            "label": "Open the review queue",
             "target_tab": "synthetic" if synthetic_pending else "annotate",
             "reason": "Clear synthetic, answer-key, or annotation review items before preparation.",
             "requires_confirmation": True,
         },
         {
-            "label": "Open Domain Managers",
+            "label": "Open Settings → Tools → Domain Packs",
             "target_tab": "domain",
             "reason": "Tune domain-specific safety and policy checks.",
             "requires_confirmation": True,
@@ -9517,8 +9517,8 @@ async def build_data_studio_dataset_versions(
                 "dataset_versions_empty",
                 "info",
                 "No prepared dataset versions yet",
-                "Run Dataset Prep to create versioned train, validation, and test artifacts.",
-                action_label="Open Dataset Prep",
+                "Run the split in Data → Split to create versioned train, validation, and test artifacts.",
+                action_label="Open Data → Split",
                 target_tab="dataprep",
             )
         )
@@ -9528,8 +9528,8 @@ async def build_data_studio_dataset_versions(
                 "dataset_versions_manifest_missing",
                 "warning",
                 "Prepared manifest is missing or unreadable",
-                "Re-run Dataset Prep so version rows and split files have a reproducible manifest.",
-                action_label="Open Dataset Prep",
+                "Re-run the split so version rows and split files have a reproducible manifest.",
+                action_label="Open Data → Split",
                 target_tab="dataprep",
             )
         )
@@ -9546,7 +9546,7 @@ async def build_data_studio_dataset_versions(
                 "warning",
                 "Prepared split artifacts are incomplete",
                 f"Missing prepared rows for: {', '.join(missing_artifacts)}.",
-                action_label="Refresh Dataset Prep",
+                action_label="Re-run the split",
                 target_tab="dataprep",
             )
         )
@@ -9563,7 +9563,7 @@ async def build_data_studio_dataset_versions(
                 "warning",
                 "Prepared datasets are not versioned",
                 f"Missing DatasetVersion rows for: {', '.join(missing_versions)}.",
-                action_label="Refresh Dataset Prep",
+                action_label="Re-run the split",
                 target_tab="dataprep",
             )
         )
@@ -9582,7 +9582,7 @@ async def build_data_studio_dataset_versions(
                 "warning",
                 "Manifest version references are stale",
                 f"Latest version does not match manifest for: {', '.join(stale_versions)}.",
-                action_label="Refresh Dataset Prep",
+                action_label="Re-run the split",
                 target_tab="dataprep",
             )
         )
@@ -9601,7 +9601,7 @@ async def build_data_studio_dataset_versions(
                 "warning",
                 "Manifest counts do not match artifacts",
                 f"Row counts differ for: {', '.join(count_mismatches)}.",
-                action_label="Refresh Dataset Prep",
+                action_label="Re-run the split",
                 target_tab="dataprep",
             )
         )
@@ -9618,7 +9618,7 @@ async def build_data_studio_dataset_versions(
                 "warning",
                 "Prepared files are missing",
                 f"Expected prepared JSONL files were not found for: {', '.join(missing_files)}.",
-                action_label="Refresh Dataset Prep",
+                action_label="Re-run the split",
                 target_tab="dataprep",
             )
         )
@@ -9630,7 +9630,7 @@ async def build_data_studio_dataset_versions(
                 "info",
                 "Manifest hashes are incomplete",
                 "File hashes help confirm that split files have not drifted since preparation.",
-                action_label="Open Dataset Prep",
+                action_label="Open Data → Split",
                 target_tab="dataprep",
             )
         )
@@ -9677,7 +9677,7 @@ async def build_data_studio_dataset_versions(
             "manifest",
             "Prepared manifest",
             "met" if manifest_readable else ("attention" if manifest_exists else "missing"),
-            "Prepared manifest is readable." if manifest_readable else "Create or refresh the prepared manifest in Dataset Prep.",
+            "Prepared manifest is readable." if manifest_readable else "Create or refresh the prepared manifest in Data → Split.",
             target_tab="dataprep",
         ),
         _dataset_version_signal(
@@ -9691,7 +9691,7 @@ async def build_data_studio_dataset_versions(
             "version_refs",
             "Manifest version refs",
             "met" if all_manifest_refs_match and all_versions_present else ("attention" if total_version_count > 0 else "missing"),
-            "Latest versions match manifest references." if all_manifest_refs_match and all_versions_present else "Refresh Dataset Prep so manifest references latest DatasetVersion rows.",
+            "Latest versions match manifest references." if all_manifest_refs_match and all_versions_present else "Re-run the split so the manifest references latest DatasetVersion rows.",
             target_tab="dataprep",
         ),
         _dataset_version_signal(
@@ -9818,19 +9818,19 @@ async def build_data_studio_dataset_versions(
         "issues": issues,
         "entry_points": [
             {
-                "label": "Open Dataset Prep",
+                "label": "Open Data → Split",
                 "target_tab": "dataprep",
                 "reason": "Create or refresh prepared dataset versions.",
                 "requires_confirmation": True,
             },
             {
-                "label": "Open Training",
+                "label": "Open Train",
                 "target_tab": "training",
                 "reason": "Use prepared split versions for training runs.",
                 "requires_confirmation": False,
             },
             {
-                "label": "Open Eval",
+                "label": "Open Results",
                 "target_tab": "eval",
                 "reason": "Use validation/test artifacts for evaluation.",
                 "requires_confirmation": False,
@@ -9980,7 +9980,7 @@ def _coach_next_action_from_entry(
     target_tab: str,
     priority: str = "low",
     section_id: str = "overview",
-    section_label: str = "Data Studio",
+    section_label: str = "Data",
     requires_user_confirmation: bool = False,
 ) -> dict[str, Any]:
     return {
@@ -10043,7 +10043,7 @@ async def build_data_studio_coach_rail(
             "label": "Sources",
             "payload": sources,
             "target_tab": "data",
-            "action_label": "Open Sources",
+            "action_label": "Open Data → Sources",
             "ready_message": "Sources are connected and readable.",
             "empty_message": "No source data has been added yet.",
         },
@@ -10079,7 +10079,7 @@ async def build_data_studio_coach_rail(
             "label": "Answer Key",
             "payload": gold,
             "target_tab": "goldset",
-            "action_label": "Open Answer Key",
+            "action_label": "Open Data → Labels",
             "ready_message": "Trusted answer-key examples are ready.",
             "empty_message": "Answer-key examples are not ready yet.",
         },
@@ -10088,7 +10088,7 @@ async def build_data_studio_coach_rail(
             "label": "Synthetic Playbooks",
             "payload": synthetic_playbooks,
             "target_tab": "synthetic",
-            "action_label": "Open Synthetic",
+            "action_label": "Open Data → Generate",
             "ready_message": "Synthetic playbook prerequisites are ready.",
             "empty_message": "Synthetic playbooks need task type context.",
         },
@@ -10115,7 +10115,7 @@ async def build_data_studio_coach_rail(
             "label": "Review Queue",
             "payload": review_queue,
             "target_tab": "synthetic",
-            "action_label": "Open Review",
+            "action_label": "Open the review queue",
             "ready_message": "Review gates are clear.",
             "empty_message": "No review queue is active.",
         },
@@ -10124,7 +10124,7 @@ async def build_data_studio_coach_rail(
             "label": "Prepare Dataset",
             "payload": prepare_dataset,
             "target_tab": "dataprep",
-            "action_label": "Open Dataset Prep",
+            "action_label": "Open Data → Split",
             "ready_message": "Dataset preparation checks are aligned.",
             "empty_message": None,
         },
@@ -10202,7 +10202,7 @@ async def build_data_studio_coach_rail(
                 action_id="coach_open_training",
                 title="Launch training from the prepared dataset",
                 message=str(training_reuse.get("message") or "Prepared versions are ready for training."),
-                action_label="Open Training",
+                action_label="Open Train",
                 target_tab="training",
                 priority="medium",
                 section_id="dataset_versions",
@@ -10215,7 +10215,7 @@ async def build_data_studio_coach_rail(
                 action_id="coach_open_dataset_prep",
                 title="Prepare a dataset version",
                 message=str(entry.get("reason") or "Create or refresh prepared dataset versions."),
-                action_label=str(entry.get("label") or "Open Dataset Prep"),
+                action_label=str(entry.get("label") or "Open Data → Split"),
                 target_tab=str(entry.get("target_tab") or "dataprep"),
                 priority="medium",
                 section_id="prepare_dataset",
@@ -10251,19 +10251,19 @@ async def build_data_studio_coach_rail(
         "issues": [_coach_public_action(item) for item in coach_issues[:30]],
         "entry_points": [
             {
-                "label": "Open Data Prep",
+                "label": "Open Data → Split",
                 "target_tab": "dataprep",
                 "reason": "Review mapping, split, manifest, and version checks.",
                 "requires_confirmation": True,
             },
             {
-                "label": "Open Synthetic",
+                "label": "Open Data → Generate",
                 "target_tab": "synthetic",
                 "reason": "Generate or review synthetic rows.",
                 "requires_confirmation": True,
             },
             {
-                "label": "Open Training",
+                "label": "Open Train",
                 "target_tab": "training",
                 "reason": "Use prepared dataset versions for training.",
                 "requires_confirmation": True,

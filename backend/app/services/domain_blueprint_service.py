@@ -708,7 +708,7 @@ def _build_guidance(
     unresolved_questions = list(blueprint.unresolved_assumptions or [])
     recommended_next_actions = [
         "Review inferred task family and output schema before saving.",
-        "Attach 5-20 representative sample rows in Dataset Prep Adapter Lab.",
+        "Attach 5-20 representative sample rows in Data → Split → Adapter preview.",
         "Run training preflight after applying blueprint defaults.",
     ]
     inferred_fields = [

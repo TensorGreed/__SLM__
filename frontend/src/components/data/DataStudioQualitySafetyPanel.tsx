@@ -608,7 +608,7 @@ export default function DataStudioQualitySafetyPanel({
                             <p>Apply a specific Domain Profile or Pack to preview domain-owned checks here.</p>
                             <button type="button" className="btn btn-secondary" onClick={() => onOpenTarget('domain')}>
                                 <ExternalLink size={15} aria-hidden="true" />
-                                Open Domain Managers
+                                Open Settings → Tools → Domain Packs
                             </button>
                         </div>
                     )}

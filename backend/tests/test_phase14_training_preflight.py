@@ -578,7 +578,7 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
         errors = [str(item) for item in preflight.get("errors", [])]
         self.assertTrue(any("Dataset contract mismatch" in item for item in errors), errors)
         hints = [str(item) for item in preflight.get("hints", [])]
-        self.assertTrue(any("Dataset Prep split" in item or "save adapter preset" in item for item in hints), hints)
+        self.assertTrue(any("Data → Split" in item or "save the adapter preset" in item for item in hints), hints)
 
 
 if __name__ == "__main__":

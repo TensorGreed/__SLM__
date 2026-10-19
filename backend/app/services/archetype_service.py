@@ -720,7 +720,7 @@ def _suggestion_for(
     if feature_id == "goldset_diversity" and status == "below":
         return (
             "Your answer key is less diverse than the cohort — rows likely "
-            "repeat similar wording. Open Data Studio's diversity tools to "
+            "repeat similar wording. Open Data → Labels (answer-key diagnostics) to "
             "spot the clusters.",
             {
                 "kind": "navigate",

@@ -700,7 +700,7 @@ async def run_documents_qa_flow(
     project = await db.get(Project, project_id)
     base_model = str(getattr(project, "base_model_name", "") or "").strip()
     if not base_model:
-        summary.stopped_reason = "Project has no base model to train; pick one on the Training tab."
+        summary.stopped_reason = "Project has no base model to train; pick one on the Train page."
         return summary
     experiment = await create_experiment(
         db,

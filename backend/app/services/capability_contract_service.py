@@ -201,7 +201,7 @@ def evaluate_training_capability_contract(
             )
         )
         hints.append(
-            "Run Adapter Lab preview and choose an adapter/task_profile aligned with your training task."
+            "Run the adapter preview in Data → Split and choose an adapter/task_profile aligned with your training task."
         )
 
     normalized_profile = normalize_task_profile(adapter_task_profile, default="")

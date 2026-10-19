@@ -123,7 +123,7 @@ const syntheticPayload = {
                             payload_fields: ['text', 'label', 'synth_source', 'synth_confidence', 'review_status'],
                             review_status: 'pending',
                             notes: [
-                                'Rows are generated in the existing Synthetic workflow, not in Data Studio.',
+                                'Rows are generated in Data → Generate, not in this preview.',
                             ],
                         },
                         prompt_focus: [
@@ -188,21 +188,21 @@ const syntheticPayload = {
                             paid_required: false,
                         },
                         generation_action: {
-                            label: 'Open Synthetic workflow',
+                            label: 'Open Data → Generate',
                             target_tab: 'synthetic',
                             requires_confirmation: true,
-                            description: 'Run this library from the existing Synthetic workflow.',
+                            description: 'Run this library from Data → Generate.',
                         },
                     },
                 ],
             },
         ],
         entry_point: {
-            label: 'Open Synthetic workflow',
+            label: 'Open Data → Generate',
             target_tab: 'synthetic',
-            reason: 'Run domain-specific playbooks in the existing Synthetic tab.',
+            reason: 'Run domain-specific playbooks in Data → Generate.',
             requires_confirmation: true,
-            description: 'Run domain-specific playbooks in the existing Synthetic tab.',
+            description: 'Run domain-specific playbooks in Data → Generate.',
         },
     },
     prerequisites: [
@@ -261,9 +261,9 @@ const syntheticPayload = {
         },
     ],
     entry_point: {
-        label: 'Open Synthetic workflow',
+        label: 'Open Data → Generate',
         target_tab: 'synthetic',
-        reason: 'Use the existing Synthetic tab and PlaybookPickerPanel.',
+        reason: 'Use the playbooks in Data → Generate to generate, review, and accept rows.',
     },
 };
 
@@ -272,7 +272,7 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
         apiMock.get.mockReset();
     });
 
-    it('renders playbook readiness and routes into the existing Synthetic workflow', async () => {
+    it('renders playbook readiness and routes into Data → Generate', async () => {
         apiMock.get.mockResolvedValueOnce({ data: syntheticPayload });
         const onOpenSynthetic = vi.fn();
 
@@ -296,7 +296,7 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
         expect(screen.getByText('Synthetic rows pending review')).toBeInTheDocument();
         expect(screen.getAllByText(/playbook:classification:positives_paraphrase/i).length).toBeGreaterThan(0);
 
-        fireEvent.click(screen.getAllByRole('button', { name: /Open Synthetic workflow/i })[0]);
+        fireEvent.click(screen.getAllByRole('button', { name: /Open Data → Generate/i })[0]);
         expect(onOpenSynthetic).toHaveBeenCalledTimes(1);
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/synthetic-playbooks');
     });

@@ -201,7 +201,7 @@ class ProjectSmokeTestApiTests(unittest.TestCase):
         self.assertEqual(check["status"], "warn", check)
         self.assertIn("classification-label", check["message"])
         self.assertIn("default-canonical", check["message"])
-        self.assertIn("Data Prep", check["remediation"])
+        self.assertIn("Data → Split", check["remediation"])
         self.assertEqual(check["metadata"]["expected_adapter"], "classification-label")
         self.assertEqual(check["metadata"]["actual_adapter"], "default-canonical")
         # Overall rolls up to warn (no other failures on this seed).

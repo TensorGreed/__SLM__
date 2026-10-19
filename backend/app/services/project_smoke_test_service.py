@@ -270,7 +270,7 @@ async def _check_recipe_applied(
                 elapsed_ms=elapsed,
                 message="No task type selected on this project.",
                 remediation=(
-                    "Open Pipeline → Task type picker and choose a task type. "
+                    "Open Train → More options → Task type and choose a task type. "
                     "Many downstream flows (synth, training, eval) require "
                     "a task type to be applied first."
                 ),
@@ -278,7 +278,7 @@ async def _check_recipe_applied(
                     "error_code": "SMOKE_RECIPE_MISSING",
                     "stage": "project",
                     "message": "No task type selected on this project.",
-                    "actionable_fix": "Open Pipeline → Task type picker and choose a task type.",
+                    "actionable_fix": "Open Train → More options → Task type and choose a task type.",
                     "docs_url": "/docs/troubleshooting",
                     "troubleshooting_id": _new_trace_id(),
                     "metadata": None,
@@ -318,7 +318,7 @@ async def _check_gold_set(
                 elapsed_ms=elapsed,
                 message="Answer key is empty (0 rows).",
                 remediation=(
-                    "Open Pipeline → Answer Key and seed at least 5-10 "
+                    "Open Data → Labels and seed at least 5-10 "
                     "labelled rows. Training + evaluation require some "
                     "answer-key rows to learn / measure against."
                 ),
@@ -457,7 +457,7 @@ async def _check_synth_catalog(
                 elapsed_ms=elapsed,
                 message=f"No playbooks registered for task type '{recipe_id}'.",
                 remediation=(
-                    "The synth panel will show an empty mode list. "
+                    "Data → Generate will show an empty mode list. "
                     "Confirm the task type ID matches one with playbooks "
                     "(classification, qa-sft, span-extraction, summarization)."
                 ),
@@ -507,7 +507,7 @@ async def _check_synth_backend(
                     "(e.g. `ollama pull qwen2.5:14b-instruct-q4_K_M`), or "
                     "set TEACHER_MODEL_API_URL to an OpenAI-compatible "
                     "endpoint. Cloud providers (OpenAI/Anthropic/Deepseek) "
-                    "work via the synth panel's Cloud picker once you "
+                    "work via Data → Generate's cloud picker once you "
                     "save an API key under Project Settings → Secrets."
                 ),
                 metadata={"available_backends": []},
@@ -552,7 +552,7 @@ async def _check_prepared_splits(
                 elapsed_ms=elapsed,
                 message="No labelled corpus yet (0 rows in train/cleaned/synthetic).",
                 remediation=(
-                    "Open Pipeline → Ingest or Synth to add rows. "
+                    "Open Data → Sources or Data → Generate to add rows. "
                     "Training needs at least the task type's minimum row count."
                 ),
                 metadata={"labelled_row_count": 0, "dataset_count": len(datasets)},
@@ -652,7 +652,7 @@ async def _check_adapter_handler_format(
                 elapsed_ms=elapsed,
                 message=(
                     "Dataset hasn't been prepped yet (manifest has no "
-                    "adapter_id). Check fires after the first Data Prep run."
+                    "adapter_id). Check fires after the first split (Data → Split)."
                 ),
                 metadata={"expected_adapter": expected_adapter},
             )
@@ -701,7 +701,7 @@ async def _check_adapter_handler_format(
                         "The adapter id matches but the adapter isn't "
                         "wrapping rows with the handler's prompt "
                         "template. Either (a) pick a different adapter "
-                        "that does wrap rows (open Pipeline → Data Prep "
+                        "that does wrap rows (open Train → More options "
                         "→ Adapter Studio to inspect what each adapter "
                         "writes), or (b) treat this as a platform bug "
                         "on the adapter and file it — the adapter id "
@@ -750,7 +750,7 @@ async def _check_adapter_handler_format(
             ),
             remediation=(
                 f"Re-prep the dataset with the correct adapter: open "
-                f"Pipeline → Data Prep and set adapter to "
+                f"Data → Split and set adapter to "
                 f"'{expected_adapter}'. Then retrain. The training-time "
                 f"eval may stay high either way, but the held-out F1 "
                 f"won't reflect the real model quality until the "

@@ -244,19 +244,19 @@ const versionPayload = {
     issues: [],
     entry_points: [
         {
-            label: 'Open Dataset Prep',
+            label: 'Open Data → Split',
             target_tab: 'dataprep',
             reason: 'Create or refresh prepared dataset versions.',
             requires_confirmation: true,
         },
         {
-            label: 'Open Training',
+            label: 'Open Train',
             target_tab: 'training',
             reason: 'Use prepared split versions for training runs.',
             requires_confirmation: false,
         },
         {
-            label: 'Open Eval',
+            label: 'Open Results',
             target_tab: 'eval',
             reason: 'Use validation/test artifacts for evaluation.',
             requires_confirmation: false,
@@ -290,7 +290,7 @@ describe('DataStudioDatasetVersionsPanel', () => {
         expect(screen.getByText('Prepared manifest')).toBeInTheDocument();
         expect(screen.getByText('Training reuse')).toBeInTheDocument();
 
-        fireEvent.click(screen.getByRole('button', { name: /Open Training/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Open Train/i }));
         fireEvent.click(screen.getByRole('button', { name: /^Eval$/i }));
         expect(onOpenTarget).toHaveBeenCalledWith('training');
         expect(onOpenTarget).toHaveBeenCalledWith('eval');
@@ -392,7 +392,7 @@ describe('DataStudioDatasetVersionsPanel', () => {
                         id: 'manifest',
                         label: 'Prepared manifest',
                         status: 'missing',
-                        message: 'Create or refresh the prepared manifest in Dataset Prep.',
+                        message: 'Create or refresh the prepared manifest in Data → Split.',
                         target_tab: 'dataprep',
                     },
                 ],
@@ -401,8 +401,8 @@ describe('DataStudioDatasetVersionsPanel', () => {
                         id: 'dataset_versions_empty',
                         severity: 'info',
                         title: 'No prepared dataset versions yet',
-                        message: 'Run Dataset Prep to create versioned train, validation, and test artifacts.',
-                        action_label: 'Open Dataset Prep',
+                        message: 'Run the split in Data → Split to create versioned train, validation, and test artifacts.',
+                        action_label: 'Open Data → Split',
                         target_tab: 'dataprep',
                     },
                 ],
@@ -421,7 +421,7 @@ describe('DataStudioDatasetVersionsPanel', () => {
         expect(screen.getByText('Version history appears after Data → Split writes prepared split versions.')).toBeInTheDocument();
         expect(screen.getByText('Read-only check')).toBeInTheDocument();
 
-        fireEvent.click(screen.getAllByRole('button', { name: /Open Dataset Prep/i })[0]);
+        fireEvent.click(screen.getAllByRole('button', { name: /Open Data → Split/i })[0]);
         expect(onOpenTarget).toHaveBeenCalledWith('dataprep');
     });
 

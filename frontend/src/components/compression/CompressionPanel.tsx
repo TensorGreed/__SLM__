@@ -5,12 +5,12 @@
 import { useState, useEffect } from 'react';
 import { Terminal } from 'lucide-react';
 import api from '../../api/client';
-import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import { buildWsUrl } from '../../utils/ws';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 
-interface CompressionPanelProps { projectId: number; onNextStep?: () => void; }
+/** Rendered inside Ship → Package → Options → Compress; the Package stage is the next step, so no step footer. */
+interface CompressionPanelProps { projectId: number; }
 
 interface RunOption {
     id: number;
@@ -44,7 +44,7 @@ const FORMAT_OPTIONS: Array<{ value: string; label: string }> = [
     { value: 'onnx', label: 'ONNX (INT8)' },
 ];
 
-export default function CompressionPanel({ projectId, onNextStep }: CompressionPanelProps) {
+export default function CompressionPanel({ projectId }: CompressionPanelProps) {
     const [modelPath, setModelPath] = useState('');
     const [bits, setBits] = useState(4);
     const [format, setFormat] = useState('gguf');
@@ -413,15 +413,6 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
                 </div>
             )}
 
-            {onNextStep && (
-                <StepFooter
-                    currentStep="Compression"
-                    nextStep="Export"
-                    isComplete={result != null}
-                    hint="Quantize or merge your model to continue"
-                    onNext={onNextStep}
-                />
-            )}
         </div>
     );
 }

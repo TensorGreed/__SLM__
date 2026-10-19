@@ -107,7 +107,7 @@ const reviewQueuePayload = {
             priority: 'high',
             count: 2,
             message: 'Accept good rows or reject weak rows before they enter the next prepared dataset.',
-            action_label: 'Open Synthetic review',
+            action_label: 'Open the Generate review queue',
             target_tab: 'synthetic',
             requires_user_confirmation: true,
             evidence: ['playbook:classification:positives_paraphrase (2)'],
@@ -183,7 +183,7 @@ const reviewQueuePayload = {
     ],
     entry_points: [
         {
-            label: 'Open Synthetic review',
+            label: 'Open the Generate review queue',
             target_tab: 'synthetic',
             reason: 'Accept or reject pending synthetic rows.',
         },
@@ -348,7 +348,7 @@ describe('DataStudioReviewQueuePanel', () => {
                         priority: 'low',
                         count: 0,
                         message: 'Review queues appear after synthetic generation, answer key sampling, or annotation seeding.',
-                        action_label: 'Open Synthetic',
+                        action_label: 'Open Data → Generate',
                         target_tab: 'synthetic',
                         requires_user_confirmation: true,
                         evidence: [],
@@ -365,7 +365,7 @@ describe('DataStudioReviewQueuePanel', () => {
                         severity: 'info',
                         title: 'No review queue yet',
                         message: 'Generate synthetic rows, add answer-key examples, or create annotation jobs to start review flow.',
-                        action_label: 'Open Synthetic',
+                        action_label: 'Open Data → Generate',
                         target_tab: 'synthetic',
                     },
                 ],
@@ -382,7 +382,7 @@ describe('DataStudioReviewQueuePanel', () => {
         expect(screen.getByText('Create a review source')).toBeInTheDocument();
         expect(screen.getByText('No review queue yet')).toBeInTheDocument();
 
-        fireEvent.click(screen.getAllByRole('button', { name: /^Open Synthetic$/i })[0]);
+        fireEvent.click(screen.getAllByRole('button', { name: /^Open Data → Generate$/i })[0]);
         expect(onOpenTarget).toHaveBeenCalledWith('synthetic');
     });
 

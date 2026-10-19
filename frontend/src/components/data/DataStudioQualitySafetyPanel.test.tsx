@@ -49,7 +49,7 @@ const qualityPayload = {
             message: 'Found 3 deterministic sensitive-data signal(s). Values are not shown in Data Studio.',
             count: 3,
             target_tab: 'data',
-            workflow_owner: 'Source Ingestion',
+            workflow_owner: 'Data → Sources',
             source: 'policy.csv',
             domain_id: 'policy_qa',
             domain_label: 'Policy Q&A',
@@ -80,9 +80,9 @@ const qualityPayload = {
                 action: {
                     label: 'Inspect sources',
                     target_tab: 'data',
-                    workflow_owner: 'Source Ingestion',
+                    workflow_owner: 'Data → Sources',
                     requires_confirmation: true,
-                    description: "Open Source Ingestion for 'Inspect sources'. Data Studio only previews this finding.",
+                    description: "'Inspect sources' opens Data → Sources. This check only previews the finding.",
                 },
                 empty_message: 'No affected row sample is available for this check yet.',
             },
@@ -96,7 +96,7 @@ const qualityPayload = {
             message: 'Found 1 overlapping row fingerprint(s) across prepared splits.',
             count: 1,
             target_tab: 'dataprep',
-            workflow_owner: 'Data Prep',
+            workflow_owner: 'Data → Split',
             source: 'Prepared splits',
             domain_id: 'policy_qa',
             domain_label: 'Policy Q&A',
@@ -112,7 +112,7 @@ const qualityPayload = {
             message: 'Applied domain contract requires stronger field coverage before training.',
             count: 1,
             target_tab: 'dataprep',
-            workflow_owner: 'Domain Managers',
+            workflow_owner: 'Settings → Tools → Domain Packs',
             source: 'Applied domain contract',
             domain_id: 'policy_qa',
             domain_label: 'Policy Q&A',
@@ -130,12 +130,12 @@ const qualityPayload = {
             message: 'Applied domain contract requires review gates.',
             count: 0,
             target_tab: 'domain',
-            workflow_owner: 'Domain Managers',
+            workflow_owner: 'Settings → Tools → Domain Packs',
             source: 'Applied domain contract',
             domain_id: 'policy_qa',
             domain_label: 'Policy Q&A',
             evidence: [],
-            action_label: 'Open Review',
+            action_label: 'Open the review queue',
             domain_authored: true,
             read_only_preview: true,
         },
@@ -179,7 +179,7 @@ const qualityPayload = {
     findings_by_owner: [
         {
             key: 'source-ingestion',
-            label: 'Source Ingestion',
+            label: 'Data → Sources',
             blocker_count: 1,
             warning_count: 1,
             info_count: 1,
@@ -188,7 +188,7 @@ const qualityPayload = {
         },
         {
             key: 'data-prep',
-            label: 'Data Prep',
+            label: 'Data → Split',
             blocker_count: 1,
             warning_count: 1,
             info_count: 1,
@@ -199,19 +199,19 @@ const qualityPayload = {
     issues: [],
     entry_points: [
         {
-            label: 'Open Source Ingestion',
+            label: 'Open Data → Sources',
             target_tab: 'data',
             reason: 'Inspect source rows.',
             requires_confirmation: true,
         },
         {
-            label: 'Open Data Prep',
+            label: 'Open Data → Split',
             target_tab: 'dataprep',
             reason: 'Review leakage checks.',
             requires_confirmation: true,
         },
         {
-            label: 'Open Domain Managers',
+            label: 'Open Settings → Tools → Domain Packs',
             target_tab: 'domain',
             reason: 'Tune policy checks.',
             requires_confirmation: true,
@@ -271,7 +271,7 @@ describe('DataStudioQualitySafetyPanel', () => {
         expect(screen.getAllByText('Domain-authored').length).toBeGreaterThan(0);
         expect(screen.getAllByText('Domain review gate').length).toBeGreaterThan(0);
         expect(screen.getByText('By workflow owner')).toBeInTheDocument();
-        expect(screen.getAllByText('Source Ingestion').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Data → Sources').length).toBeGreaterThan(0);
         expect(screen.getByText('By source')).toBeInTheDocument();
         expect(screen.getByText('policy.csv')).toBeInTheDocument();
         expect(screen.getByText('Domain-authored previews')).toBeInTheDocument();
@@ -286,7 +286,7 @@ describe('DataStudioQualitySafetyPanel', () => {
         expect(screen.getAllByText(/Contact \[EMAIL\] and use card \[CARD\]/i).length).toBeGreaterThan(0);
         expect(screen.queryByText(/jane@example.com/i)).not.toBeInTheDocument();
         expect(screen.getByText('Destination action')).toBeInTheDocument();
-        expect(screen.getAllByText(/Data Studio only previews this finding/i).length).toBeGreaterThan(0);
+        expect(screen.getAllByText(/This check only previews the finding/i).length).toBeGreaterThan(0);
 
         fireEvent.click(screen.getAllByRole('button', { name: /Inspect sources/i })[0]);
         expect(onOpenTarget).toHaveBeenCalledWith('data');

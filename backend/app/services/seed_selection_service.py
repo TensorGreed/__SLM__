@@ -281,7 +281,7 @@ class SeedNotEvaluated(Exception):
             f"Run #{experiment_id} has no evaluation on record, so its model card would carry no "
             f"evaluation or human-review evidence. Run the lift check first "
             f"(POST /api/projects/{project_id}/evaluation/summary/lift-check "
-            f'{{"experiment_id": {experiment_id}}}, or "Evaluate this run" on the Eval tab), '
+            f'{{"experiment_id": {experiment_id}}}, or "Evaluate this run" on Results → Verdict), '
             "or ship with evaluate_if_missing=true to run it before exporting."
         )
 

@@ -72,7 +72,7 @@ const WARN_REPORT = {
                     why_it_matters: 'F1 you ship may not predict prod F1.',
                     suggested_action: {
                         kind: 'navigate',
-                        label: 'Open Data Studio splits tab',
+                        label: 'Open Data → Split',
                         target: 'data-studio-splits',
                         params: {},
                     },

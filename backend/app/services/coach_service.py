@@ -440,13 +440,13 @@ async def _noop_normalizer_nudge(
             "the recommended swap-in: it decodes HTML entities (`&amp;` → "
             "`&`, `&nbsp;` → space) and collapses runs of whitespace, which "
             "catches the most common ingestion-stage cleanup issues without "
-            "any domain-specific assumptions. Swap it in via the Domain Pack "
-            "Manager — the picker badges it with a ★."
+            "any domain-specific assumptions. Swap it in via "
+            "Settings → Tools → Domain Packs — the picker badges it with a ★."
         ),
         "severity": "info",
         "action": {
             "kind": "navigate",
-            "label": "Open Domain Pack Manager",
+            "label": "Open Settings → Tools → Domain Packs",
             "params": {"target": "domain-pack-manager"},
         },
         "rule_id": "noop-normalizer.default-active",

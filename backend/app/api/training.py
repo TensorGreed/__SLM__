@@ -991,7 +991,7 @@ def _build_guardrail_unblock_actions(
             "reason_code": "DATASET_NOT_READY",
             "label": label,
             "description": str(fix.get("description") or "").strip() or "Open guided remediation.",
-            "navigate_to": navigate_to or f"/project/{project_id}/pipeline/ingestion",
+            "navigate_to": navigate_to or f"/project/{project_id}/data",
             "one_click_available": bool(navigate_to),
         }
         actions.append(action)
@@ -1003,7 +1003,7 @@ def _build_guardrail_unblock_actions(
                 "reason_code": "DATASET_NOT_READY",
                 "label": "Complete data prep",
                 "description": "Import and prepare a training split before launching Autopilot.",
-                "navigate_to": f"/project/{project_id}/pipeline/ingestion",
+                "navigate_to": f"/project/{project_id}/data",
                 "one_click_available": True,
             }
         )
@@ -1019,7 +1019,7 @@ def _build_guardrail_unblock_actions(
                 "reason_code": "TARGET_INCOMPATIBLE",
                 "label": "Change target or base model",
                 "description": reasons[0] if reasons else "Selected base model does not fit target constraints.",
-                "navigate_to": f"/project/{project_id}/wizard",
+                "navigate_to": f"/project/{project_id}/train",
                 "one_click_available": True,
             }
         )
@@ -1100,8 +1100,8 @@ def _build_target_incompatibility_actions(
     actions.append(
         {
             "id": "open_wizard_target_step",
-            "label": "Update target in wizard",
-            "description": f"Open /project/{project_id}/wizard and re-select target/base model pairing.",
+            "label": "Change the base model on Train",
+            "description": "Open Train and re-select the base model for this target.",
         }
     )
 
@@ -5467,19 +5467,19 @@ async def _spawn_training_watcher_job(
                 }
             if status == ExperimentStatus.FAILED:
                 raise RuntimeError(
-                    f"Experiment {experiment_id} failed (see Training tab for details)"
+                    f"Experiment {experiment_id} failed (see the Train page for details)"
                 )
             if status == ExperimentStatus.CANCELLED:
                 return {
                     "experiment_id": experiment_id,
                     "terminal_status": "cancelled",
-                    "note": "training cancelled via Training tab",
+                    "note": "training cancelled from the Train page",
                 }
             if status == ExperimentStatus.PAUSED:
                 return {
                     "experiment_id": experiment_id,
                     "terminal_status": "paused",
-                    "note": "training paused — resume from Training tab",
+                    "note": "training paused — resume from the Train page",
                 }
             # Cooperative cancel of the watcher only (the user is
             # done watching). The underlying training keeps running.

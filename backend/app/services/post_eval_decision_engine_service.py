@@ -375,7 +375,7 @@ def _classify_recommendation(
             "confidence": 0.55,
             "rationale": (
                 f"Output is a tiny slice of input. Try iterating on the base "
-                f"model in the Playground with a careful prompt before committing "
+                f"model in Results → Try it with a careful prompt before committing "
                 f"to another training run."
             ),
         }
@@ -386,7 +386,7 @@ def _classify_recommendation(
         "rationale": (
             f"No specific approach-mismatch signal fired. Pass rate "
             f"({pass_rate}) suggests the model needs more or higher-quality "
-            f"training data — open the Active Learning panel."
+            f"training data — see active learning under Results → Failures."
         ),
     }
 
