@@ -45,7 +45,7 @@ frontend/
     stores/      — zustand stores (projectStore, jobsStore, toastStore, …)
     types/       — shared TypeScript types
 
-data/            — runtime data dirs (gitignored except for slm_platform.db)
+data/            — runtime data dirs, all gitignored (slm_platform.db too)
 ROADMAP*.md      — gitignored discussion docs (DON'T commit them)
 ```
 
@@ -86,7 +86,15 @@ drop. Never all-or-nothing.
 
 ## Database + migrations
 
-- Dev SQLite lives at `data/slm_platform.db`. Tests use a per-PID
+- Dev SQLite lives at `data/slm_platform.db` — **untracked since 2026-10-19** (it held project
+  secrets, and the repo is public; commits up to c449abc still carry an old copy). Bootstrap on a
+  fresh clone: start the backend once (`uvicorn app.main:app --port 8000` — startup creates
+  `data/` and, via `ALLOW_SQLITE_AUTOCREATE`, every table, and `admin` can log in), stop it, then
+  `cd backend && alembic stamp head`. Do NOT `alembic upgrade head` on an empty DB: the
+  2026-03 migrations `ALTER COLUMN … DROP DEFAULT`, which SQLite refuses (verified 2026-10-19;
+  a fresh boot + stamp gives the same 50 tables as the dev DB). Never `git add` it back;
+  worktrees start with no DB (copy one in if a task needs dev data).
+  Tests use a per-PID
   scratch DB at `/tmp/brewslm-pytest-<pid>/session.db` — pinned by
   `backend/tests/conftest.py` BEFORE any test module loads.
 - Engine uses `StaticPool` + a single shared connection. Cross-loop
