@@ -1936,7 +1936,9 @@ runs real CPU inference). ~4 min locally.
   (+0.15, CI +0.02..+0.29), gated 20/9/17 (0.53) → promising → fine-tune
   4/3/39 (0.12) → reroute. Fine-tunes scored ≤ 4 correct every time, so
   "ready" stops the flow
-  (`stopped_reason` "Retrieval already answers…"), "promising" trains with
+  (`stopped_reason` "Retrieval already answers…"; the card's "Train anyway" re-posts
+  `reuse_existing` + `train_if_retrieval_ready` + `passages_check: false` — same split, no second
+  sweep), "promising" trains with
   a warning and lets the judged lift compare. Coach training stage
   `training:retrieval-ready` (warning, reroute action) /
   `training:retrieval-promising` (info, "train, then compare"; same

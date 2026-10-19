@@ -146,7 +146,7 @@ describe('DocumentsQaFlowCard', () => {
         expect(screen.getByTestId('documents-qa-flow-result')).not.toHaveTextContent('Stopped before training');
         await user.click(screen.getByTestId('documents-qa-flow-train-anyway'));
         await waitFor(() => {
-            expect(apiMock.post).toHaveBeenCalledWith('/projects/1/flows/documents-to-qa', expect.objectContaining({ reuse_existing: true, train_if_retrieval_ready: true, train: true }));
+            expect(apiMock.post).toHaveBeenCalledWith('/projects/1/flows/documents-to-qa', expect.objectContaining({ reuse_existing: true, train_if_retrieval_ready: true, train: true, passages_check: false }));
         });
         await user.click(screen.getByTestId('documents-qa-flow-reroute'));
         await waitFor(() => {

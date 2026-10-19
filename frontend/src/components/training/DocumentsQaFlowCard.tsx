@@ -82,6 +82,9 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                 train: !reviewFirst,
                 reuseExisting,
                 trainIfRetrievalReady,
+                // "Train anyway" answers a gate that already ran on these rows;
+                // re-running it repeats the whole retrieval sweep (~an hour).
+                ...(trainIfRetrievalReady ? { passagesCheck: false } : {}),
                 ...(reuseExisting ? {} : { backend }),
             });
             toast.info(

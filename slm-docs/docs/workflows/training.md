@@ -149,7 +149,7 @@ Continued pretraining teaches the model your documents' language; it does not ma
 
 | tier | rule | what happens |
 |---|---|---|
-| **retrieval ready** | gain over no retrieval beyond row noise, judge score ≥ 0.65, at least half the answers fully correct, at most a quarter wrong | the flow **stops before training** — "Retrieval already answers…" — with **Reroute to RAG** and **Train anyway** |
+| **retrieval ready** | gain over no retrieval beyond row noise, judge score ≥ 0.65, at least half the answers fully correct, at most a quarter wrong | the flow **stops before training** — "Retrieval already answers…" — with **Reroute to RAG** and **Train anyway** (trains the same pairs on the same split without re-running the gate) |
 | **retrieval promising** | gain beyond noise, judge score ≥ 0.4, but misses the "ready" bar | training goes ahead with a note; the lift check then judges the fine-tune against this retrieval on the same rows |
 | **retrieval weak** | otherwise | training goes ahead |
 
