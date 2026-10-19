@@ -88,7 +88,7 @@ export default function ProjectResultsPage() {
                 ))}
             </div>
 
-            <StepHelp projectId={projectId} tab="eval" />
+            <StepHelp projectId={projectId} tab="eval" sub={tab} />
             <CoachNotices projectId={projectId} stage="eval" />
 
             {tab === 'verdict' && autoGate && (

@@ -177,7 +177,7 @@ export default function GoldSetDiagnosticsPanel({ projectId }: GoldSetDiagnostic
                 <p className="gold-diag__hint">
                     Class balance — share of the answer key per label, sorted descending. The dashed
                     line marks the <strong>{(IMBALANCE_THRESHOLD * 100).toFixed(0)}%</strong>{' '}
-                    floor Coach Mode uses to flag under-represented classes; a bar below the line
+                    floor the Coach uses to flag under-represented classes; a bar below the line
                     will fire the imbalance signal at training time.
                 </p>
                 <ul className="gold-diag__balance-list">

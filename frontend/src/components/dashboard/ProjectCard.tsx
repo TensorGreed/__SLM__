@@ -26,9 +26,9 @@ const STAGE_ORDER = ['ingestion', 'cleaning', 'gold_set', 'synthetic', 'dataset_
 const STAGE_LABELS: Record<string, string> = {
     ingestion: 'Data Ingestion',
     cleaning: 'Data Cleaning',
-    gold_set: 'Gold Dataset',
-    synthetic: 'Synthetic Gen',
-    dataset_prep: 'Dataset Prep',
+    gold_set: 'Answer Key',
+    synthetic: 'Generate',
+    dataset_prep: 'Split',
     tokenization: 'Tokenization',
     training: 'Training',
     evaluation: 'Evaluation',

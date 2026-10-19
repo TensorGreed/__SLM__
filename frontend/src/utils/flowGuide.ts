@@ -27,7 +27,7 @@ export const PIPELINE_STAGE_LABEL: Record<PipelineStage, string> = {
     cleaning: 'Data Cleaning',
     gold_set: 'Answer Key',
     synthetic: 'Synthetic Data',
-    dataset_prep: 'Dataset Prep',
+    dataset_prep: 'Split',
     data_adapter_preview: 'Adapter Preview',
     tokenization: 'Tokenization',
     training: 'Training',
@@ -73,7 +73,7 @@ export function getRecommendedAction(
         case 'gold_set':
             return {
                 path: stagePath(projectId, 'goldset'),
-                title: 'Build gold evaluation set',
+                title: 'Build the answer key',
                 description: 'Create trusted QA pairs to benchmark quality.',
             };
         case 'synthetic':

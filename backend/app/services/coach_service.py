@@ -214,7 +214,7 @@ def _archetype_drift_nudge(
         body_parts.append(suggestion_text)
     if len(below) > 1:
         body_parts.append(
-            f"See the Archetype panel on Training Config for all "
+            f"See Train → More options → Plan and gaps for all "
             f"{len(below)} drifts."
         )
 
@@ -837,7 +837,7 @@ async def _cleaning_stage_suggestions(
                 "body": (
                     "A failure rate above 5% usually means a parser bug or "
                     "a misconfigured connector. Review the failure cluster "
-                    "on the Cleaning tab — silently shrinking the training "
+                    "on Data → Prepare — silently shrinking the training "
                     "set with bad parses is worse than fixing the root cause."
                 ),
                 "severity": severity,
@@ -994,7 +994,7 @@ async def _gold_set_stage_suggestions(
             "id": "gold_set:no-recipe",
             "title": "Choose a task type before reviewing the answer key",
             "body": (
-                "Coach Mode needs the task type's profile (classification, "
+                "The Coach needs the task type's profile (classification, "
                 "qa-sft, span-extraction, etc.) to score answer-key health. "
                 "Selecting a task type also unlocks the synth playbook "
                 "suggestions that bridge gaps in your answer key."
@@ -1265,7 +1265,7 @@ def _curriculum_training_suggestion(
         "severity": "info",
         "action": {
             "kind": "navigate",
-            "label": "Open Training Config",
+            "label": "Open Train → Plan and gaps",
             "params": {"target": "training-config"},
         },
         "context": {
@@ -1338,10 +1338,10 @@ async def _training_config_gaps_rollup_nudge(
     count_phrase = " and ".join(pieces)
 
     body = (
-        f"The Training Config gap scanner flagged {count_phrase}. "
+        f"The training-config gap scanner flagged {count_phrase}. "
         f"Top item: {top_headline}"
         if top_headline
-        else f"The Training Config gap scanner flagged {count_phrase}."
+        else f"The training-config gap scanner flagged {count_phrase}."
     )
 
     return {
@@ -1355,7 +1355,7 @@ async def _training_config_gaps_rollup_nudge(
         "severity": severity,
         "action": {
             "kind": "navigate",
-            "label": "Open Training Config gaps panel",
+            "label": "Open Train → Plan and gaps",
             "params": {"target": "training-config-gaps-panel"},
         },
         "rule_id": "training-config-gaps.rollup",
@@ -1921,7 +1921,7 @@ async def _multi_seed_variance_nudge(
             "severity": "warning",
             "action": {
                 "kind": "navigate",
-                "label": "Open multi-seed config",
+                "label": "Open Train → Seeds",
                 "params": {
                     "target": "training-config",
                     "expand_multi_seed": True,
@@ -1960,7 +1960,7 @@ async def _multi_seed_variance_nudge(
         "severity": "info",
         "action": {
             "kind": "navigate",
-            "label": "Open multi-seed config",
+            "label": "Open Train → Seeds",
             "params": {
                 "target": "training-config",
                 "expand_multi_seed": True,
@@ -2244,7 +2244,7 @@ def _retrieval_ready_nudge_from_gate(project_id: int, gate: dict[str, Any]) -> d
             f"({gate.get('partial', 0)} partly; judge score {float(gate.get('score') or 0):.2f}, judged by "
             f"{gate.get('judge') or 'the judge model'} on the facts). Not an assistant on its own yet — so train, and "
             "the lift check will judge the fine-tune against this retrieval on the same rows. If the fine-tune loses, "
-            "the Eval tab offers the reroute. Either way, a RAG sibling can serve this retrieval now."
+            "Results → Verdict offers the reroute. Either way, a RAG sibling can serve this retrieval now."
         )
         return {
             "id": "training:retrieval-promising",
@@ -2271,7 +2271,7 @@ def _retrieval_ready_nudge_from_gate(project_id: int, gate: dict[str, Any]) -> d
         "Fine-tuning a small model on a few hundred generated pairs teaches it your documents' wording, not "
         "their facts — on this kind of data it has scored far below retrieval. Reroute to RAG now: a sibling "
         "project that serves the base model + passage retrieval, no training run. Or train anyway on the "
-        "Training tab to compare — the lift check will judge both on the same rows."
+        "Train page to compare — the lift check will judge both on the same rows."
     )
     return {
         "id": "training:retrieval-ready",
@@ -2337,7 +2337,7 @@ def _passages_beat_finetune_nudge(
     if finetune.get("finetune_is_latest") is False:
         body += (
             f"\n\nYour latest run #{finetune.get('latest_experiment_id')} has not been judged yet — "
-            "re-run its lift check on the Eval tab to compare it too."
+            "re-run its lift check on Results → Verdict to compare it too."
         )
     if finetune.get("n_seeds"):
         body += f" (Run #{finetune.get('experiment_id')} is the mean of {finetune.get('n_seeds')} seeds.)"
@@ -2415,12 +2415,12 @@ def _auto_rag_eval_nudge(
             "vs the SFT-only baseline. New qa-sft experiments now default "
             "to auto-RAG on; this one didn't, so the next experiment "
             "will pick it up automatically. Or flip it on for an "
-            "individual playground chat without re-training."
+            "individual chat in Results → Try it without re-training."
         ),
         "severity": "info",
         "action": {
             "kind": "navigate",
-            "label": "Open Training Config",
+            "label": "Open Train → Plan and gaps",
             "params": {"target": "training-config"},
         },
         "context": {
@@ -2806,9 +2806,9 @@ async def _eval_gaps_rollup_nudge(
     count_phrase = " and ".join(pieces)
 
     body = (
-        f"The Eval Gap scanner flagged {count_phrase}. Top item: {top_headline}"
+        f"The eval-gap scanner flagged {count_phrase}. Top item: {top_headline}"
         if top_headline
-        else f"The Eval Gap scanner flagged {count_phrase}."
+        else f"The eval-gap scanner flagged {count_phrase}."
     )
 
     return {
@@ -2822,7 +2822,7 @@ async def _eval_gaps_rollup_nudge(
         "severity": severity,
         "action": {
             "kind": "navigate",
-            "label": "Open Eval Gaps panel",
+            "label": "Open Results → Failures",
             "params": {"target": "eval-gaps-panel"},
         },
         "rule_id": "eval-gaps.rollup",
@@ -3194,7 +3194,7 @@ async def _eval_stage_suggestions(
             "body": (
                 "Failures didn't cluster cleanly, so there's no obvious "
                 "single bucket to augment. Review the predictions preview "
-                "on the Eval tab to identify what's breaking."
+                "on Results → Failures to identify what's breaking."
             ),
             "severity": severity,
             "action": {
@@ -3306,7 +3306,7 @@ async def _documents_qa_flow_nudge(db: AsyncSession, project: Project) -> dict[s
             f"about {plan['estimated_training_pairs']} question→answer pairs from them (using "
             f"{preview['backend']}), keeps {plan['estimated_answer_key_rows']} different questions as the "
             "answer key, splits the pairs, trains with your defaults and runs the lift check — one click, "
-            "a few minutes. The generated rows stay reviewable in the Synthetic tab's review queue."
+            "a few minutes. The generated rows stay reviewable in Data → Generate's review queue."
         )
         action = {
             "kind": "start_flow",
@@ -3596,7 +3596,7 @@ async def _export_stage_suggestions(
             "title": "Nothing to export yet",
             "body": "Train a model first. Export packages a finished training run.",
             "severity": "info",
-            "action": _pipeline_tab_action("Go to Training", "training"),
+            "action": _pipeline_tab_action("Go to Train", "training"),
             "rule_id": "export.no-trained-run",
             "context": {},
         })
@@ -3646,7 +3646,7 @@ async def _export_stage_suggestions(
                 "More test examples or more training data would settle it."
             ),
             "severity": "warning",
-            "action": _pipeline_tab_action("Open Eval", "eval"),
+            "action": _pipeline_tab_action("Open Results", "eval"),
             "rule_id": "export.within-noise",
             "context": {"experiment_id": run_id, "headline": headline, "evidence": evidence},
         })
@@ -3658,7 +3658,7 @@ async def _export_stage_suggestions(
                 f"On the test examples, {_metric_display_name(headline.get('metric_id'))} "
                 f"went {headline.get('baseline_value')} → {headline.get('trained_value')}. "
                 "Shipping it would be a downgrade from the model you started with. "
-                "Check the failures on the Eval tab first."
+                "Check the failures on Results → Failures first."
             ),
             "severity": "critical",
             "action": _pipeline_tab_action("See where it fails", "eval"),
@@ -3674,7 +3674,7 @@ async def _export_stage_suggestions(
                 "without adding skill. More (or cleaner) training data usually helps."
             ),
             "severity": "warning",
-            "action": _pipeline_tab_action("Open Eval", "eval"),
+            "action": _pipeline_tab_action("Open Results", "eval"),
             "rule_id": "export.no-better-than-base",
             "context": {"experiment_id": run_id, "headline": headline},
         })
@@ -3684,7 +3684,7 @@ async def _export_stage_suggestions(
             "title": f"The latest model ({run_label}) hasn't been evaluated",
             "body": (
                 "You'd be exporting without knowing whether it beats the base model. "
-                "One click on the Eval tab scores it on your test examples."
+                "One click on Results → Verdict scores it on your test examples."
             ),
             "severity": "warning",
             "action": _pipeline_tab_action("Evaluate it", "eval"),

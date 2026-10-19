@@ -868,7 +868,7 @@ function ClusterAugmentControl({
                     data-testid={`failure-cluster-augment-ok-${clusterId}`}
                 >
                     <Check className="u-icon" aria-hidden="true" /> Generated {state.rows} rows via <code>{state.backend}</code> in {state.elapsed?.toFixed(2)}s.
-                    Pending review on the Synthetic tab.
+                    Pending review in Data → Generate.
                 </p>
             )}
             {status === 'error' && state?.message && (

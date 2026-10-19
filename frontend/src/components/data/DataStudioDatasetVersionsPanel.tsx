@@ -43,7 +43,7 @@ interface DataStudioDatasetVersionsPanelProps {
 const VERSION_VERDICT_COPY: Record<DataStudioDatasetVersions['verdict'], { label: string; detail: string }> = {
     empty: {
         label: 'No versions',
-        detail: 'Run Dataset Prep to create reusable train, validation, and test dataset versions.',
+        detail: 'Split your data (Data → Split) to create reusable train, validation, and test dataset versions.',
     },
     attention: {
         label: 'Check versions',
@@ -260,7 +260,7 @@ export default function DataStudioDatasetVersionsPanel({
             setVersions(data);
             setError(null);
         } catch (err: any) {
-            setError(err?.response?.data?.detail || err?.message || 'Failed to load Data Studio dataset versions.');
+            setError(err?.response?.data?.detail || err?.message || 'Failed to load the dataset versions.');
         } finally {
             setLoading(false);
         }
@@ -408,7 +408,7 @@ export default function DataStudioDatasetVersionsPanel({
                         type="button"
                         className="btn btn-ghost data-studio-versions__refresh"
                         onClick={() => void loadVersions()}
-                        aria-label="Refresh Data Studio dataset versions"
+                        aria-label="Refresh dataset versions"
                     >
                         <RefreshCw size={16} aria-hidden="true" />
                     </button>
@@ -667,7 +667,7 @@ export default function DataStudioDatasetVersionsPanel({
                     </div>
                 ) : (
                     <p className="data-studio-versions__empty">
-                        Version history appears after Dataset Prep writes prepared split versions.
+                        Version history appears after Data → Split writes prepared split versions.
                     </p>
                 )}
             </div>

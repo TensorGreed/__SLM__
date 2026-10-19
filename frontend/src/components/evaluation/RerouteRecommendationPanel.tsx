@@ -158,12 +158,12 @@ export default function RerouteRecommendationPanel({ projectId, evalResultId }: 
         return (
             <RerouteCard
                 flavor="try-prompt"
-                title="Iterate in the Playground first"
+                title="Iterate in Results → Try it first"
                 subtitle={`Your eval is at ${formatPassRate(analysis.pass_rate)}. The output is a small slice of the input — careful prompting may suffice before another training run.`}
                 rationale={analysis.recommendation.rationale}
                 confidence={analysis.recommendation.confidence}
                 signals={firedSignals}
-                primaryLabel="Open Playground"
+                primaryLabel="Open Try it"
                 onPrimaryClick={() => navigateTo(resultsPath(projectId, 'try'))}
             />
         );

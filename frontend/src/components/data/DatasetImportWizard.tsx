@@ -21,6 +21,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { X } from 'lucide-react';
 import {
     introspectLocator,
     listMappers,
@@ -38,6 +39,7 @@ import { applyRecipeToProject } from '../../api/recipes';
 import type { Recipe, RecipeSuggestion } from '../../api/recipes';
 import RecipePicker from './RecipePicker';
 import TaskShapeConfirmCard from './TaskShapeConfirmCard';
+import './DatasetImportWizard.css';
 
 interface DatasetImportWizardProps {
     projectId: number;
@@ -393,38 +395,27 @@ export default function DatasetImportWizard({
 
     return (
         <div className="modal-backdrop" data-testid="dataset-import-wizard">
-            <div className="modal" style={{ maxWidth: 920, width: '95vw' }}>
+            <div className="modal diw-modal">
                 <div className="modal-header">
-                    <h2 style={{ margin: 0 }}>Import dataset</h2>
+                    <h2 className="u-m0">Import dataset</h2>
                     <button className="btn btn-ghost" onClick={onClose} aria-label="Close">
-                        ✕
+                        <X className="u-icon" aria-hidden="true" />
                     </button>
                 </div>
 
                 {/* Step indicator */}
-                <div
-                    style={{
-                        display: 'flex',
-                        gap: 'var(--space-md)',
-                        padding: 'var(--space-md) var(--space-lg)',
-                        borderBottom: '1px solid var(--border-color)',
-                        fontSize: '0.9rem',
-                    }}
-                >
+                <div className="diw-steps">
                     {(Object.keys(stepLabel) as WizardStep[]).map((s) => (
                         <div
                             key={s}
-                            style={{
-                                color: s === step ? 'var(--primary-color)' : 'var(--text-secondary)',
-                                fontWeight: s === step ? 600 : 400,
-                            }}
+                            className={s === step ? 'diw-step diw-step--active' : 'diw-step'}
                         >
                             {stepLabel[s]}
                         </div>
                     ))}
                 </div>
 
-                <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+                <div className="modal-body diw-body">
                     {step === 'source' && (
                         <SourceStep
                             sources={sources}
@@ -513,14 +504,7 @@ export default function DatasetImportWizard({
                                 <div
                                     role="alert"
                                     data-testid="recipe-persist-error"
-                                    style={{
-                                        marginBottom: 'var(--space-md)',
-                                        padding: 'var(--space-sm) var(--space-md)',
-                                        fontSize: '0.85rem',
-                                        background: 'var(--color-warning-bg)',
-                                        color: 'var(--color-warning)',
-                                        borderRadius: 'var(--radius-md)',
-                                    }}
+                                    className="diw-notice"
                                 >
                                     Task type selection didn't persist to the project
                                     record ({recipePersistError}). You can continue
@@ -531,21 +515,13 @@ export default function DatasetImportWizard({
                             {recipeOverridden && (
                                 <div
                                     role="note"
-                                    style={{
-                                        marginBottom: 'var(--space-md)',
-                                        padding: 'var(--space-sm) var(--space-md)',
-                                        fontSize: '0.85rem',
-                                        background: 'var(--color-warning-bg)',
-                                        color: 'var(--color-warning)',
-                                        borderRadius: 'var(--radius-md)',
-                                    }}
+                                    className="diw-notice"
                                 >
                                     Task type suggestions skipped. Configuring mapping
                                     manually.{' '}
                                     <button
                                         type="button"
-                                        className="btn btn-ghost"
-                                        style={{ padding: 0, fontSize: '0.85rem' }}
+                                        className="btn btn-ghost diw-link-btn"
                                         onClick={() => setStep('recipe')}
                                     >
                                         Show task type suggestions →
@@ -621,29 +597,19 @@ function RecipeSummaryChip({ recipe, suggestion, onChange }: RecipeSummaryChipPr
     return (
         <div
             data-testid="recipe-summary-chip"
-            style={{
-                marginBottom: 'var(--space-md)',
-                padding: 'var(--space-sm) var(--space-md)',
-                borderRadius: 'var(--radius-md)',
-                border: '1px solid var(--border-color)',
-                background: 'var(--bg-subtle)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-md)',
-                fontSize: '0.9rem',
-            }}
+            className="diw-chip"
         >
-            <span style={{ fontSize: '1.2rem' }} aria-hidden="true">
+            <span className="diw-chip__icon" aria-hidden="true">
                 {recipe.icon}
             </span>
-            <div style={{ flex: 1 }}>
+            <div className="diw-chip__body">
                 <strong>Task type:</strong> {recipe.name}{' '}
                 {confidencePct !== null && (
-                    <span style={{ color: 'var(--text-secondary)' }}>
+                    <span className="diw-muted">
                         ({confidencePct}% match)
                     </span>
                 )}
-                <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                <div className="diw-muted diw-small">
                     <code>{recipe.task_profile}</code> ·{' '}
                     <code>{recipe.scoring_mode}</code> · base{' '}
                     <code>{recipe.suggested_base_model}</code>
@@ -651,8 +617,7 @@ function RecipeSummaryChip({ recipe, suggestion, onChange }: RecipeSummaryChipPr
             </div>
             <button
                 type="button"
-                className="btn btn-ghost"
-                style={{ fontSize: '0.85rem' }}
+                className="btn btn-ghost diw-small"
                 onClick={onChange}
             >
                 Change task type
@@ -693,7 +658,7 @@ function SourceStep({
     onNext,
 }: SourceStepProps) {
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+        <div className="diw-stack">
             <div className="form-group" data-testid="upload-block">
                 <label className="form-label" htmlFor="dsi-upload">
                     Upload a file from your computer
@@ -710,7 +675,7 @@ function SourceStep({
                         if (file) onUploadFile(file);
                     }}
                 />
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                <div className="diw-hint">
                     {uploading
                         ? 'Uploading and reading columns…'
                         : uploadedName
@@ -719,7 +684,7 @@ function SourceStep({
                 </div>
             </div>
 
-            <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
+            <p className="diw-muted u-m0">
                 Or point at a source: pick the source type and enter a locator. The introspector
                 will sniff the columns and propose a mapping — no need to write a converter.
             </p>
@@ -744,42 +709,26 @@ function SourceStep({
 
             <div className="form-group">
                 <label className="form-label">Locator</label>
-                <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
-                    <code
-                        style={{
-                            padding: '6px 10px',
-                            background: 'var(--bg-secondary)',
-                            borderRadius: 'var(--radius-sm)',
-                            border: '1px solid var(--border-color)',
-                            fontSize: '0.9rem',
-                            whiteSpace: 'nowrap',
-                        }}
-                    >
+                <div className="diw-row">
+                    <code className="diw-prefix">
                         {sourceId}:
                     </code>
                     <input
-                        className="input"
-                        style={{ flex: 1 }}
+                        className="input diw-grow"
                         value={locatorBody}
                         onChange={(e) => onLocatorBodyChange(e.target.value)}
                         placeholder={sourceHelp.placeholder}
                         data-testid="locator-input"
                     />
                 </div>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+                <div className="diw-hint">
                     {sourceHelp.helpText}
                 </div>
             </div>
 
             {sourceHelp.authNote && (
                 <div
-                    style={{
-                        padding: 'var(--space-md)',
-                        background: 'rgba(245, 158, 11, 0.08)',
-                        border: '1px solid rgba(245, 158, 11, 0.3)',
-                        borderRadius: 'var(--radius-md)',
-                        fontSize: '0.9rem',
-                    }}
+                    className="diw-callout"
                     role="note"
                 >
                     {sourceHelp.authNote}
@@ -792,7 +741,7 @@ function SourceStep({
                 </div>
             )}
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <div className="diw-actions-end">
                 <button
                     className="btn btn-primary"
                     onClick={onNext}
@@ -877,17 +826,17 @@ function MapStep({
     }, [introspection, mappers, selectedMapperId]);
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
+        <div className="diw-stack diw-stack--lg">
             {/* Column rundown */}
             <section>
-                <h3 style={{ marginTop: 0, marginBottom: 'var(--space-sm)' }}>Column signatures</h3>
-                <table className="table" style={{ width: '100%', fontSize: '0.9rem' }}>
+                <h3 className="diw-h3">Column signatures</h3>
+                <table className="table diw-table">
                     <thead>
                         <tr>
-                            <th style={{ textAlign: 'left' }}>Column</th>
-                            <th style={{ textAlign: 'left' }}>Detected type</th>
-                            <th style={{ textAlign: 'left' }}>Confidence</th>
-                            <th style={{ textAlign: 'left' }}>Notes</th>
+                            <th className="diw-th-left">Column</th>
+                            <th className="diw-th-left">Detected type</th>
+                            <th className="diw-th-left">Confidence</th>
+                            <th className="diw-th-left">Notes</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -896,7 +845,7 @@ function MapStep({
                                 <td><code>{sig.name}</code></td>
                                 <td>{sig.column_type}</td>
                                 <td>{(sig.confidence * 100).toFixed(0)}%</td>
-                                <td style={{ color: 'var(--text-secondary)' }}>
+                                <td className="diw-muted">
                                     {sig.unique_values.length > 0 && (
                                         <span>
                                             unique: [{sig.unique_values.slice(0, 5).join(', ')}
@@ -913,17 +862,10 @@ function MapStep({
 
             {/* Mapper picker */}
             <section>
-                <h3 style={{ marginTop: 0, marginBottom: 'var(--space-sm)' }}>Mapper</h3>
+                <h3 className="diw-h3">Mapper</h3>
                 {introspection.hypotheses.length === 0 && (
                     <div
-                        style={{
-                            padding: 'var(--space-md)',
-                            background: 'rgba(245, 158, 11, 0.08)',
-                            border: '1px solid rgba(245, 158, 11, 0.3)',
-                            borderRadius: 'var(--radius-md)',
-                            fontSize: '0.9rem',
-                            marginBottom: 'var(--space-sm)',
-                        }}
+                        className="diw-callout diw-callout--spaced"
                         role="note"
                     >
                         No mapping hypothesis matched this dataset's shape. Pick a mapper from
@@ -953,7 +895,7 @@ function MapStep({
                 </div>
 
                 {selectedMapperId && hypothesesById.has(selectedMapperId) && (
-                    <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: 'var(--space-sm)' }}>
+                    <div className="diw-rationale">
                         <strong>Rationale:</strong> {hypothesesById.get(selectedMapperId)?.rationale}
                     </div>
                 )}
@@ -962,22 +904,16 @@ function MapStep({
             {/* Confidence gate */}
             {isBelowThreshold && (
                 <div
-                    style={{
-                        padding: 'var(--space-md)',
-                        background: 'rgba(239, 68, 68, 0.08)',
-                        border: '1px solid rgba(239, 68, 68, 0.3)',
-                        borderRadius: 'var(--radius-md)',
-                        fontSize: '0.9rem',
-                    }}
+                    className="diw-callout diw-callout--error"
                     role="alert"
                     data-testid="confidence-warning"
                 >
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Low-confidence proposal</div>
-                    <div style={{ marginBottom: 'var(--space-sm)' }}>
+                    <div className="diw-strong-line">Low-confidence proposal</div>
+                    <div className="diw-gate-note">
                         Confidence is below the {(confidenceThreshold * 100).toFixed(0)}% threshold.
                         Eyeball the column signatures + rationale carefully before proceeding.
                     </div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                    <label className="diw-check">
                         <input
                             type="checkbox"
                             checked={forceLowConfidence}
@@ -991,22 +927,21 @@ function MapStep({
 
             {/* Field-map editor */}
             <section>
-                <h3 style={{ marginTop: 0, marginBottom: 'var(--space-sm)' }}>Field map</h3>
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 0 }}>
+                <h3 className="diw-h3">Field map</h3>
+                <p className="diw-hint diw-hint--flush">
                     JSON object passed through to the mapper. Edit to override the
                     introspector's suggestion (rename a source column, supply a nested
                     config like <code>entity_type_map</code>, etc.).
                 </p>
                 <textarea
-                    className="input"
+                    className="input diw-textarea"
                     rows={8}
-                    style={{ width: '100%', fontFamily: 'var(--font-monospace, monospace)' }}
                     value={fieldMapJson}
                     onChange={(e) => onFieldMapChange(e.target.value)}
                     data-testid="field-map-input"
                 />
                 {fieldMapError && (
-                    <div className="error-banner" style={{ marginTop: 'var(--space-sm)' }}>
+                    <div className="error-banner diw-error-spaced">
                         {fieldMapError}
                     </div>
                 )}
@@ -1018,7 +953,7 @@ function MapStep({
                 </div>
             )}
 
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <div className="diw-actions-between">
                 <button className="btn btn-ghost" onClick={onBack}>
                     ← Back
                 </button>
@@ -1087,18 +1022,13 @@ function PreviewStep({
 
     if (runResult) {
         return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+            <div className="diw-stack">
                 <div
-                    style={{
-                        padding: 'var(--space-md)',
-                        background: 'rgba(34, 197, 94, 0.08)',
-                        border: '1px solid rgba(34, 197, 94, 0.3)',
-                        borderRadius: 'var(--radius-md)',
-                    }}
+                    className="diw-callout diw-callout--success"
                     role="status"
                     data-testid="run-success-banner"
                 >
-                    <h3 style={{ marginTop: 0 }}>Imported.</h3>
+                    <h3 className="u-mt0">Imported.</h3>
                     <div>
                         <strong>{runResult.accepted_count}</strong> row(s) written to the
                         project's synthetic dataset.{' '}
@@ -1110,12 +1040,12 @@ function PreviewStep({
                         )}
                     </div>
                     {runResult.written_path && (
-                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 8 }}>
+                        <div className="diw-hint diw-hint--below">
                             File: <code>{runResult.written_path}</code>
                         </div>
                     )}
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <div className="diw-actions-end">
                     <button className="btn btn-primary" onClick={onClose}>
                         Close
                     </button>
@@ -1125,11 +1055,11 @@ function PreviewStep({
     }
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
+        <div className="diw-stack diw-stack--lg">
             {/* Summary */}
             <section>
-                <h3 style={{ marginTop: 0, marginBottom: 'var(--space-sm)' }}>Dry-run summary</h3>
-                <div style={{ display: 'flex', gap: 'var(--space-lg)', flexWrap: 'wrap' }}>
+                <h3 className="diw-h3">Dry-run summary</h3>
+                <div className="diw-cards">
                     <SummaryCard
                         label="Accepted"
                         value={previewResult.accepted_count}
@@ -1156,20 +1086,20 @@ function PreviewStep({
             {/* Rejection breakdown + bulk drop */}
             {reasonEntries.length > 0 && (
                 <section>
-                    <h3 style={{ marginTop: 0, marginBottom: 'var(--space-sm)' }}>
+                    <h3 className="diw-h3">
                         Rejected rows by reason
                     </h3>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 0 }}>
+                    <p className="diw-hint diw-hint--flush">
                         Tick a reason to bulk-drop those rejects on import. Counts are
                         preserved in the final result for audit. Refresh the preview after
                         toggling to see the updated sample.
                     </p>
-                    <table className="table" style={{ width: '100%', fontSize: '0.9rem' }}>
+                    <table className="table diw-table">
                         <thead>
                             <tr>
-                                <th style={{ width: 40 }}>Drop</th>
-                                <th style={{ textAlign: 'left' }}>Reason</th>
-                                <th style={{ textAlign: 'right' }}>Count</th>
+                                <th className="diw-th-narrow">Drop</th>
+                                <th className="diw-th-left">Reason</th>
+                                <th className="diw-th-right">Count</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1184,12 +1114,12 @@ function PreviewStep({
                                         />
                                     </td>
                                     <td><code>{reason}</code></td>
-                                    <td style={{ textAlign: 'right' }}>{count}</td>
+                                    <td className="diw-th-right">{count}</td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
-                    <div style={{ marginTop: 'var(--space-sm)' }}>
+                    <div className="u-mt-sm">
                         <button
                             className="btn btn-secondary"
                             onClick={onRefreshPreview}
@@ -1205,20 +1135,10 @@ function PreviewStep({
             {/* Accepted sample */}
             {previewResult.accepted_sample.length > 0 && (
                 <section>
-                    <h3 style={{ marginTop: 0, marginBottom: 'var(--space-sm)' }}>
+                    <h3 className="diw-h3">
                         Sample transformed rows
                     </h3>
-                    <pre
-                        style={{
-                            background: 'var(--bg-secondary)',
-                            padding: 'var(--space-md)',
-                            borderRadius: 'var(--radius-md)',
-                            fontSize: '0.85rem',
-                            maxHeight: 240,
-                            overflow: 'auto',
-                            border: '1px solid var(--border-color)',
-                        }}
-                    >
+                    <pre className="diw-pre">
                         {JSON.stringify(
                             previewResult.accepted_sample.map((r) => r.payload),
                             null,
@@ -1237,28 +1157,18 @@ function PreviewStep({
 
             {/* Save-as-config affordance: lets the user persist this
                 mapping for one-click re-runs later (Phase G). */}
-            <section
-                style={{
-                    padding: 'var(--space-md)',
-                    background: 'var(--bg-secondary)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: 'var(--radius-md)',
-                }}
-            >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+            <section className="diw-save">
+                <div className="diw-save__head">
                     <div>
                         <strong>Save this mapping</strong>
-                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        <div className="diw-muted diw-small">
                             Stores the locator + mapper + field_map + drop_reasons so you can
                             re-run against a refreshed source without re-introspecting.
                         </div>
                     </div>
                     {savedConfigName ? (
                         <span
-                            style={{
-                                fontSize: '0.85rem',
-                                color: 'var(--text-secondary)',
-                            }}
+                            className="diw-muted diw-small"
                             data-testid="saved-config-confirm"
                         >
                             Saved as <code>{savedConfigName}</code>.
@@ -1276,14 +1186,7 @@ function PreviewStep({
                     )}
                 </div>
                 {showSaveForm && !savedConfigName && (
-                    <div
-                        style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 'var(--space-sm)',
-                            marginTop: 'var(--space-md)',
-                        }}
-                    >
+                    <div className="diw-save__form">
                         <div className="form-group">
                             <label className="form-label" htmlFor="dsi-save-name">
                                 Name
@@ -1317,7 +1220,7 @@ function PreviewStep({
                                 {saveError}
                             </div>
                         )}
-                        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        <div className="diw-actions-end">
                             <button
                                 type="button"
                                 className="btn btn-primary"
@@ -1332,7 +1235,7 @@ function PreviewStep({
                 )}
             </section>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <div className="diw-actions-between">
                 <button className="btn btn-ghost" onClick={onBack} disabled={running}>
                     ← Back
                 </button>
@@ -1358,32 +1261,17 @@ interface SummaryCardProps {
 }
 
 function SummaryCard({ label, value, tone }: SummaryCardProps) {
-    const toneColor: Record<SummaryCardProps['tone'], string> = {
-        positive: 'rgba(34, 197, 94, 0.08)',
-        warning: 'rgba(245, 158, 11, 0.08)',
-        neutral: 'var(--bg-secondary)',
+    const toneClass: Record<SummaryCardProps['tone'], string> = {
+        positive: 'diw-card diw-card--positive',
+        warning: 'diw-card diw-card--warning',
+        neutral: 'diw-card',
     };
     return (
-        <div
-            style={{
-                padding: 'var(--space-md)',
-                background: toneColor[tone],
-                borderRadius: 'var(--radius-md)',
-                border: '1px solid var(--border-color)',
-                minWidth: 160,
-            }}
-        >
-            <div
-                style={{
-                    fontSize: '0.75rem',
-                    color: 'var(--text-secondary)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.5px',
-                }}
-            >
+        <div className={toneClass[tone]}>
+            <div className="diw-card__label">
                 {label}
             </div>
-            <div style={{ fontWeight: 600, fontSize: '1.1rem', marginTop: 4 }}>{value}</div>
+            <div className="diw-card__value">{value}</div>
         </div>
     );
 }

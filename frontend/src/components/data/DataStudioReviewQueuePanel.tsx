@@ -534,7 +534,7 @@ export default function DataStudioReviewQueuePanel({
             setQueue(data);
             setError(null);
         } catch (err: any) {
-            setError(err?.response?.data?.detail || err?.message || 'Failed to load Data Studio review queue.');
+            setError(err?.response?.data?.detail || err?.message || 'Failed to load the review queue.');
         } finally {
             setLoading(false);
         }
@@ -698,7 +698,7 @@ export default function DataStudioReviewQueuePanel({
                         type="button"
                         className="btn btn-ghost data-studio-review__refresh"
                         onClick={() => void loadQueue()}
-                        aria-label="Refresh Data Studio review queue"
+                        aria-label="Refresh review queue"
                     >
                         <RefreshCw size={16} aria-hidden="true" />
                     </button>

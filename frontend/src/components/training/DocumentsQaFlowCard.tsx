@@ -149,7 +149,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                         ? `, split ${result.split.train ?? '?'} / ${result.split.val ?? '?'} / ${result.split.test ?? '?'} (train / val / test)`
                         : ''}
                     {result.experiment_id != null
-                        ? `. Training run #${result.experiment_id} started — the lift check follows on the Eval tab.`
+                        ? `. Training run #${result.experiment_id} started — the lift check follows on Results → Verdict.`
                         : result.passages_gate?.status === 'retrieval_ready'
                             ? '.'
                             : result.stopped_reason
@@ -159,7 +159,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                         <span className="documents-qa-flow__warnings"> {result.warnings.join(' ')}</span>
                     )}
                     <span className="documents-qa-flow__review">
-                        {' '}The generated rows are in the Synthetic tab's review queue (source "documents_qa_flow") if you want to reject any.
+                        {' '}The generated rows are in the review queue on Data → Generate (source "documents_qa_flow") if you want to reject any.
                     </span>
                 </div>
             )}

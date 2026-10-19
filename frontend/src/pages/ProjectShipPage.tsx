@@ -105,7 +105,7 @@ export default function ProjectShipPage() {
                 ))}
             </div>
 
-            <StepHelp projectId={projectId} tab="export" />
+            <StepHelp projectId={projectId} tab="export" sub={stage} />
             <CoachNotices projectId={projectId} stage="export" />
             <div className="stage-page__content stage-page__stack">
                 {stage === 'package' && <SeedPickCard projectId={projectId} />}

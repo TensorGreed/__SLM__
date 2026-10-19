@@ -51,4 +51,15 @@ describe('TabVideoLink', () => {
             screen.getByRole('button', { name: /Ship · Package/i }),
         ).toBeInTheDocument();
     });
+
+    it('deep-links the Results tab / Ship stage chapter when given one', () => {
+        const { rerender } = render(<TabVideoLink tabKey="eval" subStep="failures" />);
+        expect(screen.getByRole('button', { name: /Results · Failures/i })).toBeInTheDocument();
+        rerender(<TabVideoLink tabKey="eval" subStep="try" />);
+        expect(screen.getByRole('button', { name: /Results · Try it/i })).toBeInTheDocument();
+        rerender(<TabVideoLink tabKey="export" subStep="deploy" />);
+        expect(screen.getByRole('button', { name: /Ship · Deploy/i })).toBeInTheDocument();
+        rerender(<TabVideoLink tabKey="eval" />);
+        expect(screen.getByRole('button', { name: /Results · Verdict/i })).toBeInTheDocument();
+    });
 });

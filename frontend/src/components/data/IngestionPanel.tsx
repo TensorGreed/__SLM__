@@ -1141,8 +1141,8 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                 />
             {onNextStep && (
                 <StepFooter
-                    currentStep="Data Ingestion"
-                    nextStep="Data Cleaning"
+                    currentStep="Sources"
+                    nextStep="Prepare"
                     nextStepIcon=""
                     isComplete={documents.length > 0}
                     hint="Upload files or import a dataset to continue"

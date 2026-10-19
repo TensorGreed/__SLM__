@@ -147,7 +147,7 @@ export default function ProjectRecipePickerPage({ embedded = false, returnTo: re
                 <p className="recipe-picker__lede">
                     A task type bundles the task shape, adapter, scoring mode, and
                     suggested base model — it shapes synthetic-data playbooks,
-                    pass/fail rules, and Coach Mode signals. You can change the
+                    pass/fail rules, and Coach signals. You can change the
                     task type later, but doing so may invalidate generated synth
                     rows.
                 </p>

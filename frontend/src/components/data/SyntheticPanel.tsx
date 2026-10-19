@@ -1173,7 +1173,7 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                             {isLoadingChunks ? 'Loading...' : 'Load from Cleaned Data'}
                         </button>
                     </div>
-                    <textarea className="input synthetic-panel__source"  value={sourceText} onChange={e => setSourceText(e.target.value)} placeholder="Paste domain text here, or click 'Load from Cleaned Data' to auto-import chunks from the Cleaning step..." />
+                    <textarea className="input synthetic-panel__source"  value={sourceText} onChange={e => setSourceText(e.target.value)} placeholder="Paste domain text here, or click 'Load from Cleaned Data' to auto-import chunks from Data → Prepare..." />
                     <small className="u-text-secondary u-mt-xs u-block">
                         {sourceText ? `${sourceText.length.toLocaleString()} characters loaded` : 'No text loaded yet. Use the button above to import cleaned chunks automatically.'}
                     </small>
@@ -1762,8 +1762,8 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                 />
             {onNextStep && (
                 <StepFooter
-                    currentStep="Synthetic Generation"
-                    nextStep="Dataset Prep"
+                    currentStep="Generate"
+                    nextStep="Split"
                     nextStepIcon=""
                     isComplete={activeGeneratedCount > 0}
                     hint={

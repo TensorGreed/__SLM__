@@ -571,7 +571,7 @@ export default function GoldSetWorkbenchPanel({ projectId }: GoldSetWorkbenchPan
                     <div>
                         <h3>Answer-key builder</h3>
                         <p className="gold-workbench-subtitle">
-                            Sample rows from a source dataset into a draft version of your gold set. Dedup is keyed on row content.
+                            Sample rows from a source dataset into a draft version of your answer key. Dedup is keyed on row content.
                         </p>
                     </div>
                     <button

@@ -1486,7 +1486,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                 )}
                                                 {trainingChanges.length > 0 && (
                                                     <div>
-                                                        <div className="eval-remediation-list-title">Training Config Changes</div>
+                                                        <div className="eval-remediation-list-title">Training config changes</div>
                                                         <ul className="eval-remediation-list">
                                                             {trainingChanges.map((item) => <li key={item}>{item}</li>)}
                                                         </ul>
@@ -2650,7 +2650,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
             {onNextStep && (
                 <StepFooter
                     currentStep="Evaluation"
-                    nextStep="Compression"
+                    nextStep="Ship"
                     nextStepIcon=""
                     isComplete={evalResults.length > 0}
                     hint="Run at least one evaluation to continue"

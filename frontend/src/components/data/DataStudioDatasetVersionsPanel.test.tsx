@@ -418,7 +418,7 @@ describe('DataStudioDatasetVersionsPanel', () => {
 
         expect(screen.getByText('No versions')).toBeInTheDocument();
         expect(screen.getByText('No prepared dataset versions yet')).toBeInTheDocument();
-        expect(screen.getByText('Version history appears after Dataset Prep writes prepared split versions.')).toBeInTheDocument();
+        expect(screen.getByText('Version history appears after Data → Split writes prepared split versions.')).toBeInTheDocument();
         expect(screen.getByText('Read-only check')).toBeInTheDocument();
 
         fireEvent.click(screen.getAllByRole('button', { name: /Open Dataset Prep/i })[0]);

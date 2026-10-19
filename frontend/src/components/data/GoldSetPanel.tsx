@@ -626,11 +626,11 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
         <div className="gold-panel animate-fade-in">
             <div className="card">
                 <div className="gold-header">
-                    <h3>Gold Evaluation Dataset</h3>
+                    <h3>Answer key</h3>
                     <div className="gold-controls">
                         <select className="input u-w-auto" value={datasetType} onChange={e => setDatasetType(e.target.value)}>
-                            <option value="gold_dev">Dev Set</option>
-                            <option value="gold_test">Test Set</option>
+                            <option value="gold_dev">Practice answer key</option>
+                            <option value="gold_test">Final answer key</option>
                         </select>
                         <button className="btn btn-secondary" onClick={handleLock}><Lock className="u-icon" aria-hidden="true" /> Lock</button>
                     </div>
@@ -670,8 +670,9 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                         className="u-p-md u-hint"
                         data-testid="gold-add-form-hidden-hint"
                     >
-                        Choose a task type (Data tab → task type picker) to
-                        unlock manual gold-row entry. The form's
+                        Choose a task type (the Task shape card above, or
+                        Train → More options → Task type) to unlock manual
+                        answer-key entry. The form's
                         fields depend on the task type.
                     </div>
                 )}
@@ -692,8 +693,8 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                 />
             {onNextStep && (
                 <StepFooter
-                    currentStep="Gold Dataset"
-                    nextStep="Synthetic Generation"
+                    currentStep="Labels"
+                    nextStep="Generate"
                     nextStepIcon=""
                     isComplete={entries.length >= 5}
                     hint="Add at least 5 Q&A pairs for evaluation"

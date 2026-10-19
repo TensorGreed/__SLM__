@@ -183,7 +183,7 @@ export default function AnswerKeyReviewPanel({ projectId, datasetType = 'gold_te
                 {queue.model_experiment_id != null
                     ? <>Rows where run #{queue.model_experiment_id} disagrees with the key come first: one of the two is wrong. Green = in the key, orange = the model missed it, dashed = the model found it and the key doesn't have it.</>
                     : <>No trained span run to compare with yet — rows are in file order.</>}
-                {' '}Accept what is right, fix what is wrong (select text in the passage to add a span), reject rows that are not a fair test. The Eval tab scores checked rows apart from unchecked ones.
+                {' '}Accept what is right, fix what is wrong (select text in the passage to add a span), reject rows that are not a fair test. Results → Verdict scores checked rows apart from unchecked ones.
             </p>
             {error && <p className="akr__error" data-testid="akr-error">{error}</p>}
             {pending.length === 0 && <p className="akr__hint" data-testid="akr-all-done">Every row has been checked.</p>}

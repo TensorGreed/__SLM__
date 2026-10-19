@@ -91,7 +91,7 @@ describe('Data panels — stepper layout', () => {
 
     it('Labels: the answer-key card stays; the entries list goes to Details', async () => {
         render(<MemoryRouter><GoldSetPanel projectId={1} extraDetails={EXTRA} /></MemoryRouter>);
-        expect(await screen.findByText('Gold Evaluation Dataset')).toBeInTheDocument();
+        expect(await screen.findByRole('heading', { name: 'Answer key' })).toBeInTheDocument();
         expect(screen.queryByTestId('gold-entries-header')).toBeNull();
         const user = await openDrawer();
         expect(sectionIds()).toEqual(['entries', 'extra']);

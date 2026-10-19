@@ -115,7 +115,7 @@ export function SpanSizingTable({ block, onAnswerKey, projectId }: { block: Span
                 {short.length > 0 && (
                     <>
                         {' '}
-                        <a href={stagePath(projectId, 'synthetic')} data-testid="eval-summary-sizing-refine">Refine weak types</a> on the Synthetic tab now targets the under-sampled types too; new rows reach the key through a re-split without “keep test” and a re-key.
+                        <a href={stagePath(projectId, 'synthetic')} data-testid="eval-summary-sizing-refine">Refine weak types</a> in Data → Generate now targets the under-sampled types too; new rows reach the key through a re-split without “keep test” and a re-key.
                     </>
                 )}
                 {' '}
@@ -541,7 +541,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     )}
                     {summary.answer_key && !summary.answer_key.review && (
                         <p className="eval-summary__judge" data-testid="eval-summary-span-review-none">
-                            Nobody has checked the answer key yet — a model wrote it, so this score inherits its mistakes. Check rows on the Answer Key tab.
+                            Nobody has checked the answer key yet — a model wrote it, so this score inherits its mistakes. Check rows in Data → Labels.
                         </p>
                     )}
                     {summary.test && (
@@ -555,7 +555,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                             {(summary.answer_key ?? summary.test)!.weakest_types
                                 .map((t) => `${t.type} ${t.f1.toFixed(2)} (${t.support} span${t.support === 1 ? '' : 's'})`)
                                 .join(', ')}
-                            . <em>Refine weak types</em> on the Synthetic tab targets them.
+                            . <em>Refine weak types</em> in Data → Generate targets them.
                         </p>
                     ) : null}
                     <SpanSizingTable block={summary.answer_key ?? summary.test ?? null} onAnswerKey={Boolean(summary.answer_key)} projectId={projectId} />

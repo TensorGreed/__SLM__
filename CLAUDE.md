@@ -517,7 +517,7 @@ runs real CPU inference). ~4 min locally.
   with its action + "why?" trace, an × that remembers the `rule_id` in
   localStorage `brewslm.coach.dismissed.<pid>.<stage>`, "Show N more") and
   `StepHelp` (the step's `coachContext.TAB_TIP` + `TabVideoLink`, "Got it"
-  key `brewslm.coach.tip.<pid>.<tab>`). The Overview lists ≤ 3 nudges.
+  key `brewslm.coach.tip.<pid>.<tab>`; Results and Ship pass `sub=<tab|stage>` → `coachContext.SUB_STEP_TIP` + `tabVideos.SUB_STEP_CHAPTER`, key `<tab>.<sub>`). The Overview lists ≤ 3 nudges.
   `useCoachMode(projectId)` (on by default, override in `coachModeStore`) is the
   one switch — Settings → "Show inline tips". Beginner mode hides nothing
   anywhere (the `flowGuide` domain-first detour is gone too).

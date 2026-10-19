@@ -18,11 +18,13 @@ import './TabVideoLink.css';
 
 interface Props {
     tabKey: TabKey;
+    /** A Results tab / Ship stage — deep-links that sub-step's chapter. */
+    subStep?: string;
 }
 
-export default function TabVideoLink({ tabKey }: Props) {
+export default function TabVideoLink({ tabKey, subStep }: Props) {
     const [open, setOpen] = useState(false);
-    const entry = getTabVideo(tabKey);
+    const entry = getTabVideo(tabKey, subStep);
 
     if (!entry) {
         return null;

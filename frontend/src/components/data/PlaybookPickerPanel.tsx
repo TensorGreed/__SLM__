@@ -432,7 +432,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 <p>
                     {recipeId
                         ? `No playbooks shipped for the '${recipeId}' task type yet. Use the manual generators below.`
-                        : 'Choose a task type on the Data tab to enable playbook-driven synthesis.'}
+                        : 'Choose a task type (Train → More options → Task type) to enable playbook-driven synthesis.'}
                 </p>
             </section>
         );

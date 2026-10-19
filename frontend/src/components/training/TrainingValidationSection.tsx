@@ -148,7 +148,7 @@ export default function TrainingValidationSection({
               </div>
               <div className="resolved-defaults-panel__grid">
                 <div>
-                  <div className="resolved-defaults-panel__subtitle">Resolved Training Config</div>
+                  <div className="resolved-defaults-panel__subtitle">Resolved training config</div>
                   <pre className="resolved-defaults-panel__json">
                     {JSON.stringify(effectivePreview.resolved_training_config || {}, null, 2)}
                   </pre>

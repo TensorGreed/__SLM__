@@ -128,7 +128,7 @@ describe('RerouteRecommendationPanel', () => {
         expect(container.querySelector('.reroute-card')).toBeNull();
     });
 
-    it('renders try_prompt_engineering card with Playground CTA', async () => {
+    it('renders try_prompt_engineering card with the Try it CTA', async () => {
         apiMock.get.mockResolvedValueOnce({
             data: makeAnalysis({
                 kind: 'try_prompt_engineering',
@@ -139,7 +139,7 @@ describe('RerouteRecommendationPanel', () => {
         await waitFor(() => {
             expect(screen.getByTestId('reroute-card-try-prompt')).toBeInTheDocument();
         });
-        expect(screen.getByTestId('reroute-card-cta')).toHaveTextContent(/playground/i);
+        expect(screen.getByTestId('reroute-card-cta')).toHaveTextContent(/try it/i);
     });
 
     it('renders expand_data card as the catch-all', async () => {

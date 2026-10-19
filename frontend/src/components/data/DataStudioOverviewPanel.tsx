@@ -67,7 +67,7 @@ export default function DataStudioOverviewPanel({
             setOverview(data);
             setError(null);
         } catch (err: any) {
-            setError(err?.response?.data?.detail || err?.message || 'Failed to load Data Studio overview.');
+            setError(err?.response?.data?.detail || err?.message || 'Failed to load the readiness overview.');
         } finally {
             setLoading(false);
         }
@@ -83,7 +83,7 @@ export default function DataStudioOverviewPanel({
     if (loading && !overview) {
         return (
             <section className="data-studio-overview data-studio-overview--loading">
-                <span>Loading Data Studio overview...</span>
+                <span>Loading the readiness overview...</span>
             </section>
         );
     }
@@ -92,7 +92,7 @@ export default function DataStudioOverviewPanel({
         return (
             <section className="data-studio-overview data-studio-overview--error">
                 <div>
-                    <h3>Data Studio Overview</h3>
+                    <h3>Readiness overview</h3>
                     <p>{error}</p>
                 </div>
                 <button type="button" className="btn btn-secondary" onClick={() => void loadOverview()}>
@@ -127,7 +127,7 @@ export default function DataStudioOverviewPanel({
 
             <div className="data-studio-overview__header">
                 <div>
-                    <p className="data-studio-overview__eyebrow">Data Studio</p>
+                    <p className="data-studio-overview__eyebrow">Data</p>
                     <h3>Overview readiness</h3>
                     <p>{verdict.detail}</p>
                 </div>
@@ -139,14 +139,14 @@ export default function DataStudioOverviewPanel({
                         type="button"
                         className="btn btn-ghost data-studio-overview__refresh"
                         onClick={() => void loadOverview()}
-                        aria-label="Refresh Data Studio overview"
+                        aria-label="Refresh readiness overview"
                     >
                         <RefreshCw size={16} aria-hidden="true" />
                     </button>
                 </div>
             </div>
 
-            <div className="data-studio-overview__metrics" aria-label="Data Studio readiness metrics">
+            <div className="data-studio-overview__metrics" aria-label="Data readiness metrics">
                 <div className="data-studio-overview__metric">
                     <Database size={18} aria-hidden="true" />
                     <span>Trainable rows</span>

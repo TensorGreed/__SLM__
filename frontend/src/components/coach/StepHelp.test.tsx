@@ -2,7 +2,9 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../video/TabVideoLink', () => ({ default: ({ tabKey }: { tabKey: string }) => <div data-testid={`video-${tabKey}`} /> }));
+vi.mock('../video/TabVideoLink', () => ({
+    default: ({ tabKey, subStep }: { tabKey: string; subStep?: string }) => <div data-testid={`video-${tabKey}${subStep ? `-${subStep}` : ''}`} />,
+}));
 
 import StepHelp from './StepHelp';
 import { _resetCoachModeStoreForTests, useCoachModeStore } from '../../stores/coachModeStore';
@@ -33,5 +35,21 @@ describe('StepHelp', () => {
         useCoachModeStore.getState().setOverride(7, 'off');
         rerender(<StepHelp projectId={7} tab="goldset" />);
         expect(screen.queryByTestId('step-help-goldset')).toBeNull();
+    });
+
+    it('follows the Results tab / Ship stage it is given', async () => {
+        const user = userEvent.setup();
+        const { rerender } = render(<StepHelp projectId={7} tab="eval" sub="verdict" />);
+        expect(screen.getByTestId('step-help-eval')).toHaveTextContent('Score the trained model');
+        rerender(<StepHelp projectId={7} tab="eval" sub="failures" />);
+        expect(screen.getByTestId('step-help-eval')).toHaveTextContent('See where the model goes wrong');
+        expect(screen.getByTestId('video-eval-failures')).toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: 'Dismiss tip' }));
+        expect(screen.queryByTestId('step-help-eval')).toBeNull();
+        rerender(<StepHelp projectId={7} tab="eval" sub="compare" />);
+        expect(screen.getByTestId('step-help-eval')).toHaveTextContent('Put runs side by side');
+        rerender(<StepHelp projectId={7} tab="export" sub="monitor" />);
+        expect(screen.getByTestId('step-help-export')).toHaveTextContent('Watch the model after it ships');
+        expect(screen.getByTestId('step-help-export')).not.toHaveTextContent('You made it');
     });
 });

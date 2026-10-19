@@ -302,8 +302,8 @@ export default function CleaningPanel({ projectId, onNextStep , extraDetails = [
                 />
             {onNextStep && (
                 <StepFooter
-                    currentStep="Data Cleaning"
-                    nextStep="Gold Dataset"
+                    currentStep="Prepare"
+                    nextStep="Labels"
                     nextStepIcon=""
                     isComplete={cleaningResults.length > 0 && cleaningErrors.length === 0}
                     hint="Run cleaning on your documents to proceed"

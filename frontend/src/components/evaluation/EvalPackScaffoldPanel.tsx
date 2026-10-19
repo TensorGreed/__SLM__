@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Lightbulb } from 'lucide-react';
 
 import type {
     GateMetricOption,
@@ -364,7 +365,7 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
                     className="eval-pack-scaffold__error"
                     data-testid="eval-pack-scaffold-inline-error"
                 >
-                    ⚠️ Save rejected: <code>{inlineError}</code>
+                    <AlertTriangle className="u-icon" aria-hidden="true" /> Save rejected: <code>{inlineError}</code>
                 </p>
             )}
 
@@ -404,7 +405,7 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
                             className="eval-pack-scaffold__per-class-hint"
                             data-testid={`eval-pack-scaffold-task-${spec.task_profile}-per-class-hint`}
                         >
-                            💡 Run a classification eval to discover per-class metrics
+                            <Lightbulb className="u-icon" aria-hidden="true" /> Run a classification eval to discover per-class metrics
                             (precision/recall/f1 per class) and add a rule for each.
                         </p>
                     )}
@@ -467,7 +468,7 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
                                                 <optgroup label="Standard metrics">
                                                     {sortedMetricOptions.map((m) => (
                                                         <option key={m.metric_id} value={m.metric_id}>
-                                                            {m.recommended ? '★ ' : ''}{m.label} ({m.metric_id})
+                                                            {m.label} ({m.metric_id}){m.recommended ? ' · recommended' : ''}
                                                         </option>
                                                     ))}
                                                 </optgroup>

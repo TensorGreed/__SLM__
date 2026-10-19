@@ -172,7 +172,7 @@ export default function DataStudioPrepareDatasetPanel({
             setPrepare(data);
             setError(null);
         } catch (err: any) {
-            setError(err?.response?.data?.detail || err?.message || 'Failed to load Data Studio prepare checks.');
+            setError(err?.response?.data?.detail || err?.message || 'Failed to load the prepare checks.');
         } finally {
             setLoading(false);
         }
@@ -294,7 +294,7 @@ export default function DataStudioPrepareDatasetPanel({
                         type="button"
                         className="btn btn-ghost data-studio-prepare__refresh"
                         onClick={() => void loadPrepare()}
-                        aria-label="Refresh Data Studio prepare checks"
+                        aria-label="Refresh prepare checks"
                     >
                         <RefreshCw size={16} aria-hidden="true" />
                     </button>

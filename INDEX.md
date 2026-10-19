@@ -536,7 +536,6 @@ session-start guidance.
 - `frontend/src/components/data/ComplianceBundlePicker.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataHealthReportPanel.tsx` — DataHealthReportPanel — D1+D2 of the data-quality arc.
 - `frontend/src/components/data/DataStudioAssistPanel.tsx` — Panel for running AI-assisted suggestions on mapping and domain with provider configuration.
-- `frontend/src/components/data/DataStudioCoachRailPanel.tsx` — Coach rail panel for DataStudio checks with blocked / attention / ready verdicts.
 - `frontend/src/components/data/DataStudioDatasetVersionsPanel.tsx` — Panel showing prepared dataset version history with reproducibility and reuse-signal checks.
 - `frontend/src/components/data/DataStudioDomainDetectionPanel.tsx` — Panel for domain detection and confirmation with profile assignment and signal review.
 - `frontend/src/components/data/DataStudioGoldSetWorkbenchPanel.tsx` — Panel for gold-set coverage metrics, field alignment checks, and review-state assessment.
@@ -1018,7 +1017,6 @@ session-start guidance.
 - `frontend/src/components/data/DataHealthReportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataPanels.stepper.test.tsx` — Epic U phase U4: each data panel in ``layout="stepper"`` keeps its short
 - `frontend/src/components/data/DataStudioAssistPanel.test.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioCoachRailPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataStudioDatasetVersionsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataStudioDomainDetectionPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataStudioGoldSetWorkbenchPanel.test.tsx` — _(no docstring)_

@@ -165,7 +165,7 @@ export default function TrainingConfigGapsPanel({
                 className="tcg-panel tcg-panel--loading"
                 data-testid="training-config-gaps"
             >
-                <LoadingState label="Loading Training Config gaps" lines={3} />
+                <LoadingState label="Loading training config gaps" lines={3} />
             </div>
         );
     }
@@ -217,7 +217,7 @@ export default function TrainingConfigGapsPanel({
                     >
                         {SEVERITY_META[data.overall].icon} {SEVERITY_META[data.overall].label}
                     </span>
-                    <h3 className="tcg-panel__title">Training Config Gaps</h3>
+                    <h3 className="tcg-panel__title">Training config gaps</h3>
                 </div>
                 <p className="tcg-panel__headline">{OVERALL_HEADLINE[data.overall]}</p>
                 <p className="tcg-panel__counts">

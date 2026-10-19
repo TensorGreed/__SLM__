@@ -2120,8 +2120,8 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                 />
 
             <StepFooter
-                currentStep="Dataset Preparation"
-                nextStep="Tokenization"
+                currentStep="Split"
+                nextStep="Train"
                 nextStepIcon=""
                 isComplete={!!splitManifest}
                 hint="Split your dataset before continuing"

@@ -605,7 +605,7 @@ function AcceptedRowsSection({ groups, totalAccepted, projectId, onChanged }: Ac
                 ))}
             </div>
             <p className="synth-review-queue__accepted-footnote">
-                Accepted rows enter the training corpus on the next Dataset Prep + Training run.
+                Accepted rows enter the training corpus on the next split (Data → Split) and training run.
             </p>
         </details>
     );

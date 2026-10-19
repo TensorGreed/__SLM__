@@ -9,11 +9,13 @@ import { useState } from 'react';
 import type { TabKey } from '../../types';
 import TabVideoLink from '../video/TabVideoLink';
 import { useCoachMode } from './useCoachMode';
-import { TAB_TIP } from './coachContext';
+import { SUB_STEP_TIP, TAB_TIP } from './coachContext';
 
 interface StepHelpProps {
     projectId: number;
     tab: TabKey;
+    /** The active Results tab / Ship stage, so the tip and video chapter follow it. */
+    sub?: string;
 }
 
 function tipKey(projectId: number, tab: string): string {
@@ -28,28 +30,30 @@ function readFlag(key: string): boolean {
     }
 }
 
-export default function StepHelp({ projectId, tab }: StepHelpProps) {
+export default function StepHelp({ projectId, tab, sub }: StepHelpProps) {
+    const subTip = sub ? SUB_STEP_TIP[tab]?.[sub] : undefined;
+    const key = tipKey(projectId, subTip ? `${tab}.${sub}` : tab);
     const { isOn } = useCoachMode(projectId);
-    const [dismissed, setDismissed] = useState(() => readFlag(tipKey(projectId, tab)));
-    const [seenTab, setSeenTab] = useState(tab);
-    if (seenTab !== tab) {
-        setSeenTab(tab);
-        setDismissed(readFlag(tipKey(projectId, tab)));
+    const [dismissed, setDismissed] = useState(() => readFlag(key));
+    const [seenKey, setSeenKey] = useState(key);
+    if (seenKey !== key) {
+        setSeenKey(key);
+        setDismissed(readFlag(key));
     }
     if (!isOn || dismissed) return null;
-    const tip = TAB_TIP[tab];
+    const tip = subTip ?? TAB_TIP[tab];
     if (!tip) return null;
     return (
         <div className="step-help" data-testid={`step-help-${tab}`}>
             <span className="step-help__tip">{tip}</span>
-            <TabVideoLink tabKey={tab} />
+            <TabVideoLink tabKey={tab} subStep={subTip ? sub : undefined} />
             <button
                 type="button"
                 className="btn btn-ghost btn-sm"
                 aria-label="Dismiss tip"
                 onClick={() => {
                     try {
-                        window.localStorage.setItem(tipKey(projectId, tab), '1');
+                        window.localStorage.setItem(key, '1');
                     } catch {
                         // ignore
                     }

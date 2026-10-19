@@ -30,7 +30,7 @@ const KIND_LABELS: Record<string, string> = {
     plan_refinement: 'AI plan strategy',
     probe_judge: 'Built-in checks judge',
     distillation_capture: 'Distillation teacher',
-    playground_chat: 'Playground chats (cloud)',
+    playground_chat: 'Try it chats (cloud)',
 };
 
 /** "This month: ~$4.10 of $5.00 (82%)" — the month-to-date budget line. */

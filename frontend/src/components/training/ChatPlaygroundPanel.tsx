@@ -1078,7 +1078,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     <div className="card playground-panel">
       <div className="playground-panel__head">
         <div>
-          <h3>Chat Playground</h3>
+          <h3>Try it</h3>
           <p>Stream responses, switch models, and persist prompt sessions in project history.</p>
         </div>
         <div className="playground-panel__actions">

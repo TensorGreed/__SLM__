@@ -93,18 +93,25 @@ export const TAB_VIDEO_MAP: Record<TabKey, { videoId: string; chapterIndex: numb
     export: { videoId: 'v03', chapterIndex: 12 },       // Ship · Package
 };
 
+/** Chapters of the sub-steps that share one step key (Results tabs, Ship stages). */
+export const SUB_STEP_CHAPTER: Partial<Record<TabKey, Record<string, number>>> = {
+    eval: { verdict: 8, failures: 9, compare: 10, try: 11 },
+    export: { package: 12, publish: 13, deploy: 14, monitor: 15 },
+};
+
 export interface TabVideo {
     video: VideoMeta;
     chapter: VideoChapter;
 }
 
 /**
- * Resolves the tab → video + chapter pair from the catalog.
+ * Resolves the tab (and, for Results / Ship, the sub-step) → video +
+ * chapter pair from the catalog.
  * Returns `null` only if the catalog is misconfigured for a tab — the
  * caller should treat that as "no walkthrough for this tab" rather
  * than throwing in render.
  */
-export function getTabVideo(tabKey: TabKey): TabVideo | null {
+export function getTabVideo(tabKey: TabKey, subStep?: string): TabVideo | null {
     const entry = TAB_VIDEO_MAP[tabKey];
     if (!entry) {
         return null;
@@ -113,7 +120,8 @@ export function getTabVideo(tabKey: TabKey): TabVideo | null {
     if (!video) {
         return null;
     }
-    const chapter = video.chapters[entry.chapterIndex];
+    const subIndex = subStep ? SUB_STEP_CHAPTER[tabKey]?.[subStep] : undefined;
+    const chapter = video.chapters[subIndex ?? entry.chapterIndex];
     if (!chapter) {
         return null;
     }
