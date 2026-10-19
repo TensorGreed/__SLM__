@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.services.cloud_backend_pins import CloudPinError, resolve_cloud_backend
 from app.services.documents_qa_flow_service import (
     DEFAULT_MAX_PASSAGES,
     DEFAULT_PAIRS_PER_PASSAGE,
@@ -37,6 +38,17 @@ from app.services.seed_documents_service import (
 router = APIRouter(prefix="/projects/{project_id}/flows", tags=["Flows"])
 
 
+async def _cloud_backend_or_http(db: AsyncSession, project_id: int, pin: str | None) -> Any:
+    """A ``cloud:<provider>:<model>`` pin → a cloud backend with the project's
+    saved key (None for local backend names — ``pick_backend`` resolves
+    those). Same 400 / 402 as the Synthetic tab's span routes."""
+    try:
+        return await resolve_cloud_backend(db, project_id, pin)
+    except CloudPinError as exc:
+        error_code = "CLOUD_KEY_MISSING" if exc.status_code == 402 else "BAD_BACKEND_PIN"
+        raise HTTPException(exc.status_code, {"error_code": error_code, "message": exc.message}) from exc
+
+
 class DocumentsQaFlowRequest(BaseModel):
     # Unset → sized to the decision: enough test examples that a 0.15
     # judge-score gap clears noise (documents_qa_flow_service.size_for_decision).
@@ -56,11 +68,17 @@ class DocumentsQaFlowRequest(BaseModel):
 
 
 @router.get("/documents-to-qa/preview")
-async def documents_to_qa_preview(project_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def documents_to_qa_preview(
+    project_id: int,
+    backend: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     """Can this project run the flow (enough cleaned passages, a reachable
-    generation model), and what would it produce?"""
+    generation model), and what would it produce? ``backend``: the model the
+    user picked (a ``cloud:<provider>:<model>`` pin counts when the project
+    has its key saved)."""
     try:
-        return await preview_documents_qa_flow(db, project_id)
+        return await preview_documents_qa_flow(db, project_id, backend=backend)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 
@@ -80,7 +98,9 @@ async def start_documents_to_qa(
     from app.services.jobs_service import JobProgressHandle, serialize_job, start_job
 
     req = data or DocumentsQaFlowRequest()
-    preview = await documents_to_qa_preview(project_id, db)
+    # A cloud pin needs the project's saved key: 400 malformed, 402 no key.
+    cloud_backend = await _cloud_backend_or_http(db, project_id, req.backend)
+    preview = await documents_to_qa_preview(project_id, req.backend, db)
     if not preview["eligible"]:
         raise HTTPException(400, {"error_code": "FLOW_NOT_ELIGIBLE", "message": " ".join(preview["blockers"])})
     in_flight = (
@@ -115,6 +135,7 @@ async def start_documents_to_qa(
                     max_passages=req.max_passages,
                     pairs_per_passage=req.pairs_per_passage,
                     backend=req.backend,
+                    backend_override=cloud_backend,
                     train=req.train,
                     reuse_existing=req.reuse_existing,
                     passages_check=req.passages_check,
@@ -194,6 +215,7 @@ async def start_seed_documents(
     req = data or SeedDocumentsRequest()
     if req.chunk_overlap >= req.chunk_size:
         raise HTTPException(400, {"error_code": "BAD_CHUNKING", "message": "chunk_overlap must be smaller than chunk_size"})
+    cloud_backend = await _cloud_backend_or_http(db, project_id, req.backend)
     try:
         prompt_check = await refuse_if_contaminated(
             db, project_id, seed_prompt_fields(req), override=req.ignore_benchmark_values,
@@ -239,6 +261,7 @@ async def start_seed_documents(
                     chunk_overlap=req.chunk_overlap,
                     layout=req.layout,
                     words_per_page=req.words_per_page,
+                    backend_override=cloud_backend,
                     progress=_progress,
                 )
             except SynthBackendError as exc:

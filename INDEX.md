@@ -112,6 +112,7 @@ session-start guidance.
 - `backend/app/services/checkpoint_registry_service.py` — Local pre-fine-tuned warm-start checkpoint registry (Track 1, Epic B).
 - `backend/app/services/checkpoint_service.py` — P16 — Checkpoint browser backend (priority.md, RM3).
 - `backend/app/services/cleaning_service.py` — Data Cleaning service — deduplication, PII detection, quality scoring, chunking.
+- `backend/app/services/cloud_backend_pins.py` — Cloud backend pins — ``cloud:<provider>:<model>`` → a ``CloudLlmBackend``
 - `backend/app/services/cloud_burst_service.py` — Cloud GPU burst planning: provider catalog, quote estimation, and launch plans.
 - `backend/app/services/cloud_llm_service.py` — Thin client wrappers for flagship cloud LLM providers (OpenAI +
 - `backend/app/services/cluster_explanation_service.py` — Per-cluster failure explanations (Theme 8 Epic 3).
@@ -637,6 +638,7 @@ session-start guidance.
 - `frontend/src/components/shared/DetailsDrawer.tsx` — "Details" — the collapsed drawer under a step's short form (Epic U phase
 - `frontend/src/components/shared/EmptyState.tsx` — EmptyState — the one way a surface says "nothing here yet" (Epic U
 - `frontend/src/components/shared/ErrorPanel.tsx` — Shared error rendering component (Diagnostics Intervention A).
+- `frontend/src/components/shared/GenerationModelPicker.tsx` — GenerationModelPicker — "which model writes this?" for the guided flows
 - `frontend/src/components/shared/HealthCheckButton.tsx` — HealthCheckButton — Diagnostics Intervention C.
 - `frontend/src/components/shared/HealthCheckModal.tsx` — HealthCheckModal — Diagnostics Intervention C.
 - `frontend/src/components/shared/LoadingState.tsx` — LoadingState — the one way a panel says "fetching" (Epic U phase U7).

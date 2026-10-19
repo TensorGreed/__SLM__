@@ -153,6 +153,38 @@ class SeedDocumentsTests(unittest.TestCase):
         del backends_base
 
 
+    def test_cloud_pin_needs_a_saved_key_and_reaches_the_runner(self):
+        from unittest import mock
+
+        pin = "cloud:anthropic:claude-test"
+        missing = client.post(f"/api/projects/{self.pid}/flows/seed-documents", json={"count": 2, "backend": pin})
+        self.assertEqual(missing.status_code, 402, missing.text)
+        self.assertEqual(missing.json()["error_code"], "CLOUD_KEY_MISSING")
+        self.assertEqual(client.post(f"/api/projects/{self.pid}/flows/seed-documents", json={"count": 2, "backend": "cloud::"}).status_code, 400)
+        saved = client.put(f"/api/projects/{self.pid}/secrets", json={"provider": "cloud_llm_anthropic", "key_name": "api_key", "value": "sk-test-key"})
+        self.assertEqual(saved.status_code, 201, saved.text)
+
+        started = {}
+
+        async def fake_run(db, project_id, **kwargs):
+            started.update(kwargs)
+            await asyncio.sleep(0.5)
+            return svc.SeedDocumentsSummary(project_id=project_id, requested=2, written=2, failed=0, backend="cloud", filename="seed-documents-x.txt", document_id=1, passages=3)
+
+        with mock.patch("app.api.flows.run_seed_documents", fake_run):
+            res = client.post(f"/api/projects/{self.pid}/flows/seed-documents", json={"count": 2, "backend": pin})
+            self.assertEqual(res.status_code, 202, res.text)
+            job_id = res.json()["id"]
+            for _ in range(40):
+                job = client.get(f"/api/jobs/{job_id}").json()
+                if job["status"] in ("succeeded", "failed", "cancelled"):
+                    break
+                time.sleep(0.25)
+        self.assertEqual(job["status"], "succeeded", job)
+        override = started["backend_override"]
+        self.assertEqual(override.describe(), "cloud:anthropic:claude-test")
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -1847,7 +1847,13 @@ runs real CPU inference). ~4 min locally.
   `split_dataset(DEFAULT_TRAINING_SOURCE_TYPES)` → `create_experiment` +
   `api.training.start` (watcher → lift check). `reuse_existing=True` skips
   generation (same pairs/answer key, re-split + train the project's current
-  base model — card button "Train again on the current base model"). `train=False` stops after
+  base model — card button "Train again on the current base model"). **Cloud generation model**:
+  `backend="cloud:<provider>:<model>"` on this flow and on seed-documents resolves through
+  `services/cloud_backend_pins.resolve_cloud_backend` (the project's saved key; `CloudPinError` →
+  400 `BAD_BACKEND_PIN` / 402 `CLOUD_KEY_MISSING`; the span routes' `_resolve_cloud_backend_override`
+  wraps the same helper) → `backend_override`; the preview takes `?backend=` (a cloud pin with a
+  saved key is eligible without a local model). UI: `components/shared/GenerationModelPicker`
+  on `DocumentsQaFlowCard` + `SeedDocumentsCard`. `train=False` stops after
   the split. Stops before training under `MIN_TRAINING_PAIRS` (40). Coach
   training stage: `training:documents-to-qa` with action kind
   `start_flow` (frontend `CoachSuggestion` posts the flow; it leads even

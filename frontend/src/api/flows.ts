@@ -69,8 +69,13 @@ export interface DocumentsQaFlowResult {
     } | null;
 }
 
-export async function fetchDocumentsQaFlowPreview(projectId: number): Promise<DocumentsQaFlowPreview> {
-    const res = await api.get<DocumentsQaFlowPreview>(`/projects/${projectId}/flows/documents-to-qa/preview`);
+/** `backend`: the generation model picked (`cloud:<provider>:<model>` counts
+ *  when the project has that provider's key saved); omit for the local one. */
+export async function fetchDocumentsQaFlowPreview(projectId: number, backend?: string | null): Promise<DocumentsQaFlowPreview> {
+    const res = await api.get<DocumentsQaFlowPreview>(
+        `/projects/${projectId}/flows/documents-to-qa/preview`,
+        backend ? { params: { backend } } : undefined,
+    );
     return res.data;
 }
 
@@ -83,9 +88,12 @@ export async function startDocumentsQaFlow(
         reuseExisting?: boolean;
         passagesCheck?: boolean;
         trainIfRetrievalReady?: boolean;
+        /** `cloud:<provider>:<model>` (the project's saved key) or a local backend name. */
+        backend?: string | null;
     } = {},
 ): Promise<Job> {
     const body: Record<string, unknown> = {};
+    if (options.backend) body.backend = options.backend;
     if (options.maxPassages != null) body.max_passages = options.maxPassages;
     if (options.pairsPerPassage != null) body.pairs_per_passage = options.pairsPerPassage;
     if (options.train != null) body.train = options.train;

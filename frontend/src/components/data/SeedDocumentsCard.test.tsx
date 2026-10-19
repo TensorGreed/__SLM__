@@ -92,4 +92,19 @@ describe('SeedDocumentsCard', () => {
         })));
         await waitFor(() => expect(screen.queryByTestId('seed-documents-blocked')).toBeNull());
     });
+    it('sends the cloud model pin when one is picked', async () => {
+        apiMock.get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('/backends/cloud/models')
+            ? { project_id: 5, providers: [{ provider: 'anthropic', key_saved: true, models: [{ id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' }] }] }
+            : { genres: ['customer support ticket'], count: 60, words: 160 } }));
+        apiMock.post.mockResolvedValue({ data: { id: 92, kind: 'seed_documents', status: 'queued', project_id: 5 } });
+        const user = userEvent.setup();
+        render(<SeedDocumentsCard projectId={5} />);
+        await user.click(screen.getByTestId('seed-documents-toggle'));
+        await waitFor(() => expect(screen.getByTestId('seed-documents-provider')).toHaveTextContent('anthropic (key saved)'));
+        await user.selectOptions(screen.getByTestId('seed-documents-provider'), 'anthropic');
+        await user.selectOptions(screen.getByTestId('seed-documents-cloud-model'), 'claude-sonnet-5-5');
+        await user.click(screen.getByTestId('seed-documents-start'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/5/flows/seed-documents',
+            expect.objectContaining({ backend: 'cloud:anthropic:claude-sonnet-5-5' })));
+    });
 });

@@ -7,6 +7,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.services.cloud_backend_pins import (
+    CLOUD_PROVIDER_SECRET_COORDS,
+    CloudPinError,
+    resolve_cloud_backend,
+)
 from app.services.synthetic_service import (
     MAX_TOTAL_ROWS,
     PER_BATCH_CONVERSATION_CAP,
@@ -26,15 +31,9 @@ from app.services.synthetic_service import (
 router = APIRouter(prefix="/projects/{project_id}/synthetic", tags=["Synthetic"])
 
 
-# Cloud provider → (secret_provider, key_name) for resolving saved
-# API keys before instantiating a CloudLlmBackend. Mirrors the
-# gold-generate flow's ``_PROVIDER_SECRET_MAP`` exactly so users only
-# enter their key once per project.
-_CLOUD_PROVIDER_SECRET_COORDS: dict[str, tuple[str, str]] = {
-    "openai": ("cloud_llm_openai", "api_key"),
-    "anthropic": ("cloud_llm_anthropic", "api_key"),
-    "deepseek": ("cloud_llm_deepseek", "api_key"),
-}
+# Cloud provider → (secret_provider, key_name) of the saved API key; the
+# shared map lives in ``cloud_backend_pins`` (the flows use it too).
+_CLOUD_PROVIDER_SECRET_COORDS = CLOUD_PROVIDER_SECRET_COORDS
 
 
 # Curated catalog of cloud models the synth panel offers. Mirrors the
@@ -51,6 +50,7 @@ _CLOUD_MODELS_CATALOG: dict[str, list[dict[str, str]]] = {
     "anthropic": [
         {"id": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5 (fast + cheap)"},
         {"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6"},
+        {"id": "claude-sonnet-5-5", "label": "Claude Sonnet 5.5"},
         {"id": "claude-opus-4-7", "label": "Claude Opus 4.7"},
     ],
     "deepseek": [
@@ -73,50 +73,13 @@ async def _with_budget_warning(db: AsyncSession, project_id: int, payload: dict[
 async def _resolve_cloud_backend_override(
     db: AsyncSession, project_id: int, backend_pin: str | None,
 ):
-    """If ``backend_pin`` looks like ``cloud:<provider>:<model>``,
-    resolve the project's saved API key and return a constructed
-    ``CloudLlmBackend``. Returns ``None`` for all other pin shapes
-    so the existing ``pick_backend()`` path handles them.
-
-    Raises ``HTTPException(400)`` for malformed pins and
-    ``HTTPException(402)`` (payment required — semantically closest)
-    when no API key is saved for the requested provider. The 402
-    distinction matters: the frontend renders a "save key first"
-    affordance for 402 and a generic error toast for 400/500."""
-    if not backend_pin or not backend_pin.startswith("cloud:"):
-        return None
-    parts = backend_pin.split(":", 2)
-    if len(parts) != 3 or not parts[1] or not parts[2]:
-        raise HTTPException(
-            400,
-            f"Malformed cloud backend pin {backend_pin!r}. Expected "
-            f"'cloud:<provider>:<model>' (e.g. 'cloud:openai:gpt-4o-mini').",
-        )
-    _, provider, model = parts
-    coords = _CLOUD_PROVIDER_SECRET_COORDS.get(provider)
-    if coords is None:
-        raise HTTPException(
-            400,
-            f"Unknown cloud provider {provider!r}. Supported: "
-            f"{', '.join(_CLOUD_PROVIDER_SECRET_COORDS.keys())}.",
-        )
-    secret_provider, key_name = coords
-    from app.services.secret_service import get_project_secret_value
-
-    api_key = await get_project_secret_value(
-        db, project_id, secret_provider, key_name,
-    )
-    if not api_key:
-        raise HTTPException(
-            402,
-            f"No {provider} API key saved for this project. Save one "
-            f"under Project Settings → Secrets (or via the gold "
-            f"generator's 'Save key for this project' option) and "
-            f"retry.",
-        )
-    from app.services.synth_backends import CloudLlmBackend
-
-    return CloudLlmBackend(provider=provider, model=model, api_key=api_key)
+    """``cloud:<provider>:<model>`` → a ``CloudLlmBackend`` with the project's
+    saved key (``cloud_backend_pins.resolve_cloud_backend``); None for other
+    pins. 400 for a malformed pin, 402 when no key is saved."""
+    try:
+        return await resolve_cloud_backend(db, project_id, backend_pin)
+    except CloudPinError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
 
 
 class GenerateRequest(BaseModel):

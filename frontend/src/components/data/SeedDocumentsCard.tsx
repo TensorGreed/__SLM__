@@ -5,6 +5,7 @@ import { checkPrompt, offendingValuesFromError, promptCheckText, type PromptChec
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import { extractApiErrorMessage } from '../../utils/apiError';
+import GenerationModelPicker from '../shared/GenerationModelPicker';
 
 interface SeedDocumentsCardProps {
     projectId: number;
@@ -26,6 +27,8 @@ export default function SeedDocumentsCard({ projectId, onDone }: SeedDocumentsCa
     const [count, setCount] = useState(60);
     const [words, setWords] = useState(160);
     const [layout, setLayout] = useState<'plain' | 'paged' | 'scanned'>('plain');
+    /** null = the first reachable local model; or `cloud:<provider>:<model>`. */
+    const [backend, setBackend] = useState<string | null>(null);
     const [starting, setStarting] = useState(false);
     const [startedJobId, setStartedJobId] = useState<number | null>(null);
     const [checking, setChecking] = useState(false);
@@ -81,6 +84,7 @@ export default function SeedDocumentsCard({ projectId, onDone }: SeedDocumentsCa
                 count: Math.max(1, count),
                 words: Math.max(60, words),
                 layout,
+                backend,
                 ...(ignoreBenchmarkValues ? { ignoreBenchmarkValues: true } : {}),
             });
             setStartedJobId(started.id);
@@ -129,6 +133,13 @@ export default function SeedDocumentsCard({ projectId, onDone }: SeedDocumentsCa
                         Genres (one per line)
                         <textarea value={genres} onChange={(e) => setGenres(e.target.value)} rows={6} data-testid="seed-documents-genres" />
                     </label>
+                    <GenerationModelPicker
+                        projectId={projectId}
+                        value={backend}
+                        onChange={setBackend}
+                        disabled={starting}
+                        testIdPrefix="seed-documents"
+                    />
                     <div className="seed-documents-card__row">
                         <label>
                             Documents

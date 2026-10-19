@@ -352,9 +352,22 @@ class FlowSummary:
         }
 
 
-async def preview_documents_qa_flow(db: AsyncSession, project_id: int) -> dict[str, Any]:
-    """Can this project run the flow, and what would it cost? Read-only."""
+async def preview_documents_qa_flow(
+    db: AsyncSession, project_id: int, *, backend: str | None = None,
+) -> dict[str, Any]:
+    """Can this project run the flow, and what would it cost? Read-only.
+
+    ``backend``: the generation model the user picked. A cloud pin
+    (``cloud:<provider>:<model>``) is usable when the project has a key saved
+    for the provider — no local model needed; otherwise the first reachable
+    registered backend is the one the flow would use."""
     from app.services.auto_rag_service import load_document_passages
+    from app.services.cloud_backend_pins import (
+        CloudPinError,
+        missing_key_message,
+        parse_cloud_pin,
+        saved_cloud_key,
+    )
     from app.services.synth_backends import BACKEND_REGISTRY
 
     project = await db.get(Project, project_id)
@@ -362,13 +375,25 @@ async def preview_documents_qa_flow(db: AsyncSession, project_id: int) -> dict[s
         raise ValueError(f"Project {project_id} not found")
     passages = load_document_passages(project_id)
     backend_name: str | None = None
-    for cls in BACKEND_REGISTRY:
-        try:
-            if cls.is_available():
-                backend_name = cls.name
-                break
-        except Exception:  # noqa: BLE001
-            continue
+    backend_blocker: str | None = None
+    try:
+        cloud = parse_cloud_pin(backend)
+    except CloudPinError as exc:
+        cloud = None
+        backend_blocker = exc.message
+    if cloud is not None:
+        if await saved_cloud_key(db, project_id, cloud[0]):
+            backend_name = str(backend)
+        else:
+            backend_blocker = missing_key_message(cloud[0])
+    elif backend_blocker is None:
+        for cls in BACKEND_REGISTRY:
+            try:
+                if cls.is_available():
+                    backend_name = cls.name
+                    break
+            except Exception:  # noqa: BLE001
+                continue
     existing_qa = await _count_flow_rows(project_id)
     recipe_id = str((project.selected_recipe or {}).get("recipe_id") or "")
     blockers: list[str] = []
@@ -377,10 +402,13 @@ async def preview_documents_qa_flow(db: AsyncSession, project_id: int) -> dict[s
             f"Needs at least {MIN_PASSAGES} cleaned document passages (found {len(passages)}). "
             "Import documents and run cleaning first."
         )
-    if backend_name is None:
+    if backend_blocker is not None:
+        blockers.append(backend_blocker)
+    elif backend_name is None:
         blockers.append(
-            "No generation model is reachable. Start Ollama with a chat model, or set "
-            "TEACHER_MODEL_API_URL to an OpenAI-compatible endpoint."
+            "No generation model is reachable. Start Ollama with a chat model, set "
+            "TEACHER_MODEL_API_URL to an OpenAI-compatible endpoint, or pick a cloud "
+            "model whose API key is saved on the project."
         )
     sizing = size_for_decision(len(passages), DEFAULT_PAIRS_PER_PASSAGE)
     max_passages = sizing["passages"]

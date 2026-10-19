@@ -153,4 +153,31 @@ describe('DocumentsQaFlowCard', () => {
             expect(apiMock.post).toHaveBeenCalledWith(expect.stringMatching(/reroute-to-rag\?async_job=true/), expect.anything());
         });
     });
+    it('runs the flow with a cloud model whose key is saved on the project', async () => {
+        const CLOUD = { project_id: 1, providers: [
+            { provider: 'anthropic', key_saved: true, models: [{ id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' }] },
+            { provider: 'openai', key_saved: false, models: [{ id: 'gpt-4o', label: 'GPT-4o' }] },
+        ] };
+        apiMock.get.mockImplementation((url: string) =>
+            Promise.resolve({ data: url.includes('/backends/cloud/models') ? CLOUD : ELIGIBLE }),
+        );
+        apiMock.post.mockResolvedValue({ data: { id: 11 } });
+        const user = userEvent.setup();
+        render(<DocumentsQaFlowCard projectId={1} />);
+        await screen.findByTestId('documents-qa-flow-plan');
+        await waitFor(() => expect(screen.getByTestId('documents-qa-flow-provider')).toHaveTextContent('anthropic (key saved)'));
+        await user.selectOptions(screen.getByTestId('documents-qa-flow-provider'), 'openai');
+        expect(screen.getByTestId('documents-qa-flow-no-key')).toHaveTextContent('No openai key saved');
+        expect(screen.getByTestId('documents-qa-flow-cloud-model')).toBeDisabled();
+        await user.selectOptions(screen.getByTestId('documents-qa-flow-provider'), 'anthropic');
+        await user.selectOptions(screen.getByTestId('documents-qa-flow-cloud-model'), 'claude-sonnet-5-5');
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith(
+            '/projects/1/flows/documents-to-qa/preview', { params: { backend: 'cloud:anthropic:claude-sonnet-5-5' } },
+        ));
+        await user.click(screen.getByTestId('documents-qa-flow-start'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(
+            '/projects/1/flows/documents-to-qa',
+            { max_passages: 60, pairs_per_passage: 3, train: true, backend: 'cloud:anthropic:claude-sonnet-5-5' },
+        ));
+    });
 });

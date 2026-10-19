@@ -53,6 +53,7 @@ export const CLEAN_FILES = [
     'components/projects/ProjectTemplateGallery.tsx',
     'components/shared/DetailsDrawer.tsx',
     'components/shared/EmptyState.tsx',
+    'components/shared/GenerationModelPicker.tsx',
     'components/shared/HealthCheckButton.tsx',
     'components/shared/LoadingState.tsx',
     'components/shared/NoRecipeEmptyState.tsx',

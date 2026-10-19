@@ -18,6 +18,7 @@ import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import './DocumentsQaFlowCard.css';
 import { retrievalLabel } from '../evaluation/retrievalLabel';
+import GenerationModelPicker from '../shared/GenerationModelPicker';
 
 interface Props {
     projectId: number;
@@ -35,6 +36,9 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
     const [hidden, setHidden] = useState(false);
     const [starting, setStarting] = useState(false);
     const [reviewFirst, setReviewFirst] = useState(false);
+    /** The generation model: null = the first reachable local one, or a
+     *  `cloud:<provider>:<model>` pin using the project's saved key. */
+    const [backend, setBackend] = useState<string | null>(null);
 
     const jobs = useJobsStore((state) => state.jobs);
     const flowJobs = (jobs || []).filter((job) => job.kind === 'documents_qa_flow' && job.project_id === projectId);
@@ -46,12 +50,12 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
 
     const load = useCallback(async () => {
         try {
-            const next = await fetchDocumentsQaFlowPreview(projectId);
+            const next = await fetchDocumentsQaFlowPreview(projectId, backend);
             setPreview(next);
         } catch {
             setHidden(true);
         }
-    }, [projectId]);
+    }, [projectId, backend]);
 
     useEffect(() => {
         void load();
@@ -78,6 +82,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                 train: !reviewFirst,
                 reuseExisting,
                 trainIfRetrievalReady,
+                ...(reuseExisting ? {} : { backend }),
             });
             toast.info(
                 reuseExisting
@@ -216,6 +221,16 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                         <> — the retrieval check could not run ({result.passages_gate.reason}); training went ahead.</>
                     )}
                 </div>
+            )}
+
+            {!inFlight && !result && (
+                <GenerationModelPicker
+                    projectId={projectId}
+                    value={backend}
+                    onChange={setBackend}
+                    disabled={starting}
+                    testIdPrefix="documents-qa-flow"
+                />
             )}
 
             {!inFlight && !preview.eligible && (

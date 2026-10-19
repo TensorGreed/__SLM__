@@ -370,6 +370,56 @@ class DocumentsQaFlowTests(unittest.TestCase):
         self.assertEqual(job["result"]["answer_key_rows"], 20)
         self.assertEqual(job["kind"], "documents_qa_flow")
 
+    def test_cloud_pin_uses_the_projects_saved_key(self):
+        """backend="cloud:<provider>:<model>" — the flow uses a cloud model with
+        the key saved on the project (like the Synthetic tab's span tools):
+        400 for a malformed pin, 402 (and a preview blocker) with no key."""
+        self._ingest("policy.docx", POLICY)
+        pin = "cloud:anthropic:claude-test"
+        with patch("app.services.synth_backends.BACKEND_REGISTRY", []):
+            preview = client.get(f"/api/projects/{self.pid}/flows/documents-to-qa/preview", params={"backend": pin}).json()
+            self.assertFalse(preview["eligible"])
+            self.assertIn("No anthropic API key saved", " ".join(preview["blockers"]))
+            missing = client.post(f"/api/projects/{self.pid}/flows/documents-to-qa", json={"backend": pin, "train": False})
+            self.assertEqual(missing.status_code, 402, missing.text)
+            self.assertEqual(missing.json()["error_code"], "CLOUD_KEY_MISSING")
+            bad = client.post(f"/api/projects/{self.pid}/flows/documents-to-qa", json={"backend": "cloud:anthropic", "train": False})
+            self.assertEqual(bad.status_code, 400, bad.text)
+            self.assertEqual(bad.json()["error_code"], "BAD_BACKEND_PIN")
+
+        saved = client.put(f"/api/projects/{self.pid}/secrets", json={"provider": "cloud_llm_anthropic", "key_name": "api_key", "value": "sk-test-key"})
+        self.assertEqual(saved.status_code, 201, saved.text)
+        built: dict = {}
+
+        class FakeCloud(FakeBackend):
+            def __init__(self, *, provider, model, api_key):
+                built.update(provider=provider, model=model, api_key=api_key)
+
+            def describe(self) -> str:
+                return f"cloud:{built['provider']}:{built['model']}"
+
+        with patch("app.services.synth_backends.BACKEND_REGISTRY", []), patch("app.services.synth_backends.CloudLlmBackend", FakeCloud):
+            preview = client.get(f"/api/projects/{self.pid}/flows/documents-to-qa/preview", params={"backend": pin}).json()
+            self.assertTrue(preview["eligible"], preview["blockers"])
+            self.assertEqual(preview["backend"], pin)
+            resp = client.post(
+                f"/api/projects/{self.pid}/flows/documents-to-qa",
+                json={"backend": pin, "train": False, "max_passages": 20, "passages_check": False},
+            )
+            self.assertEqual(resp.status_code, 202, resp.text)
+            job_id = resp.json()["id"]
+            deadline = time.time() + 60
+            while time.time() < deadline:
+                job = client.get(f"/api/jobs/{job_id}").json()
+                if job["status"] in ("succeeded", "failed", "cancelled"):
+                    break
+                time.sleep(0.5)
+        self.assertEqual(job["status"], "succeeded", job.get("error"))
+        self.assertEqual(built, {"provider": "anthropic", "model": "claude-test", "api_key": "sk-test-key"})
+        self.assertEqual(job["result"]["backend"], pin)
+        self.assertEqual(job["result"]["training_pairs"], 60)
+        self.assertNotIn("sk-test-key", json.dumps(job))
+
     def test_sizes_generation_to_the_decision_gap(self):
         """45 paired rows for a 0.15 judge-score gap to clear noise (SD 0.5);
         more passages first, a larger test share only when they run out."""
