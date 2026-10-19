@@ -808,3 +808,35 @@ class TeacherFormatTests(unittest.TestCase):
                                   training_pairs=0, answer_key_rows=0, backend="x",
                                   teacher={"filter": {"applied": True, "judge": "ollama:gemma4:12b"}})
         self.assertTrue(flow._used_local_ollama(judged))
+
+
+class GenerationConcurrencyTests(unittest.TestCase):
+    def test_generation_runs_up_to_concurrency_calls_at_once(self):
+        import asyncio
+
+        state = {"now": 0, "peak": 0}
+
+        class SlowBackend:
+            name = "fake"
+
+            def describe(self):
+                return "fake"
+
+            async def complete(self, prompt, **kwargs):
+                state["now"] += 1
+                state["peak"] = max(state["peak"], state["now"])
+                await asyncio.sleep(0.01)
+                state["now"] -= 1
+                return "{}"
+
+        async def _report(_f, _m):
+            return None
+
+        passages = [{"id": i, "text": f"Passage {i}. It says something."} for i in range(10)]
+        raws = asyncio.run(flow._generate_replies(SlowBackend(), passages, 3, "", _report, "fake", concurrency=3))
+        self.assertEqual(len(raws), 10)
+        self.assertTrue(all(r == "{}" for r in raws))
+        self.assertEqual(state["peak"], 3)
+        state["peak"] = 0
+        asyncio.run(flow._generate_replies(SlowBackend(), passages, 3, "", _report, "fake"))
+        self.assertEqual(state["peak"], 1)

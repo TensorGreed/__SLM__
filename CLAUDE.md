@@ -2003,7 +2003,8 @@ runs real CPU inference). ~4 min locally.
   `gate.sweep` = the val side. `MAX_PASSAGES_CAP` 2000. With `keep_test` the VAL set is eval-only answer-key rows too
   (`val_from` / `keep_val` on `split_dataset`, `fixed_val` in `_keep_test_rows`; `split.val_sha256`).
   Local teacher: `synth_backends/ollama.think_setting` (gpt-oss → `"low"`), `normalize_teacher_answer`
-  (【n】 → [n], no `**`), `unload_loaded_models` before training when `_used_local_ollama`. Tests in `test_documents_qa_flow.py`
+  (【n】 → [n], no `**`), `unload_loaded_models` before training when `_used_local_ollama`. Flow `concurrency` (1–8) bounds direct
+  generation (`_generate_replies`) + teacher calls in flight (for `OLLAMA_NUM_PARALLEL`). Tests in `test_documents_qa_flow.py`
   (`FlowGrowthSweepTeacherTests`), `test_training_memory_defaults.py`.
 - **External benchmarks (G-B1)** (`services/external_benchmark_service.py`,
   `api/benchmarks.py`, `DatasetType.BENCHMARK`, migration 0049): any

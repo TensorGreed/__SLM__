@@ -45,6 +45,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
     const [teacherAnswers, setTeacherAnswers] = useState(false);
     const [teacherBackend, setTeacherBackend] = useState<string | null>(null);
     const [useBatch, setUseBatch] = useState(false);
+    const [concurrency, setConcurrency] = useState(1);
     /** Keep the current test examples and grow them to resolve `decisionGap`. */
     const [keepTest, setKeepTest] = useState(false);
     const [decisionGap, setDecisionGap] = useState(0.15);
@@ -95,6 +96,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                 answersFromTeacher: teacherAnswers,
                 teacherBackend: teacherAnswers ? (teacherBackend ?? backend) : null,
                 useBatch,
+                concurrency,
                 keepTest,
                 ...(keepTest ? { decisionGap } : {}),
                 // "Train anyway" answers a gate that already ran on these rows;
@@ -160,6 +162,15 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
             <label className="documents-qa-flow__option" title="Anthropic models only: every call goes as one Message Batch — half the price, can take up to a few hours.">
                 <input type="checkbox" checked={useBatch} onChange={(e) => setUseBatch(e.target.checked)} data-testid="documents-qa-flow-batch" />
                 {' '}Batch (half price, slower)
+            </label>
+            <label className="documents-qa-flow__option" title="Calls the model answers at the same time. A local Ollama model needs OLLAMA_NUM_PARALLEL at least this high; more slots use more GPU memory.">
+                Calls at once{' '}
+                <select value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} aria-label="Calls at once" data-testid="documents-qa-flow-concurrency">
+                    <option value={1}>1</option>
+                    <option value={2}>2</option>
+                    <option value={4}>4</option>
+                    <option value={8}>8</option>
+                </select>
             </label>
             <label className="documents-qa-flow__option" title="The current test examples stay exactly as they are (earlier runs stay comparable); new answer-key questions spread over your documents are added until the test set can resolve the gap. Training and validation questions that match a test question are dropped.">
                 <input type="checkbox" checked={keepTest} onChange={(e) => setKeepTest(e.target.checked)} data-testid="documents-qa-flow-keep-test" />

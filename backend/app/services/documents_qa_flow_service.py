@@ -513,6 +513,8 @@ async def _generate_replies(
     domain_hint: str,
     report: Callable[[float, str], Awaitable[None]],
     backend_label: str,
+    *,
+    concurrency: int = 1,
 ) -> list[str | None]:
     """One reply per passage (None where the call failed). With the backend's
     ``use_batch`` on, every call goes as ONE Message Batch first; requests it
@@ -530,19 +532,31 @@ async def _generate_replies(
         except SynthBackendError as exc:
             _LOG.warning("documents_qa_flow: message batch failed, generating directly: %s", exc)
             raws = [None] * len(chosen)
+    import asyncio
+
+    # Direct calls, ``concurrency`` in flight at once (a local server with
+    # parallel slots, or a cloud API).
     pending = [i for i, raw in enumerate(raws) if raw is None]
-    for n, index in enumerate(pending):
-        await report(
-            0.05 + 0.55 * n / max(1, len(pending)),
-            f"Writing questions for passage {index + 1}/{len(chosen)} ({backend_label})",
-        )
-        args = dict(calls[index])
-        prompt = args.pop("prompt")
-        try:
-            raws[index] = await llm.complete(prompt, **args, response_schema=_RESPONSE_SCHEMA)
-        except SynthBackendError as exc:
-            _LOG.warning("documents_qa_flow passage %s failed: %s", chosen[index].get("id"), exc)
-            raws[index] = None
+    sem = asyncio.Semaphore(max(1, int(concurrency)))
+    done = {"n": 0}
+    at_once = f", {concurrency} at a time" if concurrency > 1 else ""
+
+    async def _one(index: int) -> None:
+        async with sem:
+            args = dict(calls[index])
+            prompt = args.pop("prompt")
+            try:
+                raws[index] = await llm.complete(prompt, **args, response_schema=_RESPONSE_SCHEMA)
+            except SynthBackendError as exc:
+                _LOG.warning("documents_qa_flow passage %s failed: %s", chosen[index].get("id"), exc)
+                raws[index] = None
+            done["n"] += 1
+            await report(
+                0.05 + 0.55 * done["n"] / max(1, len(pending)),
+                f"Writing questions: {done['n']}/{len(pending)} passages done ({backend_label}{at_once})",
+            )
+
+    await asyncio.gather(*(_one(i) for i in pending))
     return raws
 
 
@@ -671,6 +685,7 @@ async def run_documents_qa_flow(
     teacher_filter_judge: Any = None,
     teacher_retrieve_fn: Callable[..., list[dict[str, Any]]] | None = None,
     use_batch: bool = False,
+    concurrency: int = 1,
     progress: ProgressFn | None = None,
     start_training: Callable[..., Awaitable[dict[str, Any]]] | None = None,
     passages_check_fn: Callable[..., dict[str, Any]] | None = None,
@@ -721,7 +736,9 @@ async def run_documents_qa_flow(
     returns (``teacher_passage_answers_service``); those answers are the
     targets. ``teacher_filter``: drop training answers the local answer judge
     grades wrong against the pair's reference. ``use_batch``: send the
-    generation and the teacher calls as Anthropic Message Batches."""
+    generation and the teacher calls as Anthropic Message Batches.
+    ``concurrency`` (1–8): direct generation / teacher calls in flight at once
+    (Ollama with ``OLLAMA_NUM_PARALLEL``, or a cloud API)."""
     from app.services.auto_rag_service import load_document_passages
     from app.services.synth_backends import pick_backend
 
@@ -786,7 +803,11 @@ async def run_documents_qa_flow(
     empty_replies = 0
     # Evaluation pairs the quotable gate dropped, by reason.
     eval_rejected: dict[str, int] = {}
-    raws = await _generate_replies(llm, chosen, pairs_per_passage, domain_hint, report, backend_label)
+    if not 1 <= int(concurrency) <= 8:
+        raise ValueError("concurrency must be between 1 and 8")
+    raws = await _generate_replies(
+        llm, chosen, pairs_per_passage, domain_hint, report, backend_label, concurrency=int(concurrency)
+    )
     for index, passage in enumerate(chosen):
         raw = raws[index]
         if raw is None:
@@ -981,6 +1002,7 @@ async def run_documents_qa_flow(
             teacher_filter=teacher_filter,
             filter_judge=teacher_filter_judge,
             retrieve_fn=teacher_retrieve_fn,
+            concurrency=int(concurrency),
         )
 
     # ── 5: train (the watcher Job runs the lift check afterwards) ─────────
@@ -1164,6 +1186,7 @@ async def _run_teacher_step(
     teacher_filter: bool,
     filter_judge: Any,
     retrieve_fn: Callable[..., list[dict[str, Any]]] | None,
+    concurrency: int = 1,
 ) -> dict[str, Any]:
     """Teacher answers for the prepared train + val rows, from the project's
     served retrieval (set by the gate). Never reads the test rows."""
@@ -1195,6 +1218,7 @@ async def _run_teacher_step(
         filter_judge=judge if teacher_filter else None,
         start=0.8,
         span=0.05,
+        concurrency=max(4, concurrency) if getattr(llm, "name", "") != "ollama" else concurrency,
     )
 
 

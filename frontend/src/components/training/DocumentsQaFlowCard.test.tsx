@@ -204,10 +204,11 @@ describe('DocumentsQaFlowCard', () => {
         expect(screen.getByTestId('documents-qa-flow-retrain')).toHaveTextContent("teacher's answers");
         await user.click(screen.getByTestId('documents-qa-flow-keep-test'));
         await user.selectOptions(screen.getByTestId('documents-qa-flow-gap'), '0.08');
+        await user.selectOptions(screen.getByTestId('documents-qa-flow-concurrency'), '4');
         await user.click(screen.getByTestId('documents-qa-flow-retrain'));
         await waitFor(() => {
             expect(apiMock.post).toHaveBeenCalledWith('/projects/1/flows/documents-to-qa', expect.objectContaining({
-                reuse_existing: true, train_with_passages: true, answers_from_teacher: true, keep_test: true, decision_gap: 0.08,
+                reuse_existing: true, train_with_passages: true, answers_from_teacher: true, keep_test: true, decision_gap: 0.08, concurrency: 4,
             }));
         });
     });

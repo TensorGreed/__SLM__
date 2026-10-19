@@ -179,6 +179,7 @@ async def write_teacher_answers(
     filter_splits: tuple[str, ...] = ("train",),
     start: float = 0.0,
     span: float = 1.0,
+    concurrency: int = SYNC_CONCURRENCY,
 ) -> dict[str, Any]:
     """Ask the teacher for every row's answer (cached ones are reused) and,
     with ``filter_judge`` (a ``ResolvedJudge``), grade the ``filter_splits``
@@ -246,7 +247,7 @@ async def write_teacher_answers(
             raws = [None] * len(todo)
 
     pending = [i for i, raw in enumerate(raws) if raw is None]
-    sem = asyncio.Semaphore(SYNC_CONCURRENCY)
+    sem = asyncio.Semaphore(max(1, int(concurrency)))
     done_count = {"n": 0}
 
     async def _ask(i: int) -> None:

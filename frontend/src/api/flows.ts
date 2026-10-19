@@ -117,6 +117,7 @@ export async function startDocumentsQaFlow(
         teacherBackend?: string | null;
         /** Anthropic Message Batches (half price, slower). */
         useBatch?: boolean;
+        concurrency?: number;
     } = {},
 ): Promise<Job> {
     const body: Record<string, unknown> = {};
@@ -135,6 +136,7 @@ export async function startDocumentsQaFlow(
         if (options.teacherBackend) body.teacher_backend = options.teacherBackend;
     }
     if (options.useBatch) body.use_batch = true;
+    if (options.concurrency && options.concurrency > 1) body.concurrency = options.concurrency;
     const res = await api.post<Job>(`/projects/${projectId}/flows/documents-to-qa`, body);
     return res.data;
 }

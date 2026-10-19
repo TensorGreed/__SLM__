@@ -92,6 +92,9 @@ class DocumentsQaFlowRequest(BaseModel):
     # Anthropic Message Batches (half price, slower) for the generation and
     # the teacher calls.
     use_batch: bool = False
+    # Direct generation / teacher calls in flight at once (a local server
+    # with parallel slots — OLLAMA_NUM_PARALLEL — or a cloud API).
+    concurrency: int = Field(1, ge=1, le=8)
 
 
 @router.get("/documents-to-qa/preview")
@@ -190,6 +193,7 @@ async def start_documents_to_qa(
                     teacher_backend_override=teacher_backend,
                     teacher_filter=req.teacher_filter,
                     use_batch=req.use_batch,
+                    concurrency=req.concurrency,
                     progress=_progress,
                 )
             except SynthBackendError as exc:
@@ -215,6 +219,7 @@ async def start_documents_to_qa(
             "answers_from_teacher": req.answers_from_teacher,
             "teacher_backend": req.teacher_backend,
             "use_batch": req.use_batch,
+            "concurrency": req.concurrency,
         },
     )
     return serialize_job(job)
