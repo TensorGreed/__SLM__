@@ -1,0 +1,116 @@
+# Changelog
+
+### Latest Updates (March 5, 2026)
+
+- Added **Model Registry** lifecycle with readiness snapshots, promotion gates, and deploy tracking.
+- Added **Project Secrets** APIs with masked listing and encrypted-at-rest values.
+- Added **Domain Profiles** with a typed contract and project-level assignment.
+- Added **Domain Packs** (pluggable overlays + default profile pointer) with project-level assignment.
+- Added **Domain Pack Hooks** for custom normalizers, validators, and evaluators.
+- Added **Domain Profile Manager UI** (list/create/edit/assign) in project detail and profile selection during project creation.
+- Added **Domain Pack Manager UI** (list/create/edit/assign) in project detail and pack selection during project creation.
+- Added **Workflow Graph Preview** (read-only visual stage graph + step contracts) in project detail.
+- Added **Workflow Contract Runtime (Phase 2)** APIs: graph validate, dry-run, run active step, and run history.
+- Added **Visual Pipeline Editor (Phase 3)** with project-scoped graph contract save/load/reset and compile diagnostics.
+- Added **Step Contract SDK v1** runtime fields (`runtime_requirements`) with compile/dry-run/run-step enforcement.
+- Added **Typed Artifact Registry (Phase 4)** with versioned artifacts and pipeline run-step artifact publication.
+- Added **Workflow Runner v1 (Phase 5)** with persisted DAG runs, node retries, dependency tracking, and backend adapters (`local`, `celery`, `external`).
+- Added **Workflow Templates + Run Monitor UI (Phase 6)** on the Workflow page.
+- Refactored project UI into a cleaner workspace IA:
+  - `Pipeline` page
+  - `Training Config` page
+  - `Workflow Graph` page
+  - `Domain Packs` page
+  - `Domain Profiles` page
+  - `Domain Contracts` legacy combined page (backward-compatible route)
+  - `Pipeline Recipes` page
+  - Training run monitoring remains in the `Pipeline -> Training` stage
+  - left sidebar navigation with pipeline stages as submenu
+- Added runtime transparency in split/training responses (applied profile + resolved defaults).
+- Added **Duplicate-as-new-version** flow for domain profiles from the project UI.
+- Added dedicated **Resolved Defaults** panels in Dataset Prep and Training tabs.
+- Added queued **remote ingestion** jobs with task status/cancel APIs and WebSocket log streaming.
+- Added queued **compression** jobs (quantize/merge/benchmark) with task status/cancel APIs and WebSocket logs.
+- Added real GGUF/ONNX compression runtime paths in `backend/scripts/quantize.py`.
+- Added **experiment comparison** API/UI for side-by-side metrics and loss-history visualization.
+- Added auth UX updates for **SSO + local login** flow.
+- Added training runtime generalization:
+  - trainer backend abstraction (`auto`, `hf_trainer`, `trl_sft`)
+  - task/data adapter contract (`causal_lm`, `seq2seq`, `classification`)
+  - CUDA OOM auto-retry planner with progressive memory downscaling
+- Added **Training Capability Matrix + Preflight**:
+  - explicit config preflight endpoint before experiment creation/start
+  - model/task/trainer compatibility checks
+  - dependency/runtime/data-file preflight checks
+  - start-time server guard that blocks incompatible training runs
+- Added **Training Runtime Plugin SDK v1**:
+  - runtime registry + catalog endpoint (`/training/runtimes`)
+  - pluggable runtime selection via `training_runtime_id`
+  - built-in runtimes: `builtin.simulate`, `builtin.external_celery`
+  - legacy `TRAINING_BACKEND` remains default fallback for backward compatibility
+- Added **Training Recipe System v1**:
+  - built-in domain-agnostic recipe catalog (safe/balanced SFT, LoRA-fast, classification, seq2seq)
+  - recipe resolve endpoint with runtime/profile default merge + optional preflight
+  - Training UI recipe starter picker with one-click apply
+- Added **Evaluation Packs + Auto Gates v1**:
+  - built-in gate packs (`general`, `strict`, `fast-iteration`) + domain-profile-derived dynamic pack
+  - project-level evaluation pack preference with fallback to defaults
+  - experiment gate evaluation endpoint and pipeline status auto-gate summary
+- Added **Pipeline Recipes / Blueprints v2 (Recipe Compiler)**:
+  - built-in end-to-end recipes (`recipe.pipeline.sft_default`, `recipe.pipeline.lora_fast`, `recipe.pipeline.eval_gate`, `recipe.pipeline.program.sft_sweep`)
+  - resolve/apply APIs that wire domain pack/profile, dataset adapter preset, training recipe, and evaluation pack
+  - workflow resolution now supports `workflow.template_id` and executable `workflow.program` contracts
+  - Recipe Compiler v2 supports conditional nodes/edges, failure-type retry policies, and loop/sweep node execution plans
+  - task-profile-aware recipe recommendation context (`recommended_recipe_id`) for faster defaults on the Recipes page
+  - persisted active recipe state + versioned reproducibility manifest artifact (`manifest.pipeline_recipe`)
+  - dedicated `Pipeline Recipes` page in project workspace navigation (separate from Pipeline and Workflow pages)
+- Added top-right **User Menu** in workspace:
+  - profile identity (username/role)
+  - logout action
+  - runtime **Settings** modal for editable system config fields (persisted overrides)
+- Added **Preflight Plan Suggestions** (`safe`, `balanced`, `max_quality`) with one-click config apply in Training UI.
+- Added project-persisted training plan preference (`preferred_plan_profile`) so recommended profile choice is remembered per project.
+- Added project/domain-pack adapter preset resolution for dataset split defaults (`adapter_id`, `adapter_config`, `field_mapping`).
+- Added **Alignment Workbench baseline** for DPO/ORPO:
+  - preference dataset import/filter APIs with apply-to-train support
+  - judge quality keep-ratio guardrails in preflight
+  - training-mode controls + alignment auto-filter settings in Training Config UI
+  - native TRL pairwise objective runtime path (`DPOTrainer` / `ORPOTrainer`) in external training script
+- Added **Universal Task/Dataset Adapter v3**:
+  - typed adapter contracts (`task_profiles`, `preferred_training_tasks`, `output_contract`)
+  - expanded built-in adapters: `rag-grounded`, `tool-call-json`, `structured-extraction` (plus existing chat/preference adapters)
+  - richer preview diagnostics: `conformance_report`, `auto_fix_suggestions`, `inferred_task_profiles`, `raw_field_frequency`
+  - `task_profile` wiring across adapter preview, project adapter preference, split manifests, workflow adapter-preview node, and remote import
+- Added **Pipeline Recipe Executable Runs (Phase 18)**:
+  - `POST /pipeline/recipes/run` to apply + execute recipe-backed workflow DAG (sync or async)
+  - persisted recipe-run lineage records (`recipe_run_id -> workflow_run_id -> manifest snapshot`)
+  - `GET /pipeline/recipes/runs` and `GET /pipeline/recipes/runs/{recipe_run_id}` for status/history
+  - Recipe page now includes one-click run controls and recipe-run monitor
+- Added **Recipe Run Control + Recovery (Phase 19)**:
+  - `POST /pipeline/recipes/runs/{recipe_run_id}/cancel`
+  - `POST /pipeline/recipes/runs/{recipe_run_id}/retry`
+  - `POST /pipeline/recipes/runs/{recipe_run_id}/resume`
+  - resume reuses completed nodes from source workflow run and can start from explicit node id
+  - Recipes run inspector now exposes Cancel/Retry/Resume actions
+- Added strict dataset contract checks in training preflight (task-shape coverage gate with actionable fix hints).
+- Expanded Training experiment form controls for memory/runtime tuning (`gradient_accumulation_steps`, `max_seq_length`, `save_steps`, `eval_steps`, `fp16`/`bf16`, `flash_attention`, `sequence_packing`).
+- Added split backend dependency profiles for CPU/GPU installs (`requirements-base.txt`, `requirements.txt`, `requirements-gpu.txt`, `requirements-gpu-cu128.txt`).
+- Added live external-training telemetry streaming (`epoch`, `step`, loss metrics) from Celery worker to Training dashboard via WebSocket.
+- Added **Deployment Target SDK v1**:
+  - deployment target catalog for exporters/runners (`HF`, `GGUF`, `ONNX`, `TensorRT`, `vLLM`, `TGI`, `Ollama`)
+  - export-time deployability validation (artifact profile checks)
+  - optional local runner smoke tests and explicit deployment reports in export manifests
+- Added **Conformance + Scale Test Matrix (Phase 20)**:
+  - automated backend matrix for `adapters x runtimes x model families x task types`
+  - scale checks for adapter mapping quality at larger sample sizes
+  - explicit guardrail assertions for model-task incompatibility and dataset-contract incompatibility
+- Added Alembic revisions:
+  - `20260305_0002` for registry + secrets tables
+  - `20260305_0003` for domain profiles + project binding
+  - `20260305_0004` for domain packs + project binding
+  - `20260305_0005` for artifact registry table
+  - `20260306_0007` for project training preference persistence
+  - `20260306_0008` for project dataset adapter preset persistence
+  - `20260307_0009` for project evaluation pack preference persistence
+
+---
