@@ -362,6 +362,38 @@ Every successful training launch writes an **immutable** training manifest to `m
 
 Once written it's append-only. Modifying it doesn't change the run; rerun reads from this file.
 
+### Same config, same weights
+
+A rerun with the same config on the same prepared rows saves **byte-identical
+weights**. The seed alone doesn't guarantee that on a GPU: by default the
+attention backward pass adds its gradients with atomic operations, so the
+summation order (and the last bits of the weights) can change from run to run.
+That can tip a greedy reply or a held-out F1 by a few hundredths. With
+`deterministic: true` (the default), the trainer switches PyTorch to its
+deterministic kernels (`torch.use_deterministic_algorithms(True)`, a fixed
+cuBLAS workspace, cuDNN deterministic). On SmolLM2-135M this costs about a
+third more step time; set `deterministic: false` to trade the guarantee for
+speed. If an op on a run's path has no deterministic kernel, the run trains
+unpinned instead of failing, and `retry_history` names the op.
+
+Every `training_report.json` carries a `reproducibility` block, so two runs can
+be compared without loading either model:
+
+```json
+"reproducibility": {
+  "seed": 42,
+  "deterministic": true,
+  "cublas_workspace_config": ":4096:8",
+  "train_file_sha256": "…",
+  "val_file_sha256": "…",
+  "weights_sha256": "…"
+}
+```
+
+The rows and the config match but the score doesn't? Check `weights_sha256`
+first. If the hashes are equal, the difference is in the evaluation, not the
+training.
+
 ## Rerun an experiment
 
 The single fastest path to a reproducible run.

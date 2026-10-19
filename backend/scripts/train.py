@@ -1483,6 +1483,91 @@ def _load_training_runtime_dependencies() -> dict[str, Any]:
     }
 
 
+CUBLAS_DETERMINISTIC_WORKSPACE = ":4096:8"
+
+
+def enable_deterministic_training(torch_module: Any, enabled: bool) -> dict[str, Any]:
+    """Pin the kernels so one config + one dataset gives the same weights.
+
+    ``set_seed`` alone is not enough on a GPU: the SDPA attention backward
+    (memory-efficient and flash) defaults to an atomic-add algorithm whose
+    summation order can change between runs. Strict
+    ``use_deterministic_algorithms`` switches it to the deterministic
+    backward (and refuses any op that has none); cuBLAS needs a fixed
+    workspace for the same guarantee. Must run before the first GPU matmul
+    — cuBLAS reads the workspace setting when its handle is created.
+    """
+    if not enabled:
+        # Process-global: a retry without the pin must switch it back off.
+        torch_module.use_deterministic_algorithms(False)
+        return {"deterministic": False}
+    import os
+
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", CUBLAS_DETERMINISTIC_WORKSPACE)
+    torch_module.use_deterministic_algorithms(True)
+    backends = getattr(torch_module, "backends", None)
+    cudnn = getattr(backends, "cudnn", None)
+    if cudnn is not None:
+        cudnn.deterministic = True
+        cudnn.benchmark = False
+    return {
+        "deterministic": True,
+        "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
+    }
+
+
+def file_sha256(path: Path | str | None) -> str | None:
+    import hashlib
+
+    if not path or not Path(path).is_file():
+        return None
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def weights_sha256(model_dir: Path | str) -> str | None:
+    """One hash over the saved weight files (sorted by name), so two runs'
+    reports say at a glance whether they produced the same model."""
+    import hashlib
+
+    root = Path(model_dir)
+    if not root.is_dir():
+        return None
+    files = sorted(
+        p for p in root.iterdir()
+        if p.is_file() and p.suffix in {".safetensors", ".bin"} and p.name != "training_args.bin"
+    )
+    if not files:
+        return None
+    digest = hashlib.sha256()
+    for path in files:
+        digest.update(path.name.encode("utf-8"))
+        digest.update(bytes.fromhex(file_sha256(path) or ""))
+    return digest.hexdigest()
+
+
+def reproducibility_block(
+    *, seed: int, determinism: dict[str, Any], train_file: Path, val_file: Path | None, model_dir: Path
+) -> dict[str, Any]:
+    return {
+        "seed": int(seed),
+        **determinism,
+        "train_file_sha256": file_sha256(train_file),
+        "val_file_sha256": file_sha256(val_file),
+        "weights_sha256": weights_sha256(model_dir),
+    }
+
+
+def _is_determinism_error(exc: BaseException) -> bool:
+    """torch refuses an op with no deterministic implementation under strict
+    ``use_deterministic_algorithms`` (``"... does not have a deterministic
+    implementation ..."``)."""
+    return "deterministic" in str(exc).lower() and isinstance(exc, RuntimeError)
+
+
 def needs_fp32_master_weights(*, use_cuda: bool, half_precision: bool, use_lora: bool, task_type: str) -> bool:
     """Load the model in fp32 (the Trainer's bf16 / fp16 flag autocasts the
     compute) when non-adapter weights train: a full fine-tune, or a fresh
@@ -1589,6 +1674,8 @@ def _run_training_attempt(
     TrainingArguments = deps["TrainingArguments"]
     set_seed = deps["set_seed"]
 
+    determinism = enable_deterministic_training(torch, _coerce_bool(config.get("deterministic"), True))
+
     warnings: list[str] = []
     if training_mode not in {"sft", "domain_pretrain", "dpo", "orpo", "distillation"}:
         warnings.append(f"Unknown training_mode '{training_mode}', defaulting to sft.")
@@ -1616,6 +1703,10 @@ def _run_training_attempt(
             emit_metric=lambda entry: print(f"{TRAINING_METRIC_PREFIX}{json.dumps(entry, ensure_ascii=False)}", flush=True),
         )
         report["warnings"] = [*warnings, *report.get("warnings", [])]
+        report["reproducibility"] = reproducibility_block(
+            seed=int(getattr(args, "seed", 42) or 42), determinism=determinism,
+            train_file=train_file, val_file=val_file, model_dir=model_dir,
+        )
         report["attempt_index"] = attempt_index + 1
         report["retry_history"] = list(retry_history)
         (output_dir / "training_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -3633,6 +3724,9 @@ def _run_training_attempt(
         "retry_history": list(retry_history),
         "resume_from_checkpoint": str(resume_checkpoint) if resume_checkpoint is not None else None,
         "runtime_environment": runtime_environment,
+        "reproducibility": reproducibility_block(
+            seed=seed, determinism=determinism, train_file=train_file, val_file=val_file, model_dir=model_dir,
+        ),
         "warnings": warnings,
     }
     (output_dir / "training_report.json").write_text(
@@ -3699,6 +3793,34 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             )
         except Exception as exc:  # noqa: PERF203
             last_error = exc
+            if _is_determinism_error(exc) and _coerce_bool(attempt_config.get("deterministic"), True):
+                # Some op on this path has no deterministic kernel: train
+                # anyway, unpinned, and say so in the report.
+                retry_item = {
+                    "attempt": attempt_index + 1,
+                    "reason": f"deterministic kernels unavailable: {exc}",
+                    "changes": [{"field": "deterministic", "from": True, "to": False}],
+                    "timestamp": utcnow(),
+                }
+                retry_history.append(retry_item)
+                _emit_runtime_event("determinism_fallback", retry_item)
+                attempt_config = {**attempt_config, "deterministic": False}
+                try:
+                    return _run_training_attempt(
+                        args,
+                        config=attempt_config,
+                        output_dir=output_dir,
+                        model_dir=model_dir,
+                        config_path=config_path,
+                        train_file=train_file,
+                        val_file=val_file,
+                        started_at=started_at,
+                        attempt_index=attempt_index,
+                        total_attempts=total_attempts,
+                        retry_history=retry_history,
+                    )
+                except Exception as retry_exc:  # noqa: BLE001
+                    raise retry_exc from exc
             if not auto_oom_retry or attempt_index >= total_attempts - 1 or not _is_cuda_oom_error(exc):
                 raise
 

@@ -5,7 +5,7 @@ import * as path from 'path';
 // Video 09 — Training Run, narrated (Epic U workspace).
 //
 // First runtime-dependent video. Drives a real training run on the support-faq
-// sample (SmolLM2-135M, 2 epochs, ~12 s on the GB10) through the real Celery
+// sample (SmolLM2-135M, 2 epochs, ~15 s on the GB10 with deterministic kernels) through the real Celery
 // worker. Pre-roll (not narrated): login + launch the sample, open Train.
 // Then: the Train form (cold open) → More options (model + hyperparameters,
 // LoRA) → the run is created + started through the API (a fixed config keeps

@@ -612,7 +612,11 @@ runs real CPU inference). ~4 min locally.
   `ollama stop` before the prompt, then logs `[v12] reply:` — greedy decoding
   is repeatable only per Ollama STATE: a cold load and a warm model with the
   prompt cached give two different (each repeatable) replies, so the spec
-  always asks a cold model; the narration quotes that reply). Spec 14 is
+  always asks a cold model; the narration quotes that reply). Videos 08–10
+  were recorded BEFORE training was pinned deterministic (F1 0.2405); under
+  the pin spec 09's run is identical on every stack (weights_sha256
+  `88dfc789…`, spec 10 F1 **0.2419**, 2 fresh stacks) — a re-record must
+  re-read video 08's F1, video 09's GGUF size and video 10's reply. Spec 14 is
   slides over `file://` and needs no stack (`DEMO_BASE_URL=http://localhost:5173`
   just satisfies record-narrated's up-check). The auto lift check
   adds a baseline run above the trained one, so specs target a run by
@@ -1051,6 +1055,23 @@ runs real CPU inference). ~4 min locally.
   validator). Regression net: `tests/test_training_correctness.py`
   (real SmolLM2 fine-tune must beat base on a held-out split; skips
   without torch / cached model).
+  **Same config → same weights** (2026-10-18): `train.py`
+  `enable_deterministic_training` (config `deterministic`, schema default
+  **True**) = strict `torch.use_deterministic_algorithms(True)` +
+  `CUBLAS_WORKSPACE_CONFIG=:4096:8` + cuDNN deterministic, before the first
+  GPU matmul (also covers the token-classification dispatch). Why: the SDPA
+  attention backward (mem-efficient + flash) sums with atomics by default —
+  `set_seed` alone left the support-faq demo run at F1 0.2405 on most fresh
+  stacks and 0.2216 once (never reproduced in isolation: 11 runs, GPU
+  contention, CPU, OOM-retry configs and eval variants all ruled out).
+  ~1.5× step time on SmolLM2 (10 s → 15 s); `deterministic: false` opts out.
+  An op with no deterministic kernel → one unpinned retry (`retry_history`
+  reason "deterministic kernels unavailable"), never a failure. Every
+  `training_report.json` has `reproducibility` {seed, deterministic,
+  cublas_workspace_config, train/val_file_sha256, `weights_sha256`} — compare
+  that first when two runs' scores differ. Tests
+  `tests/test_training_reproducibility.py` (the real two-run test trains
+  SmolLM2 twice and asserts equal hashes; GPU or BREWSLM_REAL_TRAINING).
 - **Pipeline plan refinement (Phase 1, deterministic)** —
   `pipeline_refinement_service.refine_pipeline_plan` is the post-data plan-fit
   lens: does the project's current plan (recipe / task shape / base model /

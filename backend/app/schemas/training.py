@@ -218,6 +218,10 @@ class TrainingConfig(BaseModel):
     early_stopping_patience: int = Field(3, ge=1)
 
     seed: int = 42
+    # Deterministic GPU kernels (train.py ``enable_deterministic_training``):
+    # same config + same rows → byte-identical weights. Off trades that for
+    # speed (the default attention backward sums with atomics).
+    deterministic: bool = True
 
     # Multi-seed variance reporting (Quality-Lift phase 1).
     # ``num_seeds=1`` (default) preserves single-seed behavior — no fan-out, no
