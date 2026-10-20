@@ -249,7 +249,10 @@ class AnswerJudgeCache:
             return
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(json.dumps(self._data), encoding="utf-8")
+            # Atomic: a crash mid-write must not cost the whole cache.
+            tmp = self._path.with_suffix(self._path.suffix + ".tmp")
+            tmp.write_text(json.dumps(self._data), encoding="utf-8")
+            tmp.replace(self._path)
             self._dirty = False
         except Exception:  # noqa: BLE001
             pass

@@ -43,6 +43,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -140,6 +141,35 @@ def _write_answers(project_id: int, answers: dict[str, dict[str, Any]]) -> None:
         for row in answers.values():
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     tmp.replace(path)
+
+
+def _answer_record(
+    item: dict[str, Any], answer: str, served: dict[str, Any], teacher_label: str, now: str | None = None
+) -> dict[str, Any]:
+    return {
+        "key": item["key"],
+        "split": item["split"],
+        "question": item["question"],
+        "reference": item["reference"],
+        "answer": answer,
+        "abstained": is_abstention(answer),
+        "system_prompt": item["preamble"],
+        "sources": item["sources"],
+        "retrieval": served,
+        "teacher": teacher_label,
+        "created_at": now or datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _append_answer(project_id: int, record: dict[str, Any]) -> None:
+    """Append one answer to the cache (``load_answers``: the last line for a
+    key wins, a line cut off by a crash is skipped)."""
+    path = cache_path(project_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def _question_reference(row: dict[str, Any]) -> tuple[str, str]:
@@ -259,6 +289,10 @@ async def write_teacher_answers(
             except SynthBackendError as exc:
                 _LOG.warning("teacher answer failed for %r: %s", todo[i]["question"][:80], exc)
                 raws[i] = None
+            answer = normalize_teacher_answer(str(raws[i] or ""))
+            if answer:
+                # On disk as it arrives: a run killed mid-way resumes from here.
+                _append_answer(project_id, _answer_record(todo[i], answer, served, teacher_label))
             done_count["n"] += 1
             if done_count["n"] % 10 == 0 or done_count["n"] == len(pending):
                 await _report(0.1 + 0.6 * done_count["n"] / max(1, len(pending)),
@@ -276,19 +310,7 @@ async def write_teacher_answers(
             c["failed"] += 1
             continue
         c["answered"] += 1
-        answers[item["key"]] = {
-            "key": item["key"],
-            "split": item["split"],
-            "question": item["question"],
-            "reference": item["reference"],
-            "answer": answer,
-            "abstained": is_abstention(answer),
-            "system_prompt": item["preamble"],
-            "sources": item["sources"],
-            "retrieval": served,
-            "teacher": teacher_label,
-            "created_at": now,
-        }
+        answers[item["key"]] = _answer_record(item, answer, served, teacher_label, now)
     _write_answers(project_id, answers)
 
     # Abstentions per split (cached + new) for the rows asked about.
@@ -322,6 +344,7 @@ async def write_teacher_answers(
 
         async def _judge_progress(done: int, total: int) -> None:
             if done % 25 == 0 or done == total:
+                cache.flush()  # verdicts survive a crash; a re-run reads them from the cache
                 await _report(0.72 + 0.26 * done / max(1, total), f"Checking teacher answers against the references ({done}/{total}, {filter_judge.label})")
 
         if preds:

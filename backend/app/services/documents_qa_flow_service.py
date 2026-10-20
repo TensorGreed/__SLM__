@@ -39,10 +39,13 @@ notes apply as usual.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -506,6 +509,44 @@ def _generation_call(passage_text: str, pairs_per_passage: int, domain_hint: str
     return {"prompt": varying, "system_prompt": _SYSTEM_PROMPT, "max_tokens": 1600, "temperature": 0.4, **extra}
 
 
+REPLY_CHECKPOINT_FILE = "generation_checkpoint.jsonl"
+
+
+def reply_checkpoint_path(project_id: int) -> Path:
+    """Where a running flow appends each passage's raw reply (removed once
+    the pairs are saved)."""
+    return settings.DATA_DIR / "projects" / str(project_id) / "flows" / REPLY_CHECKPOINT_FILE
+
+
+def _reply_key(backend_label: str, call: dict[str, Any]) -> str:
+    """A reply is reusable only for the same backend and the same request."""
+    raw = json.dumps({"backend": backend_label, "call": call}, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _load_reply_checkpoint(path: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not path.exists():
+        return out
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # a line cut off by the crash
+            if isinstance(row, dict) and row.get("key") and isinstance(row.get("raw"), str):
+                out[str(row["key"])] = row["raw"]
+    return out
+
+
+def _append_reply(path: Path, key: str, raw: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"key": key, "raw": raw}, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
 async def _generate_replies(
     llm: Any,
     chosen: list[dict[str, Any]],
@@ -515,23 +556,39 @@ async def _generate_replies(
     backend_label: str,
     *,
     concurrency: int = 1,
+    checkpoint: Path | None = None,
 ) -> list[str | None]:
     """One reply per passage (None where the call failed). With the backend's
     ``use_batch`` on, every call goes as ONE Message Batch first; requests it
-    didn't answer are retried directly."""
+    didn't answer are retried directly.
+
+    With ``checkpoint``, every reply is appended to that file as it arrives
+    and replies already there (same backend + same prompt) are reused, so a
+    run killed mid-way (a crash, a power cut, a backend restart) resumes
+    instead of paying for every passage again."""
     from app.services.span_relabel_service import uses_message_batch
 
     calls = [_generation_call(p["text"], pairs_per_passage, domain_hint, llm) for p in chosen]
-    raws: list[str | None] = [None] * len(chosen)
-    if chosen and uses_message_batch(llm):
+    keys = [_reply_key(backend_label, call) for call in calls]
+    saved = _load_reply_checkpoint(checkpoint) if checkpoint is not None else {}
+    raws: list[str | None] = [saved.get(key) for key in keys]
+    resumed = sum(1 for raw in raws if raw is not None)
+    if resumed:
+        await report(0.05, f"Resuming: {resumed}/{len(chosen)} passages already written ({backend_label})")
+    if chosen and resumed < len(chosen) and uses_message_batch(llm):
         async def _progress(message: str, done: int, total: int) -> None:
             await report(0.05 + 0.5 * done / max(1, total), f"Writing questions for {total} passages ({backend_label}): {message}")
 
+        todo = [i for i, raw in enumerate(raws) if raw is None]
         try:
-            raws = await llm.complete_batch(calls, progress=_progress)
+            batch_raws = await llm.complete_batch([calls[i] for i in todo], progress=_progress)
         except SynthBackendError as exc:
             _LOG.warning("documents_qa_flow: message batch failed, generating directly: %s", exc)
-            raws = [None] * len(chosen)
+            batch_raws = [None] * len(todo)
+        for i, raw in zip(todo, batch_raws):
+            raws[i] = raw
+            if raw is not None and checkpoint is not None:
+                _append_reply(checkpoint, keys[i], raw)
     import asyncio
 
     # Direct calls, ``concurrency`` in flight at once (a local server with
@@ -550,10 +607,13 @@ async def _generate_replies(
             except SynthBackendError as exc:
                 _LOG.warning("documents_qa_flow passage %s failed: %s", chosen[index].get("id"), exc)
                 raws[index] = None
+            if raws[index] is not None and checkpoint is not None:
+                _append_reply(checkpoint, keys[index], raws[index])
             done["n"] += 1
+            resumed_note = f", {resumed} resumed" if resumed else ""
             await report(
                 0.05 + 0.55 * done["n"] / max(1, len(pending)),
-                f"Writing questions: {done['n']}/{len(pending)} passages done ({backend_label}{at_once})",
+                f"Writing questions: {done['n']}/{len(pending)} passages done ({backend_label}{at_once}{resumed_note})",
             )
 
     await asyncio.gather(*(_one(i) for i in pending))
@@ -805,8 +865,10 @@ async def run_documents_qa_flow(
     eval_rejected: dict[str, int] = {}
     if not 1 <= int(concurrency) <= 8:
         raise ValueError("concurrency must be between 1 and 8")
+    checkpoint = reply_checkpoint_path(project_id)
     raws = await _generate_replies(
-        llm, chosen, pairs_per_passage, domain_hint, report, backend_label, concurrency=int(concurrency)
+        llm, chosen, pairs_per_passage, domain_hint, report, backend_label,
+        concurrency=int(concurrency), checkpoint=checkpoint,
     )
     for index, passage in enumerate(chosen):
         raw = raws[index]
@@ -886,6 +948,8 @@ async def run_documents_qa_flow(
             dataset_type=DatasetType.GOLD_DEV,
         )
     await db.commit()
+    # The pairs are saved; a later run reuses them through reuse_existing.
+    checkpoint.unlink(missing_ok=True)
 
     if summary.training_pairs < MIN_TRAINING_PAIRS:
         summary.stopped_reason = (

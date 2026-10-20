@@ -2011,7 +2011,7 @@ runs real CPU inference). ~4 min locally.
   `gate.sweep` = the val side. `MAX_PASSAGES_CAP` 2000. With `keep_test` the VAL set is eval-only answer-key rows too
   (`val_from` / `keep_val` on `split_dataset`, `fixed_val` in `_keep_test_rows`; `split.val_sha256`).
   Local teacher: `synth_backends/ollama.think_setting` (gpt-oss → `"low"`), `normalize_teacher_answer`
-  (【n】 → [n], no `**`), `unload_loaded_models` before training when `_used_local_ollama`. Flow `concurrency` (1–8) bounds direct
+  (【n】 → [n], no `**`), `unload_loaded_models` before training when `_used_local_ollama`. Resumable: `_generate_replies(checkpoint=)` appends each reply to `flows/generation_checkpoint.jsonl` (key = backend label + call; fsync'd; unlinked after the pairs are saved), the teacher appends each answer (`_append_answer`), the filter flushes the judge cache every 25 rows (`AnswerJudgeCache.flush` is atomic) — re-posting a killed flow asks only for what's missing. Flow `concurrency` (1–8) bounds direct
   generation (`_generate_replies`) + teacher calls in flight (for `OLLAMA_NUM_PARALLEL`). Tests in `test_documents_qa_flow.py`
   (`FlowGrowthSweepTeacherTests`), `test_training_memory_defaults.py`.
 - **External benchmarks (G-B1)** (`services/external_benchmark_service.py`,

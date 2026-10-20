@@ -761,6 +761,7 @@ class FlowGrowthSweepTeacherTests(DocumentsQaFlowTests.__bases__[0]):
         self.assertEqual(BatchBackend.batches, [20])
         self.assertEqual(summary.passages_used, 20)
         self.assertEqual(summary.training_pairs, 60)
+        self.assertFalse(flow.reply_checkpoint_path(self.pid).exists(), "the checkpoint goes once the pairs are saved")
         with self.assertRaises(ValueError):
             self._run(train=False, max_passages=20, use_batch=True)  # the plain fake can't batch
 
@@ -840,3 +841,84 @@ class GenerationConcurrencyTests(unittest.TestCase):
         state["peak"] = 0
         asyncio.run(flow._generate_replies(SlowBackend(), passages, 3, "", _report, "fake"))
         self.assertEqual(state["peak"], 1)
+
+
+class GenerationCheckpointTests(unittest.TestCase):
+    """A run killed mid-way (crash, power cut, restart) resumes from disk."""
+
+    def test_generation_resumes_from_the_checkpoint(self):
+        import asyncio
+        import tempfile
+
+        state = {"calls": 0, "crash_at": None}
+
+        class Backend:
+            name = "fake"
+
+            def describe(self):
+                return "fake"
+
+            async def complete(self, prompt, **kwargs):
+                state["calls"] += 1
+                if state["crash_at"] is not None and state["calls"] == state["crash_at"]:
+                    raise RuntimeError("power cut")
+                return json.dumps({"reply_for": prompt[-40:]})
+
+        async def _report(_f, _m):
+            return None
+
+        passages = [{"id": i, "text": f"Passage {i}. It says something."} for i in range(10)]
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint = Path(tmp) / "flows" / "generation_checkpoint.jsonl"
+            state["crash_at"] = 6
+            with self.assertRaises(RuntimeError):
+                asyncio.run(flow._generate_replies(Backend(), passages, 3, "", _report, "fake", checkpoint=checkpoint))
+            # (gather lets the calls already queued finish; a real power cut stops them too)
+            saved = len(checkpoint.read_text(encoding="utf-8").splitlines())
+            self.assertTrue(0 < saved < 10, saved)
+            with checkpoint.open("a", encoding="utf-8") as handle:
+                handle.write('{"key": "cut off by the cra')  # a torn last line is skipped
+
+            state.update(calls=0, crash_at=None)
+            raws = asyncio.run(flow._generate_replies(Backend(), passages, 3, "", _report, "fake", checkpoint=checkpoint))
+            self.assertEqual(state["calls"], 10 - saved, "only the passages without a saved reply are asked again")
+            self.assertTrue(all(raws))
+            fresh = asyncio.run(flow._generate_replies(Backend(), passages, 3, "", _report, "fake"))
+            self.assertEqual(raws, fresh, "a resumed reply is the reply the backend gave")
+
+            state["calls"] = 0
+            asyncio.run(flow._generate_replies(Backend(), passages, 3, "", _report, "other-model", checkpoint=checkpoint))
+            self.assertEqual(state["calls"], 10, "another backend's replies are not reused")
+
+    def test_teacher_answers_are_on_disk_as_they_arrive(self):
+        import asyncio
+
+        from app.services import teacher_passage_answers_service as tpa
+
+        pid = 900000 + uuid4().int % 90000
+        state = {"calls": 0}
+
+        class Teacher:
+            name = "fake-teacher"
+
+            def describe(self):
+                return "fake:teacher"
+
+            async def complete(self, prompt, **kwargs):
+                state["calls"] += 1
+                if state["calls"] == 3:
+                    raise RuntimeError("power cut")
+                return f"From the passages: {prompt[:30]} [1]"
+
+        rows = {"train": [{"question": f"How many days under section {i}?", "answer": f"{i} days."} for i in range(5)]}
+        kwargs = dict(retrieval={"k": 3}, retrieve_fn=_fake_retrieve, concurrency=1)
+        with self.assertRaises(RuntimeError):
+            asyncio.run(tpa.write_teacher_answers(pid, rows, llm=Teacher(), **kwargs))
+        saved = len(tpa.load_answers(pid))
+        self.assertTrue(0 < saved < 5, saved)
+
+        state["calls"] = -100  # no more crashes
+        report = asyncio.run(tpa.write_teacher_answers(pid, rows, llm=Teacher(), **kwargs))
+        self.assertEqual(report["counts"]["train"]["reused"], saved)
+        self.assertEqual(state["calls"], -100 + 5 - saved, "only the unanswered questions are asked again")
+        self.assertEqual(len(tpa.load_answers(pid)), 5)
