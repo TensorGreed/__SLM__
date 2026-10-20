@@ -287,7 +287,9 @@ class _FakeTrainer:
         (target / "pytorch_model.bin").write_text("fake", encoding="utf-8")
 
 
-def _fake_load_dataset(_format: str, data_files: dict[str, str]):
+def _fake_load_dataset(_format: str, data_files: dict[str, str], split: str | None = None):
+    if split is not None:
+        return _fake_load_dataset(_format, data_files)[split]
     payload = {}
     for split, path in dict(data_files or {}).items():
         rows = []
