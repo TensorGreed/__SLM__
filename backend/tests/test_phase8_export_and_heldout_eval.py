@@ -88,7 +88,9 @@ class Phase8ExportAndHeldoutEvalTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreaterEqual(model_info.get("count", 0), 3)
             self.assertEqual(model_info.get("source"), "experiment_model_dir")
 
-            run_dir = Path(manifest["run_dir"])
+            # The manifest stores the run dir relative to the export dir.
+            self.assertFalse(Path(manifest["run_dir"]).is_absolute())
+            run_dir = Path(export.output_path) / manifest["run_dir"]
             self.assertTrue((run_dir / "model" / "config.json").exists())
             self.assertTrue((run_dir / "model" / "tokenizer.json").exists())
             self.assertTrue((run_dir / "model" / "weights.safetensors").exists())

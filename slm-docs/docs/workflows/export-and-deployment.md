@@ -135,6 +135,8 @@ exports/project-1/export-19/
 └── README.md                        # deployment instructions for this target
 ```
 
+The manifest holds no machine-specific path: `run_dir` is the run folder's name (`run-<timestamp>`, relative to the export folder), paths inside the run are relative to it, and anything else under your home directory is written as `~/…`. Exports made before this change still hold absolute paths; BrewSLM reads both.
+
 ### Shipping one seed of a multi-seed run
 
 A multi-seed run (*Seeds* in the training config, or **Check across 3 seeds** on the Results summary) trains the same recipe N times. The lift check reports the group; to ship you need one model. When the latest run is a multi-seed group, **Ship** → **Package** opens with a **Pick the seed to ship** card (the seed table also appears on the Results summary card of a multi-seed run). The table lists every seed: its run id, its **validation** metric, and its test score when the lift check has one. The seed to ship is picked by the validation metric only:
@@ -158,7 +160,7 @@ API: `GET /api/projects/{id}/seed-groups/{leader_id}/pick` (add `?metric=span_f1
 A completed Hugging Face-format export can be pushed to the Hub as a model repo. Open **Ship** → **Publish**: there is one row per completed Hugging Face export. Fill in the repo as `owner/model-name` (tick *private* to keep it unlisted), then **Publish to Hugging Face**. What goes up:
 
 - the export's `model/` folder as the repo root: weights, tokenizer, `README.md` (the model card the export wrote, with `license: mit` and `language: en` added to its front matter when the card has neither), and for a span tagger `thresholds.json` + `label_space.json`;
-- `brewslm/manifest.json` and `brewslm/RELEASE_NOTES.md`, so the run id, seed selection and every transform travel with the model.
+- `brewslm/manifest.json` and `brewslm/RELEASE_NOTES.md`, so the run id, seed selection and every transform travel with the model. Both are uploaded with local paths made relative, so an older export's absolute paths (which name your home directory) never reach the Hub.
 
 The server's token is used (`HF_TOKEN`, or the `huggingface-cli login` cache); the request may carry one instead, and it is never stored. The publication is recorded on the export's manifest as `hub_publish` (repo id, URL, commit, time) and the row shows the repo link and commit afterwards; publishing again to the same repo makes a new commit.
 

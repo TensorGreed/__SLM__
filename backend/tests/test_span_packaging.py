@@ -264,11 +264,11 @@ class ExportPackagingTests(unittest.TestCase):
                     export = await create_export(db, pid, exp_id, ExportFormat.HUGGINGFACE)
                     export = await run_export(db, pid, export.id, run_smoke_tests=False)
                     await db.commit()
-                    return export.status, export.manifest
+                    return export.status, export.manifest, export.output_path
 
-            status, manifest = asyncio.run(_export())
+            status, manifest, output_path = asyncio.run(_export())
             self.assertEqual(status, ExportStatus.COMPLETED)
-            model_dir = Path(manifest["run_dir"]) / "model"
+            model_dir = Path(output_path) / manifest["run_dir"] / "model"
             card = (model_dir / "README.md").read_text()
             self.assertLess(card.index("### Answer key (7 texts)"), card.index("### Test examples (7 texts)"))
             self.assertIn("F1 0.74", card)

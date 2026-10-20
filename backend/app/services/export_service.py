@@ -28,6 +28,7 @@ from app.schemas.export import (
     OptimizationRunEvidence,
 )
 from app.services import target_profile_service
+from app.services.portable_paths import portable_paths
 from app.services.adapter_merge_service import (
     adapter_base_model,
     merge_adapter,
@@ -375,13 +376,18 @@ def _resolve_source_model_files(
 
 def _resolve_export_run_dir_from_export(export: Export) -> Path | None:
     manifest = export.manifest if isinstance(export.manifest, dict) else {}
+    output_path = Path(export.output_path).expanduser() if export.output_path else None
     run_dir = manifest.get("run_dir")
-    if isinstance(run_dir, str) and run_dir.strip():
-        candidate = Path(run_dir).expanduser()
-        if candidate.exists() and candidate.is_dir():
+    if isinstance(run_dir, str) and run_dir.strip() and run_dir.strip() != ".":
+        # New manifests store the run dir's name (relative to the export
+        # dir) so nothing machine-specific travels with the package; older
+        # ones hold an absolute path.
+        candidate = Path(run_dir.strip()).expanduser()
+        if not candidate.is_absolute():
+            candidate = output_path / candidate if output_path is not None else None
+        if candidate is not None and candidate.exists() and candidate.is_dir():
             return candidate
 
-    output_path = Path(export.output_path).expanduser() if export.output_path else None
     if output_path is None or not output_path.exists():
         return None
 
@@ -968,7 +974,7 @@ async def run_export(
             "quantization": export.quantization,
             "created_at": now.isoformat(),
             "platform_version": settings.APP_VERSION,
-            "run_dir": str(run_dir),
+            "run_dir": run_dir.name,
             "experiment": {
                 "name": experiment.name,
                 "status": experiment.status.value,
@@ -1002,6 +1008,10 @@ async def run_export(
             run_smoke_tests=run_smoke_tests,
         )
         manifest["deployment"] = deployment_report
+        # Paths inside the run dir become relative, the home dir "~": the
+        # manifest ships with the model (Hub publish uploads it).
+        manifest = portable_paths(manifest, run_dir)
+        manifest["run_dir"] = run_dir.name
         if not bool((deployment_report.get("summary") or {}).get("deployable_artifact")):
             errors = list((deployment_report.get("artifact_validation") or {}).get("errors") or [])
             preview = "; ".join(str(item) for item in errors[:4]) or "artifact validation failed"
@@ -1031,10 +1041,13 @@ async def run_export(
         failed_manifest = export.manifest if isinstance(export.manifest, dict) else {}
         failed_manifest = dict(failed_manifest)
         if run_dir is not None:
-            failed_manifest.setdefault("run_dir", str(run_dir))
+            failed_manifest.setdefault("run_dir", run_dir.name)
         if isinstance(deployment_report, dict):
             failed_manifest["deployment"] = deployment_report
         failed_manifest["error"] = str(e)
+        if run_dir is not None:
+            failed_manifest = portable_paths(failed_manifest, run_dir)
+            failed_manifest["run_dir"] = run_dir.name
         export.manifest = failed_manifest
 
     await db.flush()
@@ -1131,8 +1144,8 @@ async def validate_export_deployment(
         run_smoke_tests=run_smoke_tests,
     )
 
-    manifest = export.manifest if isinstance(export.manifest, dict) else {}
-    manifest["deployment"] = report
+    manifest = dict(export.manifest) if isinstance(export.manifest, dict) else {}
+    manifest["deployment"] = portable_paths(report, run_dir)
     export.manifest = manifest
     await db.flush()
     await db.refresh(export)
@@ -1254,7 +1267,7 @@ async def execute_export_deploy_plan(
         }
     )
     manifest["deploy_execution_history"] = history[-30:]
-    manifest["last_deploy_execution"] = execution
+    manifest["last_deploy_execution"] = portable_paths(execution, run_dir)
     export.manifest = manifest
     await db.flush()
     await db.refresh(export)

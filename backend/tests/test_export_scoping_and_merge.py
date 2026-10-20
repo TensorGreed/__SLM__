@@ -256,7 +256,7 @@ class LoraExportMergeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(artifacts["source"], "merged_lora")
         self.assertEqual(artifacts["merged_from_adapter"]["base_model"], REAL_MODEL)
 
-        model_dir = Path(manifest["run_dir"]) / "model"
+        model_dir = Path(export.output_path) / manifest["run_dir"] / "model"
         self.assertFalse((model_dir / "adapter_config.json").exists())
         # Saved in the base checkpoint's own dtype (bf16), not fp32.
         import json as _json

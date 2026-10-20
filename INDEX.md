@@ -222,6 +222,7 @@ session-start guidance.
 - `backend/app/services/playground_session_service.py` — Persistence and model-discovery helpers for chat playground.
 - `backend/app/services/plugin_contract_service.py` — Plugin contract orchestration service (priority.md P37, Wave H).
 - `backend/app/services/plugin_contracts.py` — Plugin contract definitions for BrewSLM extension modules (priority.md P37, Wave H).
+- `backend/app/services/portable_paths.py` — Strip machine-specific absolute paths from what an export records.
 - `backend/app/services/post_eval_decision_engine_service.py` — Post-eval decision engine (USER-SUCCESS Epic 7 Phase 7a).
 - `backend/app/services/post_training_eval_service.py` — Automatic baseline-vs-fine-tuned lift eval after every real training run.
 - `backend/app/services/probe_pack_service.py` — Platform-authored held-out probe packs (Coach-stage-2 phase 8).
@@ -934,6 +935,7 @@ session-start guidance.
 - `backend/tests/test_phase9_training_runtime_compat.py` — Compatibility tests for external training runtime adapters.
 - `backend/tests/test_pipeline_refinement.py` — Pipeline plan refinement — Phase 1 tests.
 - `backend/tests/test_playground_trained_run.py` — Playground "experiment" provider — chat with a trained run in-process
+- `backend/tests/test_portable_paths.py` — portable_paths: what an export records carries no machine-specific path.
 - `backend/tests/test_post_eval_decision_engine.py` — Tests for the post-eval decision engine service
 - `backend/tests/test_post_training_lift_eval.py` — Automatic post-training lift eval (Wave 1b).
 - `backend/tests/test_probe_pack_generative.py` — Coach-stage-2 phase 10 — generative predict_fn wiring for probes.

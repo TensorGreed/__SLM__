@@ -36,25 +36,9 @@ def _normalize_port(value: int | None) -> int:
 
 
 def _resolve_export_run_dir(export: Export) -> Path | None:
-    manifest = export.manifest if isinstance(export.manifest, dict) else {}
-    run_dir = manifest.get("run_dir")
-    if isinstance(run_dir, str) and run_dir.strip():
-        candidate = Path(run_dir).expanduser()
-        if candidate.exists() and candidate.is_dir():
-            return candidate
+    from app.services.export_service import _resolve_export_run_dir_from_export
 
-    output_path = Path(export.output_path).expanduser() if export.output_path else None
-    if output_path is None or not output_path.exists():
-        return None
-
-    latest_run = output_path / "LATEST_RUN"
-    if latest_run.exists():
-        token = latest_run.read_text(encoding="utf-8").strip()
-        if token:
-            candidate = output_path / f"run-{token}"
-            if candidate.exists() and candidate.is_dir():
-                return candidate
-    return None
+    return _resolve_export_run_dir_from_export(export)
 
 
 def _format_cmd(cmd: list[str]) -> str:

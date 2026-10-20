@@ -75,11 +75,16 @@ class FakeHubApi:
         self.calls.append(("upload_file", kw))
 
 
+def _uploaded(api: FakeHubApi, path_in_repo: str) -> str:
+    body = next(c[1]["path_or_fileobj"] for c in api.calls if c[0] == "upload_file" and c[1]["path_in_repo"] == path_in_repo)
+    return body.decode("utf-8") if isinstance(body, bytes) else Path(body).read_text(encoding="utf-8")
+
+
 def _project() -> int:
     return client.post("/api/projects", json={"name": f"hub-{time.time_ns()}", "description": "x"}).json()["id"]
 
 
-def _export(pid: int, root: Path) -> tuple[int, dict]:
+def _export(pid: int, root: Path) -> tuple[int, dict, Path]:
     from app.services.export_service import create_export, run_export
 
     async def _go():
@@ -95,7 +100,7 @@ def _export(pid: int, root: Path) -> tuple[int, dict]:
             export = await run_export(db, pid, export.id, run_smoke_tests=False)
             await db.commit()
             assert export.status == ExportStatus.COMPLETED, export.manifest
-            return export.id, export.manifest
+            return export.id, export.manifest, Path(export.output_path) / export.manifest["run_dir"]
 
     return asyncio.run(_go())
 
@@ -104,8 +109,7 @@ class PublishServiceTests(unittest.TestCase):
     def test_publish_uploads_model_dir_and_records_on_the_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
             pid = _project()
-            export_id, manifest = _export(pid, Path(tmp))
-            run_dir = Path(manifest["run_dir"])
+            export_id, manifest, run_dir = _export(pid, Path(tmp))
             api = FakeHubApi()
 
             async def _go():
@@ -132,6 +136,27 @@ class PublishServiceTests(unittest.TestCase):
             self.assertEqual(on_disk["hub_publish"]["repo_id"], "me/tagger")
             listed = client.get(f"/api/projects/{pid}/export/list").json()
             self.assertEqual(listed[0]["id"], export_id)
+            # The shipped manifest names the run dir, never its absolute path.
+            shipped = _uploaded(api, "brewslm/manifest.json")
+            self.assertEqual(json.loads(shipped)["run_dir"], run_dir.name)
+            self.assertNotIn(str(run_dir.parent), shipped)
+
+    def test_an_older_absolute_path_manifest_is_scrubbed_on_upload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pid = _project()
+            export_id, manifest, run_dir = _export(pid, Path(tmp))
+            old = dict(manifest, run_dir=str(run_dir), note=f"model directory must exist at '{run_dir}/model'.")
+            (run_dir / "manifest.json").write_text(json.dumps(old), encoding="utf-8")
+            api = FakeHubApi()
+
+            async def _go():
+                async with async_session_factory() as db:
+                    return await hub.publish_export_to_hub(db, pid, export_id, repo_id="me/tagger", api=api)
+
+            asyncio.run(_go())
+            shipped = json.loads(_uploaded(api, "brewslm/manifest.json"))
+            self.assertEqual(shipped["run_dir"], ".")
+            self.assertEqual(shipped["note"], "model directory must exist at 'model'.")
 
     def test_route_maps_errors(self):
         pid = _project()

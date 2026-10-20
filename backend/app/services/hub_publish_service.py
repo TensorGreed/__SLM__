@@ -3,7 +3,7 @@
 The export's ``model/`` directory (weights, tokenizer, ``README.md`` model
 card, ``thresholds.json`` …) becomes the repo root; ``manifest.json`` and
 ``RELEASE_NOTES.md`` go under ``brewslm/`` so the provenance travels with
-the model. The card's front matter gains ``license`` / ``language`` when it
+the model, with machine paths made relative (``portable_paths``). The card's front matter gains ``license`` / ``language`` when it
 has none (the Hub wants them; the card builder never guesses a licence).
 The publication is recorded on the export's manifest (``hub_publish``:
 repo id, URL, commit, time) — on disk and in the DB.
@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.export import Export, ExportFormat, ExportStatus
+from app.services.portable_paths import portable_text
 
 REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 DEFAULT_LICENSE = "mit"
@@ -160,10 +161,12 @@ async def publish_export_to_hub(
     for name in PROVENANCE_FILES:
         src = run_dir / name
         if src.exists():
+            # Uploaded as a scrubbed copy: an export made before manifests
+            # stored relative paths still carries the builder's home dir.
             api.upload_file(
                 repo_id=repo_id,
                 repo_type="model",
-                path_or_fileobj=str(src),
+                path_or_fileobj=portable_text(src.read_text(encoding="utf-8"), run_dir).encode("utf-8"),
                 path_in_repo=f"{PROVENANCE_DIR}/{name}",
                 commit_message=f"{message}: {name}",
             )
