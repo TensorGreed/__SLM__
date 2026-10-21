@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import time
 import unittest
 from pathlib import Path
@@ -526,6 +527,82 @@ class DocumentsQaFlowTests(unittest.TestCase):
         self.assertEqual(summary.eval_rejected, {"deictic": summary.passages_used})
         self.assertTrue(any("dropped from the answer key" in w and "pointed at the passage" in w for w in summary.warnings), summary.warnings)
         self.assertEqual(summary.as_dict()["eval_rejected"], {"deictic": summary.passages_used})
+
+    def test_questions_that_point_at_the_passage_are_repaired_before_any_row_is_kept(self):
+        """A pure attribution ("…, according to the passage?") is cut by code;
+        any other reference to the passage goes back to the model in one
+        rewrite call per passage; nothing saved points at the passage."""
+        self._ingest("policy.docx", POLICY)
+        rewrite_prompts: list[str] = []
+
+        class PointingBackend(FakeBackend):
+            async def complete(self, prompt, **kwargs):
+                if prompt.startswith("Each question below"):
+                    rewrite_prompts.append(prompt)
+                    count = len(re.findall(r"^\d+\. ", prompt, flags=re.MULTILINE))
+                    section = int(re.search(r"Section (\d+):", prompt).group(1))
+                    return json.dumps({"questions": [f"What does section {section} define as a qualifying leave (rewrite {i})?" for i in range(count)]})
+                payload = json.loads(await super().complete(prompt, **kwargs))
+                pairs = payload["pairs"]
+                pairs[0]["question"] = pairs[0]["question"].rstrip("?") + ", according to the passage?"
+                pairs[1]["question"] = "What does the passage define as a notice period?"
+                payload["eval"]["question"] = "Who qualifies, as listed in the text?"
+                return json.dumps(payload)
+
+        summary = self._run(train=False, max_passages=10, backend_override=PointingBackend())
+        used = summary.passages_used
+        self.assertEqual(summary.questions_repaired, {"stripped": used, "rewritten": 2 * used})
+        self.assertEqual(len(rewrite_prompts), used)  # one rewrite call per passage, both questions in it
+        self.assertEqual(summary.pairs_rejected, {})
+        self.assertEqual(summary.answer_key_rows, used)
+        self.assertEqual(summary.as_dict()["questions_repaired"], summary.questions_repaired)
+        synth = [r for r in self._rows("synthetic/synthetic.jsonl") if r.get("synth_source") == flow.FLOW_SOURCE]
+        gold = self._rows("gold/gold_dev.jsonl")
+        self.assertTrue(synth and gold)
+        self.assertFalse([r["question"] for r in synth + gold if flow.is_deictic(r["question"])])
+        self.assertTrue(any(r["question"].endswith("each year?") for r in synth), "the stripped question keeps its own words")
+
+    def test_a_question_the_rewrite_cannot_fix_is_dropped_and_counted(self):
+        self._ingest("policy.docx", POLICY)
+
+        class StubbornBackend(FakeBackend):
+            async def complete(self, prompt, **kwargs):
+                if prompt.startswith("Each question below"):
+                    return json.dumps({"questions": ["What does the passage define?"]})  # still deictic
+                payload = json.loads(await super().complete(prompt, **kwargs))
+                payload["pairs"][1]["question"] = "What does the passage define as a notice period?"
+                return json.dumps(payload)
+
+        summary = self._run(train=False, max_passages=10, backend_override=StubbornBackend())
+        used = summary.passages_used
+        self.assertEqual(summary.pairs_rejected, {"deictic": used})
+        self.assertEqual(summary.training_pairs, 2 * used)
+        self.assertEqual(summary.answer_key_rows, used)  # the eval questions were fine
+        self.assertTrue(any("training questions were dropped" in w for w in summary.warnings), summary.warnings)
+
+    def test_strip_and_rewrite_helpers(self):
+        strip = flow.strip_passage_reference
+        self.assertEqual(strip("Who can claim the ACTC according to this passage?"), "Who can claim the ACTC?")
+        self.assertEqual(strip("What are the ways to pay, according to the passage?"), "What are the ways to pay?")
+        self.assertEqual(strip("According to the text, when is the return due?"), "When is the return due?")
+        # A reference that carries meaning is left for the model.
+        for question in ("What does the passage define as identity theft?", "Which states are listed in the text?",
+                         "How much is the standard deduction for 2025?"):
+            self.assertEqual(strip(question), question)
+        self.assertTrue(flow.is_deictic("Who can claim it according to the excerpt?"))
+        self.assertFalse(flow.is_deictic("Who can claim the additional child tax credit?"))
+
+        prompt = flow.build_rewrite_prompt("Section 3: text.", ["Q one about the passage?", "Q two in the text?"])
+        self.assertIn("1. Q one about the passage?\n2. Q two in the text?", prompt)
+        self.assertIn("<passage>", prompt)
+        ok = json.dumps({"questions": ["Who files Form 1040?", "What does the passage say?"]})
+        self.assertEqual(flow.parse_rewrite_output(ok, 2), ["Who files Form 1040?", None])
+        self.assertEqual(flow.parse_rewrite_output(ok, 3), [None, None, None])  # wrong count: order untrusted
+        self.assertEqual(flow.parse_rewrite_output("garbage", 1), [None])
+        # Every question, not only the evaluation one, must stand on its own.
+        instructions = flow.build_passage_prompt("text", 3)
+        self.assertIn("Every question — the pairs and the evaluation question", instructions)
+        self.assertIn("according to the passage", instructions)
 
     def test_parse_output_tolerates_fences_and_drops_duplicates(self):
         raw = '```json\n{"pairs": [{"question": "What is the cap?", "answer": "Ten."}, {"question": "what is the cap?", "answer": "x"}], "eval": {"question": "What is the cap?", "answer": "Ten."}}\n```'

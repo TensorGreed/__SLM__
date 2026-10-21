@@ -197,9 +197,13 @@ def _passage_instructions(pairs_per_passage: int) -> str:
         "each answerable from the passage alone. Vary what they ask about (who, what, when, why, how much, "
         "which rule applies). Then write ONE more evaluation question about the same passage that none of "
         "the pairs already asks, with its answer.\n\n"
+        "Every question — the pairs and the evaluation question — will be asked by someone who has never seen "
+        "this passage, so each must stand on its own: name the thing you are asking about (the section, the "
+        "rule, the form, the person) and never refer to the passage itself — no \"according to the passage\", "
+        "\"this passage\", \"the text\", \"this subsection\", \"mentioned above\" or \"listed here\". "
+        "Write \"Who can claim the additional child tax credit?\", not \"Who can claim the credit according "
+        "to the passage?\".\n\n"
         "The evaluation question will be put to a model that has this passage in front of it, so:\n"
-        "- it must stand on its own — never say \"this passage\", \"this subsection\", \"mentioned above\" "
-        "or \"listed\"; name the thing you are asking about (the section, the rule, the person);\n"
         "- its answer must be quotable: the passage's own complete statement of the fact, in the passage's "
         "words — not a selection of some items from a list, not a summary, nothing the passage does not say;\n"
         "- the passage may begin or end in the middle of a sentence; never build the evaluation question on a "
@@ -271,6 +275,81 @@ def eval_pair_rejection(eval_pair: dict[str, str] | None, passage_text: str) -> 
     if support is not None and support < EVAL_ANSWER_SUPPORT_MIN:
         return "unsupported"
     return None
+
+
+def is_deictic(question: str) -> bool:
+    """The question points at the passage / the prompt instead of naming
+    what it asks about."""
+    return bool(_DEICTIC_RE.search(question or ""))
+
+
+# A pure attribution — "…, according to the passage?" / "According to this
+# text, …" — adds nothing a reader needs: the question means the same
+# without it, so it is cut by code. Any other reference to the passage
+# ("What does the passage define as …", "Which states are listed in the
+# text?") carries meaning and goes to the model to rewrite.
+_PASSAGE_NOUN = r"(?:the|this|that|the given|the provided)\s+(?:passage|text|excerpt|extract|document|paragraph|snippet)"
+_ATTRIBUTION_TAIL_RE = re.compile(
+    r",?\s+(?:according to|as (?:stated|described|explained|given) in)\s+" + _PASSAGE_NOUN + r"\s*(?=[?.!]?\s*$)",
+    flags=re.IGNORECASE,
+)
+_ATTRIBUTION_HEAD_RE = re.compile(
+    r"^\s*(?:according to|based on|as (?:stated|described) in)\s+" + _PASSAGE_NOUN + r"\s*,\s*",
+    flags=re.IGNORECASE,
+)
+
+
+def strip_passage_reference(question: str) -> str:
+    """``question`` without a pure attribution to the passage (unchanged
+    when it has none)."""
+    original = (question or "").strip()
+    stripped = _ATTRIBUTION_TAIL_RE.sub("", _ATTRIBUTION_HEAD_RE.sub("", original)).strip()
+    if stripped == original or len(stripped) < 8:
+        return original
+    stripped = stripped[0].upper() + stripped[1:]
+    if not stripped.endswith(("?", ".", "!")):
+        stripped += "?"
+    return stripped
+
+
+_REWRITE_SYSTEM_PROMPT = "You rewrite questions so they stand on their own. Reply with JSON only."
+_REWRITE_SCHEMA = {
+    "type": "object",
+    "properties": {"questions": {"type": "array", "items": {"type": "string"}}},
+    "required": ["questions"],
+}
+
+
+def build_rewrite_prompt(passage_text: str, questions: list[str]) -> str:
+    """Ask the generation model to rewrite questions that point at the
+    passage so they name what they ask about — same meaning, same answer."""
+    numbered = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
+    return (
+        "Each question below was written about this passage but refers to the passage instead of naming what "
+        "it asks about. Rewrite each one so it stands on its own for someone who has never seen the passage: "
+        "name the thing it asks about (the rule, the form, the credit, the person), keep its meaning, so the same "
+        "answer still answers it. Never mention the passage, the text, the excerpt or the document.\n\n"
+        f"<passage>\n{passage_text.strip()[:MAX_PASSAGE_CHARS]}\n</passage>\n\n"
+        f"Questions:\n{numbered}\n\n"
+        'Return JSON of the form {"questions": ["...", ...]} with one rewritten question per question above, '
+        "in the same order, and nothing else."
+    )
+
+
+def parse_rewrite_output(raw: str | None, count: int) -> list[str | None]:
+    """One rewritten question per input (None where the rewrite is unusable:
+    missing, too short, or still pointing at the passage). A reply with the
+    wrong number of questions is unusable as a whole — the order can't be
+    trusted."""
+    payload = _extract_json(raw or "")
+    items = payload.get("questions") if isinstance(payload, dict) else None
+    if not isinstance(items, list) or len(items) != count:
+        return [None] * count
+    out: list[str | None] = []
+    for item in items:
+        text = str(item or "").strip()
+        out.append(text if len(text) >= 8 and not is_deictic(text) else None)
+    return out
 
 
 def _extract_json(raw: str) -> Any:
@@ -345,6 +424,13 @@ class FlowSummary:
     warnings: list[str] = field(default_factory=list)
     # Evaluation pairs the quotable gate dropped, by reason (deictic / unsupported).
     eval_rejected: dict[str, int] = field(default_factory=dict)
+    # Questions that pointed at the passage and were repaired: a pure
+    # attribution cut by code ("stripped"), the rest rewritten by the
+    # generation model ("rewritten").
+    questions_repaired: dict[str, int] = field(default_factory=dict)
+    # Training pairs dropped because their question still pointed at the
+    # passage after the repair, by reason.
+    pairs_rejected: dict[str, int] = field(default_factory=dict)
     # The pre-training gate: what the base model + passages gets right.
     passages_gate: dict[str, Any] | None = None
     # The run was trained to answer from the retrieved passages.
@@ -361,6 +447,8 @@ class FlowSummary:
             "training_pairs": self.training_pairs,
             "answer_key_rows": self.answer_key_rows,
             "eval_rejected": dict(self.eval_rejected),
+            "questions_repaired": dict(self.questions_repaired),
+            "pairs_rejected": dict(self.pairs_rejected),
             "backend": self.backend,
             "recipe_id": self.recipe_id,
             "split": self.split,
@@ -566,18 +654,42 @@ async def _generate_replies(
     and replies already there (same backend + same prompt) are reused, so a
     run killed mid-way (a crash, a power cut, a backend restart) resumes
     instead of paying for every passage again."""
+    calls = [_generation_call(p["text"], pairs_per_passage, domain_hint, llm) for p in chosen]
+    return await _complete_calls(
+        llm, calls, report, backend_label,
+        ids=[p.get("id") for p in chosen], schema=_RESPONSE_SCHEMA, what="Writing questions",
+        start=0.05, width=0.55, concurrency=concurrency, checkpoint=checkpoint,
+    )
+
+
+async def _complete_calls(
+    llm: Any,
+    calls: list[dict[str, Any]],
+    report: Callable[[float, str], Awaitable[None]],
+    backend_label: str,
+    *,
+    ids: list[Any],
+    schema: dict[str, Any],
+    what: str,
+    start: float,
+    width: float,
+    concurrency: int = 1,
+    checkpoint: Path | None = None,
+) -> list[str | None]:
+    """One reply per call, one call per passage (None where it failed):
+    batch first when the backend batches, then direct calls ``concurrency``
+    at a time; every reply checkpointed (see ``_generate_replies``)."""
     from app.services.span_relabel_service import uses_message_batch
 
-    calls = [_generation_call(p["text"], pairs_per_passage, domain_hint, llm) for p in chosen]
     keys = [_reply_key(backend_label, call) for call in calls]
     saved = _load_reply_checkpoint(checkpoint) if checkpoint is not None else {}
     raws: list[str | None] = [saved.get(key) for key in keys]
     resumed = sum(1 for raw in raws if raw is not None)
     if resumed:
-        await report(0.05, f"Resuming: {resumed}/{len(chosen)} passages already written ({backend_label})")
-    if chosen and resumed < len(chosen) and uses_message_batch(llm):
+        await report(start, f"Resuming: {resumed}/{len(calls)} passages already written ({backend_label})")
+    if calls and resumed < len(calls) and uses_message_batch(llm):
         async def _progress(message: str, done: int, total: int) -> None:
-            await report(0.05 + 0.5 * done / max(1, total), f"Writing questions for {total} passages ({backend_label}): {message}")
+            await report(start + width * 0.9 * done / max(1, total), f"{what} for {total} passages ({backend_label}): {message}")
 
         todo = [i for i, raw in enumerate(raws) if raw is None]
         try:
@@ -603,21 +715,77 @@ async def _generate_replies(
             args = dict(calls[index])
             prompt = args.pop("prompt")
             try:
-                raws[index] = await llm.complete(prompt, **args, response_schema=_RESPONSE_SCHEMA)
+                raws[index] = await llm.complete(prompt, **args, response_schema=schema)
             except SynthBackendError as exc:
-                _LOG.warning("documents_qa_flow passage %s failed: %s", chosen[index].get("id"), exc)
+                _LOG.warning("documents_qa_flow passage %s failed (%s): %s", ids[index], what, exc)
                 raws[index] = None
             if raws[index] is not None and checkpoint is not None:
                 _append_reply(checkpoint, keys[index], raws[index])
             done["n"] += 1
             resumed_note = f", {resumed} resumed" if resumed else ""
             await report(
-                0.05 + 0.55 * done["n"] / max(1, len(pending)),
-                f"Writing questions: {done['n']}/{len(pending)} passages done ({backend_label}{at_once}{resumed_note})",
+                start + width * done["n"] / max(1, len(pending)),
+                f"{what}: {done['n']}/{len(pending)} passages done ({backend_label}{at_once}{resumed_note})",
             )
 
     await asyncio.gather(*(_one(i) for i in pending))
     return raws
+
+
+def _rewrite_call(passage_text: str, questions: list[str]) -> dict[str, Any]:
+    return {
+        "prompt": build_rewrite_prompt(passage_text, questions),
+        "system_prompt": _REWRITE_SYSTEM_PROMPT,
+        "max_tokens": 120 * len(questions) + 200,
+        "temperature": 0.2,
+    }
+
+
+async def repair_deictic_questions(
+    llm: Any,
+    parsed: list[tuple[dict[str, Any], list[dict[str, str]], dict[str, str] | None]],
+    report: Callable[[float, str], Awaitable[None]],
+    backend_label: str,
+    *,
+    concurrency: int = 1,
+    checkpoint: Path | None = None,
+) -> dict[str, int]:
+    """Repair, in place, every question in ``parsed`` ((passage, pairs,
+    eval_pair) per passage) that points at the passage: a pure attribution
+    is cut by code; the rest go back to ``llm`` in one rewrite call per
+    passage. A question the rewrite can't fix is left as it was (the caller
+    drops it). Returns ``{"stripped": n, "rewritten": n}``."""
+    counts = {"stripped": 0, "rewritten": 0}
+    todo: list[tuple[int, list[dict[str, str]]]] = []
+    for index, (_passage, pairs, eval_pair) in enumerate(parsed):
+        items = list(pairs) + ([eval_pair] if eval_pair is not None else [])
+        still: list[dict[str, str]] = []
+        for item in items:
+            if not is_deictic(item["question"]):
+                continue
+            fixed = strip_passage_reference(item["question"])
+            if fixed != item["question"] and not is_deictic(fixed):
+                item["question"] = fixed
+                counts["stripped"] += 1
+            else:
+                still.append(item)
+        if still:
+            todo.append((index, still))
+    if not todo or llm is None:
+        return counts
+    calls = [_rewrite_call(parsed[i][0]["text"], [item["question"] for item in items]) for i, items in todo]
+    raws = await _complete_calls(
+        llm, calls, report, backend_label,
+        ids=[parsed[i][0].get("id") for i, _ in todo], schema=_REWRITE_SCHEMA,
+        what="Rewriting questions that point at the passage", start=0.60, width=0.02,
+        concurrency=concurrency, checkpoint=checkpoint,
+    )
+    for (_index, items), raw in zip(todo, raws):
+        for item, rewritten in zip(items, parse_rewrite_output(raw, len(items))):
+            if rewritten is not None:
+                item["question"] = rewritten
+                counts["rewritten"] += 1
+    return counts
 
 
 def grow_test_set(
@@ -870,6 +1038,7 @@ async def run_documents_qa_flow(
         llm, chosen, pairs_per_passage, domain_hint, report, backend_label,
         concurrency=int(concurrency), checkpoint=checkpoint,
     )
+    parsed: list[tuple[dict[str, Any], list[dict[str, str]], dict[str, str] | None]] = []
     for index, passage in enumerate(chosen):
         raw = raws[index]
         if raw is None:
@@ -883,6 +1052,15 @@ async def run_documents_qa_flow(
             else:
                 _LOG.warning("documents_qa_flow passage %s: unparseable reply: %r", passage["id"], str(raw)[:200])
             continue
+        parsed.append((passage, pairs, eval_pair))
+    # A question that points at the passage ("… according to the passage?")
+    # is unanswerable as asked by a user who never saw it — repaired before
+    # any row is kept (training pairs too, not only the answer key).
+    questions_repaired = await repair_deictic_questions(
+        llm, parsed, report, backend_label, concurrency=int(concurrency), checkpoint=checkpoint,
+    )
+    pairs_rejected: dict[str, int] = {}
+    for passage, pairs, eval_pair in parsed:
         provenance = {
             "source_doc": passage.get("source_doc"),
             "source_document_id": passage.get("source_document_id"),
@@ -891,6 +1069,9 @@ async def run_documents_qa_flow(
             "generated_by": backend_label,
         }
         for pair in pairs:
+            if is_deictic(pair["question"]):
+                pairs_rejected["deictic"] = pairs_rejected.get("deictic", 0) + 1
+                continue
             training_pairs.append({**pair, **provenance})
         if eval_pair is not None:
             reason = eval_pair_rejection(eval_pair, passage["text"])
@@ -909,6 +1090,8 @@ async def run_documents_qa_flow(
         answer_key_rows=len(answer_key),
         backend=backend_label,
         eval_rejected=dict(eval_rejected),
+        questions_repaired={k: v for k, v in questions_repaired.items() if v},
+        pairs_rejected=dict(pairs_rejected),
     )
     summary._llms.append(llm)
     if eval_rejected:
@@ -920,6 +1103,11 @@ async def run_documents_qa_flow(
         summary.warnings.append(
             f"{sum(eval_rejected.values())} evaluation questions were dropped from the answer key: "
             + "; ".join(parts) + ". A reader with the passage in front of it couldn't have been scored fairly on them."
+        )
+    if pairs_rejected.get("deictic"):
+        summary.warnings.append(
+            f"{pairs_rejected['deictic']} training questions were dropped: they still pointed at the passage "
+            "after the rewrite, and a user who never saw it couldn't ask them."
         )
     if failed:
         note = f"{failed} of {len(chosen)} passages produced no usable questions."

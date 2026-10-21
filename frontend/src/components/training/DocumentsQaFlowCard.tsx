@@ -31,6 +31,11 @@ function errorText(err: unknown): string {
     return data?.message ?? (typeof data?.detail === 'string' ? data.detail : 'Could not start the flow.');
 }
 
+/** Questions repaired because they pointed at the passage (code + model). */
+function repairedCount(result: { questions_repaired?: Record<string, number> | null }): number {
+    return Object.values(result.questions_repaired ?? {}).reduce((a, b) => a + b, 0);
+}
+
 export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) {
     const [preview, setPreview] = useState<DocumentsQaFlowPreview | null>(null);
     const [hidden, setHidden] = useState(false);
@@ -211,6 +216,12 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                     {result.eval_rejected && Object.values(result.eval_rejected).some((n) => n > 0) ? (
                         <span data-testid="documents-qa-flow-eval-rejected" title="Dropped before they became answer-key rows: a reader with the passage in front of it could not have been scored fairly on them.">
                             {' '}({Object.values(result.eval_rejected).reduce((a, b) => a + b, 0)} dropped: a reader couldn't quote the answer from the passage)
+                        </span>
+                    ) : null}
+                    {repairedCount(result) > 0 ? (
+                        <span data-testid="documents-qa-flow-repaired" title="Questions that said &quot;according to the passage&quot; or &quot;this passage&quot; were rewritten to name what they ask about: a user never sees the passage.">
+                            {`; ${repairedCount(result)} questions rewritten to stop pointing at the passage`}
+                            {(result.pairs_rejected?.deictic ?? 0) > 0 ? `, ${result.pairs_rejected?.deictic} dropped` : ''}
                         </span>
                     ) : null}
                     {result.split

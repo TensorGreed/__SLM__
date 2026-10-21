@@ -118,6 +118,18 @@ describe('DocumentsQaFlowCard', () => {
         expect(screen.getByTestId('documents-qa-flow-eval-rejected')).toHaveTextContent("(3 dropped: a reader couldn't quote the answer from the passage)");
         expect(result).toHaveTextContent('Training run #31 started');
         expect(result).toHaveTextContent('2 of 60 passages produced no usable questions.');
+        expect(screen.queryByTestId('documents-qa-flow-repaired')).not.toBeInTheDocument();
+    });
+
+    it('says how many questions were rewritten to stop pointing at the passage', async () => {
+        apiMock.get.mockResolvedValue({ data: ELIGIBLE });
+        jobsState.jobs = [{
+            id: 12, kind: 'documents_qa_flow', project_id: 1, status: 'succeeded',
+            result: { training_pairs: 170, answer_key_rows: 58, passages_used: 58, backend: 'ollama:gpt-oss:120b', split: null, experiment_id: null, stopped_reason: 'training skipped (train=False)', warnings: [],
+                questions_repaired: { stripped: 30, rewritten: 12 }, pairs_rejected: { deictic: 4 } },
+        }];
+        render(<DocumentsQaFlowCard projectId={1} />);
+        expect(await screen.findByTestId('documents-qa-flow-repaired')).toHaveTextContent('; 42 questions rewritten to stop pointing at the passage, 4 dropped');
     });
 
     it('says when retrieval was promising and training went ahead', async () => {

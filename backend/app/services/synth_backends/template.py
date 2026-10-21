@@ -56,7 +56,9 @@ def passage_pairs(passage: str, pairs_per_passage: int) -> dict[str, Any]:
         words = sentence.split()
         lead = " ".join(words[:9]).rstrip(",.;:")
         items.append({
-            "question": f"What does the passage say about \"{lead}\" (part {index + 1})?",
+            # Names what it asks about, never "the passage" — the flow drops
+            # questions that point at the passage.
+            "question": f"What is said about \"{lead}\" (part {index + 1})?",
             "answer": sentence,
         })
     return {"pairs": items[:pairs_per_passage], "eval": items[pairs_per_passage]}

@@ -46,6 +46,13 @@ export interface DocumentsQaFlowResult {
      *  by reason: "deictic" (pointed at the passage) / "unsupported" (the
      *  passage doesn't state the answer). */
     eval_rejected?: Record<string, number> | null;
+    /** Questions that pointed at the passage and were repaired: "stripped"
+     *  (a pure "according to the passage" cut by code) / "rewritten" (by the
+     *  generation model). */
+    questions_repaired?: Record<string, number> | null;
+    /** Training pairs dropped because their question still pointed at the
+     *  passage after the rewrite, by reason ("deictic"). */
+    pairs_rejected?: Record<string, number> | null;
     backend: string;
     split: { train: number | null; val: number | null; test: number | null; dedup_dropped: number | null } | null;
     experiment_id: number | null;

@@ -1923,7 +1923,19 @@ runs real CPU inference). ~4 min locally.
   mentions", "mentioned above"…) / `"unsupported"` (`answer_support` < 
   `EVAL_ANSWER_SUPPORT_MIN` 0.7 of content words in the passage) / None;
   dropped keys → `FlowSummary.eval_rejected` {reason: n} + a warning; the
-  passage keeps its training pairs. Test fakes must return quotable eval
+  passage keeps its training pairs. **Every question stands on its own**
+  (prompt rule for pairs + eval): `repair_deictic_questions` runs after parsing,
+  before any row is kept — `strip_passage_reference` cuts a pure attribution
+  (`_ATTRIBUTION_TAIL_RE` / `_HEAD_RE`: "…, according to the passage?"), the rest
+  of `is_deictic` questions go back to the generation model, one
+  `build_rewrite_prompt` call per passage (via `_complete_calls`, the shared
+  batch/concurrency/checkpoint runner `_generate_replies` now uses), parsed by
+  `parse_rewrite_output` (wrong count → all None). Still deictic → training pair
+  dropped (`pairs_rejected`), eval → the gate. Summary `questions_repaired`
+  {stripped, rewritten}; card "N questions rewritten…". The template backend's
+  questions are worded "What is said about …" (not "the passage") so the
+  CI documents gate keeps its pairs. gpt-oss:120b on Pub 17: 280/3190 train +
+  292/1064 eval questions pointed at the passage. Test fakes must return quotable eval
   answers (the flow suite's FakeBackend quotes the passage).
   **Sizing** (`size_for_decision(available_passages, pairs_per_passage)`):
   `target_test_rows()` = ceil((2·`DIFF_SD` 0.5 / `DECISION_GAP` 0.15)²) = 45
