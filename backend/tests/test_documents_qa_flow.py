@@ -629,6 +629,39 @@ class FakeTeacher:
         return f"From the passages: {prompt[:40]} [1]"
 
 
+class RevisingTeacher(FakeTeacher):
+    """A FakeTeacher that also answers revision prompts: a corrected answer,
+    unless the question is in ``stubborn`` (its revision stays wrong)."""
+
+    revised: list[dict] = []
+    stubborn: set[str] = set()
+
+    async def complete(self, prompt, *, system_prompt=None, max_tokens=1024, temperature=0.7, **kwargs):
+        if "YOUR PREVIOUS ANSWER:" not in prompt:
+            return await FakeTeacher.complete(self, prompt, system_prompt=system_prompt, max_tokens=max_tokens, temperature=temperature, **kwargs)
+        question = prompt.split("QUESTION:\n", 1)[1].split("\n\n", 1)[0]
+        RevisingTeacher.revised.append({"question": question, "prompt": prompt, "system_prompt": system_prompt})
+        if question in RevisingTeacher.stubborn:
+            return "Still the same answer [1]"
+        return f"Corrected: the right figure for {question[:30]} [2]"
+
+
+class FakeCritic:
+    """Writes the critique as JSON; records what it was shown."""
+
+    name = "fake-critic"
+
+    def __init__(self) -> None:
+        self.prompts: list[dict] = []
+
+    def describe(self) -> str:
+        return "fake:critic"
+
+    async def complete(self, prompt, *, system_prompt=None, max_tokens=1024, temperature=0.7, **kwargs):
+        self.prompts.append({"prompt": prompt, "system_prompt": system_prompt})
+        return '{"verdict": "partial", "feedback": "Name the carry-over cap."}'
+
+
 def _fake_retrieve(question, retrieval):
     return [
         {"payload": {"text": f"Passage {i} about {question}", "source_doc": "policy.docx", "chunk_id": i}, "score": 1.0}
@@ -870,6 +903,167 @@ class FlowGrowthSweepTeacherTests(DocumentsQaFlowTests.__bases__[0]):
         with self.assertRaises(ValueError):
             self._run(**kwargs, teacher_filter_keep="strict")
 
+    def _revise_fixture(self):
+        """Pairs + split, a teacher whose revisions fix every dropped answer
+        but the ``stubborn`` one, and a judge that grades "carries" answers
+        wrong until they are corrected."""
+        from app.services.answer_judge_service import ResolvedJudge
+
+        self._ingest("policy.docx", POLICY)
+        self._run(train=False, max_passages=20)
+        FakeTeacher.asked = []
+        RevisingTeacher.revised = []
+        RevisingTeacher.stubborn = set()
+
+        async def _judge(question, reference, prediction):
+            if "carries" in question.lower() and "Corrected" not in prediction:
+                return 0.0, "wrong", "contradicts the reference", 0
+            return 1.0, "correct", "matches", 0
+
+        async def _launcher(project_id, experiment_id, db):
+            return {"status": "running"}
+
+        return dict(
+            train=True, reuse_existing=True, start_training=_launcher,
+            answers_from_teacher=True, teacher_backend_override=RevisingTeacher(),
+            teacher_retrieve_fn=_fake_retrieve, teacher_filter_judge=ResolvedJudge(label="fake:judge", judge=_judge),
+        )
+
+    def test_revise_loop_fixes_dropped_answers_records_them_and_resumes(self):
+        from app.services import teacher_passage_answers_service as tpa
+
+        kwargs = self._revise_fixture()
+        # rounds=0 (the default): today's behaviour, nothing revised.
+        base = self._run(**kwargs).teacher
+        self.assertEqual(base["revise"], {"rounds": 0})
+        self.assertNotIn("revise", base["counts"]["train"])
+        dropped_before = base["counts"]["train"]["filter_dropped"]
+        self.assertGreater(dropped_before, 1)
+        self.assertFalse(any(r.get("revised") for r in tpa.load_answers(self.pid).values()))
+        self.assertEqual(RevisingTeacher.revised, [])
+        dropped_questions = sorted(r["question"] for r in tpa.load_answers(self.pid).values() if r.get("dropped"))
+        RevisingTeacher.stubborn = {dropped_questions[0]}
+
+        # One round, no critic: the judge's reason is the feedback.
+        FakeTeacher.asked = []
+        one = self._run(**kwargs, teacher_revise_rounds=1).teacher
+        self.assertEqual(one["revise"], {"rounds": 1, "critic": "fake:judge", "judge": "fake:judge", "critic_is_judge": True})
+        revise = one["counts"]["train"]["revise"]
+        self.assertEqual(revise, {"attempted": dropped_before, "fixed": dropped_before - 1, "still_dropped": 1, "calls": dropped_before})
+        self.assertEqual(FakeTeacher.asked, [], "no answer is asked again")
+        self.assertEqual(len(RevisingTeacher.revised), dropped_before)
+        first = RevisingTeacher.revised[0]
+        self.assertIn("contradicts the reference", first["prompt"], "the judge's reason is the critique")
+        self.assertIn("YOUR PREVIOUS ANSWER:\nFrom the passages:", first["prompt"])
+        self.assertTrue(first["system_prompt"].startswith("Passages from this project's documents:"))
+        self.assertTrue(first["system_prompt"].endswith(tpa.TEACHER_STYLE_NOTE), "the same system message as the original answer")
+        self.assertEqual(one["counts"]["train"]["filter_dropped"], 1)
+        self.assertEqual(one["counts"]["train"]["filter_by_verdict"].get("wrong"), 1, "the counts describe what trains")
+        answers = tpa.load_answers(self.pid)
+        revised = [r for r in answers.values() if r.get("revised")]
+        self.assertEqual(len(revised), dropped_before)
+        for rec in revised:
+            self.assertTrue(rec["original_answer"].startswith("From the passages:"))
+            self.assertEqual(len(rec["revisions"]), 1)
+            rev = rec["revisions"][0]
+            self.assertEqual((rev["critic"], rev["judge"], rev["round"], rev["feedback_source"]), ("fake:judge", "fake:judge", 1, "judge_reason"))
+            self.assertEqual(rev["feedback"], "contradicts the reference")
+            self.assertEqual(rec["answer"], rev["answer"])
+            self.assertEqual(rec["filter"]["verdict"], rev["verdict"])
+            self.assertTrue(rec["filter"]["revised"])
+            if rec["question"] in RevisingTeacher.stubborn:
+                self.assertTrue(rec["dropped"])
+                self.assertEqual(rec["filter"]["verdict"], "wrong")
+            else:
+                self.assertFalse(rec["dropped"])
+                self.assertTrue(rec["answer"].startswith("Corrected:"))
+                self.assertEqual(rec["filter"]["verdict"], "correct")
+        # The training rows carry the kept revision; the stubborn one stays out.
+        rows, counts = tpa.teacher_rows(self._rows("prepared/train.jsonl"), answers, {"k": 3})
+        self.assertEqual(counts["filtered"], 1)
+        carried = [r for r in rows if "carries" in r["question"].lower()]
+        self.assertEqual(len(carried), dropped_before - 1)
+        self.assertTrue(all(r["answer"].startswith("Corrected:") for r in carried))
+
+        # Resume: the same options make no new call.
+        RevisingTeacher.revised = []
+        again = self._run(**kwargs, teacher_revise_rounds=1).teacher
+        self.assertEqual(RevisingTeacher.revised, [])
+        self.assertEqual(FakeTeacher.asked, [])
+        self.assertEqual(again["counts"]["train"]["revise"], {"attempted": 0, "fixed": 0, "still_dropped": 0, "calls": 0})
+        self.assertEqual(again["counts"]["train"]["filter_dropped"], 1)
+        # A second round re-runs only what is missing: the stubborn answer.
+        two = self._run(**kwargs, teacher_revise_rounds=2).teacher
+        self.assertEqual(two["counts"]["train"]["revise"], {"attempted": 1, "fixed": 0, "still_dropped": 1, "calls": 1})
+        self.assertEqual([r["question"] for r in RevisingTeacher.revised], list(RevisingTeacher.stubborn))
+        stubborn = next(r for r in tpa.load_answers(self.pid).values() if r["question"] in RevisingTeacher.stubborn)
+        self.assertEqual([r["round"] for r in stubborn["revisions"]], [1, 2])
+        self.assertTrue(stubborn["dropped"])
+
+    def test_critic_backend_reads_the_passages_and_its_feedback_reaches_the_teacher(self):
+        from app.services import teacher_passage_answers_service as tpa
+
+        kwargs = self._revise_fixture()
+        critic = FakeCritic()
+        dropped_before = self._run(**kwargs).teacher["counts"]["train"]["filter_dropped"]
+        FakeTeacher.asked = []
+        result = self._run(**kwargs, teacher_revise_rounds=1, teacher_critic_backend_override=critic).teacher
+        self.assertEqual(result["revise"]["critic"], "fake:critic")
+        self.assertFalse(result["revise"]["critic_is_judge"])
+        revise = result["counts"]["train"]["revise"]
+        self.assertEqual(revise["attempted"], dropped_before)
+        self.assertEqual(revise["fixed"], dropped_before)
+        self.assertEqual(revise["calls"], 2 * dropped_before, "one critic call + one teacher call per answer")
+        self.assertEqual(len(critic.prompts), dropped_before)
+        first = critic.prompts[0]
+        self.assertIn("Passage 0 about", first["prompt"], "the critic sees the retrieved passages")
+        self.assertIn("REFERENCE ANSWER", first["prompt"])
+        self.assertIn("ANSWER TO CHECK:\nFrom the passages:", first["prompt"])
+        self.assertEqual(first["system_prompt"], tpa.CRITIQUE_SYSTEM_PROMPT)
+        self.assertTrue(all("Name the carry-over cap." in r["prompt"] for r in RevisingTeacher.revised), "the critic's feedback reaches the revise prompt")
+        rec = next(r for r in tpa.load_answers(self.pid).values() if r.get("revised"))
+        rev = rec["revisions"][0]
+        self.assertEqual((rev["critic"], rev["critic_verdict"], rev["feedback_source"], rev["feedback"]), ("fake:critic", "partial", "critic", "Name the carry-over cap."))
+        # Abstentions were never revised.
+        self.assertFalse(any("notice period" in r["question"] for r in RevisingTeacher.revised))
+        self.assertFalse(any("notice period" in p["prompt"] for p in critic.prompts))
+        # Same critic again: nothing to do.
+        critic.prompts = []
+        RevisingTeacher.revised = []
+        self._run(**kwargs, teacher_revise_rounds=1, teacher_critic_backend_override=critic)
+        self.assertEqual((critic.prompts, RevisingTeacher.revised), ([], []))
+
+    def test_revise_needs_the_filter_and_a_valid_round_count(self):
+        import asyncio
+
+        from app.services import teacher_passage_answers_service as tpa
+        from app.services.answer_judge_service import ResolvedJudge
+
+        kwargs = self._revise_fixture()
+        with self.assertRaises(ValueError) as ctx:
+            self._run(**kwargs, teacher_revise_rounds=1, teacher_filter=False)
+        self.assertIn("teacher_filter", str(ctx.exception))
+        with self.assertRaises(ValueError):
+            self._run(**kwargs, teacher_revise_rounds=3)
+
+        async def _judge(question, reference, prediction):
+            return 0.0, "wrong", "no", 0
+
+        async def _bad_rounds():
+            return await tpa.critique_and_revise([], llm=RevisingTeacher(), judge=ResolvedJudge(label="j", judge=_judge), rounds=3)
+
+        with self.assertRaises(ValueError):
+            asyncio.run(_bad_rounds())
+
+        async def _abstention_skipped():
+            rec = {"question": "q", "reference": "r", "answer": "The passages don't say.", "abstained": True,
+                   "system_prompt": "p", "filter": {"judge": "j", "verdict": "wrong", "reason": "no"}}
+            return await tpa.critique_and_revise([rec], llm=RevisingTeacher(), judge=ResolvedJudge(label="j", judge=_judge), rounds=1), rec
+
+        counts, rec = asyncio.run(_abstention_skipped())
+        self.assertEqual(counts, {"attempted": 0, "fixed": 0, "still_dropped": 0, "calls": 0})
+        self.assertNotIn("revised", rec)
+
     def test_generation_goes_through_one_message_batch(self):
         self._ingest("policy.docx", POLICY)
 
@@ -912,8 +1106,46 @@ class FlowRequestValidationTests(unittest.TestCase):
         bad = client.post(f"/api/projects/{pid}/flows/documents-to-qa", json={"sweep_split": "train"})
         self.assertEqual(bad.status_code, 422)
 
+    def test_revise_needs_the_filter(self):
+        pid = int(client.post("/api/projects", json={"name": f"flow-{uuid4().hex[:6]}"}).json()["id"])
+        resp = client.post(f"/api/projects/{pid}/flows/documents-to-qa",
+                           json={"answers_from_teacher": True, "teacher_revise_rounds": 1, "teacher_filter": False})
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertEqual(resp.json()["error_code"], "REVISE_NEEDS_FILTER")
+        bad = client.post(f"/api/projects/{pid}/flows/documents-to-qa", json={"answers_from_teacher": True, "teacher_revise_rounds": 3})
+        self.assertEqual(bad.status_code, 422)
+
 
 class TeacherFormatTests(unittest.TestCase):
+    def test_critique_and_revise_prompts(self):
+        from app.services import teacher_passage_answers_service as tpa
+
+        prompt = tpa.build_critique_prompt("What is the cap?", "Ten days.", "Twelve days [1].", "Passages from this project's documents:\n[1] Ten days carry.")
+        self.assertTrue(prompt.startswith("Passages from this project's documents:\n[1] Ten days carry."))
+        self.assertIn("QUESTION:\nWhat is the cap?", prompt)
+        self.assertIn("REFERENCE ANSWER (treat as ground truth):\nTen days.", prompt)
+        self.assertIn("ANSWER TO CHECK:\nTwelve days [1].", prompt)
+        self.assertIn('{"verdict": "correct|partial|wrong", "feedback": "..."}', prompt)
+        req = tpa.revise_request("What is the cap?", "PREAMBLE", "Twelve days [1].", "It is ten, not twelve.")
+        self.assertEqual(req["system_prompt"], tpa.teacher_request("What is the cap?", "PREAMBLE")["system_prompt"], "the revision reads the same system message")
+        self.assertEqual((req["max_tokens"], req["temperature"]), (tpa.TEACHER_MAX_TOKENS, 0.0))
+        self.assertIn("QUESTION:\nWhat is the cap?\n\nYOUR PREVIOUS ANSWER:\nTwelve days [1].\n\nFEEDBACK ON IT:\nIt is ten, not twelve.", req["prompt"])
+        self.assertIn("one to three sentences", req["prompt"])
+        self.assertIn("[n]", req["prompt"])
+
+    def test_parse_critique_falls_back_to_the_judges_reason(self):
+        from app.services.teacher_passage_answers_service import parse_critique
+
+        good = parse_critique('{"verdict": "wrong", "feedback": "Misses  the  cap."}', "judge said no")
+        self.assertEqual(good, {"verdict": "wrong", "feedback": "Misses the cap.", "parsed": True})
+        fenced = parse_critique('```json\n{"verdict": "Partial", "feedback": "x"}\n```', "r")
+        self.assertEqual((fenced["verdict"], fenced["feedback"]), ("partial", "x"))
+        embedded = parse_critique('Sure: {"verdict": "maybe", "feedback": "y"} done', "r")
+        self.assertEqual((embedded["verdict"], embedded["feedback"], embedded["parsed"]), (None, "y", True))
+        for raw in ("not json", "", None, "[1, 2]"):
+            self.assertEqual(parse_critique(raw, "judge said no"), {"verdict": None, "feedback": "judge said no", "parsed": False}, raw)
+        self.assertEqual(parse_critique('{"verdict": "wrong"}', "judge said no")["feedback"], "judge said no", "no feedback → the judge's reason")
+
     def test_teacher_answer_is_normalised_to_the_serving_cite_format(self):
         from app.services.teacher_passage_answers_service import normalize_teacher_answer
 

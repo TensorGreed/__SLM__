@@ -49,6 +49,10 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
     /** Targets = a teacher model's answers to the same served passages. */
     const [teacherAnswers, setTeacherAnswers] = useState(false);
     const [teacherBackend, setTeacherBackend] = useState<string | null>(null);
+    /** One critique-and-revise round for teacher answers the checker rejects;
+     *  the critic: null = the checker's own verdict reason, else a cloud pin. */
+    const [reviseAnswers, setReviseAnswers] = useState(false);
+    const [criticBackend, setCriticBackend] = useState<string | null>(null);
     const [useBatch, setUseBatch] = useState(false);
     const [concurrency, setConcurrency] = useState(1);
     /** Keep the current test examples and grow them to resolve `decisionGap`. */
@@ -100,6 +104,8 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                 trainWithPassages: withPassages || teacherAnswers,
                 answersFromTeacher: teacherAnswers,
                 teacherBackend: teacherAnswers ? (teacherBackend ?? backend) : null,
+                teacherReviseRounds: teacherAnswers && reviseAnswers ? 1 : 0,
+                teacherCriticBackend: teacherAnswers && reviseAnswers ? criticBackend : null,
                 useBatch,
                 concurrency,
                 keepTest,
@@ -162,6 +168,23 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                     onChange={setTeacherBackend}
                     disabled={starting}
                     testIdPrefix="documents-qa-flow-teacher"
+                />
+            )}
+            {teacherAnswers && (
+                <label className="documents-qa-flow__option" title="Every training answer the checker (the local answer judge) rejects gets a critique — what is wrong or missing against the pair's reference — and the teacher writes a corrected answer from the same passages; the same checker grades it again and only a passing revision trains. One round. The critique comes from the checker's own verdict by default, or from a critic model you pick.">
+                    <input type="checkbox" checked={reviseAnswers} onChange={(e) => setReviseAnswers(e.target.checked)} data-testid="documents-qa-flow-revise" />
+                    {' '}Revise answers the checker rejects (one round of feedback)
+                </label>
+            )}
+            {teacherAnswers && reviseAnswers && (
+                <GenerationModelPicker
+                    projectId={projectId}
+                    value={criticBackend}
+                    onChange={setCriticBackend}
+                    disabled={starting}
+                    testIdPrefix="documents-qa-flow-critic"
+                    label="Critic model"
+                    localOptionLabel="The checker itself (its verdict's reason, no extra call)"
                 />
             )}
             <label className="documents-qa-flow__option" title="Anthropic models only: every call goes as one Message Batch — half the price, can take up to a few hours.">
@@ -240,7 +263,13 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                         <span data-testid="documents-qa-flow-teacher-result">
                             {' '}Teacher ({result.teacher.teacher}): {result.teacher.usable} usable answers
                             {result.teacher.counts.train ? ` — ${result.teacher.counts.train.abstained} training answers say the passages don't cover it` : ''}
-                            {result.teacher.filter.applied && result.teacher.counts.train ? `, ${result.teacher.counts.train.filter_dropped} dropped as wrong by ${result.teacher.filter.judge}` : ''}.
+                            {result.teacher.filter.applied && result.teacher.counts.train ? `, ${result.teacher.counts.train.filter_dropped} dropped as wrong by ${result.teacher.filter.judge}` : ''}
+                            {result.teacher.counts.train?.revise ? (
+                                <span data-testid="documents-qa-flow-revise-result" title="Answers the checker rejected were critiqued and rewritten by the teacher, then graded again by the same checker; only passing revisions train.">
+                                    {`; ${result.teacher.counts.train.revise.attempted} teacher answers revised, ${result.teacher.counts.train.revise.fixed} fixed`}
+                                    {result.teacher.revise?.critic && !result.teacher.revise.critic_is_judge ? ` (critique by ${result.teacher.revise.critic})` : ''}
+                                </span>
+                            ) : null}.
                         </span>
                     )}
                     {result.warnings.length > 0 && (

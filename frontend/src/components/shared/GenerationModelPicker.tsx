@@ -21,6 +21,10 @@ interface Props {
     disabled?: boolean;
     /** Prefix for data-testids (one picker per card). */
     testIdPrefix: string;
+    /** The field's label (default "Generation model"). */
+    label?: string;
+    /** What the `null` (no cloud pin) choice means for this picker. */
+    localOptionLabel?: string;
 }
 
 export function cloudPin(provider: string, model: string): string {
@@ -34,7 +38,9 @@ export function parsePin(pin: string | null): { provider: string; model: string 
     return provider && model ? { provider, model } : null;
 }
 
-export default function GenerationModelPicker({ projectId, value, onChange, disabled, testIdPrefix }: Props) {
+export default function GenerationModelPicker({
+    projectId, value, onChange, disabled, testIdPrefix, label = 'Generation model', localOptionLabel = 'Local model (first reachable)',
+}: Props) {
     const [providers, setProviders] = useState<CloudProviderEntry[]>([]);
     const parsed = parsePin(value);
     const [provider, setProvider] = useState<string>(parsed?.provider ?? '');
@@ -56,7 +62,7 @@ export default function GenerationModelPicker({ projectId, value, onChange, disa
     return (
         <div className="u-row" data-testid={`${testIdPrefix}-model-picker`}>
             <label>
-                Generation model{' '}
+                {label}{' '}
                 <select
                     value={provider}
                     disabled={disabled}
@@ -66,7 +72,7 @@ export default function GenerationModelPicker({ projectId, value, onChange, disa
                     }}
                     data-testid={`${testIdPrefix}-provider`}
                 >
-                    <option value="">Local model (first reachable)</option>
+                    <option value="">{localOptionLabel}</option>
                     {providers.map((p) => (
                         <option key={p.provider} value={p.provider}>
                             {p.provider}{p.key_saved ? ' (key saved)' : ' (no key saved)'}

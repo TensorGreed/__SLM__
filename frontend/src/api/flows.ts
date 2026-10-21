@@ -65,8 +65,14 @@ export interface DocumentsQaFlowResult {
     teacher?: {
         teacher: string;
         usable: number;
-        counts: Record<string, { rows: number; reused: number; asked: number; answered: number; failed: number; abstained: number; filter_judged: number; filter_dropped: number }>;
-        filter: { applied: boolean; judge?: string; reason?: string };
+        counts: Record<string, {
+            rows: number; reused: number; asked: number; answered: number; failed: number; abstained: number; filter_judged: number; filter_dropped: number;
+            /** The critique-and-revise loop over the answers the filter dropped (present when rounds > 0). */
+            revise?: { attempted: number; fixed: number; still_dropped: number; calls: number };
+        }>;
+        filter: { applied: boolean; judge?: string; reason?: string; keep?: string };
+        /** rounds 0 = off; `critic` = who wrote the critiques (the judge itself when `critic_is_judge`). */
+        revise?: { rounds: number; critic?: string; judge?: string; critic_is_judge?: boolean };
     } | null;
     /** The pre-training gate: what the base model + document passages got
      *  right on the test examples, judged, before any training. */
@@ -122,6 +128,11 @@ export async function startDocumentsQaFlow(
         /** Targets = a teacher model's answers to exactly the served passages. */
         answersFromTeacher?: boolean;
         teacherBackend?: string | null;
+        /** Critique-and-revise rounds (0–2) for teacher answers the filter
+         *  drops; `teacherCriticBackend` writes the critique (null = the
+         *  filter judge's own reason). */
+        teacherReviseRounds?: number;
+        teacherCriticBackend?: string | null;
         /** Anthropic Message Batches (half price, slower). */
         useBatch?: boolean;
         concurrency?: number;
@@ -141,6 +152,10 @@ export async function startDocumentsQaFlow(
     if (options.answersFromTeacher) {
         body.answers_from_teacher = true;
         if (options.teacherBackend) body.teacher_backend = options.teacherBackend;
+        if (options.teacherReviseRounds && options.teacherReviseRounds > 0) {
+            body.teacher_revise_rounds = options.teacherReviseRounds;
+            if (options.teacherCriticBackend) body.teacher_critic_backend = options.teacherCriticBackend;
+        }
     }
     if (options.useBatch) body.use_batch = true;
     if (options.concurrency && options.concurrency > 1) body.concurrency = options.concurrency;

@@ -829,8 +829,8 @@ def grow_test_set(
 
 
 def _used_local_ollama(summary: "FlowSummary") -> bool:
-    """Did this flow run a model in the local Ollama (generation, teacher, or
-    the teacher filter's judge)?"""
+    """Did this flow run a model in the local Ollama (generation, teacher,
+    critic, or the teacher filter's judge)?"""
     from app.services.synth_backends.ollama import OllamaBackend
 
     if any(isinstance(llm, OllamaBackend) for llm in summary._llms):
@@ -912,6 +912,9 @@ async def run_documents_qa_flow(
     teacher_filter: bool = True,
     teacher_filter_keep: str = "not_wrong",
     teacher_filter_judge: Any = None,
+    teacher_revise_rounds: int = 0,
+    teacher_critic_backend: str | None = None,
+    teacher_critic_backend_override: SynthBackend | None = None,
     teacher_retrieve_fn: Callable[..., list[dict[str, Any]]] | None = None,
     use_batch: bool = False,
     concurrency: int = 1,
@@ -966,7 +969,12 @@ async def run_documents_qa_flow(
     targets. ``teacher_filter``: drop training answers the local answer judge
     grades wrong against the pair's reference; ``teacher_filter_keep``
     ``"not_wrong"`` (default) keeps partial answers, ``"correct"`` keeps only
-    the ones graded correct. ``use_batch``: send the
+    the ones graded correct. ``teacher_revise_rounds`` (0–2): answers the
+    filter drops are critiqued and revised by the teacher, then re-judged
+    (``teacher_passage_answers_service.critique_and_revise``); the critique
+    comes from ``teacher_critic_backend`` (pin / name, or
+    ``teacher_critic_backend_override``), else from the filter verdict's own
+    reason; needs ``teacher_filter``. ``use_batch``: send the
     generation and the teacher calls as Anthropic Message Batches.
     ``concurrency`` (1–8): direct generation / teacher calls in flight at once
     (Ollama with ``OLLAMA_NUM_PARALLEL``, or a cloud API)."""
@@ -991,6 +999,11 @@ async def run_documents_qa_flow(
         raise ValueError("sweep_split must be 'val' or 'test'")
     if answers_from_teacher:
         train_with_passages = True
+    teacher_revise_rounds = int(teacher_revise_rounds or 0)
+    if teacher_revise_rounds and not teacher_filter:
+        raise ValueError(
+            "teacher_revise_rounds needs teacher_filter: the filter judge's verdicts say which answers to revise."
+        )
 
     project = await db.get(Project, project_id)
     if project is None:
@@ -1250,6 +1263,13 @@ async def run_documents_qa_flow(
     if answers_from_teacher:
         teacher_llm = teacher_backend_override or (llm if teacher_backend is None and llm is not None else None) or pick_backend(teacher_backend)
         summary._llms.append(teacher_llm)
+        critic_llm = None
+        if teacher_revise_rounds:
+            # The critic resolves like the teacher (cloud pin via the saved key,
+            # else a synth backend name); None = the filter judge's own reason.
+            critic_llm = teacher_critic_backend_override or (pick_backend(teacher_critic_backend) if teacher_critic_backend else None)
+            if critic_llm is not None:
+                summary._llms.append(critic_llm)
         summary.teacher = await _run_teacher_step(
             db, project_id, report,
             llm=teacher_llm,
@@ -1259,6 +1279,8 @@ async def run_documents_qa_flow(
             filter_judge=teacher_filter_judge,
             retrieve_fn=teacher_retrieve_fn,
             concurrency=int(concurrency),
+            revise_rounds=teacher_revise_rounds,
+            critic=critic_llm,
         )
 
     # ── 5: train (the watcher Job runs the lift check afterwards) ─────────
@@ -1444,6 +1466,8 @@ async def _run_teacher_step(
     retrieve_fn: Callable[..., list[dict[str, Any]]] | None,
     concurrency: int = 1,
     teacher_filter_keep: str = "not_wrong",
+    revise_rounds: int = 0,
+    critic: Any = None,
 ) -> dict[str, Any]:
     """Teacher answers for the prepared train + val rows, from the project's
     served retrieval (set by the gate). Never reads the test rows."""
@@ -1474,6 +1498,8 @@ async def _run_teacher_step(
         report=report,
         filter_judge=judge if teacher_filter else None,
         filter_keep=teacher_filter_keep,
+        revise_rounds=revise_rounds,
+        critic=critic,
         start=0.8,
         span=0.05,
         concurrency=max(4, concurrency) if getattr(llm, "name", "") != "ollama" else concurrency,

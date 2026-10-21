@@ -225,6 +225,63 @@ describe('DocumentsQaFlowCard', () => {
         });
     });
 
+    it('revises the answers the checker rejects, with the checker or a picked critic', async () => {
+        const CLOUD = { project_id: 1, providers: [
+            { provider: 'anthropic', key_saved: true, models: [{ id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' }] },
+        ] };
+        apiMock.get.mockImplementation((url: string) =>
+            Promise.resolve({ data: url.includes('/backends/cloud/models') ? CLOUD : { ...ELIGIBLE, already_generated: 120 } }),
+        );
+        apiMock.post.mockResolvedValue({ data: { id: 15 } });
+        const user = userEvent.setup();
+        render(<DocumentsQaFlowCard projectId={1} />);
+        expect(screen.queryByTestId('documents-qa-flow-revise')).toBeNull();
+        await user.click(await screen.findByTestId('documents-qa-flow-teacher'));
+        await user.click(screen.getByTestId('documents-qa-flow-revise'));
+        expect(screen.getByTestId('documents-qa-flow-critic-provider')).toHaveTextContent('The checker itself');
+        await user.click(screen.getByTestId('documents-qa-flow-retrain'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith('/projects/1/flows/documents-to-qa', expect.objectContaining({
+                answers_from_teacher: true, teacher_revise_rounds: 1,
+            }));
+        });
+        expect(apiMock.post.mock.calls[0][1]).not.toHaveProperty('teacher_critic_backend');
+        // A picked critic goes along as its pin.
+        await waitFor(() => expect(screen.getByTestId('documents-qa-flow-critic-provider')).toHaveTextContent('anthropic (key saved)'));
+        await user.selectOptions(screen.getByTestId('documents-qa-flow-critic-provider'), 'anthropic');
+        await user.selectOptions(screen.getByTestId('documents-qa-flow-critic-cloud-model'), 'claude-sonnet-5-5');
+        await user.click(screen.getByTestId('documents-qa-flow-retrain'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenLastCalledWith('/projects/1/flows/documents-to-qa', expect.objectContaining({
+                teacher_revise_rounds: 1, teacher_critic_backend: 'cloud:anthropic:claude-sonnet-5-5',
+            }));
+        });
+        // Unticked: nothing about revising is sent.
+        await user.click(screen.getByTestId('documents-qa-flow-revise'));
+        await user.click(screen.getByTestId('documents-qa-flow-retrain'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(3));
+        expect(apiMock.post.mock.calls[2][1]).not.toHaveProperty('teacher_revise_rounds');
+    });
+
+    it('says how many teacher answers were revised and fixed', async () => {
+        apiMock.get.mockResolvedValue({ data: { ...ELIGIBLE, already_generated: 120 } });
+        jobsState.jobs = [{
+            id: 21, kind: 'documents_qa_flow', project_id: 1, status: 'succeeded',
+            result: {
+                project_id: 1, passages_total: 10, passages_used: 0, passages_failed: 0, training_pairs: 120, answer_key_rows: 10,
+                backend: 'reused', split: { train: 90, val: 20, test: 20, dedup_dropped: 0 }, experiment_id: 8, stopped_reason: null, warnings: [],
+                train_with_passages: true,
+                teacher: { teacher: 'ollama:gpt-oss:120b', usable: 100, filter: { applied: true, judge: 'ollama:gemma4:12b' },
+                           revise: { rounds: 1, critic: 'cloud:anthropic:claude-sonnet-5-5', judge: 'ollama:gemma4:12b', critic_is_judge: false },
+                           counts: { train: { rows: 90, reused: 0, asked: 90, answered: 90, failed: 0, abstained: 6, filter_judged: 84, filter_dropped: 3,
+                                              revise: { attempted: 7, fixed: 4, still_dropped: 3, calls: 14 } } } },
+            },
+        }];
+        render(<DocumentsQaFlowCard projectId={1} />);
+        expect(await screen.findByTestId('documents-qa-flow-revise-result')).toHaveTextContent('7 teacher answers revised, 4 fixed (critique by cloud:anthropic:claude-sonnet-5-5)');
+        expect(screen.getByTestId('documents-qa-flow-teacher-result')).toHaveTextContent('3 dropped as wrong by ollama:gemma4:12b; 7 teacher answers revised, 4 fixed');
+    });
+
     it('says how the teacher step and the val-chosen retrieval went', async () => {
         apiMock.get.mockResolvedValue({ data: { ...ELIGIBLE, already_generated: 120 } });
         jobsState.jobs = [{

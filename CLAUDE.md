@@ -2014,7 +2014,19 @@ runs real CPU inference). ~4 min locally.
   `TEACHER_STYLE_NOTE` as system + the question (one Message Batch with `use_batch`, else 4
   concurrent calls), caches `{answer, abstained (is_abstention), system_prompt, sources, teacher,
   filter}` in `teacher_answers/answers.jsonl` keyed by `answer_key(question, retrieval)`; the
-  filter = local answer judge vs the reference on train rows, `wrong` → `dropped` (`teacher_filter_keep`: `not_wrong` default, `correct` drops partial answers too; verdicts cached, the keep rule is re-applied to every cached verdict on each run — `filter_drops`, counts `filter_by_verdict`). Run config
+  filter = local answer judge vs the reference on train rows, `wrong` → `dropped` (`teacher_filter_keep`: `not_wrong` default, `correct` drops partial answers too; verdicts cached, the keep rule is re-applied to every cached verdict on each run — `filter_drops`, counts `filter_by_verdict`).
+  **Critique-and-revise** (`teacher_revise_rounds` 0–2, default 0 = byte-identical to before;
+  `teacher_critic_backend` pin / name, None = the filter verdict's own reason, no extra call;
+  needs `teacher_filter` → 400 `REVISE_NEEDS_FILTER`): `critique_and_revise(records, llm=,
+  judge=, keep=, rounds=, critic=)` — the reusable helper — critiques each dropped answer
+  (`build_critique_prompt` + `parse_critique`, bad JSON → the judge's reason), the teacher
+  rewrites it from the SAME preamble (`revise_request`), the same filter judge re-grades (final
+  authority); a kept revision becomes `answer` / `filter` (original in `original_answer`,
+  rounds in `revisions`, `revised: true`), each round appended to answers.jsonl (resume: same
+  critic + judge → no calls); abstentions never revised; revisions always direct calls (no
+  batch); counts `counts.<split>.revise` {attempted, fixed, still_dropped, calls} + `revise`
+  {rounds, critic, judge, critic_is_judge}; card checkbox "Revise answers the checker rejects"
+  + `GenerationModelPicker label= / localOptionLabel=` as the critic picker. Run config
   `passage_prompts_targets: "teacher"`, withheld 0 → `apply_passage_prompts(target_mode="teacher")`
   → `teacher_rows` (cached preamble verbatim as `system_prompt`, teacher answer as target;
   `no_teacher_answer` / `filtered` counted). Generated pairs carry `generated_by`. Flow result

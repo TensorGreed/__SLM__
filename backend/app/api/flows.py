@@ -34,6 +34,7 @@ from app.services.seed_documents_service import (
     MIN_WORDS,
     run_seed_documents,
 )
+from app.services.teacher_passage_answers_service import REVISE_MAX_ROUNDS
 
 router = APIRouter(prefix="/projects/{project_id}/flows", tags=["Flows"])
 
@@ -92,6 +93,13 @@ class DocumentsQaFlowRequest(BaseModel):
     # What the filter keeps: every answer not judged wrong (partial answers
     # train too), or only answers judged correct.
     teacher_filter_keep: Literal["not_wrong", "correct"] = "not_wrong"
+    # Critique-and-revise rounds for answers the filter drops (0 = off):
+    # a critique, the teacher's corrected answer, the same judge again.
+    # Needs teacher_filter (400 REVISE_NEEDS_FILTER otherwise).
+    teacher_revise_rounds: int = Field(0, ge=0, le=REVISE_MAX_ROUNDS)
+    # Who writes the critique: a cloud pin (the project's saved key) or a
+    # synth backend name; unset → the filter judge's own verdict reason.
+    teacher_critic_backend: str | None = None
     # Anthropic Message Batches (half price, slower) for the generation and
     # the teacher calls.
     use_batch: bool = False
@@ -137,6 +145,18 @@ async def start_documents_to_qa(
     # A cloud pin needs the project's saved key: 400 malformed, 402 no key.
     cloud_backend = await _cloud_backend_or_http(db, project_id, req.backend)
     teacher_backend = await _cloud_backend_or_http(db, project_id, req.teacher_backend) if req.answers_from_teacher else None
+    if req.answers_from_teacher and req.teacher_revise_rounds and not req.teacher_filter:
+        raise HTTPException(400, {
+            "error_code": "REVISE_NEEDS_FILTER",
+            "message": "Revising teacher answers needs the teacher filter: its judge's verdicts say which answers to revise.",
+        })
+    # The critic's revision calls go direct (never a Message Batch), so it is
+    # not among the pins use_batch checks.
+    critic_backend = (
+        await _cloud_backend_or_http(db, project_id, req.teacher_critic_backend)
+        if req.answers_from_teacher and req.teacher_revise_rounds and req.teacher_critic_backend
+        else None
+    )
     if req.use_batch:
         pins = [req.backend] if not req.reuse_existing else []
         if req.answers_from_teacher:
@@ -196,6 +216,9 @@ async def start_documents_to_qa(
                     teacher_backend_override=teacher_backend,
                     teacher_filter=req.teacher_filter,
                     teacher_filter_keep=req.teacher_filter_keep,
+                    teacher_revise_rounds=req.teacher_revise_rounds,
+                    teacher_critic_backend=req.teacher_critic_backend,
+                    teacher_critic_backend_override=critic_backend,
                     use_batch=req.use_batch,
                     concurrency=req.concurrency,
                     progress=_progress,
@@ -222,6 +245,8 @@ async def start_documents_to_qa(
             "sweep_split": req.sweep_split,
             "answers_from_teacher": req.answers_from_teacher,
             "teacher_backend": req.teacher_backend,
+            "teacher_revise_rounds": req.teacher_revise_rounds,
+            "teacher_critic_backend": req.teacher_critic_backend,
             "use_batch": req.use_batch,
             "concurrency": req.concurrency,
         },
