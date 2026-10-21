@@ -26,7 +26,9 @@ validation question:
 Optional quality filter (``filter_splits``, training rows by default): the
 answer judge grades each non-abstaining teacher answer against the pair's
 original reference; answers graded ``wrong`` are dropped from training and
-counted. Only a LOCAL judge runs the filter — it never spends cloud tokens.
+counted (``filter_keep="not_wrong"``, the default), or only answers graded
+``correct`` are kept (``filter_keep="correct"``: partial answers go too).
+Only a LOCAL judge runs the filter — it never spends cloud tokens.
 
 Answers are cached per project in ``teacher_answers/answers.jsonl``, keyed by
 the question + the retrieval setting, so a re-train reuses them at no cost and
@@ -54,6 +56,20 @@ from app.config import settings
 _LOG = logging.getLogger("teacher_passage_answers")
 
 CACHE_DIR = "teacher_answers"
+# What the quality filter keeps: every judged answer that is not ``wrong``
+# (partial answers train), or only the ones judged ``correct``.
+FILTER_KEEP_MODES = ("not_wrong", "correct")
+DEFAULT_FILTER_KEEP = "not_wrong"
+
+
+def filter_drops(verdict: str | None, keep: str = DEFAULT_FILTER_KEEP) -> bool:
+    """Pure: does the filter drop an answer with this judge verdict under
+    ``keep``? An unjudged answer (None) is never dropped."""
+    if keep not in FILTER_KEEP_MODES:
+        raise ValueError(f"filter_keep must be one of {FILTER_KEEP_MODES}, got {keep!r}")
+    if verdict is None:
+        return False
+    return verdict != "correct" if keep == "correct" else verdict == "wrong"
 CACHE_FILE = "answers.jsonl"
 # Teacher-only style note, appended to the serving preamble the teacher sees
 # (the training row's system message is the preamble without it): short
@@ -207,13 +223,16 @@ async def write_teacher_answers(
     report: ProgressFn | None = None,
     filter_judge: Any = None,
     filter_splits: tuple[str, ...] = ("train",),
+    filter_keep: str = DEFAULT_FILTER_KEEP,
     start: float = 0.0,
     span: float = 1.0,
     concurrency: int = SYNC_CONCURRENCY,
 ) -> dict[str, Any]:
     """Ask the teacher for every row's answer (cached ones are reused) and,
     with ``filter_judge`` (a ``ResolvedJudge``), grade the ``filter_splits``
-    answers against each pair's reference. Returns the report the flow
+    answers against each pair's reference; ``filter_keep`` says which
+    verdicts train (``not_wrong`` / ``correct`` — a cached verdict is re-read
+    under the current rule, so changing it costs no judge call). Returns the report the flow
     records (counts per split, usage). Raises ``ValueError`` when no row got
     a teacher answer — training on nothing would mislead."""
     from app.services.auto_rag_service import document_preamble, normalize_retrieval
@@ -224,6 +243,8 @@ async def write_teacher_answers(
         if report is not None:
             await report(start + span * max(0.0, min(1.0, frac)), message)
 
+    if filter_keep not in FILTER_KEEP_MODES:
+        raise ValueError(f"filter_keep must be one of {FILTER_KEEP_MODES}, got {filter_keep!r}")
     served = normalize_retrieval(retrieval)
     fn = retrieve_fn
     if fn is None:
@@ -238,7 +259,7 @@ async def write_teacher_answers(
     for split, rows in rows_by_split.items():
         c = counts.setdefault(split, {"rows": 0, "reused": 0, "asked": 0, "answered": 0, "failed": 0,
                                       "abstained": 0, "skipped": 0, "filter_judged": 0, "filter_dropped": 0,
-                                      "filter_unjudged": 0})
+                                      "filter_unjudged": 0, "filter_by_verdict": {}})
         for row in rows:
             question, reference = _question_reference(row)
             if not question:
@@ -328,7 +349,7 @@ async def write_teacher_answers(
     if filter_judge is not None and getattr(filter_judge, "local", True):
         from app.services.answer_judge_service import judge_predictions, project_cache
 
-        filter_info = {"applied": True, "judge": filter_judge.label, "splits": list(filter_splits)}
+        filter_info = {"applied": True, "judge": filter_judge.label, "splits": list(filter_splits), "keep": filter_keep}
         cache = project_cache(project_id)
         to_judge: list[tuple[str, dict[str, Any]]] = []
         for split in filter_splits:
@@ -354,8 +375,8 @@ async def write_teacher_answers(
             if verdict is None:
                 continue
             rec["filter"] = {"judge": filter_judge.label, "verdict": verdict, "reason": pred.get("row_judge_reason")}
-            rec["dropped"] = verdict == "wrong"
-        _write_answers(project_id, answers)
+        # Every judged answer — new or cached — is kept or dropped under the
+        # CURRENT keep rule (a cached ``dropped`` may come from another rule).
         for split in filter_splits:
             for k in dict.fromkeys(keys_by_split.get(split, [])):
                 rec = answers.get(k) or {}
@@ -363,10 +384,16 @@ async def write_teacher_answers(
                     continue
                 f = rec.get("filter") if isinstance(rec.get("filter"), dict) else None
                 if f and f.get("judge") == filter_judge.label:
+                    verdict = f.get("verdict")
+                    rec["dropped"] = filter_drops(verdict, filter_keep)
+                    rec["filter"]["keep"] = filter_keep
                     counts[split]["filter_judged"] += 1
                     counts[split]["filter_dropped"] += int(bool(rec.get("dropped")))
+                    by_verdict = counts[split]["filter_by_verdict"]
+                    by_verdict[str(verdict)] = by_verdict.get(str(verdict), 0) + 1
                 else:
                     counts[split]["filter_unjudged"] += 1
+        _write_answers(project_id, answers)
     elif filter_judge is not None:
         filter_info = {"applied": False, "reason": "the answer judge is a cloud model; the filter only runs on a local judge"}
 

@@ -2014,7 +2014,7 @@ runs real CPU inference). ~4 min locally.
   `TEACHER_STYLE_NOTE` as system + the question (one Message Batch with `use_batch`, else 4
   concurrent calls), caches `{answer, abstained (is_abstention), system_prompt, sources, teacher,
   filter}` in `teacher_answers/answers.jsonl` keyed by `answer_key(question, retrieval)`; the
-  filter = local answer judge vs the reference on train rows, `wrong` → `dropped`. Run config
+  filter = local answer judge vs the reference on train rows, `wrong` → `dropped` (`teacher_filter_keep`: `not_wrong` default, `correct` drops partial answers too; verdicts cached, the keep rule is re-applied to every cached verdict on each run — `filter_drops`, counts `filter_by_verdict`). Run config
   `passage_prompts_targets: "teacher"`, withheld 0 → `apply_passage_prompts(target_mode="teacher")`
   → `teacher_rows` (cached preamble verbatim as `system_prompt`, teacher answer as target;
   `no_teacher_answer` / `filtered` counted). Generated pairs carry `generated_by`. Flow result

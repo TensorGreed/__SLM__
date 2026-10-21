@@ -6,7 +6,7 @@ train → lift check). See ``documents_qa_flow_service``.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -89,6 +89,9 @@ class DocumentsQaFlowRequest(BaseModel):
     # Drop training answers the local answer judge grades wrong against the
     # pair's reference.
     teacher_filter: bool = True
+    # What the filter keeps: every answer not judged wrong (partial answers
+    # train too), or only answers judged correct.
+    teacher_filter_keep: Literal["not_wrong", "correct"] = "not_wrong"
     # Anthropic Message Batches (half price, slower) for the generation and
     # the teacher calls.
     use_batch: bool = False
@@ -192,6 +195,7 @@ async def start_documents_to_qa(
                     teacher_backend=req.teacher_backend,
                     teacher_backend_override=teacher_backend,
                     teacher_filter=req.teacher_filter,
+                    teacher_filter_keep=req.teacher_filter_keep,
                     use_batch=req.use_batch,
                     concurrency=req.concurrency,
                     progress=_progress,

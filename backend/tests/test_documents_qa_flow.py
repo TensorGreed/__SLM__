@@ -818,6 +818,58 @@ class FlowGrowthSweepTeacherTests(DocumentsQaFlowTests.__bases__[0]):
         self.assertEqual(FakeTeacher.asked, [])
         self.assertEqual(again.teacher["counts"]["train"]["reused"], len(train_rows))
 
+    def test_teacher_filter_keep_correct_drops_partial_answers(self):
+        from app.services import teacher_passage_answers_service as tpa
+        from app.services.answer_judge_service import ResolvedJudge
+
+        self.assertTrue(tpa.filter_drops("wrong"))
+        self.assertFalse(tpa.filter_drops("partial"))
+        self.assertTrue(tpa.filter_drops("partial", "correct"))
+        self.assertFalse(tpa.filter_drops("correct", "correct"))
+        self.assertFalse(tpa.filter_drops(None, "correct"), "an unjudged answer is never dropped")
+        with self.assertRaises(ValueError):
+            tpa.filter_drops("wrong", "strict")
+
+        self._ingest("policy.docx", POLICY)
+        self._run(train=False, max_passages=20)
+        FakeTeacher.asked = []
+
+        async def _judge(question, reference, prediction):
+            if "carries" in question.lower():
+                return 0.0, "wrong", "contradicts the reference", 0
+            if "earn each year" in question.lower():
+                return 0.5, "partial", "half of it", 0
+            return 1.0, "correct", "matches", 0
+
+        async def _launcher(project_id, experiment_id, db):
+            return {"status": "running"}
+
+        kwargs = dict(
+            train=True, reuse_existing=True, start_training=_launcher,
+            answers_from_teacher=True, teacher_backend_override=FakeTeacher(),
+            teacher_retrieve_fn=_fake_retrieve, teacher_filter_judge=ResolvedJudge(label="fake:judge", judge=_judge),
+        )
+        default = self._run(**kwargs).teacher["counts"]["train"]
+        by_verdict = default["filter_by_verdict"]
+        self.assertGreater(by_verdict.get("partial", 0), 0, "the fake judge grades the earn-each-year answers partial")
+        self.assertEqual(default["filter_dropped"], by_verdict.get("wrong", 0), "not_wrong keeps partial answers")
+        strict = self._run(**kwargs, teacher_filter_keep="correct").teacher
+        self.assertEqual(strict["filter"]["keep"], "correct")
+        s_counts = strict["counts"]["train"]
+        self.assertEqual(s_counts["filter_by_verdict"], by_verdict, "cached verdicts are re-read, not re-judged")
+        self.assertEqual(s_counts["filter_dropped"], by_verdict.get("wrong", 0) + by_verdict.get("partial", 0))
+        answers = tpa.load_answers(self.pid)
+        for rec in answers.values():
+            f = rec.get("filter") or {}
+            if f.get("verdict") == "partial":
+                self.assertTrue(rec["dropped"])
+                self.assertEqual(f["keep"], "correct")
+        # Back to the default rule: the same cache, partial answers train again.
+        again = self._run(**kwargs).teacher["counts"]["train"]
+        self.assertEqual(again["filter_dropped"], by_verdict.get("wrong", 0))
+        with self.assertRaises(ValueError):
+            self._run(**kwargs, teacher_filter_keep="strict")
+
     def test_generation_goes_through_one_message_batch(self):
         self._ingest("policy.docx", POLICY)
 
