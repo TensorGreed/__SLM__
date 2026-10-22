@@ -78,6 +78,7 @@ Content type: `application/json` — `CleanRequest`
 | `chunk_overlap` | `integer` | no |  |
 | `redact_pii` | `boolean` | no |  |
 | `redact_toxicity` | `boolean` | no |  |
+| `remove_page_furniture` | `boolean \\| null` | no |  |
 
 **Responses**
 
@@ -110,6 +111,7 @@ Content type: `application/json` — `CleanBatchRequest`
 | `chunk_overlap` | `integer` | no |  |
 | `redact_pii` | `boolean` | no |  |
 | `redact_toxicity` | `boolean` | no |  |
+| `remove_page_furniture` | `boolean \\| null` | no |  |
 
 **Responses**
 
@@ -154,6 +156,7 @@ Content type: `application/json` — `CleanBatchRequest`
 | `chunk_overlap` | `integer` | no |  |
 | `redact_pii` | `boolean` | no |  |
 | `redact_toxicity` | `boolean` | no |  |
+| `remove_page_furniture` | `boolean \\| null` | no |  |
 
 **Responses**
 

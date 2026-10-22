@@ -335,7 +335,8 @@ async def critique_and_revise(
     ``on_record`` as it arrives (the cache append), so a re-run with the same
     critic and judge skips what is done. Abstentions are never revised —
     pass only non-abstaining records. Returns ``{attempted, fixed,
-    still_dropped, calls}``. Revisions go as direct calls even for a
+    still_dropped, abstained, calls}`` — ``abstained``: still-dropped records
+    whose last revision is itself an abstention (a subset of still_dropped). Revisions go as direct calls even for a
     message-batch backend: each is one short call after a verdict, and a
     batch's turnaround would stall the loop between rounds."""
     from app.services.answer_judge_service import judge_predictions
@@ -344,7 +345,7 @@ async def critique_and_revise(
     rounds = int(rounds)
     if rounds < 0 or rounds > REVISE_MAX_ROUNDS:
         raise ValueError(f"revise rounds must be between 0 and {REVISE_MAX_ROUNDS}, got {rounds}")
-    counts = {"attempted": 0, "fixed": 0, "still_dropped": 0, "calls": 0}
+    counts = {"attempted": 0, "fixed": 0, "still_dropped": 0, "abstained": 0, "calls": 0}
     if rounds == 0 or judge is None:
         return counts
     judge_label = str(judge.label)
@@ -426,6 +427,8 @@ async def critique_and_revise(
                     fixed = True
                     break
             counts["fixed" if fixed else "still_dropped"] += 1
+            if not fixed and rec.get("abstained"):
+                counts["abstained"] += 1
             done["n"] += 1
             if report is not None and (done["n"] % 10 == 0 or done["n"] == len(todo)):
                 await report(done["n"], len(todo))
@@ -655,11 +658,14 @@ async def write_teacher_answers(
 
         # Counts over what trains: a kept revision's verdict counts, not the
         # original's (the verdict the record carries is the last judged one).
+        # A judged answer whose revision came back as an abstention is still
+        # judged and dropped here — skipping it as an abstention made it
+        # vanish from every count (revise.abstained says how many).
         for split in filter_splits:
             judged_ids = {id(rec) for rec in judged_records.get(split, [])}
             for k in dict.fromkeys(keys_by_split.get(split, [])):
                 rec = answers.get(k) or {}
-                if rec.get("abstained") or not rec.get("answer"):
+                if id(rec) not in judged_ids and (rec.get("abstained") or not rec.get("answer")):
                     continue
                 if id(rec) in judged_ids:
                     verdict = (rec.get("filter") or {}).get("verdict")

@@ -544,6 +544,14 @@ async def run_auto_rag_comparison(
             "so the verdict pairs the same rows as the lift check)."
         ),
     ),
+    experiment_id: int | None = Query(
+        None,
+        description=(
+            "Score this COMPLETED run of the project instead of the latest one "
+            "(fine-tuned only). The output file is the same, so it replaces the "
+            "cached comparison."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Hardening — spawn the auto-RAG comparison as a background Job
@@ -551,7 +559,7 @@ async def run_auto_rag_comparison(
     --project <id>``).
 
     The Job runner loads the project's latest COMPLETED experiment's
-    model (or, with ``model=base``, the untouched base model — no trained
+    model (``experiment_id``: that completed run instead; or, with ``model=base``, the untouched base model — no trained
     run needed), runs inference twice over the val split (with-RAG /
     without-RAG), writes the per-row ``comparison.json`` (or
     ``comparison_base.json``) the existing
@@ -562,7 +570,8 @@ async def run_auto_rag_comparison(
       202 — Job queued; body carries the Job stub. Frontend polls the
             bell + the comparison endpoint to pick up the result.
       400 — project missing a recipe / recipe not RAG-eligible.
-      404 — project not found.
+      400 — ``experiment_id`` with ``model=base``, or the run isn't COMPLETED.
+      404 — project not found, or ``experiment_id`` isn't one of its runs.
       409 — comparison Job already in flight for this project
             (idempotency: refuse rather than spawn a duplicate that
             would race the output file).
@@ -588,6 +597,33 @@ async def run_auto_rag_comparison(
             ),
         )
 
+    if experiment_id is not None:
+        from app.models.experiment import Experiment, ExperimentStatus
+
+        if model == "base":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error_code": "EXPERIMENT_ID_WITH_BASE_MODEL",
+                    "message": "experiment_id picks a fine-tuned run; model=base scores the untouched base model.",
+                },
+            )
+        experiment = await db.get(Experiment, experiment_id)
+        if experiment is None or experiment.project_id != project_id:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Run #{experiment_id} not found in project {project_id}",
+            )
+        if experiment.status != ExperimentStatus.COMPLETED:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error_code": "EXPERIMENT_NOT_COMPLETED",
+                    "message": f"Run #{experiment_id} is {experiment.status.value}; only a completed run can be scored.",
+                    "metadata": {"experiment_id": experiment_id, "status": experiment.status.value},
+                },
+            )
+
     from app.services.auto_rag_comparison_job_service import (
         AutoRagComparisonInFlight,
         start_auto_rag_comparison_job,
@@ -602,6 +638,7 @@ async def run_auto_rag_comparison(
             corpus=corpus,
             split=split or ("test" if corpus == "documents" else "val"),
             sweep_retrieval=sweep_retrieval,
+            experiment_id=experiment_id,
         )
     except AutoRagComparisonInFlight as exc:
         in_flight = exc.job

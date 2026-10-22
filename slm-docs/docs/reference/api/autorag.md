@@ -168,7 +168,7 @@ Hardening — spawn the auto-RAG comparison as a background Job
 --project <id>``).
 
 The Job runner loads the project's latest COMPLETED experiment's
-model (or, with ``model=base``, the untouched base model — no trained
+model (``experiment_id``: that completed run instead; or, with ``model=base``, the untouched base model — no trained
 run needed), runs inference twice over the val split (with-RAG /
 without-RAG), writes the per-row ``comparison.json`` (or
 ``comparison_base.json``) the existing
@@ -179,7 +179,8 @@ Status codes:
   202 — Job queued; body carries the Job stub. Frontend polls the
         bell + the comparison endpoint to pick up the result.
   400 — project missing a recipe / recipe not RAG-eligible.
-  404 — project not found.
+  400 — ``experiment_id`` with ``model=base``, or the run isn't COMPLETED.
+  404 — project not found, or ``experiment_id`` isn't one of its runs.
   409 — comparison Job already in flight for this project
         (idempotency: refuse rather than spawn a duplicate that
         would race the output file).
@@ -193,6 +194,7 @@ Status codes:
 | `corpus` | `query` | `enum("qa", "documents")` | no | What the with-retrieval arm retrieves: the project's training Q&A pairs (default) or its cleaned document passages with the cite-or-say-you-don't-know preamble (written to *_documents.json). |
 | `sweep_retrieval` | `query` | `boolean` | no | Try top-3 / top-5, each with and without the cross-encoder reranker; keep the judge's best as the comparison and make it the project's retrieval setting. |
 | `split` | `query` | `enum("val", "test") \\| null` | no | Rows to score: the validation split (default for Q&A-pair retrieval) or the test examples (default for document passages, so the verdict pairs the same rows as the lift check). |
+| `experiment_id` | `query` | `integer \\| null` | no | Score this COMPLETED run of the project instead of the latest one (fine-tuned only). The output file is the same, so it replaces the cached comparison. |
 
 **Responses**
 

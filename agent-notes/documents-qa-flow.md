@@ -138,8 +138,11 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   authority); a kept revision becomes `answer` / `filter` (original in `original_answer`,
   rounds in `revisions`, `revised: true`), each round appended to answers.jsonl (resume: same
   critic + judge → no calls); abstentions never revised; revisions always direct calls (no
-  batch); counts `counts.<split>.revise` {attempted, fixed, still_dropped, calls} + `revise`
-  {rounds, critic, judge, critic_is_judge}; card checkbox "Revise answers the checker rejects"
+  batch); counts `counts.<split>.revise` {attempted, fixed, still_dropped, abstained, calls} + `revise`
+  {rounds, critic, judge, critic_is_judge}. The filter tally runs AFTER revise over final verdicts and
+  counts a judged record even when its revision became an abstention (it used to skip it as
+  `abstained`: p38 showed attempted 628 vs filter_dropped 317 with 69 abstaining revisions in no
+  count) → `filter_dropped == still_dropped`; `counts.abstained` is first-pass only; card checkbox "Revise answers the checker rejects"
   + `GenerationModelPicker label= / localOptionLabel=` as the critic picker. Run config
   `passage_prompts_targets: "teacher"`, withheld 0 → `apply_passage_prompts(target_mode="teacher")`
   → `teacher_rows` (cached preamble verbatim as `system_prompt`, teacher answer as target;

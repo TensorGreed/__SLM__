@@ -61,7 +61,12 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   sibling when the source resolves to passages.
   Harness `--split val|test` (`run_project_comparison(split=)`; documents
   corpus defaults to **test** so the verdict's `same_rows` is True; payload
-  + GET carry `split`). The comparison Job start lives in
+  + GET carry `split`). `POST /comparison/run?experiment_id=N` (and the CLI's
+  `--experiment-id`) scores that COMPLETED run instead of the latest — 400
+  `EXPERIMENT_ID_WITH_BASE_MODEL` / `EXPERIMENT_NOT_COMPLETED`, 404 for another
+  project's run; Job params + title + result carry it, the bell says "run #N ·
+  … · K test|val rows". Same output file, so it replaces the cached comparison
+  (GET then reports `stale` vs the latest run). The comparison Job start lives in
   `services/auto_rag_comparison_job_service.start_auto_rag_comparison_job`
   (raises `AutoRagComparisonInFlight`; the endpoint maps it to 409) so
   `rag_project_service.start_sibling_passages_check` can spawn it from the

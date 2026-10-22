@@ -315,7 +315,10 @@ function jobOutcomeSummaryCore(job: Job): string | null {
         const lift = typeof r.relative_lift_pct === 'number' ? r.relative_lift_pct : null;
         const nVal = typeof r.n_val_rows === 'number' ? r.n_val_rows : null;
         const parts: string[] = [];
+        // Which model was scored: the base, or the fine-tuned run (a request
+        // can pick an older run than the latest, so name it).
         if (r.model === 'base') parts.push('base model');
+        else if (typeof r.experiment_id === 'number') parts.push(`run #${r.experiment_id}`);
         if (offF1 !== null && onF1 !== null) {
             parts.push(`off F1 ${offF1.toFixed(2)} → on F1 ${onF1.toFixed(2)}`);
         } else if (onF1 !== null) {
@@ -333,7 +336,8 @@ function jobOutcomeSummaryCore(job: Job): string | null {
             parts.push(`${sign}${lift.toFixed(2)}% lift${note}`);
         }
         if (nVal !== null) {
-            parts.push(`${nVal} val row${nVal === 1 ? '' : 's'}`);
+            const split = r.split === 'test' ? 'test' : 'val';
+            parts.push(`${nVal} ${split} row${nVal === 1 ? '' : 's'}`);
         }
         return parts.length ? parts.join(' · ') : null;
     }

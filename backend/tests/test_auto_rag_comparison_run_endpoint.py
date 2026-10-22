@@ -169,7 +169,78 @@ class RunComparisonEndpointTests(unittest.TestCase):
         finally:
             _clear_inflight_comparison_jobs(project["id"])
 
-    # The "202 success-shape" path isn't unit-tested here because the
+    def _add_run(self, project_id: int, status: str = "completed") -> int:
+        from app.database import async_session_factory
+        from app.models.experiment import Experiment, ExperimentStatus, TrainingMode
+
+        async def _go() -> int:
+            async with async_session_factory() as db:
+                exp = Experiment(
+                    project_id=project_id, name="scored run", status=ExperimentStatus(status),
+                    training_mode=TrainingMode.SFT, base_model="HuggingFaceTB/SmolLM2-135M-Instruct", config={},
+                )
+                db.add(exp)
+                await db.commit()
+                return exp.id
+
+        return asyncio.run(_go())
+
+    def test_experiment_id_must_be_a_completed_run_of_this_project(self):
+        project = self._instantiate_template("policy-qa-style", "ARC run-comparison experiment_id checks")
+        other = self._instantiate_template("policy-qa-style", "ARC run-comparison other project")
+        url = f"/api/projects/{project['id']}/auto-rag/comparison/run"
+        done = self._add_run(project["id"])
+
+        with_base = self.client.post(url, params={"model": "base", "experiment_id": done})
+        self.assertEqual(with_base.status_code, 400, with_base.text)
+        self.assertEqual(with_base.json()["error_code"], "EXPERIMENT_ID_WITH_BASE_MODEL")
+
+        self.assertEqual(self.client.post(url, params={"experiment_id": 99999999}).status_code, 404)
+        foreign = self.client.post(url, params={"experiment_id": self._add_run(other["id"])})
+        self.assertEqual(foreign.status_code, 404, foreign.text)
+
+        pending = self._add_run(project["id"], status="pending")
+        not_done = self.client.post(url, params={"experiment_id": pending})
+        self.assertEqual(not_done.status_code, 400, not_done.text)
+        body = not_done.json()
+        self.assertEqual(body["error_code"], "EXPERIMENT_NOT_COMPLETED")
+        self.assertEqual(body["metadata"], {"experiment_id": pending, "status": "pending"})
+
+    def test_experiment_id_reaches_the_harness_and_labels_the_job(self):
+        """A run other than the latest is scored as a Job (it used to need the
+        CLI's --experiment-id, which the bell and watchdogs can't see). The
+        harness is patched: no model is loaded."""
+        from unittest.mock import patch
+
+        from _job_wait import wait_for_jobs_idle
+
+        project = self._instantiate_template("policy-qa-style", "ARC run-comparison older run")
+        older = self._add_run(project["id"])
+        self._add_run(project["id"])  # the latest, which is NOT scored
+        calls: list[dict] = []
+
+        def _fake_comparison(project_id, **kwargs):
+            calls.append({"project_id": project_id, **kwargs})
+            return {"experiment_id": kwargs.get("experiment_id"), "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+                    "summary": {"off_mean_f1": 0.1, "on_mean_f1": 0.3, "n_val_rows": 0}, "rows": []}
+
+        with patch("scripts.auto_rag_ab.run_project_comparison", _fake_comparison):
+            resp = self.client.post(
+                f"/api/projects/{project['id']}/auto-rag/comparison/run",
+                params={"corpus": "documents", "split": "val", "experiment_id": older},
+            )
+            self.assertEqual(resp.status_code, 202, resp.text)
+            job = resp.json()
+            wait_for_jobs_idle(self.client)
+        self.assertEqual(job["params"]["experiment_id"], older)
+        self.assertIn(f"run #{older}", job["title"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual((calls[0]["experiment_id"], calls[0]["split"], calls[0]["base_only"]), (older, "val", False))
+        done = self.client.get(f"/api/jobs/{job['id']}").json()
+        self.assertEqual(done["status"], "succeeded", done)
+        self.assertEqual(done["result"]["experiment_id"], older)
+
+    # The unpatched "202 success-shape" path isn't unit-tested here because the
     # runner fires asynchronously and loads torch + a real LoRA on GPU
     # the moment it gets event-loop time. Cancelling the Job row after
     # the response returns races the wrapper's QUEUED→RUNNING transition

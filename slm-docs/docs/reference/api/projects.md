@@ -7,7 +7,7 @@ title: Projects
 
 # Projects
 
-Auto-generated reference for the **Projects** API. 26 endpoint(s).
+Auto-generated reference for the **Projects** API. 27 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -247,6 +247,34 @@ Resolve the effective domain runtime contract for a project.
 | Status | Schema | Description |
 |---|---|---|
 | `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/duplicate`
+
+**Duplicate Project Route**
+
+Copy a project's documents, rows, answer key and prepared split
+(test examples byte-identical) into a new project — runs, evaluations
+and comparisons stay with the source (``project_duplicate_service``).
+The way to try another base model without replacing the bar the
+source's runs were measured against.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (optional)
+
+Content type: `application/json` — `ProjectDuplicateRequest \| null`
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `201` | `ProjectResponse` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 

@@ -43,12 +43,14 @@ async def start_auto_rag_comparison_job(
     corpus: str = "qa",
     split: str = "val",
     sweep_retrieval: bool = False,
+    experiment_id: int | None = None,
 ) -> Job:
     """Queue the comparison Job (``kind="auto_rag_comparison"``). Raises
     ``AutoRagComparisonInFlight`` instead of racing an existing one.
     ``sweep_retrieval``: try top-3 / top-5 ± reranker, keep the judge's best
     and write it to the project's ``runtime_config.auto_rag_retrieval`` so
-    the playground serves it (``apply_retrieval_choice``)."""
+    the playground serves it (``apply_retrieval_choice``). ``experiment_id``:
+    score that completed run instead of the latest one (fine-tuned only)."""
     from datetime import datetime, timezone
 
     from app.services.jobs_service import JobProgressHandle, start_job
@@ -168,6 +170,7 @@ async def start_auto_rag_comparison_job(
                 corpus=corpus,
                 split=split,
                 sweep_retrieval=sweep_retrieval,
+                experiment_id=experiment_id,
             )
         finally:
             stop_event.set()
@@ -230,6 +233,7 @@ async def start_auto_rag_comparison_job(
         kind="auto_rag_comparison",
         title=(
             f"Auto-RAG comparison · {'base model' if base_only else 'fine-tuned'}"
+            f"{f' · run #{experiment_id}' if experiment_id is not None else ''}"
             f"{' · document passages' if corpus == 'documents' else ''} · project #{project_id}"
         ),
         runner=_runner,
@@ -241,6 +245,7 @@ async def start_auto_rag_comparison_job(
             "corpus": corpus,
             "split": split,
             "sweep_retrieval": sweep_retrieval,
+            "experiment_id": experiment_id,
         },
     )
     return job

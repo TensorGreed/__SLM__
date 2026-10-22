@@ -70,13 +70,17 @@ Content type: `application/json` — `SeedDocumentsRequest \| null`
 **Documents To Qa Preview**
 
 Can this project run the flow (enough cleaned passages, a reachable
-generation model), and what would it produce?
+generation model), and what would it produce? ``backend``: the model the
+user picked (a ``cloud:<provider>:<model>`` pin counts when the project
+has its key saved).
 
 **Parameters**
 
 | Name | In | Type | Required | Description |
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
+| `backend` | `query` | `string \\| null` | no |  |
+| `decision_gap` | `query` | `number` | no |  |
 
 **Responses**
 

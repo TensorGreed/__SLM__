@@ -631,10 +631,12 @@ class FakeTeacher:
 
 class RevisingTeacher(FakeTeacher):
     """A FakeTeacher that also answers revision prompts: a corrected answer,
-    unless the question is in ``stubborn`` (its revision stays wrong)."""
+    unless the question is in ``stubborn`` (its revision stays wrong) or in
+    ``abstain`` (its revision says the passages don't hold the answer)."""
 
     revised: list[dict] = []
     stubborn: set[str] = set()
+    abstain: set[str] = set()
 
     async def complete(self, prompt, *, system_prompt=None, max_tokens=1024, temperature=0.7, **kwargs):
         if "YOUR PREVIOUS ANSWER:" not in prompt:
@@ -643,6 +645,8 @@ class RevisingTeacher(FakeTeacher):
         RevisingTeacher.revised.append({"question": question, "prompt": prompt, "system_prompt": system_prompt})
         if question in RevisingTeacher.stubborn:
             return "Still the same answer [1]"
+        if question in RevisingTeacher.abstain:
+            return "The passages don't say."
         return f"Corrected: the right figure for {question[:30]} [2]"
 
 
@@ -914,6 +918,7 @@ class FlowGrowthSweepTeacherTests(DocumentsQaFlowTests.__bases__[0]):
         FakeTeacher.asked = []
         RevisingTeacher.revised = []
         RevisingTeacher.stubborn = set()
+        RevisingTeacher.abstain = set()
 
         async def _judge(question, reference, prediction):
             if "carries" in question.lower() and "Corrected" not in prediction:
@@ -949,7 +954,7 @@ class FlowGrowthSweepTeacherTests(DocumentsQaFlowTests.__bases__[0]):
         one = self._run(**kwargs, teacher_revise_rounds=1).teacher
         self.assertEqual(one["revise"], {"rounds": 1, "critic": "fake:judge", "judge": "fake:judge", "critic_is_judge": True})
         revise = one["counts"]["train"]["revise"]
-        self.assertEqual(revise, {"attempted": dropped_before, "fixed": dropped_before - 1, "still_dropped": 1, "calls": dropped_before})
+        self.assertEqual(revise, {"attempted": dropped_before, "fixed": dropped_before - 1, "still_dropped": 1, "abstained": 0, "calls": dropped_before})
         self.assertEqual(FakeTeacher.asked, [], "no answer is asked again")
         self.assertEqual(len(RevisingTeacher.revised), dropped_before)
         first = RevisingTeacher.revised[0]
@@ -990,15 +995,41 @@ class FlowGrowthSweepTeacherTests(DocumentsQaFlowTests.__bases__[0]):
         again = self._run(**kwargs, teacher_revise_rounds=1).teacher
         self.assertEqual(RevisingTeacher.revised, [])
         self.assertEqual(FakeTeacher.asked, [])
-        self.assertEqual(again["counts"]["train"]["revise"], {"attempted": 0, "fixed": 0, "still_dropped": 0, "calls": 0})
+        self.assertEqual(again["counts"]["train"]["revise"], {"attempted": 0, "fixed": 0, "still_dropped": 0, "abstained": 0, "calls": 0})
         self.assertEqual(again["counts"]["train"]["filter_dropped"], 1)
         # A second round re-runs only what is missing: the stubborn answer.
         two = self._run(**kwargs, teacher_revise_rounds=2).teacher
-        self.assertEqual(two["counts"]["train"]["revise"], {"attempted": 1, "fixed": 0, "still_dropped": 1, "calls": 1})
+        self.assertEqual(two["counts"]["train"]["revise"], {"attempted": 1, "fixed": 0, "still_dropped": 1, "abstained": 0, "calls": 1})
         self.assertEqual([r["question"] for r in RevisingTeacher.revised], list(RevisingTeacher.stubborn))
         stubborn = next(r for r in tpa.load_answers(self.pid).values() if r["question"] in RevisingTeacher.stubborn)
         self.assertEqual([r["round"] for r in stubborn["revisions"]], [1, 2])
         self.assertTrue(stubborn["dropped"])
+
+    def test_a_revision_that_abstains_stays_judged_and_dropped_in_the_counts(self):
+        # Project 38 (2026-10-22): 69 revisions came back as abstentions and
+        # vanished from filter_judged / filter_dropped, so revise.attempted
+        # (628) could not be reconciled with filter_dropped (317).
+        from app.services import teacher_passage_answers_service as tpa
+
+        kwargs = self._revise_fixture()
+        base = self._run(**kwargs).teacher["counts"]["train"]
+        dropped_before = base["filter_dropped"]
+        self.assertGreater(dropped_before, 1)
+        dropped_questions = sorted(r["question"] for r in tpa.load_answers(self.pid).values() if r.get("dropped"))
+        RevisingTeacher.abstain = {dropped_questions[0]}
+
+        counts = self._run(**kwargs, teacher_revise_rounds=1).teacher["counts"]["train"]
+        self.assertEqual(counts["revise"], {"attempted": dropped_before, "fixed": dropped_before - 1, "still_dropped": 1,
+                                            "abstained": 1, "calls": dropped_before})
+        self.assertEqual(counts["filter_judged"], base["filter_judged"], "the abstaining revision is still a judged answer")
+        self.assertEqual(counts["filter_dropped"], counts["revise"]["still_dropped"])
+        self.assertEqual(counts["abstained"], base["abstained"], "abstained stays the teacher's own first-pass abstentions")
+        rec = next(r for r in tpa.load_answers(self.pid).values() if r["question"] in RevisingTeacher.abstain)
+        self.assertTrue(rec["abstained"])
+        self.assertTrue(rec["dropped"])
+        rows, row_counts = tpa.teacher_rows(self._rows("prepared/train.jsonl"), tpa.load_answers(self.pid), {"k": 3})
+        self.assertFalse(any(r["question"] in RevisingTeacher.abstain for r in rows), "it never trains")
+        self.assertEqual(row_counts["filtered"], 1)
 
     def test_critic_backend_reads_the_passages_and_its_feedback_reaches_the_teacher(self):
         from app.services import teacher_passage_answers_service as tpa
@@ -1061,7 +1092,7 @@ class FlowGrowthSweepTeacherTests(DocumentsQaFlowTests.__bases__[0]):
             return await tpa.critique_and_revise([rec], llm=RevisingTeacher(), judge=ResolvedJudge(label="j", judge=_judge), rounds=1), rec
 
         counts, rec = asyncio.run(_abstention_skipped())
-        self.assertEqual(counts, {"attempted": 0, "fixed": 0, "still_dropped": 0, "calls": 0})
+        self.assertEqual(counts, {"attempted": 0, "fixed": 0, "still_dropped": 0, "abstained": 0, "calls": 0})
         self.assertNotIn("revised", rec)
 
     def test_generation_goes_through_one_message_batch(self):

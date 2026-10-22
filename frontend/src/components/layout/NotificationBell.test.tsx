@@ -631,6 +631,25 @@ describe('NotificationBell', () => {
         expect(summary).toHaveTextContent('off F1 0.04 → on F1 0.06');
         expect(summary).toHaveTextContent('+53.66% lift');
         expect(summary).toHaveTextContent('28 val rows');
+        expect(summary).toHaveTextContent(/^run #15 · off F1/);
+    });
+
+    it('auto_rag_comparison summary names the scored run and its split', async () => {
+        const jobs = [
+            jobFixture({
+                id: 63, kind: 'auto_rag_comparison', status: 'succeeded', title: 'Auto-RAG comparison · fine-tuned · run #160 · project #38',
+                result: { project_id: 38, model: 'fine_tuned', experiment_id: 160, split: 'test', off_mean_f1: 0.15, on_mean_f1: 0.34, n_val_rows: 157 },
+            }),
+        ];
+        apiMock.get.mockResolvedValue({ data: { count: jobs.length, jobs } });
+        render(<NotificationBell />);
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+        expect(screen.getByTestId('notification-bell-row-63-summary')).toHaveTextContent(
+            'run #160 · off F1 0.15 → on F1 0.34 · 157 test rows',
+        );
     });
 
     it('auto_rag_comparison summary qualifies the lift with its row evidence', async () => {
