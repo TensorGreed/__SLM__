@@ -20,7 +20,7 @@ Usage:
     python3 scripts/regenerate_index.py --stdout   # print, don't write
 
 Auto-enforced by the tracked pre-commit hook (``bash scripts/install-git-hooks.sh``)
-and by CI's ``index-fresh`` job; see the bottom of this file.
+and by CI's ``repo-checks`` job; see the bottom of this file.
 """
 
 from __future__ import annotations
@@ -368,4 +368,4 @@ if __name__ == "__main__":
 #   bash scripts/install-git-hooks.sh
 #
 # It regenerates + stages INDEX.md whenever a commit touches source files
-# or agent-notes/*.md. CI's index-fresh job runs --check as the backstop.
+# or agent-notes/*.md. CI's repo-checks job runs --check as the backstop.

@@ -708,6 +708,7 @@ session-start guidance.
 ## Repo · Top-level scripts
 
 - `scripts/agent-pipeline.sh` — !/usr/bin/env bash
+- `scripts/check_ci_gate.py` — Fail when the ci-success gate's ``needs:`` list doesn't name every CI job.
 - `scripts/install-git-hooks.sh` — Install the project's git hooks into .git/hooks/.
 - `scripts/pre-commit-hook.sh` — Auto-regenerate INDEX.md when staged changes touch source files.
 - `scripts/regenerate_index.py` — Regenerate INDEX.md — one-liner per backend/frontend module.

@@ -206,7 +206,8 @@ cd backend && python -m pytest -k "name_pattern"        # by name
   `asyncio.run(...)`.
 - **CI**: `test_phase*` files run under `unittest` in one process; every other
   test file runs in its **own pytest process** (3× retry). Keep non-phase files
-  pytest-only. Details: `agent-notes/testing.md`.
+  pytest-only. Details: `agent-notes/testing.md`. A new job in `ci.yml` must
+  also go in `ci-success.needs` (the `repo-checks` job fails otherwise).
 - **Never open a `TestClient(app)` outside pytest** — without the conftest pin
   it boots against the DEV DB and its startup sweep FAILs live Jobs. Probe the
   running backend over HTTP instead.

@@ -487,10 +487,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  index-fresh:
-    # INDEX.md is generated from the tree (stdlib-only script, no installs).
-    # Fails when a module / agent note was added, moved or re-docstringed
-    # without regenerating it.
+  repo-checks:
+    # Stdlib-only repo hygiene, no installs: INDEX.md is regenerated from the
+    # tree, and ci-success below must gate every job in this file.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -509,16 +508,16 @@ jobs:
             exit 1
           }
 
+      - name: ci-success gates every job
+        run: |
+          python scripts/check_ci_gate.py || {
+            echo "::error file=.github/workflows/ci.yml::add the job to ci-success.needs (python3 scripts/check_ci_gate.py)."
+            exit 1
+          }
+
   ci-success:
-    # Single aggregate gate for branch protection. Make THIS the one required
-    # status check (not the individual jobs). It always runs, so the context is
-    # never "missing" — the footgun where a path-gated job that never reports
-    # leaves a PR stuck at "Expected — Waiting for status to be reported".
-    #
-    # It passes when every job either succeeded OR was intentionally skipped
-    # (path-gated), and fails only if a job actually failed or was cancelled.
-    # Requiring just this one check also means the required-check list never
-    # drifts as jobs are added/renamed.
+    # The one required status check. Passes when every job succeeded or was
+    # path-skipped. `needs` must list every other job — repo-checks enforces it.
     if: always()
     needs:
       - changes
@@ -528,7 +527,7 @@ jobs:
       - docs-build
       - e2e-golden-path
       - real-training
-      - index-fresh
+      - repo-checks
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any job failed or was cancelled

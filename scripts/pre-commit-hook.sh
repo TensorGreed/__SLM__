@@ -11,7 +11,7 @@
 # Behavior:
 #   * Only fires when at least one staged file is .py / .ts / .tsx / .sh
 #     or an agent-notes/*.md note (skips CSS / other markdown / config
-#     commits — no index churn). CI's index-fresh job fails on a stale index.
+#     commits — no index churn). CI's repo-checks job fails on a stale index.
 #   * Regenerates INDEX.md via scripts/regenerate_index.py.
 #   * Auto-stages the regenerated INDEX.md so the commit includes it.
 #   * NEVER blocks a commit on its own failure — if the regen script
