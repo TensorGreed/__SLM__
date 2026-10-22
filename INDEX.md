@@ -6,7 +6,7 @@ header `/** ... */` block (TypeScript) or `# ` title (Markdown). Re-run after st
 changes:
 
 ```
-python scripts/regenerate_index.py
+python3 scripts/regenerate_index.py
 ```
 
 A missing description is a signal that the file should grow a one-
@@ -1197,4 +1197,4 @@ session-start guidance.
 - `frontend/src/utils/workspaceRoutes.test.ts` — _(no docstring)_
 
 ---
-_Regenerate: `python scripts/regenerate_index.py`. A missing description means the file lacks a header docstring.
+_Regenerate: `python3 scripts/regenerate_index.py`. A missing description means the file lacks a header docstring.

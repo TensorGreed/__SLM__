@@ -15,9 +15,9 @@ Files without a docstring/header are listed without a description
 (intentional — the missing summary is a signal to fix the file).
 
 Usage:
-    python scripts/regenerate_index.py            # writes INDEX.md
-    python scripts/regenerate_index.py --check    # exits 1 if stale
-    python scripts/regenerate_index.py --stdout   # print, don't write
+    python3 scripts/regenerate_index.py            # writes INDEX.md
+    python3 scripts/regenerate_index.py --check    # exits 1 if stale
+    python3 scripts/regenerate_index.py --stdout   # print, don't write
 
 Wire as a pre-commit hook if you want it auto-enforced; see
 ``.git/hooks/pre-commit`` example at the bottom of this file.
@@ -82,7 +82,7 @@ header `/** ... */` block (TypeScript) or `# ` title (Markdown). Re-run after st
 changes:
 
 ```
-python scripts/regenerate_index.py
+python3 scripts/regenerate_index.py
 ```
 
 A missing description is a signal that the file should grow a one-
@@ -306,7 +306,7 @@ def render() -> str:
     # Trailing footer with regen reminder.
     out.append("---")
     out.append(
-        "_Regenerate: `python scripts/regenerate_index.py`. "
+        "_Regenerate: `python3 scripts/regenerate_index.py`. "
         "A missing description means the file lacks a header docstring."
     )
     return "\n".join(out) + "\n"
@@ -340,7 +340,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         if existing != rendered:
             print(
-                f"INDEX.md is stale. Run: python {Path(__file__).relative_to(REPO_ROOT)}",
+                f"INDEX.md is stale. Run: python3 {Path(__file__).relative_to(REPO_ROOT)}",
                 file=sys.stderr,
             )
             return 1
@@ -367,7 +367,7 @@ if __name__ == "__main__":
 #
 #   #!/usr/bin/env bash
 #   set -e
-#   python scripts/regenerate_index.py
+#   python3 scripts/regenerate_index.py
 #   git add INDEX.md
 #
 # That regenerates INDEX.md on every commit + stages it so the index

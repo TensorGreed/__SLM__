@@ -487,6 +487,28 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  index-fresh:
+    # INDEX.md is generated from the tree (stdlib-only script, no installs).
+    # Fails when a module / agent note was added, moved or re-docstringed
+    # without regenerating it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: INDEX.md is up to date
+        run: |
+          python scripts/regenerate_index.py --check || {
+            echo "::error file=INDEX.md::INDEX.md is stale — run python3 scripts/regenerate_index.py and commit it."
+            exit 1
+          }
+
   ci-success:
     # Single aggregate gate for branch protection. Make THIS the one required
     # status check (not the individual jobs). It always runs, so the context is
@@ -506,6 +528,7 @@ jobs:
       - docs-build
       - e2e-golden-path
       - real-training
+      - index-fresh
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any job failed or was cancelled
