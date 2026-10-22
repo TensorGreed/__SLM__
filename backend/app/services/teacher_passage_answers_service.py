@@ -115,13 +115,16 @@ ProgressFn = Callable[[float, str], Awaitable[None]]
 RetrieveFn = Callable[[str, dict[str, Any]], list[dict[str, Any]]]
 
 
-_FULLWIDTH_CITE_RE = re.compile(r"[【［]\s*(\d+(?:\s*[,，、]\s*\d+)*)\s*[】］]")
+# ``【1】`` / ``【2, 3】``, and the line-range form some reasoning models emit
+# (``【1†L1-L4】``: passage 1, its lines 1-4); the passage number is what serves.
+_FULLWIDTH_CITE_RE = re.compile(r"[【［]\s*(\d+(?:\s*[,，、]\s*\d+)*)\s*(?:†[^】］]*)?[】］]")
 
 
 def normalize_teacher_answer(answer: str) -> str:
     """The teacher's answer as a training target in the serving format:
-    full-width citation brackets (``【1】``, some models' habit) become the
-    ``[1]`` the preamble asks for, and markdown bold markers are dropped."""
+    full-width citation brackets (``【1】``, ``【1†L1-L4】``, some models'
+    habit) become the ``[1]`` the preamble asks for, and markdown bold markers
+    are dropped. Idempotent."""
     text = _FULLWIDTH_CITE_RE.sub(lambda m: "[" + re.sub(r"\s*[,，、]\s*", "][", m.group(1)) + "]", str(answer or ""))
     text = text.replace("**", "")
     return text.strip()
@@ -721,7 +724,9 @@ def teacher_rows(
         out = {key: value for key, value in row.items() if key not in {"text", "source_text", "target_text"}}
         out["question"] = question
         out["reference_answer"] = _question_reference(row)[1]
-        out["answer"] = rec["answer"]
+        # Normalised again here so answers cached before a normaliser fix
+        # train in the serving format without asking the teacher again.
+        out["answer"] = normalize_teacher_answer(rec["answer"])
         out["system_prompt"] = rec["system_prompt"]
         out["passage_prompt"] = {"gold": "teacher", "abstained": bool(rec.get("abstained")), "teacher": rec.get("teacher")}
         counts["teacher"] += 1

@@ -168,6 +168,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                     onChange={setTeacherBackend}
                     disabled={starting}
                     testIdPrefix="documents-qa-flow-teacher"
+                    label="Teacher model"
                 />
             )}
             {teacherAnswers && (

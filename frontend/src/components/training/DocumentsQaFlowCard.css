@@ -27,7 +27,18 @@
     font-size: var(--font-size-sm);
 }
 
+.documents-qa-flow__options {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+}
+
 .documents-qa-flow__option { font-size: var(--font-size-sm); }
+
+/* A select inside an option line ("Calls at once", the decision gap) sizes
+   to its content instead of the global full-width field. */
+.documents-qa-flow__option select { width: auto; margin-left: 4px; }
 
 .documents-qa-flow__running { margin: 0; color: var(--accent); font-size: var(--font-size-sm); }
 

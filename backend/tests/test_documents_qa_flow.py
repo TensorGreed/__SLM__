@@ -1182,6 +1182,18 @@ class TeacherFormatTests(unittest.TestCase):
 
         self.assertEqual(normalize_teacher_answer("It is **$31,500** 【1】."), "It is $31,500 [1].")
         self.assertEqual(normalize_teacher_answer("See 【2, 3】"), "See [2][3]")
+        # The line-range form (project 38: 505 of 2,779 targets, and the trained
+        # model copied it on 73 of 157 test answers).
+        self.assertEqual(normalize_teacher_answer("Use Form 8606【1†L1-L4】."), "Use Form 8606[1].")
+        self.assertEqual(normalize_teacher_answer("line 1【1†L1-L2】【3†L1-L2】."), "line 1[1][3].")
+        self.assertEqual(normalize_teacher_answer(normalize_teacher_answer("x【2†L5-L8】")), "x[2]")
+        # An answer cached before the fix trains in the serving format.
+        from app.services import teacher_passage_answers_service as tpa
+
+        retrieval = {"k": 3}
+        cached = {tpa.answer_key("Which form?", retrieval): {"answer": "Form 8606【1†L1-L4】.", "system_prompt": "Passages…"}}
+        rows, _ = tpa.teacher_rows([{"question": "Which form?", "answer": "Form 8606."}], cached, retrieval)
+        self.assertEqual(rows[0]["answer"], "Form 8606[1].")
 
     def test_gpt_oss_gets_low_reasoning_others_none(self):
         from app.services.synth_backends.ollama import think_setting
