@@ -19,8 +19,8 @@ Usage:
     python3 scripts/regenerate_index.py --check    # exits 1 if stale
     python3 scripts/regenerate_index.py --stdout   # print, don't write
 
-Wire as a pre-commit hook if you want it auto-enforced; see
-``.git/hooks/pre-commit`` example at the bottom of this file.
+Auto-enforced by the tracked pre-commit hook (``bash scripts/install-git-hooks.sh``)
+and by CI's ``index-fresh`` job; see the bottom of this file.
 """
 
 from __future__ import annotations
@@ -361,14 +361,11 @@ if __name__ == "__main__":
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Optional: wire as a git pre-commit hook
+# Pre-commit hook
 # ─────────────────────────────────────────────────────────────────────
-# Save the following to .git/hooks/pre-commit (chmod +x):
+# The tracked hook is scripts/pre-commit-hook.sh — install it with
 #
-#   #!/usr/bin/env bash
-#   set -e
-#   python3 scripts/regenerate_index.py
-#   git add INDEX.md
+#   bash scripts/install-git-hooks.sh
 #
-# That regenerates INDEX.md on every commit + stages it so the index
-# stays current without anyone having to remember.
+# It regenerates + stages INDEX.md whenever a commit touches source files
+# or agent-notes/*.md. CI's index-fresh job runs --check as the backstop.

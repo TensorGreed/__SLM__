@@ -10,7 +10,8 @@
 #
 # Behavior:
 #   * Only fires when at least one staged file is .py / .ts / .tsx / .sh
-#     (skips pure CSS / markdown / config commits — no index churn).
+#     or an agent-notes/*.md note (skips CSS / other markdown / config
+#     commits — no index churn). CI's index-fresh job fails on a stale index.
 #   * Regenerates INDEX.md via scripts/regenerate_index.py.
 #   * Auto-stages the regenerated INDEX.md so the commit includes it.
 #   * NEVER blocks a commit on its own failure — if the regen script
@@ -21,7 +22,7 @@ set -e
 
 # Only run when source files are part of the commit.
 if ! git diff --cached --name-only --diff-filter=ACMR \
-        | grep -qE '\.(py|ts|tsx|sh)$'; then
+        | grep -qE '\.(py|ts|tsx|sh)$|^agent-notes/.*\.md$'; then
     exit 0
 fi
 
