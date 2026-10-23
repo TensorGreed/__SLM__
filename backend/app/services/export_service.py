@@ -894,9 +894,10 @@ async def run_export(
             else:
                 # A run trained with retrieved passages ships an evidence-only
                 # reader card (its lift check, data, training, prompt layout).
-                from app.services.reader_model_package_service import package_passage_reader
+                from app.services.reader_model_package_service import package_passage_reader, seed_siblings
 
                 reader_package = package_passage_reader(
+                    seed_runs=await seed_siblings(db, project_id, experiment),
                     project_id=project_id,
                     experiment=experiment,
                     model_dir=model_dir,

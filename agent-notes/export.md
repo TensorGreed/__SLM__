@@ -30,8 +30,15 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   Critique-and-revise lines, plus a Limitations line when the filter judge IS the eval judge. A run
   trained before the report recorded them (e.g. #162) falls back to `teacher_provenance` over the cache,
   only while its train file's sha256 matches the report AND every trained answer matches its cache
-  record (no dropped-answer breakdown then — that needs the training-time counts). Not on the card:
-  per-seed scores (passage runs aren't lift-checked as a seed group). The card's caution line is
+  record (no dropped-answer breakdown then — that needs the training-time counts). **Across seeds**:
+  export passes `seed_siblings(db, project, run)` — COMPLETED passage runs in the project with the
+  same base model, the same `train_file_sha256` + `val_file_sha256` in their training reports and the
+  same config bar `seed` / `training_runtime_id` / `seed_selection` / `_`-keys (a formal seed group
+  or hand clones like p38's #160–162). Table: seed, run, test score, paired diff vs bar (CI),
+  validation loss, this run bold; only siblings whose lift check matches this run's split, judge,
+  rows, retrieval and bar score (the rest are named with the reason); the across-seed line is
+  `paired_comparison_stats.seed_spread_evidence` on those scores (p38: +0.091, CI +0.028 to
+  +0.155). The table never says how the shipped seed was picked — only `seed_selection` does. The card's caution line is
   generic; a Hub card still needs the user's education-only warning + blog links added by hand.
   UI: each row of ExportPanel's Hub-publish card shows `modelCardLine(manifest)`
   (`components/export/exportModelCard.ts`): span card + its evaluations, reader card + split · judge ·

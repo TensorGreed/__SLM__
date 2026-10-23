@@ -10,7 +10,10 @@
 * who filtered / revised a teacher-target run's answers is frozen in its
   passage-prompt report (``teacher_provenance``: only cache records whose
   answer is the trained one count) and shown on the card, with the
-  same-judge caveat; an older run falls back to the verified cache.
+  same-judge caveat; an older run falls back to the verified cache;
+* seed siblings (same base model, byte-identical train / val files, same
+  config bar the seed) get a per-seed table + the across-seed interval,
+  only for siblings scored exactly like this run.
 """
 
 from __future__ import annotations
@@ -364,6 +367,93 @@ class TeacherProvenanceTests(unittest.TestCase):
         self.assertIn("The same model (`ollama:judge:12b`) filtered the training answers and judges the test", card)
         other = build_reader_model_card(reader_record=_record(judge="ollama:another"), passage_report=report)
         self.assertNotIn("filtered the training answers and judges the test", other)
+
+
+# ── Seed siblings ───────────────────────────────────────────────────────
+
+
+def _seed_record(score, diff, lo, hi, bar=0.5701, **overrides):
+    rec = _record()
+    rec["arms"] = {**rec["arms"], "base_with_passages": {**rec["arms"]["base_with_passages"], "score": bar},
+                   "finetune_with_passages": {**rec["arms"]["finetune_with_passages"], "score": score}}
+    rec["evidence"] = {**rec["evidence"], "mean_diff": diff, "ci_low": lo, "ci_high": hi}
+    rec.update(overrides)
+    return rec
+
+
+class SeedTableTests(unittest.TestCase):
+    def _runs(self):
+        return [
+            {"experiment_id": 162, "seed": 44, "val_loss": 0.531, "record": None},
+            {"experiment_id": 160, "seed": 42, "val_loss": 0.526, "record": _seed_record(0.6369, 0.0668, 0.003, 0.131)},
+            {"experiment_id": 161, "seed": 43, "val_loss": 0.5263, "record": _seed_record(0.6592, 0.0891, 0.026, 0.152)},
+        ]
+
+    def test_table_and_across_seed_interval(self):
+        card = build_reader_model_card(experiment_id=162, reader_record=_seed_record(0.6879, 0.1178, 0.0539, 0.1818),
+                                       seed_runs=self._runs())
+        self.assertIn("one of 3 runs trained on the identical training and validation files", card)
+        rows = [l for l in card.splitlines() if l.startswith("| 4") or l.startswith("| **4")]
+        self.assertEqual(rows, [
+            "| 42 | #160 | 0.637 | +0.067 (+0.003 to +0.131) | 0.5260 |",
+            "| 43 | #161 | 0.659 | +0.089 (+0.026 to +0.152) | 0.5263 |",
+            "| **44** | **#162 (this model)** | **0.688** | **+0.118 (+0.054 to +0.182)** | **0.5310** |",
+        ])
+        self.assertIn("mean score is 0.661 (range 0.637 to 0.688), +0.091 against the bar "
+                      "(95% CI across seeds +0.028 to +0.155), so the gain holds across seeds", card)
+        self.assertIn("All 3 seeds beat the bar.", card)
+        self.assertLess(card.index("### Across seeds"), card.index("## Prompt format"))
+
+    def test_siblings_scored_differently_or_unscored_are_named_not_tabled(self):
+        runs = self._runs()
+        runs[1]["record"] = _seed_record(0.7, 0.1, 0.05, 0.15, bar=0.60)  # another bar
+        runs.append({"experiment_id": 170, "seed": 45, "val_loss": 0.53, "record": None})
+        card = build_reader_model_card(experiment_id=162, reader_record=_seed_record(0.6879, 0.1178, 0.0539, 0.1818),
+                                       seed_runs=runs)
+        self.assertNotIn("| 42 | #160", card)
+        self.assertIn("run #160 (scored on a different split, judge, retrieval or bar)", card)
+        self.assertIn("run #170 (no lift check)", card)
+        self.assertIn("Across the 2 seeds", card)
+
+    def test_no_table_without_two_comparable_seeds(self):
+        rec = _seed_record(0.6879, 0.1178, 0.0539, 0.1818)
+        lone = [{"experiment_id": 162, "seed": 44, "record": None}, {"experiment_id": 160, "seed": 42, "record": None}]
+        self.assertNotIn("### Across seeds", build_reader_model_card(experiment_id=162, reader_record=rec, seed_runs=lone))
+        self.assertNotIn("### Across seeds", build_reader_model_card(experiment_id=162, seed_runs=self._runs()),
+                         "no lift check on this run → no seed table")
+
+    def test_export_finds_siblings_by_files_and_config(self):
+        from app.database import async_session_factory
+        from app.services.reader_model_package_service import seed_siblings
+
+        config = {"task_type": "causal_lm", "passage_prompts": True, "passage_prompts_targets": "teacher"}
+        with tempfile.TemporaryDirectory() as tmp:
+            pid = _new_project()
+
+            def _run(name, seed, train_sha="a" * 64, **cfg):
+                d = Path(tmp) / name
+                d.mkdir()
+                (d / "training_report.json").write_text(json.dumps({
+                    "final_eval_loss": 0.5, "reproducibility": {"seed": seed, "train_file_sha256": train_sha,
+                                                                "val_file_sha256": "b" * 64}}))
+                return _seed_run(pid, d, {**config, "seed": seed, "_runtime": {"x": seed}, **cfg})
+
+            me = _run("me", 44)
+            sib = _run("sib", 42)
+            _run("other-data", 43, train_sha="c" * 64)
+            _run("other-lr", 41, learning_rate=1e-4)
+            _run("same-seed", 44)
+            not_passage = _run("plain", 40, passage_prompts=False)
+
+            async def _go():
+                async with async_session_factory() as db:
+                    exp = await db.get(Experiment, me)
+                    return await seed_siblings(db, pid, exp)
+
+            runs = asyncio.run(_go())
+            self.assertEqual(sorted(r["experiment_id"] for r in runs), [me, sib])
+            self.assertNotIn(not_passage, [r["experiment_id"] for r in runs])
+            self.assertEqual({r["seed"] for r in runs}, {42, 44})
 
 
 if __name__ == "__main__":

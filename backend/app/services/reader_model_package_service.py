@@ -195,6 +195,92 @@ def _result_lines(record: dict[str, Any] | None, trained_retrieval: Any) -> list
     return lines
 
 
+_SEED_VERDICT_TEXT = {
+    "better": "the gain holds across seeds (the 95% CI of the mean seed-to-bar difference is above 0)",
+    "worse": "the loss holds across seeds (the 95% CI of the mean seed-to-bar difference is below 0)",
+    "within_noise": "a gain across seeds is not established (the 95% CI of the mean seed-to-bar difference includes 0)",
+    "too_few_seeds": "there are too few seeds for an interval across seeds",
+}
+
+
+def _same_scoring(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Two lift-check records scored the same way: split, judge, rows,
+    retrieval and the bar's own score."""
+    from app.services.auto_rag_service import same_retrieval
+
+    bar_a = ((a.get("arms") or {}).get("base_with_passages") or {}).get("score")
+    bar_b = ((b.get("arms") or {}).get("base_with_passages") or {}).get("score")
+    return (
+        a.get("split") == b.get("split") and a.get("judge") == b.get("judge") and a.get("n_rows") == b.get("n_rows")
+        and same_retrieval(a.get("retrieval"), b.get("retrieval")) and bar_a is not None and bar_a == bar_b
+    )
+
+
+def _seed_lines(experiment_id: int | None, record: dict[str, Any] | None, seed_runs: list[dict[str, Any]]) -> list[str]:
+    """Card section for the run's seed siblings (``seed_runs`` includes the
+    run itself): one row per seed scored like this run, the across-seed
+    interval when every listed seed shares the bar, and which siblings are
+    left out and why. Fewer than two seeds → no section."""
+    from app.services.paired_comparison_stats import seed_spread_evidence
+
+    if not isinstance(record, dict) or len(seed_runs) < 2:
+        return []
+    listed: list[dict[str, Any]] = []
+    left_out: list[str] = []
+    for run in sorted(seed_runs, key=lambda r: (r.get("seed") is None, r.get("seed"), r.get("experiment_id"))):
+        rec = record if run.get("experiment_id") == experiment_id else run.get("record")
+        score = (((rec or {}).get("arms") or {}).get("finetune_with_passages") or {}).get("score")
+        if not isinstance(rec, dict) or score is None:
+            left_out.append(f"run #{run.get('experiment_id')} (no lift check)")
+        elif not _same_scoring(record, rec):
+            left_out.append(f"run #{run.get('experiment_id')} (scored on a different split, judge, retrieval or bar)")
+        else:
+            listed.append({**run, "record": rec, "score": score})
+    if len(listed) < 2:
+        return []
+    lines = [
+        "### Across seeds",
+        "",
+        f"This run is one of {len(seed_runs)} runs trained on the identical training and validation files with "
+        "identical settings, differing only in the random seed. Each was scored the same way:",
+        "",
+        f"| Seed | Run | {str(record.get('split') or 'test').capitalize()} score | Paired difference vs bar (95% CI) | Validation loss |",
+        "|---|---|---|---|---|",
+    ]
+    for run in listed:
+        ev = run["record"].get("evidence") if isinstance(run["record"].get("evidence"), dict) else {}
+        diff = _signed(ev.get("mean_diff"))
+        if ev.get("ci_low") is not None and ev.get("ci_high") is not None:
+            diff += f" ({_signed(ev['ci_low'])} to {_signed(ev['ci_high'])})"
+        loss = f"{run['val_loss']:.4f}" if isinstance(run.get("val_loss"), (int, float)) else "–"
+        cells = [str(run.get("seed") if run.get("seed") is not None else "–"), f"#{run['experiment_id']}",
+                 _score(run["score"]), diff, loss]
+        if run.get("experiment_id") == experiment_id:
+            cells = [f"**{c}**" for c in cells]
+            cells[1] = f"**#{run['experiment_id']} (this model)**"
+        lines.append("| " + " | ".join(cells) + " |")
+    lines.append("")
+    bar = record["arms"]["base_with_passages"]["score"]
+    spread = seed_spread_evidence(bar, [run["score"] for run in listed])
+    text = (
+        f"Across the {len(listed)} seeds the mean score is {_score(spread['mean'])} "
+        f"(range {_score(spread['min'])} to {_score(spread['max'])}), {_signed(spread['mean'] - bar)} against the bar"
+    )
+    if spread.get("ci_low") is not None and spread.get("ci_high") is not None:
+        text += f" (95% CI across seeds {_signed(spread['ci_low'])} to {_signed(spread['ci_high'])})"
+    text += f", so {_SEED_VERDICT_TEXT.get(spread['verdict'], spread['verdict'])}."
+    if spread.get("all_better"):
+        text += f" All {len(listed)} seeds beat the bar."
+    elif spread.get("all_worse"):
+        text += f" All {len(listed)} seeds are below the bar."
+    else:
+        text += f" {sum(1 for run in listed if run['score'] > bar)} of {len(listed)} seeds beat the bar."
+    lines += [text, ""]
+    if left_out:
+        lines += ["Not in the table: " + ", ".join(left_out) + ".", ""]
+    return lines
+
+
 def _data_lines(passage_report: dict[str, Any] | None, tallies: dict[str, dict[str, int]]) -> list[str]:
     report = passage_report if isinstance(passage_report, dict) else {}
     counts = report.get("counts") if isinstance(report.get("counts"), dict) else {}
@@ -382,6 +468,7 @@ def build_reader_model_card(
     tallies: dict[str, dict[str, int]] | None = None,
     merged: bool = False,
     seed_selection: str | None = None,
+    seed_runs: list[dict[str, Any]] | None = None,
 ) -> str:
     """Markdown model card (with HF front matter) for a passage reader.
 
@@ -389,8 +476,10 @@ def build_reader_model_card(
     ``passage_report``: the run's ``passage_prompts/report.json``.
     ``training``: ``training_report.json``. ``adapter``: the run's
     ``adapter_config.json``. ``tallies``: ``{generators, sources}`` row
-    counts from the run's own training file. Numbers are copied, never
-    derived; a section with no data is omitted — except the result, which
+    counts from the run's own training file. ``seed_runs``: the run and its
+    seed siblings (``seed_siblings``) — ``{experiment_id, seed, val_loss,
+    record}``. Numbers are copied, never derived (bar the across-seed
+    interval); a section with no data is omitted — except the result, which
     says when there is none."""
     training = training or {}
     passage_report = passage_report if isinstance(passage_report, dict) else {}
@@ -427,6 +516,7 @@ def build_reader_model_card(
     lines.append("")
 
     lines += _result_lines(reader_record, passage_report.get("retrieval"))
+    lines += _seed_lines(experiment_id, reader_record, seed_runs or [])
     if seed_selection:
         lines += [f"**Seed selection:** {seed_selection}", ""]
     lines += _data_lines(passage_report, tallies or {})
@@ -499,6 +589,65 @@ def training_file_tallies(train_file: Path | None, expected_sha256: str | None) 
     return {"generators": dict(generators), "sources": dict(sources)}
 
 
+_SIBLING_IGNORED_KEYS = {"seed", "training_runtime_id", "seed_selection"}
+
+
+def _sibling_config(config: Any) -> dict[str, Any]:
+    """The settings two seed siblings must share: the run config minus the
+    seed, run-local ids and ``_``-prefixed runtime notes."""
+    if not isinstance(config, dict):
+        return {}
+    return {k: v for k, v in config.items() if k not in _SIBLING_IGNORED_KEYS and not str(k).startswith("_")}
+
+
+def _run_fingerprint(experiment: Any) -> tuple[str, str, Any, float | None] | None:
+    output_dir = Path(experiment.output_dir).expanduser() if getattr(experiment, "output_dir", None) else None
+    report = (_read_json(output_dir / "training_report.json") if output_dir else None) or {}
+    repro = report.get("reproducibility") if isinstance(report.get("reproducibility"), dict) else {}
+    if not repro.get("train_file_sha256") or not repro.get("val_file_sha256"):
+        return None
+    loss = report.get("final_eval_loss")
+    return repro["train_file_sha256"], repro["val_file_sha256"], repro.get("seed"), loss if isinstance(loss, (int, float)) else None
+
+
+async def seed_siblings(db: Any, project_id: int, experiment: Experiment) -> list[dict[str, Any]]:
+    """The run + every COMPLETED passage-trained run in the project that is
+    the same training with another seed: same base model, byte-identical
+    training and validation files (the reports' sha256), the same config
+    apart from the seed. A formal seed group qualifies; so do runs cloned by
+    hand. Each: ``{experiment_id, seed, val_loss, record}``. Fewer than two
+    distinct seeds → []."""
+    from sqlalchemy import select
+
+    from app.models.experiment import ExperimentStatus
+    from app.services.passage_reader_eval_service import is_passage_trained, read_record
+
+    mine = _run_fingerprint(experiment)
+    if mine is None or not is_passage_trained(experiment):
+        return []
+    candidates = (
+        await db.execute(
+            select(Experiment)
+            .where(Experiment.project_id == project_id)
+            .where(Experiment.status == ExperimentStatus.COMPLETED)
+            .where(Experiment.base_model == experiment.base_model)
+            .where(Experiment.id != experiment.id)
+        )
+    ).scalars().all()
+    runs = [{"experiment_id": experiment.id, "seed": mine[2], "val_loss": mine[3], "record": None}]
+    seeds = {mine[2]}
+    for other in candidates:
+        if not is_passage_trained(other) or _sibling_config(other.config) != _sibling_config(experiment.config):
+            continue
+        theirs = _run_fingerprint(other)
+        if theirs is None or theirs[:2] != mine[:2] or theirs[2] in seeds:
+            continue
+        seeds.add(theirs[2])
+        runs.append({"experiment_id": other.id, "seed": theirs[2], "val_loss": theirs[3],
+                     "record": read_record(project_id, other.id)})
+    return runs if len(runs) > 1 else []
+
+
 def _cached_teacher_provenance(project_id: int, train_file: Path | None, report: dict[str, Any]) -> dict[str, Any]:
     from app.services.teacher_passage_answers_service import load_answers, teacher_provenance
 
@@ -523,6 +672,7 @@ def package_passage_reader(
     project_name: str | None = None,
     merged: bool = False,
     seed_selection: dict[str, Any] | None = None,
+    seed_runs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Write ``README.md`` into an exported passage-reader model directory.
     None (nothing written) for a run not trained with passages."""
@@ -555,6 +705,7 @@ def package_passage_reader(
         tallies=tallies,
         merged=merged,
         seed_selection=(seed_selection or {}).get("text"),
+        seed_runs=seed_runs,
     )
     (model_dir / MODEL_CARD_FILE).write_text(card, encoding="utf-8")
     evidence = (record or {}).get("evidence") if isinstance((record or {}).get("evidence"), dict) else {}
@@ -564,4 +715,5 @@ def package_passage_reader(
         "split": (record or {}).get("split"),
         "judge": (record or {}).get("judge"),
         "verdict": evidence.get("verdict"),
+        "seed_runs": [run["experiment_id"] for run in seed_runs or []],
     }
