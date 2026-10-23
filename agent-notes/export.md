@@ -24,9 +24,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   follows `evidence.verdict` (CI), not the raw delta; no lift check → the card says so; a trained ≠
   evaluated retrieval and `comparable: false` are called out. The prompt example renders
   `auto_rag_service._DOCUMENT_PREAMBLE_TEMPLATE`, so it can't drift from serving. Manifest key
-  `reader_package` {model_card, evaluated, split, judge, verdict} + a RELEASE_NOTES line. Not on the
-  card (not run-owned): the answer filter's judge + critique-and-revise counts (they live on the flow
-  Job), per-seed scores (passage runs aren't lift-checked as a seed group). The card's caution line is
+  `reader_package` {model_card, evaluated, split, judge, verdict} + a RELEASE_NOTES line. Teacher
+  targets: the report's `filter` {judge, keep, judged} + `revise` {critic, judge, rounds, kept} and the
+  train counts `revised_kept` / `filtered_revised` / `filtered_revised_abstained` give the Filter and
+  Critique-and-revise lines, plus a Limitations line when the filter judge IS the eval judge. A run
+  trained before the report recorded them (e.g. #162) falls back to `teacher_provenance` over the cache,
+  only while its train file's sha256 matches the report AND every trained answer matches its cache
+  record (no dropped-answer breakdown then — that needs the training-time counts). Not on the card:
+  per-seed scores (passage runs aren't lift-checked as a seed group). The card's caution line is
   generic; a Hub card still needs the user's education-only warning + blog links added by hand.
   UI: each row of ExportPanel's Hub-publish card shows `modelCardLine(manifest)`
   (`components/export/exportModelCard.ts`): span card + its evaluations, reader card + split · judge ·

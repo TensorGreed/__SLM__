@@ -706,8 +706,12 @@ def teacher_rows(
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Pure: training rows → passage-prompt rows whose prompt is the cached
     serving preamble and whose target is the teacher's answer. A row with no
-    teacher answer or one the filter dropped is left out (counted)."""
-    counts = {"rows_in": len(rows), "rows_out": 0, "teacher": 0, "abstained": 0, "no_teacher_answer": 0, "filtered": 0, "skipped": 0}
+    teacher answer or one the filter dropped is left out (counted). Revised
+    answers are counted too: kept (``revised_kept``) and still dropped
+    (``filtered_revised``, of which ``filtered_revised_abstained`` ended in
+    "I don't know")."""
+    counts = {"rows_in": len(rows), "rows_out": 0, "teacher": 0, "abstained": 0, "no_teacher_answer": 0, "filtered": 0, "skipped": 0,
+              "revised_kept": 0, "filtered_revised": 0, "filtered_revised_abstained": 0}
     out_rows: list[dict[str, Any]] = []
     for row in rows:
         question, _ = _question_reference(row)
@@ -720,7 +724,11 @@ def teacher_rows(
             continue
         if rec.get("dropped"):
             counts["filtered"] += 1
+            if rec.get("revised"):
+                counts["filtered_revised"] += 1
+                counts["filtered_revised_abstained"] += int(bool(rec.get("abstained")))
             continue
+        counts["revised_kept"] += int(bool(rec.get("revised")))
         out = {key: value for key, value in row.items() if key not in {"text", "source_text", "target_text"}}
         out["question"] = question
         out["reference_answer"] = _question_reference(row)[1]
@@ -734,3 +742,56 @@ def teacher_rows(
         out_rows.append(out)
     counts["rows_out"] = len(out_rows)
     return out_rows, counts
+
+
+def teacher_provenance(
+    out_rows: list[dict[str, Any]],
+    answers: dict[str, dict[str, Any]],
+    retrieval: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Pure: who filtered and revised the answers a run trained on —
+    ``{filter: {judge, keep, judged}, revise: {critic, judge, rounds, kept} | None}``
+    read from the cache records behind ``out_rows`` (``teacher_rows``'
+    output). The cache is project-wide and later flows rewrite it, so a
+    record only counts when its answer IS the row's target (both normalised); any
+    mismatch (or missing record) → None rather than another run's story.
+    A label used for some rows but not others is listed."""
+    judges: set[str] = set()
+    keeps: set[str] = set()
+    critics: set[str] = set()
+    revise_judges: set[str] = set()
+    judged = kept_revisions = rounds = 0
+    for row in out_rows:
+        rec = answers.get(answer_key(str(row.get("question") or ""), retrieval))
+        # Both sides normalised: a run trained before a normaliser fix
+        # still matches the record its target came from.
+        if not rec or normalize_teacher_answer(str(rec.get("answer") or "")) != normalize_teacher_answer(str(row.get("answer") or "")):
+            return None
+        filt = rec.get("filter") if isinstance(rec.get("filter"), dict) else None
+        if filt and filt.get("judge"):
+            judges.add(str(filt["judge"]))
+            judged += 1
+            if filt.get("keep"):
+                keeps.add(str(filt["keep"]))
+        revisions = [r for r in rec.get("revisions") or [] if isinstance(r, dict)]
+        if rec.get("revised") and revisions:
+            kept_revisions += 1
+        for rev in revisions:
+            if rev.get("critic"):
+                critics.add(str(rev["critic"]))
+            if rev.get("judge"):
+                revise_judges.add(str(rev["judge"]))
+            try:
+                rounds = max(rounds, int(rev.get("round") or 0))
+            except (TypeError, ValueError):
+                pass
+
+    def _one(values: set[str]) -> str | list[str] | None:
+        return None if not values else next(iter(values)) if len(values) == 1 else sorted(values)
+
+    if not judges:
+        return {"filter": None, "revise": None}
+    revise = None
+    if critics or revise_judges:
+        revise = {"critic": _one(critics), "judge": _one(revise_judges), "rounds": rounds or None, "kept": kept_revisions}
+    return {"filter": {"judge": _one(judges), "keep": _one(keeps), "judged": judged}, "revise": revise}

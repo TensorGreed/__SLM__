@@ -146,7 +146,11 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   + `GenerationModelPicker label= / localOptionLabel=` as the critic picker. Run config
   `passage_prompts_targets: "teacher"`, withheld 0 → `apply_passage_prompts(target_mode="teacher")`
   → `teacher_rows` (cached preamble verbatim as `system_prompt`, teacher answer as target;
-  `no_teacher_answer` / `filtered` counted). Generated pairs carry `generated_by`. Flow result
+  `no_teacher_answer` / `filtered` counted, plus `revised_kept` / `filtered_revised` /
+  `filtered_revised_abstained`). The run's `passage_prompts/report.json` freezes `filter` + `revise`
+  from `teacher_provenance` (the cache is project-wide and later flows rewrite it; a record counts only
+  when its answer — both sides normalised — is the trained target, else None) for the reader model
+  card (agent-notes/export.md). Generated pairs carry `generated_by`. Flow result
   `teacher` + its own `usage` list (batch calls bypass the Job meter). `train.py
   _fit_passage_seq_length`: passage-prompt runs raise `max_seq_length` to the longest row (≤
   `PASSAGE_MAX_SEQ_CAP` 4096; report `max_seq_length_fit`). **Sized + pre-registered test**:

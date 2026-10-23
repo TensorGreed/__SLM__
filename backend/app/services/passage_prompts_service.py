@@ -394,7 +394,12 @@ def _apply_teacher_targets(
     output_dir: Path,
 ) -> dict[str, Any]:
     from app.services.auto_rag_service import retrieval_label
-    from app.services.teacher_passage_answers_service import TEACHER_STYLE_NOTE, load_answers, teacher_rows
+    from app.services.teacher_passage_answers_service import (
+        TEACHER_STYLE_NOTE,
+        load_answers,
+        teacher_provenance,
+        teacher_rows,
+    )
 
     answers = load_answers(project_id)
     if not answers:
@@ -405,10 +410,15 @@ def _apply_teacher_targets(
     target_dir = output_dir / "passage_prompts"
     files: dict[str, str | None] = {"train_file": None, "val_file": None}
     counts: dict[str, dict[str, int]] = {}
+    provenance: dict[str, Any] | None = None
     for split, path in (("train", train_file), ("val", val_file)):
         if path is None or not Path(path).exists():
             continue
         rows, split_counts = teacher_rows(_read_jsonl(Path(path)), answers, retrieval)
+        if split == "train":
+            # Who filtered / revised the targets, frozen with the run (the
+            # cache is project-wide and later flows rewrite it).
+            provenance = teacher_provenance(rows, answers, retrieval)
         if split == "train" and not rows:
             raise ValueError(
                 "No training row has a teacher answer for the retrieval the project serves now "
@@ -429,6 +439,8 @@ def _apply_teacher_targets(
         "withheld_fraction": 0.0,
         **files,
         "counts": counts,
+        "filter": (provenance or {}).get("filter"),
+        "revise": (provenance or {}).get("revise"),
     }
     target_dir.mkdir(parents=True, exist_ok=True)
     (target_dir / "report.json").write_text(json.dumps(block, indent=2), encoding="utf-8")

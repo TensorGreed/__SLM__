@@ -229,12 +229,39 @@ def _data_lines(passage_report: dict[str, Any] | None, tallies: dict[str, dict[s
         if isinstance(train.get("abstained"), int):
             text += f" and {train['abstained']:,} of them say the passages don't hold the answer"
         text += "."
-        if isinstance(train.get("filtered"), int) and train["filtered"]:
-            text += (
-                f" An answer filter graded the teacher's answers against the reference answers and "
-                f"{train['filtered']:,} were left out of training."
-            )
         items.append(text)
+        filt = report.get("filter") if isinstance(report.get("filter"), dict) else None
+        if filt or (isinstance(train.get("filtered"), int) and train["filtered"]):
+            judge = _labels(filt.get("judge")) if filt else None
+            text = f"**Filter:** {judge or 'an answer judge'} graded the teacher's answers against the reference answers"
+            keep = filt.get("keep") if filt else None
+            if keep == "correct":
+                text += "; only answers graded correct were kept (partial answers were dropped as well as wrong ones)"
+            elif keep == "not_wrong":
+                text += "; answers graded wrong were dropped"
+            if isinstance(train.get("filtered"), int):
+                text += f". {train['filtered']:,} answers were left out of training"
+            items.append(text + ".")
+        revise = report.get("revise") if isinstance(report.get("revise"), dict) else None
+        kept = train.get("revised_kept") if isinstance(train.get("revised_kept"), int) else (revise or {}).get("kept")
+        if revise:
+            rounds = revise.get("rounds")
+            text = "**Critique and revise:** each answer the filter dropped got "
+            text += f"up to {rounds} revision round{'s' if rounds != 1 else ''}" if isinstance(rounds, int) else "a revision round"
+            critic = _labels(revise.get("critic"))
+            text += (f": {critic} critiqued it" if critic else ": it was critiqued") + ", the teacher rewrote it, and "
+            text += f"{_labels(revise.get('judge'))} re-graded the rewrite" if revise.get("judge") else "the filter re-graded the rewrite"
+            text += "."
+            if isinstance(kept, int):
+                text += f" {kept:,} revisions passed and are training targets"
+                if isinstance(train.get("filtered_revised"), int):
+                    text += f"; {train['filtered_revised']:,} still failed and stayed out"
+                    if train.get("filtered_revised_abstained"):
+                        text += f" ({train['filtered_revised_abstained']:,} of them because the revision said it didn't know)"
+                text += "."
+            if kept:
+                text += " **Some training answers are therefore revisions written under critique, not first drafts.**"
+            items.append(text)
     elif report.get("targets") == "reference":
         text = (
             "**Training answers:** the reference answer with the passage that holds it cited"
@@ -255,6 +282,12 @@ def _data_lines(passage_report: dict[str, Any] | None, tallies: dict[str, dict[s
     if not items:
         return []
     return ["## Training data", ""] + [f"- {item}" for item in items] + [""]
+
+
+def _labels(value: Any) -> str | None:
+    if isinstance(value, list):
+        return ", ".join(f"`{v}`" for v in value) if value else None
+    return f"`{value}`" if value else None
 
 
 def _training_lines(training: dict[str, Any], adapter: dict[str, Any] | None, merged: bool) -> list[str]:
@@ -414,6 +447,14 @@ def build_reader_model_card(
             f"({train['abstained'] / train['rows_out']:.0%}) are “I don't know”, so it abstains when unsure; "
             "an abstention counts as wrong against the answer key."
         )
+    filt = passage_report.get("filter") if isinstance(passage_report.get("filter"), dict) else {}
+    eval_judge = reader_record.get("judge") if isinstance(reader_record, dict) else None
+    filter_judges = filt.get("judge") if isinstance(filt.get("judge"), list) else [filt.get("judge")]
+    if eval_judge and eval_judge in filter_judges:
+        limits.append(
+            f"The same model (`{eval_judge}`) filtered the training answers and judges the test, so its "
+            "preferences are built into both the data and the score."
+        )
     lines += ["## Limitations", ""] + [f"- {item}" for item in limits] + [""]
     return "\n".join(lines).rstrip() + "\n"
 
@@ -458,6 +499,22 @@ def training_file_tallies(train_file: Path | None, expected_sha256: str | None) 
     return {"generators": dict(generators), "sources": dict(sources)}
 
 
+def _cached_teacher_provenance(project_id: int, train_file: Path | None, report: dict[str, Any]) -> dict[str, Any]:
+    from app.services.teacher_passage_answers_service import load_answers, teacher_provenance
+
+    if train_file is None or not isinstance(report.get("retrieval"), dict):
+        return {}
+    rows: list[dict[str, Any]] = []
+    try:
+        for line in train_file.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rows.append(json.loads(line))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    provenance = teacher_provenance(rows, load_answers(project_id), report["retrieval"])
+    return {"filter": provenance.get("filter"), "revise": provenance.get("revise")} if provenance else {}
+
+
 def package_passage_reader(
     *,
     project_id: int,
@@ -481,6 +538,11 @@ def package_passage_reader(
     repro = training.get("reproducibility") if isinstance(training.get("reproducibility"), dict) else {}
     train_file = Path(str(training["train_file"])) if training.get("train_file") else None
     tallies = training_file_tallies(train_file, repro.get("train_file_sha256"))
+    if passage_report.get("targets") == "teacher" and "filter" not in passage_report and tallies:
+        # A run trained before the report recorded who filtered / revised
+        # its targets: read it from the cache, but only when every trained
+        # answer is still the cached one (tallies ⇒ the file is unchanged).
+        passage_report = {**passage_report, **_cached_teacher_provenance(project_id, train_file, passage_report)}
     record = read_record(project_id, experiment.id)
     card = build_reader_model_card(
         base_model=experiment.base_model,

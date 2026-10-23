@@ -6,7 +6,11 @@
 * the headline claim follows the paired CI verdict, a run with no lift
   check says so, and a retrieval change since training is called out;
 * HF export of a passage run writes README.md into model/ and records a
-  ``reader_package``; a plain causal-LM run still ships without a card.
+  ``reader_package``; a plain causal-LM run still ships without a card;
+* who filtered / revised a teacher-target run's answers is frozen in its
+  passage-prompt report (``teacher_provenance``: only cache records whose
+  answer is the trained one count) and shown on the card, with the
+  same-judge caveat; an older run falls back to the verified cache.
 """
 
 from __future__ import annotations
@@ -102,7 +106,7 @@ class ReaderCardTests(unittest.TestCase):
         self.assertIn("28 of this model's 41 wrong answers", card)
         self.assertIn("without passages it scores 0.185", card)
         self.assertIn("272 of them say the passages don't hold the answer", card)
-        self.assertIn("389 were left out of training", card)
+        self.assertIn("389 answers were left out of training", card)
         self.assertIn("LoRA r 16, alpha 32, dropout 0.05 on `q_proj`, `v_proj` (merged into the base weights)", card)
         self.assertIn("2 epochs, 348 steps, effective batch 16, max sequence length 2048", card)
         self.assertIn("Seed 44.", card)
@@ -249,6 +253,117 @@ class ReaderExportTests(unittest.TestCase):
             _status, manifest, output_path = _export(pid, exp_id)
             self.assertIsNone(manifest["reader_package"])
             self.assertFalse((Path(output_path) / manifest["run_dir"] / "model" / "README.md").exists())
+
+
+# ── Filter / revise provenance ──────────────────────────────────────────
+
+RET = {"k": 3}
+
+
+def _cache_rec(question, answer, *, revised=False, dropped=False, abstained=False, judge="ollama:judge:12b"):
+    rec = {"question": question, "answer": answer, "system_prompt": "Passages…", "teacher": "ollama:teacher:120b",
+           "abstained": abstained, "dropped": dropped,
+           "filter": {"judge": judge, "verdict": "wrong" if dropped else "correct", "keep": "correct"}}
+    if revised:
+        rec["revised"] = True
+        rec["original_answer"] = "first draft"
+        rec["revisions"] = [{"round": 1, "answer": answer, "critic": "ollama:critic", "judge": judge,
+                             "verdict": rec["filter"]["verdict"]}]
+    return rec
+
+
+def _answers(*recs):
+    from app.services.teacher_passage_answers_service import answer_key
+
+    return {answer_key(r["question"], RET): r for r in recs}
+
+
+class TeacherProvenanceTests(unittest.TestCase):
+    def test_teacher_rows_count_revisions_kept_and_still_dropped(self):
+        from app.services.teacher_passage_answers_service import teacher_rows
+
+        answers = _answers(
+            _cache_rec("q1", "a1 [1]"),
+            _cache_rec("q2", "a2 [1]", revised=True),
+            _cache_rec("q3", "a3", revised=True, dropped=True),
+            _cache_rec("q4", "I don't know.", revised=True, dropped=True, abstained=True),
+            _cache_rec("q5", "a5", dropped=True),
+        )
+        rows, counts = teacher_rows([{"question": f"q{i}", "answer": "ref"} for i in range(1, 6)], answers, RET)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual((counts["filtered"], counts["revised_kept"], counts["filtered_revised"],
+                          counts["filtered_revised_abstained"]), (3, 1, 2, 1))
+
+    def test_provenance_reads_matching_records_only(self):
+        from app.services.teacher_passage_answers_service import teacher_provenance, teacher_rows
+
+        answers = _answers(_cache_rec("q1", "a1 [1]"), _cache_rec("q2", "a2 [1]", revised=True))
+        rows, _ = teacher_rows([{"question": "q1", "answer": "r"}, {"question": "q2", "answer": "r"}], answers, RET)
+        self.assertEqual(teacher_provenance(rows, answers, RET), {
+            "filter": {"judge": "ollama:judge:12b", "keep": "correct", "judged": 2},
+            "revise": {"critic": "ollama:critic", "judge": "ollama:judge:12b", "rounds": 1, "kept": 1},
+        })
+        # A later flow rewrote one answer: the cache no longer describes this run.
+        drifted = _answers(_cache_rec("q1", "a1 [1]"), _cache_rec("q2", "a different answer [2]", revised=True))
+        self.assertIsNone(teacher_provenance(rows, drifted, RET))
+        # A row the cache never held.
+        self.assertIsNone(teacher_provenance(rows + [{"question": "q9", "answer": "x"}], answers, RET))
+
+    def test_provenance_survives_a_normaliser_upgrade(self):
+        from app.services.teacher_passage_answers_service import normalize_teacher_answer, teacher_provenance
+
+        cached = "Yes, it is taxable【1†L1-L4】."
+        self.assertNotEqual(normalize_teacher_answer(cached), cached, "the cached form is one the normaliser rewrites")
+        answers = _answers(_cache_rec("q1", cached))
+        # The run trained on the raw (pre-fix) form.
+        self.assertIsNotNone(teacher_provenance([{"question": "q1", "answer": cached}], answers, RET))
+
+    def test_mixed_judges_are_listed_and_no_filter_is_none(self):
+        from app.services.teacher_passage_answers_service import teacher_provenance
+
+        answers = _answers(_cache_rec("q1", "a"), _cache_rec("q2", "b", judge="ollama:other"))
+        rows = [{"question": "q1", "answer": "a"}, {"question": "q2", "answer": "b"}]
+        self.assertEqual(teacher_provenance(rows, answers, RET)["filter"]["judge"], ["ollama:judge:12b", "ollama:other"])
+        bare = {k: {**v, "filter": None} for k, v in answers.items()}
+        self.assertEqual(teacher_provenance(rows, bare, RET), {"filter": None, "revise": None})
+
+    def test_report_freezes_filter_and_revise(self):
+        from app.services.passage_prompts_service import _apply_teacher_targets
+        from app.services.teacher_passage_answers_service import cache_path
+
+        pid = 990_000 + (time.time_ns() % 9_999)
+        recs = [_cache_rec("q1", "a1 [1]"), _cache_rec("q2", "a2 [1]", revised=True), _cache_rec("q3", "a3", dropped=True)]
+        path = cache_path(pid)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        from app.services.teacher_passage_answers_service import answer_key
+
+        path.write_text("".join(json.dumps({**r, "key": answer_key(r["question"], RET), "retrieval": RET}) + "\n" for r in recs))
+        with tempfile.TemporaryDirectory() as tmp:
+            train = Path(tmp) / "train.jsonl"
+            train.write_text("".join(json.dumps({"question": r["question"], "answer": "ref"}) + "\n" for r in recs))
+            block = _apply_teacher_targets(pid, retrieval=RET, train_file=train, val_file=None, output_dir=Path(tmp))
+            saved = json.loads((Path(tmp) / "passage_prompts" / "report.json").read_text())
+        self.assertEqual(saved["filter"], {"judge": "ollama:judge:12b", "keep": "correct", "judged": 2})
+        self.assertEqual(saved["revise"]["kept"], 1)
+        self.assertEqual(block["counts"]["train"]["filtered"], 1)
+
+    def test_card_shows_filter_revise_and_same_judge_caveat(self):
+        report = _passage_report(
+            counts={"train": {"rows_out": 2779, "abstained": 272, "filtered": 389, "revised_kept": 242,
+                              "filtered_revised": 386, "filtered_revised_abstained": 69}},
+            filter={"judge": "ollama:judge:12b", "keep": "correct", "judged": 2507},
+            revise={"critic": "ollama:teacher:120b", "judge": "ollama:judge:12b", "rounds": 1, "kept": 242},
+        )
+        card = build_reader_model_card(reader_record=_record(), passage_report=report)
+        self.assertIn("**Filter:** `ollama:judge:12b` graded", card)
+        self.assertIn("only answers graded correct were kept", card)
+        self.assertIn("up to 1 revision round: `ollama:teacher:120b` critiqued it", card)
+        self.assertIn("242 revisions passed and are training targets; 386 still failed and stayed out "
+                      "(69 of them because the revision said it didn't know).", card)
+        self.assertIn("revisions written under critique, not first drafts", card)
+        self.assertIn("The same model (`ollama:judge:12b`) filtered the training answers and judges the test", card)
+        other = build_reader_model_card(reader_record=_record(judge="ollama:another"), passage_report=report)
+        self.assertNotIn("filtered the training answers and judges the test", other)
 
 
 if __name__ == "__main__":
