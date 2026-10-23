@@ -13,6 +13,25 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   checkpoint's dtype read from `AutoConfig` — `from_pretrained(dtype=fp32)`
   overwrites `config.dtype`). `scripts/quantize.py` auto-detects an
   adapter-only `--model`.
+- **Passage-reader model card** (`services/reader_model_package_service.py`; span taggers keep
+  `span_model_package_service`). HF/Docker export of a run with `config.passage_prompts` writes
+  `model/README.md` from evidence the RUN owns: `auto_rag/passage_reader/<run>.json` (the four arms,
+  the paired evidence, the retrieval judge's found / missed split), `passage_prompts/report.json`
+  (trained retrieval, targets, counts), the run's `adapter_config.json` + `training_report.json`, and
+  question-generator / source-document tallies from `passage_prompts/train.jsonl` only while its
+  sha256 matches `reproducibility.train_file_sha256`. Never the project-wide
+  `comparison*_documents.json` (overwritten by any later comparison, on any split). The claim
+  follows `evidence.verdict` (CI), not the raw delta; no lift check → the card says so; a trained ≠
+  evaluated retrieval and `comparable: false` are called out. The prompt example renders
+  `auto_rag_service._DOCUMENT_PREAMBLE_TEMPLATE`, so it can't drift from serving. Manifest key
+  `reader_package` {model_card, evaluated, split, judge, verdict} + a RELEASE_NOTES line. Not on the
+  card (not run-owned): the answer filter's judge + critique-and-revise counts (they live on the flow
+  Job), per-seed scores (passage runs aren't lift-checked as a seed group). The card's caution line is
+  generic; a Hub card still needs the user's education-only warning + blog links added by hand.
+  UI: each row of ExportPanel's Hub-publish card shows `modelCardLine(manifest)`
+  (`components/export/exportModelCard.ts`): span card + its evaluations, reader card + split · judge ·
+  verdict, or a warning that a card-less export publishes a blank Hub page
+  (`data-testid="export-publish-card-line-<id>"`).
 - **Publish to the Hugging Face Hub** (`services/hub_publish_service.py`, `POST
   /projects/{id}/export/{export_id}/publish-hub` {repo_id, private, token?, license,
   commit_message}): a COMPLETED huggingface-format export's `model/` becomes the

@@ -7,6 +7,7 @@ import { ChevronDown } from 'lucide-react';
 import api from '../../api/client';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import './ExportPanel.css';
+import { modelCardLine } from './exportModelCard';
 
 /** Ship stages (Epic U phase U5). ``null`` = the one-page layout. */
 export type ShipStage = 'package' | 'publish' | 'deploy' | 'monitor';
@@ -1552,7 +1553,7 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                 <div className="card" data-testid="export-publish-card">
                     <h3 className="u-card-title u-mb-sm">Publish to the Hugging Face Hub</h3>
                     <p className="u-hint u-mt0 u-mb-md">
-                        A completed Hugging Face export becomes a model repo: weights, tokenizer, model card, thresholds, plus the manifest and release notes under brewslm/. The server's HF_TOKEN or login is used; nothing is stored.
+                        A completed Hugging Face export becomes a model repo: weights, tokenizer, model card (span taggers and passage readers), thresholds, plus the manifest and release notes under brewslm/. The server's HF_TOKEN or login is used; nothing is stored.
                     </p>
                     {(() => {
                         const hfExports = exportsList.filter((exp) => String(exp.export_format || exp.format || '').toLowerCase() === 'huggingface' && exp.status === 'completed');
@@ -1568,6 +1569,14 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                                             {exp.experiment_id ? ` · run #${exp.experiment_id}` : ''}
                                             {exp.created_at ? ` · ${new Date(exp.created_at).toLocaleDateString()}` : ''}
                                         </div>
+                                        {(() => {
+                                            const card = modelCardLine(exp.manifest);
+                                            return (
+                                                <p className={`form-hint u-mt0${card.warn ? ' u-text-warning' : ''}`} data-testid={`export-publish-card-line-${exp.id}`}>
+                                                    {card.text}
+                                                </p>
+                                            );
+                                        })()}
                                         <div className="export-hub-publish" data-testid={`export-hub-publish-${exp.id}`}>
                                             {exp.hub_publish ? (
                                                 <div className="export-hub-publish__done">

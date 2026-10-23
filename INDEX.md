@@ -246,6 +246,7 @@ session-start guidance.
 - `backend/app/services/prompt_contamination_service.py` — Prompts must never carry a benchmark's own values.
 - `backend/app/services/rag_project_service.py` — RAG-skeleton project service (USER-SUCCESS Epic 7 Phase 7b).
 - `backend/app/services/rag_sandbox_service.py` — Lightweight RAG sandbox retrieval helpers.
+- `backend/app/services/reader_model_package_service.py` — Model card for a passage reader — a causal LM trained with retrieved
 - `backend/app/services/readiness_service.py` — Pre-deployment readiness checks for a project — GPU, deps, paths, secrets, with pass/warn/fail verdicts.
 - `backend/app/services/recipe_apply_service.py` — Apply a Theme 2 recipe selection to a Project record.
 - `backend/app/services/recipe_service.py` — Task-shape recipe registry.
@@ -964,6 +965,7 @@ session-start guidance.
 - `backend/tests/test_rag_project_service.py` — Tests for the RAG-skeleton project service
 - `backend/tests/test_rag_protocol_discipline_pack.py` — Tests for the rag_protocol.discipline eval pack + the
 - `backend/tests/test_rag_protocol_recipe.py` — Tests for the rag-protocol recipe + its three playbooks (Arc R-1).
+- `backend/tests/test_reader_packaging.py` — Packaging a passage reader (a causal LM trained with retrieved passages):
 - `backend/tests/test_real_training_path.py` — The core training loop on the REAL runtime, end to end, through the API.
 - `backend/tests/test_recipe_apply_service.py` — Tests for recipe_apply_service — applying a Theme 2 recipe pick
 - `backend/tests/test_recipe_service.py` — Tests for the task-shape recipe registry + header-based shape sniffer.
@@ -1120,6 +1122,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/retrievalSplit.test.ts` — _(no docstring)_
 - `frontend/src/components/export/ExportPanel.stages.test.tsx` — Ship stages (Epic U phase U5): the export panel splits by ``stage`` —
 - `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/export/exportModelCard.test.ts` — _(no docstring)_
 - `frontend/src/components/guide/QuickstartCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/CommandPalette.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/NotificationBell.test.tsx` — NotificationBell tests (Hardening Phase H1).

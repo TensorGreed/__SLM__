@@ -873,6 +873,7 @@ async def run_export(
 
         seed_selection = await selection_for_experiment(db, experiment)
         span_package = None
+        reader_package = None
         if export.export_format not in COMPRESSED_EXPORT_FORMATS:
             from app.services.span_model_package_service import package_token_classifier
 
@@ -890,6 +891,22 @@ async def run_export(
                     path = model_dir / name
                     if path.is_file() and path.resolve() not in known:
                         copied_model_files.append(path)
+            else:
+                # A run trained with retrieved passages ships an evidence-only
+                # reader card (its lift check, data, training, prompt layout).
+                from app.services.reader_model_package_service import package_passage_reader
+
+                reader_package = package_passage_reader(
+                    project_id=project_id,
+                    experiment=experiment,
+                    model_dir=model_dir,
+                    project_name=project.name if project else None,
+                    merged=model_source == "merged_lora",
+                    seed_selection=seed_selection,
+                )
+                card_path = model_dir / reader_package["model_card"] if reader_package else None
+                if card_path is not None and card_path.resolve() not in {p.resolve() for p in copied_model_files}:
+                    copied_model_files.append(card_path)
         for copied in copied_model_files:
             artifacts.append(_artifact_manifest_entry(copied, run_dir))
         model_size_bytes = sum(p.stat().st_size for p in copied_model_files)
@@ -955,6 +972,15 @@ async def run_export(
                     f"+ thresholds.json; HF pipeline stride={span_package['pipeline_stride']}\n"
                     if span_package else ""
                 )
+                + (
+                    "- Passage reader: README.md model card ("
+                    + (
+                        f"{reader_package['split']} split, judged by {reader_package['judge']}, verdict {reader_package['verdict']}"
+                        if reader_package["evaluated"] else "no lift check recorded"
+                    )
+                    + ")\n"
+                    if reader_package else ""
+                )
                 + (f"- Seed selection: {seed_selection['text']}\n" if seed_selection else "")
             ),
             encoding="utf-8",
@@ -965,6 +991,7 @@ async def run_export(
         manifest = {
             "token_window": window_note,
             "span_package": span_package,
+            "reader_package": reader_package,
             "seed_selection": seed_selection,
             "run_id": run_id,
             "export_id": export.id,
