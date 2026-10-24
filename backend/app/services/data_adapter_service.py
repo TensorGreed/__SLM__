@@ -711,6 +711,21 @@ _CLASSIFICATION_PAIR_ALIASES = (
 )
 
 
+def _mapped_input_text(record: dict[str, Any], config: dict[str, Any]) -> str:
+    """The text of the column the user mapped as the input (``field_mapping["text"]``, else
+    ``["question"]``; dotted paths allowed), or "" when nothing is mapped / the cell is empty."""
+    from app.services.record_normalization import _coerce_text as _ct, _get_nested_value
+
+    fm = config.get("field_mapping")
+    if not isinstance(fm, dict):
+        return ""
+    for key in ("text", "question"):
+        path = fm.get(key)
+        if isinstance(path, str) and path.strip():
+            return _ct(_get_nested_value(record, path.strip())) or ""
+    return ""
+
+
 def _classification_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[str, str, str | None]:
     """``(text, label, reject_reason)``. ``reject_reason`` is set when the row has no usable
     input: nothing found, or the canonical fallback produced a text that IS the label."""
@@ -736,7 +751,9 @@ def _classification_parts(record: dict[str, Any], config: dict[str, Any]) -> tup
         "output",
     ]
 
-    text = _pick_text(record, text_aliases)
+    # An input column the user mapped is read directly, ahead of every alias / canonical fallback.
+    mapped_input = _mapped_input_text(record, config)
+    text = mapped_input or _pick_text(record, text_aliases)
     if not text and not explicit_text:
         for first, second, first_name, second_name in _CLASSIFICATION_PAIR_ALIASES:
             a, b = _pick_text(record, [first]), _pick_text(record, [second])
@@ -1307,9 +1324,15 @@ def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[s
         "output",
     ]
 
-    source = _pick_text(record, source_aliases)
+    mapped_input = _mapped_input_text(record, config)
+    source = mapped_input or _pick_text(record, source_aliases)
     target_payload = _pick_payload(record, output_aliases)
     target = _json_text(target_payload)
+    if mapped_input and not target:
+        mapped_answer = (config.get("field_mapping") or {}).get("answer")
+        if mapped_answer:
+            canonical = canonicalize_record(record, field_mapping=config.get("field_mapping"))
+            target = _coerce_text((canonical or {}).get("answer"))
     if not source:
         canonical = canonicalize_record(record, field_mapping=config.get("field_mapping"))
         source = source or _coerce_text((canonical or {}).get("text")) or _coerce_text((canonical or {}).get("question"))

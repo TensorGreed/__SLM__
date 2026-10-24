@@ -113,7 +113,7 @@ _TARGET_NAMES = frozenset({
     "answer", "output", "completion", "response", "target", "label", "labels", "class", "category",
     "output_label", "structured_output", "json", "extracted", "entities", "target_text", "chosen",
     "rejected", "tool_calls", "expected", "ner_tags", "pos_tags", "chunk_tags", "tags", "bio_tags",
-    "spans", "label_ids", "caption", "transcript", "summary",
+    "spans", "label_ids", "caption", "transcript", "summary", "highlights", "abstract", "target_text",
 })
 
 
@@ -297,10 +297,27 @@ _TRACEABLE_INPUT_ADAPTERS = frozenset({
     "qa-pair", "rag-grounded", "seq2seq-pair", "structured-extraction", "classification-label",
 })
 _PAIR_PREFIXES = ("Premise: ", "Sentence 1: ")
+SYSTEMATIC_FLAGGED_FRACTION = 0.9
 
 
 def _collapse(text: str) -> str:
     return " ".join(str(text).split()).lower()
+
+
+def _equals_non_target_column(row: dict[str, Any], collapsed: str, field_mapping: dict[str, str] | None) -> bool:
+    """Whether some column that is neither a target name, a provenance column nor the mapped answer
+    path holds ``collapsed`` as its (whitespace/case-collapsed) text."""
+    from app.services.record_normalization import NON_CONTENT_KEYS, _coerce_text
+
+    answer_path = str((field_mapping or {}).get("answer") or "").strip().lower()
+    for name, value in row.items():
+        low = str(name).strip().lower()
+        if low in _TARGET_NAMES or low in NON_CONTENT_KEYS or low == answer_path or low.startswith("_"):
+            continue
+        for variant in (_as_text(value), _coerce_text(value) or ""):
+            if variant.strip() and _collapse(variant) == collapsed:
+                return True
+    return False
 
 
 def _input_is_real(
@@ -324,7 +341,9 @@ def _input_is_real(
     for field in ("answer", "label", "target_text"):
         answer = _collapse(_as_text(entry.get(field)))
         if answer and answer == first:
-            return False
+            # Equal to the answer is still a real input when a non-target column holds the same text
+            # (a GEC pair left unchanged, a label word that is also the input).
+            return _equals_non_target_column(row, first, field_mapping)
     if adapter_id not in _TRACEABLE_INPUT_ADAPTERS:
         return True
     if adapter_id == "classification-label" and _as_text(entry.get("text")).startswith(_PAIR_PREFIXES):
@@ -523,7 +542,7 @@ def _columns_of(rows: list[dict[str, Any]]) -> list[str]:
 
 def _raise_input_column_unrecognised(
     parsed: dict[str, _ParsedFile], union: list[dict[str, Any]],
-    flagged: dict[str, list[int]] | None = None,
+    flagged: dict[str, list[int]] | None = None, overlap_input_columns: list[str] | None = None,
 ) -> None:
     """422 asking for a field mapping. ``flagged`` = file lines per role whose input is not a real
     column (default: every row). ``metadata.columns`` lets the card offer the mapper."""
@@ -538,13 +557,14 @@ def _raise_input_column_unrecognised(
     raise _fail(
         422, "PREDEFINED_SPLIT_ROWS_REJECTED",
         "Could not tell which column is the input: none of the file's columns is a recognised input name "
-        f"(columns: {', '.join(columns) or 'none'}), or the input found is the answer or a mix of columns; "
-        "nothing was imported.",
+        f"(columns: {', '.join(columns) or 'none'}), the input found is the answer or a mix of columns, "
+        "or the answer column is the one that needs mapping; nothing was imported.",
         "Set a field mapping: question (or text) = the column the model is given, answer = the column it should "
         'produce, for example {"question": "utterance", "answer": "reply"}. Without it, overlap between your '
         "files cannot be checked.",
         {"reason": "input_column_unrecognised", "columns": columns, "rejected": rejected,
-         "row_counts": {r: len(pf.rows) for r, pf in parsed.items()}},
+         "row_counts": {r: len(pf.rows) for r, pf in parsed.items()},
+         "overlap_input_columns": overlap_input_columns or []},
     )
 
 
@@ -664,6 +684,13 @@ async def import_predefined_split(
         _apply_review_gate(pf)
     source_rows = {role: pf.rows for role, pf in parsed.items()}
 
+    union = [row for role in SPLIT_ROLES for row in source_rows.get(role, [])]
+    resolved_adapter_id, _profile, enriched_config = _resolve_adapter_for_rows(
+        union, adapter_id=adapter_id, adapter_config=adapter_config,
+        field_mapping=mapping, task_profile=task_profile,
+    )
+    overlap_cols = _overlap_input_columns(union, resolved_adapter_id, mapping, enriched_config)
+
     # A re-import without a test file would reject the project's current own test file
     # (the supersede step below) and ship no test split: ask first.
     existing_tests: list[int] = []
@@ -676,25 +703,20 @@ async def import_predefined_split(
                 "test file would drop it and leave the new split with no test rows. Nothing was imported.",
                 "Upload a test file with this import, or confirm with 'Drop my current test file' "
                 "(drop_existing_test=true) to import without one.",
-                {"test_document_ids": existing_tests},
+                {"test_document_ids": existing_tests, "overlap_input_columns": overlap_cols},
             )
 
     # 2. Map every split through the SAME adapter path a random split uses. The
     # adapter, label candidates and extraction field list are resolved once over
     # all splits' rows, so train / val / test get an identical prompt shape.
     hook_spec = await _resolve_normalizer_hook_spec(db, project_id)
-    union = [row for role in SPLIT_ROLES for row in source_rows.get(role, [])]
-    resolved_adapter_id, _profile, enriched_config = _resolve_adapter_for_rows(
-        union, adapter_id=adapter_id, adapter_config=adapter_config,
-        field_mapping=mapping, task_profile=task_profile,
-    )
     mapped: dict[str, list[dict[str, Any]]] = {}
     keys: dict[str, list[str]] = {}
     rejected_report: dict[str, Any] = {}
     if resolved_adapter_id not in _CANONICAL_INPUT_KEYS and union and not any(
         _row_has_input_column(row, resolved_adapter_id, mapping, enriched_config) for row in union
     ):
-        _raise_input_column_unrecognised(parsed, union)
+        _raise_input_column_unrecognised(parsed, union, None, overlap_cols)
     flagged: dict[str, list[int]] = {}
     input_rejects = 0
     for role, pf in parsed.items():
@@ -735,11 +757,15 @@ async def import_predefined_split(
             rejected_report[role] = {"count": len(problems), "by_reason": by_reason}
     # The adapter's own input rejections (input is the label / the gold record) covering EVERY row,
     # or any row whose input is not a real column: ask for a mapping instead of listing row noise.
-    if union and (flagged or (not any(mapped.values()) and (
+    # Flagged rows fail the import only when the problem is systematic (>= 90% of the rows): one
+    # coincidental row (an input equal to its answer) must not.
+    flagged_total = sum(len(v) for v in flagged.values())
+    systematic = bool(flagged) and flagged_total >= SYSTEMATIC_FLAGGED_FRACTION * len(union)
+    if union and (systematic or (not any(mapped.values()) and (
         input_rejects == len(union)
         or not any(_row_has_input_column(row, resolved_adapter_id, mapping, enriched_config) for row in union)
     ))):
-        _raise_input_column_unrecognised(parsed, union, flagged or None)
+        _raise_input_column_unrecognised(parsed, union, flagged or None, overlap_cols)
     if rejected_report:
         total = sum(v["count"] for v in rejected_report.values())
         raise _fail(
@@ -749,6 +775,7 @@ async def import_predefined_split(
             "its first data row line 2; blank lines count); for JSON arrays, XLSX and Parquet they are the "
             "1-based record number. Rows still waiting in (or rejected by) the review queue are reported too.",
             {"rejected": rejected_report, "row_counts": {r: len(v) for r, v in source_rows.items()},
+             "overlap_input_columns": overlap_cols,
              **({"columns": _columns_of(union)} if any(
                  "no_input_field" in v["by_reason"] or "input_column_unrecognised" in v["by_reason"]
                  for v in rejected_report.values()) else {})},
@@ -773,7 +800,7 @@ async def import_predefined_split(
             })
     val_test = next((p for p in leak_pairs if p["pair"] == "val_test"), None)
     train_leaks = [p for p in leak_pairs if p["pair"] != "val_test"]
-    leak_meta = {"on_leak": on_leak, "pairs": leak_pairs}
+    leak_meta = {"on_leak": on_leak, "pairs": leak_pairs, "overlap_input_columns": overlap_cols}
     if val_test:
         raise _fail(
             409, "PREDEFINED_SPLIT_VAL_TEST_OVERLAP",
@@ -945,7 +972,7 @@ async def import_predefined_split(
             "source_files": source_files,
             "leak_report": leak_report,
             "duplicate_report": duplicate_report,
-            "overlap_input_columns": _overlap_input_columns(union, resolved_adapter_id, mapping, enriched_config),
+            "overlap_input_columns": overlap_cols,
         }
         if "test" in files:  # added only when true: manifests without it are unchanged
             manifest["predefined_test_active"] = True

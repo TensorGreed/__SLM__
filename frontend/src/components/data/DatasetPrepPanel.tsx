@@ -100,6 +100,8 @@ interface SplitManifest {
     include_types_resolution?: {
         reason?: string | null;
         cleaned_filter?: { kept?: number; dropped_unlabelled_passages?: number } | null;
+        /** Rows the adapter refused because their input was the label / the gold record, by reason. */
+        input_rejected?: Record<string, number> | null;
     } | null;
     disjoint_by?: string | null;
     disjoint_report?: DisjointReport | null;
@@ -2106,6 +2108,19 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                                 supervised training.
                             </p>
                         )}
+                        {(() => {
+                            const rejected = splitManifest.include_types_resolution?.input_rejected;
+                            const entries = Object.entries(rejected ?? {}).filter(([, n]) => n > 0);
+                            if (!entries.length) return null;
+                            const total = entries.reduce((sum, [, n]) => sum + n, 0);
+                            return (
+                                <p className="form-hint" data-testid="dp-input-rejected-note">
+                                    Left out {total} row(s) whose input would have been their own answer:{' '}
+                                    {entries.map(([reason, n]) => `${reason.replace(/_/g, ' ')} (${n})`).join(', ')}.
+                                    Name the input column with a field mapping (text / question) to keep them.
+                                </p>
+                            );
+                        })()}
                         {splitManifest.stratification_report && (
                             <div className="dp-resolved-panel dp-strat-panel">
                                 <div className="dp-resolved-title">

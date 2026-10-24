@@ -43,6 +43,8 @@ interface Problem {
     code: string;
     /** Set on a 422 where no column is recognised as the input: the file's columns. */
     unrecognisedColumns: string[] | null;
+    /** The columns the overlap check keyed on (sent with 409 / 422 errors), when the server says. */
+    overlapColumns: string[];
 }
 
 /** Provenance / id-like names (the server's NON_CONTENT_KEYS plus index-like names). */
@@ -54,7 +56,7 @@ const TARGET_NAMES = new Set([
     'answer', 'output', 'completion', 'response', 'target', 'label', 'labels', 'class', 'category', 'output_label',
     'structured_output', 'json', 'extracted', 'entities', 'target_text', 'chosen', 'rejected', 'tool_calls',
     'expected', 'ner_tags', 'pos_tags', 'chunk_tags', 'tags', 'bio_tags', 'spans', 'label_ids', 'caption',
-    'transcript', 'summary',
+    'transcript', 'summary', 'highlights', 'abstract',
 ]);
 
 function isProvenance(column: string): boolean {
@@ -124,7 +126,8 @@ function toProblem(err: unknown): Problem {
     const columns = meta.reason === 'input_column_unrecognised' && Array.isArray(meta.columns)
         ? (meta.columns as unknown[]).map(String)
         : null;
-    return { message: env.message, fix: env.actionableFix, groups, code: env.errorCode, unrecognisedColumns: columns };
+    const overlapColumns = Array.isArray(meta.overlap_input_columns) ? (meta.overlap_input_columns as unknown[]).map(String) : [];
+    return { message: env.message, fix: env.actionableFix, groups, code: env.errorCode, unrecognisedColumns: columns, overlapColumns };
 }
 
 export default function PredefinedSplitCard({
@@ -180,7 +183,10 @@ export default function PredefinedSplitCard({
 
     const applyMapping = () => {
         if (!mapInput) return;
-        const mapping: Record<string, string> = { question: mapInput };
+        // Classification and structured extraction read the input as ``text``; everything else as ``question``.
+        const inputKey = adapter?.adapterId === 'classification-label' || adapter?.adapterId === 'structured-extraction'
+            ? 'text' : 'question';
+        const mapping: Record<string, string> = { [inputKey]: mapInput };
         if (mapAnswer && mapAnswer !== mapInput) mapping.answer = mapAnswer;
         const text = JSON.stringify(mapping);
         setFieldMapping(text);
@@ -284,6 +290,11 @@ export default function PredefinedSplitCard({
                 <div className="pdsplit__problem" role="alert" data-testid="pdsplit-problem">
                     <strong><AlertTriangle className="u-icon" aria-hidden="true" /> {problem.message}</strong>
                     {problem.fix && <p>{problem.fix}</p>}
+                    {problem.overlapColumns.length > 0 && (
+                        <p data-testid="pdsplit-problem-overlap-columns">
+                            Overlap checked on: {problem.overlapColumns.join(' + ')}
+                        </p>
+                    )}
                     {problem.unrecognisedColumns && (
                         <div className="pdsplit__mapper" data-testid="pdsplit-mapper">
                             <p>The file's columns: {problem.unrecognisedColumns.join(', ')}</p>

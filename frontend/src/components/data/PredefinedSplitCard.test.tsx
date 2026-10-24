@@ -292,7 +292,7 @@ describe('PredefinedSplitCard column mapper', () => {
         await user.click(screen.getByTestId('pdsplit-map-apply'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(2));
         const form = apiMock.post.mock.calls[1][1] as FormData;
-        expect(JSON.parse(String(form.get('field_mapping')))).toEqual({ question: 'sentence', answer: 'label' });
+        expect(JSON.parse(String(form.get('field_mapping')))).toEqual({ text: 'sentence', answer: 'label' });
         expect(form.get('adapter_id')).toBe('classification-label');
         expect(form.get('task_profile')).toBe('classification');
         expect(JSON.parse(String(form.get('adapter_config')))).toEqual({ text_fields: ['sentence'] });
@@ -324,5 +324,20 @@ describe('PredefinedSplitCard column mapper', () => {
         expect((apiMock.post.mock.calls[0][1] as FormData).get('drop_existing_test')).toBe('true');
         expect(screen.getByTestId('pdsplit-overlap-columns')).toHaveTextContent('Overlap checked on: question + context');
         expect(screen.getByTestId('pdsplit-drop-test')).not.toBeChecked();
+    });
+
+    it('sends the input as text for a structured-extraction adapter, and shows the overlap columns on a 409', async () => {
+        const user = await openMapper(['narrative', 'structured_output'], { adapterId: 'structured-extraction' });
+        apiMock.post.mockRejectedValueOnce({
+            response: { status: 409, data: {
+                error_code: 'PREDEFINED_SPLIT_LEAKAGE', message: 'Rows overlap', actionable_fix: 'Remove them.',
+                troubleshooting_id: 'e1', metadata: { pairs: [], overlap_input_columns: ['text'] },
+            } },
+        });
+        await user.click(screen.getByTestId('pdsplit-map-apply'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(2));
+        const mapping = JSON.parse(String((apiMock.post.mock.calls[1][1] as FormData).get('field_mapping')));
+        expect(mapping).toEqual({ text: 'narrative', answer: 'structured_output' });
+        expect(await screen.findByTestId('pdsplit-problem-overlap-columns')).toHaveTextContent('Overlap checked on: text');
     });
 });

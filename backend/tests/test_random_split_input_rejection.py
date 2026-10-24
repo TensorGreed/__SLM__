@@ -141,3 +141,42 @@ def test_structured_with_recognised_or_mapped_document_is_unchanged():
     m = das.map_record_with_adapter({"narr": "N", "structured_output": {"a": 1}}, adapter_id="structured-extraction",
                                     field_mapping={"text": "narr"})
     assert m["text"] == "N"
+
+
+def test_a_saved_question_mapping_trains_the_mapped_column_not_the_label():
+    pid = _project()
+    rows = [{"utterance": f"book a flight {i}", "intent": ["book", "cancel"][i % 2]} for i in range(20)]
+    resp = _random_split(pid, rows, **CLS, field_mapping={"question": "utterance", "answer": "intent"})
+    assert resp.status_code == 200, resp.text
+    got = _prepared(pid)
+    assert len(got) == 20 and "input_rejected" not in (resp.json()["include_types_resolution"] or {})
+    for r in got:
+        assert r["text"].startswith("book a flight "), r
+        assert f"Text: {r['text']}\nLabel:" in r["source_text"]
+        assert r["text"] != r["label"]
+
+
+def test_an_explicit_input_mapping_keeps_rows_whose_input_equals_the_answer():
+    pid = _project()
+    rows = [{"utterance": u, "intent": u} for u in ("help", "stop", "yes")] + [
+        {"utterance": f"book a flight {i}", "intent": "book"} for i in range(17)]
+    resp = _random_split(pid, rows, **CLS, field_mapping={"text": "utterance", "answer": "intent"})
+    assert resp.status_code == 200, resp.text
+    assert len(_prepared(pid)) == 20 and "input_rejected" not in (resp.json()["include_types_resolution"] or {})
+    pid = _project()
+    se = [{"report": f"A cat {i} sat", "lab": "cat"} for i in range(20)]
+    resp = _random_split(pid, se, adapter_id="structured-extraction", task_profile="structured_extraction",
+                         field_mapping={"text": "report", "answer": "lab"})
+    assert resp.status_code == 200, resp.text
+    got = _prepared(pid)
+    assert len(got) == 20 and all(r["text"].startswith("A cat ") for r in got)
+
+
+def test_unmapped_fallback_rows_stay_rejected_and_structured_mapping_reads_the_document():
+    pid = _project()
+    rows = [{"utt": f"u {i}", "label": i % 3} for i in range(21)]
+    resp = _random_split(pid, rows, **CLS)
+    assert resp.status_code in (400, 422) and "own label" in resp.text
+    m = das.map_record_with_adapter({"narr": "N", "gold": {"a": 1}, "structured_output": {"a": 1}},
+                                    adapter_id="structured-extraction", field_mapping={"question": "narr"})
+    assert m["text"] == "N"

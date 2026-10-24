@@ -149,4 +149,19 @@ describe('DatasetPrepPanel — split-form hydration from the active prepared ver
         // …but no hydration happened, so no hint.
         expect(screen.queryByTestId('dp-active-config-hint')).not.toBeInTheDocument();
     });
+
+    it('shows how many rows a random split left out because their input was their answer, by reason', async () => {
+        mockApi({ ...ACTIVE_MANIFEST, splits: { train: 341, val: 42, test: 44 } });
+        apiMock.post.mockResolvedValue({ data: {
+            splits: { train: 30, val: 4, test: 4 },
+            include_types_resolution: { input_rejected: { classification_input_is_label: 5, structured_input_contains_gold: 2 } },
+        } });
+        const user = await renderAndOpenSplit();
+        await screen.findByTestId('dp-active-config-hint');
+        await user.click(screen.getByRole('button', { name: /Run Split/ }));
+        const note = await screen.findByTestId('dp-input-rejected-note');
+        expect(note).toHaveTextContent('Left out 7 row(s)');
+        expect(note).toHaveTextContent('classification input is label (5)');
+        expect(note).toHaveTextContent('structured input contains gold (2)');
+    });
 });

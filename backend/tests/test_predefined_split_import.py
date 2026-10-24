@@ -1237,3 +1237,87 @@ def test_manifest_names_the_columns_the_overlap_check_used():
     rag = [{"question": f"q{i}?", "context": f"ctx {i}", "answer": f"a{i}"} for i in range(4)]
     manifest = _predef(pid, _jsonl(rag), None, _jsonl([{"question": "new?", "context": "ctx 0", "answer": "x"}])).json()
     assert manifest["overlap_input_columns"] == ["question", "context"]
+
+
+def _mapper_import(pid, train, test, mapping, **wiring):
+    """The result card's mapper request: the mapping plus the project's adapter wiring."""
+    return client.post(
+        f"/api/projects/{pid}/dataset/predefined-split",
+        data={"field_mapping": json.dumps(mapping), **wiring},
+        files={"train": ("train.jsonl", _jsonl(train)), "test": ("test.jsonl", _jsonl(test))},
+    )
+
+
+def test_mapper_request_shapes_import_classification_and_structured_rows():
+    pid = _new_project()
+    _set_pref(pid, adapter_id="classification-label", task_profile="classification")
+    train = [{"utterance": f"book a flight {i}", "intent": ["book", "cancel"][i % 2]} for i in range(20)]
+    test = [{"utterance": "cancel my trip", "intent": "cancel"}]
+    assert _predef(pid, _jsonl(train), None, _jsonl(test)).status_code == 422
+    for key in ("text", "question"):  # the card sends ``text``; a saved preference may hold ``question``
+        resp = _mapper_import(pid, train, test, {key: "utterance", "answer": "intent"},
+                              adapter_id="classification-label", task_profile="classification")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["overlap_input_columns"] == ["text"]
+        row = _prepared(pid, "test")[0]
+        assert "Text: cancel my trip\nLabel:" in row["source_text"] and row["target_text"].strip() == "cancel"
+    pid = _new_project()
+    _set_pref(pid, adapter_id="structured-extraction", task_profile="structured_extraction")
+    train = [{"narrative": f"plane {i} crashed", "structured_output": {"a": i}} for i in range(20)]
+    test = [{"narrative": "plane new crashed", "structured_output": {"a": 99}}]
+    for mapping in ({"text": "narrative", "answer": "structured_output"}, {"question": "narrative"}):
+        resp = _mapper_import(pid, train, test, mapping, adapter_id="structured-extraction",
+                              task_profile="structured_extraction")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["overlap_input_columns"] == ["text"]
+        assert "Input: plane new crashed\nOutput:" in _prepared(pid, "test")[0]["source_text"]
+
+
+def test_a_coincidental_input_equal_to_its_answer_does_not_fail_the_import():
+    # GEC pairs where the sentence needed no correction
+    pid = _new_project()
+    _set_pref(pid, adapter_id="seq2seq-pair", task_profile="seq2seq")
+    gec = [{"input": f"She go to school {i}." if i % 2 else f"She goes to school {i}.",
+            "output": f"She goes to school {i}."} for i in range(20)]
+    assert _predef(pid, _jsonl(gec), None, _jsonl([{"input": "He is fine.", "output": "He is fine."}])).status_code == 200
+    # one {"text": "help", "label": "help"} among 20 classification rows
+    pid = _new_project()
+    _set_pref(pid, adapter_id="classification-label", task_profile="classification")
+    cls = [{"text": "help", "label": "help"}] + [{"text": f"please book {i}", "label": "book"} for i in range(19)]
+    resp = _predef(pid, _jsonl(cls), None, _jsonl([{"text": "cancel it", "label": "cancel"}]))
+    assert resp.status_code == 200, resp.text
+    # one {"question": "Yes", "answer": "Yes"} among qa pairs
+    pid = _new_project()
+    _set_pref(pid, adapter_id="qa-pair")
+    qa = [{"question": "Yes", "answer": "Yes"}] + [{"question": f"q {i}?", "answer": f"a {i}"} for i in range(19)]
+    resp = _predef(pid, _jsonl(qa), None, _jsonl([{"question": "new?", "answer": "n"}]))
+    assert resp.status_code == 200, resp.text
+
+
+def test_a_file_whose_every_input_is_the_answer_still_asks_for_a_mapping():
+    pid = _new_project()
+    _set_pref(pid, adapter_id="classification-label", task_profile="classification")
+    rows = [{"idx": i, "label": f"l{i}"} for i in range(10)]
+    meta = _unrecognised(_predef(pid, _jsonl(rows), None, _jsonl(rows[:1])))
+    assert meta["overlap_input_columns"] == ["text"]
+    assert "answer column" in _predef(pid, _jsonl(rows), None, _jsonl(rows[:1])).json()["message"]
+
+
+def test_highlights_summary_abstract_are_targets_not_unrecognised_inputs():
+    pid = _new_project()
+    cnn = [{"article": f"Long article {i} body text.", "highlights": f"hl {i}", "id": f"x{i}"} for i in range(8)]
+    resp = _predef(pid, _jsonl(cnn), None, _jsonl([{"article": "Other article.", "highlights": "h", "id": "y"}]))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["overlap_input_columns"] == ["article"]
+
+
+def test_conflict_errors_carry_the_overlap_input_columns():
+    pid = _new_project()
+    train, test = _qa("tr", 6), _qa("tr", 6)[:2]
+    resp = _predef(pid, _jsonl(train), None, _jsonl(test))
+    assert resp.status_code == 409 and resp.json()["error_code"] == "PREDEFINED_SPLIT_LEAKAGE"
+    assert resp.json()["metadata"]["overlap_input_columns"] == ["question"]
+    assert _predef(pid, _jsonl(_qa("ok", 6)), None, _jsonl(_qa("tz", 2))).status_code == 200
+    resp = _predef(pid, _jsonl(_qa("ok2", 6)), None, None)
+    assert resp.status_code == 409 and resp.json()["error_code"] == "PREDEFINED_TEST_WOULD_BE_DROPPED"
+    assert resp.json()["metadata"]["overlap_input_columns"] == ["question"]
