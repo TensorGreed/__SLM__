@@ -545,7 +545,9 @@ def test_input_key_ignores_prompt_template_and_target_fields():
     assert _input_side_key({"instruction": "X", "input": "one"}) != _input_side_key({"instruction": "X", "input": "two"})
     chat = dict(adapter_id="chat-messages")
     assert _input_side_key(_chat("hi", "a"), **chat) == _input_side_key(_chat("hi", "b"), **chat)
-    assert _input_side_key({"note": "x", "label": "pos"}) == _input_side_key({"note": "x", "label": "neg"})
+    mapped = dict(field_mapping={"question": "note", "answer": "label"})
+    assert _input_side_key({"note": "x", "label": "pos"}, **mapped) == _input_side_key({"note": "x", "label": "neg"}, **mapped)
+    assert _input_side_key({"note": "x", "label": "pos"}) == "", "no recognised input column: no key, no guess"
     # an id / index column never enters the key
     assert _input_side_key({"sentence": "good film", "label": 1, "idx": 0}) == _input_side_key(
         {"sentence": "good film", "label": 0, "idx": 99}
@@ -583,6 +585,9 @@ def test_review_sentiment_same_review_different_label_is_a_leak():
     tr = [{"review": f"movie {i} was fine", "sentiment": "pos" if i % 2 else "neg"} for i in range(20)]
     te = [{"review": "movie 3 was fine", "sentiment": "neg"}, {"review": "brand new", "sentiment": "neg"}]
     resp = _predef(pid, _jsonl(tr), None, _jsonl(te))
+    assert resp.status_code == 422, "no recognised input column: asks for a field mapping, never guesses"
+    mapping = {"field_mapping": json.dumps({"question": "review", "answer": "sentiment"})}
+    resp = _predef(pid, _jsonl(tr), None, _jsonl(te), **mapping)
     assert resp.status_code == 409, resp.text
 
 
@@ -1002,3 +1007,117 @@ def test_adapter_preference_origin_is_predefined_split():
         return (await db.get(Project, pid)).dataset_adapter_preset.get("origin")
 
     assert _run(_query(origin)) == "predefined_split"
+
+
+# --- review-5: no heuristic fallback, provenance columns, nested mappings, test-file re-import, prompt+text ---
+
+
+def _map(question: str, answer: str) -> dict:
+    return {"field_mapping": json.dumps({"question": question, "answer": answer})}
+
+
+def _unrecognised(resp) -> dict:
+    assert resp.status_code == 422, resp.text
+    meta = resp.json()["metadata"]
+    assert meta["reason"] == "input_column_unrecognised"
+    for role in meta["rejected"]:
+        assert "input_column_unrecognised" in meta["rejected"][role]["by_reason"]
+    return meta
+
+
+def test_unrecognised_input_columns_ask_for_a_field_mapping_then_detect_leaks():
+    cases = {
+        "qa": ([{"q": f"capital of country {i}?", "a": f"city {i}"} for i in range(20)],
+               [{"q": "capital of country 3?", "a": "other city"}], "q", "a"),
+        "flan": ([{"inputs": f"Translate: sentence {i}", "targets": f"phrase {i}"} for i in range(20)],
+                 [{"inputs": "Translate: sentence 3", "targets": "reworded"}], "inputs", "targets"),
+        "pair": ([{"en": f"the cat {i}", "fr": f"le chat {i}"} for i in range(20)],
+                 [{"en": "the cat 3", "fr": "un chat"}], "en", "fr"),
+        "math": ([{"problem": f"What is {i}+{i}?", "solution": f"{2 * i}", "level": "Level 1"} for i in range(20)],
+                 [{"problem": "What is 3+3?", "solution": "six", "level": "Level 2"}], "problem", "solution"),
+        "intents64": ([{"utterance": f"u {i}", "intent": f"intent_{i % 64}"} for i in range(256)],
+                      [{"utterance": "u 3", "intent": "intent_9"}], "utterance", "intent"),
+        "intents20": ([{"utterance": f"u {i}", "intent": f"intent_{i % 20}"} for i in range(30)],
+                      [{"utterance": "u 3", "intent": "intent_9"}], "utterance", "intent"),
+        "tiny": ([{"utterance": "hi there", "intent": "greet"}, {"utterance": "bye", "intent": "farewell"}],
+                 [{"utterance": "hi there", "intent": "farewell"}], "utterance", "intent"),
+    }
+    for name, (train, test, q, a) in cases.items():
+        pid = _new_project()
+        meta = _unrecognised(_predef(pid, _jsonl(train), None, _jsonl(test)))
+        assert meta["columns"] == list(train[0]), name
+        assert not (_prep_dir(pid) / "manifest.json").exists(), name
+        resp = _predef(pid, _jsonl(train), None, _jsonl(test), **_map(q, a))
+        assert resp.status_code == 409, (name, resp.text)
+        assert resp.json()["error_code"] == "PREDEFINED_SPLIT_LEAKAGE", name
+
+
+def test_repeated_short_utterance_with_a_free_text_reply_uses_the_mapped_input():
+    cmds = ["turn on the lights", "play music", "stop", "what time is it"]
+    train = [{"utterance": cmds[i % 4], "reply": f"ok #{i}"} for i in range(40)]
+    pid = _new_project()
+    _unrecognised(_predef(pid, _jsonl(train), None, _jsonl([{"utterance": "play music", "reply": "x"}])))
+    mapping = _map("utterance", "reply")
+    # real overlap (same utterance, different reply) is detected
+    resp = _predef(pid, _jsonl(train), None, _jsonl([{"utterance": "play music", "reply": "different"}, {"utterance": "new", "reply": "y"}]), **mapping)
+    assert resp.status_code == 409, resp.text
+    # a new input whose reply equals a train reply is NOT flagged
+    resp = _predef(pid, _jsonl(train), None, _jsonl([{"utterance": "brand new cmd", "reply": "ok #2"}]), **mapping)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["duplicate_report"]["train"] == 36, "40 rows over 4 repeated utterances: 36 repeats"
+
+
+def test_provenance_columns_never_enter_the_key():
+    train = [{"question": f"q {i}?", "answer": f"a{i}", "source": "scraped"} for i in range(20)]
+    test = [{"question": "q 3?", "answer": "a3", "source": "benchmark"}, {"question": "fresh?", "answer": "f", "source": "scraped"}]
+    resp = _predef(_new_project(), _jsonl(train), None, _jsonl(test))
+    assert resp.status_code == 409, resp.text
+    # a file whose only candidate is a provenance column is unrecognised
+    _unrecognised(_predef(_new_project(), _jsonl([{"source": f"s{i}", "reply": "r"} for i in range(5)]), None, _jsonl([{"source": "s1", "reply": "r"}])))
+
+
+def test_dotted_field_mapping_paths_are_resolved():
+    train = [{"data": {"q": f"capital of {i}?", "a": f"city {i}"}} for i in range(20)]
+    test = [{"data": {"q": "capital of 3?", "a": "other"}}]
+    resp = _predef(_new_project(), _jsonl(train), None, _jsonl(test), **_map("data.q", "data.a"))
+    assert resp.status_code == 409, resp.text
+    assert _predef(_new_project(), _jsonl(train), None, _jsonl([{"data": {"q": "new?", "a": "other"}}]), **_map("data.q", "data.a")).status_code == 200
+    # an extra sibling next to the mapped path does not hide the overlap
+    train = [{"req": {"q": f"capital of {i}?"}, "a": f"city {i}"} for i in range(20)]
+    test = [{"req": {"q": "capital of 3?", "meta": "bench"}, "a": "other"}]
+    resp = _predef(_new_project(), _jsonl(train), None, _jsonl(test), **_map("req.q", "a"))
+    assert resp.status_code == 409, resp.text
+
+
+def test_reimport_without_a_test_file_asks_before_dropping_the_current_one():
+    pid = _new_project()
+    assert _predef(pid, _jsonl(_qa("tr", 20)), None, _jsonl(_qa("te", 5))).status_code == 200
+    (old_test,) = _test_doc_ids(pid, [DocumentStatus.ACCEPTED])
+    resp = _predef(pid, _jsonl(_qa("tr2", 20)), None, None)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error_code"] == "PREDEFINED_TEST_WOULD_BE_DROPPED"
+    assert "drop_existing_test" in resp.json()["actionable_fix"]
+    assert _test_doc_ids(pid, [DocumentStatus.ACCEPTED]) == [old_test], "nothing changed"
+    resp = _predef(pid, _jsonl(_qa("tr2", 20)), None, None, drop_existing_test="true")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["dropped_existing_test_document_ids"] == [old_test]
+    assert _test_doc_ids(pid, [DocumentStatus.ACCEPTED]) == []
+    assert "predefined_test_active" not in resp.json()
+    # no accepted test file: no question, no extra manifest key
+    resp = _predef(pid, _jsonl(_qa("tr3", 20)), None, None)
+    assert resp.status_code == 200 and "dropped_existing_test_document_ids" not in resp.json()
+    # a new test file replaces the old one without asking
+    pid = _new_project()
+    assert _predef(pid, _jsonl(_qa("tr", 20)), None, _jsonl(_qa("te", 5))).status_code == 200
+    assert _predef(pid, _jsonl(_qa("tr", 20)), None, _jsonl(_qa("te2", 5))).status_code == 200
+
+
+def test_prompt_with_a_rendered_text_column_keys_on_the_prompt():
+    train = [{"prompt": f"p {i}", "text": f"p {i} -> resp {i}"} for i in range(20)]
+    test = [{"prompt": "p 3", "text": "p 3 -> other resp"}]
+    resp = _predef(_new_project(), _jsonl(train), None, _jsonl(test))
+    assert resp.status_code == 409, resp.text
+    # RAG: question + context are both in the key
+    rag_tr = [{"question": "why?", "context": f"doc {i}", "answer": "a"} for i in range(5)]
+    assert _predef(_new_project(), _jsonl(rag_tr), None, _jsonl([{"question": "why?", "context": "doc 9", "answer": "a"}])).status_code == 200
+    assert _predef(_new_project(), _jsonl(rag_tr), None, _jsonl([{"question": "why?", "context": "doc 2", "answer": "z"}])).status_code == 409

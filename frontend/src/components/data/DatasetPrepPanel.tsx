@@ -1910,8 +1910,10 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                             setSplitTemplate(value);
                             setSplitTouched((prev) => ({ ...prev, chat_template: true }));
                         }}
-                        onImported={() => {
-                            setPredefinedActive(true);
+                        ownTestRows={predefinedActive ? (activeTestRows || splitManifest?.splits?.test || 0) : null}
+                        onImported={(manifest) => {
+                            setPredefinedActive(manifest.predefined_test_active === true);
+                            setActiveTestRows(manifest.splits?.test ?? 0);
                             setHealthRefreshKey((k) => k + 1);
                         }}
                     />

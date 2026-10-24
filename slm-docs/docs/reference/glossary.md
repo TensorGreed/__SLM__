@@ -421,7 +421,7 @@ One inference observation pushed to BrewSLM by your serving runtime (status, lat
 
 ## Own split files
 
-Train / validation / test files you already have, imported on **Data** → **Split** with "Use my own train / val / test files". Rows go in the split of the file they came from (no ratio, no shuffle; train rows that overlap validation or test are the one exception, see below; your test file is never used for training, and a later random re-split must either keep it or explicitly replace it), rows go through the same mapping as a normal split, and train rows that also appear in validation or test either stop the import or are dropped from train only (and stay out of any later re-split). A later re-split re-draws validation from train + val. API: `POST /dataset/predefined-split`; the manifest says `split_source: "predefined"`.
+Train / validation / test files you already have, imported on **Data** → **Split** with "Use my own train / val / test files". Rows go in the split of the file they came from (no ratio, no shuffle; train rows that overlap validation or test are the one exception, see below; your test file is never used for training, and a later random re-split must either keep it or explicitly replace it), rows go through the same mapping as a normal split, and when no column is recognised as the input the import asks for a column mapping instead of guessing; train rows that also appear in validation or test either stop the import or are dropped from train only (and stay out of any later re-split). A later re-split re-draws validation from train + val. API: `POST /dataset/predefined-split`; the manifest says `split_source: "predefined"`.
 
 ## Test examples
 

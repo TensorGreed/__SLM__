@@ -56,3 +56,10 @@
     padding: .3rem .5rem;
     border-bottom: 1px solid var(--border);
 }
+
+.pdsplit__mapper {
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    margin-top: .6rem;
+}

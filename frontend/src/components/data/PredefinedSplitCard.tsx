@@ -28,12 +28,17 @@ interface Props {
     /** False while the profile's default template applies (the split form sends nothing then). */
     sendChatTemplate?: boolean;
     onImported?: (manifest: PredefinedSplitManifest) => void;
+    /** Rows of the project's own (imported) test file while it is active, else null/undefined. */
+    ownTestRows?: number | null;
 }
 
 interface Problem {
     message: string;
     fix: string;
     groups: { label: string; count: number; rows: number[] }[];
+    code: string;
+    /** Set on a 422 where no column is recognised as the input: the file's columns. */
+    unrecognisedColumns: string[] | null;
 }
 
 const ROLE_LABEL: Record<string, string> = { train: 'Train', val: 'Validation', test: 'Test' };
@@ -81,7 +86,10 @@ function toProblem(err: unknown): Problem {
             }
         }
     }
-    return { message: env.message, fix: env.actionableFix, groups };
+    const columns = meta.reason === 'input_column_unrecognised' && Array.isArray(meta.columns)
+        ? (meta.columns as unknown[]).map(String)
+        : null;
+    return { message: env.message, fix: env.actionableFix, groups, code: env.errorCode, unrecognisedColumns: columns };
 }
 
 export default function PredefinedSplitCard({
@@ -91,17 +99,21 @@ export default function PredefinedSplitCard({
     onChatTemplateChange,
     sendChatTemplate = true,
     onImported,
+    ownTestRows = null,
 }: Props) {
     const [train, setTrain] = useState<File | null>(null);
     const [val, setVal] = useState<File | null>(null);
     const [test, setTest] = useState<File | null>(null);
     const [onLeak, setOnLeak] = useState<OnLeak>('fail');
     const [fieldMapping, setFieldMapping] = useState('');
+    const [dropOwnTest, setDropOwnTest] = useState(false);
+    const [mapInput, setMapInput] = useState('');
+    const [mapAnswer, setMapAnswer] = useState('');
     const [busy, setBusy] = useState(false);
     const [problem, setProblem] = useState<Problem | null>(null);
     const [result, setResult] = useState<PredefinedSplitManifest | null>(null);
 
-    const submit = async () => {
+    const submit = async (mappingOverride?: string) => {
         if (!train) return;
         setBusy(true);
         setProblem(null);
@@ -109,17 +121,33 @@ export default function PredefinedSplitCard({
         try {
             const manifest = await importPredefinedSplit(projectId, { train, val, test }, {
                 onLeak,
-                fieldMapping,
+                fieldMapping: mappingOverride ?? fieldMapping,
                 chatTemplate: sendChatTemplate ? chatTemplate : null,
+                dropExistingTest: !test && dropOwnTest,
             });
             setResult(manifest);
             onImported?.(manifest);
         } catch (err) {
-            setProblem(toProblem(err));
+            const next = toProblem(err);
+            setProblem(next);
+            if (next.unrecognisedColumns) {
+                setMapInput(next.unrecognisedColumns[0] ?? '');
+                setMapAnswer(next.unrecognisedColumns[1] ?? '');
+            }
         } finally {
             setBusy(false);
         }
     };
+
+    const applyMapping = () => {
+        const mapping: Record<string, string> = { question: mapInput };
+        if (mapAnswer) mapping.answer = mapAnswer;
+        const text = JSON.stringify(mapping);
+        setFieldMapping(text);
+        void submit(text);
+    };
+
+    const showDropOwnTest = !test && (ownTestRows !== null || problem?.code === 'PREDEFINED_TEST_WOULD_BE_DROPPED');
 
     const picker = (id: string, label: string, hint: string, onPick: (f: File | null) => void) => (
         <label className="pdsplit__file" htmlFor={id}>
@@ -188,6 +216,24 @@ export default function PredefinedSplitCard({
                     onChange={(e) => setFieldMapping(e.target.value)}
                 />
             </label>
+            {showDropOwnTest && (
+                <label className="pdsplit__field" htmlFor="pdsplit-drop-test">
+                    <span>
+                        <input
+                            id="pdsplit-drop-test"
+                            type="checkbox"
+                            data-testid="pdsplit-drop-test"
+                            checked={dropOwnTest}
+                            onChange={(e) => setDropOwnTest(e.target.checked)}
+                        />{' '}
+                        Drop my current test file{ownTestRows ? ` (${ownTestRows} rows)` : ''}
+                    </span>
+                    <small>
+                        Importing without a test file would retire the test file you imported earlier. Tick this to
+                        confirm, or choose a new test file above.
+                    </small>
+                </label>
+            )}
             <div className="pdsplit__actions">
                 <button className="btn-primary" data-testid="pdsplit-submit" disabled={!train || busy} onClick={() => void submit()}>
                     {busy ? 'Importing...' : 'Import my files'}
@@ -198,6 +244,27 @@ export default function PredefinedSplitCard({
                 <div className="pdsplit__problem" role="alert" data-testid="pdsplit-problem">
                     <strong><AlertTriangle className="u-icon" aria-hidden="true" /> {problem.message}</strong>
                     {problem.fix && <p>{problem.fix}</p>}
+                    {problem.unrecognisedColumns && (
+                        <div className="pdsplit__mapper" data-testid="pdsplit-mapper">
+                            <p>The file's columns: {problem.unrecognisedColumns.join(', ')}</p>
+                            <label className="pdsplit__field" htmlFor="pdsplit-map-input">
+                                <span>Question / text column (what the model is given)</span>
+                                <select id="pdsplit-map-input" data-testid="pdsplit-map-input" value={mapInput} onChange={(e) => setMapInput(e.target.value)}>
+                                    {problem.unrecognisedColumns.map((c) => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                            </label>
+                            <label className="pdsplit__field" htmlFor="pdsplit-map-answer">
+                                <span>Answer column (what it should produce)</span>
+                                <select id="pdsplit-map-answer" data-testid="pdsplit-map-answer" value={mapAnswer} onChange={(e) => setMapAnswer(e.target.value)}>
+                                    <option value="">(none)</option>
+                                    {problem.unrecognisedColumns.filter((c) => c !== mapInput).map((c) => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                            </label>
+                            <button className="btn-secondary" type="button" data-testid="pdsplit-map-apply" disabled={!mapInput || busy} onClick={applyMapping}>
+                                Use this mapping and import again
+                            </button>
+                        </div>
+                    )}
                     {problem.groups.length > 0 && (
                         <ul>
                             {problem.groups.map((g) => (
@@ -232,6 +299,11 @@ export default function PredefinedSplitCard({
                     <p className="pdsplit__help">
                         Repeated inputs are rows whose text already appears earlier in the same split. They were kept.
                     </p>
+                    {result.dropped_existing_test_document_ids && result.dropped_existing_test_document_ids.length > 0 && (
+                        <p data-testid="pdsplit-dropped-test">
+                            Your earlier test file was dropped; this import has no test file.
+                        </p>
+                    )}
                     {result.leak_report.dropped_from_train > 0 ? (
                         <p data-testid="pdsplit-leak">
                             Dropped {result.leak_report.dropped_from_train} train row(s) that also appear in validation or test

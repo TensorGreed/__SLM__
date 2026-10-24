@@ -33,7 +33,6 @@ import csv
 import hashlib
 import io
 import json
-import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,14 +96,18 @@ _CANONICAL_INPUT_KEYS: dict[str, tuple[str, ...]] = {
 }
 _ASSISTANT_ROLES = frozenset({"assistant", "gpt", "model", "bot"})
 # Input columns the default / unknown adapter reads (``record_normalization`` text + question
-# aliases) plus the standard pair / sentence / token-sequence inputs.
-_DEFAULT_INPUT_ALIASES: tuple[str, ...] = (
-    "instruction", "input", "prompt", "query", "question", "ask",
-    "text", "content", "body", "document", "passage", "chunk", "context", "article", "message",
-    "sentence", "sentence1", "sentence2", "sentence_1", "sentence_2", "premise", "hypothesis",
-    "text_a", "text_b", "text1", "text2", "source", "tokens", "words",
+# aliases). Question-side aliases win: when a row has any, the key is those plus the RAG context
+# columns; the text-side aliases (sentence / pair / token inputs) are used only when it has none.
+# Provenance columns (``record_normalization.NON_CONTENT_KEYS``: ``source``, ``id`` ...) never enter.
+_QUESTION_ALIASES: tuple[str, ...] = ("instruction", "input", "prompt", "query", "question", "ask")
+_CONTEXT_ALIASES: tuple[str, ...] = ("context", "passage", "document", "article", "chunk")
+_TEXT_ALIASES: tuple[str, ...] = (
+    "text", "content", "body", "message", "sentence", "sentence1", "sentence2", "sentence_1", "sentence_2",
+    "premise", "hypothesis", "text_a", "text_b", "text1", "text2", "tokens", "words",
 )
-_CONFIG_INPUT_LISTS = ("source_fields", "text_fields", "question_fields", "prompt_fields", "context_fields")
+_CONFIG_QUESTION_LISTS = ("question_fields", "prompt_fields")
+_CONFIG_CONTEXT_LISTS = ("context_fields",)
+_CONFIG_TEXT_LISTS = ("source_fields", "text_fields")
 # Columns that are what the model should produce, never input.
 _TARGET_NAMES = frozenset({
     "answer", "output", "completion", "response", "target", "label", "labels", "class", "category",
@@ -112,9 +115,6 @@ _TARGET_NAMES = frozenset({
     "rejected", "tool_calls", "expected", "ner_tags", "pos_tags", "chunk_tags", "tags", "bio_tags",
     "spans", "label_ids", "caption", "transcript", "summary",
 })
-_ID_LIKE = re.compile(r"^(_.*|id|idx|index|uid|guid|uuid|rowid|row_index|row_idx|.*_(id|idx|uid|guid|uuid))$", re.I)
-_BIO_TAG = re.compile(r"^(O|[BIESLU]-.+)$")
-_NON_CONTENT = frozenset({"id", "uuid", "source", "split", "timestamp", "created_at", "updated_at", "metadata"})
 
 
 def _as_text(value: Any) -> str:
@@ -132,31 +132,6 @@ def _as_text(value: Any) -> str:
         return str(value)
 
 
-def _label_like_columns(rows: list[dict[str, Any]]) -> frozenset[str]:
-    """Lower-case names of columns that behave like labels across ``rows``: all
-    numbers / booleans, a few repeating string values, or BIO-style tag lists.
-    Used only when a row has no recognisable input column (see ``_input_side_text``)."""
-    values: dict[str, list[Any]] = {}
-    for row in rows:
-        if isinstance(row, dict):
-            for key, value in row.items():
-                if value is not None and value != "":
-                    values.setdefault(str(key).lower(), []).append(value)
-    out: set[str] = set()
-    for name, vals in values.items():
-        if all(isinstance(v, (int, float, bool)) for v in vals):
-            out.add(name)
-        elif all(isinstance(v, list) and v and all(isinstance(x, (int, float, bool)) for x in v) for v in vals):
-            out.add(name)
-        elif all(isinstance(v, list) and v and all(isinstance(x, str) and _BIO_TAG.match(x) for x in v) for v in vals):
-            out.add(name)
-        elif all(isinstance(v, str) for v in vals):
-            distinct = len(set(vals))
-            if len(vals) >= 4 and distinct <= 50 and distinct * 2 <= len(vals):
-                out.add(name)
-    return frozenset(out)
-
-
 def _input_side_text(
     row: Any,
     entry: dict[str, Any] | None = None,
@@ -164,7 +139,6 @@ def _input_side_text(
     adapter_id: str = ds.DEFAULT_ADAPTER_ID,
     field_mapping: dict[str, str] | None = None,
     adapter_config: dict[str, Any] | None = None,
-    label_like: frozenset[str] = frozenset(),
 ) -> str:
     """The text the model is given for ``row``, read from the adapter-mapped
     ``entry`` (the canonical row; computed with the same adapter when omitted).
@@ -201,49 +175,68 @@ def _input_side_text(
 
     # default-canonical / plugin adapters: the canonical ``text`` may be derived from the
     # answer ("Question: .. Answer: .."), so read the SOURCE columns the adapter reads.
-    from app.services.record_normalization import NON_CONTENT_KEYS, _coerce_text, _get_nested_value
+    sources = _default_input_sources(row, field_mapping, cfg)
+    return "\n".join(text for text in sources if text.strip())
 
+
+def _default_input_sources(row: dict[str, Any], field_mapping: dict[str, str] | None, cfg: dict[str, Any]) -> list[str]:
+    """Texts of the input columns a default-canonical / plugin row has, in key order:
+    question-side columns + context when any question-side column exists, else
+    text-side columns + context. Empty list when no input column is recognised."""
+    from app.services.record_normalization import NON_CONTENT_KEYS, _get_nested_value
+
+    mapping = field_mapping or {}
+    answer_path = str(mapping.get("answer") or "").strip().lower()
     lowered = {str(k).lower(): k for k in row}
-    mapped_answer = {str(v).split(".")[0].lower() for k, v in (field_mapping or {}).items() if k == "answer" and v}
-    names: list[str] = []
-    for canonical in ("question", "text"):
-        src = (field_mapping or {}).get(canonical)
-        if src:
-            names.append(str(src).split(".")[0].lower())
-    for key in _CONFIG_INPUT_LISTS:
-        if isinstance(cfg.get(key), list):
-            names.extend(str(v).lower() for v in cfg[key])
-    names.extend(_DEFAULT_INPUT_ALIASES)
-    parts: list[str] = []
-    seen: set[str] = set()
-    for name in names:
-        if name in seen or name in _TARGET_NAMES or name in mapped_answer or name not in lowered:
-            continue
-        seen.add(name)
-        text = _as_text(row[lowered[name]])
-        if text.strip():
-            parts.append(text)
-    if parts:
-        return "\n".join(parts)
-    # No input column by name. The default adapter then builds ``text`` from the first
-    # three non-empty content columns; use those, minus id / target / label-like ones.
-    taken = 0
-    for key, value in row.items():
-        name = str(key).lower()
-        if name in NON_CONTENT_KEYS or _coerce_text(value) is None:
-            continue
-        taken += 1
-        if taken > 3:
-            break
-        if (
-            name in _TARGET_NAMES or name in mapped_answer or name in label_like or _ID_LIKE.match(name)
-            or isinstance(value, (bool, int, float))
-        ):
-            continue
-        text = _as_text(value)
-        if text.strip():
-            parts.append(text)
-    return "\n".join(parts)
+
+    def lookup(path: str, explicit: bool) -> Any:
+        path = str(path).strip()
+        if not path or path.lower() == answer_path:
+            return None
+        if not explicit and (path.lower() in _TARGET_NAMES or path.lower() in NON_CONTENT_KEYS):
+            return None
+        if "." in path:
+            return _get_nested_value(row, path)
+        return row[lowered[path.lower()]] if path.lower() in lowered else None
+
+    def gather(explicit: list[str], aliases: tuple[str, ...]) -> list[Any]:
+        found: list[Any] = []
+        seen: set[str] = set()
+        for explicit_flag, names in ((True, explicit), (False, aliases)):
+            for name in names:
+                key = str(name).strip().lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                value = lookup(name, explicit_flag)
+                if value is not None:
+                    found.append(value)
+        return found
+
+    def listed(keys: tuple[str, ...]) -> list[str]:
+        out: list[str] = []
+        for key in keys:
+            if isinstance(cfg.get(key), list):
+                out.extend(str(v) for v in cfg[key])
+        return out
+
+    question = gather(([mapping["question"]] if mapping.get("question") else []) + listed(_CONFIG_QUESTION_LISTS), _QUESTION_ALIASES)
+    context = gather(listed(_CONFIG_CONTEXT_LISTS), _CONTEXT_ALIASES)
+    if question:
+        chosen = question + context
+    else:
+        chosen = gather(([mapping["text"]] if mapping.get("text") else []) + listed(_CONFIG_TEXT_LISTS), _TEXT_ALIASES) + context
+    return [_as_text(v) for v in chosen]
+
+
+def _row_has_input_column(row: Any, adapter_id: str, field_mapping: dict[str, str] | None, cfg: dict[str, Any]) -> bool:
+    """Whether ``row`` has a column the default key reads (chat rows count)."""
+    if not isinstance(row, dict):
+        return False
+    for key in ("messages", "conversations"):
+        if isinstance(row.get(key), list) and any(isinstance(m, dict) for m in row[key]):
+            return True
+    return bool(_default_input_sources(row, field_mapping, cfg))
 
 
 def _input_key_hash(text: str) -> str:
@@ -418,6 +411,28 @@ def _apply_review_gate(parsed: _ParsedFile) -> None:
     parsed.rows, parsed.lines = kept_rows, kept_lines
 
 
+def _raise_input_column_unrecognised(parsed: dict[str, _ParsedFile], union: list[dict[str, Any]]) -> None:
+    columns: list[str] = []
+    for row in union:
+        columns.extend(str(k) for k in row if str(k) not in columns)
+    rejected: dict[str, Any] = {}
+    for role, pf in parsed.items():
+        if pf.rows:
+            rejected[role] = {"count": len(pf.rows), "by_reason": {
+                "input_column_unrecognised": {"count": len(pf.rows), "sample_rows": _sample(pf.lines)},
+            }}
+    raise _fail(
+        422, "PREDEFINED_SPLIT_ROWS_REJECTED",
+        "Could not tell which column is the input: none of the file's columns is a recognised input name "
+        f"(columns: {', '.join(columns) or 'none'}); nothing was imported.",
+        "Set a field mapping: question (or text) = the column the model is given, answer = the column it should "
+        'produce, for example {"question": "utterance", "answer": "reply"}. Without it, overlap between your '
+        "files cannot be checked.",
+        {"reason": "input_column_unrecognised", "columns": columns, "rejected": rejected,
+         "row_counts": {r: len(pf.rows) for r, pf in parsed.items()}},
+    )
+
+
 async def _persist_adapter_preference(
     db: AsyncSession, project_id: int, adapter_id: str, adapter_config: dict[str, Any] | None,
     field_mapping: dict[str, str], task_profile: str | None,
@@ -440,6 +455,19 @@ async def _persist_adapter_preference(
     }
     project.dataset_adapter_preset = preset
     await db.flush()
+
+
+async def _accepted_test_document_ids(db: AsyncSession, project_id: int) -> list[int]:
+    """Ids of the project's ACCEPTED test-role documents (its own test file)."""
+    from app.models.dataset import Dataset
+    from app.services.split_role_service import is_test_role_document
+
+    result = await db.execute(
+        select(RawDocument).join(Dataset, Dataset.id == RawDocument.dataset_id).where(
+            Dataset.project_id == project_id, RawDocument.status == DocumentStatus.ACCEPTED,
+        )
+    )
+    return sorted(int(d.id) for d in result.scalars() if is_test_role_document(d))
 
 
 async def _discard_registered(db: AsyncSession, docs: list[RawDocument]) -> None:
@@ -471,6 +499,7 @@ async def import_predefined_split(
     task_profile: str | None = None,
     chat_template: str = "llama3",
     seed: int = DEFAULT_SEED,
+    drop_existing_test: bool = False,
 ) -> dict[str, Any]:
     """Import ``files`` ({"train": (name, bytes), "val"?: ..., "test"?: ...})
     with exact membership. Returns the prepared manifest.
@@ -512,6 +541,21 @@ async def import_predefined_split(
         _apply_review_gate(pf)
     source_rows = {role: pf.rows for role, pf in parsed.items()}
 
+    # A re-import without a test file would reject the project's current own test file
+    # (the supersede step below) and ship no test split: ask first.
+    existing_tests: list[int] = []
+    if "test" not in files:
+        existing_tests = await _accepted_test_document_ids(db, project_id)
+        if existing_tests and not drop_existing_test:
+            raise _fail(
+                409, "PREDEFINED_TEST_WOULD_BE_DROPPED",
+                f"This project has its own test file ({len(existing_tests)} document(s) accepted); importing without a "
+                "test file would drop it and leave the new split with no test rows. Nothing was imported.",
+                "Upload a test file with this import, or confirm with 'Drop my current test file' "
+                "(drop_existing_test=true) to import without one.",
+                {"test_document_ids": existing_tests},
+            )
+
     # 2. Map every split through the SAME adapter path a random split uses. The
     # adapter, label candidates and extraction field list are resolved once over
     # all splits' rows, so train / val / test get an identical prompt shape.
@@ -524,7 +568,10 @@ async def import_predefined_split(
     mapped: dict[str, list[dict[str, Any]]] = {}
     keys: dict[str, list[str]] = {}
     rejected_report: dict[str, Any] = {}
-    label_like = _label_like_columns(union)
+    if resolved_adapter_id not in _CANONICAL_INPUT_KEYS and union and not any(
+        _row_has_input_column(row, resolved_adapter_id, mapping, enriched_config) for row in union
+    ):
+        _raise_input_column_unrecognised(parsed, union)
     for role, pf in parsed.items():
         problems: list[tuple[int, str]] = list(pf.bad)
         rejected: list[tuple[int, str]] = []
@@ -542,7 +589,7 @@ async def import_predefined_split(
         for pos, i in enumerate(survivors):
             key = _input_side_key(
                 pf.rows[i], mapped[role][pos], adapter_id=resolved_adapter_id,
-                field_mapping=mapping, adapter_config=enriched_config, label_like=label_like,
+                field_mapping=mapping, adapter_config=enriched_config,
             )
             keys[role].append(key)
             if not key:
@@ -761,6 +808,8 @@ async def import_predefined_split(
         }
         if "test" in files:  # added only when true: manifests without it are unchanged
             manifest["predefined_test_active"] = True
+        if existing_tests:  # confirmed with drop_existing_test: say which test documents were retired
+            manifest["dropped_existing_test_document_ids"] = existing_tests
         _finalize_prepared_manifest(project_id, manifest, prepared_version)
     except BaseException:
         # Nothing was imported: remove the files / documents registered above and

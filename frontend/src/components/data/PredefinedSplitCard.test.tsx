@@ -173,4 +173,61 @@ describe('PredefinedSplitCard', () => {
         await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
         expect((apiMock.post.mock.calls[0][1] as FormData).get('chat_template')).toBeNull();
     });
+
+    it('asks for a field mapping on an unrecognised input column and resubmits with it', async () => {
+        const user = userEvent.setup();
+        apiMock.post.mockRejectedValueOnce({
+            response: {
+                status: 422,
+                data: {
+                    error_code: 'PREDEFINED_SPLIT_ROWS_REJECTED',
+                    message: 'Could not tell which column is the input (columns: utterance, reply)',
+                    actionable_fix: 'Set a field mapping.',
+                    troubleshooting_id: 'err_m',
+                    metadata: {
+                        reason: 'input_column_unrecognised',
+                        columns: ['utterance', 'reply'],
+                        rejected: { train: { count: 4, by_reason: { input_column_unrecognised: { count: 4, sample_rows: [1, 2, 3, 4] } } } },
+                    },
+                },
+            },
+        });
+        render(<PredefinedSplitCard projectId={5} />);
+        await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
+        await user.click(screen.getByTestId('pdsplit-submit'));
+        const mapper = await screen.findByTestId('pdsplit-mapper');
+        expect(mapper).toHaveTextContent('utterance, reply');
+        expect(screen.getByTestId('pdsplit-map-input')).toHaveValue('utterance');
+        expect(screen.getByTestId('pdsplit-map-answer')).toHaveValue('reply');
+        apiMock.post.mockResolvedValueOnce({ data: OK });
+        await user.click(screen.getByTestId('pdsplit-map-apply'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(2));
+        const body = apiMock.post.mock.calls[1][1] as FormData;
+        expect(JSON.parse(String(body.get('field_mapping')))).toEqual({ question: 'utterance', answer: 'reply' });
+    });
+
+    it('offers to drop the current test file when none is chosen and sends the confirmation', async () => {
+        const user = userEvent.setup();
+        apiMock.post.mockResolvedValue({ data: { ...OK, dropped_existing_test_document_ids: [7] } });
+        render(<PredefinedSplitCard projectId={5} ownTestRows={44} />);
+        const box = screen.getByTestId('pdsplit-drop-test');
+        expect(screen.getByText(/Drop my current test file \(44 rows\)/)).toBeInTheDocument();
+        await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
+        await user.click(box);
+        await user.click(screen.getByTestId('pdsplit-submit'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
+        expect((apiMock.post.mock.calls[0][1] as FormData).get('drop_existing_test')).toBe('true');
+        expect(await screen.findByTestId('pdsplit-dropped-test')).toBeInTheDocument();
+        // choosing a test file hides the option and never sends it
+        await user.upload(screen.getByTestId('pdsplit-test'), file('e.jsonl'));
+        expect(screen.queryByTestId('pdsplit-drop-test')).toBeNull();
+        await user.click(screen.getByTestId('pdsplit-submit'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(2));
+        expect((apiMock.post.mock.calls[1][1] as FormData).get('drop_existing_test')).toBeNull();
+    });
+
+    it('shows no drop option when the project has no own test file', () => {
+        render(<PredefinedSplitCard projectId={5} />);
+        expect(screen.queryByTestId('pdsplit-drop-test')).toBeNull();
+    });
 });

@@ -472,6 +472,7 @@ async def predefined_split(
     adapter_config: str | None = Form(default=None),
     task_profile: str | None = Form(default=None),
     chat_template: str | None = Form(default=None),
+    drop_existing_test: bool = Form(default=False),
     db: AsyncSession = Depends(get_db),
 ):
     """Import train / val / test files with EXACT split membership.
@@ -482,7 +483,9 @@ async def predefined_split(
     adapter rejects, review-queue rows) by file line; 409 lists
     train/val/test overlap (``on_leak=drop_from_train`` removes train-side
     overlap only; val/test overlap always fails). Synchronous: not wrapped in
-    a Job (files arrive with the request, ~10k rows prepare in seconds)."""
+    a Job (files arrive with the request, ~10k rows prepare in seconds).
+    Re-importing WITHOUT a test file while the project has its own accepted test file
+    is refused (409 ``PREDEFINED_TEST_WOULD_BE_DROPPED``) unless ``drop_existing_test``."""
     from app.services.predefined_split_service import import_predefined_split
 
     mapping_obj = _json_form_object("field_mapping", field_mapping)
@@ -504,6 +507,7 @@ async def predefined_split(
             db, project_id, files=files, on_leak=on_leak, field_mapping=mapping,
             adapter_id=adapter_id, adapter_config=config_obj, task_profile=task_profile,
             chat_template=str(resolved["chat_template"]), seed=int(resolved["seed"]),
+            drop_existing_test=drop_existing_test,
         )
         # resolved=None: the manifest keeps its OBSERVED ratios (nothing was divided).
         return _enrich_split_manifest(

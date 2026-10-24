@@ -28,6 +28,8 @@ export interface PredefinedSplitManifest {
     split_source: 'predefined';
     /** Present (true) when a test file was imported. */
     predefined_test_active?: boolean;
+    /** Present when a confirmed re-import retired the project's earlier own test file(s). */
+    dropped_existing_test_document_ids?: number[];
     total_entries: number;
     splits: Record<string, number>;
     file_hashes: Record<string, string>;
@@ -46,7 +48,7 @@ export interface PredefinedSplitManifest {
 export async function importPredefinedSplit(
     projectId: number,
     files: { train: File; val?: File | null; test?: File | null },
-    opts: { onLeak: OnLeak; fieldMapping?: string; chatTemplate?: string | null },
+    opts: { onLeak: OnLeak; fieldMapping?: string; chatTemplate?: string | null; dropExistingTest?: boolean },
 ): Promise<PredefinedSplitManifest> {
     const form = new FormData();
     form.append('train', files.train);
@@ -55,6 +57,7 @@ export async function importPredefinedSplit(
     form.append('on_leak', opts.onLeak);
     if (opts.fieldMapping && opts.fieldMapping.trim()) form.append('field_mapping', opts.fieldMapping.trim());
     if (opts.chatTemplate) form.append('chat_template', opts.chatTemplate);
+    if (opts.dropExistingTest) form.append('drop_existing_test', 'true');
     const res = await api.post<PredefinedSplitManifest>(
         `/projects/${projectId}/dataset/predefined-split`,
         form,

@@ -143,14 +143,23 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   instead of dropped), `adapter_unmappable_or_empty`, `normalizer_hook_dropped`. Row numbers
   are PHYSICAL FILE LINES (strict reader `_parse_upload`: blank lines skipped but counted; CSV
   header = line 1; JSON array / XLSX / Parquet = 1-based record index).
+  Re-importing WITHOUT a test file while an ACCEPTED test-role doc exists is 409
+  `PREDEFINED_TEST_WOULD_BE_DROPPED` unless the form field `drop_existing_test=true` is sent (then the old
+  test doc is REJECTED as before and the manifest carries `dropped_existing_test_document_ids`); the card
+  shows a "Drop my current test file (N rows)" checkbox while its own test file is active.
   Leak/duplicate key = `predefined_split_service._input_side_key(source row, mapped entry,
   adapter_id=…)` (used ONLY by the import; prepared rows are not stamped and the random split /
   `keep_test` never see it): the normalised text the MODEL IS GIVEN, read from the adapter-mapped
   entry (the canonical row written to prepared/*.jsonl) before the chat template renders the
   answer. Never a label / answer / target column, an id-like column (`id`, `idx`, `uid`,
   `guid`, `*_id`, `_*` ...), or the adapter's shared prompt boilerplate (candidate list, field
-  list). A surviving row whose key is empty is REJECTED in the 422 (`no_input_field`); there is
-  no "whole row minus targets" fallback. Input fields per adapter:
+  list). A surviving row whose mapped input column is empty is REJECTED in the 422 (`no_input_field`).
+  There is NO heuristic fallback ("first three content columns", label-like columns): for
+  default-canonical / plugin adapters where no input column is recognised (by name, `field_mapping`
+  or adapter config fields) in ANY row, the import is 422 `ROWS_REJECTED` with
+  `metadata.reason=input_column_unrecognised` + `metadata.columns` (the file's columns) and asks for
+  a `field_mapping` (question/text = input column, answer = output column); the card shows the
+  columns, two selects and a resubmit button. Input fields per adapter:
 
   | Adapter | Input fields in the key |
   |---|---|
@@ -163,7 +172,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   | `preference-pair` | `prompt` (not chosen / rejected) |
   | `vision-language-pair` / `audio-transcript` | asset path + `question` (not caption / transcript) |
   | chat rows (`messages` / `conversations`, any adapter) | every non-assistant turn, in order |
-  | `default-canonical` and plugin adapters | the SOURCE columns the adapter reads as input: `field_mapping` `text`/`question` + config `source_fields`/`text_fields`/`question_fields`/`prompt_fields`/`context_fields` + the standard aliases (instruction, input, prompt, query, question, text, content, body, document, passage, context, article, message, sentence, sentence1/2, premise, hypothesis, text_a/b, source, tokens, words; a token list is joined). With none of those present the adapter's own fallback `text` (first three non-empty content columns) is used minus target-named, id-like and label-like columns (numbers/bools, ≤50 repeating strings, BIO tag lists; `_label_like_columns` over all three files). Span / NER rows key on `tokens`, never `ner_tags`; SST-2 `{sentence,label,idx}` on `sentence`; NLI on premise + hypothesis. |
+  | `default-canonical` and plugin adapters | the SOURCE columns the adapter reads as input, resolved with `record_normalization._get_nested_value` (dotted `field_mapping` paths work; only the exact answer path is excluded). Question side: `field_mapping` `question` + config `question_fields`/`prompt_fields` + aliases instruction, input, prompt, query, question, ask. Context (always added): config `context_fields` + context, passage, document, article, chunk. Text side, used ONLY when the row has no question-side column: `field_mapping` `text` + config `source_fields`/`text_fields` + text, content, body, message, sentence, sentence1/2, premise, hypothesis, text_a/b, text1/2, tokens, words (a token list is joined). So `{prompt, text:"p 3 -> resp"}` keys on `prompt` alone. Provenance columns (`record_normalization.NON_CONTENT_KEYS`: `source`, `id`, `split`, `timestamp`, `metadata` ...) and target-named columns never enter via aliases. Span / NER rows key on `tokens`, never `ner_tags`; SST-2 `{sentence,label,idx}` on `sentence`; NLI on premise + hypothesis. |
 
   → 409 (`metadata.pairs`); `drop_from_train` removes
   train rows only; val↔test always 409. Within-split repeats kept, counted in
