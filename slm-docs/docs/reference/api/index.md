@@ -38,7 +38,7 @@ This section is auto-generated from the FastAPI OpenAPI spec. For curated narrat
 | [Data Health](data-health.md) | 4 |
 | [Data Studio](data-studio.md) | 21 |
 | [Dataset Import](dataset-import.md) | 10 |
-| [Dataset Prep](dataset-prep.md) | 13 |
+| [Dataset Prep](dataset-prep.md) | 14 |
 | [DemoProjects](demoprojects.md) | 3 |
 | [Deployments](deployments.md) | 15 |
 | [Distillation](distillation.md) | 2 |

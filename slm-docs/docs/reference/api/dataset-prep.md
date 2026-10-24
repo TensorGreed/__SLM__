@@ -7,7 +7,7 @@ title: Dataset Prep
 
 # Dataset Prep
 
-Auto-generated reference for the **Dataset Prep** API. 13 endpoint(s).
+Auto-generated reference for the **Dataset Prep** API. 14 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -158,6 +158,42 @@ Content type: `application/json` — `SplitRequest`
 |---|---|---|
 | `200` | `any` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/dataset/predefined-split`
+
+**Predefined Split**
+
+Import train / val / test files with EXACT split membership. Same row mapping (adapter, field mapping, recipe `output_schema`) and same prepared artefacts as `POST .../dataset/split` (`prepared/{train,val,test}.jsonl`, `manifest.json`, per-split dataset versions, snapshot), but nothing is re-divided, shuffled, deduplicated or moved. Synchronous (no `?async_job`): the files arrive with the request and ~10k rows prepare in seconds.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `multipart/form-data`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `train` | `file` | yes | JSONL, JSON, CSV, TSV, XLSX or Parquet, one example per row. |
+| `val` | `file` | no | Validation rows. Omit to prepare an empty validation split. |
+| `test` | `file` | no | Test rows (the answer key). |
+| `on_leak` | `string` | no | `fail` (default) or `drop_from_train`. Overlap = the same normalised input text (lower-cased, whitespace collapsed) in two files. `drop_from_train` removes train-side overlap only; val and test are never edited, and val/test overlap always fails. |
+| `field_mapping` | `string` (JSON object) | no | Source column to canonical field, same semantics as the split form; replaces the project's saved mapping for this import. |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | The prepared manifest: `split_source: "predefined"`, `splits`, `file_hashes` (sha256 of each prepared file), `source_files` (original filenames + sha256), `leak_report`, `duplicate_report` (rows whose input repeats earlier in the same split; kept), `dataset_versions`, `prepared_version`, `output_schema`. |
+| `400` | error envelope | Unsupported or empty file, bad `field_mapping` / `on_leak`. |
+| `409` | error envelope | Overlap. `metadata.pairs[]` has `pair` (`train_val`, `train_test`, `val_test`), `counts` per file and `sample_rows` per file (1-based row numbers, header excluded, up to 20). Nothing is written. |
+| `422` | error envelope | Rows the adapter could not map. `metadata.rejected.<split>.by_reason.<reason>` has `count` and up to 20 `sample_rows`. Nothing is written. |
+
+The uploaded files are also registered as project raw documents tagged `predefined_split:<role>` (a re-import supersedes the previous ones), so a later random `POST .../dataset/split` with `include_types: ["raw"]` re-pools them, and `keep_test: true` keeps the imported test rows.
 
 
 ### `POST /api/projects/{project_id}/dataset/adapter-preference/auto-detect`

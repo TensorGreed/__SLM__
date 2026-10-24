@@ -125,6 +125,28 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   whitespace-normalised, lower-cased) matches a test row — so adding data
   never moves the answer key into training. Manifest `keep_test` report.
   Tests: `tests/test_split_keep_test.py`.
+- **Predefined-split import** (`POST /dataset/predefined-split`, multipart `train` /
+  optional `val` / `test`, `on_leak` fail|drop_from_train, `field_mapping`; Data tab split
+  form button "Use my own train / val / test files" → `PredefinedSplitCard`):
+  `predefined_split_service.import_predefined_split`. Shares the random split's row
+  pipeline — `dataset_service._resolve_adapter_for_rows` (adapter + candidates / field
+  list resolved ONCE over all three files' rows, so splits get one prompt shape) +
+  `_normalize_rows_for_training(rejected=[...])`, then the shared tail
+  `_write_prepared_splits` (files + Dataset + DatasetVersion rows, tagged
+  `split_source`/`source_filename`) and `_finalize_prepared_manifest` (manifest +
+  snapshot). Exact membership: no ratio, shuffle or dedup. Adapter-rejected rows → 422
+  (`metadata.rejected.<split>.by_reason`, 20 sample rows, 1-based, header excluded);
+  leak = `_normalise_for_exact(_question_text(row) or _row_to_text(row))` (the
+  split-leakage scan's normaliser) → 409 (`metadata.pairs`); `drop_from_train` removes
+  train rows only; val↔test always 409. Within-split repeats kept, counted in
+  `duplicate_report`. Validation happens before anything is written. Files are registered
+  as ACCEPTED raw documents (`source=predefined_split:<role>`; a re-import marks the
+  previous ones REJECTED), stamped on rows via `_source_document*`, so a later random
+  split (`include_types:["raw"]`) re-pools them and `keep_test` keeps the test rows;
+  rows are byte-identical to a random split of the same files. Manifest
+  `split_source: "predefined"`, `source_files`, `leak_report`, `duplicate_report`;
+  `ratios` are the observed proportions. Not a Job (synchronous). Tests:
+  `tests/test_predefined_split_import.py`, `PredefinedSplitCard.test.tsx`.
 - **Autofix engine** — `data_health_autofix_service` exposes 9 safe
   one-click transforms via `POST /data-health/autofix/{preview|apply}`.
   Original four (drop_failed_docs, dedupe_duplicate_docs, redact_pii,

@@ -1,8 +1,9 @@
 """Dataset preparation API routes."""
 
+import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -397,6 +398,49 @@ async def split(
         # from the active prepared version rather than form/profile defaults.
         manifest["dedup_inherited_config"] = sorted(set(inherited_from_active))
         return manifest
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("Project "):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.post("/predefined-split")
+async def predefined_split(
+    project_id: int,
+    train: UploadFile = File(...),
+    val: UploadFile | None = File(default=None),
+    test: UploadFile | None = File(default=None),
+    on_leak: str = Form(default="fail"),
+    field_mapping: str | None = Form(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import train / val / test files with EXACT split membership.
+
+    Same row mapping and prepared artefacts as ``POST /split``, but no
+    re-division or shuffling. 422 lists rows the adapter rejected; 409 lists
+    train/val/test overlap (``on_leak=drop_from_train`` removes train-side
+    overlap only; val/test overlap always fails). Synchronous: not wrapped in
+    a Job (files arrive with the request, ~10k rows prepare in seconds)."""
+    from app.services.predefined_split_service import import_predefined_split
+
+    mapping: dict[str, str] | None = None
+    if field_mapping and field_mapping.strip():
+        try:
+            parsed = json.loads(field_mapping)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(400, f"field_mapping is not valid JSON: {exc}")
+        if not isinstance(parsed, dict):
+            raise HTTPException(400, "field_mapping must be a JSON object")
+        mapping = {str(k): str(v) for k, v in parsed.items()}
+    files: dict[str, tuple[str, bytes]] = {}
+    for role, upload in (("train", train), ("val", val), ("test", test)):
+        if upload is not None and upload.filename:
+            files[role] = (upload.filename, await upload.read())
+    try:
+        return await import_predefined_split(
+            db, project_id, files=files, on_leak=on_leak, field_mapping=mapping,
+        )
     except ValueError as e:
         detail = str(e)
         if detail.startswith("Project "):

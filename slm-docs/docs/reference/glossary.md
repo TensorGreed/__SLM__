@@ -419,6 +419,10 @@ What shape of task the project trains: Q&A (`qa-sft`), classification, span extr
 
 One inference observation pushed to BrewSLM by your serving runtime (status, latency_ms, prompt_tokens, completion_tokens, TTFT). Rolls up into the deployment telemetry window. See [Post-deploy telemetry](../deployment/telemetry.md).
 
+## Own split files
+
+Train / validation / test files you already have, imported on **Data** → **Split** with "Use my own train / val / test files". Each row stays in the split of the file it came from (no ratio, no shuffle), rows go through the same mapping as a normal split, and train rows that also appear in validation or test either stop the import or are dropped from train only. API: `POST /dataset/predefined-split`; the manifest says `split_source: "predefined"`.
+
 ## Test examples
 
 The prepared **test** split from **Data** → **Split**: rows held back from training so the model is scored on examples it never saw. "Better than base?" on the Results page compares the base model and the fine-tuned model on the same test examples. The eval dataset alias `test` always means these rows; the final answer key is used only when the project has no prepared split. API name: the `test` split / `DatasetType.TEST` (`prepared/test.jsonl`), "held-out" in older API docs.

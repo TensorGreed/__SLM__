@@ -239,6 +239,7 @@ session-start guidance.
 - `backend/app/services/portable_paths.py` — Strip machine-specific absolute paths from what an export records.
 - `backend/app/services/post_eval_decision_engine_service.py` — Post-eval decision engine (USER-SUCCESS Epic 7 Phase 7a).
 - `backend/app/services/post_training_eval_service.py` — Automatic baseline-vs-fine-tuned lift eval after every real training run.
+- `backend/app/services/predefined_split_service.py` — Predefined-split import: the user already has train / val / test files.
 - `backend/app/services/probe_pack_service.py` — Platform-authored held-out probe packs (Coach-stage-2 phase 8).
 - `backend/app/services/probe_runner.py` — Probe runner — Coach-stage-2 phase 9.
 - `backend/app/services/project_duplicate_service.py` — Duplicate a project: the same documents, rows, answer key and prepared
@@ -482,6 +483,7 @@ session-start guidance.
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
 - `frontend/src/api/llmSpend.ts` — _(no docstring)_
 - `frontend/src/api/planRefinement.ts` — _(no docstring)_
+- `frontend/src/api/predefinedSplit.ts` — Predefined-split import: the user's own train / val / test files with
 - `frontend/src/api/probePack.ts` — Probe Pack API client — Coach-stage-2 phase 8.
 - `frontend/src/api/projectTemplates.ts` — Typed wrappers for the project-template catalog + instantiation API.
 - `frontend/src/api/promptCheck.ts` — Dry run of the benchmark-value gate: does a seed-documents or
@@ -587,6 +589,7 @@ session-start guidance.
 - `frontend/src/components/data/LlmSpendCard.tsx` — _(no docstring)_
 - `frontend/src/components/data/OutputSchemaEditor.tsx` — Optional "Output schema (JSON)" for the json-extraction task type.
 - `frontend/src/components/data/PlaybookPickerPanel.tsx` — PlaybookPickerPanel — USER-SUCCESS Epic 2.
+- `frontend/src/components/data/PredefinedSplitCard.tsx` — "Use my own train / val / test files" — import files whose split
 - `frontend/src/components/data/RecipePicker.tsx` — Recipe Picker — Theme 2 Epic 3 + 4.
 - `frontend/src/components/data/SavedMappingsPanel.tsx` — Saved dataset-import mappings panel (Phase G of DATASET_IMPORT_PLAN).
 - `frontend/src/components/data/SeedDocumentsCard.tsx` — _(no docstring)_
@@ -957,6 +960,7 @@ session-start guidance.
 - `backend/tests/test_portable_paths.py` — portable_paths: what an export records carries no machine-specific path.
 - `backend/tests/test_post_eval_decision_engine.py` — Tests for the post-eval decision engine service
 - `backend/tests/test_post_training_lift_eval.py` — Automatic post-training lift eval (Wave 1b).
+- `backend/tests/test_predefined_split_import.py` — POST /dataset/predefined-split: import train / val / test files with exact
 - `backend/tests/test_probe_pack_generative.py` — Coach-stage-2 phase 10 — generative predict_fn wiring for probes.
 - `backend/tests/test_probe_pack_service.py` — Coach-stage-2 phase 8 — platform-authored held-out probe packs.
 - `backend/tests/test_probe_runner.py` — Coach-stage-2 phase 9 — probe runner scoring + aggregation.
@@ -1075,6 +1079,7 @@ session-start guidance.
 - `frontend/src/components/data/LlmSpendCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/OutputSchemaEditor.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/PlaybookPickerPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/PredefinedSplitCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/RecipePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SavedMappingsPanel.test.tsx` — Saved-mappings panel contract.
 - `frontend/src/components/data/SeedDocumentsCard.test.tsx` — _(no docstring)_

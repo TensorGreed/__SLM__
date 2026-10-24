@@ -538,18 +538,20 @@ def _scan_structured_extraction_fields(
     return sorted(seen)
 
 
-def _normalize_rows_for_training(
+def _resolve_adapter_for_rows(
     rows: list[dict[str, Any]],
-    source_dataset: DatasetType,
-    chat_template: str,
-    normalizer_hook_spec: dict[str, Any] | None = None,
+    *,
     adapter_id: str = DEFAULT_ADAPTER_ID,
     adapter_config: dict[str, Any] | None = None,
     field_mapping: dict[str, str] | None = None,
     task_profile: str | None = None,
     manifest: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    normalized_entries: list[dict[str, Any]] = []
+) -> tuple[str, str | None, dict[str, Any] | None]:
+    """Resolve the adapter id, task profile and the pre-scanned adapter
+    config (classification candidates, extraction field list, subtask,
+    tgt_lang) for ``rows``. ``_normalize_rows_for_training`` calls this per
+    batch; the predefined-split import calls it once over every split's rows
+    so train / val / test are mapped with the same adapter and field list."""
     resolved_adapter_id, _ = resolve_data_adapter_for_records(
         rows,
         adapter_id=adapter_id,
@@ -628,7 +630,34 @@ def _normalize_rows_for_training(
         if isinstance(raw_tgt, str) and raw_tgt.strip():
             adapter_config = dict(adapter_config or {})
             adapter_config["tgt_lang"] = raw_tgt.strip()
-    for row in rows:
+    return resolved_adapter_id, resolved_task_profile, adapter_config
+
+
+def _normalize_rows_for_training(
+    rows: list[dict[str, Any]],
+    source_dataset: DatasetType,
+    chat_template: str,
+    normalizer_hook_spec: dict[str, Any] | None = None,
+    adapter_id: str = DEFAULT_ADAPTER_ID,
+    adapter_config: dict[str, Any] | None = None,
+    field_mapping: dict[str, str] | None = None,
+    task_profile: str | None = None,
+    manifest: dict[str, Any] | None = None,
+    rejected: list[tuple[int, str]] | None = None,
+) -> list[dict[str, Any]]:
+    """Map source rows to prepared rows. ``rejected`` (when given) collects
+    ``(row_index, reason)`` for every row the adapter / normalizer hook
+    dropped, instead of losing them silently."""
+    normalized_entries: list[dict[str, Any]] = []
+    resolved_adapter_id, resolved_task_profile, adapter_config = _resolve_adapter_for_rows(
+        rows,
+        adapter_id=adapter_id,
+        adapter_config=adapter_config,
+        field_mapping=field_mapping,
+        task_profile=task_profile,
+        manifest=manifest,
+    )
+    for row_index, row in enumerate(rows):
         canonical = map_record_with_adapter(
             row,
             adapter_id=resolved_adapter_id,
@@ -636,8 +665,13 @@ def _normalize_rows_for_training(
             field_mapping=field_mapping,
             task_profile=resolved_task_profile,
         )
+        adapter_empty = not canonical
         canonical = apply_normalizer_hook(row, canonical, normalizer_hook_spec)
         if not canonical:
+            if rejected is not None:
+                rejected.append(
+                    (row_index, "adapter_unmappable_or_empty" if adapter_empty else "normalizer_hook_dropped")
+                )
             continue
 
         # Preserve original fields while ensuring canonical keys exist.
@@ -898,6 +932,25 @@ async def _recipe_output_schema(db: AsyncSession, project_id: int) -> dict[str, 
         return None
 
 
+async def _resolve_normalizer_hook_spec(
+    db: AsyncSession, project_id: int
+) -> dict[str, Any] | None:
+    try:
+        hook_state = await resolve_project_domain_hooks(db, project_id)
+        return hook_state.get("normalizer")
+    except ValueError:
+        return None
+
+
+def _stamp_source_document(
+    entries: list[dict[str, Any]], document_id: int, filename: str
+) -> None:
+    """Record which uploaded document a prepared row came from."""
+    for entry in entries:
+        entry["_source_document_id"] = document_id
+        entry["_source_document"] = filename
+
+
 async def combine_datasets(
     db: AsyncSession,
     project_id: int,
@@ -923,12 +976,7 @@ async def combine_datasets(
     if include_types is None:
         include_types = list(DEFAULT_TRAINING_SOURCE_TYPES)
 
-    normalizer_hook_spec: dict[str, Any] | None = None
-    try:
-        hook_state = await resolve_project_domain_hooks(db, project_id)
-        normalizer_hook_spec = hook_state.get("normalizer")
-    except ValueError:
-        normalizer_hook_spec = None
+    normalizer_hook_spec = await _resolve_normalizer_hook_spec(db, project_id)
 
     all_entries: list[dict[str, Any]] = []
 
@@ -983,10 +1031,8 @@ async def combine_datasets(
                     field_mapping=field_mapping,
                     task_profile=task_profile,
                 )
-                for entry in normalized:
-                    entry["_source_document_id"] = doc.id
-                    entry["_source_document"] = doc.filename
-                    all_entries.append(entry)
+                _stamp_source_document(normalized, doc.id, doc.filename)
+                all_entries.extend(normalized)
             continue
 
         if not ds.file_path:
@@ -1237,6 +1283,114 @@ def _keep_test_rows(
     return {"train": pool[n_val:], "val": val, "test": kept}, report
 
 
+async def _write_prepared_splits(
+    db: AsyncSession,
+    project_id: int,
+    splits: dict[str, list[dict[str, Any]]],
+    *,
+    seed: int,
+    chat_template: str,
+    source_types: list[str],
+    version_extra: dict[str, Any] | None = None,
+) -> tuple[dict[str, str], dict[str, str], dict[str, int], int | None]:
+    """Write ``prepared/{train,val,test}.jsonl`` and the per-split Dataset +
+    DatasetVersion rows. Shared by the random split and the predefined-split
+    import so both produce identical on-disk artefacts. ``version_extra`` is
+    merged into each DatasetVersion manifest: ``{"all": {...}}`` for every
+    split, ``{"per_split": {"train": {...}}}`` for one."""
+    prep_dir = _prep_dir(project_id)
+    file_paths: dict[str, str] = {}
+    file_hashes: dict[str, str] = {}
+    dataset_versions: dict[str, int] = {}
+
+    for split_name, split_data in splits.items():
+        file_path = prep_dir / f"{split_name}.jsonl"
+        with open(file_path, "w", encoding="utf-8") as f:
+            for entry in split_data:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        file_paths[split_name] = str(file_path)
+        file_hashes[split_name] = _sha256_file(file_path)
+
+        ds_type = {
+            "train": DatasetType.TRAIN,
+            "val": DatasetType.VALIDATION,
+            "test": DatasetType.TEST,
+        }[split_name]
+
+        result = await db.execute(
+            select(Dataset).where(
+                Dataset.project_id == project_id,
+                Dataset.dataset_type == ds_type,
+            )
+        )
+        ds = result.scalar_one_or_none()
+        if not ds:
+            ds = Dataset(
+                project_id=project_id,
+                name=f"{split_name.title()} Set",
+                dataset_type=ds_type,
+            )
+            db.add(ds)
+            await db.flush()
+
+        ds.record_count = len(split_data)
+        ds.file_path = str(file_path)
+        await db.flush()
+
+        version_result = await db.execute(
+            select(func.max(DatasetVersion.version)).where(DatasetVersion.dataset_id == ds.id)
+        )
+        next_version = int(version_result.scalar() or 0) + 1
+        version_manifest = {
+            "split": split_name,
+            "seed": seed,
+            "chat_template": chat_template,
+            "count": len(split_data),
+            "sha256": file_hashes[split_name],
+            "source_types": source_types,
+        }
+        if version_extra:
+            version_manifest.update(version_extra.get("all", {}))
+            version_manifest.update((version_extra.get("per_split") or {}).get(split_name, {}))
+        db.add(
+            DatasetVersion(
+                dataset_id=ds.id,
+                version=next_version,
+                file_path=str(file_path),
+                record_count=len(split_data),
+                manifest=version_manifest,
+            )
+        )
+        dataset_versions[split_name] = next_version
+
+    # The prepared-version id for this run — the per-split DatasetVersion
+    # numbers increment together each Prepare, so they're aligned; use the max
+    # as the single version the snapshot + activate flow keys off.
+    prepared_version = max(dataset_versions.values()) if dataset_versions else None
+
+    return file_paths, file_hashes, dataset_versions, prepared_version
+
+
+def _finalize_prepared_manifest(
+    project_id: int, manifest: dict[str, Any], prepared_version: int | None
+) -> None:
+    """Write the active ``prepared/manifest.json`` and snapshot the run."""
+    prep_dir = _prep_dir(project_id)
+    manifest_path = prep_dir / "manifest.json"
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+
+    # Epic E — snapshot this run so it can be re-activated / retrained from
+    # after a later Prepare overwrites the active files. Best-effort: a
+    # snapshot failure must never fail the Prepare itself.
+    if prepared_version is not None:
+        try:
+            snapshot_prepared_version(project_id, prepared_version)
+            prune_prepared_version_snapshots(project_id)
+        except Exception:  # noqa: BLE001 — snapshot is non-critical
+            pass
+
+
 async def split_dataset(
     db: AsyncSession,
     project_id: int,
@@ -1462,72 +1616,14 @@ async def split_dataset(
         if keep_test_report is not None:
             keep_test_report["val_kept_verbatim"] = bool(keep_val)
 
-    prep_dir = _prep_dir(project_id)
-    file_paths: dict[str, str] = {}
-    file_hashes: dict[str, str] = {}
-    dataset_versions: dict[str, int] = {}
-
-    for split_name, split_data in splits.items():
-        file_path = prep_dir / f"{split_name}.jsonl"
-        with open(file_path, "w", encoding="utf-8") as f:
-            for entry in split_data:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        file_paths[split_name] = str(file_path)
-        file_hashes[split_name] = _sha256_file(file_path)
-
-        ds_type = {
-            "train": DatasetType.TRAIN,
-            "val": DatasetType.VALIDATION,
-            "test": DatasetType.TEST,
-        }[split_name]
-
-        result = await db.execute(
-            select(Dataset).where(
-                Dataset.project_id == project_id,
-                Dataset.dataset_type == ds_type,
-            )
-        )
-        ds = result.scalar_one_or_none()
-        if not ds:
-            ds = Dataset(
-                project_id=project_id,
-                name=f"{split_name.title()} Set",
-                dataset_type=ds_type,
-            )
-            db.add(ds)
-            await db.flush()
-
-        ds.record_count = len(split_data)
-        ds.file_path = str(file_path)
-        await db.flush()
-
-        version_result = await db.execute(
-            select(func.max(DatasetVersion.version)).where(DatasetVersion.dataset_id == ds.id)
-        )
-        next_version = int(version_result.scalar() or 0) + 1
-        version_manifest = {
-            "split": split_name,
-            "seed": seed,
-            "chat_template": chat_template,
-            "count": len(split_data),
-            "sha256": file_hashes[split_name],
-            "source_types": included_source_types,
-        }
-        db.add(
-            DatasetVersion(
-                dataset_id=ds.id,
-                version=next_version,
-                file_path=str(file_path),
-                record_count=len(split_data),
-                manifest=version_manifest,
-            )
-        )
-        dataset_versions[split_name] = next_version
-
-    # The prepared-version id for this run — the per-split DatasetVersion
-    # numbers increment together each Prepare, so they're aligned; use the max
-    # as the single version the snapshot + activate flow keys off.
-    prepared_version = max(dataset_versions.values()) if dataset_versions else None
+    file_paths, file_hashes, dataset_versions, prepared_version = await _write_prepared_splits(
+        db,
+        project_id,
+        splits,
+        seed=seed,
+        chat_template=chat_template,
+        source_types=included_source_types,
+    )
 
     manifest = {
         "project_id": project_id,
@@ -1575,19 +1671,7 @@ async def split_dataset(
         "keep_test": keep_test_report,
         "dedup_report": dedup_report,
     }
-    manifest_path = prep_dir / "manifest.json"
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
-
-    # Epic E — snapshot this run so it can be re-activated / retrained from
-    # after a later Prepare overwrites the active files. Best-effort: a
-    # snapshot failure must never fail the Prepare itself.
-    if prepared_version is not None:
-        try:
-            snapshot_prepared_version(project_id, prepared_version)
-            prune_prepared_version_snapshots(project_id)
-        except Exception:  # noqa: BLE001 — snapshot is non-critical
-            pass
+    _finalize_prepared_manifest(project_id, manifest, prepared_version)
 
     return manifest
 

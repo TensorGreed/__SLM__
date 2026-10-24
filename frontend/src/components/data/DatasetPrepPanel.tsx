@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Info, Lightbulb, RefreshCw } from 'lucide-react';
 import api from '../../api/client';
 import DataHealthReportPanel from './DataHealthReportPanel';
+import PredefinedSplitCard from './PredefinedSplitCard';
 import StepFooter from '../shared/StepFooter';
 import { toast } from '../../stores/toastStore';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
@@ -388,6 +389,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
     // Keep the active test examples exactly; split everything else into
     // train / val (for adding data between runs scored on the same rows).
     const [keepTest, setKeepTest] = useState(false);
+    const [useOwnSplitFiles, setUseOwnSplitFiles] = useState(false);
     // Test rows in the ACTIVE prepared version (0 = no split yet) — the
     // keep-test option only makes sense when there is one.
     const [activeTestRows, setActiveTestRows] = useState(0);
@@ -1847,6 +1849,19 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         {' '}Keep the current {activeTestRows || splitManifest?.splits?.test} test examples — re-split only train and validation. Use it when you've added data and
                         want the new run scored on exactly the same rows as the last one (rows with the same text never move into training).
                     </label>
+                )}
+                <div className="dp-actions">
+                    <button
+                        className="btn-secondary"
+                        type="button"
+                        data-testid="split-own-files"
+                        onClick={() => setUseOwnSplitFiles((v) => !v)}
+                    >
+                        {useOwnSplitFiles ? 'Hide: use my own train / val / test files' : 'Use my own train / val / test files'}
+                    </button>
+                </div>
+                {useOwnSplitFiles && (
+                    <PredefinedSplitCard projectId={projectId} onImported={() => setHealthRefreshKey((k) => k + 1)} />
                 )}
                 <div className="dp-actions">
                     <button className="btn-primary" onClick={previewEffectiveSplitConfig} disabled={effectiveSplitLoading}>

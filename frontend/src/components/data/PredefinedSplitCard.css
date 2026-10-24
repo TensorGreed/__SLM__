@@ -1,0 +1,58 @@
+.pdsplit {
+    display: flex;
+    flex-direction: column;
+    gap: .9rem;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-tertiary);
+}
+
+.pdsplit__help {
+    margin: 0;
+    font-size: .82rem;
+    opacity: .8;
+}
+
+.pdsplit__files {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: .8rem;
+}
+
+.pdsplit__file,
+.pdsplit__field {
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+    font-size: .82rem;
+}
+
+.pdsplit__file small {
+    opacity: .7;
+}
+
+.pdsplit__problem {
+    padding: .8rem 1rem;
+    border: 1px solid var(--border);
+    border-left-width: 4px;
+    border-radius: 8px;
+}
+
+.pdsplit__problem ul {
+    margin: .4rem 0 0;
+    padding-left: 1.2rem;
+}
+
+.pdsplit__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .82rem;
+}
+
+.pdsplit__table th,
+.pdsplit__table td {
+    text-align: left;
+    padding: .3rem .5rem;
+    border-bottom: 1px solid var(--border);
+}
