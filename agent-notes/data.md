@@ -167,7 +167,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   | `rag-grounded` | `question` + `context` (the same question over a different passage is NOT a leak; deliberately unlike the question-only `question_leakage_filter`, which guards generated rows against a gold set) |
   | `seq2seq-pair` | the source text (`question`, i.e. before the Summarize/Translate wrap) |
   | `structured-extraction` | `text` (the document; not `structured_output`, not the field-list prompt) |
-  | `classification-label` | `text` (not the label, not the candidate-list prompt) |
+  | `classification-label` | `text` (not the label, not the candidate-list prompt). The adapter reads `text, content, input, question, prompt, instruction, sentence, comment, review` (in that order), else a pair joined as `Premise: ..\nHypothesis: ..` / `Sentence 1: ..\nSentence 2: ..` (premise+hypothesis, sentence1+sentence2) so the prompt's `Text:` block shows both sides. A row whose text would equal its label (no input column found: the canonical fallback sets text = answer) is rejected (`classification_input_is_label`), never trained. Same for `structured-extraction` when no document column is recognised and the canonical fallback would put the gold JSON in the prompt (`structured_input_contains_gold`). A random split reports such rows in the manifest `include_types_resolution.input_rejected` and errors when nothing is left. |
   | `tool-call-json` | `question` (the user prompt; not tool name / args / result) |
   | `preference-pair` | `prompt` (not chosen / rejected) |
   | `vision-language-pair` / `audio-transcript` | asset path + `question` (not caption / transcript) |

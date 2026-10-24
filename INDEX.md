@@ -974,6 +974,7 @@ session-start guidance.
 - `backend/tests/test_rag_project_service.py` — Tests for the RAG-skeleton project service
 - `backend/tests/test_rag_protocol_discipline_pack.py` — Tests for the rag_protocol.discipline eval pack + the
 - `backend/tests/test_rag_protocol_recipe.py` — Tests for the rag-protocol recipe + its three playbooks (Arc R-1).
+- `backend/tests/test_random_split_input_rejection.py` — Random split: classification reads sentence / premise+hypothesis / comment / review columns,
 - `backend/tests/test_reader_packaging.py` — Packaging a passage reader (a causal LM trained with retrieved passages):
 - `backend/tests/test_real_training_path.py` — The core training loop on the REAL runtime, end to end, through the API.
 - `backend/tests/test_recipe_apply_service.py` — Tests for recipe_apply_service — applying a Theme 2 recipe pick

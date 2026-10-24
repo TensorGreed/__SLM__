@@ -32,6 +32,7 @@ from app.services.data_adapter_service import (
     DEFAULT_ADAPTER_ID,
     list_data_adapter_catalog,
     map_record_with_adapter,
+    unmappable_reason,
     normalize_task_profile,
     preview_data_adapter,
     resolve_data_adapter_for_records,
@@ -643,6 +644,19 @@ def _resolve_adapter_for_rows(
     return resolved_adapter_id, resolved_task_profile, adapter_config
 
 
+# Adapter-specific rejections (a row whose input would be its own label / gold record) that a
+# random split reports in the manifest instead of dropping silently.
+INPUT_REJECT_REASONS = ("classification_input_is_label", "structured_input_contains_gold")
+
+
+def _count_input_rejects(rejected: list[tuple[int, str]], into: dict[str, int] | None) -> None:
+    if into is None:
+        return
+    for _idx, reason in rejected:
+        if reason in INPUT_REJECT_REASONS:
+            into[reason] = into.get(reason, 0) + 1
+
+
 def _normalize_rows_for_training(
     rows: list[dict[str, Any]],
     source_dataset: DatasetType,
@@ -679,9 +693,13 @@ def _normalize_rows_for_training(
         canonical = apply_normalizer_hook(row, canonical, normalizer_hook_spec)
         if not canonical:
             if rejected is not None:
-                rejected.append(
-                    (row_index, "adapter_unmappable_or_empty" if adapter_empty else "normalizer_hook_dropped")
-                )
+                reason = "normalizer_hook_dropped"
+                if adapter_empty:
+                    reason = unmappable_reason(
+                        row, adapter_id=resolved_adapter_id, adapter_config=adapter_config,
+                        field_mapping=field_mapping, task_profile=resolved_task_profile,
+                    )
+                rejected.append((row_index, reason))
             continue
 
         # Preserve original fields while ensuring canonical keys exist.
@@ -972,6 +990,7 @@ async def combine_datasets(
     task_profile: str | None = None,
     cleaned_labelled_only: bool = False,
     cleaned_report: dict[str, int] | None = None,
+    input_rejected: dict[str, int] | None = None,
 ) -> list[dict]:
     """
     Combine entries from cleaned/synthetic (and, when asked, gold) datasets.
@@ -1036,6 +1055,7 @@ async def combine_datasets(
                     continue
                 doc_path = Path(doc.file_path)
                 rows = _load_records_from_file(doc_path)
+                row_rejects: list[tuple[int, str]] = []
                 normalized = _normalize_rows_for_training(
                     rows,
                     ds.dataset_type,
@@ -1045,7 +1065,9 @@ async def combine_datasets(
                     adapter_config=adapter_config,
                     field_mapping=field_mapping,
                     task_profile=task_profile,
+                    rejected=row_rejects,
                 )
+                _count_input_rejects(row_rejects, input_rejected)
                 _stamp_source_document(normalized, doc.id, doc.filename)
                 all_entries.extend(normalized)
             continue
@@ -1066,6 +1088,7 @@ async def combine_datasets(
                     cleaned_report.get("dropped_unlabelled_passages", 0) + len(rows) - len(labelled)
                 )
             rows = labelled
+        row_rejects: list[tuple[int, str]] = []
         normalized = _normalize_rows_for_training(
             rows,
             ds.dataset_type,
@@ -1075,7 +1098,9 @@ async def combine_datasets(
             adapter_config=adapter_config,
             field_mapping=field_mapping,
             task_profile=task_profile,
+            rejected=row_rejects,
         )
+        _count_input_rejects(row_rejects, input_rejected)
         all_entries.extend(normalized)
 
     return all_entries
@@ -1595,6 +1620,7 @@ async def split_dataset(
     )
 
     cleaned_report: dict[str, int] = {}
+    input_rejected: dict[str, int] = {}
     entries = await combine_datasets(
         db,
         project_id,
@@ -1606,10 +1632,20 @@ async def split_dataset(
         task_profile=task_profile,
         cleaned_labelled_only=dataset_type_report.get("cleaned_rows") == "labelled_only",
         cleaned_report=cleaned_report,
+        input_rejected=input_rejected,
     )
     if cleaned_report:
         dataset_type_report["cleaned_filter"] = cleaned_report
+    if input_rejected:
+        dataset_type_report["input_rejected"] = dict(input_rejected)
+        logger.warning("project %s: split rejected rows whose input is their own label / gold record: %s",
+                       project_id, input_rejected)
     if not entries:
+        if input_rejected:
+            raise ValueError(
+                "No data available to split: every row's input would have been its own label or gold "
+                f"record ({input_rejected}). Name the input column with a field mapping (text / question)."
+            )
         raise ValueError("No data available to split. Ingest and process documents first.")
 
     # ``dedup_rows`` powers the "Re-split with dedup" leakage remediation.

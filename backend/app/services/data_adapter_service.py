@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import copy
 import importlib
 import inspect
@@ -698,16 +699,32 @@ def _build_classification_training_prompt(
     )
 
 
-def _map_classification(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
+# Single-column text inputs a classification dataset commonly uses (SST-2 ``sentence``,
+# sentiment ``review``, toxicity ``comment``), tried after the generic text aliases.
+_CLASSIFICATION_EXTRA_TEXT_ALIASES = ("sentence", "comment", "review")
+# Two-column inputs (NLI / paraphrase pairs) joined into ONE text as labelled lines, the way
+# the ``Text: ...`` block of the classification prompt then shows both sides:
+#   Premise: <p>\nHypothesis: <h>      Sentence 1: <a>\nSentence 2: <b>
+_CLASSIFICATION_PAIR_ALIASES = (
+    ("premise", "hypothesis", "Premise", "Hypothesis"),
+    ("sentence1", "sentence2", "Sentence 1", "Sentence 2"),
+)
+
+
+def _classification_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[str, str, str | None]:
+    """``(text, label, reject_reason)``. ``reject_reason`` is set when the row has no usable
+    input: nothing found, or the canonical fallback produced a text that IS the label."""
     text_fields = config.get("text_fields")
     label_fields = config.get("label_fields")
-    text_aliases = list(text_fields) if isinstance(text_fields, list) and text_fields else [
+    explicit_text = isinstance(text_fields, list) and bool(text_fields)
+    text_aliases = list(text_fields) if explicit_text else [
         "text",
         "content",
         "input",
         "question",
         "prompt",
         "instruction",
+        *_CLASSIFICATION_EXTRA_TEXT_ALIASES,
     ]
     label_aliases = list(label_fields) if isinstance(label_fields, list) and label_fields else [
         "label",
@@ -720,14 +737,30 @@ def _map_classification(record: dict[str, Any], config: dict[str, Any]) -> dict[
     ]
 
     text = _pick_text(record, text_aliases)
+    if not text and not explicit_text:
+        for first, second, first_name, second_name in _CLASSIFICATION_PAIR_ALIASES:
+            a, b = _pick_text(record, [first]), _pick_text(record, [second])
+            if a and b:
+                text = f"{first_name}: {a}\n{second_name}: {b}"
+                break
     label = _pick_text(record, label_aliases)
     if not text:
         canonical = canonicalize_record(record, field_mapping=config.get("field_mapping"))
         text = text or _coerce_text((canonical or {}).get("text")) or _coerce_text((canonical or {}).get("question"))
         label = label or _coerce_text((canonical or {}).get("answer"))
+        # The canonical fallback sets ``text`` = the answer when it finds no input column:
+        # training on that teaches "Text: <label> Label: <label>". Reject, never train it.
+        if text and label and text == label:
+            return "", label, "classification_input_is_label"
     if not text or not label:
-        return None
+        return text, label, "adapter_unmappable_or_empty"
+    return text, label, None
 
+
+def _map_classification(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
+    text, label, reason = _classification_parts(record, config)
+    if reason:
+        return None
     # β-fix — wrap source_text with the instruction prompt so training
     # rows match the format ClassificationHandler builds at eval time.
     # When the caller pre-scanned the dataset for candidate labels and
@@ -1244,7 +1277,9 @@ def _build_structured_extraction_training_prompt(
     )
 
 
-def _map_structured_extraction(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
+def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[str, str, Any, str | None]:
+    """``(source, target, target_payload, reject_reason)``. Rejected when no input is found or
+    when the canonical fallback built the input out of the gold record itself."""
     source_fields = config.get("source_fields")
     output_fields = config.get("output_fields")
     source_aliases = list(source_fields) if isinstance(source_fields, list) and source_fields else [
@@ -1274,7 +1309,19 @@ def _map_structured_extraction(record: dict[str, Any], config: dict[str, Any]) -
         canonical = canonicalize_record(record, field_mapping=config.get("field_mapping"))
         source = source or _coerce_text((canonical or {}).get("text")) or _coerce_text((canonical or {}).get("question"))
         target = target or _coerce_text((canonical or {}).get("answer"))
+        # No recognised document column: the canonical fallback concatenates the row's
+        # first columns, gold JSON included. Never put the answer into the prompt.
+        golds = {g for g in (target, _coerce_text(json.dumps(target_payload, ensure_ascii=False)) if isinstance(target_payload, (dict, list)) else "") if g}
+        if source and any(g in source for g in golds):
+            return "", target, target_payload, "structured_input_contains_gold"
     if not source or not target:
+        return source, target, target_payload, "adapter_unmappable_or_empty"
+    return source, target, target_payload, None
+
+
+def _map_structured_extraction(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
+    source, target, target_payload, reason = _structured_parts(record, config)
+    if reason:
         return None
 
     # ζ-fix — wrap source_text with the handler's instruction
@@ -2262,6 +2309,28 @@ def map_record_with_adapter(
     config = _base_adapter_config(adapter_config, field_mapping, task_profile=task_profile)
     result = map_fn(row, config)
     return result if isinstance(result, dict) else None
+
+
+def unmappable_reason(
+    row: dict[str, Any],
+    *,
+    adapter_id: str,
+    adapter_config: dict[str, Any] | None = None,
+    field_mapping: dict[str, str] | None = None,
+    task_profile: str | None = None,
+) -> str:
+    """Why ``map_record_with_adapter`` returned nothing for ``row``: a specific reason where the
+    adapter knows one (input would be the label / the gold record), else the generic one."""
+    normalized_id = _normalize_adapter_id(adapter_id) or DEFAULT_ADAPTER_ID
+    config = _base_adapter_config(adapter_config, field_mapping, task_profile=task_profile)
+    try:
+        if normalized_id == "classification-label":
+            return _classification_parts(row, config)[2] or "adapter_unmappable_or_empty"
+        if normalized_id == "structured-extraction":
+            return _structured_parts(row, config)[3] or "adapter_unmappable_or_empty"
+    except Exception:  # noqa: BLE001 - diagnostics only
+        pass
+    return "adapter_unmappable_or_empty"
 
 
 def validate_mapped_records(
