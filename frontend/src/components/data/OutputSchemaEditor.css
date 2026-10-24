@@ -1,0 +1,25 @@
+/* OutputSchemaEditor — optional JSON-record schema for json-extraction. */
+
+.output-schema-editor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.output-schema-editor__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+}
+
+.output-schema-editor__text {
+    width: 100%;
+    font-family: var(--font-mono, monospace);
+    font-size: var(--font-size-sm);
+    resize: vertical;
+}
+
+.output-schema-editor__actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}

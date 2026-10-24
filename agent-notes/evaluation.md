@@ -276,3 +276,32 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `_apply_playground_auto_rag` / `_resolve_playground_run` in `api/training.py`
   (the stream route previously skipped auto-RAG and rag_first). The UI opens
   on the latest run (or `?run=<id>`).
+- **`field_match` scoring (typed JSON records)** —
+  `StructuredExtractionHandler._score_field_match`, rules in
+  `output_schema_service` (one place for scorer + validator). Per-field exact
+  match is TYPED: NULL class = JSON null, missing key, `"null"`, `""`
+  (`"none"` is NOT null: it is a real enum value); numbers compare as `Decimal`
+  (`1250.0` == `"1,250"`) when the declared type is integer/number or both
+  sides parse; booleans `true` == `"true"`; strings casefold + collapse
+  whitespace + drop one trailing period (articles / internal punctuation kept:
+  `"the destroyed"` != `"destroyed"`). Token-F1 stays for string fields (so F1
+  can credit a near miss that EM refuses). dict/list values compare as
+  `json.dumps(sort_keys=True)` through the old SQuAD EM/F1; **nested / list
+  per-key scoring is a later phase**. `overall_em` = every schema field matches
+  typed (extra predicted keys ignored, still visible in
+  `schema_compliance_rate`). **Null metrics** (positive class = "predicted
+  NULL"; valid-JSON rows only, invalid rows are in `json_validity_rate`):
+  per field and micro-averaged `null_precision` = tp/pred_null,
+  `null_recall` = tp/gold_null, plus `hallucinated` (pred non-null, gold null)
+  and `abstained_wrongly`; zero denominator -> `None`, never 0 (the UI shows a
+  dash). A gold row missing a key counts as NULL. **Enum + type validation**
+  (only for fields with a declared `type` / `enum`): `out_of_vocab_rate` = share
+  of non-NULL predictions outside the enum; `type_violation_rate` = share of
+  non-NULL predictions of the wrong type (numeric strings satisfy
+  integer/number, integer needs an integral value) plus NULLs where the type
+  excludes null; `schema_valid_rate` = valid-JSON rows with no violation in any
+  field. OOV values are still scored normally. Rows carry `schema_violations`.
+  UI: `FieldMatchMetricsPanel` in `EvalPanel` (per-field table + aggregates,
+  header names run / dataset / result id; shown when the result has null
+  metrics). Declaring the schema: see `agent-notes/data.md` (json-extraction).
+  Tests: `tests/test_json_extraction_scoring.py`, `FieldMatchMetricsPanel.test.tsx`.

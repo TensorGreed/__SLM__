@@ -87,7 +87,12 @@ async def apply_recipe_to_project(
     if recipe is None:
         raise RecipeNotFoundError(f"Recipe '{recipe_id}' not found in catalog")
 
-    project.selected_recipe = build_recipe_snapshot(recipe)
+    previous = project.selected_recipe if isinstance(project.selected_recipe, dict) else {}
+    snapshot = build_recipe_snapshot(recipe)
+    # Re-applying the same recipe keeps the declared output schema.
+    if previous.get("recipe_id") == recipe.id and previous.get("output_schema"):
+        snapshot["output_schema"] = previous["output_schema"]
+    project.selected_recipe = snapshot
     project.base_model_name = recipe.suggested_base_model
     _sync_dataset_adapter_preset(project, recipe)
 
@@ -140,6 +145,44 @@ async def clear_recipe_from_project(db: AsyncSession, project_id: int) -> Projec
     if project is None:
         raise ValueError(f"Project {project_id} not found")
     project.selected_recipe = None
+    await db.flush()
+    await db.refresh(project)
+    return project
+
+
+class OutputSchemaNotSupportedError(ValueError):
+    """The project's recipe doesn't take a declared output schema."""
+
+
+# Recipes whose scorer reads a declared record schema.
+OUTPUT_SCHEMA_RECIPES = frozenset({"json-extraction"})
+
+
+async def set_recipe_output_schema(
+    db: AsyncSession,
+    project_id: int,
+    output_schema: dict[str, Any] | None,
+) -> Project:
+    """Save (or clear, with ``None``) the declared output schema on the
+    project's selected recipe. Raises ``ValueError`` with a user-facing
+    message when the schema is malformed, ``OutputSchemaNotSupportedError``
+    when the recipe isn't a record-extraction one."""
+    from app.services.output_schema_service import validate_output_schema
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+    snapshot = project.selected_recipe if isinstance(project.selected_recipe, dict) else {}
+    if snapshot.get("recipe_id") not in OUTPUT_SCHEMA_RECIPES:
+        raise OutputSchemaNotSupportedError(
+            "An output schema applies to the json-extraction task type; pick it first."
+        )
+    updated = dict(snapshot)
+    if output_schema is None:
+        updated.pop("output_schema", None)
+    else:
+        updated["output_schema"] = validate_output_schema(output_schema)
+    project.selected_recipe = updated
     await db.flush()
     await db.refresh(project)
     return project

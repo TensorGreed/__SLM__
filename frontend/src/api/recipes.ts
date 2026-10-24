@@ -126,3 +126,18 @@ export async function applyRecipeToProject(
     });
     return res.data;
 }
+
+/**
+ * Declare (or clear, with ``null``) the JSON-record output schema on a
+ * project using the json-extraction task type. The server validates the
+ * shape and answers 400 with a readable message when it is malformed.
+ */
+export async function saveRecipeOutputSchema(
+    projectId: number,
+    outputSchema: Record<string, unknown> | null,
+): Promise<unknown> {
+    const res = await api.put(`/projects/${projectId}/recipe/output-schema`, {
+        output_schema: outputSchema,
+    });
+    return res.data;
+}

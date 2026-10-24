@@ -221,6 +221,7 @@ session-start guidance.
 - `backend/app/services/model_selection_service.py` — Heuristic base-model recommendation service for the training wizard.
 - `backend/app/services/newbie_autopilot_service.py` — Newbie autopilot intent mapping for zero-knowledge training UX.
 - `backend/app/services/nl2pipeline_service.py` — Natural Language to Pipeline (Magic Create) service.
+- `backend/app/services/output_schema_service.py` — Declared output schema for typed JSON-record extraction + typed scalar compare.
 - `backend/app/services/pack_generation_service.py` — Auto-generate a starter evaluation pack from blueprint + dataset + adapter.
 - `backend/app/services/page_furniture.py` — Page furniture: repeated page headers / footers / page numbers.
 - `backend/app/services/paired_comparison_stats.py` — Is a before/after difference on the same rows more than noise?
@@ -584,6 +585,7 @@ session-start guidance.
 - `frontend/src/components/data/LabellingConventionsCard.tsx` — Labels step — the labelling conventions of a span project (Epic U phase
 - `frontend/src/components/data/LlmGoldGeneratePanel.tsx` — LlmGoldGeneratePanel — generate gold-set Q&A pairs using a flagship
 - `frontend/src/components/data/LlmSpendCard.tsx` — _(no docstring)_
+- `frontend/src/components/data/OutputSchemaEditor.tsx` — Optional "Output schema (JSON)" for the json-extraction task type.
 - `frontend/src/components/data/PlaybookPickerPanel.tsx` — PlaybookPickerPanel — USER-SUCCESS Epic 2.
 - `frontend/src/components/data/RecipePicker.tsx` — Recipe Picker — Theme 2 Epic 3 + 4.
 - `frontend/src/components/data/SavedMappingsPanel.tsx` — Saved dataset-import mappings panel (Phase G of DATASET_IMPORT_PLAN).
@@ -614,6 +616,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalSummaryCard.tsx` — EvalSummaryCard — the Eval tab's default view (Wave 3b).
 - `frontend/src/components/evaluation/ExternalBenchmarksPanel.tsx` — External benchmarks (Epic G-B1/B2) — score the selected run on labelled
 - `frontend/src/components/evaluation/FailureClustersPanel.tsx` — Failure pattern grouper with cluster explanation and augmentation recommendations.
+- `frontend/src/components/evaluation/FieldMatchMetricsPanel.tsx` — FieldMatchMetricsPanel — per-field results of a typed JSON-record eval
 - `frontend/src/components/evaluation/FrontierComparisonPanel.tsx` — FrontierComparisonPanel — Track 1, Epic D.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.
 - `frontend/src/components/evaluation/PackSectionEditor.tsx` — Quality-Lift phase 7 slice 1 — Generic pack section editor.
@@ -813,6 +816,7 @@ session-start guidance.
 - `backend/tests/test_hub_publish.py` — Publish an export to the Hugging Face Hub: the pure front-matter helper,
 - `backend/tests/test_hyperparameter_sweep.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
+- `backend/tests/test_json_extraction_scoring.py` — json-extraction: typed field_match scoring, null metrics, enum/type
 - `backend/tests/test_label_noise_slice1.py` — Quality-Lift phase 4 slice 1 — Label-noise scan service + endpoints.
 - `backend/tests/test_labelling_cost.py` — Labelling cost: prompt caching, usage + cost per relabel, convention-aware
 - `backend/tests/test_llm_budget.py` — Playground cloud-chat metering + the monthly cloud-LLM budget.
@@ -1069,6 +1073,7 @@ session-start guidance.
 - `frontend/src/components/data/LabelNoiseReviewPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LlmGoldGeneratePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LlmSpendCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/OutputSchemaEditor.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/PlaybookPickerPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/RecipePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SavedMappingsPanel.test.tsx` — Saved-mappings panel contract.
@@ -1105,6 +1110,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalSummaryCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ExternalBenchmarksPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/FailureClustersPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/FieldMatchMetricsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/FrontierComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/PackSectionEditor.test.tsx` — Quality-Lift phase 7 slice 1 — Generic PackSectionEditor tests.

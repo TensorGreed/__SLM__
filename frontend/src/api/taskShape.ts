@@ -65,10 +65,11 @@ export async function fetchProjectTaskShape(
 export async function confirmTaskShape(
     projectId: number,
     taskProfile: string,
+    recipeId?: string,
 ): Promise<ConfirmTaskShapeResult> {
     const res = await api.post<ConfirmTaskShapeResult>(
         `/projects/${projectId}/task-shape/confirm`,
-        { task_profile: taskProfile },
+        recipeId ? { task_profile: taskProfile, recipe_id: recipeId } : { task_profile: taskProfile },
     );
     return res.data;
 }

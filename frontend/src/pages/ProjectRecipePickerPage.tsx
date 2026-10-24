@@ -33,6 +33,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 
 import { applyRecipeToProject, listRecipes, type Recipe } from '../api/recipes';
+import OutputSchemaEditor from '../components/data/OutputSchemaEditor';
 import LoadingState from '../components/shared/LoadingState';
 import RecipeTileFrame from '../components/shared/RecipeTileFrame';
 import './ProjectRecipePickerPage.css';
@@ -89,6 +90,12 @@ export default function ProjectRecipePickerPage({ embedded = false, returnTo: re
             if (typeof id === 'string' && id) return id;
         }
         return null;
+    }, [project]);
+
+    const declaredOutputSchema = useMemo(() => {
+        const snapshot = project?.selected_recipe as { output_schema?: unknown } | null | undefined;
+        const schema = snapshot?.output_schema;
+        return schema && typeof schema === 'object' ? (schema as Record<string, unknown>) : null;
     }, [project]);
 
     useEffect(() => {
@@ -160,6 +167,10 @@ export default function ProjectRecipePickerPage({ embedded = false, returnTo: re
                     </p>
                 )}
             </header>
+
+            {currentRecipeId === 'json-extraction' && (
+                <OutputSchemaEditor projectId={projectId} initialSchema={declaredOutputSchema} />
+            )}
 
             {loading && (
                 <LoadingState

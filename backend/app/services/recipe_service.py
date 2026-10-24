@@ -336,6 +336,80 @@ def _span_extraction_recipe() -> Recipe:
     )
 
 
+def _json_extraction_recipe() -> Recipe:
+    return Recipe(
+        id="json-extraction",
+        name="Structured Record Extractor",
+        headline="Train a model to read text and fill in a fixed set of fields as a JSON record.",
+        description=(
+            "For datasets where each row is text paired with one JSON object "
+            "whose keys are a fixed set of fields (strings, numbers, "
+            "booleans, enum-like categories, or null when the text doesn't "
+            "say). Form filling, incident or ticket records, invoice and "
+            "receipt fields, any 'text in, typed record out' task. Scored "
+            "field by field with typed comparison: numbers compare "
+            "numerically, null is told apart from a wrong value, and an "
+            "optional declared output schema checks categories and types."
+        ),
+        icon="🧾",
+        task_profile="structured_extraction",
+        adapter_id="structured-extraction",
+        scoring_mode="field_match",
+        default_input_column="text",
+        default_output_column="structured_output",
+        suggested_base_model="HuggingFaceTB/SmolLM2-135M-Instruct",
+        alt_base_models=[
+            "Qwen/Qwen2.5-0.5B-Instruct",
+            "Qwen/Qwen2.5-1.5B-Instruct",
+            "Qwen/Qwen2.5-3B-Instruct",
+        ],
+        target_profile="vllm_server",
+        training_plan_profile="balanced",
+        eval_pack_id="evalpack.general.default",
+        gold_template=GoldTemplate(
+            shape_label="text_structured_output",
+            min_rows_recommended=150,
+            fields=[
+                GoldFieldSpec(name="text", description="The source text to read."),
+                GoldFieldSpec(
+                    name="structured_output",
+                    description=(
+                        "A JSON object with the same keys on every row. Use null "
+                        "for a field the text doesn't state; keep numbers as numbers."
+                    ),
+                ),
+            ],
+            example_row={
+                "text": "Two people were hurt when the cargo van left the road near Dover.",
+                "structured_output": {"vehicle": "cargo van", "injuries": 2, "fatalities": None},
+            },
+        ),
+        sample_eval_prompts=[
+            "A delivery truck clipped a fence on Elm Street; nobody was hurt.",
+            "Order #4471 for 3 units shipped on 12 March.",
+        ],
+        data_acquisition_hints=[
+            "Export records from a form or database next to the free text they were filled from.",
+            "Have a teacher model fill the fields for a sample of texts, then review the nulls by hand.",
+        ],
+        shape_signatures=[
+            ShapeSignature(
+                columns=[
+                    ShapeColumn(
+                        name_patterns=["text", "content", "snippet", "input", "narrative"],
+                        column_role="input",
+                    ),
+                    ShapeColumn(
+                        name_patterns=["structured_output", "extracted", "record", "fields_json", "target_json"],
+                        column_role="output",
+                    ),
+                ],
+                base_confidence=0.9,
+            ),
+        ],
+    )
+
+
 def _summarization_recipe() -> Recipe:
     return Recipe(
         id="summarization",
@@ -675,6 +749,7 @@ _BUILTIN_RECIPE_FACTORIES = [
     _qa_sft_recipe,
     _classification_recipe,
     _span_extraction_recipe,
+    _json_extraction_recipe,
     _summarization_recipe,
     _code_review_recipe,
     _generic_sft_recipe,

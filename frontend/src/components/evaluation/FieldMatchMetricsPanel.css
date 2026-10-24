@@ -1,0 +1,62 @@
+/* FieldMatchMetricsPanel — typed JSON-record eval breakdown. */
+
+.fm-metrics {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin: var(--space-md) 0;
+}
+
+.fm-metrics__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+}
+
+.fm-metrics__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+}
+
+.fm-metrics__summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    margin: 0;
+}
+
+.fm-metrics__summary dt {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+}
+
+.fm-metrics__summary dd {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-variant-numeric: tabular-nums;
+}
+
+.fm-metrics__scroll {
+    overflow-x: auto;
+}
+
+.fm-metrics__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+}
+
+.fm-metrics__table th,
+.fm-metrics__table td {
+    padding: var(--space-xs) var(--space-sm);
+    text-align: right;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.fm-metrics__table th:first-child,
+.fm-metrics__table thead th {
+    text-align: left;
+}

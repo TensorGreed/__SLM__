@@ -65,7 +65,7 @@ This section is auto-generated from the FastAPI OpenAPI spec. For curated narrat
 | [Pipeline](pipeline.md) | 30 |
 | [Probe Pack](probe-pack.md) | 3 |
 | [Project Templates](project-templates.md) | 3 |
-| [Projects](projects.md) | 27 |
+| [Projects](projects.md) | 28 |
 | [Quickstart](quickstart.md) | 4 |
 | [Recipes](recipes.md) | 3 |
 | [Redaction](redaction.md) | 4 |

@@ -71,10 +71,13 @@ export default function TaskShapeConfirmCard({
         setSaving(true);
         setError('');
         try {
-            const result = await confirmTaskShape(projectId, taskProfile);
+            const candidate = detection.candidates.find((c) => c.task_profile === taskProfile) ?? null;
+            // The detector may recommend json-extraction (fixed-field records)
+            // over span-extraction (entity lists) for this shape.
+            const recipeId = taskProfile === 'structured_extraction' ? candidate?.recipe_id : undefined;
+            const result = await confirmTaskShape(projectId, taskProfile, recipeId);
             setConfirmed(result.label);
             setChoosing(false);
-            const candidate = detection.candidates.find((c) => c.task_profile === taskProfile) ?? null;
             onConfirmed?.(result, candidate);
         } catch (err) {
             setError(errorText(err));

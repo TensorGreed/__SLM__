@@ -14,6 +14,7 @@ import LoadingState from '../shared/LoadingState';
 import StepFooter from '../shared/StepFooter';
 import { Term } from '../shared/Term';
 import ClassificationChartsPanel from './ClassificationChartsPanel';
+import FieldMatchMetricsPanel, { hasFieldMatchBreakdown, type FieldMatchMetrics } from './FieldMatchMetricsPanel';
 import './ClassificationChartsPanel.css';
 import ScorecardPanel from './ScorecardPanel';
 import AggregateRunBadge from './AggregateRunBadge';
@@ -104,6 +105,17 @@ interface EvalMetrics {
     }>;
     confusion_matrix?: Record<string, Record<string, number>>;
     candidate_set?: string[];
+    // Typed JSON-record (field_match) breakdown: per-field null precision /
+    // recall, out-of-vocab + type-violation rates; FieldMatchMetricsPanel.
+    scoring_mode?: string;
+    per_field?: FieldMatchMetrics['per_field'];
+    null_precision?: number | null;
+    null_recall?: number | null;
+    hallucinated?: number;
+    abstained_wrongly?: number;
+    schema_valid_rate?: number | null;
+    json_validity_rate?: number | null;
+    overall_em?: number | null;
 }
 
 interface PredictionPreviewRow {
@@ -2043,6 +2055,19 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                     candidates={r.metrics.candidate_set}
                                     macroF1={r.metrics.macro_f1 ?? null}
                                     accuracy={r.metrics.accuracy ?? null}
+                                />
+                            ))}
+
+                        {/* Typed JSON-record evals (field_match): per-field null
+                            precision / recall, made-up values, out-of-vocabulary and
+                            type-violation rates. Each block names its run + dataset. */}
+                        {evalResults
+                            .filter((r) => hasFieldMatchBreakdown(r.metrics))
+                            .map((r) => (
+                                <FieldMatchMetricsPanel
+                                    key={`fm-metrics-${r.id}`}
+                                    metrics={r.metrics}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
                                 />
                             ))}
                     </div>

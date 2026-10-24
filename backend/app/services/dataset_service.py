@@ -869,12 +869,14 @@ async def resolve_training_dataset_types(
 
 
 async def _recipe_output_schema(db: AsyncSession, project_id: int) -> dict[str, Any] | None:
-    """``{"scoring_mode", "required"}`` from the project's selected recipe
-    (``recipe_service.Recipe.scoring_mode``), None when the project has no
-    recipe or it has no scoring mode. Best-effort."""
+    """``{"scoring_mode", "required"[, "properties"]}`` from the project's
+    selected recipe (``recipe_service.Recipe.scoring_mode``) plus the declared
+    ``output_schema`` properties, None when the project has no recipe or it has
+    no scoring mode. Best-effort."""
     try:
         project = await db.get(Project, project_id)
-        recipe_id = str(((project.selected_recipe or {}) if project else {}).get("recipe_id") or "")
+        snapshot = (project.selected_recipe if project and isinstance(project.selected_recipe, dict) else {})
+        recipe_id = str(snapshot.get("recipe_id") or "")
         if not recipe_id:
             return None
         from app.services.recipe_service import get_recipe
@@ -883,7 +885,15 @@ async def _recipe_output_schema(db: AsyncSession, project_id: int) -> dict[str, 
         mode = str(getattr(recipe, "scoring_mode", "") or "")
         if not mode:
             return None
-        return {"scoring_mode": mode, "required": ["entities"] if mode == "span_set" else []}
+        from app.services.output_schema_service import merge_manifest_output_schema
+
+        # A project-declared record schema (json-extraction) adds properties
+        # (types / enums) and its own required list.
+        return merge_manifest_output_schema(
+            mode,
+            ["entities"] if mode == "span_set" else [],
+            snapshot.get("output_schema") if mode == "field_match" else None,
+        )
     except Exception:  # noqa: BLE001 — never block a split over the recipe
         return None
 
@@ -921,6 +931,15 @@ async def combine_datasets(
         normalizer_hook_spec = None
 
     all_entries: list[dict[str, Any]] = []
+
+    # A declared record schema fixes the field list the training prompt names,
+    # so it matches what the eval handler asks for (sorted property names).
+    if adapter_id == "structured-extraction" and not (adapter_config and "fields" in adapter_config):
+        declared = await _recipe_output_schema(db, project_id)
+        declared_props = (declared or {}).get("properties")
+        if isinstance(declared_props, dict) and declared_props:
+            adapter_config = dict(adapter_config or {})
+            adapter_config["fields"] = sorted(declared_props)
 
     result = await db.execute(
         select(Dataset).where(

@@ -24,6 +24,16 @@ from pathlib import Path
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from app.config import settings
+from app.services.output_schema_service import (
+    MISSING,
+    enum_contains,
+    is_container,
+    is_null,
+    normalize_property,
+    text_of,
+    type_ok,
+    value_match,
+)
 
 
 # ── Data shapes ───────────────────────────────────────────────────────
@@ -768,6 +778,10 @@ class StructuredExtractionHandler:
                     "fields": fields,
                     "required": req_list,
                     "scoring_mode": scoring_mode,
+                    # Declared types / enums (json-extraction output_schema).
+                    "properties": {
+                        name: normalize_property(properties[name]) for name in fields
+                    },
                 }
                 return self._schema
 
@@ -1001,10 +1015,18 @@ class StructuredExtractionHandler:
         predictions: list[dict[str, Any]],
         schema: dict[str, Any],
     ) -> dict[str, Any]:
-        from app.services.evaluation_service import exact_match, f1_score
+        """Typed per-field scoring (rules live in ``output_schema_service``).
+
+        Exact match is typed (null class, numeric, boolean, normalised
+        string); token-F1 stays for string fields. Null precision/recall and
+        enum/type validation cover valid-JSON rows only. Nested objects /
+        arrays are compared as a stable ``json.dumps`` string (no per-key
+        scoring yet)."""
+        from app.services.evaluation_service import f1_score
 
         fields = schema["fields"]
         required = schema["required"]
+        props: dict[str, dict[str, Any]] = schema.get("properties") or {}
         total = len(predictions)
 
         if total == 0:
@@ -1016,6 +1038,11 @@ class StructuredExtractionHandler:
                 "overall_em": 0.0,
                 "exact_match": 0.0,
                 "f1": 0.0,
+                "null_precision": None,
+                "null_recall": None,
+                "hallucinated": 0,
+                "abstained_wrongly": 0,
+                "schema_valid_rate": None,
                 "total": 0,
                 "correct": 0,
                 "per_field": {},
@@ -1029,6 +1056,19 @@ class StructuredExtractionHandler:
             f: {"correct": 0, "total": 0} for f in fields
         }
         per_field_f1: dict[str, list[float]] = {f: [] for f in fields}
+        null_counts: dict[str, dict[str, int]] = {
+            f: {"tp": 0, "pred_null": 0, "gold_null": 0, "hallucinated": 0, "abstained_wrongly": 0}
+            for f in fields
+        }
+        # Validation counters (valid-JSON rows, declared type/enum only).
+        val_counts: dict[str, dict[str, int]] = {
+            f: {"nonnull": 0, "oov": 0, "type_checked": 0, "type_bad": 0}
+            for f in fields
+        }
+        validated_fields = [
+            f for f in fields if (props.get(f) or {}).get("types") or (props.get(f) or {}).get("enum")
+        ]
+        schema_valid_rows = 0
 
         for prediction in predictions:
             raw_output = prediction.get("prediction") or ""
@@ -1047,25 +1087,71 @@ class StructuredExtractionHandler:
                 compliant_count += 1
 
             row_field_results: dict[str, dict[str, float]] = {}
-            if is_valid and isinstance(parsed_ref, dict):
+            row_violations: dict[str, list[str]] = {}
+            has_ref = is_valid and isinstance(parsed_ref, dict)
+            all_match = has_ref
+            if is_valid:
                 for field_name in fields:
-                    if field_name not in parsed_ref:
+                    spec = props.get(field_name) or {}
+                    types = list(spec.get("types") or [])
+                    enum = spec.get("enum")
+                    pred_val = parsed_pred.get(field_name, MISSING)
+                    p_null = is_null(pred_val)
+
+                    if field_name in validated_fields:
+                        issues: list[str] = []
+                        counts = val_counts[field_name]
+                        if not p_null:
+                            counts["nonnull"] += 1
+                            if enum and not enum_contains(pred_val, enum, types):
+                                counts["oov"] += 1
+                                issues.append("out_of_vocab")
+                        if types:
+                            if not p_null:
+                                counts["type_checked"] += 1
+                                if not type_ok(pred_val, types):
+                                    counts["type_bad"] += 1
+                                    issues.append("type_violation")
+                            elif "null" not in types:
+                                counts["type_checked"] += 1
+                                counts["type_bad"] += 1
+                                issues.append("type_violation")
+                        if issues:
+                            row_violations[field_name] = issues
+
+                    if not has_ref:
                         continue
+                    ref_val = parsed_ref.get(field_name, MISSING)
+                    g_null = is_null(ref_val)
+                    nc = null_counts[field_name]
+                    nc["pred_null"] += int(p_null)
+                    nc["gold_null"] += int(g_null)
+                    nc["tp"] += int(p_null and g_null)
+                    nc["hallucinated"] += int((not p_null) and g_null)
+                    nc["abstained_wrongly"] += int(p_null and not g_null)
+
                     per_field_em[field_name]["total"] += 1
-                    ref_val = str(parsed_ref.get(field_name, ""))
-                    if field_name in parsed_pred:
-                        pred_val = str(parsed_pred.get(field_name, ""))
-                        em = exact_match(pred_val, ref_val)
+                    em = value_match(pred_val, ref_val, types)
+                    if em:
+                        f1 = 1.0
+                    elif isinstance(pred_val, str) and isinstance(ref_val, str) and not p_null and not g_null:
+                        # Token-F1 only for string fields (partial credit).
                         f1 = f1_score(pred_val, ref_val)
-                        per_field_em[field_name]["correct"] += int(em)
-                        per_field_f1[field_name].append(f1)
-                        row_field_results[field_name] = {"em": em, "f1": f1}
+                    elif is_container(pred_val) or is_container(ref_val):
+                        f1 = f1_score(text_of(pred_val), text_of(ref_val))
                     else:
-                        per_field_f1[field_name].append(0.0)
-                        row_field_results[field_name] = {"em": 0.0, "f1": 0.0}
+                        f1 = 0.0
+                    per_field_em[field_name]["correct"] += int(em)
+                    per_field_f1[field_name].append(f1)
+                    row_field_results[field_name] = {"em": float(em), "f1": f1}
+                    if not em:
+                        all_match = False
+
+                if validated_fields and not row_violations:
+                    schema_valid_rows += 1
 
             overall_em = 0.0
-            if is_valid and isinstance(parsed_ref, dict) and parsed_pred == parsed_ref:
+            if has_ref and (all_match if fields else parsed_pred == parsed_ref):
                 overall_em = 1.0
                 overall_em_count += 1
 
@@ -1084,8 +1170,12 @@ class StructuredExtractionHandler:
             prediction["is_valid_json"] = is_valid
             prediction["missing_required_fields"] = missing
             prediction["row_field_results"] = row_field_results
+            prediction["schema_violations"] = row_violations
             prediction["row_exact_match"] = overall_em
             prediction["row_f1"] = row_f1
+
+        def _ratio(num: int, den: int) -> float | None:
+            return round(num / den, 4) if den > 0 else None
 
         per_field_summary: dict[str, dict[str, Any]] = {}
         for field_name in fields:
@@ -1094,10 +1184,22 @@ class StructuredExtractionHandler:
             em_rate = round(cor / tot, 4) if tot > 0 else 0.0
             f1_list = per_field_f1[field_name]
             f1_mean = round(sum(f1_list) / len(f1_list), 4) if f1_list else 0.0
+            nc = null_counts[field_name]
+            vc = val_counts[field_name]
+            declared_enum = bool((props.get(field_name) or {}).get("enum"))
+            declared_types = bool((props.get(field_name) or {}).get("types"))
             per_field_summary[field_name] = {
                 "em": em_rate,
                 "f1": f1_mean,
                 "support": tot,
+                "null_precision": _ratio(nc["tp"], nc["pred_null"]),
+                "null_recall": _ratio(nc["tp"], nc["gold_null"]),
+                "pred_null": nc["pred_null"],
+                "gold_null": nc["gold_null"],
+                "hallucinated": nc["hallucinated"],
+                "abstained_wrongly": nc["abstained_wrongly"],
+                "out_of_vocab_rate": _ratio(vc["oov"], vc["nonnull"]) if declared_enum else None,
+                "type_violation_rate": _ratio(vc["type_bad"], vc["type_checked"]) if declared_types else None,
             }
 
         field_em_avg = (
@@ -1117,6 +1219,10 @@ class StructuredExtractionHandler:
             else 0.0
         )
         overall_em_rate = round(overall_em_count / total, 4)
+        micro = {
+            k: sum(c[k] for c in null_counts.values())
+            for k in ("tp", "pred_null", "gold_null", "hallucinated", "abstained_wrongly")
+        }
 
         return {
             "scoring_mode": self.SCORING_MODE_FIELD_MATCH,
@@ -1131,6 +1237,13 @@ class StructuredExtractionHandler:
             # aggregate for extraction: mean per-field F1.
             "exact_match": overall_em_rate,
             "f1": field_f1_avg,
+            # Micro-averaged over fields, valid-JSON rows only. Positive
+            # class = "predicted NULL"; None when the denominator is zero.
+            "null_precision": _ratio(micro["tp"], micro["pred_null"]),
+            "null_recall": _ratio(micro["tp"], micro["gold_null"]),
+            "hallucinated": micro["hallucinated"],
+            "abstained_wrongly": micro["abstained_wrongly"],
+            "schema_valid_rate": _ratio(schema_valid_rows, valid_count) if validated_fields else None,
             "per_field": per_field_summary,
             "schema": schema,
             "total": total,

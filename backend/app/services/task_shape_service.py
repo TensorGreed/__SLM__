@@ -152,6 +152,44 @@ _FIELD_MAP_TO_CANONICAL = {
 }
 
 
+# Output columns the structured-extraction adapter reads the gold payload from.
+_STRUCTURED_OUTPUT_ALIASES = (
+    "structured_output", "json", "labels", "entities", "extracted", "target", "answer", "output",
+)
+JSON_EXTRACTION_RECIPE_ID = "json-extraction"
+
+
+def structured_recipe_for_rows(rows: list[Any], default: str = "span-extraction") -> str:
+    """``json-extraction`` when the gold payload is a JSON object WITHOUT an
+    ``entities`` list (a fixed-field record); ``span-extraction`` (``default``)
+    for entity lists or when nothing can be read."""
+    import json
+
+    saw_record = False
+    for row in rows[:50]:
+        if not isinstance(row, dict):
+            continue
+        payload: Any = None
+        for alias in _STRUCTURED_OUTPUT_ALIASES:
+            value = row.get(alias)
+            if value is None or (isinstance(value, str) and not value.strip()):
+                continue
+            payload = value
+            break
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (ValueError, TypeError):
+                payload = None
+        if isinstance(payload, list):
+            return default
+        if isinstance(payload, dict):
+            if isinstance(payload.get("entities"), list):
+                return default
+            saw_record = True
+    return JSON_EXTRACTION_RECIPE_ID if saw_record else default
+
+
 def canonical_task_profile(value: str | None) -> str | None:
     token = str(value or "").strip().lower().replace("-", "_")
     if not token:
@@ -211,12 +249,13 @@ def _map_rate(rows: list[dict[str, Any]], adapter_id: str, field_map: dict[str, 
 
 def _candidate(profile: str, **fields: Any) -> dict[str, Any]:
     spec = TASK_SHAPES[profile]
+    recipe_id = fields.pop("recipe_id", None) or spec["recipe_id"]
     return {
         "task_profile": profile,
         "label": spec["label"],
         "description": spec["description"],
         "adapter_id": spec["adapter_id"],
-        "recipe_id": spec["recipe_id"],
+        "recipe_id": recipe_id,
         "mapper_id": fields.pop("mapper_id", None) or spec["mapper_id"],
         "field_map": fields.pop("field_map", {}) or {},
         **fields,
@@ -262,6 +301,7 @@ def detect_task_shape(
             rationale.append(f"{round(rate * 100)}% of rows fit the {TASK_SHAPES[profile]['label'].lower()} format")
         candidates.append(_candidate(
             profile,
+            recipe_id=structured_recipe_for_rows(sample) if profile == "structured_extraction" else None,
             mapper_id=found["mapper_id"],
             field_map=found["field_map"],
             confidence=confidence,
@@ -280,6 +320,7 @@ def detect_task_shape(
             continue
         candidates.append(_candidate(
             profile,
+            recipe_id=structured_recipe_for_rows(sample) if profile == "structured_extraction" else None,
             confidence=0.45 + 0.2 * rate,
             map_rate=round(rate, 3),
             rationale=[f"{round(rate * 100)}% of rows fit the {TASK_SHAPES[profile]['label'].lower()} format"],
@@ -325,6 +366,7 @@ async def confirm_task_shape(
     *,
     adapter_config: dict[str, Any] | None = None,
     field_mapping: dict[str, str] | None = None,
+    recipe_id: str | None = None,
 ) -> dict[str, Any]:
     """Persist the confirmed shape where dataset prep, training and eval
     read it (``dataset_adapter_preset``) and snapshot the matching recipe
@@ -352,9 +394,23 @@ async def confirm_task_shape(
     if project is not None and isinstance(project.dataset_adapter_preset, dict):
         project.dataset_adapter_preset = {**project.dataset_adapter_preset, "origin": "task_shape"}
         preference = {**preference, "origin": "task_shape"}
-    recipe = recipe_service.get_recipe(spec["recipe_id"])
+    chosen_recipe_id = spec["recipe_id"]
+    if profile == "structured_extraction":
+        # An entity list keeps span-extraction; a fixed-field JSON record is
+        # json-extraction. The caller may pass the detector's pick.
+        if recipe_id in ("span-extraction", JSON_EXTRACTION_RECIPE_ID):
+            chosen_recipe_id = recipe_id
+        else:
+            try:
+                chosen_recipe_id = structured_recipe_for_rows(await sample_project_rows(db, project_id))
+            except Exception:  # noqa: BLE001 — detection is a nicety, never block a confirm
+                chosen_recipe_id = spec["recipe_id"]
+    recipe = recipe_service.get_recipe(chosen_recipe_id)
     if project is not None and recipe is not None:
+        previous = project.selected_recipe if isinstance(project.selected_recipe, dict) else {}
         snapshot = build_recipe_snapshot(recipe)
+        if previous.get("recipe_id") == recipe.id and previous.get("output_schema"):
+            snapshot["output_schema"] = previous["output_schema"]
         snapshot["task_profile"] = profile
         snapshot["adapter_id"] = spec["adapter_id"]
         snapshot["confirmed_via"] = "task_shape"
@@ -367,7 +423,7 @@ async def confirm_task_shape(
         "task_profile": profile,
         "label": spec["label"],
         "adapter_id": spec["adapter_id"],
-        "recipe_id": spec["recipe_id"],
+        "recipe_id": chosen_recipe_id,
         "dataset_adapter_preference": preference,
     }
 

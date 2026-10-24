@@ -74,6 +74,33 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   (`task_profile_requested` kept). UI: `TaskShapeConfirmCard` in the import
   wizard + DatasetPrepPanel. Other detectors (newbie-autopilot keywords, brief
   keywords, recipe header sniffer) still exist — fold them in as priors next.
+- **`json-extraction` recipe (typed JSON records)** — `recipe_service`
+  `json-extraction` = text in, one JSON object with a fixed field set out:
+  task_profile `structured_extraction`, adapter `structured-extraction`,
+  `scoring_mode="field_match"`, columns `text` → `structured_output`.
+  `span-extraction` stays for entity lists (`{entities: [...]}`, `span_set`).
+  `task_shape_service.structured_recipe_for_rows` picks between them: gold
+  payload is a JSON object WITHOUT an `entities` list -> json-extraction
+  (candidate `recipe_id`; `confirm_task_shape(recipe_id=)` / the confirm
+  request's optional `recipe_id`; absent, it re-samples the project rows).
+  **Gold column**: use `structured_output` (the adapter `json.dumps` the
+  payload, keeping types and nulls). **Do NOT use `kv_to_structured` for typed
+  records** — it stringifies values and drops nulls, so the gold loses exactly
+  what the typed scorer measures. **Declared output schema**
+  (`output_schema_service`, JSON-Schema subset): `{"required": [...],
+  "properties": {"f": {"type": "string"|[...], "enum": [...]}}}`; types
+  string/integer/number/boolean/null (object/array accepted, not validated);
+  enum members may include `null`. `PUT /api/projects/{id}/recipe/output-schema`
+  (400 + message when malformed or the recipe isn't json-extraction; `null`
+  clears) stores it on `Project.selected_recipe["output_schema"]` (re-applying
+  the same recipe keeps it); `dataset_service._recipe_output_schema` merges
+  recipe `scoring_mode` + the project's `properties`/`required` into the
+  prepared manifest's `output_schema`, and `combine_datasets` pins the
+  training prompt's field list to `sorted(properties)` so train and eval name
+  the same fields. No properties declared = field list derived from the
+  references, as before. UI: `OutputSchemaEditor` on the task-type picker page
+  (shown when json-extraction is applied). Tests:
+  `tests/test_json_extraction_scoring.py`, `OutputSchemaEditor.test.tsx`.
 - **Data defaults (Wave 2d)** — split sources default to
   `dataset_service.DEFAULT_TRAINING_SOURCE_TYPES` = CLEANED + SYNTHETIC (Wave 3b:
   GOLD_DEV is no longer a default source — the gold set is eval-only, and the

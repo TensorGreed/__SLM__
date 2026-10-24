@@ -47,6 +47,14 @@ class ProjectRecipeApplyRequest(BaseModel):
     recipe_id: str = Field(..., min_length=1, max_length=128)
 
 
+class ProjectRecipeOutputSchemaRequest(BaseModel):
+    """Declared output schema for a typed JSON-record recipe
+    (``json-extraction``). ``null`` clears it. Shape is validated by
+    ``output_schema_service.validate_output_schema`` (400 with a message)."""
+
+    output_schema: dict | None = None
+
+
 # Quality-Lift phase 2, slice 1 — Slice definitions PUT request.
 # Schemas are intentionally thin: the heavy validation (op closed set,
 # slice_id grammar, per-project cap, regex compilability) lives in

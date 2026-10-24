@@ -33,6 +33,8 @@ class ConfirmTaskShapeRequest(BaseModel):
     task_profile: str = Field(..., min_length=1, max_length=64)
     field_mapping: dict[str, str] | None = None
     adapter_config: dict[str, Any] | None = None
+    # Optional: the detector's recipe pick (span-extraction | json-extraction).
+    recipe_id: str | None = Field(default=None, max_length=64)
 
 
 def _catalog() -> list[dict[str, Any]]:
@@ -87,6 +89,7 @@ async def post_confirm_task_shape(
             req.task_profile,
             adapter_config=req.adapter_config,
             field_mapping=req.field_mapping,
+            recipe_id=req.recipe_id,
         )
     except ValueError as exc:
         message = str(exc)

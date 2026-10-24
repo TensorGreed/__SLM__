@@ -21,6 +21,7 @@ from app.schemas.project import (
     ProjectCreate,
     ProjectListResponse,
     ProjectRecipeApplyRequest,
+    ProjectRecipeOutputSchemaRequest,
     ProjectRerouteToRagRequest,
     ProjectRerouteToRagResponse,
     ProjectResponse,
@@ -42,9 +43,11 @@ from app.services.pipeline_recipe_service import apply_pipeline_recipe_blueprint
 from app.services.dataset_service import save_project_dataset_adapter_preference
 from app.services.evaluation_pack_service import evaluate_experiment_auto_gates
 from app.services.recipe_apply_service import (
+    OutputSchemaNotSupportedError,
     RecipeNotFoundError,
     apply_recipe_to_project,
     clear_recipe_from_project,
+    set_recipe_output_schema,
 )
 from app.services.recipe_service import (
     default_recipe_for_task_family,
@@ -689,6 +692,24 @@ async def apply_project_recipe(
         raise HTTPException(404, str(e))
     except ValueError as e:
         raise HTTPException(404, str(e))
+    return ProjectResponse.model_validate(project)
+
+
+@router.put("/{project_id}/recipe/output-schema", response_model=ProjectResponse)
+async def put_project_recipe_output_schema(
+    project_id: int,
+    data: ProjectRecipeOutputSchemaRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Declare (or clear) the JSON-record schema (field types and enums) the
+    json-extraction scorer checks predictions against."""
+    try:
+        project = await set_recipe_output_schema(db, project_id, data.output_schema)
+    except OutputSchemaNotSupportedError as e:
+        raise HTTPException(400, str(e))
+    except ValueError as e:
+        message = str(e)
+        raise HTTPException(404 if "not found" in message.lower() else 400, message)
     return ProjectResponse.model_validate(project)
 
 

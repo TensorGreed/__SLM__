@@ -401,6 +401,35 @@ Content type: `application/json` — `ProjectRecipeApplyRequest`
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `PUT /api/projects/{project_id}/recipe/output-schema`
+
+**Put Project Recipe Output Schema**
+
+Declare (or clear, with `null`) the JSON-record schema, field types and enums, that the `json-extraction` scorer checks predictions against. Stored on `Project.selected_recipe.output_schema` and forwarded to the prepared manifest. `400` with a readable message when the schema is malformed or the project's task type is not `json-extraction`.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `ProjectRecipeOutputSchemaRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `output_schema` | `object \\| null` | no | `{"required": [...], "properties": {"<field>": {"type": "string" \\| [...], "enum": [...]}}}`; types: string, integer, number, boolean, null (object / array accepted, not validated). |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `ProjectResponse` | Successful Response |
+| `400` | `object` | Malformed schema, or task type is not json-extraction |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `DELETE /api/projects/{project_id}/recipe`
 
 **Clear Project Recipe**

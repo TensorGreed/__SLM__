@@ -267,4 +267,32 @@ describe('ProjectRecipePickerPage', () => {
             screen.getByTestId('project-recipe-picker-error').textContent,
         ).toMatch(/Catalog unavailable/);
     });
+    it('shows the output-schema editor only for json-extraction, prefilled from the project', async () => {
+        contextValue = {
+            projectId: 1,
+            project: {
+                id: 1,
+                name: 'Test',
+                selected_recipe: {
+                    recipe_id: 'json-extraction',
+                    output_schema: { properties: { damage: { type: 'string' } } },
+                },
+            },
+        };
+        apiMock.get.mockResolvedValueOnce({ data: SAMPLE_CATALOG });
+        render(<ProjectRecipePickerPage />);
+        const box = (await screen.findByTestId('output-schema-text')) as HTMLTextAreaElement;
+        expect(box.value).toContain('damage');
+    });
+
+    it('does not show the output-schema editor for other task types', async () => {
+        contextValue = {
+            projectId: 1,
+            project: { id: 1, name: 'Test', selected_recipe: { recipe_id: 'qa-sft' } },
+        };
+        apiMock.get.mockResolvedValueOnce({ data: SAMPLE_CATALOG });
+        render(<ProjectRecipePickerPage />);
+        await screen.findByTestId('project-recipe-picker-card-qa-sft');
+        expect(screen.queryByTestId('output-schema-editor')).toBeNull();
+    });
 });
