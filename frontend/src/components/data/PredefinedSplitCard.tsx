@@ -139,11 +139,13 @@ export default function PredefinedSplitCard({
         <div className="pdsplit" data-testid="predefined-split-card">
             <p className="pdsplit__help">
                 Already have train / validation / test files (for example a benchmark with a fixed test set)?
-                Each row stays in the split you put it in: nothing is re-divided, shuffled or removed, and the
-                files go through the same mapping as a normal split. Problems are reported by file line: line 1 of a
+                Your files go in as they are: nothing is re-divided or shuffled, and they go through the same
+                mapping as a normal split. If a train row also appears in validation or test, the import stops and
+                lists it, unless you choose to drop those overlapping rows from train (that removes them from train
+                only; validation and test are never edited). Problems are reported by file line: line 1 of a
                 CSV is the header, so its first row is line 2; blank lines count; for JSON arrays, Excel and Parquet
                 files the number is the record number. Your test file stays out of any later re-split unless you
-                import new files.
+                import new files, and a later re-split re-draws validation from train + val.
             </p>
             <div className="pdsplit__files">
                 {picker('pdsplit-train', 'Train file (required)', 'JSONL, JSON, CSV, TSV, XLSX or Parquet', setTrain)}

@@ -234,6 +234,22 @@ async def process_document(
     if not doc:
         raise ValueError(f"Document {document_id} not found in project {project_id}")
 
+    if str(doc.source or "").startswith("predefined_split:") and doc.status == DocumentStatus.REJECTED:
+        # A predefined-split file that was discarded / superseded stays rejected: processing
+        # would flip it back to ACCEPTED and pool the old test rows into training again.
+        from app.exceptions import SLMError
+
+        raise SLMError(
+            status_code=409,
+            error_code="PREDEFINED_SPLIT_DOCUMENT_REJECTED",
+            stage="ingestion",
+            message=(
+                f"Document {document_id} came from a predefined-split import and was rejected "
+                "(replaced or superseded); it is not processed again."
+            ),
+            actionable_fix="Import the files again with the predefined-split import, or delete this document.",
+        )
+
     try:
         doc.status = DocumentStatus.PROCESSING
         await db.flush()

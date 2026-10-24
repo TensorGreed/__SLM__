@@ -1454,7 +1454,12 @@ async def _guard_predefined_test(
                 if doc_id is None:
                     owns_test = True
                 else:
-                    doc = await db.get(RawDocument, int(doc_id))
+                    # Scoped to this project: a stale / foreign document id must not count.
+                    doc = (await db.execute(
+                        select(RawDocument)
+                        .join(Dataset, Dataset.id == RawDocument.dataset_id)
+                        .where(RawDocument.id == int(doc_id), Dataset.project_id == project_id)
+                    )).scalar_one_or_none()
                     owns_test = doc is not None and doc.status == DocumentStatus.ACCEPTED
     if not owns_test:
         return
@@ -1768,6 +1773,11 @@ async def split_dataset(
         "keep_test": keep_test_report,
         "dedup_report": dedup_report,
     }
+    # The project's ACCEPTED test-role document still owns the test split (a keep_test
+    # re-split preserved it). Added only when true, so projects that never imported their
+    # own splits get a manifest identical to before.
+    if await _accepted_test_role_documents(db, project_id):
+        manifest["predefined_test_active"] = True
     _finalize_prepared_manifest(project_id, manifest, prepared_version)
 
     return manifest

@@ -73,6 +73,8 @@ interface SplitManifest {
     project_id: number;
     total_entries: number;
     split_source?: string;
+    /** True while the project's accepted test file (imported via "my own files") owns the test split. */
+    predefined_test_active?: boolean;
     splits: Record<string, number>;
     file_paths?: Record<string, string>;
     files?: Record<string, string>;
@@ -339,6 +341,16 @@ function asPercent(value: unknown): string {
     return `${(numberValue * 100).toFixed(1)}%`;
 }
 
+/** Whether a re-split would replace the user's own test file. The backend sets
+ *  ``predefined_test_active`` on every manifest while that file is still accepted
+ *  (a keep-test re-split drops ``split_source`` but keeps the file); manifests
+ *  from before that key fall back to a predefined import with test rows. */
+function ownTestFileActive(m: Partial<SplitManifest> | null | undefined): boolean {
+    if (!m) return false;
+    if (typeof m.predefined_test_active === 'boolean') return m.predefined_test_active;
+    return m.split_source === 'predefined' && Number((m.splits || {}).test ?? 0) > 0;
+}
+
 export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails = [], openSection = null }: DatasetPrepPanelProps) {
 
     // Preview state
@@ -545,7 +557,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
 
             const activeSplits = (m.splits || {}) as Record<string, unknown>;
             setActiveTestRows(typeof activeSplits.test === 'number' ? activeSplits.test : 0);
-            setPredefinedActive(m.split_source === 'predefined');
+            setPredefinedActive(ownTestFileActive(m as Partial<SplitManifest>));
             const stratify = typeof m.stratify_by === 'string' ? m.stratify_by.trim() : '';
             const disjoint = typeof m.disjoint_by === 'string' ? m.disjoint_by.trim() : '';
             if (stratify) { setStratifyBy(stratify); hydrated.push('stratify_by'); }
@@ -905,7 +917,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
             const res = await api.post<SplitManifest>(`/projects/${projectId}/dataset/split`, payload);
             const manifest = res.data;
             setSplitManifest(manifest);
-            setPredefinedActive(manifest.split_source === 'predefined');
+            setPredefinedActive(ownTestFileActive(manifest));
             setDiscardPredefinedTest(false);
 
             // Dedup re-split: report what was dropped and re-scan data
@@ -958,6 +970,9 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
             });
         } catch (err: any) {
             const msg = err?.response?.data?.detail || 'Split failed. Make sure you have ingested and processed data.';
+            // The 409 names two exits (keep the test examples / replace the test file):
+            // make sure both are on screen.
+            if (err?.response?.data?.error_code === 'PREDEFINED_TEST_SPLIT_WOULD_BE_REPLACED') setPredefinedActive(true);
             setSplitManifest(null);
             toast.error(msg);
         } finally {

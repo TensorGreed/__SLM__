@@ -33,6 +33,7 @@ import csv
 import hashlib
 import io
 import json
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,52 +78,112 @@ def _fail(status: int, code: str, message: str, fix: str, metadata: dict[str, An
     )
 
 
-# Fields that are the TARGET of a row (what the model should produce); never
-# part of the input-side key two rows are compared on.
-_TARGET_KEY_FIELDS = frozenset({
+# --- leak / duplicate key: the INPUT side of the adapter-mapped row -----------------------------
+#
+# Two rows are "the same example" when the text the MODEL IS GIVEN is the same, whatever the
+# answer, label, id or prompt template. The key is built from the adapter's canonical entry
+# (the same mapped row that is written to prepared/*.jsonl), reading only its input fields,
+# before any chat template renders the answer. Per adapter (table in agent-notes/data.md):
+_CANONICAL_INPUT_KEYS: dict[str, tuple[str, ...]] = {
+    "qa-pair": ("question",),
+    "rag-grounded": ("question", "context"),
+    "seq2seq-pair": ("question",),  # the source text (``question`` is the unwrapped source)
+    "structured-extraction": ("text",),  # the document, not ``structured_output`` / the field-list prompt
+    "classification-label": ("text",),  # the text, not the label / candidate-list prompt
+    "tool-call-json": ("question",),  # the user prompt, not the tool name / args / result
+    "preference-pair": ("prompt",),  # not chosen / rejected
+    "vision-language-pair": ("image_path", "question"),
+    "audio-transcript": ("audio_path", "question"),
+}
+_ASSISTANT_ROLES = frozenset({"assistant", "gpt", "model", "bot"})
+# Input columns the default / unknown adapter reads (``record_normalization`` text + question
+# aliases) plus the standard pair / sentence / token-sequence inputs.
+_DEFAULT_INPUT_ALIASES: tuple[str, ...] = (
+    "instruction", "input", "prompt", "query", "question", "ask",
+    "text", "content", "body", "document", "passage", "chunk", "context", "article", "message",
+    "sentence", "sentence1", "sentence2", "sentence_1", "sentence_2", "premise", "hypothesis",
+    "text_a", "text_b", "text1", "text2", "source", "tokens", "words",
+)
+_CONFIG_INPUT_LISTS = ("source_fields", "text_fields", "question_fields", "prompt_fields", "context_fields")
+# Columns that are what the model should produce, never input.
+_TARGET_NAMES = frozenset({
     "answer", "output", "completion", "response", "target", "label", "labels", "class", "category",
     "output_label", "structured_output", "json", "extracted", "entities", "target_text", "chosen",
-    "rejected", "tool_calls", "expected",
+    "rejected", "tool_calls", "expected", "ner_tags", "pos_tags", "chunk_tags", "tags", "bio_tags",
+    "spans", "label_ids", "caption", "transcript", "summary",
 })
-# Input-side fields, in the order they are concatenated.
-_INPUT_KEY_FIELDS = (
-    "system", "instruction", "input", "context", "passage", "document", "content", "body", "article",
-    "chunk", "message", "text", "question", "prompt", "query", "ask",
-)
-_NON_INPUT_KEYS = frozenset({"id", "uuid", "source", "split", "timestamp", "created_at", "updated_at", "metadata"})
-_ASSISTANT_ROLES = frozenset({"assistant", "gpt", "model", "bot"})
+_ID_LIKE = re.compile(r"^(_.*|id|idx|index|uid|guid|uuid|rowid|row_index|row_idx|.*_(id|idx|uid|guid|uuid))$", re.I)
+_BIO_TAG = re.compile(r"^(O|[BIESLU]-.+)$")
+_NON_CONTENT = frozenset({"id", "uuid", "source", "split", "timestamp", "created_at", "updated_at", "metadata"})
 
 
-def _input_side_text(row: Any, field_mapping: dict[str, str] | None = None, adapter_config: dict[str, Any] | None = None) -> str:
-    """The raw INPUT-side text of a source row: every field the adapter reads
-    as input, never a target field. Chat rows: every non-assistant turn in
-    order. Otherwise the standard input fields (instruction + input + context
-    + question / prompt / text ...), plus any the field mapping / adapter
-    config names as the text or question source; with none of those present,
-    the whole row minus target fields."""
+def _as_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        return " ".join(value)  # a token sequence
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _label_like_columns(rows: list[dict[str, Any]]) -> frozenset[str]:
+    """Lower-case names of columns that behave like labels across ``rows``: all
+    numbers / booleans, a few repeating string values, or BIO-style tag lists.
+    Used only when a row has no recognisable input column (see ``_input_side_text``)."""
+    values: dict[str, list[Any]] = {}
+    for row in rows:
+        if isinstance(row, dict):
+            for key, value in row.items():
+                if value is not None and value != "":
+                    values.setdefault(str(key).lower(), []).append(value)
+    out: set[str] = set()
+    for name, vals in values.items():
+        if all(isinstance(v, (int, float, bool)) for v in vals):
+            out.add(name)
+        elif all(isinstance(v, list) and v and all(isinstance(x, (int, float, bool)) for x in v) for v in vals):
+            out.add(name)
+        elif all(isinstance(v, list) and v and all(isinstance(x, str) and _BIO_TAG.match(x) for x in v) for v in vals):
+            out.add(name)
+        elif all(isinstance(v, str) for v in vals):
+            distinct = len(set(vals))
+            if len(vals) >= 4 and distinct <= 50 and distinct * 2 <= len(vals):
+                out.add(name)
+    return frozenset(out)
+
+
+def _input_side_text(
+    row: Any,
+    entry: dict[str, Any] | None = None,
+    *,
+    adapter_id: str = ds.DEFAULT_ADAPTER_ID,
+    field_mapping: dict[str, str] | None = None,
+    adapter_config: dict[str, Any] | None = None,
+    label_like: frozenset[str] = frozenset(),
+) -> str:
+    """The text the model is given for ``row``, read from the adapter-mapped
+    ``entry`` (the canonical row; computed with the same adapter when omitted).
+    Never a label / answer / target column, an id column, or the adapter's shared
+    prompt boilerplate. Empty when the row has no identifiable input."""
     if not isinstance(row, dict):
         return ""
-    lowered = {str(k).lower(): k for k in row}
-    mapped = {str(v).lower() for k, v in (field_mapping or {}).items() if k == "answer" and v}
     cfg = adapter_config or {}
-    for key in ("label_fields", "output_fields"):
-        if isinstance(cfg.get(key), list):
-            mapped.update(str(v).lower() for v in cfg[key])
+    if entry is None:
+        from app.services.data_adapter_service import map_record_with_adapter
 
-    def _as_text(value: Any) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, str):
-            return value
-        if isinstance(value, (int, float, bool)):
-            return str(value)
-        try:
-            return json.dumps(value, ensure_ascii=False, sort_keys=True)
-        except (TypeError, ValueError):
-            return str(value)
+        entry = {**row, **(map_record_with_adapter(
+            row, adapter_id=adapter_id, adapter_config=cfg, field_mapping=field_mapping) or {})}
 
-    messages = row.get("messages") if isinstance(row.get("messages"), list) else row.get("conversations")
-    if isinstance(messages, list):
+    # Chat rows (any adapter): every non-assistant turn, in order.
+    messages = entry.get("messages") if isinstance(entry.get("messages"), list) else row.get("messages")
+    if not isinstance(messages, list):
+        messages = row.get("conversations")
+    if isinstance(messages, list) and (adapter_id == "chat-messages" or any(isinstance(m, dict) for m in messages)):
         turns = []
         for item in messages:
             if not isinstance(item, dict):
@@ -133,32 +194,51 @@ def _input_side_text(row: Any, field_mapping: dict[str, str] | None = None, adap
             content = _as_text(item.get("content") or item.get("value") or item.get("text"))
             if content.strip():
                 turns.append(content)
-        if turns:
-            return "\n".join(turns)
+        return "\n".join(turns)
+    keys = _CANONICAL_INPUT_KEYS.get(adapter_id)
+    if keys is not None:
+        return "\n".join(t for t in (_as_text(entry.get(k)) for k in keys) if t.strip())
 
+    # default-canonical / plugin adapters: the canonical ``text`` may be derived from the
+    # answer ("Question: .. Answer: .."), so read the SOURCE columns the adapter reads.
+    from app.services.record_normalization import NON_CONTENT_KEYS, _coerce_text, _get_nested_value
+
+    lowered = {str(k).lower(): k for k in row}
+    mapped_answer = {str(v).split(".")[0].lower() for k, v in (field_mapping or {}).items() if k == "answer" and v}
     names: list[str] = []
-    for canonical in ("text", "question"):
+    for canonical in ("question", "text"):
         src = (field_mapping or {}).get(canonical)
         if src:
             names.append(str(src).split(".")[0].lower())
-    for key in ("source_fields", "text_fields"):
+    for key in _CONFIG_INPUT_LISTS:
         if isinstance(cfg.get(key), list):
             names.extend(str(v).lower() for v in cfg[key])
-    names.extend(_INPUT_KEY_FIELDS)
+    names.extend(_DEFAULT_INPUT_ALIASES)
     parts: list[str] = []
     seen: set[str] = set()
     for name in names:
-        if name in seen or name in _TARGET_KEY_FIELDS or name in mapped or name not in lowered:
+        if name in seen or name in _TARGET_NAMES or name in mapped_answer or name not in lowered:
             continue
         seen.add(name)
-        value = _as_text(row[lowered[name]])
-        if value.strip():
-            parts.append(value)
+        text = _as_text(row[lowered[name]])
+        if text.strip():
+            parts.append(text)
     if parts:
         return "\n".join(parts)
+    # No input column by name. The default adapter then builds ``text`` from the first
+    # three non-empty content columns; use those, minus id / target / label-like ones.
+    taken = 0
     for key, value in row.items():
         name = str(key).lower()
-        if name.startswith("_") or name in _TARGET_KEY_FIELDS or name in mapped or name in _NON_INPUT_KEYS:
+        if name in NON_CONTENT_KEYS or _coerce_text(value) is None:
+            continue
+        taken += 1
+        if taken > 3:
+            break
+        if (
+            name in _TARGET_NAMES or name in mapped_answer or name in label_like or _ID_LIKE.match(name)
+            or isinstance(value, (bool, int, float))
+        ):
             continue
         text = _as_text(value)
         if text.strip():
@@ -173,18 +253,39 @@ def _input_key_hash(text: str) -> str:
     return hashlib.sha1(norm.encode("utf-8")).hexdigest() if norm else ""
 
 
-def _input_side_key(
-    row: Any, field_mapping: dict[str, str] | None = None, adapter_config: dict[str, Any] | None = None
-) -> str:
+def _input_side_key(row: Any, entry: dict[str, Any] | None = None, **kwargs: Any) -> str:
     """Normalised (lower-case, whitespace-collapsed) digest of a source row's
-    input side. Two rows with the same input but different answers share it;
-    a different prompt template, candidate list or field list does not change it."""
-    return _input_key_hash(_input_side_text(row, field_mapping, adapter_config))
+    model input. Two rows with the same input but different answers / labels /
+    ids share it; a different prompt template, candidate list or field list does
+    not change it. Empty string = no identifiable input (the import rejects the row)."""
+    return _input_key_hash(_input_side_text(row, entry, **kwargs))
 
 
 def _sample(numbers: list[int]) -> list[int]:
     """File line (or record) numbers, capped."""
     return numbers[:SAMPLE_CAP]
+
+
+def _reserialize_rows(filename: str, rows: list[dict[str, Any]]) -> tuple[str, bytes]:
+    """The upload's rows (a filtered subset) in the upload's own format, so the
+    registered document re-loads exactly like the original did. XLSX / Parquet are
+    stored as JSON Lines (same rows, no binary writer needed)."""
+    safe = Path(filename or "train.jsonl").name
+    ext = Path(safe).suffix.lower()
+    if ext == ".json":
+        return safe, json.dumps(rows, ensure_ascii=False, default=str).encode("utf-8")
+    if ext in {".csv", ".tsv"}:
+        fields: list[str] = []
+        for row in rows:
+            fields.extend(k for k in row if k not in fields)
+        buf = io.StringIO(newline="")
+        writer = csv.DictWriter(buf, fieldnames=fields, delimiter="\t" if ext == ".tsv" else ",", lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+        return safe, buf.getvalue().encode("utf-8")
+    if ext != ".jsonl":
+        safe = f"{Path(safe).stem}.jsonl"
+    return safe, "".join(json.dumps(r, ensure_ascii=False, default=str) + "\n" for r in rows).encode("utf-8")
 
 
 class _ParsedFile:
@@ -421,7 +522,9 @@ async def import_predefined_split(
         field_mapping=mapping, task_profile=task_profile,
     )
     mapped: dict[str, list[dict[str, Any]]] = {}
+    keys: dict[str, list[str]] = {}
     rejected_report: dict[str, Any] = {}
+    label_like = _label_like_columns(union)
     for role, pf in parsed.items():
         problems: list[tuple[int, str]] = list(pf.bad)
         rejected: list[tuple[int, str]] = []
@@ -431,6 +534,19 @@ async def import_predefined_split(
             field_mapping=mapping, task_profile=task_profile, rejected=rejected,
         ) if pf.rows else []
         problems.extend((pf.lines[idx], reason) for idx, reason in rejected)
+        # Leak / duplicate key = the adapter-mapped model input of each surviving row. A
+        # row with no identifiable input cannot be compared across splits: reject it.
+        rejected_idx = {idx for idx, _ in rejected}
+        survivors = [i for i in range(len(pf.rows)) if i not in rejected_idx]
+        keys[role] = []
+        for pos, i in enumerate(survivors):
+            key = _input_side_key(
+                pf.rows[i], mapped[role][pos], adapter_id=resolved_adapter_id,
+                field_mapping=mapping, adapter_config=enriched_config, label_like=label_like,
+            )
+            keys[role].append(key)
+            if not key:
+                problems.append((pf.lines[i], "no_input_field"))
         if problems:
             problems.sort()
             by_reason: dict[str, Any] = {}
@@ -452,13 +568,9 @@ async def import_predefined_split(
         )
     lines = {role: pf.lines for role, pf in parsed.items()}
 
-    # 3. Exact-input leakage between splits. Keyed on the SOURCE rows' input side
-    # (every row mapped, else step 2 failed, so ``mapped[role][i]`` is ``rows[i]``).
+    # 3. Exact-input leakage between splits, keyed on the adapter-mapped input computed in
+    # step 2 (every row mapped, else step 2 failed, so ``keys[role][i]`` is ``rows[i]``'s).
     # The key lives only here: prepared rows carry no key field.
-    keys = {
-        role: [_input_side_key(row, mapping, enriched_config) for row in parsed[role].rows]
-        for role in mapped
-    }
     key_sets = {role: {k for k in ks if k} for role, ks in keys.items()}
     leak_pairs: list[dict[str, Any]] = []
     for a, b in _PAIRS:
@@ -491,13 +603,16 @@ async def import_predefined_split(
             "Remove the overlap yourself, or re-submit with 'drop the overlapping rows from train'.", leak_meta,
         )
     leak_report: dict[str, Any] = {"on_leak": on_leak, "pairs": leak_pairs, "dropped_from_train": 0}
+    register_as: dict[str, tuple[str, bytes]] = {}  # role -> (name, bytes) when it differs from the upload
+    dropped_lines: list[int] = []
     if train_leaks:  # on_leak == "drop_from_train"
         held_out = set().union(*(key_sets[r] for r in ("val", "test") if r in key_sets))
-        kept, dropped_rows = [], []
+        kept, dropped_rows, dropped_idx_train = [], [], set()
         for i, entry in enumerate(mapped["train"]):
             k = keys["train"][i]
             if k and k in held_out:
                 dropped_rows.append(lines["train"][i])
+                dropped_idx_train.add(i)
             else:
                 kept.append(entry)
         if not kept:
@@ -510,6 +625,11 @@ async def import_predefined_split(
         keys["train"] = [k for k in keys["train"] if not (k and k in held_out)]
         leak_report["dropped_from_train"] = len(dropped_rows)
         leak_report["dropped_sample_rows"] = _sample(dropped_rows)
+        # The train document registered below must hold exactly the kept rows, or a later
+        # re-split would pool the dropped (overlapping) rows back in.
+        kept_source = [r for i, r in enumerate(parsed["train"].rows) if i not in dropped_idx_train]
+        register_as["train"] = _reserialize_rows(files["train"][0], kept_source)
+        dropped_lines = list(dropped_rows)
 
     # 4. Within-split exact duplicates: kept, counted.
     duplicate_report: dict[str, int] = {}
@@ -549,12 +669,22 @@ async def import_predefined_split(
             if role not in files:
                 continue
             name, content = files[role]
+            reg_name, reg_content = register_as.get(role, (name, content))
             doc = await ingest_file(
-                db, project_id, name, content, source=f"predefined_split:{role}", sensitivity="internal",
+                db, project_id, reg_name, reg_content, source=f"predefined_split:{role}", sensitivity="internal",
             )
             registered.append(doc)
             doc.status = DocumentStatus.ACCEPTED
-            doc.metadata_ = {**(doc.metadata_ or {}), "split_role": role, "predefined_split": True}
+            provenance: dict[str, Any] = {}
+            if role in register_as:
+                # The registered document holds the rows that were kept; the upload's name,
+                # hash and the dropped line numbers stay on record.
+                provenance = {
+                    "original_filename": Path(name).name,
+                    "original_sha256": hashlib.sha256(content).hexdigest(),
+                    "dropped_row_lines": dropped_lines,
+                }
+            doc.metadata_ = {**(doc.metadata_ or {}), "split_role": role, "predefined_split": True, **provenance}
             await db.flush()
             _stamp_source_document(mapped[role], doc.id, doc.filename)
             source_files[role] = {
@@ -564,6 +694,12 @@ async def import_predefined_split(
                 "source_rows": len(source_rows[role]),
                 "sha256": hashlib.sha256(content).hexdigest(),
             }
+            if role in register_as:
+                source_files[role].update({
+                    "registered_rows": len(mapped[role]),
+                    "registered_sha256": hashlib.sha256(reg_content).hexdigest(),
+                    "dropped_row_lines": dropped_lines,
+                })
 
         # 6. Persist the adapter wiring the rows were prepared with, then write
         # through the shared tail.
@@ -623,6 +759,8 @@ async def import_predefined_split(
             "leak_report": leak_report,
             "duplicate_report": duplicate_report,
         }
+        if "test" in files:  # added only when true: manifests without it are unchanged
+            manifest["predefined_test_active"] = True
         _finalize_prepared_manifest(project_id, manifest, prepared_version)
     except BaseException:
         # Nothing was imported: remove the files / documents registered above and

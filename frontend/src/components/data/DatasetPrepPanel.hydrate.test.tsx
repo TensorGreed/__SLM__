@@ -105,6 +105,35 @@ describe('DatasetPrepPanel — split-form hydration from the active prepared ver
         ));
     });
 
+    it('keeps offering "Replace my own test file" after a keep-test re-split (predefined_test_active, no split_source)', async () => {
+        mockApi({ ...ACTIVE_MANIFEST, predefined_test_active: true, splits: { train: 341, val: 42, test: 44 } });
+        await renderAndOpenSplit();
+        await screen.findByTestId('dp-active-config-hint');
+        expect(screen.getByTestId('split-discard-predefined-test')).toBeInTheDocument();
+        expect(screen.getByTestId('split-keep-test')).toBeInTheDocument();
+    });
+
+    it('drops the replace option once the replace re-split returns a manifest without predefined_test_active', async () => {
+        mockApi({ ...ACTIVE_MANIFEST, predefined_test_active: true, splits: { train: 341, val: 42, test: 44 } });
+        apiMock.post.mockResolvedValue({ data: { splits: { train: 400, val: 50, test: 50 } } });
+        const user = await renderAndOpenSplit();
+        await user.click(await screen.findByTestId('split-discard-predefined-test'));
+        await user.click(screen.getByRole('button', { name: /Run Split/ }));
+        await waitFor(() => expect(screen.queryByTestId('split-discard-predefined-test')).not.toBeInTheDocument());
+    });
+
+    it('shows the replace option when the split fails with the would-be-replaced 409', async () => {
+        mockApi({ ...ACTIVE_MANIFEST, splits: { train: 341, val: 42, test: 44 } });
+        apiMock.post.mockRejectedValue({
+            response: { data: { error_code: 'PREDEFINED_TEST_SPLIT_WOULD_BE_REPLACED', detail: 'keep or replace' } },
+        });
+        const user = await renderAndOpenSplit();
+        await screen.findByTestId('dp-active-config-hint');
+        expect(screen.queryByTestId('split-discard-predefined-test')).not.toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: /Run Split/ }));
+        expect(await screen.findByTestId('split-discard-predefined-test')).toBeInTheDocument();
+    });
+
     it('does not offer the replace-test option for a random split', async () => {
         mockApi({ ...ACTIVE_MANIFEST, splits: { train: 341, val: 42, test: 44 } });
         await renderAndOpenSplit();

@@ -143,21 +143,40 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   instead of dropped), `adapter_unmappable_or_empty`, `normalizer_hook_dropped`. Row numbers
   are PHYSICAL FILE LINES (strict reader `_parse_upload`: blank lines skipped but counted; CSV
   header = line 1; JSON array / XLSX / Parquet = 1-based record index).
-  Leak/duplicate key = `predefined_split_service._input_side_key(source row)` (used ONLY by
-  the import; prepared rows are not stamped and the random split / `keep_test` never see it):
-  normalised concatenation of every INPUT field (instruction + input + context/passage +
-  question/prompt/text, honouring `field_mapping` text/question and adapter
-  `source_fields`/`text_fields`; chat = all non-assistant turns; fallback = whole row minus
-  target fields). Passage/RAG rows keep the context IN the key, so the same question over a
-  different passage is NOT a leak here; this differs on purpose from
-  `question_leakage_filter` (question-only): an imported file pair is the user's declared
-  split, and flagging (and failing/dropping) every re-asked question would reject legitimate
-  per-passage benchmarks, whereas the filter guards generated rows against a gold set. → 409 (`metadata.pairs`); `drop_from_train` removes
+  Leak/duplicate key = `predefined_split_service._input_side_key(source row, mapped entry,
+  adapter_id=…)` (used ONLY by the import; prepared rows are not stamped and the random split /
+  `keep_test` never see it): the normalised text the MODEL IS GIVEN, read from the adapter-mapped
+  entry (the canonical row written to prepared/*.jsonl) before the chat template renders the
+  answer. Never a label / answer / target column, an id-like column (`id`, `idx`, `uid`,
+  `guid`, `*_id`, `_*` ...), or the adapter's shared prompt boilerplate (candidate list, field
+  list). A surviving row whose key is empty is REJECTED in the 422 (`no_input_field`); there is
+  no "whole row minus targets" fallback. Input fields per adapter:
+
+  | Adapter | Input fields in the key |
+  |---|---|
+  | `qa-pair` | `question` |
+  | `rag-grounded` | `question` + `context` (the same question over a different passage is NOT a leak; deliberately unlike the question-only `question_leakage_filter`, which guards generated rows against a gold set) |
+  | `seq2seq-pair` | the source text (`question`, i.e. before the Summarize/Translate wrap) |
+  | `structured-extraction` | `text` (the document; not `structured_output`, not the field-list prompt) |
+  | `classification-label` | `text` (not the label, not the candidate-list prompt) |
+  | `tool-call-json` | `question` (the user prompt; not tool name / args / result) |
+  | `preference-pair` | `prompt` (not chosen / rejected) |
+  | `vision-language-pair` / `audio-transcript` | asset path + `question` (not caption / transcript) |
+  | chat rows (`messages` / `conversations`, any adapter) | every non-assistant turn, in order |
+  | `default-canonical` and plugin adapters | the SOURCE columns the adapter reads as input: `field_mapping` `text`/`question` + config `source_fields`/`text_fields`/`question_fields`/`prompt_fields`/`context_fields` + the standard aliases (instruction, input, prompt, query, question, text, content, body, document, passage, context, article, message, sentence, sentence1/2, premise, hypothesis, text_a/b, source, tokens, words; a token list is joined). With none of those present the adapter's own fallback `text` (first three non-empty content columns) is used minus target-named, id-like and label-like columns (numbers/bools, ≤50 repeating strings, BIO tag lists; `_label_like_columns` over all three files). Span / NER rows key on `tokens`, never `ner_tags`; SST-2 `{sentence,label,idx}` on `sentence`; NLI on premise + hypothesis. |
+
+  → 409 (`metadata.pairs`); `drop_from_train` removes
   train rows only; val↔test always 409. Within-split repeats kept, counted in
   `duplicate_report`. Validation happens before anything is written. Files are registered
   as ACCEPTED raw documents (`source=predefined_split:<role>`; a re-import marks the
   previous ones REJECTED), stamped on rows via `_source_document*`, so a later random
-  split (`include_types:["raw"]`) re-pools the train/val files only. **One predicate keeps
+  split (`include_types:["raw"]`) re-pools the train/val files only. With `on_leak=drop_from_train`
+  the registered TRAIN document holds exactly the KEPT rows (the upload's rows minus the dropped
+  ones, in the upload's format; XLSX/Parquet stored as JSONL), so a later keep-test / plain
+  re-split never pools the dropped overlap back in; the original filename + sha256 and the
+  dropped file lines stay in the document metadata (`original_filename`, `original_sha256`,
+  `dropped_row_lines`) and in `source_files.train` (`registered_rows`, `registered_sha256`,
+  `dropped_row_lines`; keys only present when rows were dropped). **One predicate keeps
   the test file out of every training source** (`split_role_service.is_test_role_document` /
   `test_role_document_ids` / `drop_test_role_rows`; no-op for projects that never imported
   splits): `combine_datasets` skips a `split_role="test"` RAW doc and drops CLEANED/SYNTHETIC
@@ -174,8 +193,15 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   test-role doc exists or the active manifest is predefined with a non-empty test whose doc
   is still accepted; exits: `keep_test`, or `discard_predefined_test: true` (test doc(s)
   marked REJECTED + logged, normal random split, old test rows NOT pooled; both flags = 400;
-  split form checkbox "Replace my own test file with a random test split", shown when the
-  active manifest is predefined). Rejecting or deleting the test doc also clears the guard.
+  split form checkbox "Replace my own test file with a random test split", shown while the
+  manifest says `predefined_test_active`). Every split manifest (random, keep-test or
+  predefined) carries `predefined_test_active: true` while the project has an ACCEPTED
+  test-role doc; the key is ADDED only when true, so manifests of projects that never imported
+  are byte-identical to before. The UI drives the replace checkbox + the "re-draws validation"
+  note from it (fallback for older manifests: `split_source=="predefined"` with test rows; the
+  409 error code also shows it). The guard's manifest-doc lookup is scoped to the project.
+  `POST /ingestion/documents/{id}/process` refuses (409 `PREDEFINED_SPLIT_DOCUMENT_REJECTED`) a
+  REJECTED `predefined_split:*` document instead of re-accepting it. Rejecting or deleting the test doc also clears the guard.
   The import saves its resolved adapter wiring (incl. scanned label/field
   list) as the project adapter preference so per-doc re-normalisation builds identical
   prompts. On failure after `ingest_file`, the registered docs/files are removed and the

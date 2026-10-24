@@ -543,8 +543,211 @@ def test_input_key_ignores_prompt_template_and_target_fields():
 
     assert _input_side_key({"question": "Why?", "answer": "A"}) == _input_side_key({"prompt": "why?  ", "response": "B"})
     assert _input_side_key({"instruction": "X", "input": "one"}) != _input_side_key({"instruction": "X", "input": "two"})
-    assert _input_side_key(_chat("hi", "a")) == _input_side_key(_chat("hi", "b"))
+    chat = dict(adapter_id="chat-messages")
+    assert _input_side_key(_chat("hi", "a"), **chat) == _input_side_key(_chat("hi", "b"), **chat)
     assert _input_side_key({"note": "x", "label": "pos"}) == _input_side_key({"note": "x", "label": "neg"})
+    # an id / index column never enters the key
+    assert _input_side_key({"sentence": "good film", "label": 1, "idx": 0}) == _input_side_key(
+        {"sentence": "good film", "label": 0, "idx": 99}
+    )
+
+
+def test_row_with_no_identifiable_input_is_rejected_422_no_input_field():
+    pid = _new_project()
+    train = [{"question": f"q {i}?", "answer": f"a {i}"} for i in range(5)] + [{"id": 7, "label": "x", "answer": "y"}]
+    resp = _predef(pid, _jsonl(train), None, _jsonl(_qa("te", 2)))
+    assert resp.status_code == 422, resp.text
+    reasons = resp.json()["metadata"]["rejected"]["train"]["by_reason"]
+    assert reasons["no_input_field"]["sample_rows"] == [6]
+    assert not (_prep_dir(pid) / "manifest.json").exists()
+
+
+# --- review-4: leak keys follow the adapter-mapped input ---
+
+
+def test_sst2_shape_same_sentence_different_idx_or_label_is_a_leak():
+    pid = _new_project()
+    tr = [{"sentence": f"movie {i} was fine", "label": i % 2, "idx": i} for i in range(20)]
+    te = [{"sentence": "movie 3 was fine", "label": 0, "idx": 0}, {"sentence": "brand new", "label": 0, "idx": 1}]
+    resp = _predef(pid, _jsonl(tr), None, _jsonl(te))
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["metadata"]["pairs"][0]["sample_rows"] == {"train": [4], "test": [1]}
+    # genuinely different sentences with colliding idx / labels are NOT a leak
+    pid = _new_project()
+    te = [{"sentence": "something else entirely", "label": 1, "idx": 3}, {"sentence": "brand new", "label": 0, "idx": 1}]
+    assert _predef(pid, _jsonl(tr), None, _jsonl(te)).status_code == 200
+
+
+def test_review_sentiment_same_review_different_label_is_a_leak():
+    pid = _new_project()
+    tr = [{"review": f"movie {i} was fine", "sentiment": "pos" if i % 2 else "neg"} for i in range(20)]
+    te = [{"review": "movie 3 was fine", "sentiment": "neg"}, {"review": "brand new", "sentiment": "neg"}]
+    resp = _predef(pid, _jsonl(tr), None, _jsonl(te))
+    assert resp.status_code == 409, resp.text
+
+
+def test_nli_pairs_key_on_both_sentences_not_the_label():
+    pid = _new_project()
+    tr = [{"premise": f"p {i}", "hypothesis": f"h {i}", "label": i % 3} for i in range(12)]
+    same_pair = [{"premise": "p 3", "hypothesis": "h 3", "label": 2}, {"premise": "new", "hypothesis": "pair", "label": 0}]
+    assert _predef(pid, _jsonl(tr), None, _jsonl(same_pair)).status_code == 409
+    # same premise, different hypothesis: a different example
+    pid = _new_project()
+    shared_premise = [{"premise": "p 3", "hypothesis": "another hypothesis", "label": 2}, {"premise": "new", "hypothesis": "pair", "label": 0}]
+    assert _predef(pid, _jsonl(tr), None, _jsonl(shared_premise)).status_code == 200
+
+
+def test_token_tagging_rows_key_on_tokens_not_ner_tags():
+    pid = _new_project()
+    tr = [{"tokens": ["w", str(i), "went"], "ner_tags": [0, 1, 0]} for i in range(10)]
+    te = [{"tokens": ["w", "4", "went"], "ner_tags": [0, 0, 0]}, {"tokens": ["fresh", "row"], "ner_tags": [0, 0]}]
+    assert _predef(pid, _jsonl(tr), None, _jsonl(te)).status_code == 409
+    pid = _new_project()
+    te = [{"tokens": ["fresh", "row"], "ner_tags": [0, 1, 0][:2]}, {"tokens": ["another"], "ner_tags": [0]}]
+    assert _predef(pid, _jsonl(tr), None, _jsonl(te)).status_code == 200
+
+
+def test_classification_adapter_keys_on_the_text_not_the_label_or_prompt():
+    pid = _new_project()
+    _set_pref(pid, adapter_id="classification-label", task_profile="classification")
+    tr = [{"text": f"review {i}", "label": "pos" if i % 2 else "neg"} for i in range(10)]
+    te = [{"text": "Review   3", "label": "neg"}, {"text": "other thing", "label": "pos"}]
+    assert _predef(pid, _jsonl(tr), None, _jsonl(te)).status_code == 409
+
+
+def test_extraction_key_ignores_the_shared_field_list_prompt():
+    pid = _new_project()
+    _set_pref(pid, adapter_id="structured-extraction", task_profile="structured_extraction")
+    tr = [{"text": f"doc {i}", "structured_output": {"a": i, "b": "x"}} for i in range(6)]
+    te = [{"text": "other doc", "structured_output": {"a": 1, "b": "x"}}, {"text": "another doc", "structured_output": {"a": 1, "b": "x"}}]
+    resp = _predef(pid, _jsonl(tr), None, _jsonl(te))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["duplicate_report"] == {"train": 0, "val": 0, "test": 0}
+
+
+# --- review-4: dropped overlap rows stay out of every later re-split ---
+
+
+def _dropped_import(pid: int, test_rows: list[dict]):
+    tr = _qa("tr", 20) + [{"question": t["question"], "answer": "DIFFERENT " + t["answer"]} for t in test_rows]
+    return _predef(pid, _jsonl(tr), None, _jsonl(test_rows), on_leak="drop_from_train")
+
+
+def test_drop_from_train_rows_never_return_on_a_later_resplit():
+    pid = _new_project()
+    test_rows = _qa("te", 5)
+    resp = _dropped_import(pid, test_rows)
+    assert resp.status_code == 200, resp.text
+    manifest = resp.json()
+    assert manifest["leak_report"]["dropped_from_train"] == 5
+    info = manifest["source_files"]["train"]
+    assert info["registered_rows"] == 20 and info["source_rows"] == 25 and info["dropped_row_lines"] == [21, 22, 23, 24, 25]
+    assert info["sha256"] != info["registered_sha256"], "original upload hash stays on record"
+    (train_doc,) = [d for d in _run(_query(_docs_for(pid))) if d[3] == "train" and d[2] == "accepted"]
+    assert train_doc[4]["original_sha256"] == info["sha256"] and train_doc[4]["dropped_row_lines"] == [21, 22, 23, 24, 25]
+    test_q = {r["question"] for r in test_rows}
+    for body in ({"include_types": ["raw"], "keep_test": True}, {"include_types": None, "keep_test": True}):
+        resp = client.post(f"/api/projects/{pid}/dataset/split", json=body)
+        assert resp.status_code == 200, (body, resp.text)
+        assert resp.json()["predefined_test_active"] is True
+        pooled = _prepared(pid, "train") + _prepared(pid, "val")
+        assert pooled and not [r for r in pooled if r["question"] in test_q], body
+        assert {r["question"] for r in _prepared(pid, "test")} == test_q
+    # a plain random re-split (own test file replaced) must not resurrect them either
+    resp = client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"], "discard_predefined_test": True, "dedup_rows": False})
+    assert resp.status_code == 200, resp.text
+    assert "predefined_test_active" not in resp.json()
+    assert not [r for s in ("train", "val", "test") for r in _prepared(pid, s) if r["question"] in test_q]
+
+
+def test_drop_from_train_registers_a_csv_train_as_csv():
+    pid = _new_project()
+    header = "question,answer\n"
+    train = header + "".join(f"tr q {i}?,a {i}\n" for i in range(12)) + "te question number 0?,other\n"
+    resp = client.post(
+        f"/api/projects/{pid}/dataset/predefined-split",
+        files={"train": ("train.csv", train.encode(), "text/csv"), "test": ("test.jsonl", _jsonl(_qa("te", 2)), "application/octet-stream")},
+        data={"on_leak": "drop_from_train"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["source_files"]["train"]["stored_as"].endswith(".csv")
+    resp = client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"], "keep_test": True})
+    assert resp.status_code == 200, resp.text
+    assert not [r for s in ("train", "val") for r in _prepared(pid, s) if r["question"].startswith("te question")]
+
+
+def _docs_for(pid: int):
+    async def go(db):
+        q = await db.execute(
+            select(RawDocument).join(Dataset, Dataset.id == RawDocument.dataset_id).where(Dataset.project_id == pid)
+        )
+        return [(d.id, d.source, d.status.value, (d.metadata_ or {}).get("split_role"), dict(d.metadata_ or {})) for d in q.scalars()]
+
+    return go
+
+
+# --- review-4: predefined_test_active, process, scoped guard ---
+
+
+def test_predefined_test_active_only_appears_when_true():
+    pid = _new_project()
+    resp = _predef(pid, _jsonl(_qa("tr", 20)), _jsonl(_qa("va", 4)), _jsonl(_qa("te", 5)))
+    assert resp.json()["predefined_test_active"] is True
+    assert json.loads((_prep_dir(pid) / "manifest.json").read_text())["predefined_test_active"] is True
+    resp = client.post(f"/api/projects/{pid}/dataset/split", json={"keep_test": True, "include_types": ["raw"]})
+    assert resp.json()["predefined_test_active"] is True
+    resp = client.post(f"/api/projects/{pid}/dataset/split", json={"discard_predefined_test": True})
+    assert resp.status_code == 200 and "predefined_test_active" not in resp.json()
+    # no test file imported -> never present
+    pid = _new_project()
+    assert "predefined_test_active" not in _predef(pid, _jsonl(_qa("tr", 20)), _jsonl(_qa("va", 4))).json()
+
+
+def test_process_does_not_reaccept_a_rejected_predefined_document():
+    pid = _new_project()
+    assert _predef(pid, _jsonl(_qa("tr", 20)), None, _jsonl(_qa("te", 5))).status_code == 200
+    resp = client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"], "discard_predefined_test": True})
+    assert resp.status_code == 200
+    (doc_id,) = _test_doc_ids(pid)
+    resp = client.post(f"/api/projects/{pid}/ingestion/documents/{doc_id}/process")
+    assert resp.status_code == 409 and resp.json()["error_code"] == "PREDEFINED_SPLIT_DOCUMENT_REJECTED"
+    assert _test_doc_ids(pid, [DocumentStatus.ACCEPTED]) == []
+    assert client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"]}).status_code == 200
+
+
+def test_guard_ignores_a_document_id_from_another_project():
+    pid, other = _new_project(), _new_project()
+    assert _predef(other, _jsonl(_qa("tr", 20)), None, _jsonl(_qa("te", 5))).status_code == 200
+    foreign = json.loads((_prep_dir(other) / "manifest.json").read_text())["source_files"]["test"]["document_id"]
+    assert _predef(pid, _jsonl(_qa("tr", 20)), None, _jsonl(_qa("te", 5))).status_code == 200
+    (own,) = _test_doc_ids(pid)
+    _set_doc_status(own, DocumentStatus.REJECTED)
+    manifest_path = _prep_dir(pid) / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["source_files"]["test"]["document_id"] = foreign  # accepted, but in another project
+    manifest_path.write_text(json.dumps(manifest))
+    assert client.post(f"/api/projects/{pid}/dataset/split", json={}).status_code == 200
+
+
+def test_exits_duplicate_and_delete_keep_working():
+    te = _qa("te", 5)
+    teq = {t["question"] for t in te}
+    pid = _new_project()
+    assert _predef(pid, _jsonl(_qa("tr", 20)), _jsonl(_qa("va", 4)), _jsonl(te)).status_code == 200
+    assert client.post(f"/api/projects/{pid}/dataset/split", json={"keep_test": True, "include_types": ["raw"]}).status_code == 200
+    assert client.post(f"/api/projects/{pid}/dataset/split", json={}).status_code == 409
+    assert client.post(f"/api/projects/{pid}/dataset/split", json={"discard_predefined_test": True}).status_code == 200
+    assert not [r for s in ("train", "val", "test") for r in _prepared(pid, s) if r["question"] in teq]
+    # duplicate of a predefined project: guard fires on the clone; discard clears it
+    pid2 = _new_project()
+    assert _predef(pid2, _jsonl(_qa("tr", 20)), None, _jsonl(te)).status_code == 200
+    resp = client.post(f"/api/projects/{pid2}/duplicate", json={})
+    assert resp.status_code < 300, resp.text
+    clone = resp.json()["id"]
+    assert client.post(f"/api/projects/{clone}/dataset/split", json={"include_types": ["raw"]}).status_code == 409
+    resp = client.post(f"/api/projects/{clone}/dataset/split", json={"include_types": ["raw"], "discard_predefined_test": True})
+    assert resp.status_code == 200, resp.text
+    assert not [r for s in ("train", "val", "test") for r in _prepared(clone, s) if r["question"] in teq]
 
 
 def test_chat_template_is_resolved_like_split_and_accepts_a_form_field():

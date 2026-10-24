@@ -11,6 +11,10 @@ export interface PredefinedSplitSourceFile {
     document_id: number;
     source_rows: number;
     sha256: string;
+    /** Set when drop_from_train filtered the train file: the rows actually registered. */
+    registered_rows?: number;
+    registered_sha256?: string;
+    dropped_row_lines?: number[];
 }
 
 export interface PredefinedSplitLeakPair {
@@ -22,6 +26,8 @@ export interface PredefinedSplitLeakPair {
 
 export interface PredefinedSplitManifest {
     split_source: 'predefined';
+    /** Present (true) when a test file was imported. */
+    predefined_test_active?: boolean;
     total_entries: number;
     splits: Record<string, number>;
     file_hashes: Record<string, string>;
