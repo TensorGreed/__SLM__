@@ -97,8 +97,12 @@ export default function OutputSchemaEditor({ projectId, initialSchema, onSaved }
                 data-testid="output-schema-text"
             />
             <p className="u-meta u-m0">
-                Types: string, integer, number, boolean, null (object and array are accepted but not
-                checked). Use <code>["string", "null"]</code> when the text may not state the field.
+                Types: string, integer, number, boolean, null, object, array (types are checked strictly:
+                the text <code>"3"</code> is not an integer). Use <code>["string", "null"]</code> when the text may not state the field.
+            </p>
+            <p className="u-meta u-m0" data-testid="output-schema-apply-hint">
+                Changes apply the next time the dataset is prepared; retrain afterwards so the training
+                prompt lists the same fields.
             </p>
             {error && (
                 <div className="error-banner" role="alert" data-testid="output-schema-error">{error}</div>

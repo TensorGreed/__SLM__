@@ -49,6 +49,15 @@ describe('FieldMatchMetricsPanel', () => {
         expect(screen.getByTestId('field-match-injuries_fatal-oov')).toHaveTextContent('—');
     });
 
+    it('shows a dash for exact match when a field has no support', () => {
+        const metrics: FieldMatchMetrics = {
+            ...METRICS,
+            per_field: { ghost: { em: null, f1: null, support: 0, null_precision: null, null_recall: null } },
+        };
+        render(<FieldMatchMetricsPanel metrics={metrics} provenance="x" />);
+        expect(screen.getByTestId('field-match-row-ghost').querySelectorAll('td')[0]).toHaveTextContent('—');
+    });
+
     it('detects a typed field_match breakdown', () => {
         expect(hasFieldMatchBreakdown(METRICS)).toBe(true);
         expect(hasFieldMatchBreakdown({ scoring_mode: 'span_set', per_field: {} })).toBe(false);

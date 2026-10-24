@@ -294,11 +294,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   per field and micro-averaged `null_precision` = tp/pred_null,
   `null_recall` = tp/gold_null, plus `hallucinated` (pred non-null, gold null)
   and `abstained_wrongly`; zero denominator -> `None`, never 0 (the UI shows a
-  dash). A gold row missing a key counts as NULL. **Enum + type validation**
+  dash; per-field `em`/`f1` are `None` at `support == 0`). Containers (object/array) compare
+  literally: both sides containers and identical JSON (key order free). A gold row missing a key counts as NULL. **Enum + type validation**
   (only for fields with a declared `type` / `enum`): `out_of_vocab_rate` = share
   of non-NULL predictions outside the enum; `type_violation_rate` = share of
-  non-NULL predictions of the wrong type (numeric strings satisfy
-  integer/number, integer needs an integral value) plus NULLs where the type
+  non-NULL predictions of the wrong type (strict JSON typing, no coercion: `"3"`
+  is not an integer, `true` is not an integer, `3` is not a string, `3.0` is an
+  integer; coercion applies only to the exact-match compare, and a field
+  declared string / string+null never compares numerically) plus NULLs where the type
   excludes null; `schema_valid_rate` = valid-JSON rows with no violation in any
   field. OOV values are still scored normally. Rows carry `schema_violations`.
   UI: `FieldMatchMetricsPanel` in `EvalPanel` (per-field table + aggregates,

@@ -159,18 +159,27 @@ _STRUCTURED_OUTPUT_ALIASES = (
 JSON_EXTRACTION_RECIPE_ID = "json-extraction"
 
 
-def structured_recipe_for_rows(rows: list[Any], default: str = "span-extraction") -> str:
+def structured_recipe_for_rows(
+    rows: list[Any],
+    default: str = "span-extraction",
+    field_mapping: dict[str, str] | None = None,
+) -> str:
     """``json-extraction`` when the gold payload is a JSON object WITHOUT an
     ``entities`` list (a fixed-field record); ``span-extraction`` (``default``)
     for entity lists or when nothing can be read."""
     import json
 
     saw_record = False
+    mapped_columns = [
+        str(field_mapping[key])
+        for key in ("structured_output", "answer", "output")
+        if isinstance(field_mapping, dict) and field_mapping.get(key)
+    ]
     for row in rows[:50]:
         if not isinstance(row, dict):
             continue
         payload: Any = None
-        for alias in _STRUCTURED_OUTPUT_ALIASES:
+        for alias in (*mapped_columns, *_STRUCTURED_OUTPUT_ALIASES):
             value = row.get(alias)
             if value is None or (isinstance(value, str) and not value.strip()):
                 continue
@@ -402,7 +411,9 @@ async def confirm_task_shape(
             chosen_recipe_id = recipe_id
         else:
             try:
-                chosen_recipe_id = structured_recipe_for_rows(await sample_project_rows(db, project_id))
+                chosen_recipe_id = structured_recipe_for_rows(
+                    await sample_project_rows(db, project_id), field_mapping=field_mapping
+                )
             except Exception:  # noqa: BLE001 — detection is a nicety, never block a confirm
                 chosen_recipe_id = spec["recipe_id"]
     recipe = recipe_service.get_recipe(chosen_recipe_id)

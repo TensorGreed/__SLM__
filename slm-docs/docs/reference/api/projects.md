@@ -419,7 +419,7 @@ Content type: `application/json` — `ProjectRecipeOutputSchemaRequest`
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `output_schema` | `object \\| null` | no | `{"required": [...], "properties": {"<field>": {"type": "string" \\| [...], "enum": [...]}}}`; types: string, integer, number, boolean, null (object / array accepted, not validated). |
+| `output_schema` | `object \\| null` | no | `{"required": [...], "properties": {"<field>": {"type": "string" \\| [...], "enum": [...]}}}`; types: string, integer, number, boolean, null (object / array type-checked; types are strict, so `"3"` is not an integer). An explicit `required` (including `[]`) is honoured. Changes apply the next time the dataset is prepared; retrain afterwards so the training prompt lists the same fields.. |
 
 **Responses**
 

@@ -115,6 +115,76 @@ class TypedCompareTests(unittest.TestCase):
         self.assertFalse(value_match({"a": 1}, None))
 
 
+class ReviewFixTests(unittest.TestCase):
+    def test_containers_compare_literally(self):
+        self.assertFalse(value_match({"a": 1, "b": 2}, ["a", 1, "b", 2]))
+        self.assertFalse(value_match(["a b"], ["a", "b"]))
+        self.assertFalse(value_match({"x": "the cat"}, {"x": "cat"}))
+        self.assertFalse(value_match(["destroyed"], "destroyed"))
+        self.assertFalse(value_match("destroyed", ["destroyed"]))
+        self.assertTrue(value_match({"a": 1, "b": 2}, {"b": 2, "a": 1}))
+
+    def test_declared_strings_stay_strings(self):
+        self.assertFalse(scalar_match("02134", "2134", ["string"]))
+        self.assertFalse(scalar_match("1e3", "1000", ["string", "null"]))
+        self.assertTrue(scalar_match("02134", "02134", ["string"]))
+        self.assertTrue(scalar_match("3", 3))
+        self.assertTrue(scalar_match("3", 3, ["integer"]))
+
+    def test_type_ok_is_strict(self):
+        from app.services.output_schema_service import type_ok
+
+        self.assertFalse(type_ok("3", ["integer"]))
+        self.assertFalse(type_ok(True, ["integer"]))
+        self.assertFalse(type_ok(3, ["string"]))
+        self.assertFalse(type_ok("true", ["boolean"]))
+        self.assertFalse(type_ok(True, ["number"]))
+        self.assertTrue(type_ok(3.0, ["integer"]))
+        self.assertFalse(type_ok(3.5, ["integer"]))
+        self.assertTrue(type_ok(3.5, ["number"]))
+        self.assertTrue(type_ok(True, ["boolean"]))
+        self.assertTrue(type_ok({"a": 1}, ["object"]))
+        self.assertTrue(type_ok([1], ["array"]))
+
+    def test_type_violation_rate_uses_strict_types(self):
+        schema = {"scoring_mode": "field_match", "required": ["n"], "properties": {"n": {"type": "integer"}}}
+        res = _score([_row({"n": "3"}, {"n": 3}), _row({"n": 3}, {"n": 3})], schema)
+        self.assertEqual(res["per_field"]["n"]["type_violation_rate"], 0.5)
+
+    def test_empty_required_is_honoured(self):
+        from app.services.output_schema_service import merge_manifest_output_schema
+
+        declared = {"required": [], "properties": {"a": {"type": "string"}}}
+        merged = merge_manifest_output_schema("field_match", ["a"], declared)
+        self.assertEqual(merged["required"], [])
+        undeclared = merge_manifest_output_schema("field_match", ["a"], {"properties": {"a": {}}})
+        self.assertEqual(undeclared["required"], ["a"])
+        handler = StructuredExtractionHandler()
+        schema = handler._resolve_schema([], _ctx({"scoring_mode": "field_match", "required": [], "properties": {"a": {}}}))
+        self.assertEqual(schema["required"], [])
+        handler2 = StructuredExtractionHandler()
+        schema2 = handler2._resolve_schema([], _ctx({"scoring_mode": "field_match", "properties": {"a": {}, "b": {}}}))
+        self.assertEqual(schema2["required"], ["a", "b"])
+
+    def test_mapped_output_column_picks_recipe(self):
+        rows = [{"text": f"t{i}", "record_json": json.dumps({"damage": "minor"})} for i in range(5)]
+        self.assertEqual(structured_recipe_for_rows(rows), "span-extraction")
+        self.assertEqual(
+            structured_recipe_for_rows(rows, field_mapping={"structured_output": "record_json"}),
+            "json-extraction",
+        )
+
+    def test_zero_support_field_is_none(self):
+        schema = {"scoring_mode": "field_match", "required": ["a", "b"], "properties": {"a": {}, "b": {}}}
+        res = _score([_row({"a": "x"}, {"a": "x"})], schema)
+        self.assertEqual(res["per_field"]["a"]["em"], 1.0)
+        self.assertEqual(res["per_field"]["b"]["support"], 1)
+        # No gold rows at all -> support 0.
+        res0 = _score([{"prediction": json.dumps({"a": "x"}), "reference": ""}], schema)
+        self.assertIsNone(res0["per_field"]["a"]["em"])
+        self.assertIsNone(res0["per_field"]["a"]["f1"])
+
+
 class FieldMatchScoringTests(unittest.TestCase):
     def test_none_string_vs_null_are_different(self):
         res = _score([_row({"damage": "none"}, {"damage": None})])
@@ -218,14 +288,14 @@ class FieldMatchScoringTests(unittest.TestCase):
     def test_type_violations(self):
         rows = [
             _row({"injuries_fatal": 2}, {"injuries_fatal": 2}),
-            _row({"injuries_fatal": "2"}, {"injuries_fatal": 2}),      # numeric string ok
+            _row({"injuries_fatal": "2"}, {"injuries_fatal": 2}),      # numeric string: strict typing, violation
             _row({"injuries_fatal": 2.5}, {"injuries_fatal": 2}),      # not integral
             _row({"injuries_fatal": "two"}, {"injuries_fatal": 2}),    # not a number
             _row({"injuries_fatal": None}, {"injuries_fatal": None}),  # null allowed
         ]
         res = _score(rows)
-        # 4 non-null predictions, 2 violations.
-        self.assertEqual(res["per_field"]["injuries_fatal"]["type_violation_rate"], 0.5)
+        # 4 non-null predictions, 3 violations (string "2", 2.5, "two").
+        self.assertEqual(res["per_field"]["injuries_fatal"]["type_violation_rate"], 0.75)
 
     def test_null_violates_when_type_excludes_null(self):
         schema = {"scoring_mode": "field_match", "properties": {"n": {"type": "integer"}}}

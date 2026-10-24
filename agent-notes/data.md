@@ -89,7 +89,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   what the typed scorer measures. **Declared output schema**
   (`output_schema_service`, JSON-Schema subset): `{"required": [...],
   "properties": {"f": {"type": "string"|[...], "enum": [...]}}}`; types
-  string/integer/number/boolean/null (object/array accepted, not validated);
+  string/integer/number/boolean/null (object/array type-checked strictly);
   enum members may include `null`. `PUT /api/projects/{id}/recipe/output-schema`
   (400 + message when malformed or the recipe isn't json-extraction; `null`
   clears) stores it on `Project.selected_recipe["output_schema"]` (re-applying
@@ -97,7 +97,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   recipe `scoring_mode` + the project's `properties`/`required` into the
   prepared manifest's `output_schema`, and `combine_datasets` pins the
   training prompt's field list to `sorted(properties)` so train and eval name
-  the same fields. No properties declared = field list derived from the
+  the same fields. An explicit `required` (including `[]`) is kept in the manifest and honoured by the scorer; only an undeclared one means "all fields". The schema takes effect only the next time the dataset is prepared, and the training prompt pins the field list, so retrain afterwards. (UI hint: "Changes apply the next time the dataset is prepared; retrain afterwards so the training prompt lists the same fields.") No properties declared = field list derived from the
   references, as before. UI: `OutputSchemaEditor` on the task-type picker page
   (shown when json-extraction is applied). Tests:
   `tests/test_json_extraction_scoring.py`, `OutputSchemaEditor.test.tsx`.

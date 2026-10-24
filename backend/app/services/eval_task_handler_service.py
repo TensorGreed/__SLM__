@@ -769,11 +769,9 @@ class StructuredExtractionHandler:
             required = manifest_schema.get("required")
             if isinstance(properties, dict) and properties:
                 fields = sorted(properties.keys())
-                req_list = (
-                    list(required)
-                    if isinstance(required, list) and required
-                    else list(fields)
-                )
+                # An explicit ``required`` (including []) is honoured; only an
+                # undeclared one means "all fields".
+                req_list = list(required) if isinstance(required, list) else list(fields)
                 self._schema = {
                     "fields": fields,
                     "required": req_list,
@@ -1181,9 +1179,9 @@ class StructuredExtractionHandler:
         for field_name in fields:
             tot = per_field_em[field_name]["total"]
             cor = per_field_em[field_name]["correct"]
-            em_rate = round(cor / tot, 4) if tot > 0 else 0.0
+            em_rate = round(cor / tot, 4) if tot > 0 else None
             f1_list = per_field_f1[field_name]
-            f1_mean = round(sum(f1_list) / len(f1_list), 4) if f1_list else 0.0
+            f1_mean = round(sum(f1_list) / len(f1_list), 4) if f1_list else None
             nc = null_counts[field_name]
             vc = val_counts[field_name]
             declared_enum = bool((props.get(field_name) or {}).get("enum"))
@@ -1204,7 +1202,8 @@ class StructuredExtractionHandler:
 
         field_em_avg = (
             round(
-                sum(v["em"] for v in per_field_summary.values()) / len(per_field_summary),
+                sum(v["em"] for v in per_field_summary.values() if v["em"] is not None)
+                / max(1, sum(1 for v in per_field_summary.values() if v["em"] is not None)),
                 4,
             )
             if per_field_summary
@@ -1212,7 +1211,8 @@ class StructuredExtractionHandler:
         )
         field_f1_avg = (
             round(
-                sum(v["f1"] for v in per_field_summary.values()) / len(per_field_summary),
+                sum(v["f1"] for v in per_field_summary.values() if v["f1"] is not None)
+                / max(1, sum(1 for v in per_field_summary.values() if v["f1"] is not None)),
                 4,
             )
             if per_field_summary

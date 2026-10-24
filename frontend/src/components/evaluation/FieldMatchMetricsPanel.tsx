@@ -14,8 +14,8 @@
 import './FieldMatchMetricsPanel.css';
 
 export interface FieldMatchFieldMetrics {
-    em?: number;
-    f1?: number;
+    em?: number | null;
+    f1?: number | null;
     support?: number;
     null_precision?: number | null;
     null_recall?: number | null;

@@ -137,7 +137,9 @@ def merge_manifest_output_schema(
     merged: dict[str, Any] = {"scoring_mode": scoring_mode, "required": list(required_default)}
     if isinstance(declared, dict) and isinstance(declared.get("properties"), dict) and declared["properties"]:
         merged["properties"] = declared["properties"]
-        if isinstance(declared.get("required"), list) and declared["required"]:
+        if isinstance(declared.get("required"), list):
+            # An explicit list (including []) is the project's choice; only an
+            # undeclared ``required`` falls back to the recipe default.
             merged["required"] = list(declared["required"])
     return merged
 
@@ -240,41 +242,51 @@ def scalar_match(pred: Any, gold: Any, types: list[str] | None = None) -> bool:
             return pb == gb
         if "boolean" in types:
             return False
-    pn, gn = to_number(pred), to_number(gold)
     if set(types) & _SCALAR_NUMERIC:
+        pn, gn = to_number(pred), to_number(gold)
         return pn is not None and gn is not None and pn == gn
-    if pn is not None and gn is not None:
-        return pn == gn
+    if types and not (set(types) - {"string", "null"}):
+        # Declared as text: "02134" and "2134" are different values.
+        return normalize_string(pred) == normalize_string(gold)
+    if not types:
+        pn, gn = to_number(pred), to_number(gold)
+        if pn is not None and gn is not None:
+            return pn == gn
     return normalize_string(pred) == normalize_string(gold)
 
 
 def value_match(pred: Any, gold: Any, types: list[str] | None = None) -> bool:
-    """Typed exact match. Containers keep the pre-typed behaviour (SQuAD
-    normalisation over a stable ``json.dumps(sort_keys=True)``)."""
+    """Typed exact match. Containers compare literally: both sides must be
+    containers and serialise identically (``sort_keys``, so dict key order
+    is free; list order and every string character count)."""
     if is_container(pred) or is_container(gold):
-        if is_null(pred) or is_null(gold):
-            return is_null(pred) and is_null(gold)
-        from app.services.evaluation_service import exact_match
-
-        return bool(exact_match(text_of(pred), text_of(gold)))
+        if not (is_container(pred) and is_container(gold)):
+            return False
+        return json.dumps(pred, sort_keys=True, ensure_ascii=False, default=str) == json.dumps(
+            gold, sort_keys=True, ensure_ascii=False, default=str
+        )
     return scalar_match(pred, gold, types)
 
 
 def type_ok(value: Any, types: list[str]) -> bool:
-    """Does a non-NULL value satisfy at least one declared type?"""
+    """Strict JSON typing: does a non-NULL value satisfy at least one declared
+    type? No coercion ("3" is not an integer, "true" is not a boolean)."""
     if not types:
         return True
     for t in types:
         if t == "string" and isinstance(value, str):
             return True
-        if t == "boolean" and to_bool(value) is not None:
+        if t == "boolean" and isinstance(value, bool):
             return True
-        if t == "number" and to_number(value) is not None:
+        if t == "number" and isinstance(value, (int, float)) and not isinstance(value, bool):
             return True
-        if t == "integer":
-            number = to_number(value)
-            if number is not None and number == number.to_integral_value():
+        if t == "integer" and not isinstance(value, bool):
+            if isinstance(value, int):
                 return True
+            if isinstance(value, float) and value == value and value not in (float("inf"), float("-inf")) and value == int(value):
+                return True
+        if t == "null" and is_null(value):
+            return True
         if t == "object" and isinstance(value, dict):
             return True
         if t == "array" and isinstance(value, list):
