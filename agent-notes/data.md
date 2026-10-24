@@ -177,9 +177,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   Every canonical-key adapter additionally checks (`_input_is_real`) that the input is the text of ONE real column and
   not the row's answer/label (an input equal to the answer is still real when a non-target, non-provenance, non-answer
   column holds the same text: a GEC pair left unchanged, `{text:"help", label:"help"}`; `highlights`, `abstract`,
-  `summary`, `target_text` are target names). Flagged rows fail the import only when systematic (>= 90% of the rows, or
-  no row has a real input column); a coincidental row alone does not. 409 and 422 errors carry `metadata.overlap_input_columns`
-  (the card prints it under the error). Otherwise otherwise (the canonical fallback fabricated it from the answer or concatenated columns)
+  `summary`, `target_text` are target names). Flagged rows are ALWAYS rejected per row as `input_is_answer` (listed by file line in
+  the ROWS_REJECTED 422, bulk-droppable in the card); the whole-file `input_column_unrecognised` 422 is only for "no row has a real input column". 409 and 422 errors carry `metadata.overlap_input_columns`
+  (the card prints it under the error). Otherwise (the canonical fallback fabricated it from the answer or concatenated columns)
   the import is 422 `input_column_unrecognised` + `metadata.columns` (also when the adapter rejected EVERY row for
   that reason, or none of the file's columns is a recognised input). `no_input_field` 422s carry `metadata.columns`
   too, so the card offers the mapper. The manifest's `overlap_input_columns` names the columns the overlap check
@@ -313,3 +313,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   scan (0.72 vs 0.71). Tests: `tests/test_seed_documents.py`
   (read the ingested doc back IN THE SAME LOOP — a later TestClient read can
   lose the write on the StaticPool).
+
+- **Follow-up candidate (seq2seq input == target):** on the random split, the
+  seq2seq-pair adapter maps `{"input": "", "output": o}` / `{"target": t}`-only /
+  `{"summary": s}`-only rows to question == answer (pre-existing on main). The
+  predefined-split import now reports such rows as `input_is_answer`; a matching
+  `seq2seq_input_is_target` rejection on the random split is a candidate follow-up.

@@ -113,7 +113,7 @@ _TARGET_NAMES = frozenset({
     "answer", "output", "completion", "response", "target", "label", "labels", "class", "category",
     "output_label", "structured_output", "json", "extracted", "entities", "target_text", "chosen",
     "rejected", "tool_calls", "expected", "ner_tags", "pos_tags", "chunk_tags", "tags", "bio_tags",
-    "spans", "label_ids", "caption", "transcript", "summary", "highlights", "abstract", "target_text",
+    "spans", "label_ids", "caption", "transcript", "summary", "highlights", "abstract",
 })
 
 
@@ -297,7 +297,6 @@ _TRACEABLE_INPUT_ADAPTERS = frozenset({
     "qa-pair", "rag-grounded", "seq2seq-pair", "structured-extraction", "classification-label",
 })
 _PAIR_PREFIXES = ("Premise: ", "Sentence 1: ")
-SYSTEMATIC_FLAGGED_FRACTION = 0.9
 
 
 def _collapse(text: str) -> str:
@@ -746,6 +745,7 @@ async def import_predefined_split(
                 pf.rows[i], key, resolved_adapter_id, mapping, enriched_config, _profile,
             ):
                 flagged.setdefault(role, []).append(pf.lines[i])
+                problems.append((pf.lines[i], "input_is_answer"))
         if problems:
             problems.sort()
             by_reason: dict[str, Any] = {}
@@ -757,14 +757,11 @@ async def import_predefined_split(
             rejected_report[role] = {"count": len(problems), "by_reason": by_reason}
     # The adapter's own input rejections (input is the label / the gold record) covering EVERY row,
     # or any row whose input is not a real column: ask for a mapping instead of listing row noise.
-    # Flagged rows fail the import only when the problem is systematic (>= 90% of the rows): one
-    # coincidental row (an input equal to its answer) must not.
-    flagged_total = sum(len(v) for v in flagged.values())
-    systematic = bool(flagged) and flagged_total >= SYSTEMATIC_FLAGGED_FRACTION * len(union)
-    if union and (systematic or (not any(mapped.values()) and (
+    # Flagged rows (input is its own answer) are reported per row above as ``input_is_answer``.
+    if union and (not any(mapped.values()) and (
         input_rejects == len(union)
         or not any(_row_has_input_column(row, resolved_adapter_id, mapping, enriched_config) for row in union)
-    ))):
+    )):
         _raise_input_column_unrecognised(parsed, union, flagged or None, overlap_cols)
     if rejected_report:
         total = sum(v["count"] for v in rejected_report.values())

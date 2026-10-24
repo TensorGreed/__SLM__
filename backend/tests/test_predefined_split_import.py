@@ -1321,3 +1321,23 @@ def test_conflict_errors_carry_the_overlap_input_columns():
     resp = _predef(pid, _jsonl(_qa("ok2", 6)), None, None)
     assert resp.status_code == 409 and resp.json()["error_code"] == "PREDEFINED_TEST_WOULD_BE_DROPPED"
     assert resp.json()["metadata"]["overlap_input_columns"] == ["question"]
+
+
+def test_rows_whose_input_is_their_answer_are_always_reported_per_row():
+    def rejected_lines(train):
+        pid = _new_project()
+        _set_pref(pid, adapter_id="seq2seq-pair", task_profile="seq2seq")
+        resp = _predef(pid, _jsonl(train), None, _jsonl([{"input": "t in", "output": "t out"}]))
+        assert resp.status_code == 422, resp.text
+        body = resp.json()
+        assert body["error_code"] == "PREDEFINED_SPLIT_ROWS_REJECTED", body
+        return body["metadata"]["rejected"]["train"]["by_reason"]
+
+    half = [{"input": "", "output": "o i"}] * 10 + [{"input": "in i", "output": "o i"}] * 10
+    assert rejected_lines(half)["input_is_answer"]["count"] == 10
+    assert rejected_lines(
+        [{"target": f"t {i}"} for i in range(16)] + [{"input": f"in {i}", "output": f"o {i}"} for i in range(2)]
+    )["input_is_answer"]["count"] == 16
+    assert rejected_lines(
+        [{"summary": f"s {i}"} for i in range(17)] + [{"input": f"in {i}", "output": f"o {i}"} for i in range(3)]
+    )["input_is_answer"]["count"] == 17

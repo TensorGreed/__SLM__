@@ -180,3 +180,27 @@ def test_unmapped_fallback_rows_stay_rejected_and_structured_mapping_reads_the_d
     m = das.map_record_with_adapter({"narr": "N", "gold": {"a": 1}, "structured_output": {"a": 1}},
                                     adapter_id="structured-extraction", field_mapping={"question": "narr"})
     assert m["text"] == "N"
+
+
+def test_a_mapped_input_only_fills_in_when_no_input_alias_matched():
+    # main's precedence: the ``text`` alias wins over a (stale) mapping to another column
+    m = das.map_record_with_adapter({"text": "T", "label": "L"}, adapter_id="classification-label",
+                                    field_mapping={"text": "label"})
+    assert m["text"] == "T" and m["label"] == "L"
+    m = das.map_record_with_adapter({"text": "T", "structured_output": {"a": 1}, "other": "O"},
+                                    adapter_id="structured-extraction",
+                                    field_mapping={"text": "structured_output"})
+    assert m["text"] == "T"
+    # no alias column, mapped input IS the label column -> rejected
+    assert das.map_record_with_adapter({"utt": "u", "label": "L"}, adapter_id="classification-label",
+                                       field_mapping={"text": "label"}) is None
+    assert das.unmappable_reason({"utt": "u", "label": "L"}, adapter_id="classification-label",
+                                 field_mapping={"text": "label"}) == "classification_input_is_label"
+    # mapped input from a different column that happens to equal the label -> kept
+    m = das.map_record_with_adapter({"name": "book", "label": "book"}, adapter_id="classification-label",
+                                    field_mapping={"text": "name"})
+    assert m["text"] == "book"
+    # structured: mapped column holding the gold JSON is rejected
+    assert das.unmappable_reason({"doc": '{"a": 1}', "structured_output": {"a": 1}},
+                                 adapter_id="structured-extraction",
+                                 field_mapping={"text": "doc"}) == "structured_input_contains_gold"

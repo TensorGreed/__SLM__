@@ -711,19 +711,26 @@ _CLASSIFICATION_PAIR_ALIASES = (
 )
 
 
-def _mapped_input_text(record: dict[str, Any], config: dict[str, Any]) -> str:
-    """The text of the column the user mapped as the input (``field_mapping["text"]``, else
-    ``["question"]``; dotted paths allowed), or "" when nothing is mapped / the cell is empty."""
-    from app.services.record_normalization import _coerce_text as _ct, _get_nested_value
-
+def _mapped_input_path(config: dict[str, Any]) -> str:
+    """The path of the column the user mapped as the input (``field_mapping["text"]``, else
+    ``["question"]``), or ""."""
     fm = config.get("field_mapping")
     if not isinstance(fm, dict):
         return ""
     for key in ("text", "question"):
         path = fm.get(key)
         if isinstance(path, str) and path.strip():
-            return _ct(_get_nested_value(record, path.strip())) or ""
+            return path.strip()
     return ""
+
+
+def _mapped_input_text(record: dict[str, Any], config: dict[str, Any]) -> str:
+    """The text of the column the user mapped as the input (dotted paths allowed), or "" when
+    nothing is mapped / the cell is empty. Only used when no input alias column matched."""
+    from app.services.record_normalization import _coerce_text as _ct, _get_nested_value
+
+    path = _mapped_input_path(config)
+    return (_ct(_get_nested_value(record, path)) or "") if path else ""
 
 
 def _classification_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[str, str, str | None]:
@@ -751,9 +758,13 @@ def _classification_parts(record: dict[str, Any], config: dict[str, Any]) -> tup
         "output",
     ]
 
-    # An input column the user mapped is read directly, ahead of every alias / canonical fallback.
-    mapped_input = _mapped_input_text(record, config)
-    text = mapped_input or _pick_text(record, text_aliases)
+    text = _pick_text(record, text_aliases)
+    mapped_input = ""
+    if not text:
+        # No input alias matched: an input column the user mapped is read directly, ahead of
+        # the canonical fallback.
+        mapped_input = _mapped_input_text(record, config)
+        text = mapped_input
     if not text and not explicit_text:
         for first, second, first_name, second_name in _CLASSIFICATION_PAIR_ALIASES:
             a, b = _pick_text(record, [first]), _pick_text(record, [second])
@@ -761,6 +772,12 @@ def _classification_parts(record: dict[str, Any], config: dict[str, Any]) -> tup
                 text = f"{first_name}: {a}\n{second_name}: {b}"
                 break
     label = _pick_text(record, label_aliases)
+    if mapped_input:
+        fm = config.get("field_mapping") or {}
+        in_path = _mapped_input_path(config).lower()
+        ans_path = str(fm.get("answer") or "").strip().lower()
+        if in_path in {str(a).strip().lower() for a in label_aliases} or (ans_path and in_path == ans_path):
+            return "", label, "classification_input_is_label"
     mapped_answer = isinstance(config.get("field_mapping"), dict) and bool((config["field_mapping"] or {}).get("answer"))
     if text and not label and mapped_answer:
         # A text alias matched, but the label lives in the column the user mapped as ``answer``.
@@ -1324,8 +1341,11 @@ def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[s
         "output",
     ]
 
-    mapped_input = _mapped_input_text(record, config)
-    source = mapped_input or _pick_text(record, source_aliases)
+    source = _pick_text(record, source_aliases)
+    mapped_input = ""
+    if not source:
+        mapped_input = _mapped_input_text(record, config)
+        source = mapped_input
     target_payload = _pick_payload(record, output_aliases)
     target = _json_text(target_payload)
     if mapped_input and not target:
@@ -1333,6 +1353,13 @@ def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[s
         if mapped_answer:
             canonical = canonicalize_record(record, field_mapping=config.get("field_mapping"))
             target = _coerce_text((canonical or {}).get("answer"))
+    if mapped_input:
+        in_path = _mapped_input_path(config).lower()
+        ans_path = str((config.get("field_mapping") or {}).get("answer") or "").strip().lower()
+        gold_json = _coerce_text(json.dumps(target_payload, ensure_ascii=False)) if isinstance(target_payload, (dict, list)) else ""
+        if (ans_path and in_path == ans_path) or in_path in {str(a).strip().lower() for a in output_aliases} \
+                or mapped_input in {g for g in (target, gold_json) if g}:
+            return "", target, target_payload, "structured_input_contains_gold"
     if not source:
         canonical = canonicalize_record(record, field_mapping=config.get("field_mapping"))
         source = source or _coerce_text((canonical or {}).get("text")) or _coerce_text((canonical or {}).get("question"))
