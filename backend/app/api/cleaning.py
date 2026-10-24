@@ -201,7 +201,12 @@ async def get_cleaned_chunks(
         .join(Dataset, Dataset.id == RawDocument.dataset_id)
         .where(Dataset.project_id == project_id)
     )
-    docs = list(result.scalars().all())
+    from app.services.split_role_service import is_test_role_document
+
+    all_docs = list(result.scalars().all())
+    # Your own predefined test file never seeds synthetic data (split_role_service).
+    test_doc_ids = {int(d.id) for d in all_docs if is_test_role_document(d)}
+    docs = [d for d in all_docs if d.id not in test_doc_ids]
 
     # Two ingest paths feed a project (see data_health_service for the
     # full explanation): document-cleaning produces .chunks.jsonl
@@ -263,6 +268,8 @@ async def get_cleaned_chunks(
                         try:
                             row = _json.loads(line)
                         except _json.JSONDecodeError:
+                            continue
+                        if isinstance(row, dict) and row.get("source_document_id") in test_doc_ids:
                             continue
                         # Map the row's text field into the
                         # cleaning-chunk shape so the picker renders

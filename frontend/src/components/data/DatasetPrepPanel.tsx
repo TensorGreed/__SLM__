@@ -72,6 +72,7 @@ interface DisjointReport {
 interface SplitManifest {
     project_id: number;
     total_entries: number;
+    split_source?: string;
     splits: Record<string, number>;
     file_paths?: Record<string, string>;
     files?: Record<string, string>;
@@ -390,6 +391,11 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
     // train / val (for adding data between runs scored on the same rows).
     const [keepTest, setKeepTest] = useState(false);
     const [useOwnSplitFiles, setUseOwnSplitFiles] = useState(false);
+    // The active prepared version came from the user's own split files: a
+    // random re-split would replace their test file, so it needs an explicit
+    // choice (keep it above, or replace it here).
+    const [predefinedActive, setPredefinedActive] = useState(false);
+    const [discardPredefinedTest, setDiscardPredefinedTest] = useState(false);
     // Test rows in the ACTIVE prepared version (0 = no split yet) — the
     // keep-test option only makes sense when there is one.
     const [activeTestRows, setActiveTestRows] = useState(0);
@@ -455,6 +461,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
             payload.disjoint_by = trimmedDisjoint;
         }
         if (keepTest) payload.keep_test = true;
+        if (discardPredefinedTest && predefinedActive && !keepTest) payload.discard_predefined_test = true;
         return payload;
     };
 
@@ -538,6 +545,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
 
             const activeSplits = (m.splits || {}) as Record<string, unknown>;
             setActiveTestRows(typeof activeSplits.test === 'number' ? activeSplits.test : 0);
+            setPredefinedActive(m.split_source === 'predefined');
             const stratify = typeof m.stratify_by === 'string' ? m.stratify_by.trim() : '';
             const disjoint = typeof m.disjoint_by === 'string' ? m.disjoint_by.trim() : '';
             if (stratify) { setStratifyBy(stratify); hydrated.push('stratify_by'); }
@@ -897,6 +905,8 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
             const res = await api.post<SplitManifest>(`/projects/${projectId}/dataset/split`, payload);
             const manifest = res.data;
             setSplitManifest(manifest);
+            setPredefinedActive(manifest.split_source === 'predefined');
+            setDiscardPredefinedTest(false);
 
             // Dedup re-split: report what was dropped and re-scan data
             // health so the leakage.split_overlap signal clears in place.
@@ -1850,6 +1860,21 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         want the new run scored on exactly the same rows as the last one (rows with the same text never move into training).
                     </label>
                 )}
+                {predefinedActive && (
+                    <div className="dp-strat-help" data-testid="split-replace-own-test-note">
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={discardPredefinedTest && !keepTest}
+                                disabled={keepTest}
+                                onChange={(e) => setDiscardPredefinedTest(e.target.checked)}
+                                data-testid="split-discard-predefined-test"
+                            />
+                            {' '}Replace my own test file with a random test split (its rows won't be used for training)
+                        </label>
+                        <p>Re-splitting re-draws validation from train + val; your own val file's membership is not kept.</p>
+                    </div>
+                )}
                 <div className="dp-actions">
                     <button
                         className="btn-secondary"
@@ -1870,7 +1895,10 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                             setSplitTemplate(value);
                             setSplitTouched((prev) => ({ ...prev, chat_template: true }));
                         }}
-                        onImported={() => setHealthRefreshKey((k) => k + 1)}
+                        onImported={() => {
+                            setPredefinedActive(true);
+                            setHealthRefreshKey((k) => k + 1);
+                        }}
                     />
                 )}
                 <div className="dp-actions">

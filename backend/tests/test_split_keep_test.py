@@ -34,9 +34,9 @@ class KeepTestTests(unittest.TestCase):
             }
             out, report = ds._keep_test_rows(7, splits, train_ratio=0.8, val_ratio=0.1, seed=42)
             self.assertEqual(out["test"], old_test, "verbatim, in order")
-            test_keys = {ds._entry_input_key(r) for r in old_test}
+            test_keys = {ds._entry_text_key(r) for r in old_test}
             for name in ("train", "val"):
-                self.assertFalse(any(ds._entry_input_key(r) in test_keys for r in out[name]), name)
+                self.assertFalse(any(ds._entry_text_key(r) in test_keys for r in out[name]), name)
             self.assertEqual(len(out["train"]) + len(out["val"]), 51, "40 + 5 + 6 new, minus nothing else")
             self.assertEqual(len(out["val"]), round(51 / 9))
             self.assertEqual(report, {"applied": True, "test_rows_kept": 5, "test_rows_added": 0, "test_rows": 5,
@@ -100,3 +100,42 @@ class SqliteUrlTests(unittest.TestCase):
             self.assertEqual(s._normalize_sqlite_database_url(url), url)
         relative = s._normalize_sqlite_database_url("sqlite+aiosqlite:///./data/x.db")
         self.assertTrue(relative.startswith("sqlite+aiosqlite:////"), "relative paths still become absolute")
+
+
+class LegacyPreparedRowKeepTestTests(unittest.TestCase):
+    """The random path is exactly as before: prepared rows carry no input key,
+    and keep_test matches test rows by ``_entry_text_key`` - for every row shape,
+    including rows prepared by older versions."""
+
+    def _check(self, rows, test_idx):
+        from app.models.dataset import DatasetType
+
+        fresh = ds._normalize_rows_for_training(rows, DatasetType.RAW, "llama3")
+        self.assertTrue(all("_input_key" not in e for e in fresh))
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(settings, "DATA_DIR", Path(tmp)):
+            (ds._prep_dir(3) / "test.jsonl").write_text("".join(json.dumps(fresh[i]) + "\n" for i in test_idx))
+            splits, report = ds._keep_test_rows(3, {"train": fresh, "val": [], "test": []}, train_ratio=0.8, val_ratio=0.2, seed=1)
+        test_keys = {ds._entry_text_key(fresh[i]) for i in test_idx}
+        leaked = [e for e in splits["train"] + splits["val"] if ds._entry_text_key(e) in test_keys]
+        self.assertEqual(report["rows_matching_test_excluded"], len(test_idx))
+        self.assertEqual(leaked, [])
+
+    def test_instruction_input_output(self):
+        self._check([{"instruction": "Summarize", "input": f"Doc {i}", "output": f"o{i}"} for i in range(10)], [0, 1, 2])
+
+    def test_prompt_completion(self):
+        self._check([{"prompt": f"{i}+{i}=", "completion": str(2 * i)} for i in range(10)], [0, 1, 2])
+
+    def test_source_text_target_text(self):
+        self._check([{"source_text": f"hello {i}", "target_text": f"bonjour {i}"} for i in range(10)], [0, 1, 2])
+
+    def test_same_question_different_answers_survive_the_pool(self):
+        from app.models.dataset import DatasetType
+
+        rows = [{"question": "Name a colour", "answer": c} for c in ("red", "blue", "green", "pink")] + [{"question": "q-test", "answer": "x"}]
+        fresh = ds._normalize_rows_for_training(rows, DatasetType.RAW, "llama3")
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(settings, "DATA_DIR", Path(tmp)):
+            (ds._prep_dir(3) / "test.jsonl").write_text(json.dumps(fresh[-1]) + "\n")
+            splits, report = ds._keep_test_rows(3, {"train": fresh[:4], "val": [], "test": []}, train_ratio=0.8, val_ratio=0.2, seed=1)
+        self.assertEqual(len(splits["train"]) + len(splits["val"]), 4)
+        self.assertEqual(report["rows_matching_test_excluded"], 0)

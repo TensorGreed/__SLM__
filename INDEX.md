@@ -279,6 +279,7 @@ session-start guidance.
 - `backend/app/services/span_relabel_service.py` — Answer key from a second model: relabel a split's texts without changing
 - `backend/app/services/span_threshold_service.py` — Per-type score thresholds for a span tagger, tuned on a held-out split.
 - `backend/app/services/span_type_definitions_service.py` — Entity-type definitions: one labelling convention for every model that
+- `backend/app/services/split_role_service.py` — The one predicate for "this source must never feed training".
 - `backend/app/services/starter_pack_service.py` — Dynamic starter-pack registry for domain-specific onboarding defaults.
 - `backend/app/services/student_teacher_comparison_service.py` — Student-vs-teacher distillation comparison (Track 1, Epic A, slice 3).
 - `backend/app/services/support_bundle_service.py` — Support-bundle service with redaction (priority.md P34, Wave G).

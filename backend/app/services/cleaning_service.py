@@ -19,6 +19,7 @@ from app.utils.tabular_io import is_tabular, load_rows, read_text_file
 from app.database import async_session_factory
 from app.models.dataset import Dataset, DatasetType, RawDocument
 from app.services import page_furniture
+from app.services.split_role_service import is_test_role_document
 
 
 # ── PII / Secret Patterns ──────────────────────────────────────────────
@@ -556,6 +557,14 @@ async def clean_document(
     doc = result.scalar_one_or_none()
     if not doc:
         raise ValueError(f"Document {document_id} not found")
+    if is_test_role_document(doc):
+        # Cleaning writes the rows / chunks that seed synthetic data, passage
+        # indexes and the cleaned training pool: a held-out test file never
+        # gets any (clean-batch reports this as a per-document error).
+        raise ValueError(
+            f"{doc.filename} is your own test file (predefined split); it is kept out of every training "
+            "source, so it is not cleaned."
+        )
 
     # Row files (CSV/TSV/JSON(L)/XLSX/Parquet, incl. HF/Kaggle imports) keep
     # their columns: one cleaned row per record. Flattening them into text

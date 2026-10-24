@@ -13,9 +13,16 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import logging
+
 from app.config import settings
 from app.models.dataset import Dataset, DatasetType, DatasetVersion, DocumentStatus, RawDocument
 from app.models.project import Project
+from app.services.split_role_service import (
+    drop_test_role_rows,
+    is_test_role_document,
+    test_role_document_ids,
+)
 from app.services.domain_hook_service import (
     apply_normalizer_hook,
     resolve_project_domain_hooks,
@@ -36,6 +43,9 @@ from app.services.record_normalization import (
 )
 from app.utils.file_parsers import parse_file
 from app.utils.tabular_io import is_tabular, load_rows, read_text_file
+
+
+logger = logging.getLogger(__name__)
 
 
 def _prep_dir(project_id: int) -> Path:
@@ -680,9 +690,6 @@ def _normalize_rows_for_training(
             rendered = apply_chat_template(merged, chat_template)
             if rendered:
                 merged["text"] = rendered
-        input_key = _input_side_key(row, field_mapping, adapter_config)
-        if input_key:
-            merged["_input_key"] = input_key
         merged["_source_dataset"] = source_dataset.value
         merged["_adapter_id"] = resolved_adapter_id
         merged["_task_profile"] = resolved_task_profile
@@ -1010,6 +1017,7 @@ async def combine_datasets(
         )
         datasets = list(result.scalars().all())
 
+    test_doc_ids: set[int] | None = None
     for ds in datasets:
         if ds.dataset_type == DatasetType.RAW:
             docs_result = await db.execute(
@@ -1023,10 +1031,8 @@ async def combine_datasets(
             docs = docs_result.scalars().all()
             for doc in docs:
                 # A predefined-split TEST file is an answer key: never pooled
-                # into a train / val division (keep_test re-uses the prepared
-                # test rows; a split without keep_test refuses, see
-                # ``_refuse_to_discard_predefined_test``).
-                if (doc.metadata_ or {}).get("split_role") == "test":
+                # into a train / val division (see ``split_role_service``).
+                if is_test_role_document(doc):
                     continue
                 doc_path = Path(doc.file_path)
                 rows = _load_records_from_file(doc_path)
@@ -1048,6 +1054,10 @@ async def combine_datasets(
             continue
         path = Path(ds.file_path)
         rows = _load_records_from_file(path)
+        if test_doc_ids is None:
+            test_doc_ids = await test_role_document_ids(db, project_id)
+        # CLEANED / SYNTHETIC rows derived from a test-role document (any status).
+        rows = drop_test_role_rows(rows, test_doc_ids)
         if cleaned_labelled_only and ds.dataset_type == DatasetType.CLEANED:
             labelled = [row for row in rows if isinstance(row, dict) and "row_index" in row]
             if cleaned_report is not None:
@@ -1146,124 +1156,17 @@ def _dedup_entries_for_split(
     return kept, dropped
 
 
-# Fields that are the TARGET of a row (what the model should produce); never
-# part of the input-side key two rows are compared on.
-_TARGET_KEY_FIELDS = frozenset({
-    "answer", "output", "completion", "response", "target", "label", "labels", "class", "category",
-    "output_label", "structured_output", "json", "extracted", "entities", "target_text", "chosen",
-    "rejected", "tool_calls", "expected",
-})
-# Input-side fields, in the order they are concatenated.
-_INPUT_KEY_FIELDS = (
-    "system", "instruction", "input", "context", "passage", "document", "content", "body", "article",
-    "chunk", "message", "text", "question", "prompt", "query", "ask",
-)
-_NON_INPUT_KEYS = frozenset({"id", "uuid", "source", "split", "timestamp", "created_at", "updated_at", "metadata"})
-_ASSISTANT_ROLES = frozenset({"assistant", "gpt", "model", "bot"})
+_TEST_KEY_FIELDS = ("text", "input", "prompt", "question", "instruction", "source_text")
 
 
-def _input_side_text(row: Any, field_mapping: dict[str, str] | None = None, adapter_config: dict[str, Any] | None = None) -> str:
-    """The raw INPUT-side text of a source row: every field the adapter reads
-    as input, never a target field. Chat rows: every non-assistant turn in
-    order. Otherwise the standard input fields (instruction + input + context
-    + question / prompt / text ...), plus any the field mapping / adapter
-    config names as the text or question source; with none of those present,
-    the whole row minus target fields."""
-    if not isinstance(row, dict):
-        return ""
-    lowered = {str(k).lower(): k for k in row}
-    mapped = {str(v).lower() for k, v in (field_mapping or {}).items() if k == "answer" and v}
-    cfg = adapter_config or {}
-    for key in ("label_fields", "output_fields"):
-        if isinstance(cfg.get(key), list):
-            mapped.update(str(v).lower() for v in cfg[key])
-
-    def _as_text(value: Any) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, str):
-            return value
-        if isinstance(value, (int, float, bool)):
-            return str(value)
-        try:
-            return json.dumps(value, ensure_ascii=False, sort_keys=True)
-        except (TypeError, ValueError):
-            return str(value)
-
-    messages = row.get("messages") if isinstance(row.get("messages"), list) else row.get("conversations")
-    if isinstance(messages, list):
-        turns = []
-        for item in messages:
-            if not isinstance(item, dict):
-                continue
-            role = str(item.get("role") or item.get("from") or "").lower()
-            if role in _ASSISTANT_ROLES:
-                continue
-            content = _as_text(item.get("content") or item.get("value") or item.get("text"))
-            if content.strip():
-                turns.append(content)
-        if turns:
-            return "\n".join(turns)
-
-    names: list[str] = []
-    for canonical in ("text", "question"):
-        src = (field_mapping or {}).get(canonical)
-        if src:
-            names.append(str(src).split(".")[0].lower())
-    for key in ("source_fields", "text_fields"):
-        if isinstance(cfg.get(key), list):
-            names.extend(str(v).lower() for v in cfg[key])
-    names.extend(_INPUT_KEY_FIELDS)
-    parts: list[str] = []
-    seen: set[str] = set()
-    for name in names:
-        if name in seen or name in _TARGET_KEY_FIELDS or name in mapped or name not in lowered:
-            continue
-        seen.add(name)
-        value = _as_text(row[lowered[name]])
-        if value.strip():
-            parts.append(value)
-    if parts:
-        return "\n".join(parts)
-    for key, value in row.items():
-        name = str(key).lower()
-        if name.startswith("_") or name in _TARGET_KEY_FIELDS or name in mapped or name in _NON_INPUT_KEYS:
-            continue
-        text = _as_text(value)
-        if text.strip():
-            parts.append(text)
-    return "\n".join(parts)
-
-
-def _input_key_hash(text: str) -> str:
-    from app.services.data_health_service import _normalise_for_exact
-
-    norm = _normalise_for_exact(text)
-    return hashlib.sha1(norm.encode("utf-8")).hexdigest() if norm else ""
-
-
-def _input_side_key(
-    row: Any, field_mapping: dict[str, str] | None = None, adapter_config: dict[str, Any] | None = None
-) -> str:
-    """Normalised (lower-case, whitespace-collapsed) digest of a source row's
-    input side. Two rows with the same input but different answers share it;
-    a different prompt template, candidate list or field list does not change it."""
-    return _input_key_hash(_input_side_text(row, field_mapping, adapter_config))
-
-
-def _entry_input_key(entry: Any) -> str:
-    """The input-side key of a PREPARED row: the ``_input_key`` stamped when the
-    row was prepared, else (rows prepared before it existed) derived from the
-    row's own input fields."""
+def _entry_text_key(entry: Any) -> str:
+    """What makes two prepared rows "the same example": their input text,
+    whitespace-normalised and lower-cased (metadata such as
+    ``_source_dataset`` may differ between two splits of the same row)."""
     if not isinstance(entry, dict):
         return ""
-    stamped = entry.get("_input_key")
-    if isinstance(stamped, str) and stamped:
-        return stamped
-    if entry.get("question") and entry.get("answer"):
-        # A Q&A row's canonical ``text`` is "Question: ..\nAnswer: .." - it carries the target.
-        entry = {k: v for k, v in entry.items() if k not in ("text", "source_text")}
-    return _input_side_key(entry)
+    parts = [str(entry.get(k)) for k in _TEST_KEY_FIELDS if isinstance(entry.get(k), str) and entry.get(k).strip()]
+    return " ".join(" ".join(parts).split()).lower()
 
 
 def _question_text(entry: Any) -> str:
@@ -1349,10 +1252,10 @@ def _keep_test_rows(
     if not kept:
         return splits, {"applied": False, "reason": "the active test split is empty"}
     kept_count = len(kept)
-    test_keys = {_entry_input_key(r) for r in kept}
+    test_keys = {_entry_text_key(r) for r in kept}
     added = 0
     for row in additions or []:
-        key = _entry_input_key(row)
+        key = _entry_text_key(row)
         if key and key not in test_keys:
             kept.append(row)
             test_keys.add(key)
@@ -1362,7 +1265,7 @@ def _keep_test_rows(
     seen: set[str] = set()
     for name in ("train", "val", "test"):
         for entry in splits.get(name, []):
-            key = _entry_input_key(entry)
+            key = _entry_text_key(entry)
             if key in test_keys:
                 excluded += 1
                 continue
@@ -1371,9 +1274,9 @@ def _keep_test_rows(
             seen.add(key)
             pool.append(entry)
     if fixed_val is not None:
-        val_keys = {_entry_input_key(r) for r in fixed_val}
+        val_keys = {_entry_text_key(r) for r in fixed_val}
         before = len(pool)
-        pool = [r for r in pool if _entry_input_key(r) not in val_keys]
+        pool = [r for r in pool if _entry_text_key(r) not in val_keys]
         excluded += before - len(pool)
     leakage: dict[str, Any] | None = None
     if additions is not None or fixed_val is not None:
@@ -1507,48 +1410,77 @@ def _finalize_prepared_manifest(
             pass
 
 
-async def _refuse_to_discard_predefined_test(
-    db: AsyncSession, project_id: int, types: list[DatasetType]
+async def _accepted_test_role_documents(db: AsyncSession, project_id: int) -> list[RawDocument]:
+    result = await db.execute(
+        select(RawDocument)
+        .join(Dataset, Dataset.id == RawDocument.dataset_id)
+        .where(Dataset.project_id == project_id, RawDocument.status == DocumentStatus.ACCEPTED)
+    )
+    return [d for d in result.scalars() if is_test_role_document(d)]
+
+
+async def _guard_predefined_test(
+    db: AsyncSession, project_id: int, *, keep_test: bool, discard_predefined_test: bool
 ) -> None:
     """A random re-split without ``keep_test`` would replace the user's own
-    test file with randomly drawn rows. Refuse (409) instead of silently
-    dropping or pooling it."""
+    test file with randomly drawn rows. Refuse (409) unless the caller asked to
+    keep the test rows (``keep_test``) or to replace them
+    (``discard_predefined_test``: the test document(s) are marked REJECTED, so
+    their rows are NOT pooled into training, and a normal random split runs).
+
+    Fires whenever the project has an ACCEPTED test-role document, or the active
+    manifest is a predefined split with a non-empty test whose document is still
+    accepted - regardless of ``include_types`` (the UI sends none). Rejecting or
+    deleting the test document clears it."""
     from app.exceptions import SLMError
 
-    owns_test = False
-    manifest_path = _prep_dir(project_id) / "manifest.json"
-    test_path = _prep_dir(project_id) / "test.jsonl"
-    if manifest_path.exists() and test_path.exists() and test_path.stat().st_size > 0:
-        try:
-            owns_test = json.loads(manifest_path.read_text(encoding="utf-8")).get("split_source") == "predefined"
-        except (OSError, ValueError):
-            owns_test = False
-    if not owns_test and DatasetType.RAW in types:
-        raw_ds = (
-            await db.execute(
-                select(Dataset).where(Dataset.project_id == project_id, Dataset.dataset_type == DatasetType.RAW)
+    if keep_test and discard_predefined_test:
+        raise ValueError("keep_test and discard_predefined_test are opposites; send one.")
+    if keep_test:
+        return
+    docs = await _accepted_test_role_documents(db, project_id)
+    owns_test = bool(docs)
+    if not owns_test:
+        manifest_path = _prep_dir(project_id) / "manifest.json"
+        test_path = _prep_dir(project_id) / "test.jsonl"
+        if manifest_path.exists() and test_path.exists() and test_path.stat().st_size > 0:
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                manifest = {}
+            if manifest.get("split_source") == "predefined":
+                test_info = (manifest.get("source_files") or {}).get("test") or {}
+                doc_id = test_info.get("document_id")
+                if doc_id is None:
+                    owns_test = True
+                else:
+                    doc = await db.get(RawDocument, int(doc_id))
+                    owns_test = doc is not None and doc.status == DocumentStatus.ACCEPTED
+    if not owns_test:
+        return
+    if discard_predefined_test:
+        for doc in docs:
+            doc.status = DocumentStatus.REJECTED
+            doc.metadata_ = {**(doc.metadata_ or {}), "discarded_by_resplit": True}
+            logger.info(
+                "project %s: predefined test document %s rejected by a replace-test re-split", project_id, doc.id
             )
-        ).scalar_one_or_none()
-        if raw_ds is not None:
-            docs = (
-                await db.execute(
-                    select(RawDocument).where(
-                        RawDocument.dataset_id == raw_ds.id, RawDocument.status == DocumentStatus.ACCEPTED
-                    )
-                )
-            ).scalars().all()
-            owns_test = any((d.metadata_ or {}).get("split_role") == "test" for d in docs)
-    if owns_test:
-        raise SLMError(
-            status_code=409,
-            error_code="PREDEFINED_TEST_SPLIT_WOULD_BE_REPLACED",
-            stage="dataset",
-            message=(
-                "This project's test split came from your own test file. Re-split with "
-                "'Keep the current test examples', or import new split files."
-            ),
-            actionable_fix="Turn on 'Keep the current test examples' (keep_test), or import new train / val / test files.",
-        )
+        await db.flush()
+        return
+    raise SLMError(
+        status_code=409,
+        error_code="PREDEFINED_TEST_SPLIT_WOULD_BE_REPLACED",
+        stage="dataset",
+        message=(
+            "This project's test split came from your own test file. Either keep your test examples "
+            "(tick 'Keep the current test examples') or replace them with a random test split "
+            "(tick 'Replace my own test file with a random test split' - its rows won't be used for training)."
+        ),
+        actionable_fix=(
+            "Tick 'Keep the current test examples' (keep_test), or tick 'Replace my own test file with a random "
+            "test split' (discard_predefined_test), or import new train / val / test files."
+        ),
+    )
 
 
 async def split_dataset(
@@ -1569,6 +1501,7 @@ async def split_dataset(
     dedup_rows: bool = True,
     auto_stratify: bool = True,
     keep_test: bool = False,
+    discard_predefined_test: bool = False,
     test_additions: list[dict[str, Any]] | None = None,
     val_rows: int | None = None,
     val_from: list[dict[str, Any]] | None = None,
@@ -1652,8 +1585,9 @@ async def split_dataset(
     included_source_types = resolved_type_strs[:]
     types = [DatasetType(t) for t in resolved_type_strs]
 
-    if not keep_test:
-        await _refuse_to_discard_predefined_test(db, project_id, types)
+    await _guard_predefined_test(
+        db, project_id, keep_test=keep_test, discard_predefined_test=discard_predefined_test
+    )
 
     cleaned_report: dict[str, int] = {}
     entries = await combine_datasets(

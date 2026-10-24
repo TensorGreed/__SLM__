@@ -539,14 +539,12 @@ def test_leak_key_is_the_input_side_not_the_whole_row():
 
 
 def test_input_key_ignores_prompt_template_and_target_fields():
-    from app.services.dataset_service import _entry_input_key, _input_side_key
+    from app.services.predefined_split_service import _input_side_key
 
     assert _input_side_key({"question": "Why?", "answer": "A"}) == _input_side_key({"prompt": "why?  ", "response": "B"})
     assert _input_side_key({"instruction": "X", "input": "one"}) != _input_side_key({"instruction": "X", "input": "two"})
     assert _input_side_key(_chat("hi", "a")) == _input_side_key(_chat("hi", "b"))
     assert _input_side_key({"note": "x", "label": "pos"}) == _input_side_key({"note": "x", "label": "neg"})
-    legacy = {"question": "Why?", "answer": "A", "text": "Question: Why?\nAnswer: A"}
-    assert _entry_input_key(legacy) == _input_side_key({"question": "Why?"})
 
 
 def test_chat_template_is_resolved_like_split_and_accepts_a_form_field():
@@ -640,3 +638,164 @@ def test_upload_size_cap_is_enforced_per_file_with_413():
         assert resp.status_code == 413, resp.text
         assert "train" in resp.json()["detail"]
     assert _predef(pid, _jsonl(_qa("tr", 10)), None, _jsonl(_qa("te", 1))).status_code == 200
+
+
+# --- review-3: the random path is untouched; test files are kept out of every source ---
+
+
+def _test_doc_ids(pid: int, statuses=None) -> list[int]:
+    async def go(db):
+        raw = (await db.execute(select(Dataset).where(Dataset.project_id == pid, Dataset.dataset_type == DatasetType.RAW))).scalar_one()
+        docs = (await db.execute(select(RawDocument).where(RawDocument.dataset_id == raw.id))).scalars().all()
+        return [d.id for d in docs if (d.metadata_ or {}).get("split_role") == "test" and (statuses is None or d.status in statuses)]
+
+    return _run(_query(go))
+
+
+def _set_doc_status(doc_id: int, status) -> None:
+    async def go(db):
+        (await db.get(RawDocument, doc_id)).status = status
+        await db.commit()
+
+    _run(_query(go))
+
+
+def _seed_cleaned(pid: int, rows: list[dict]) -> None:
+    """A CLEANED dataset + file with ``rows`` (as cleaning would have written)."""
+    from app.services.cleaning_service import _cleaned_dir, get_or_create_cleaned_dataset
+
+    path = _cleaned_dir(pid) / "cleaned.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    async def go(db):
+        ds = await get_or_create_cleaned_dataset(db, pid)
+        ds.file_path = str(path)
+        ds.record_count = len(rows)
+        await db.commit()
+
+    _run(_query(go))
+
+
+def test_random_split_rows_carry_no_input_key_and_no_helper_fields():
+    pid = _new_project()
+    raw = ("\n".join(json.dumps(r) for r in _qa("x", 30)) + "\n").encode()
+    assert client.post(f"/api/projects/{pid}/ingestion/upload", files={"file": ("a.jsonl", raw, "application/octet-stream")}).status_code == 201
+
+    async def accept(db):
+        for d in (await db.execute(select(RawDocument))).scalars():
+            d.status = DocumentStatus.ACCEPTED
+        await db.commit()
+
+    _run(_query(accept))
+    assert client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"]}).status_code == 200
+    for split in ("train", "val", "test"):
+        assert all("_input_key" not in r for r in _prepared(pid, split)), split
+
+
+def test_guard_fires_with_default_include_types_and_names_both_exits():
+    pid = _new_project()
+    assert _predef(pid, _jsonl(_qa("tr", 20)), None, _jsonl(_qa("te", 5))).status_code == 200
+    for body in ({"include_types": None}, {}, {"include_types": ["cleaned"]}, {"include_types": ["raw"]}):
+        resp = client.post(f"/api/projects/{pid}/dataset/split", json=body)
+        assert resp.status_code == 409, (body, resp.text)
+        assert resp.json()["error_code"] == "PREDEFINED_TEST_SPLIT_WOULD_BE_REPLACED"
+        message = resp.json()["message"]
+        assert "Keep the current test examples" in message and "Replace my own test file" in message
+
+
+def test_discard_predefined_test_rejects_the_doc_and_runs_a_random_split():
+    pid = _new_project()
+    train, test = _qa("tr", 30), _qa("te", 6)
+    assert _predef(pid, _jsonl(train), None, _jsonl(test)).status_code == 200
+    resp = client.post(f"/api/projects/{pid}/dataset/split", json={"discard_predefined_test": True, "dedup_rows": False})
+    assert resp.status_code == 200, resp.text
+    manifest = resp.json()
+    assert manifest.get("split_source") != "predefined"
+    assert manifest["total_entries"] == 30, "the old test rows are NOT pooled into training"
+    test_q = {r["question"] for r in test}
+    assert not [r for s in ("train", "val", "test") for r in _prepared(pid, s) if r["question"] in test_q]
+    assert _test_doc_ids(pid, [DocumentStatus.ACCEPTED]) == []
+    # the guard is gone for the next split
+    assert client.post(f"/api/projects/{pid}/dataset/split", json={}).status_code == 200
+    # opposites are refused
+    assert client.post(f"/api/projects/{pid}/dataset/split", json={"keep_test": True, "discard_predefined_test": True}).status_code == 400
+
+
+def test_rejecting_or_deleting_the_test_doc_clears_the_guard():
+    for how in ("reject", "delete"):
+        pid = _new_project()
+        assert _predef(pid, _jsonl(_qa("tr", 20)), None, _jsonl(_qa("te", 5))).status_code == 200
+        (doc_id,) = _test_doc_ids(pid)
+        assert client.post(f"/api/projects/{pid}/dataset/split", json={}).status_code == 409
+        if how == "reject":
+            _set_doc_status(doc_id, DocumentStatus.REJECTED)
+        else:
+            assert client.delete(f"/api/projects/{pid}/ingestion/documents/{doc_id}").status_code == 204
+        resp = client.post(f"/api/projects/{pid}/dataset/split", json={})
+        assert resp.status_code == 200, (how, resp.text)
+
+
+def test_test_role_document_rows_reach_no_training_source():
+    """Raw, cleaned (live and from a superseded import) and the synthetic seed pickers."""
+    from app.services.cleaning_service import clean_document
+    from app.services.split_role_service import is_test_role_document, test_role_document_ids
+    from app.services.synthetic_service import _load_project_cleaned_chunks
+
+    pid = _new_project()
+    train, test = _qa("tr", 20), _qa("te", 5)
+    assert _predef(pid, _jsonl(train), None, _jsonl(test)).status_code == 200
+    (first_test,) = _test_doc_ids(pid)
+    # a re-import supersedes the first: its (REJECTED) test doc stays a test-role doc
+    assert _predef(pid, _jsonl(train), None, _jsonl(test)).status_code == 200
+    (second_test,) = _test_doc_ids(pid, [DocumentStatus.ACCEPTED])
+    assert first_test != second_test and sorted(_test_doc_ids(pid)) == sorted([first_test, second_test])
+    assert _run(_query(lambda db: test_role_document_ids(db, pid))) == {first_test, second_test}
+
+    # cleaned: clean-batch refuses the test doc and writes no rows/chunks for it
+    resp = client.post(f"/api/projects/{pid}/cleaning/clean-batch", json={"document_ids": [second_test]})
+    assert resp.status_code == 200 and resp.json()["cleaned"] == 0
+    assert "your own test file" in resp.json()["errors"][0]["error"]
+    cleaned_path = Path(settings.DATA_DIR) / "projects" / str(pid) / "cleaned" / "cleaned.jsonl"
+    assert not cleaned_path.exists() or second_test not in {json.loads(l).get("source_document_id") for l in cleaned_path.read_text().splitlines() if l.strip()}
+
+    # cleaned rows that DO carry a test-role source id (older data / a superseded import) are dropped by the pool
+    test_rows = [dict(r, source_document_id=i, row_index=n) for n, r in enumerate(_qa("te", 5)) for i in (first_test, second_test)]
+    fresh_rows = [dict(r, source_document_id=999999, row_index=n) for n, r in enumerate(_qa("fresh", 4))]
+    _seed_cleaned(pid, test_rows + fresh_rows)
+    resp = client.post(
+        f"/api/projects/{pid}/dataset/split",
+        json={"include_types": ["raw", "cleaned"], "discard_predefined_test": True, "dedup_rows": False},
+    )
+    assert resp.status_code == 200, resp.text
+    pooled = [r for s in ("train", "val", "test") for r in _prepared(pid, s)]
+    questions = {r["question"] for r in pooled}
+    assert not [q for q in questions if q.startswith("te ")], "test-file rows (raw or cleaned) reached a split"
+    assert {r["question"] for r in fresh_rows} <= questions, "other cleaned rows still pool"
+    assert resp.json()["total_entries"] == 20 + 4
+
+    # synthetic seed pickers: GET /cleaning/chunks and the synth chunk pool skip the test doc / its rows
+    chunks = client.get(f"/api/projects/{pid}/cleaning/chunks", params={"limit": 500}).json()["chunks"]
+    assert not [c for c in chunks if "te question" in str(c.get("text"))], "test rows offered as synth seeds"
+    assert [c for c in chunks if "fresh question" in str(c.get("text"))]
+    docs = _run(_query(lambda db: _docs_by_id(db, pid)))
+    assert is_test_role_document(docs[second_test])
+    # chunk files beside a test-role doc are not read
+    chunk_file = Path(docs[second_test].file_path).with_suffix(".chunks.jsonl")
+    chunk_file.write_text(json.dumps({"chunk_id": 0, "text": "SECRET TEST CHUNK"}) + "\n")
+    assert "SECRET TEST CHUNK" not in _run(_load_project_cleaned_chunks(pid))
+
+
+async def _docs_by_id(db, pid):
+    raw = (await db.execute(select(Dataset).where(Dataset.project_id == pid, Dataset.dataset_type == DatasetType.RAW))).scalar_one()
+    return {d.id: d for d in (await db.execute(select(RawDocument).where(RawDocument.dataset_id == raw.id))).scalars()}
+
+
+def test_adapter_preference_origin_is_predefined_split():
+    pid = _new_project()
+    _set_pref(pid, adapter_id="classification-label", task_profile="classification")
+    assert _predef(pid, _jsonl(_cls("tr", 8, ["pos", "neg"])), None, _jsonl(_cls("te", 3, ["neg"]))).status_code == 200
+
+    async def origin(db):
+        return (await db.get(Project, pid)).dataset_adapter_preset.get("origin")
+
+    assert _run(_query(origin)) == "predefined_split"

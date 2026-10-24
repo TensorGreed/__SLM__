@@ -121,8 +121,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `keep_test`, split-form checkbox "Keep the current N test examples",
   shown when the active manifest has a test split): `_keep_test_rows` keeps
   `prepared/test.jsonl` verbatim, re-divides everything else train / val by
-  their ratio, and drops any row whose `_entry_text_key` (text/input/prompt…
-  whitespace-normalised, lower-cased) matches a test row — so adding data
+  their ratio, and drops any row whose `_entry_text_key` (the prepared row's
+  `text` / `input` / `prompt` / `question` / `instruction` / `source_text` string fields joined,
+  whitespace-normalised, lower-cased; unchanged by the predefined import: prepared rows carry
+  no extra key field and the random path is byte-identical to before it) matches a test row — so adding data
   never moves the answer key into training. Manifest `keep_test` report.
   Tests: `tests/test_split_keep_test.py`.
 - **Predefined-split import** (`POST /dataset/predefined-split`, multipart `train` /
@@ -141,27 +143,47 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   instead of dropped), `adapter_unmappable_or_empty`, `normalizer_hook_dropped`. Row numbers
   are PHYSICAL FILE LINES (strict reader `_parse_upload`: blank lines skipped but counted; CSV
   header = line 1; JSON array / XLSX / Parquet = 1-based record index).
-  Leak/duplicate key = `dataset_service._input_side_key(raw row)`: normalised concatenation of
-  every INPUT field (instruction + input + context/passage + question/prompt/text, honouring
-  `field_mapping` text/question and adapter `source_fields`/`text_fields`; chat = all
-  non-assistant turns; fallback = whole row minus target fields), stamped on every prepared
-  row as `_input_key` (a sha1; random split rows carry it too). `keep_test` uses the same key
-  (`_entry_input_key`; legacy rows without the stamp derive it). → 409 (`metadata.pairs`); `drop_from_train` removes
+  Leak/duplicate key = `predefined_split_service._input_side_key(source row)` (used ONLY by
+  the import; prepared rows are not stamped and the random split / `keep_test` never see it):
+  normalised concatenation of every INPUT field (instruction + input + context/passage +
+  question/prompt/text, honouring `field_mapping` text/question and adapter
+  `source_fields`/`text_fields`; chat = all non-assistant turns; fallback = whole row minus
+  target fields). Passage/RAG rows keep the context IN the key, so the same question over a
+  different passage is NOT a leak here; this differs on purpose from
+  `question_leakage_filter` (question-only): an imported file pair is the user's declared
+  split, and flagging (and failing/dropping) every re-asked question would reject legitimate
+  per-passage benchmarks, whereas the filter guards generated rows against a gold set. → 409 (`metadata.pairs`); `drop_from_train` removes
   train rows only; val↔test always 409. Within-split repeats kept, counted in
   `duplicate_report`. Validation happens before anything is written. Files are registered
   as ACCEPTED raw documents (`source=predefined_split:<role>`; a re-import marks the
   previous ones REJECTED), stamped on rows via `_source_document*`, so a later random
-  split (`include_types:["raw"]`) re-pools the train/val files only: a `split_role="test"`
-  document is NEVER pooled by `combine_datasets`, `keep_test` keeps the prepared test rows, and
-  a re-split WITHOUT `keep_test` on a project that owns a predefined test file is refused 409
-  (`PREDEFINED_TEST_SPLIT_WOULD_BE_REPLACED`; checks manifest `split_source` OR an accepted
-  test-role doc). The import saves its resolved adapter wiring (incl. scanned label/field
+  split (`include_types:["raw"]`) re-pools the train/val files only. **One predicate keeps
+  the test file out of every training source** (`split_role_service.is_test_role_document` /
+  `test_role_document_ids` / `drop_test_role_rows`; no-op for projects that never imported
+  splits): `combine_datasets` skips a `split_role="test"` RAW doc and drops CLEANED/SYNTHETIC
+  rows whose `source_document_id` is a test-role doc of ANY status (superseded imports
+  too); `clean_document` refuses test-role docs (clean-batch lists the refusal in `errors`;
+  chosen over silently skipping so the user sees why), so no cleaned.jsonl row / chunk file /
+  cleaned.txt exists for them, which also keeps them out of the passage loaders, RAFT /
+  teacher-answer prompts, documents→Q&A flow and span relabels; `GET /cleaning/chunks` and
+  `synthetic_service._load_project_cleaned_chunks` (synthetic + gold seed pickers) skip them.
+  Read-only inference (task-shape detection, adapter-studio preview, EDA, quality scan, doc
+  preview) still samples them: they feed no training row. `keep_test` keeps the prepared test
+  rows. A re-split WITHOUT `keep_test` is refused 409
+  (`PREDEFINED_TEST_SPLIT_WOULD_BE_REPLACED`, whatever `include_types`) when an ACCEPTED
+  test-role doc exists or the active manifest is predefined with a non-empty test whose doc
+  is still accepted; exits: `keep_test`, or `discard_predefined_test: true` (test doc(s)
+  marked REJECTED + logged, normal random split, old test rows NOT pooled; both flags = 400;
+  split form checkbox "Replace my own test file with a random test split", shown when the
+  active manifest is predefined). Rejecting or deleting the test doc also clears the guard.
+  The import saves its resolved adapter wiring (incl. scanned label/field
   list) as the project adapter preference so per-doc re-normalisation builds identical
   prompts. On failure after `ingest_file`, the registered docs/files are removed and the
   superseded import is restored. Per-file upload cap = `dataset_import.MAX_UPLOAD_BYTES`
   (413). `chat_template` form field / profile split default resolve like `/split`; adapter
   wiring rule matches `/split` (any of adapter_id/adapter_config/field_mapping/task_profile
-  sent → request is the whole wiring, default-canonical if no adapter_id). Manifest carries
+  sent → request is the whole wiring, default-canonical if no adapter_id; the saved
+  preference gets `origin: "predefined_split"`). Manifest carries
   the `/split` enrichment (`_enrich_split_manifest`). Intentional differences: observed ratios
   in `resolved_split_config`, `dedup_requested:false`, `keep_test:null`, no `seed` shuffle.
   Rows are byte-identical to a random split of the same files. Manifest

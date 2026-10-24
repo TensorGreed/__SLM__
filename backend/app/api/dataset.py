@@ -74,6 +74,10 @@ class SplitRequest(BaseModel):
     # (dataset_service._keep_test_rows). For adding data between runs that
     # must be scored on the same test rows.
     keep_test: bool = False
+    # Replace the test file you imported (predefined split) with a random test
+    # split: the test document is marked rejected, its rows are NOT pooled into
+    # training. Opposite of ``keep_test``.
+    discard_predefined_test: bool = False
 
     @model_validator(mode="after")
     def validate_ratios(self):
@@ -414,6 +418,7 @@ async def split(
             dedup_rows=req.dedup_rows,
             auto_stratify=req.auto_stratify,
             keep_test=req.keep_test,
+            discard_predefined_test=req.discard_predefined_test,
         )
         _enrich_split_manifest(
             manifest, runtime=runtime, profile_defaults=profile_defaults, resolved=resolved,

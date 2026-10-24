@@ -90,6 +90,28 @@ describe('DatasetPrepPanel — split-form hydration from the active prepared ver
         ));
     });
 
+    it('offers "Replace my own test file" only when the active split is predefined, and sends discard_predefined_test', async () => {
+        mockApi({ ...ACTIVE_MANIFEST, split_source: 'predefined', splits: { train: 341, val: 42, test: 44 } });
+        apiMock.post.mockResolvedValue({ data: { splits: { train: 400, val: 50, test: 44 } } });
+        const user = await renderAndOpenSplit();
+        await screen.findByTestId('dp-active-config-hint');
+        expect(screen.getByTestId('split-replace-own-test-note')).toHaveTextContent(
+            "Re-splitting re-draws validation from train + val; your own val file's membership is not kept.",
+        );
+        await user.click(await screen.findByTestId('split-discard-predefined-test'));
+        await user.click(screen.getByRole('button', { name: /Run Split/ }));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(
+            '/projects/42/dataset/split', expect.objectContaining({ discard_predefined_test: true }),
+        ));
+    });
+
+    it('does not offer the replace-test option for a random split', async () => {
+        mockApi({ ...ACTIVE_MANIFEST, splits: { train: 341, val: 42, test: 44 } });
+        await renderAndOpenSplit();
+        await screen.findByTestId('dp-active-config-hint');
+        expect(screen.queryByTestId('split-discard-predefined-test')).not.toBeInTheDocument();
+    });
+
     it('shows no reuse hint on a fresh project with no active prepared version', async () => {
         mockApi({}); // empty manifest
         await renderAndOpenSplit();

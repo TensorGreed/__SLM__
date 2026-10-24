@@ -20,8 +20,9 @@ skipped but still count); for JSON arrays, XLSX and Parquet they are the
 1-based record index.
 
 The uploads are registered as accepted raw documents carrying
-``metadata.split_role``; ``combine_datasets`` never pools a ``test`` document
-into a later random division, and the import's scanned adapter config is saved
+``metadata.split_role``; a ``test`` document is kept out of every training
+source (``split_role_service``: ``combine_datasets``, cleaning, synthetic seed
+pools), and the import's scanned adapter config is saved
 as the project's adapter preference so later per-document normalisation
 produces identical prompts.
 """
@@ -45,7 +46,6 @@ from app.models.dataset import DatasetType, DocumentStatus, RawDocument
 from app.services import dataset_service as ds
 from app.services.dataset_service import (
     _finalize_prepared_manifest,
-    _input_side_key,
     _majority_task_profile,
     _normalize_rows_for_training,
     _recipe_output_schema,
@@ -77,10 +77,109 @@ def _fail(status: int, code: str, message: str, fix: str, metadata: dict[str, An
     )
 
 
-def _leak_key(entry: dict[str, Any]) -> str:
-    """The input-side key two rows are compared on (stamped when the row was
-    prepared; see ``dataset_service._input_side_key``)."""
-    return ds._entry_input_key(entry)
+# Fields that are the TARGET of a row (what the model should produce); never
+# part of the input-side key two rows are compared on.
+_TARGET_KEY_FIELDS = frozenset({
+    "answer", "output", "completion", "response", "target", "label", "labels", "class", "category",
+    "output_label", "structured_output", "json", "extracted", "entities", "target_text", "chosen",
+    "rejected", "tool_calls", "expected",
+})
+# Input-side fields, in the order they are concatenated.
+_INPUT_KEY_FIELDS = (
+    "system", "instruction", "input", "context", "passage", "document", "content", "body", "article",
+    "chunk", "message", "text", "question", "prompt", "query", "ask",
+)
+_NON_INPUT_KEYS = frozenset({"id", "uuid", "source", "split", "timestamp", "created_at", "updated_at", "metadata"})
+_ASSISTANT_ROLES = frozenset({"assistant", "gpt", "model", "bot"})
+
+
+def _input_side_text(row: Any, field_mapping: dict[str, str] | None = None, adapter_config: dict[str, Any] | None = None) -> str:
+    """The raw INPUT-side text of a source row: every field the adapter reads
+    as input, never a target field. Chat rows: every non-assistant turn in
+    order. Otherwise the standard input fields (instruction + input + context
+    + question / prompt / text ...), plus any the field mapping / adapter
+    config names as the text or question source; with none of those present,
+    the whole row minus target fields."""
+    if not isinstance(row, dict):
+        return ""
+    lowered = {str(k).lower(): k for k in row}
+    mapped = {str(v).lower() for k, v in (field_mapping or {}).items() if k == "answer" and v}
+    cfg = adapter_config or {}
+    for key in ("label_fields", "output_fields"):
+        if isinstance(cfg.get(key), list):
+            mapped.update(str(v).lower() for v in cfg[key])
+
+    def _as_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+        try:
+            return json.dumps(value, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError):
+            return str(value)
+
+    messages = row.get("messages") if isinstance(row.get("messages"), list) else row.get("conversations")
+    if isinstance(messages, list):
+        turns = []
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or item.get("from") or "").lower()
+            if role in _ASSISTANT_ROLES:
+                continue
+            content = _as_text(item.get("content") or item.get("value") or item.get("text"))
+            if content.strip():
+                turns.append(content)
+        if turns:
+            return "\n".join(turns)
+
+    names: list[str] = []
+    for canonical in ("text", "question"):
+        src = (field_mapping or {}).get(canonical)
+        if src:
+            names.append(str(src).split(".")[0].lower())
+    for key in ("source_fields", "text_fields"):
+        if isinstance(cfg.get(key), list):
+            names.extend(str(v).lower() for v in cfg[key])
+    names.extend(_INPUT_KEY_FIELDS)
+    parts: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        if name in seen or name in _TARGET_KEY_FIELDS or name in mapped or name not in lowered:
+            continue
+        seen.add(name)
+        value = _as_text(row[lowered[name]])
+        if value.strip():
+            parts.append(value)
+    if parts:
+        return "\n".join(parts)
+    for key, value in row.items():
+        name = str(key).lower()
+        if name.startswith("_") or name in _TARGET_KEY_FIELDS or name in mapped or name in _NON_INPUT_KEYS:
+            continue
+        text = _as_text(value)
+        if text.strip():
+            parts.append(text)
+    return "\n".join(parts)
+
+
+def _input_key_hash(text: str) -> str:
+    from app.services.data_health_service import _normalise_for_exact
+
+    norm = _normalise_for_exact(text)
+    return hashlib.sha1(norm.encode("utf-8")).hexdigest() if norm else ""
+
+
+def _input_side_key(
+    row: Any, field_mapping: dict[str, str] | None = None, adapter_config: dict[str, Any] | None = None
+) -> str:
+    """Normalised (lower-case, whitespace-collapsed) digest of a source row's
+    input side. Two rows with the same input but different answers share it;
+    a different prompt template, candidate list or field list does not change it."""
+    return _input_key_hash(_input_side_text(row, field_mapping, adapter_config))
 
 
 def _sample(numbers: list[int]) -> list[int]:
@@ -225,21 +324,19 @@ async def _persist_adapter_preference(
     """Save the import's resolved adapter wiring (including the scanned label /
     field lists) as the project preference, so a later per-document
     re-normalisation (random re-split of the registered files) builds the same
-    prompts. Keeps the preset's ``origin``."""
+    prompts. The preset's ``origin`` becomes ``predefined_split``."""
     from app.models.project import Project
 
     project = await db.get(Project, project_id)
     if project is None:
         return
-    prior = project.dataset_adapter_preset if isinstance(project.dataset_adapter_preset, dict) else {}
     preset = {
         "adapter_id": adapter_id,
         "adapter_config": ds._normalize_adapter_config(adapter_config),
         "field_mapping": ds._normalize_field_mapping(field_mapping),
         "task_profile": ds._normalize_task_profile_value(task_profile),
+        "origin": "predefined_split",  # not a prior origin: this wiring was derived from the import
     }
-    if prior.get("origin"):
-        preset["origin"] = prior["origin"]
     project.dataset_adapter_preset = preset
     await db.flush()
 
@@ -355,8 +452,13 @@ async def import_predefined_split(
         )
     lines = {role: pf.lines for role, pf in parsed.items()}
 
-    # 3. Exact-input leakage between splits.
-    keys = {role: [_leak_key(e) for e in entries] for role, entries in mapped.items()}
+    # 3. Exact-input leakage between splits. Keyed on the SOURCE rows' input side
+    # (every row mapped, else step 2 failed, so ``mapped[role][i]`` is ``rows[i]``).
+    # The key lives only here: prepared rows carry no key field.
+    keys = {
+        role: [_input_side_key(row, mapping, enriched_config) for row in parsed[role].rows]
+        for role in mapped
+    }
     key_sets = {role: {k for k in ks if k} for role, ks in keys.items()}
     leak_pairs: list[dict[str, Any]] = []
     for a, b in _PAIRS:

@@ -151,6 +151,7 @@ Content type: `application/json` — `SplitRequest`
 | `dedup_rows` | `boolean` | no |  |
 | `auto_stratify` | `boolean` | no |  |
 | `keep_test` | `boolean` | no |  |
+| `discard_predefined_test` | `boolean` | no | Replace the test file you imported with a random test split: the test document is marked rejected and its rows are not used for training. Cannot be combined with `keep_test`. |
 
 **Responses**
 
@@ -196,7 +197,7 @@ Content type: `multipart/form-data`
 | `409` | error envelope | Overlap. `metadata.pairs[]` has `pair` (`train_val`, `train_test`, `val_test`), `counts` per file and `sample_rows` per file (file line numbers, up to 20; see below). Nothing is written. |
 | `422` | error envelope | Rows that cannot be used. `metadata.rejected.<split>.by_reason.<reason>` has `count` and up to 20 `sample_rows`. Reasons: `unparseable_line` (a JSONL line or JSON-array item that is not a JSON object), `malformed_row` (CSV/TSV row with the wrong column count), `review_status_pending` / `review_status_rejected` (rows still in or rejected by the review queue), `adapter_unmappable_or_empty`, `normalizer_hook_dropped`. Nothing is written. |
 
-The uploaded files are also registered as project raw documents tagged `predefined_split:<role>` (a re-import supersedes the previous ones), so a later random `POST .../dataset/split` with `include_types: ["raw"]` re-pools the train and validation files. The test file is never pooled: `keep_test: true` keeps the imported test rows, and a re-split without `keep_test` returns `409` (`PREDEFINED_TEST_SPLIT_WOULD_BE_REPLACED`) until you keep the test examples or import new files. The import also saves its adapter wiring (including the scanned label / field list) as the project's adapter preference.
+The uploaded files are also registered as project raw documents tagged `predefined_split:<role>` (a re-import supersedes the previous ones), so a later random `POST .../dataset/split` with `include_types: ["raw"]` re-pools the train and validation files. The test file is never pooled: `keep_test: true` keeps the imported test rows, and a re-split without `keep_test` returns `409` (`PREDEFINED_TEST_SPLIT_WOULD_BE_REPLACED`, whatever `include_types`) until you keep the test examples, send `discard_predefined_test: true` (replace your test file with a random test split; its rows are not pooled into training), reject or delete the test document, or import new files. The test document is also kept out of cleaning (`clean` refuses it) and out of the synthetic and gold seed pickers. The import also saves its adapter wiring (including the scanned label / field list) as the project's adapter preference.
 
 **Row numbers** are file line numbers for JSONL, CSV and TSV: blank lines are skipped but still counted, and a CSV header is line 1 (its first data row is line 2). For JSON arrays, XLSX and Parquet they are the 1-based record index.
 

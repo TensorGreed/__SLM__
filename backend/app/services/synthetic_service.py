@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import async_session_factory
 from app.models.dataset import Dataset, DatasetType, RawDocument
+from app.services.split_role_service import is_test_role_document
 import logging
 
 _LOG = logging.getLogger(__name__)
@@ -1857,7 +1858,7 @@ async def _load_project_cleaned_chunks(project_id: int) -> list[str]:
 
     texts: list[str] = []
     for doc in docs:
-        if not doc.file_path:
+        if not doc.file_path or is_test_role_document(doc):
             continue
         chunks_path = Path(doc.file_path).with_suffix(".chunks.jsonl")
         if not chunks_path.exists():
