@@ -744,6 +744,11 @@ def _classification_parts(record: dict[str, Any], config: dict[str, Any]) -> tup
                 text = f"{first_name}: {a}\n{second_name}: {b}"
                 break
     label = _pick_text(record, label_aliases)
+    mapped_answer = isinstance(config.get("field_mapping"), dict) and bool((config["field_mapping"] or {}).get("answer"))
+    if text and not label and mapped_answer:
+        # A text alias matched, but the label lives in the column the user mapped as ``answer``.
+        canonical = canonicalize_record(record, field_mapping=config.get("field_mapping"))
+        label = _coerce_text((canonical or {}).get("answer"))
     if not text:
         canonical = canonicalize_record(record, field_mapping=config.get("field_mapping"))
         text = text or _coerce_text((canonical or {}).get("text")) or _coerce_text((canonical or {}).get("question"))

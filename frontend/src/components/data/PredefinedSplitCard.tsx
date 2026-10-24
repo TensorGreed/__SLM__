@@ -9,6 +9,7 @@ import { AlertTriangle } from 'lucide-react';
 import { parseErrorEnvelope } from '../../api/errors';
 import {
     importPredefinedSplit,
+    type AdapterWiring,
     type OnLeak,
     type PredefinedSplitManifest,
 } from '../../api/predefinedSplit';
@@ -30,6 +31,9 @@ interface Props {
     onImported?: (manifest: PredefinedSplitManifest) => void;
     /** Rows of the project's own (imported) test file while it is active, else null/undefined. */
     ownTestRows?: number | null;
+    /** The project's current adapter wiring (the split form's): sent with any column mapping so the
+     *  mapping refines it instead of resetting the adapter. */
+    adapter?: AdapterWiring | null;
 }
 
 interface Problem {
@@ -39,6 +43,37 @@ interface Problem {
     code: string;
     /** Set on a 422 where no column is recognised as the input: the file's columns. */
     unrecognisedColumns: string[] | null;
+}
+
+/** Provenance / id-like names (the server's NON_CONTENT_KEYS plus index-like names). */
+const PROVENANCE_NAMES = new Set([
+    'id', 'uuid', 'source', 'split', 'timestamp', 'created_at', 'updated_at', 'metadata', 'idx', 'index', 'guid',
+]);
+/** Target-named columns: what the model should produce (the server's target names). */
+const TARGET_NAMES = new Set([
+    'answer', 'output', 'completion', 'response', 'target', 'label', 'labels', 'class', 'category', 'output_label',
+    'structured_output', 'json', 'extracted', 'entities', 'target_text', 'chosen', 'rejected', 'tool_calls',
+    'expected', 'ner_tags', 'pos_tags', 'chunk_tags', 'tags', 'bio_tags', 'spans', 'label_ids', 'caption',
+    'transcript', 'summary',
+]);
+
+function isProvenance(column: string): boolean {
+    const name = column.trim().toLowerCase();
+    return PROVENANCE_NAMES.has(name) || name.startsWith('_') || name.endsWith('_id') || name.endsWith('_ids');
+}
+
+/** A column that may be preselected as the model's input: not provenance, id-like or target-named. */
+export function isInputCandidate(column: string): boolean {
+    return !isProvenance(column) && !TARGET_NAMES.has(column.trim().toLowerCase());
+}
+
+/** The mapper's starting selections: the first plausible input column, and a different answer column
+ *  (a target-named one first, else the next non-provenance column). Never the same column twice. */
+export function defaultMapping(columns: string[]): { input: string; answer: string } {
+    const input = columns.find(isInputCandidate) ?? '';
+    const others = columns.filter((c) => c !== input && !isProvenance(c));
+    const answer = others.find((c) => TARGET_NAMES.has(c.trim().toLowerCase())) ?? others[0] ?? '';
+    return { input, answer };
 }
 
 const ROLE_LABEL: Record<string, string> = { train: 'Train', val: 'Validation', test: 'Test' };
@@ -100,6 +135,7 @@ export default function PredefinedSplitCard({
     sendChatTemplate = true,
     onImported,
     ownTestRows = null,
+    adapter = null,
 }: Props) {
     const [train, setTrain] = useState<File | null>(null);
     const [val, setVal] = useState<File | null>(null);
@@ -124,15 +160,18 @@ export default function PredefinedSplitCard({
                 fieldMapping: mappingOverride ?? fieldMapping,
                 chatTemplate: sendChatTemplate ? chatTemplate : null,
                 dropExistingTest: !test && dropOwnTest,
+                adapter,
             });
             setResult(manifest);
+            setDropOwnTest(false);
             onImported?.(manifest);
         } catch (err) {
             const next = toProblem(err);
             setProblem(next);
             if (next.unrecognisedColumns) {
-                setMapInput(next.unrecognisedColumns[0] ?? '');
-                setMapAnswer(next.unrecognisedColumns[1] ?? '');
+                const start = defaultMapping(next.unrecognisedColumns);
+                setMapInput(start.input);
+                setMapAnswer(start.answer);
             }
         } finally {
             setBusy(false);
@@ -140,8 +179,9 @@ export default function PredefinedSplitCard({
     };
 
     const applyMapping = () => {
+        if (!mapInput) return;
         const mapping: Record<string, string> = { question: mapInput };
-        if (mapAnswer) mapping.answer = mapAnswer;
+        if (mapAnswer && mapAnswer !== mapInput) mapping.answer = mapAnswer;
         const text = JSON.stringify(mapping);
         setFieldMapping(text);
         void submit(text);
@@ -249,7 +289,11 @@ export default function PredefinedSplitCard({
                             <p>The file's columns: {problem.unrecognisedColumns.join(', ')}</p>
                             <label className="pdsplit__field" htmlFor="pdsplit-map-input">
                                 <span>Question / text column (what the model is given)</span>
-                                <select id="pdsplit-map-input" data-testid="pdsplit-map-input" value={mapInput} onChange={(e) => setMapInput(e.target.value)}>
+                                <select id="pdsplit-map-input" data-testid="pdsplit-map-input" value={mapInput} onChange={(e) => {
+                                    setMapInput(e.target.value);
+                                    if (e.target.value === mapAnswer) setMapAnswer('');
+                                }}>
+                                    <option value="" disabled>(choose a column)</option>
                                     {problem.unrecognisedColumns.map((c) => <option key={c} value={c}>{c}</option>)}
                                 </select>
                             </label>
@@ -296,6 +340,11 @@ export default function PredefinedSplitCard({
                             ))}
                         </tbody>
                     </table>
+                    {result.overlap_input_columns && result.overlap_input_columns.length > 0 && (
+                        <p data-testid="pdsplit-overlap-columns">
+                            Overlap checked on: {result.overlap_input_columns.join(' + ')}
+                        </p>
+                    )}
                     <p className="pdsplit__help">
                         Repeated inputs are rows whose text already appears earlier in the same split. They were kept.
                     </p>

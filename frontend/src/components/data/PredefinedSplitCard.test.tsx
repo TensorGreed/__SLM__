@@ -231,3 +231,98 @@ describe('PredefinedSplitCard', () => {
         expect(screen.queryByTestId('pdsplit-drop-test')).toBeNull();
     });
 });
+
+describe('PredefinedSplitCard column mapper', () => {
+    const unrecognised = (columns: string[]) => ({
+        response: {
+            status: 422,
+            data: {
+                error_code: 'PREDEFINED_SPLIT_ROWS_REJECTED',
+                message: 'Could not tell which column is the input',
+                actionable_fix: 'Set a field mapping',
+                troubleshooting_id: 'err_1',
+                metadata: { reason: 'input_column_unrecognised', columns },
+            },
+        },
+    });
+
+    async function openMapper(columns: string[], adapter?: Record<string, unknown>) {
+        const user = userEvent.setup();
+        apiMock.post.mockReset();
+        apiMock.post.mockRejectedValueOnce(unrecognised(columns));
+        render(<PredefinedSplitCard projectId={5} adapter={adapter as never} />);
+        await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
+        await user.click(screen.getByTestId('pdsplit-submit'));
+        await screen.findByTestId('pdsplit-mapper');
+        return user;
+    }
+
+    const select = (id: string) => screen.getByTestId(id) as HTMLSelectElement;
+
+    it('never preselects an id or target-named column as the input, and the answer differs from it', async () => {
+        await openMapper(['id', 'utterance', 'intent']);
+        expect(select('pdsplit-map-input').value).toBe('utterance');
+        expect(select('pdsplit-map-answer').value).toBe('intent');
+    });
+
+    it('does not preselect label / idx columns as the input', async () => {
+        await openMapper(['idx', 'label', 'sentence']);
+        expect(select('pdsplit-map-input').value).toBe('sentence');
+        expect(select('pdsplit-map-answer').value).toBe('label');
+    });
+
+    it('clears the answer when the user picks it as the input, and never sends question == answer', async () => {
+        const user = await openMapper(['id', 'utterance', 'intent']);
+        await user.selectOptions(select('pdsplit-map-input'), 'intent');
+        expect(select('pdsplit-map-answer').value).toBe('');
+        apiMock.post.mockResolvedValueOnce({ data: OK });
+        await user.click(screen.getByTestId('pdsplit-map-apply'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(2));
+        const mapping = JSON.parse(String((apiMock.post.mock.calls[1][1] as FormData).get('field_mapping')));
+        expect(mapping).toEqual({ question: 'intent' });
+    });
+
+    it('sends the project adapter wiring with the mapping, so the adapter is kept', async () => {
+        const user = await openMapper(['idx', 'sentence', 'label'], {
+            adapterId: 'classification-label',
+            taskProfile: 'classification',
+            adapterConfig: { text_fields: ['sentence'] },
+        });
+        apiMock.post.mockResolvedValueOnce({ data: OK });
+        await user.click(screen.getByTestId('pdsplit-map-apply'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(2));
+        const form = apiMock.post.mock.calls[1][1] as FormData;
+        expect(JSON.parse(String(form.get('field_mapping')))).toEqual({ question: 'sentence', answer: 'label' });
+        expect(form.get('adapter_id')).toBe('classification-label');
+        expect(form.get('task_profile')).toBe('classification');
+        expect(JSON.parse(String(form.get('adapter_config')))).toEqual({ text_fields: ['sentence'] });
+    });
+
+    it('sends no adapter fields without a field mapping, and skips an unpinned (auto) task profile', async () => {
+        const user = userEvent.setup();
+        apiMock.post.mockReset();
+        apiMock.post.mockResolvedValue({ data: OK });
+        render(<PredefinedSplitCard projectId={5} adapter={{ adapterId: 'qa-pair', taskProfile: 'auto' }} />);
+        await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
+        await user.click(screen.getByTestId('pdsplit-submit'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(1));
+        const form = apiMock.post.mock.calls[0][1] as FormData;
+        expect(form.get('adapter_id')).toBeNull();
+        expect(form.get('field_mapping')).toBeNull();
+    });
+
+    it('names the columns the overlap check used, and resets the drop-test checkbox after an import', async () => {
+        const user = userEvent.setup();
+        apiMock.post.mockReset();
+        apiMock.post.mockResolvedValue({ data: { ...OK, overlap_input_columns: ['question', 'context'] } });
+        render(<PredefinedSplitCard projectId={5} ownTestRows={7} />);
+        await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
+        await user.click(screen.getByTestId('pdsplit-drop-test'));
+        expect(screen.getByTestId('pdsplit-drop-test')).toBeChecked();
+        await user.click(screen.getByTestId('pdsplit-submit'));
+        await screen.findByTestId('pdsplit-result');
+        expect((apiMock.post.mock.calls[0][1] as FormData).get('drop_existing_test')).toBe('true');
+        expect(screen.getByTestId('pdsplit-overlap-columns')).toHaveTextContent('Overlap checked on: question + context');
+        expect(screen.getByTestId('pdsplit-drop-test')).not.toBeChecked();
+    });
+});

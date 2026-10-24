@@ -37,6 +37,8 @@ export interface PredefinedSplitManifest {
     prepared_version: number | null;
     source_files: Record<string, PredefinedSplitSourceFile>;
     duplicate_report: Record<string, number>;
+    /** The columns the overlap check keyed on (the adapter's input fields or the source columns found). */
+    overlap_input_columns?: string[];
     leak_report: {
         on_leak: OnLeak;
         pairs: PredefinedSplitLeakPair[];
@@ -45,17 +47,41 @@ export interface PredefinedSplitManifest {
     };
 }
 
+/** The project's current adapter wiring, as the split form holds it. */
+export interface AdapterWiring {
+    adapterId?: string | null;
+    /** 'auto' / empty means the profile is not pinned: nothing is sent. */
+    taskProfile?: string | null;
+    adapterConfig?: Record<string, unknown> | null;
+}
+
 export async function importPredefinedSplit(
     projectId: number,
     files: { train: File; val?: File | null; test?: File | null },
-    opts: { onLeak: OnLeak; fieldMapping?: string; chatTemplate?: string | null; dropExistingTest?: boolean },
+    opts: {
+        onLeak: OnLeak;
+        fieldMapping?: string;
+        chatTemplate?: string | null;
+        dropExistingTest?: boolean;
+        /** Sent with a field mapping so the mapping refines the project's adapter instead of
+         *  resetting it (a mapping alone is merged server-side too). */
+        adapter?: AdapterWiring | null;
+    },
 ): Promise<PredefinedSplitManifest> {
     const form = new FormData();
     form.append('train', files.train);
     if (files.val) form.append('val', files.val);
     if (files.test) form.append('test', files.test);
     form.append('on_leak', opts.onLeak);
-    if (opts.fieldMapping && opts.fieldMapping.trim()) form.append('field_mapping', opts.fieldMapping.trim());
+    if (opts.fieldMapping && opts.fieldMapping.trim()) {
+        form.append('field_mapping', opts.fieldMapping.trim());
+        const adapter = opts.adapter;
+        if (adapter?.adapterId) form.append('adapter_id', adapter.adapterId);
+        if (adapter?.taskProfile && adapter.taskProfile !== 'auto') form.append('task_profile', adapter.taskProfile);
+        if (adapter?.adapterConfig && Object.keys(adapter.adapterConfig).length > 0) {
+            form.append('adapter_config', JSON.stringify(adapter.adapterConfig));
+        }
+    }
     if (opts.chatTemplate) form.append('chat_template', opts.chatTemplate);
     if (opts.dropExistingTest) form.append('drop_existing_test', 'true');
     const res = await api.post<PredefinedSplitManifest>(

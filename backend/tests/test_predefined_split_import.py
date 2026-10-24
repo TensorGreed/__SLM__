@@ -795,18 +795,35 @@ def test_manifest_has_the_same_enrichment_fields_as_split():
     assert manifest["resolved_split_config"]["train_ratio"] == round(4 / 6, 6)
 
 
-def test_sending_field_mapping_resets_the_adapter_like_split():
+def test_a_lone_field_mapping_keeps_the_projects_adapter():
+    """The card's mapper sends a mapping alone: it refines the project's wiring, never resets it."""
     pid = _new_project()
     _set_pref(pid, adapter_id="classification-label", task_profile="classification")
-    resp = client.post(
-        f"/api/projects/{pid}/dataset/predefined-split",
-        files={"train": ("t.jsonl", _jsonl(_qa("tr", 4)), "x"), "test": ("e.jsonl", _jsonl(_qa("te", 2)), "x")},
-        data={"field_mapping": json.dumps({"question": "question", "answer": "answer"})},
+    before = client.get(f"/api/projects/{pid}/dataset/adapter-preference").json()
+    train = [{"sentence": f"movie {i} was fine", "label": i % 2, "idx": i} for i in range(8)]
+    test = [{"sentence": "an unseen movie", "label": 1, "idx": 99}]
+    resp = _predef(pid, _jsonl(train), None, _jsonl(test), field_mapping=json.dumps({"text": "sentence"}))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["adapter_id"] == "classification-label" and body["adapter_preference_source"] == "project"
+    assert body["task_profile"] == before["task_profile"] == "classification"
+    after = client.get(f"/api/projects/{pid}/dataset/adapter-preference").json()
+    assert after["adapter_id"] == "classification-label" and after["task_profile"] == "classification"
+    assert after["origin"] == "predefined_split" and after["field_mapping"] == {"text": "sentence"}
+    row = _prepared(pid, "test")[0]
+    assert row["_adapter_id"] == "classification-label" and row["text"] == "an unseen movie"
+
+
+def test_a_full_adapter_request_is_still_the_whole_wiring():
+    pid = _new_project()
+    _set_pref(pid, adapter_id="classification-label", task_profile="classification")
+    resp = _predef(
+        pid, _jsonl(_qa("tr", 4)), None, _jsonl(_qa("te", 2)),
+        adapter_id="default-canonical", field_mapping=json.dumps({"question": "question", "answer": "answer"}),
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["adapter_id"] == "default-canonical" and body["adapter_preference_source"] == "request"
-    assert body["task_profile_requested"] is None
 
 
 def test_failure_after_registering_files_removes_the_orphans():
@@ -1121,3 +1138,102 @@ def test_prompt_with_a_rendered_text_column_keys_on_the_prompt():
     rag_tr = [{"question": "why?", "context": f"doc {i}", "answer": "a"} for i in range(5)]
     assert _predef(_new_project(), _jsonl(rag_tr), None, _jsonl([{"question": "why?", "context": "doc 9", "answer": "a"}])).status_code == 200
     assert _predef(_new_project(), _jsonl(rag_tr), None, _jsonl([{"question": "why?", "context": "doc 2", "answer": "z"}])).status_code == 409
+
+
+def _unrecognised(resp):
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    meta = body["metadata"]
+    assert meta["reason"] == "input_column_unrecognised", body
+    return meta
+
+
+def test_structured_file_without_a_document_column_asks_for_a_mapping():
+    """The adapter would fall back to the gold JSON as the input: the whole file is
+    ``input_column_unrecognised`` with the file's columns, not per-row noise."""
+    pid = _new_project()
+    _set_pref(pid, adapter_id="structured-extraction", task_profile="structured_extraction")
+    train = [{"narrative": f"plane {i} crashed", "structured_output": {"a": i}} for i in range(6)]
+    test = [{"narrative": "plane 3 crashed", "structured_output": {"a": 99}}]
+    meta = _unrecognised(_predef(pid, _jsonl(train), None, _jsonl(test)))
+    assert meta["columns"] == ["narrative", "structured_output"]
+    # the mapper's answer works and keeps the project's adapter
+    resp = _predef(pid, _jsonl(train), None, _jsonl(test), field_mapping=json.dumps({"text": "narrative"}))
+    assert resp.status_code == 409 and resp.json()["error_code"] == "PREDEFINED_SPLIT_LEAKAGE", resp.text
+
+
+def test_classification_file_without_an_input_column_asks_for_a_mapping():
+    pid = _new_project()
+    _set_pref(pid, adapter_id="classification-label", task_profile="classification")
+    train = [{"idx": i, "label": i % 2} for i in range(6)]
+    meta = _unrecognised(_predef(pid, _jsonl(train), None, _jsonl(train[:1])))
+    assert meta["columns"] == ["idx", "label"]
+
+
+def test_seq2seq_pair_columns_nobody_recognises_ask_for_a_mapping():
+    pid = _new_project()
+    _set_pref(pid, adapter_id="seq2seq-pair", task_profile="seq2seq")
+    train = [{"en": f"hello {i}", "fr": f"bonjour {i}"} for i in range(6)]
+    meta = _unrecognised(_predef(pid, _jsonl(train), None, _jsonl(train[:1])))
+    assert meta["columns"] == ["en", "fr"]
+
+
+def test_context_alone_is_not_the_input_when_another_content_column_exists():
+    pid = _new_project()
+    train = [{"utterance": f"how do I {i}?", "document": "Product manual v1", "response": f"r{i}"} for i in range(6)]
+    test = [{"utterance": "brand new ask", "document": "Product manual v1", "response": "x"}]
+    meta = _unrecognised(_predef(pid, _jsonl(train), None, _jsonl(test)))
+    assert "utterance" in meta["columns"]
+    # {document, summary} is still a document keyed on itself
+    docs = [{"document": f"long doc {i} body", "summary": f"s{i}"} for i in range(6)]
+    assert _predef(pid, _jsonl(docs), None, _jsonl([{"document": "other doc", "summary": "s0"}])).status_code == 200
+
+
+def test_blank_question_cell_falls_through_to_the_text_column():
+    pid = _new_project()
+    train = [{"question": (f"q {i}?" if i % 2 else ""), "text": f"body {i}", "answer": f"a{i}"} for i in range(8)]
+    test = [{"question": "", "text": "body 4", "answer": "zz"}]  # same body as train row 4 (blank question)
+    resp = _predef(pid, _jsonl(train), None, _jsonl(test))
+    assert resp.status_code == 409 and resp.json()["error_code"] == "PREDEFINED_SPLIT_LEAKAGE", resp.text
+    assert resp.json()["metadata"]["pairs"][0]["counts"]["train"] == 1
+
+
+def test_no_input_field_rejection_carries_the_columns_so_the_mapper_is_offered():
+    pid = _new_project()
+    train = [{"question": f"q {i}?", "answer": f"a{i}"} for i in range(5)] + [{"utterance": "u", "reply": "r"}]
+    resp = _predef(pid, _jsonl(train), None, _jsonl(_qa("te", 1)))
+    assert resp.status_code == 422, resp.text
+    meta = resp.json()["metadata"]
+    assert meta["rejected"]["train"]["by_reason"]["no_input_field"]["sample_rows"] == [6]
+    assert meta["columns"] == ["question", "answer", "utterance", "reply"]
+
+
+def test_sst2_and_nli_import_under_the_classification_adapter():
+    pid = _new_project()
+    _set_pref(pid, adapter_id="classification-label", task_profile="classification")
+    train = [{"sentence": f"movie {i} was fine", "label": i % 2, "idx": i} for i in range(8)]
+    resp = _predef(pid, _jsonl(train), None, _jsonl([{"sentence": "unseen movie", "label": 1, "idx": 0}]))
+    assert resp.status_code == 200, resp.text
+    assert _prepared(pid, "test")[0]["text"] == "unseen movie"
+    pid = _new_project()
+    _set_pref(pid, adapter_id="classification-label", task_profile="classification")
+    nli = [{"premise": f"a man {i} walks", "hypothesis": f"someone {i} moves", "label": i % 3} for i in range(8)]
+    same_premise = [{"premise": "a man 3 walks", "hypothesis": "a different hypothesis", "label": 0}]
+    assert _predef(pid, _jsonl(nli), None, _jsonl(same_premise)).status_code == 200, "a pair is keyed on both sides"
+    leaked = [{"premise": "a man 3 walks", "hypothesis": "someone 3 moves", "label": 2}]
+    assert _predef(pid, _jsonl(nli), None, _jsonl(leaked)).status_code == 409
+
+
+def test_manifest_names_the_columns_the_overlap_check_used():
+    pid = _new_project()
+    manifest = _predef(pid, _jsonl(_qa("tr", 4)), None, _jsonl(_qa("te", 2))).json()
+    assert manifest["overlap_input_columns"] == ["question"]
+    pid = _new_project()
+    rows = [{"prompt": f"p {i}", "context": "shared passage", "reply": f"r{i}"} for i in range(4)]
+    manifest = _predef(pid, _jsonl(rows), None, _jsonl([{"prompt": "new", "context": "shared passage", "reply": "r"}])).json()
+    assert manifest["overlap_input_columns"] == ["prompt", "context"]
+    pid = _new_project()
+    _set_pref(pid, adapter_id="rag-grounded", task_profile="rag_qa")
+    rag = [{"question": f"q{i}?", "context": f"ctx {i}", "answer": f"a{i}"} for i in range(4)]
+    manifest = _predef(pid, _jsonl(rag), None, _jsonl([{"question": "new?", "context": "ctx 0", "answer": "x"}])).json()
+    assert manifest["overlap_input_columns"] == ["question", "context"]

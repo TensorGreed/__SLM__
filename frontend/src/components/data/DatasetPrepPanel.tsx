@@ -1911,6 +1911,11 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                             setSplitTouched((prev) => ({ ...prev, chat_template: true }));
                         }}
                         ownTestRows={predefinedActive ? (activeTestRows || splitManifest?.splits?.test || 0) : null}
+                        adapter={{
+                            adapterId: splitAdapterId || 'default-canonical',
+                            taskProfile: splitTaskProfile,
+                            adapterConfig: parseJsonObjectInput(splitAdapterConfigText).value,
+                        }}
                         onImported={(manifest) => {
                             setPredefinedActive(manifest.predefined_test_active === true);
                             setActiveTestRows(manifest.splits?.test ?? 0);

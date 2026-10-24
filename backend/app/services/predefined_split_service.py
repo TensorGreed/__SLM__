@@ -179,7 +179,10 @@ def _input_side_text(
     return "\n".join(text for text in sources if text.strip())
 
 
-def _default_input_sources(row: dict[str, Any], field_mapping: dict[str, str] | None, cfg: dict[str, Any]) -> list[str]:
+def _default_input_sources(
+    row: dict[str, Any], field_mapping: dict[str, str] | None, cfg: dict[str, Any],
+    names_out: list[str] | None = None,
+) -> list[str]:
     """Texts of the input columns a default-canonical / plugin row has, in key order:
     question-side columns + context when any question-side column exists, else
     text-side columns + context. Empty list when no input column is recognised."""
@@ -209,8 +212,10 @@ def _default_input_sources(row: dict[str, Any], field_mapping: dict[str, str] | 
                     continue
                 seen.add(key)
                 value = lookup(name, explicit_flag)
-                if value is not None:
+                if value is not None and _as_text(value).strip():  # a blank cell is no input
                     found.append(value)
+                    if names_out is not None:
+                        names_out.append(str(name).strip())
         return found
 
     def listed(keys: tuple[str, ...]) -> list[str]:
@@ -225,8 +230,53 @@ def _default_input_sources(row: dict[str, Any], field_mapping: dict[str, str] | 
     if question:
         chosen = question + context
     else:
-        chosen = gather(([mapping["text"]] if mapping.get("text") else []) + listed(_CONFIG_TEXT_LISTS), _TEXT_ALIASES) + context
+        text_side = gather(([mapping["text"]] if mapping.get("text") else []) + listed(_CONFIG_TEXT_LISTS), _TEXT_ALIASES)
+        chosen = text_side + context
+        if context and not text_side and _has_other_content_column(row, mapping, cfg):
+            # Only a shared context matched, yet the row has another content column (an
+            # ``utterance``, a ``query_text`` ...) that is the real input: keying on the
+            # context alone would call every row of one document a duplicate. Ask for a mapping.
+            return []
     return [_as_text(v) for v in chosen]
+
+
+def _has_other_content_column(row: dict[str, Any], mapping: dict[str, str], cfg: dict[str, Any]) -> bool:
+    """Whether ``row`` has a non-blank column that is no input / context alias, no target name,
+    no provenance column and no mapped answer: a candidate input the aliases did not recognise."""
+    from app.services.record_normalization import NON_CONTENT_KEYS
+
+    known = set(_QUESTION_ALIASES) | set(_CONTEXT_ALIASES) | set(_TEXT_ALIASES) | _TARGET_NAMES | set(NON_CONTENT_KEYS)
+    known.add(str(mapping.get("answer") or "").strip().lower())
+    for key in ("context_fields",):
+        if isinstance(cfg.get(key), list):
+            known.update(str(v).strip().lower() for v in cfg[key])
+    for name, value in row.items():
+        low = str(name).strip().lower()
+        if low in known or low.startswith("_") or low == "idx" or low.endswith("_id"):
+            continue
+        if _as_text(value).strip():
+            return True
+    return False
+
+
+def _overlap_input_columns(
+    rows: list[dict[str, Any]], adapter_id: str, field_mapping: dict[str, str] | None, cfg: dict[str, Any],
+) -> list[str]:
+    """The columns the overlap check keyed on, for the result card: the adapter's input fields
+    (``question`` + ``context`` ...) or, for default / plugin adapters, the source columns found."""
+    if adapter_id in _CANONICAL_INPUT_KEYS:
+        return list(_CANONICAL_INPUT_KEYS[adapter_id])
+    names: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if any(isinstance(row.get(k), list) and any(isinstance(m, dict) for m in row[k]) for k in ("messages", "conversations")):
+            found = ["messages (every non-assistant turn)"]
+        else:
+            found = []
+            _default_input_sources(row, field_mapping, cfg, found)
+        names.extend(n for n in found if n not in names)
+    return names
 
 
 def _row_has_input_column(row: Any, adapter_id: str, field_mapping: dict[str, str] | None, cfg: dict[str, Any]) -> bool:
@@ -237,6 +287,59 @@ def _row_has_input_column(row: Any, adapter_id: str, field_mapping: dict[str, st
         if isinstance(row.get(key), list) and any(isinstance(m, dict) for m in row[key]):
             return True
     return bool(_default_input_sources(row, field_mapping, cfg))
+
+
+# Adapters whose mapped input must be traceable to ONE real column of the row. The canonical
+# fallback (``record_normalization``) otherwise fabricates an input: the answer itself, or the first
+# few columns concatenated (gold record included). Only the first key is checked (RAG context may be
+# a structured payload).
+_TRACEABLE_INPUT_ADAPTERS = frozenset({
+    "qa-pair", "rag-grounded", "seq2seq-pair", "structured-extraction", "classification-label",
+})
+_PAIR_PREFIXES = ("Premise: ", "Sentence 1: ")
+
+
+def _collapse(text: str) -> str:
+    return " ".join(str(text).split()).lower()
+
+
+def _input_is_real(
+    row: dict[str, Any], key_text: str, adapter_id: str,
+    field_mapping: dict[str, str] | None, adapter_config: dict[str, Any] | None, task_profile: str | None,
+) -> bool:
+    """False when ``key_text`` (the model input the leak key is built from) is not the text of a real
+    input column: it equals the row's answer / label, or it is no single column's text (the canonical
+    fallback's concatenation). Adapters outside ``_TRACEABLE_INPUT_ADAPTERS`` only get the answer check."""
+    from app.services.record_normalization import _coerce_text, _get_nested_value
+
+    from app.services.data_adapter_service import map_record_with_adapter
+
+    # The adapter's own mapped row (the prepared entry's ``text`` may be a rendered chat template).
+    entry = map_record_with_adapter(
+        row, adapter_id=adapter_id, adapter_config=adapter_config, field_mapping=field_mapping,
+        task_profile=task_profile) or {}
+    first = _collapse(_as_text(entry.get(_CANONICAL_INPUT_KEYS[adapter_id][0])))
+    if not first:
+        return True  # reported as ``no_input_field`` instead
+    for field in ("answer", "label", "target_text"):
+        answer = _collapse(_as_text(entry.get(field)))
+        if answer and answer == first:
+            return False
+    if adapter_id not in _TRACEABLE_INPUT_ADAPTERS:
+        return True
+    if adapter_id == "classification-label" and _as_text(entry.get("text")).startswith(_PAIR_PREFIXES):
+        return True  # two real columns joined by the adapter
+    values: set[str] = set()
+    for name, value in row.items():
+        for variant in (_as_text(value), _coerce_text(value) or ""):
+            if variant.strip():
+                values.add(_collapse(variant))
+    for path in (field_mapping or {}).values():
+        value = _get_nested_value(row, str(path)) if path else None
+        for variant in (_as_text(value), _coerce_text(value) or ""):
+            if variant.strip():
+                values.add(_collapse(variant))
+    return first in values
 
 
 def _input_key_hash(text: str) -> str:
@@ -411,20 +514,32 @@ def _apply_review_gate(parsed: _ParsedFile) -> None:
     parsed.rows, parsed.lines = kept_rows, kept_lines
 
 
-def _raise_input_column_unrecognised(parsed: dict[str, _ParsedFile], union: list[dict[str, Any]]) -> None:
+def _columns_of(rows: list[dict[str, Any]]) -> list[str]:
     columns: list[str] = []
-    for row in union:
+    for row in rows:
         columns.extend(str(k) for k in row if str(k) not in columns)
+    return columns
+
+
+def _raise_input_column_unrecognised(
+    parsed: dict[str, _ParsedFile], union: list[dict[str, Any]],
+    flagged: dict[str, list[int]] | None = None,
+) -> None:
+    """422 asking for a field mapping. ``flagged`` = file lines per role whose input is not a real
+    column (default: every row). ``metadata.columns`` lets the card offer the mapper."""
+    columns = _columns_of(union)
     rejected: dict[str, Any] = {}
     for role, pf in parsed.items():
-        if pf.rows:
-            rejected[role] = {"count": len(pf.rows), "by_reason": {
-                "input_column_unrecognised": {"count": len(pf.rows), "sample_rows": _sample(pf.lines)},
+        lines = list(pf.lines) if flagged is None else flagged.get(role, [])
+        if lines:
+            rejected[role] = {"count": len(lines), "by_reason": {
+                "input_column_unrecognised": {"count": len(lines), "sample_rows": _sample(lines)},
             }}
     raise _fail(
         422, "PREDEFINED_SPLIT_ROWS_REJECTED",
         "Could not tell which column is the input: none of the file's columns is a recognised input name "
-        f"(columns: {', '.join(columns) or 'none'}); nothing was imported.",
+        f"(columns: {', '.join(columns) or 'none'}), or the input found is the answer or a mix of columns; "
+        "nothing was imported.",
         "Set a field mapping: question (or text) = the column the model is given, answer = the column it should "
         'produce, for example {"question": "utterance", "answer": "reply"}. Without it, overlap between your '
         "files cannot be checked.",
@@ -505,9 +620,10 @@ async def import_predefined_split(
     with exact membership. Returns the prepared manifest.
 
     Adapter wiring follows ``POST /split``: when any of ``adapter_id`` /
-    ``adapter_config`` / ``field_mapping`` / ``task_profile`` is sent, the
-    request is the whole wiring (an omitted ``adapter_id`` means
-    ``default-canonical``); otherwise the project's adapter preference."""
+    ``adapter_config`` / ``task_profile`` is sent, the request is the whole wiring (an omitted
+    ``adapter_id`` means ``default-canonical``); a ``field_mapping`` ALONE is merged onto the
+    project's adapter preference (adapter, config and task profile kept); otherwise the
+    project's adapter preference."""
     if on_leak not in ON_LEAK_CHOICES:
         raise _fail(
             400, "PREDEFINED_SPLIT_BAD_ON_LEAK", f"on_leak must be one of {list(ON_LEAK_CHOICES)}.",
@@ -516,7 +632,10 @@ async def import_predefined_split(
     if "train" not in files:
         raise _fail(400, "PREDEFINED_SPLIT_NO_TRAIN", "A train file is required.", "Upload a train file.")
 
-    if any(v is not None for v in (adapter_id, adapter_config, field_mapping, task_profile)):
+    lone_mapping = (
+        field_mapping is not None and adapter_id is None and adapter_config is None and task_profile is None
+    )
+    if not lone_mapping and any(v is not None for v in (adapter_id, adapter_config, field_mapping, task_profile)):
         adapter_id = str(adapter_id or ds.DEFAULT_ADAPTER_ID).strip() or ds.DEFAULT_ADAPTER_ID
         adapter_config = dict(adapter_config or {})
         mapping = dict(field_mapping or {})
@@ -527,6 +646,10 @@ async def import_predefined_split(
         adapter_id = str(preset.get("adapter_id") or ds.DEFAULT_ADAPTER_ID)
         adapter_config = dict(preset.get("adapter_config") or {})
         mapping = dict(preset.get("field_mapping") or {})
+        if lone_mapping:
+            # A mapping alone (the result card's mapper) refines the project's adapter wiring; it
+            # never resets the adapter to default-canonical. Its keys win over the saved ones.
+            mapping.update({k: v for k, v in (field_mapping or {}).items() if v})
         task_profile = str(preset.get("task_profile") or "").strip() or None
         adapter_source = str(preset.get("source") or "default")
 
@@ -572,6 +695,8 @@ async def import_predefined_split(
         _row_has_input_column(row, resolved_adapter_id, mapping, enriched_config) for row in union
     ):
         _raise_input_column_unrecognised(parsed, union)
+    flagged: dict[str, list[int]] = {}
+    input_rejects = 0
     for role, pf in parsed.items():
         problems: list[tuple[int, str]] = list(pf.bad)
         rejected: list[tuple[int, str]] = []
@@ -581,6 +706,7 @@ async def import_predefined_split(
             field_mapping=mapping, task_profile=task_profile, rejected=rejected,
         ) if pf.rows else []
         problems.extend((pf.lines[idx], reason) for idx, reason in rejected)
+        input_rejects += sum(1 for _i, reason in rejected if reason in ds.INPUT_REJECT_REASONS)
         # Leak / duplicate key = the adapter-mapped model input of each surviving row. A
         # row with no identifiable input cannot be compared across splits: reject it.
         rejected_idx = {idx for idx, _ in rejected}
@@ -594,6 +720,10 @@ async def import_predefined_split(
             keys[role].append(key)
             if not key:
                 problems.append((pf.lines[i], "no_input_field"))
+            elif resolved_adapter_id in _CANONICAL_INPUT_KEYS and not _input_is_real(
+                pf.rows[i], key, resolved_adapter_id, mapping, enriched_config, _profile,
+            ):
+                flagged.setdefault(role, []).append(pf.lines[i])
         if problems:
             problems.sort()
             by_reason: dict[str, Any] = {}
@@ -603,6 +733,13 @@ async def import_predefined_split(
                 if len(slot["sample_rows"]) < SAMPLE_CAP:
                     slot["sample_rows"].append(line)
             rejected_report[role] = {"count": len(problems), "by_reason": by_reason}
+    # The adapter's own input rejections (input is the label / the gold record) covering EVERY row,
+    # or any row whose input is not a real column: ask for a mapping instead of listing row noise.
+    if union and (flagged or (not any(mapped.values()) and (
+        input_rejects == len(union)
+        or not any(_row_has_input_column(row, resolved_adapter_id, mapping, enriched_config) for row in union)
+    ))):
+        _raise_input_column_unrecognised(parsed, union, flagged or None)
     if rejected_report:
         total = sum(v["count"] for v in rejected_report.values())
         raise _fail(
@@ -611,7 +748,10 @@ async def import_predefined_split(
             "Fix or remove those rows, or set a field mapping. Row numbers are file lines (a CSV header is line 1, "
             "its first data row line 2; blank lines count); for JSON arrays, XLSX and Parquet they are the "
             "1-based record number. Rows still waiting in (or rejected by) the review queue are reported too.",
-            {"rejected": rejected_report, "row_counts": {r: len(v) for r, v in source_rows.items()}},
+            {"rejected": rejected_report, "row_counts": {r: len(v) for r, v in source_rows.items()},
+             **({"columns": _columns_of(union)} if any(
+                 "no_input_field" in v["by_reason"] or "input_column_unrecognised" in v["by_reason"]
+                 for v in rejected_report.values()) else {})},
         )
     lines = {role: pf.lines for role, pf in parsed.items()}
 
@@ -805,6 +945,7 @@ async def import_predefined_split(
             "source_files": source_files,
             "leak_report": leak_report,
             "duplicate_report": duplicate_report,
+            "overlap_input_columns": _overlap_input_columns(union, resolved_adapter_id, mapping, enriched_config),
         }
         if "test" in files:  # added only when true: manifests without it are unchanged
             manifest["predefined_test_active"] = True
