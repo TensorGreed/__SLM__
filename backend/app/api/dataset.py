@@ -279,6 +279,35 @@ async def split_effective_config(
     }
 
 
+def _enrich_split_manifest(
+    manifest: dict,
+    *,
+    runtime: dict,
+    profile_defaults: dict,
+    resolved: dict | None,
+    profile_defaults_applied: list[str],
+    adapter_source: str,
+    inherited_from_active: list[str],
+) -> dict:
+    """The endpoint-level fields every prepared-split response carries (domain
+    pack / profile, profile split defaults, adapter-preference source, dedup
+    inheritance). Shared by ``POST /split`` and ``POST /predefined-split``;
+    ``resolved=None`` keeps the manifest's own ``resolved_split_config``."""
+    manifest["domain_pack_applied"] = runtime.get("domain_pack_applied")
+    manifest["domain_pack_source"] = runtime.get("domain_pack_source")
+    manifest["domain_profile_applied"] = runtime.get("domain_profile_applied")
+    manifest["domain_profile_source"] = runtime.get("domain_profile_source")
+    manifest["profile_split_defaults"] = profile_defaults or None
+    if resolved is not None:
+        manifest["resolved_split_config"] = resolved
+    manifest["profile_defaults_applied"] = sorted(set(profile_defaults_applied))
+    manifest["adapter_preference_source"] = adapter_source
+    # Honesty: which split-config fields this dedup re-split reproduced
+    # from the active prepared version rather than form/profile defaults.
+    manifest["dedup_inherited_config"] = sorted(set(inherited_from_active))
+    return manifest
+
+
 @router.post("/split")
 async def split(
     project_id: int,
@@ -386,23 +415,44 @@ async def split(
             auto_stratify=req.auto_stratify,
             keep_test=req.keep_test,
         )
-        manifest["domain_pack_applied"] = runtime.get("domain_pack_applied")
-        manifest["domain_pack_source"] = runtime.get("domain_pack_source")
-        manifest["domain_profile_applied"] = runtime.get("domain_profile_applied")
-        manifest["domain_profile_source"] = runtime.get("domain_profile_source")
-        manifest["profile_split_defaults"] = profile_defaults or None
-        manifest["resolved_split_config"] = resolved
-        manifest["profile_defaults_applied"] = sorted(set(profile_defaults_applied))
-        manifest["adapter_preference_source"] = adapter_source
-        # Honesty: which split-config fields this dedup re-split reproduced
-        # from the active prepared version rather than form/profile defaults.
-        manifest["dedup_inherited_config"] = sorted(set(inherited_from_active))
+        _enrich_split_manifest(
+            manifest, runtime=runtime, profile_defaults=profile_defaults, resolved=resolved,
+            profile_defaults_applied=profile_defaults_applied, adapter_source=adapter_source,
+            inherited_from_active=inherited_from_active,
+        )
         return manifest
     except ValueError as e:
         detail = str(e)
         if detail.startswith("Project "):
             raise HTTPException(404, detail)
         raise HTTPException(400, detail)
+
+
+def _json_form_object(name: str, raw: str | None) -> dict[str, Any] | None:
+    if raw is None or not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(400, f"{name} is not valid JSON: {exc}")
+    if not isinstance(parsed, dict):
+        raise HTTPException(400, f"{name} must be a JSON object")
+    return parsed
+
+
+async def _read_capped_upload(role: str, upload: UploadFile) -> bytes:
+    """Read an upload with the same per-file cap as the row-file import (413)."""
+    from app.api import dataset_import
+
+    limit = dataset_import.MAX_UPLOAD_BYTES
+    chunks: list[bytes] = []
+    size = 0
+    while chunk := await upload.read(1024 * 1024):
+        size += len(chunk)
+        if size > limit:
+            raise HTTPException(413, f"The {role} file is larger than {limit // (1024 * 1024)} MB.")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @router.post("/predefined-split")
@@ -413,33 +463,49 @@ async def predefined_split(
     test: UploadFile | None = File(default=None),
     on_leak: str = Form(default="fail"),
     field_mapping: str | None = Form(default=None),
+    adapter_id: str | None = Form(default=None),
+    adapter_config: str | None = Form(default=None),
+    task_profile: str | None = Form(default=None),
+    chat_template: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """Import train / val / test files with EXACT split membership.
 
-    Same row mapping and prepared artefacts as ``POST /split``, but no
-    re-division or shuffling. 422 lists rows the adapter rejected; 409 lists
+    Same row mapping, chat-template resolution, adapter-wiring rules and
+    prepared artefacts as ``POST /split``, but no re-division or shuffling.
+    422 lists rows that could not be used (unparseable / malformed lines,
+    adapter rejects, review-queue rows) by file line; 409 lists
     train/val/test overlap (``on_leak=drop_from_train`` removes train-side
     overlap only; val/test overlap always fails). Synchronous: not wrapped in
     a Job (files arrive with the request, ~10k rows prepare in seconds)."""
     from app.services.predefined_split_service import import_predefined_split
 
-    mapping: dict[str, str] | None = None
-    if field_mapping and field_mapping.strip():
-        try:
-            parsed = json.loads(field_mapping)
-        except json.JSONDecodeError as exc:
-            raise HTTPException(400, f"field_mapping is not valid JSON: {exc}")
-        if not isinstance(parsed, dict):
-            raise HTTPException(400, "field_mapping must be a JSON object")
-        mapping = {str(k): str(v) for k, v in parsed.items()}
+    mapping_obj = _json_form_object("field_mapping", field_mapping)
+    mapping = {str(k): str(v) for k, v in mapping_obj.items()} if mapping_obj is not None else None
+    config_obj = _json_form_object("adapter_config", adapter_config)
     files: dict[str, tuple[str, bytes]] = {}
     for role, upload in (("train", train), ("val", val), ("test", test)):
         if upload is not None and upload.filename:
-            files[role] = (upload.filename, await upload.read())
+            files[role] = (upload.filename, await _read_capped_upload(role, upload))
     try:
-        return await import_predefined_split(
+        runtime = await resolve_project_domain_runtime(db, project_id)
+        profile_defaults = get_dataset_split_defaults(runtime.get("effective_contract"))
+        provided = {"chat_template"} if chat_template else set()
+        resolved, profile_defaults_applied = _resolve_split_config(
+            profile_defaults=profile_defaults, provided_fields=provided,
+            train_ratio=None, val_ratio=None, test_ratio=None, seed=None, chat_template=chat_template,
+        )
+        manifest = await import_predefined_split(
             db, project_id, files=files, on_leak=on_leak, field_mapping=mapping,
+            adapter_id=adapter_id, adapter_config=config_obj, task_profile=task_profile,
+            chat_template=str(resolved["chat_template"]), seed=int(resolved["seed"]),
+        )
+        # resolved=None: the manifest keeps its OBSERVED ratios (nothing was divided).
+        return _enrich_split_manifest(
+            manifest, runtime=runtime, profile_defaults=profile_defaults, resolved=None,
+            profile_defaults_applied=profile_defaults_applied,
+            adapter_source=str(manifest.get("adapter_preference_source") or "default"),
+            inherited_from_active=[],
         )
     except ValueError as e:
         detail = str(e)

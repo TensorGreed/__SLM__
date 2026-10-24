@@ -34,9 +34,9 @@ class KeepTestTests(unittest.TestCase):
             }
             out, report = ds._keep_test_rows(7, splits, train_ratio=0.8, val_ratio=0.1, seed=42)
             self.assertEqual(out["test"], old_test, "verbatim, in order")
-            test_keys = {ds._entry_text_key(r) for r in old_test}
+            test_keys = {ds._entry_input_key(r) for r in old_test}
             for name in ("train", "val"):
-                self.assertFalse(any(ds._entry_text_key(r) in test_keys for r in out[name]), name)
+                self.assertFalse(any(ds._entry_input_key(r) in test_keys for r in out[name]), name)
             self.assertEqual(len(out["train"]) + len(out["val"]), 51, "40 + 5 + 6 new, minus nothing else")
             self.assertEqual(len(out["val"]), round(51 / 9))
             self.assertEqual(report, {"applied": True, "test_rows_kept": 5, "test_rows_added": 0, "test_rows": 5,

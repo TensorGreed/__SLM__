@@ -181,8 +181,10 @@ Content type: `multipart/form-data`
 | `train` | `file` | yes | JSONL, JSON, CSV, TSV, XLSX or Parquet, one example per row. |
 | `val` | `file` | no | Validation rows. Omit to prepare an empty validation split. |
 | `test` | `file` | no | Test rows (the answer key). |
-| `on_leak` | `string` | no | `fail` (default) or `drop_from_train`. Overlap = the same normalised input text (lower-cased, whitespace collapsed) in two files. `drop_from_train` removes train-side overlap only; val and test are never edited, and val/test overlap always fails. |
-| `field_mapping` | `string` (JSON object) | no | Source column to canonical field, same semantics as the split form; replaces the project's saved mapping for this import. |
+| `on_leak` | `string` | no | `fail` (default) or `drop_from_train`. Overlap = the same normalised model INPUT (lower-cased, whitespace collapsed; every input field the adapter reads, e.g. instruction + input, or a chat's non-assistant turns, never the answer) in two files. `drop_from_train` removes train-side overlap only; val and test are never edited, and val/test overlap always fails. |
+| `field_mapping` | `string` (JSON object) | no | Source column to canonical field, same semantics as `POST .../dataset/split`: sending it (or `adapter_id`, `adapter_config`, `task_profile`) makes the request the whole adapter wiring (`default-canonical` unless `adapter_id` is sent); otherwise the project's saved adapter preference is used. |
+| `adapter_id`, `adapter_config` (JSON object), `task_profile` | `string` | no | Explicit adapter wiring, as in `POST .../dataset/split`. |
+| `chat_template` | `string` | no | `llama3`, `chatml`, `zephyr` or `phi3`. Resolved like `POST .../dataset/split`: this field, else the domain profile's split default, else `llama3`. |
 
 **Responses**
 
@@ -190,10 +192,13 @@ Content type: `multipart/form-data`
 |---|---|---|
 | `200` | `object` | The prepared manifest: `split_source: "predefined"`, `splits`, `file_hashes` (sha256 of each prepared file), `source_files` (original filenames + sha256), `leak_report`, `duplicate_report` (rows whose input repeats earlier in the same split; kept), `dataset_versions`, `prepared_version`, `output_schema`. |
 | `400` | error envelope | Unsupported or empty file, bad `field_mapping` / `on_leak`. |
-| `409` | error envelope | Overlap. `metadata.pairs[]` has `pair` (`train_val`, `train_test`, `val_test`), `counts` per file and `sample_rows` per file (1-based row numbers, header excluded, up to 20). Nothing is written. |
-| `422` | error envelope | Rows the adapter could not map. `metadata.rejected.<split>.by_reason.<reason>` has `count` and up to 20 `sample_rows`. Nothing is written. |
+| `413` | error | A file is larger than 512 MB (same per-file cap as the row-file import). |
+| `409` | error envelope | Overlap. `metadata.pairs[]` has `pair` (`train_val`, `train_test`, `val_test`), `counts` per file and `sample_rows` per file (file line numbers, up to 20; see below). Nothing is written. |
+| `422` | error envelope | Rows that cannot be used. `metadata.rejected.<split>.by_reason.<reason>` has `count` and up to 20 `sample_rows`. Reasons: `unparseable_line` (a JSONL line or JSON-array item that is not a JSON object), `malformed_row` (CSV/TSV row with the wrong column count), `review_status_pending` / `review_status_rejected` (rows still in or rejected by the review queue), `adapter_unmappable_or_empty`, `normalizer_hook_dropped`. Nothing is written. |
 
-The uploaded files are also registered as project raw documents tagged `predefined_split:<role>` (a re-import supersedes the previous ones), so a later random `POST .../dataset/split` with `include_types: ["raw"]` re-pools them, and `keep_test: true` keeps the imported test rows.
+The uploaded files are also registered as project raw documents tagged `predefined_split:<role>` (a re-import supersedes the previous ones), so a later random `POST .../dataset/split` with `include_types: ["raw"]` re-pools the train and validation files. The test file is never pooled: `keep_test: true` keeps the imported test rows, and a re-split without `keep_test` returns `409` (`PREDEFINED_TEST_SPLIT_WOULD_BE_REPLACED`) until you keep the test examples or import new files. The import also saves its adapter wiring (including the scanned label / field list) as the project's adapter preference.
+
+**Row numbers** are file line numbers for JSONL, CSV and TSV: blank lines are skipped but still counted, and a CSV header is line 1 (its first data row is line 2). For JSON arrays, XLSX and Parquet they are the 1-based record index.
 
 
 ### `POST /api/projects/{project_id}/dataset/adapter-preference/auto-detect`

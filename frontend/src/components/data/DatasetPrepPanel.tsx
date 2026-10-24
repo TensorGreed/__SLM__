@@ -1861,7 +1861,17 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                     </button>
                 </div>
                 {useOwnSplitFiles && (
-                    <PredefinedSplitCard projectId={projectId} onImported={() => setHealthRefreshKey((k) => k + 1)} />
+                    <PredefinedSplitCard
+                        projectId={projectId}
+                        chatTemplates={CHAT_TEMPLATES}
+                        chatTemplate={splitTemplate}
+                        sendChatTemplate={!useProfileDefaults || splitTouched.chat_template}
+                        onChatTemplateChange={(value) => {
+                            setSplitTemplate(value);
+                            setSplitTouched((prev) => ({ ...prev, chat_template: true }));
+                        }}
+                        onImported={() => setHealthRefreshKey((k) => k + 1)}
+                    />
                 )}
                 <div className="dp-actions">
                     <button className="btn-primary" onClick={previewEffectiveSplitConfig} disabled={effectiveSplitLoading}>

@@ -135,15 +135,36 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `_write_prepared_splits` (files + Dataset + DatasetVersion rows, tagged
   `split_source`/`source_filename`) and `_finalize_prepared_manifest` (manifest +
   snapshot). Exact membership: no ratio, shuffle or dedup. Adapter-rejected rows → 422
-  (`metadata.rejected.<split>.by_reason`, 20 sample rows, 1-based, header excluded);
-  leak = `_normalise_for_exact(_question_text(row) or _row_to_text(row))` (the
-  split-leakage scan's normaliser) → 409 (`metadata.pairs`); `drop_from_train` removes
+  (`metadata.rejected.<split>.by_reason`, 20 sample rows). Reasons: `unparseable_line` (JSONL
+  line / JSON-array item that isn't a JSON object), `malformed_row` (CSV/TSV wrong column
+  count), `review_status_pending|rejected` (the random split's review gate, reported
+  instead of dropped), `adapter_unmappable_or_empty`, `normalizer_hook_dropped`. Row numbers
+  are PHYSICAL FILE LINES (strict reader `_parse_upload`: blank lines skipped but counted; CSV
+  header = line 1; JSON array / XLSX / Parquet = 1-based record index).
+  Leak/duplicate key = `dataset_service._input_side_key(raw row)`: normalised concatenation of
+  every INPUT field (instruction + input + context/passage + question/prompt/text, honouring
+  `field_mapping` text/question and adapter `source_fields`/`text_fields`; chat = all
+  non-assistant turns; fallback = whole row minus target fields), stamped on every prepared
+  row as `_input_key` (a sha1; random split rows carry it too). `keep_test` uses the same key
+  (`_entry_input_key`; legacy rows without the stamp derive it). → 409 (`metadata.pairs`); `drop_from_train` removes
   train rows only; val↔test always 409. Within-split repeats kept, counted in
   `duplicate_report`. Validation happens before anything is written. Files are registered
   as ACCEPTED raw documents (`source=predefined_split:<role>`; a re-import marks the
   previous ones REJECTED), stamped on rows via `_source_document*`, so a later random
-  split (`include_types:["raw"]`) re-pools them and `keep_test` keeps the test rows;
-  rows are byte-identical to a random split of the same files. Manifest
+  split (`include_types:["raw"]`) re-pools the train/val files only: a `split_role="test"`
+  document is NEVER pooled by `combine_datasets`, `keep_test` keeps the prepared test rows, and
+  a re-split WITHOUT `keep_test` on a project that owns a predefined test file is refused 409
+  (`PREDEFINED_TEST_SPLIT_WOULD_BE_REPLACED`; checks manifest `split_source` OR an accepted
+  test-role doc). The import saves its resolved adapter wiring (incl. scanned label/field
+  list) as the project adapter preference so per-doc re-normalisation builds identical
+  prompts. On failure after `ingest_file`, the registered docs/files are removed and the
+  superseded import is restored. Per-file upload cap = `dataset_import.MAX_UPLOAD_BYTES`
+  (413). `chat_template` form field / profile split default resolve like `/split`; adapter
+  wiring rule matches `/split` (any of adapter_id/adapter_config/field_mapping/task_profile
+  sent → request is the whole wiring, default-canonical if no adapter_id). Manifest carries
+  the `/split` enrichment (`_enrich_split_manifest`). Intentional differences: observed ratios
+  in `resolved_split_config`, `dedup_requested:false`, `keep_test:null`, no `seed` shuffle.
+  Rows are byte-identical to a random split of the same files. Manifest
   `split_source: "predefined"`, `source_files`, `leak_report`, `duplicate_report`;
   `ratios` are the observed proportions. Not a Job (synchronous). Tests:
   `tests/test_predefined_split_import.py`, `PredefinedSplitCard.test.tsx`.

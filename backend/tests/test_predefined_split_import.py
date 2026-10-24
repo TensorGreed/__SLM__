@@ -118,25 +118,78 @@ def test_exact_membership_and_manifest_and_versions():
     assert ("predefined_split:val", "accepted", "val") in got["docs"]
 
 
-def test_equivalent_to_random_split_of_the_same_rows():
-    pid = _new_project()
-    train, val, test = _qa("tr", 14), _qa("va", 3), _qa("te", 3)
-    assert _predef(pid, _jsonl(train), _jsonl(val), _jsonl(test)).status_code == 200
-    predefined = Counter(
-        json.dumps(r, sort_keys=True) for s in ("train", "val", "test") for r in _prepared(pid, s)
-    )
-    # The same source rows, prepared by a RANDOM split of the registered files.
-    resp = client.post(
-        f"/api/projects/{pid}/dataset/split",
-        json={"include_types": ["raw"], "dedup_rows": False, "auto_stratify": False},
-    )
+def _set_pref(pid: int, **body):
+    resp = client.put(f"/api/projects/{pid}/dataset/adapter-preference", json=body)
     assert resp.status_code == 200, resp.text
-    assert resp.json().get("split_source") is None
-    randomised = Counter(
-        json.dumps(r, sort_keys=True) for s in ("train", "val", "test") for r in _prepared(pid, s)
-    )
-    assert sum(randomised.values()) == 20
-    assert predefined == randomised, "byte-identical prepared rows, only the membership differs"
+
+
+def _clear_split_roles(pid: int) -> None:
+    """Let a random split pool the registered files (the test file is normally
+    refused: see the keep_test tests)."""
+
+    async def clear(db):
+        raw = (await db.execute(select(Dataset).where(Dataset.project_id == pid, Dataset.dataset_type == DatasetType.RAW))).scalar_one()
+        for d in (await db.execute(select(RawDocument).where(RawDocument.dataset_id == raw.id))).scalars():
+            meta = dict(d.metadata_ or {})
+            meta.pop("split_role", None)
+            d.metadata_ = meta
+        await db.commit()
+
+    _run(_query(clear))
+    manifest_path = _prep_dir(pid) / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.pop("split_source", None)
+    manifest_path.write_text(json.dumps(manifest))
+
+
+def _chat(user: str, answer: str) -> dict:
+    return {"messages": [{"role": "user", "content": user}, {"role": "assistant", "content": answer}]}
+
+
+def _equiv_cases():
+    cls = lambda p, n, labels: [{"text": f"{p} text {i}", "label": labels[i % len(labels)]} for i in range(n)]
+    ext = lambda p, n, keys: [{"text": f"{p} doc {i}", "structured_output": {k: i for k in keys}} for i in range(n)]
+    ins = lambda p, n: [{"instruction": "Summarize.", "input": f"{p} body {i}", "output": f"{p} sum {i}"} for i in range(n)]
+    return {
+        "qa": (None, _qa("tr", 14), _qa("va", 3), _qa("te", 3)),
+        # the test file has a label the train file lacks: a per-file scan would differ
+        "classification": (
+            ("classification-label", "classification"),
+            cls("tr", 12, ["pos", "neg"]), cls("va", 4, ["pos", "neg"]), cls("te", 6, ["pos", "neg", "neutral"]),
+        ),
+        "structured-extraction": (
+            ("structured-extraction", "structured_extraction"),
+            ext("tr", 12, ["a", "b"]), ext("va", 3, ["a", "b"]), ext("te", 4, ["a"]),
+        ),
+        "instruction": (None, ins("tr", 10), ins("va", 3), ins("te", 3)),
+        "chat": (None, [_chat(f"tr q{i}", f"a{i}") for i in range(10)], [_chat(f"va q{i}", "a") for i in range(3)], [_chat(f"te q{i}", "a") for i in range(3)]),
+    }
+
+
+def test_equivalent_to_random_split_of_the_same_rows():
+    for name, (adapter, train, val, test) in _equiv_cases().items():
+        pid = _new_project()
+        if adapter:
+            _set_pref(pid, adapter_id=adapter[0], task_profile=adapter[1])
+        resp = _predef(pid, _jsonl(train), _jsonl(val), _jsonl(test))
+        assert resp.status_code == 200, (name, resp.text)
+        n = len(train) + len(val) + len(test)
+        predefined = Counter(
+            json.dumps(r, sort_keys=True) for s in ("train", "val", "test") for r in _prepared(pid, s)
+        )
+        # The same source rows, prepared by a RANDOM split of the registered files.
+        _clear_split_roles(pid)
+        resp = client.post(
+            f"/api/projects/{pid}/dataset/split",
+            json={"include_types": ["raw"], "dedup_rows": False, "auto_stratify": False},
+        )
+        assert resp.status_code == 200, (name, resp.text)
+        assert resp.json().get("split_source") is None
+        randomised = Counter(
+            json.dumps(r, sort_keys=True) for s in ("train", "val", "test") for r in _prepared(pid, s)
+        )
+        assert sum(randomised.values()) == n, name
+        assert predefined == randomised, f"{name}: byte-identical prepared rows, only the membership differs"
 
 
 def test_rejected_rows_fail_422_grouped_with_sample_rows():
@@ -280,8 +333,11 @@ def test_later_random_resplit_and_keep_test_keep_the_predefined_test_rows():
     assert resp.json()["keep_test"]["applied"] is True
     assert _prepared(pid, "test") == test_before
     assert len(_prepared(pid, "train")) + len(_prepared(pid, "val")) == 35
-    # a plain random split afterwards still works
-    assert client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"]}).status_code == 200
+    # a plain random split would replace the user's own test file: refused, not silent
+    plain = client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"]})
+    assert plain.status_code == 409, plain.text
+    assert "test split came from your own test file" in plain.json()["message"]
+    assert _prepared(pid, "test") == test_before
 
 
 def test_reimport_supersedes_the_previous_files():
@@ -298,9 +354,12 @@ def test_reimport_supersedes_the_previous_files():
 
     # other tests' docs share the table; the latest two are accepted, so at least 2
     assert _run(_query(statuses))[DocumentStatus.ACCEPTED] >= 2
-    resp = client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"], "dedup_rows": False})
-    assert resp.status_code == 200
-    assert resp.json()["total_entries"] == 9, "only the latest import is pooled"
+    resp = client.post(
+        f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"], "dedup_rows": False, "keep_test": True},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total_entries"] == 6, "only the latest import's train file is pooled (test rows are kept, not pooled)"
+    assert len(_prepared(pid, "test")) == 3
 
 
 def test_training_and_eval_read_the_prepared_files_unchanged():
@@ -314,3 +373,270 @@ def test_training_and_eval_read_the_prepared_files_unchanged():
     for split, n in (("train", 6), ("val", 2), ("test", 2)):
         assert Path(manifest["file_paths"][split]) == _prep_dir(pid) / f"{split}.jsonl"
         assert len(_prepared(pid, split)) == n
+
+
+# --- review-2 regressions -----------------------------------------------------
+
+
+def _own_test_survives(pid: int, test_rows: list[dict], text_key: str = "text") -> None:
+    """keep_test re-split keeps every test-file row in test and none in train / val;
+    without keep_test the re-split is refused."""
+    test_before = _prepared(pid, "test")
+    refused = client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"]})
+    assert refused.status_code == 409, refused.text
+    assert _prepared(pid, "test") == test_before
+    resp = client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"], "keep_test": True})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["keep_test"]["applied"] is True
+    assert _prepared(pid, "test") == test_before
+    test_texts = {r[text_key] for r in test_rows}
+    pooled = _prepared(pid, "train") + _prepared(pid, "val")
+    assert not [r for r in pooled if r.get(text_key) in test_texts], "test-file rows leaked into train / val"
+    assert not [r for r in pooled if r.get("_source_document") and "test" in str(r["_source_document"])]
+
+
+def _cls(prefix, n, labels):
+    return [{"text": f"{prefix} text {i}", "label": labels[i % len(labels)]} for i in range(n)]
+
+
+def test_keep_test_resplit_never_pools_the_test_file_classification():
+    for tr_labels, te_labels in (
+        (["pos", "neg"], ["pos", "neg", "neutral"]),  # test has a label train lacks
+        (["pos", "neg", "neutral"], ["pos", "neg"]),  # test lacks a label train has
+    ):
+        pid = _new_project()
+        _set_pref(pid, adapter_id="classification-label", task_profile="classification")
+        test = _cls("te", 6, te_labels) + [{"text": "te rare", "label": "mixed"}]
+        assert _predef(pid, _jsonl(_cls("tr", 21, tr_labels)), _jsonl(_cls("va", 3, tr_labels)), _jsonl(test)).status_code == 200
+        _own_test_survives(pid, test)
+
+
+def test_keep_test_resplit_never_pools_the_test_file_structured_extraction():
+    pid = _new_project()
+    _set_pref(pid, adapter_id="structured-extraction", task_profile="structured_extraction")
+    tr = [{"text": f"tr doc {i}", "structured_output": {"a": i, "b": "x"}} for i in range(20)]
+    va = [{"text": f"va doc {i}", "structured_output": {"a": i, "b": "x"}} for i in range(4)]
+    te = [{"text": f"te doc {i}", "structured_output": {"a": i}} for i in range(6)]
+    assert _predef(pid, _jsonl(tr), _jsonl(va), _jsonl(te)).status_code == 200
+    _own_test_survives(pid, te)
+
+
+def test_adapter_wiring_is_saved_as_the_project_preference():
+    pid = _new_project()
+    _set_pref(pid, adapter_id="classification-label", task_profile="classification")
+    assert _predef(pid, _jsonl(_cls("tr", 8, ["pos", "neg"])), None, _jsonl(_cls("te", 3, ["neutral"]))).status_code == 200
+    pref = client.get(f"/api/projects/{pid}/dataset/adapter-preference").json()
+    assert pref["adapter_id"] == "classification-label"
+    assert sorted(pref["adapter_config"]["candidates"]) == ["neg", "neutral", "pos"]
+
+
+def test_test_file_never_pooled_without_keep_test_even_after_a_keep_test_resplit():
+    pid = _new_project()
+    assert _predef(pid, _jsonl(_qa("tr", 20)), _jsonl(_qa("va", 4)), _jsonl(_qa("te", 5))).status_code == 200
+    assert client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"], "keep_test": True}).status_code == 200
+    # the manifest no longer says "predefined", but the registered test document still guards the test rows
+    assert client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"]}).status_code == 409
+
+
+def _lines(*parts: str) -> bytes:
+    return ("\n".join(parts) + "\n").encode()
+
+
+def test_malformed_jsonl_lines_are_reported_by_physical_line_not_dropped():
+    pid = _new_project()
+    good = lambda i: json.dumps({"question": f"tr q{i}?", "answer": "a"})
+    # line 1 ok, 2 blank, 3 truncated, 4 ok, 5 a JSON list, 6 ok
+    train = _lines(good(0), "", '{"question": "broken?", "answer": ', good(1), "[1, 2]", good(2))
+    resp = _predef(pid, train, None, _jsonl(_qa("te", 2)))
+    assert resp.status_code == 422, resp.text
+    slot = resp.json()["metadata"]["rejected"]["train"]["by_reason"]["unparseable_line"]
+    assert slot == {"count": 2, "sample_rows": [3, 5]}
+    assert not (_prep_dir(pid) / "train.jsonl").exists()
+    # blank lines do not shift the numbering of later (mapping) rejects
+    pid = _new_project()
+    _set_pref(pid, adapter_id="structured-extraction", task_profile="structured_extraction")
+    train = _lines(json.dumps({"text": "a", "structured_output": {"x": 1}}), "", "", json.dumps({"note": "nothing"}))
+    resp = _predef(pid, train, None, _jsonl([{"text": "t", "structured_output": {"x": 1}}]))
+    assert resp.json()["metadata"]["rejected"]["train"]["by_reason"]["adapter_unmappable_or_empty"]["sample_rows"] == [4]
+
+
+def test_csv_rows_with_the_wrong_column_count_are_malformed_and_numbered_from_the_header():
+    pid = _new_project()
+    # header = line 1; line 3 has an extra cell, line 4 is blank, line 5 is short
+    train = b"question,answer\nq one?,A\nq two?,B,extra\n\nq three?\nq four?,D\n"
+    resp = client.post(
+        f"/api/projects/{pid}/dataset/predefined-split",
+        files={"train": ("t.csv", train, "text/csv")},
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["metadata"]["rejected"]["train"]["by_reason"]["malformed_row"] == {"count": 2, "sample_rows": [3, 5]}
+
+
+def test_json_array_rows_are_numbered_by_record_index():
+    pid = _new_project()
+    payload = json.dumps([{"question": "q1?", "answer": "a"}, "not an object", {"question": "q3?", "answer": "a"}]).encode()
+    resp = client.post(
+        f"/api/projects/{pid}/dataset/predefined-split", files={"train": ("t.json", payload, "application/json")},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["metadata"]["rejected"]["train"]["by_reason"]["unparseable_line"]["sample_rows"] == [2]
+
+
+def test_review_queue_rows_are_reported_not_dropped_silently():
+    pid = _new_project()
+    train = _qa("tr", 4)
+    train[1]["review_status"] = "pending"
+    train[3]["review_status"] = "rejected"
+    resp = _predef(pid, _jsonl(train), None, _jsonl(_qa("te", 2)))
+    assert resp.status_code == 422, resp.text
+    by_reason = resp.json()["metadata"]["rejected"]["train"]["by_reason"]
+    assert by_reason["review_status_pending"]["sample_rows"] == [2]
+    assert by_reason["review_status_rejected"]["sample_rows"] == [4]
+    ok = _qa("tr", 4)
+    ok[0]["review_status"] = "approved"
+    assert _predef(pid, _jsonl(ok), None, _jsonl(_qa("te", 2))).status_code == 200
+
+
+def _predef_rows(shape: str, prefix: str, i: int, **kw) -> dict:
+    return {
+        "instruction": {"instruction": kw.get("instruction", "Summarize."), "input": kw.get("input", f"{prefix} body {i}"), "output": kw.get("output", "s")},
+        "chat": _chat(kw.get("user", f"{prefix} q{i}"), kw.get("answer", "a")),
+        "extraction": {"text": kw.get("text", f"{prefix} doc {i}"), "structured_output": kw.get("out", {"a": i})},
+    }[shape]
+
+
+def test_leak_key_is_the_input_side_not_the_whole_row():
+    # shared instruction, different inputs -> not a leak
+    pid = _new_project()
+    resp = _predef(
+        pid, _jsonl([_predef_rows("instruction", "tr", i) for i in range(5)]), None,
+        _jsonl([_predef_rows("instruction", "te", i) for i in range(2)]),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["duplicate_report"] == {"train": 0, "val": 0, "test": 0}
+    # same instruction + input, different output -> leak
+    pid = _new_project()
+    resp = _predef(
+        pid, _jsonl([_predef_rows("instruction", "tr", i) for i in range(5)] + [_predef_rows("instruction", "te", 0, output="x", input="te body 0")]),
+        None, _jsonl([_predef_rows("instruction", "te", i) for i in range(2)]),
+    )
+    assert resp.status_code == 409
+    # chat: same user turn, different answers -> leak; different user turns -> not
+    pid = _new_project()
+    tr = [_predef_rows("chat", "tr", i) for i in range(5)] + [_predef_rows("chat", "x", 0, user="shared prompt", answer="answer one")]
+    te = [_predef_rows("chat", "te", 0, user="shared prompt", answer="answer two"), _predef_rows("chat", "te", 1)]
+    resp = _predef(pid, _jsonl(tr), None, _jsonl(te))
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["metadata"]["pairs"][0]["sample_rows"] == {"train": [6], "test": [1]}
+    pid = _new_project()
+    assert _predef(pid, _jsonl(tr[:5]), None, _jsonl(te[1:])).status_code == 200
+    # extraction: keyed on the document text, not the output
+    pid = _new_project()
+    _set_pref(pid, adapter_id="structured-extraction", task_profile="structured_extraction")
+    tr = [_predef_rows("extraction", "tr", i) for i in range(5)] + [_predef_rows("extraction", "x", 0, text="shared doc", out={"a": 99})]
+    te = [_predef_rows("extraction", "te", 0, text="Shared   DOC", out={"a": 1}), _predef_rows("extraction", "te", 1)]
+    assert _predef(pid, _jsonl(tr), None, _jsonl(te)).status_code == 409
+
+
+def test_input_key_ignores_prompt_template_and_target_fields():
+    from app.services.dataset_service import _entry_input_key, _input_side_key
+
+    assert _input_side_key({"question": "Why?", "answer": "A"}) == _input_side_key({"prompt": "why?  ", "response": "B"})
+    assert _input_side_key({"instruction": "X", "input": "one"}) != _input_side_key({"instruction": "X", "input": "two"})
+    assert _input_side_key(_chat("hi", "a")) == _input_side_key(_chat("hi", "b"))
+    assert _input_side_key({"note": "x", "label": "pos"}) == _input_side_key({"note": "x", "label": "neg"})
+    legacy = {"question": "Why?", "answer": "A", "text": "Question: Why?\nAnswer: A"}
+    assert _entry_input_key(legacy) == _input_side_key({"question": "Why?"})
+
+
+def test_chat_template_is_resolved_like_split_and_accepts_a_form_field():
+    pid = _new_project()
+    resp = _predef(pid, _jsonl(_qa("tr", 4)), None, _jsonl(_qa("te", 2)))
+    assert resp.json()["chat_template"] == "llama3"
+    assert _prepared(pid, "train")[0]["text"].startswith("<|start_header_id|>")
+    assert resp.json()["resolved_split_config"]["chat_template"] == "llama3"
+    resp = _predef(pid, _jsonl(_qa("tr", 4)), None, _jsonl(_qa("te", 2)), chat_template="chatml")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["chat_template"] == "chatml"
+    assert resp.json()["resolved_split_config"]["chat_template"] == "chatml"
+    assert _prepared(pid, "train")[0]["text"].startswith("<|im_start|>user")
+    # the profile's split default applies when the form does not set one
+    from unittest import mock
+
+    with mock.patch("app.api.dataset.get_dataset_split_defaults", return_value={"chat_template": "zephyr"}):
+        resp = _predef(pid, _jsonl(_qa("tr", 4)), None, _jsonl(_qa("te", 2)))
+    assert resp.json()["chat_template"] == "zephyr"
+    assert resp.json()["profile_defaults_applied"] == ["chat_template"]
+
+
+def test_manifest_has_the_same_enrichment_fields_as_split():
+    pid = _new_project()
+    _set_pref(pid, adapter_id="default-canonical")
+    manifest = _predef(pid, _jsonl(_qa("tr", 4)), None, _jsonl(_qa("te", 2))).json()
+    random_manifest = client.post(
+        f"/api/projects/{pid}/dataset/split", json={"include_types": ["raw"], "keep_test": True},
+    ).json()
+    for key in (
+        "domain_pack_applied", "domain_pack_source", "domain_profile_applied", "domain_profile_source",
+        "profile_split_defaults", "profile_defaults_applied", "adapter_preference_source", "dedup_inherited_config",
+        "resolved_split_config",
+    ):
+        assert key in manifest, key
+        assert key in random_manifest, key
+    assert manifest["adapter_preference_source"] == "project"
+    assert manifest["dedup_inherited_config"] == []
+    # intentional difference: observed (not requested) ratios
+    assert manifest["resolved_split_config"]["train_ratio"] == round(4 / 6, 6)
+
+
+def test_sending_field_mapping_resets_the_adapter_like_split():
+    pid = _new_project()
+    _set_pref(pid, adapter_id="classification-label", task_profile="classification")
+    resp = client.post(
+        f"/api/projects/{pid}/dataset/predefined-split",
+        files={"train": ("t.jsonl", _jsonl(_qa("tr", 4)), "x"), "test": ("e.jsonl", _jsonl(_qa("te", 2)), "x")},
+        data={"field_mapping": json.dumps({"question": "question", "answer": "answer"})},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["adapter_id"] == "default-canonical" and body["adapter_preference_source"] == "request"
+    assert body["task_profile_requested"] is None
+
+
+def test_failure_after_registering_files_removes_the_orphans():
+    from unittest import mock
+
+    import pytest
+
+    pid = _new_project()
+    assert _predef(pid, _jsonl(_qa("a", 5)), None, _jsonl(_qa("b", 2))).status_code == 200
+
+    async def snapshot(db):
+        raw = (await db.execute(select(Dataset).where(Dataset.project_id == pid, Dataset.dataset_type == DatasetType.RAW))).scalar_one()
+        docs = (await db.execute(select(RawDocument).where(RawDocument.dataset_id == raw.id))).scalars().all()
+        return sorted((d.id, d.status.value, d.file_path) for d in docs)
+
+    before = _run(_query(snapshot))
+    assert before and all(Path(p).exists() for _, _, p in before)
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("disk full")
+
+    with mock.patch("app.services.predefined_split_service._write_prepared_splits", boom):
+        with pytest.raises(RuntimeError):
+            _predef(pid, _jsonl(_qa("c", 5)), None, _jsonl(_qa("d", 2)))
+    after = _run(_query(snapshot))
+    assert after == before, "no orphan documents; the previous import is still the accepted one"
+    stored = list((Path(before[0][2]).parent).glob("*.jsonl"))
+    assert {p.name for p in stored} == {Path(p).name for _, _, p in before}, "no orphan files on disk"
+
+
+def test_upload_size_cap_is_enforced_per_file_with_413():
+    from unittest import mock
+
+    pid = _new_project()
+    with mock.patch("app.api.dataset_import.MAX_UPLOAD_BYTES", 64):
+        resp = _predef(pid, _jsonl(_qa("tr", 10)), None, _jsonl(_qa("te", 1)))
+        assert resp.status_code == 413, resp.text
+        assert "train" in resp.json()["detail"]
+    assert _predef(pid, _jsonl(_qa("tr", 10)), None, _jsonl(_qa("te", 1))).status_code == 200

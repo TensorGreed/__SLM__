@@ -14,8 +14,19 @@ import {
 } from '../../api/predefinedSplit';
 import './PredefinedSplitCard.css';
 
+export interface ChatTemplateOption {
+    value: string;
+    label: string;
+}
+
 interface Props {
     projectId: number;
+    /** The split form's chat-template control (same options, same value). */
+    chatTemplates?: ChatTemplateOption[];
+    chatTemplate?: string;
+    onChatTemplateChange?: (value: string) => void;
+    /** False while the profile's default template applies (the split form sends nothing then). */
+    sendChatTemplate?: boolean;
     onImported?: (manifest: PredefinedSplitManifest) => void;
 }
 
@@ -28,7 +39,7 @@ interface Problem {
 const ROLE_LABEL: Record<string, string> = { train: 'Train', val: 'Validation', test: 'Test' };
 
 function rowsText(rows: number[]): string {
-    return rows.length ? `rows ${rows.join(', ')}` : 'no sample rows';
+    return rows.length ? `lines ${rows.join(', ')}` : 'no sample lines';
 }
 
 /** Turn a 409 (leakage) / 422 (rejected rows) envelope into grouped lines. */
@@ -73,7 +84,14 @@ function toProblem(err: unknown): Problem {
     return { message: env.message, fix: env.actionableFix, groups };
 }
 
-export default function PredefinedSplitCard({ projectId, onImported }: Props) {
+export default function PredefinedSplitCard({
+    projectId,
+    chatTemplates,
+    chatTemplate,
+    onChatTemplateChange,
+    sendChatTemplate = true,
+    onImported,
+}: Props) {
     const [train, setTrain] = useState<File | null>(null);
     const [val, setVal] = useState<File | null>(null);
     const [test, setTest] = useState<File | null>(null);
@@ -89,7 +107,11 @@ export default function PredefinedSplitCard({ projectId, onImported }: Props) {
         setProblem(null);
         setResult(null);
         try {
-            const manifest = await importPredefinedSplit(projectId, { train, val, test }, { onLeak, fieldMapping });
+            const manifest = await importPredefinedSplit(projectId, { train, val, test }, {
+                onLeak,
+                fieldMapping,
+                chatTemplate: sendChatTemplate ? chatTemplate : null,
+            });
             setResult(manifest);
             onImported?.(manifest);
         } catch (err) {
@@ -118,7 +140,10 @@ export default function PredefinedSplitCard({ projectId, onImported }: Props) {
             <p className="pdsplit__help">
                 Already have train / validation / test files (for example a benchmark with a fixed test set)?
                 Each row stays in the split you put it in: nothing is re-divided, shuffled or removed, and the
-                files go through the same mapping as a normal split.
+                files go through the same mapping as a normal split. Problems are reported by file line: line 1 of a
+                CSV is the header, so its first row is line 2; blank lines count; for JSON arrays, Excel and Parquet
+                files the number is the record number. Your test file stays out of any later re-split unless you
+                import new files.
             </p>
             <div className="pdsplit__files">
                 {picker('pdsplit-train', 'Train file (required)', 'JSONL, JSON, CSV, TSV, XLSX or Parquet', setTrain)}
@@ -137,6 +162,21 @@ export default function PredefinedSplitCard({ projectId, onImported }: Props) {
                     <option value="drop_from_train">Drop the overlapping rows from train</option>
                 </select>
             </label>
+            {chatTemplates && chatTemplate !== undefined && onChatTemplateChange && (
+                <label className="pdsplit__field" htmlFor="pdsplit-template">
+                    <span>Chat template (same choice as the split form below)</span>
+                    <select
+                        id="pdsplit-template"
+                        data-testid="pdsplit-template"
+                        value={chatTemplate}
+                        onChange={(e) => onChatTemplateChange(e.target.value)}
+                    >
+                        {chatTemplates.map((t) => (
+                            <option key={t.value} value={t.value}>{t.label}</option>
+                        ))}
+                    </select>
+                </label>
+            )}
             <label className="pdsplit__field" htmlFor="pdsplit-mapping">
                 <span>Column mapping (optional JSON object, for example {'{"prompt": "question"}'})</span>
                 <input

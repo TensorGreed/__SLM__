@@ -13,11 +13,25 @@ duplicates stay (and are counted); rows the adapter rejects fail the import
 (422, grouped by reason); train/val/test input overlap fails (409) unless the
 caller asked to drop the overlapping rows from TRAIN only. Val<->test overlap
 always fails — neither side is ever edited.
+
+Row numbers in every report are physical FILE LINE numbers for JSONL / CSV /
+TSV (CSV: the header is line 1, the first data row line 2; blank lines are
+skipped but still count); for JSON arrays, XLSX and Parquet they are the
+1-based record index.
+
+The uploads are registered as accepted raw documents carrying
+``metadata.split_role``; ``combine_datasets`` never pools a ``test`` document
+into a later random division, and the import's scanned adapter config is saved
+as the project's adapter preference so later per-document normalisation
+produces identical prompts.
 """
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
+import json
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,10 +45,9 @@ from app.models.dataset import DatasetType, DocumentStatus, RawDocument
 from app.services import dataset_service as ds
 from app.services.dataset_service import (
     _finalize_prepared_manifest,
-    _load_records_from_file,
+    _input_side_key,
     _majority_task_profile,
     _normalize_rows_for_training,
-    _question_text,
     _recipe_output_schema,
     _resolve_adapter_for_rows,
     _resolve_normalizer_hook_spec,
@@ -43,7 +56,7 @@ from app.services.dataset_service import (
     resolve_project_dataset_adapter_preference,
 )
 from app.utils.file_parsers import SUPPORTED_EXTENSIONS
-from app.utils.tabular_io import is_tabular
+from app.utils.tabular_io import decode_bytes, is_tabular, load_rows
 
 SPLIT_ROLES: tuple[str, ...] = ("train", "val", "test")
 ON_LEAK_CHOICES: tuple[str, ...] = ("fail", "drop_from_train")
@@ -65,21 +78,74 @@ def _fail(status: int, code: str, message: str, fix: str, metadata: dict[str, An
 
 
 def _leak_key(entry: dict[str, Any]) -> str:
-    """The normalised input text two rows are compared on: the question /
-    prompt / input the row asks (else its whole text), through the same
-    lower-case + whitespace-collapse normaliser the split-leakage scan uses."""
-    from app.services.data_health_service import _normalise_for_exact
-    from app.services.trainability_forecast_service import _row_to_text
-
-    return _normalise_for_exact(_question_text(entry) or _row_to_text(entry))
+    """The input-side key two rows are compared on (stamped when the row was
+    prepared; see ``dataset_service._input_side_key``)."""
+    return ds._entry_input_key(entry)
 
 
 def _sample(numbers: list[int]) -> list[int]:
-    """1-based file row numbers (header excluded), capped."""
+    """File line (or record) numbers, capped."""
     return numbers[:SAMPLE_CAP]
 
 
-def _parse_upload(role: str, filename: str, content: bytes, workdir: Path) -> list[dict[str, Any]]:
+class _ParsedFile:
+    """Rows of one upload plus where each came from: ``lines[i]`` is the
+    physical file line (JSONL / CSV / TSV) or 1-based record index of
+    ``rows[i]``; ``bad`` lists ``(line, reason)`` for what could not be read."""
+
+    def __init__(self) -> None:
+        self.rows: list[dict[str, Any]] = []
+        self.lines: list[int] = []
+        self.bad: list[tuple[int, str]] = []
+
+
+def _read_jsonl(text: str, parsed: _ParsedFile) -> None:
+    for number, raw in enumerate(text.split("\n"), start=1):
+        token = raw.strip()
+        if not token:
+            continue
+        try:
+            row = json.loads(token)
+        except json.JSONDecodeError:
+            parsed.bad.append((number, "unparseable_line"))
+            continue
+        if not isinstance(row, dict):
+            parsed.bad.append((number, "unparseable_line"))
+            continue
+        parsed.rows.append(row)
+        parsed.lines.append(number)
+
+
+def _read_delimited(text: str, ext: str, parsed: _ParsedFile) -> None:
+    delimiter: str | None = "\t" if ext == ".tsv" else None
+    if delimiter is None:
+        try:
+            delimiter = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|").delimiter
+        except csv.Error:
+            delimiter = ","
+    reader = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter)
+    header: list[str] | None = None
+    previous = 0
+    try:
+        for cells in reader:
+            start = previous + 1
+            previous = reader.line_num
+            if not any(c.strip() for c in cells):
+                continue
+            if header is None:
+                header = [c.strip() for c in cells]
+                continue
+            if len(cells) != len(header):
+                parsed.bad.append((start, "malformed_row"))
+                continue
+            row = {h: c for h, c in zip(header, cells) if h}
+            parsed.rows.append(row)
+            parsed.lines.append(start)
+    except csv.Error:
+        parsed.bad.append((previous + 1, "malformed_row"))
+
+
+def _parse_upload(role: str, filename: str, content: bytes, workdir: Path) -> _ParsedFile:
     safe = Path(filename or f"{role}.jsonl").name
     ext = Path(safe).suffix.lower()
     if ext not in SUPPORTED_EXTENSIONS or not is_tabular(safe):
@@ -95,17 +161,104 @@ def _parse_upload(role: str, filename: str, content: bytes, workdir: Path) -> li
             400, "PREDEFINED_SPLIT_EMPTY_FILE", f"The {role} file '{safe}' is empty.",
             "Upload a file with at least one row, or leave it out.", {"split": role, "filename": safe},
         )
-    path = workdir / role / safe
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(content)
-    rows = _load_records_from_file(path, include_pending_synth=True)
-    if not rows:
+    parsed = _ParsedFile()
+    if ext == ".jsonl":
+        _read_jsonl(decode_bytes(content)[0], parsed)
+    elif ext in {".csv", ".tsv"}:
+        _read_delimited(decode_bytes(content)[0], ext, parsed)
+    elif ext == ".json":
+        from app.utils.tabular_io import _json_rows
+
+        text = decode_bytes(content)[0]
+        try:
+            records = _json_rows(text)
+        except json.JSONDecodeError:
+            _read_jsonl(text, parsed)  # a ".json" export that is really JSON Lines
+        else:
+            for number, row in enumerate(records, start=1):
+                if isinstance(row, dict):
+                    parsed.rows.append(row)
+                    parsed.lines.append(number)
+                else:
+                    parsed.bad.append((number, "unparseable_line"))
+    else:  # xlsx / parquet: record index
+        path = workdir / role / safe
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        try:
+            records = load_rows(path)
+        except ValueError as exc:
+            raise _fail(
+                400, "PREDEFINED_SPLIT_BAD_FILE", f"The {role} file '{safe}' could not be read: {exc}",
+                "Check the file opens in a spreadsheet / Parquet viewer.", {"split": role, "filename": safe},
+            ) from exc
+        for number, row in enumerate(records, start=1):
+            parsed.rows.append(row)
+            parsed.lines.append(number)
+    if not parsed.rows and not parsed.bad:
         raise _fail(
             400, "PREDEFINED_SPLIT_NO_ROWS", f"No rows could be read from the {role} file '{safe}'.",
             "Check the file format and that it has a header row (CSV) or one JSON object per line.",
             {"split": role, "filename": safe},
         )
-    return rows
+    return parsed
+
+
+def _apply_review_gate(parsed: _ParsedFile) -> None:
+    """The random split's review gate (rows pending / rejected in the review
+    queue never train), except these rows are REPORTED, not dropped silently."""
+    kept_rows, kept_lines = [], []
+    for row, line in zip(parsed.rows, parsed.lines):
+        status = row.get("review_status")
+        if status in ("pending", "rejected"):
+            parsed.bad.append((line, f"review_status_{status}"))
+        else:
+            kept_rows.append(row)
+            kept_lines.append(line)
+    parsed.rows, parsed.lines = kept_rows, kept_lines
+
+
+async def _persist_adapter_preference(
+    db: AsyncSession, project_id: int, adapter_id: str, adapter_config: dict[str, Any] | None,
+    field_mapping: dict[str, str], task_profile: str | None,
+) -> None:
+    """Save the import's resolved adapter wiring (including the scanned label /
+    field lists) as the project preference, so a later per-document
+    re-normalisation (random re-split of the registered files) builds the same
+    prompts. Keeps the preset's ``origin``."""
+    from app.models.project import Project
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        return
+    prior = project.dataset_adapter_preset if isinstance(project.dataset_adapter_preset, dict) else {}
+    preset = {
+        "adapter_id": adapter_id,
+        "adapter_config": ds._normalize_adapter_config(adapter_config),
+        "field_mapping": ds._normalize_field_mapping(field_mapping),
+        "task_profile": ds._normalize_task_profile_value(task_profile),
+    }
+    if prior.get("origin"):
+        preset["origin"] = prior["origin"]
+    project.dataset_adapter_preset = preset
+    await db.flush()
+
+
+async def _discard_registered(db: AsyncSession, docs: list[RawDocument]) -> None:
+    """Best-effort cleanup of documents ``ingest_file`` registered before a
+    later step failed: delete the stored file and the row."""
+    for doc in docs:
+        try:
+            path = Path(doc.file_path)
+            path.unlink(missing_ok=True)
+            path.with_suffix(".extracted.txt").unlink(missing_ok=True)
+            await db.delete(doc)
+        except Exception:  # noqa: BLE001 - cleanup must not mask the real error
+            pass
+    try:
+        await db.flush()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def import_predefined_split(
@@ -115,11 +268,19 @@ async def import_predefined_split(
     files: dict[str, tuple[str, bytes]],
     on_leak: str = "fail",
     field_mapping: dict[str, str] | None = None,
+    adapter_id: str | None = None,
+    adapter_config: dict[str, Any] | None = None,
+    task_profile: str | None = None,
     chat_template: str = "llama3",
     seed: int = DEFAULT_SEED,
 ) -> dict[str, Any]:
     """Import ``files`` ({"train": (name, bytes), "val"?: ..., "test"?: ...})
-    with exact membership. Returns the prepared manifest."""
+    with exact membership. Returns the prepared manifest.
+
+    Adapter wiring follows ``POST /split``: when any of ``adapter_id`` /
+    ``adapter_config`` / ``field_mapping`` / ``task_profile`` is sent, the
+    request is the whole wiring (an omitted ``adapter_id`` means
+    ``default-canonical``); otherwise the project's adapter preference."""
     if on_leak not in ON_LEAK_CHOICES:
         raise _fail(
             400, "PREDEFINED_SPLIT_BAD_ON_LEAK", f"on_leak must be one of {list(ON_LEAK_CHOICES)}.",
@@ -128,19 +289,30 @@ async def import_predefined_split(
     if "train" not in files:
         raise _fail(400, "PREDEFINED_SPLIT_NO_TRAIN", "A train file is required.", "Upload a train file.")
 
-    preset = await resolve_project_dataset_adapter_preference(db, project_id)
-    adapter_id = str(preset.get("adapter_id") or ds.DEFAULT_ADAPTER_ID)
-    adapter_config = dict(preset.get("adapter_config") or {})
-    task_profile = str(preset.get("task_profile") or "").strip() or None
-    mapping = dict(field_mapping) if field_mapping else dict(preset.get("field_mapping") or {})
+    if any(v is not None for v in (adapter_id, adapter_config, field_mapping, task_profile)):
+        adapter_id = str(adapter_id or ds.DEFAULT_ADAPTER_ID).strip() or ds.DEFAULT_ADAPTER_ID
+        adapter_config = dict(adapter_config or {})
+        mapping = dict(field_mapping or {})
+        task_profile = str(task_profile or "").strip() or None
+        adapter_source = "request"
+    else:
+        preset = await resolve_project_dataset_adapter_preference(db, project_id)
+        adapter_id = str(preset.get("adapter_id") or ds.DEFAULT_ADAPTER_ID)
+        adapter_config = dict(preset.get("adapter_config") or {})
+        mapping = dict(preset.get("field_mapping") or {})
+        task_profile = str(preset.get("task_profile") or "").strip() or None
+        adapter_source = str(preset.get("source") or "default")
 
     # 1. Parse (in a scratch dir; nothing is registered until every check passes).
-    source_rows: dict[str, list[dict[str, Any]]] = {}
+    parsed: dict[str, _ParsedFile] = {}
     with tempfile.TemporaryDirectory(prefix="predefined-split-") as tmp:
         for role in SPLIT_ROLES:
             if role in files:
                 name, content = files[role]
-                source_rows[role] = _parse_upload(role, name, content, Path(tmp))
+                parsed[role] = _parse_upload(role, name, content, Path(tmp))
+    for pf in parsed.values():
+        _apply_review_gate(pf)
+    source_rows = {role: pf.rows for role, pf in parsed.items()}
 
     # 2. Map every split through the SAME adapter path a random split uses. The
     # adapter, label candidates and extraction field list are resolved once over
@@ -153,29 +325,35 @@ async def import_predefined_split(
     )
     mapped: dict[str, list[dict[str, Any]]] = {}
     rejected_report: dict[str, Any] = {}
-    for role, rows in source_rows.items():
+    for role, pf in parsed.items():
+        problems: list[tuple[int, str]] = list(pf.bad)
         rejected: list[tuple[int, str]] = []
         mapped[role] = _normalize_rows_for_training(
-            rows, DatasetType.RAW, chat_template, normalizer_hook_spec=hook_spec,
+            pf.rows, DatasetType.RAW, chat_template, normalizer_hook_spec=hook_spec,
             adapter_id=resolved_adapter_id, adapter_config=enriched_config,
             field_mapping=mapping, task_profile=task_profile, rejected=rejected,
-        )
-        if rejected:
+        ) if pf.rows else []
+        problems.extend((pf.lines[idx], reason) for idx, reason in rejected)
+        if problems:
+            problems.sort()
             by_reason: dict[str, Any] = {}
-            for idx, reason in rejected:
+            for line, reason in problems:
                 slot = by_reason.setdefault(reason, {"count": 0, "sample_rows": []})
                 slot["count"] += 1
                 if len(slot["sample_rows"]) < SAMPLE_CAP:
-                    slot["sample_rows"].append(idx + 1)
-            rejected_report[role] = {"count": len(rejected), "by_reason": by_reason}
+                    slot["sample_rows"].append(line)
+            rejected_report[role] = {"count": len(problems), "by_reason": by_reason}
     if rejected_report:
         total = sum(v["count"] for v in rejected_report.values())
         raise _fail(
             422, "PREDEFINED_SPLIT_ROWS_REJECTED",
-            f"{total} row(s) could not be mapped to training examples; nothing was imported.",
-            "Fix or remove those rows (row numbers are 1-based, header excluded), or set a field mapping.",
+            f"{total} row(s) could not be used as training examples; nothing was imported.",
+            "Fix or remove those rows, or set a field mapping. Row numbers are file lines (a CSV header is line 1, "
+            "its first data row line 2; blank lines count); for JSON arrays, XLSX and Parquet they are the "
+            "1-based record number. Rows still waiting in (or rejected by) the review queue are reported too.",
             {"rejected": rejected_report, "row_counts": {r: len(v) for r, v in source_rows.items()}},
         )
+    lines = {role: pf.lines for role, pf in parsed.items()}
 
     # 3. Exact-input leakage between splits.
     keys = {role: [_leak_key(e) for e in entries] for role, entries in mapped.items()}
@@ -184,8 +362,8 @@ async def import_predefined_split(
     for a, b in _PAIRS:
         if a not in mapped or b not in mapped:
             continue
-        rows_a = [i + 1 for i, k in enumerate(keys[a]) if k and k in key_sets[b]]
-        rows_b = [i + 1 for i, k in enumerate(keys[b]) if k and k in key_sets[a]]
+        rows_a = [lines[a][i] for i, k in enumerate(keys[a]) if k and k in key_sets[b]]
+        rows_b = [lines[b][i] for i, k in enumerate(keys[b]) if k and k in key_sets[a]]
         if rows_a or rows_b:
             leak_pairs.append({
                 "pair": f"{a}_{b}",
@@ -217,7 +395,7 @@ async def import_predefined_split(
         for i, entry in enumerate(mapped["train"]):
             k = keys["train"][i]
             if k and k in held_out:
-                dropped_rows.append(i + 1)
+                dropped_rows.append(lines["train"][i])
             else:
                 kept.append(entry)
         if not kept:
@@ -249,90 +427,107 @@ async def import_predefined_split(
     # previous predefined files so a later random re-split doesn't double them).
     from app.services.ingestion_service import get_or_create_raw_dataset, ingest_file
 
-    raw_ds = await get_or_create_raw_dataset(db, project_id)
-    prior = await db.execute(
-        select(RawDocument).where(
-            RawDocument.dataset_id == raw_ds.id,
-            RawDocument.source.like("predefined_split:%"),
+    registered: list[RawDocument] = []
+    superseded: list[tuple[RawDocument, dict[str, Any]]] = []
+    try:
+        raw_ds = await get_or_create_raw_dataset(db, project_id)
+        prior = await db.execute(
+            select(RawDocument).where(
+                RawDocument.dataset_id == raw_ds.id,
+                RawDocument.source.like("predefined_split:%"),
+            )
         )
-    )
-    for doc in prior.scalars():
-        if doc.status == DocumentStatus.ACCEPTED:
-            doc.status = DocumentStatus.REJECTED
-            doc.metadata_ = {**(doc.metadata_ or {}), "superseded_by_predefined_split": True}
-    source_files: dict[str, Any] = {}
-    for role in SPLIT_ROLES:
-        if role not in files:
-            continue
-        name, content = files[role]
-        doc = await ingest_file(
-            db, project_id, name, content, source=f"predefined_split:{role}", sensitivity="internal",
-        )
-        doc.status = DocumentStatus.ACCEPTED
-        doc.metadata_ = {**(doc.metadata_ or {}), "split_role": role, "predefined_split": True}
-        await db.flush()
-        _stamp_source_document(mapped[role], doc.id, doc.filename)
-        source_files[role] = {
-            "filename": Path(name).name,
-            "stored_as": doc.filename,
-            "document_id": doc.id,
-            "source_rows": len(source_rows[role]),
-            "sha256": hashlib.sha256(content).hexdigest(),
-        }
+        for doc in prior.scalars():
+            if doc.status == DocumentStatus.ACCEPTED:
+                superseded.append((doc, dict(doc.metadata_ or {})))
+                doc.status = DocumentStatus.REJECTED
+                doc.metadata_ = {**(doc.metadata_ or {}), "superseded_by_predefined_split": True}
+        source_files: dict[str, Any] = {}
+        for role in SPLIT_ROLES:
+            if role not in files:
+                continue
+            name, content = files[role]
+            doc = await ingest_file(
+                db, project_id, name, content, source=f"predefined_split:{role}", sensitivity="internal",
+            )
+            registered.append(doc)
+            doc.status = DocumentStatus.ACCEPTED
+            doc.metadata_ = {**(doc.metadata_ or {}), "split_role": role, "predefined_split": True}
+            await db.flush()
+            _stamp_source_document(mapped[role], doc.id, doc.filename)
+            source_files[role] = {
+                "filename": Path(name).name,
+                "stored_as": doc.filename,
+                "document_id": doc.id,
+                "source_rows": len(source_rows[role]),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
 
-    # 6. Write through the shared tail.
-    splits = {role: mapped.get(role, []) for role in SPLIT_ROLES}
-    file_paths, file_hashes, dataset_versions, prepared_version = await _write_prepared_splits(
-        db, project_id, splits, seed=seed, chat_template=chat_template, source_types=[DatasetType.RAW.value],
-        version_extra={
-            "all": {"split_source": SPLIT_SOURCE},
-            "per_split": {
-                role: {"source_filename": info["filename"], "source_sha256": info["sha256"]}
-                for role, info in source_files.items()
+        # 6. Persist the adapter wiring the rows were prepared with, then write
+        # through the shared tail.
+        await _persist_adapter_preference(db, project_id, resolved_adapter_id, enriched_config, mapping, task_profile)
+        splits = {role: mapped.get(role, []) for role in SPLIT_ROLES}
+        file_paths, file_hashes, dataset_versions, prepared_version = await _write_prepared_splits(
+            db, project_id, splits, seed=seed, chat_template=chat_template, source_types=[DatasetType.RAW.value],
+            version_extra={
+                "all": {"split_source": SPLIT_SOURCE},
+                "per_split": {
+                    role: {"source_filename": info["filename"], "source_sha256": info["sha256"]}
+                    for role, info in source_files.items()
+                },
             },
-        },
-    )
-    total = sum(len(v) for v in splits.values())
-    train_ratio = round(len(splits["train"]) / total, 6)
-    val_ratio = round(len(splits["val"]) / total, 6)
-    test_ratio = round(1.0 - train_ratio - val_ratio, 6)
-    manifest = {
-        "project_id": project_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "split_source": SPLIT_SOURCE,
-        "seed": seed,
-        "total_entries": total,
-        "splits": {k: len(v) for k, v in splits.items()},
-        # Observed proportions of the imported files (not requested ratios).
-        "ratios": {"train": train_ratio, "val": val_ratio, "test": test_ratio},
-        "resolved_split_config": {
-            "train_ratio": train_ratio, "val_ratio": val_ratio, "test_ratio": test_ratio,
-            "seed": seed, "chat_template": chat_template,
-        },
-        "file_paths": file_paths,
-        "file_hashes": file_hashes,
-        "dataset_versions": dataset_versions,
-        "prepared_version": prepared_version,
-        "chat_template": chat_template,
-        "included_types": [DatasetType.RAW.value],
-        "include_types_resolution": {"predefined_split": True},
-        "adapter_id": resolved_adapter_id,
-        "adapter_config": dict(enriched_config or {}),
-        "field_mapping": dict(mapping),
-        "task_profile": _majority_task_profile(splits) or ds._normalize_task_profile_value(task_profile),
-        "task_profile_requested": ds._normalize_task_profile_value(task_profile),
-        "output_schema": await _recipe_output_schema(db, project_id),
-        "stratify_by": None,
-        "stratify_auto": False,
-        "stratification_report": None,
-        "disjoint_by": None,
-        "disjoint_report": None,
-        "dedup_requested": False,
-        "keep_test": None,
-        "dedup_report": None,
-        "source_files": source_files,
-        "leak_report": leak_report,
-        "duplicate_report": duplicate_report,
-    }
-    _finalize_prepared_manifest(project_id, manifest, prepared_version)
+        )
+        total = sum(len(v) for v in splits.values())
+        train_ratio = round(len(splits["train"]) / total, 6)
+        val_ratio = round(len(splits["val"]) / total, 6)
+        test_ratio = round(1.0 - train_ratio - val_ratio, 6)
+        manifest = {
+            "project_id": project_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "split_source": SPLIT_SOURCE,
+            "seed": seed,
+            "total_entries": total,
+            "splits": {k: len(v) for k, v in splits.items()},
+            # Observed proportions of the imported files (not requested ratios).
+            "ratios": {"train": train_ratio, "val": val_ratio, "test": test_ratio},
+            "resolved_split_config": {
+                "train_ratio": train_ratio, "val_ratio": val_ratio, "test_ratio": test_ratio,
+                "seed": seed, "chat_template": chat_template,
+            },
+            "file_paths": file_paths,
+            "file_hashes": file_hashes,
+            "dataset_versions": dataset_versions,
+            "prepared_version": prepared_version,
+            "chat_template": chat_template,
+            "included_types": [DatasetType.RAW.value],
+            "include_types_resolution": {"predefined_split": True},
+            "adapter_id": resolved_adapter_id,
+            "adapter_config": dict(enriched_config or {}),
+            "field_mapping": dict(mapping),
+            "task_profile": _majority_task_profile(splits) or ds._normalize_task_profile_value(task_profile),
+            "task_profile_requested": ds._normalize_task_profile_value(task_profile),
+            "output_schema": await _recipe_output_schema(db, project_id),
+            "stratify_by": None,
+            "stratify_auto": False,
+            "stratification_report": None,
+            "disjoint_by": None,
+            "disjoint_report": None,
+            "dedup_requested": False,
+            "keep_test": None,
+            "dedup_report": None,
+            "adapter_preference_source": adapter_source,
+            "dedup_inherited_config": [],
+            "source_files": source_files,
+            "leak_report": leak_report,
+            "duplicate_report": duplicate_report,
+        }
+        _finalize_prepared_manifest(project_id, manifest, prepared_version)
+    except BaseException:
+        # Nothing was imported: remove the files / documents registered above and
+        # un-supersede the previous import.
+        for doc, metadata in superseded:
+            doc.status = DocumentStatus.ACCEPTED
+            doc.metadata_ = metadata
+        await _discard_registered(db, registered)
+        raise
     return manifest

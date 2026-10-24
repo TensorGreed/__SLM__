@@ -16,7 +16,7 @@ export interface PredefinedSplitSourceFile {
 export interface PredefinedSplitLeakPair {
     pair: string;
     counts: Record<string, number>;
-    /** 1-based row numbers in each file (header excluded), capped at 20. */
+    /** File line numbers in each file (a CSV header is line 1), capped at 20. */
     sample_rows: Record<string, number[]>;
 }
 
@@ -40,7 +40,7 @@ export interface PredefinedSplitManifest {
 export async function importPredefinedSplit(
     projectId: number,
     files: { train: File; val?: File | null; test?: File | null },
-    opts: { onLeak: OnLeak; fieldMapping?: string },
+    opts: { onLeak: OnLeak; fieldMapping?: string; chatTemplate?: string | null },
 ): Promise<PredefinedSplitManifest> {
     const form = new FormData();
     form.append('train', files.train);
@@ -48,6 +48,7 @@ export async function importPredefinedSplit(
     if (files.test) form.append('test', files.test);
     form.append('on_leak', opts.onLeak);
     if (opts.fieldMapping && opts.fieldMapping.trim()) form.append('field_mapping', opts.fieldMapping.trim());
+    if (opts.chatTemplate) form.append('chat_template', opts.chatTemplate);
     const res = await api.post<PredefinedSplitManifest>(
         `/projects/${projectId}/dataset/predefined-split`,
         form,

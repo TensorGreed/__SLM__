@@ -52,7 +52,7 @@ describe('PredefinedSplitCard', () => {
         expect(result).toHaveTextContent('my_test.jsonl');
         expect(result).toHaveTextContent('not provided');
         expect(screen.getByTestId('pdsplit-leak')).toHaveTextContent('Dropped 2 train row(s)');
-        expect(screen.getByTestId('pdsplit-leak')).toHaveTextContent('rows 4, 7');
+        expect(screen.getByTestId('pdsplit-leak')).toHaveTextContent('lines 4, 7');
     });
 
     it('shows grouped reasons with row numbers on a 409 leak', async () => {
@@ -77,7 +77,7 @@ describe('PredefinedSplitCard', () => {
         await user.click(screen.getByTestId('pdsplit-submit'));
         const problem = await screen.findByTestId('pdsplit-problem');
         expect(problem).toHaveTextContent('nothing was imported');
-        expect(problem).toHaveTextContent('Train file rows that also appear in Test: 2 row(s) (rows 3, 9)');
+        expect(problem).toHaveTextContent('Train file rows that also appear in Test: 2 row(s) (lines 3, 9)');
     });
 
     it('shows rejected rows grouped by file and reason on a 422', async () => {
@@ -100,6 +100,77 @@ describe('PredefinedSplitCard', () => {
         await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
         await user.click(screen.getByTestId('pdsplit-submit'));
         const problem = await screen.findByTestId('pdsplit-problem');
-        expect(problem).toHaveTextContent('Test file, adapter unmappable or empty: 2 row(s) (rows 5, 8)');
+        expect(problem).toHaveTextContent('Test file, adapter unmappable or empty: 2 row(s) (lines 5, 8)');
+    });
+
+    it('shows the unparseable-line and review-status reasons by file line', async () => {
+        const user = userEvent.setup();
+        apiMock.post.mockRejectedValue({
+            response: {
+                status: 422,
+                data: {
+                    error_code: 'PREDEFINED_SPLIT_ROWS_REJECTED',
+                    message: '3 row(s) could not be used',
+                    actionable_fix: 'Fix them.',
+                    troubleshooting_id: 'err_z',
+                    metadata: {
+                        rejected: {
+                            train: {
+                                count: 3,
+                                by_reason: {
+                                    unparseable_line: { count: 2, sample_rows: [3, 5] },
+                                    review_status_pending: { count: 1, sample_rows: [9] },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        render(<PredefinedSplitCard projectId={5} />);
+        await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
+        await user.click(screen.getByTestId('pdsplit-submit'));
+        const problem = await screen.findByTestId('pdsplit-problem');
+        expect(problem).toHaveTextContent('Train file, unparseable line: 2 row(s) (lines 3, 5)');
+        expect(problem).toHaveTextContent('Train file, review status pending: 1 row(s) (lines 9)');
+    });
+
+    it('offers the split form chat template and posts the choice', async () => {
+        const user = userEvent.setup();
+        const onChange = vi.fn();
+        apiMock.post.mockResolvedValue({ data: OK });
+        render(
+            <PredefinedSplitCard
+                projectId={5}
+                chatTemplates={[{ value: 'llama3', label: 'Llama 3' }, { value: 'chatml', label: 'ChatML' }]}
+                chatTemplate="chatml"
+                onChatTemplateChange={onChange}
+            />,
+        );
+        expect(screen.getByTestId('pdsplit-template')).toHaveValue('chatml');
+        await user.selectOptions(screen.getByTestId('pdsplit-template'), 'llama3');
+        expect(onChange).toHaveBeenCalledWith('llama3');
+        await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
+        await user.click(screen.getByTestId('pdsplit-submit'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
+        expect((apiMock.post.mock.calls[0][1] as FormData).get('chat_template')).toBe('chatml');
+    });
+
+    it('sends no chat template while the profile default applies', async () => {
+        const user = userEvent.setup();
+        apiMock.post.mockResolvedValue({ data: OK });
+        render(
+            <PredefinedSplitCard
+                projectId={5}
+                chatTemplates={[{ value: 'llama3', label: 'Llama 3' }]}
+                chatTemplate="llama3"
+                sendChatTemplate={false}
+                onChatTemplateChange={() => undefined}
+            />,
+        );
+        await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
+        await user.click(screen.getByTestId('pdsplit-submit'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
+        expect((apiMock.post.mock.calls[0][1] as FormData).get('chat_template')).toBeNull();
     });
 });
