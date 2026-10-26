@@ -81,6 +81,11 @@ function jobDeepLink(job: Job): string | null {
 }
 
 
+/** A running Job the command backend has parked until its usage window reopens. */
+export function isPausedJob(job: Job): boolean {
+    return job.status === 'running' && (job.progress_message ?? '').toLowerCase().startsWith('waiting for usage window');
+}
+
 function jobStatusLabel(job: Job): string {
     switch (job.status) {
         case 'queued': return 'Queued';
@@ -566,6 +571,11 @@ function JobRow({ job, onOpen, onDismiss, onCancel }: JobRowProps) {
             <div className="notif-bell__row-main">
                 <div className="notif-bell__row-title">{job.title}</div>
                 <div className="notif-bell__row-status">
+                    {isPausedJob(job) && (
+                        <span className="notif-bell__chip notif-bell__chip--paused" data-testid={`notification-bell-row-${job.id}-paused`}>
+                            paused
+                        </span>
+                    )}
                     {jobStatusLabel(job)}
                 </div>
                 {(() => {

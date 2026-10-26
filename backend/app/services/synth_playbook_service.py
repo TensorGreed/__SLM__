@@ -20,10 +20,15 @@ rows in the right place.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
+import math
+import os
+import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -196,6 +201,7 @@ async def run_playbook(
     backend: str | None = None,
     backend_override: SynthBackend | None = None,
     dry_run: bool = False,
+    progress: Callable[[float, str], Awaitable[None]] | None = None,
 ) -> PlaybookResult:
     """Run the playbook matching (project's recipe, mode) and persist
     accepted rows into the project's synthetic dataset.
@@ -206,6 +212,12 @@ async def run_playbook(
 
     The `backend_override` arg lets tests inject a fake backend without
     going through the registry.
+
+    A backend that declares ``playbook_rows_per_call`` (the command backend)
+    is asked for at most that many rows per call: a larger ``target_count``
+    runs as chunks, each checkpointed on disk so a re-run reuses finished
+    chunks (see ``_run_chunked``). ``progress(fraction, message)`` is
+    published per chunk. Other backends make ONE call for all rows.
     """
     if target_count < 1 or target_count > 500:
         raise ValueError("target_count must be between 1 and 500")
@@ -247,26 +259,36 @@ async def run_playbook(
 
     selected_backend = backend_override or pick_backend(backend, registry=BACKEND_REGISTRY)
 
-    prompt = playbook.build_prompt(ctx)
-    # Per-row JSON Schema (Phase 5b): schema-aware backends (NeMo / NIM)
-    # consume it via response_format; others silently ignore — the
-    # playbook parser still validates structure either way.
-    response_schema = get_response_schema(playbook, ctx)
-    started_at = time.monotonic()
-    raw_llm_output = await selected_backend.complete(
-        prompt,
-        system_prompt=_system_prompt_for_mode(mode),
-        max_tokens=2048,
-        temperature=0.7,
-        response_schema=response_schema,
-        # The mode's system prompt repeats across playbook runs: a cloud
-        # backend marks it as a cached block (same text).
-        **llm_usage.cache_kwargs(selected_backend),
-    )
-    elapsed = time.monotonic() - started_at
+    rows_per_call = getattr(selected_backend, "playbook_rows_per_call", None)
+    chunked = isinstance(rows_per_call, int) and rows_per_call > 0 and target_count > rows_per_call and not dry_run
+    chunk_meta: dict[str, Any] = {}
+    checkpoint_path: Path | None = None
+    if chunked:
+        prompt, raw_llm_output, accepted_rows, elapsed, chunk_meta, checkpoint_path = await _run_chunked(
+            playbook, ctx, mode, selected_backend, int(rows_per_call), progress=progress,
+            recipe_id=recipe_id, target_class=target_class, failure_cluster=failure_cluster,
+        )
+    else:
+        prompt = playbook.build_prompt(ctx)
+        # Per-row JSON Schema (Phase 5b): schema-aware backends (NeMo / NIM)
+        # consume it via response_format; others silently ignore — the
+        # playbook parser still validates structure either way.
+        response_schema = get_response_schema(playbook, ctx)
+        started_at = time.monotonic()
+        raw_llm_output = await selected_backend.complete(
+            prompt,
+            system_prompt=_system_prompt_for_mode(mode),
+            max_tokens=2048,
+            temperature=0.7,
+            response_schema=response_schema,
+            # The mode's system prompt repeats across playbook runs: a cloud
+            # backend marks it as a cached block (same text).
+            **llm_usage.cache_kwargs(selected_backend),
+        )
+        elapsed = time.monotonic() - started_at
 
-    parsed_rows = playbook.parse_output(raw_llm_output, ctx)
-    accepted_rows = playbook.validate(parsed_rows, ctx)
+        parsed_rows = playbook.parse_output(raw_llm_output, ctx)
+        accepted_rows = playbook.validate(parsed_rows, ctx)
 
     # Persist into the project's synthetic dataset. We ensure the
     # Dataset row exists (legacy helper) and then append to the
@@ -295,10 +317,18 @@ async def run_playbook(
         if not synthetic_ds.file_path:
             synthetic_ds.file_path = str(file_path)
         await db.flush()
+    if checkpoint_path is not None and not dry_run:
+        # The rows are persisted (file appended, Dataset count committed
+        # here): only now is the checkpoint's job done. Deleting it earlier
+        # would lose finished chunks if the commit failed; it is reused for
+        # up to 7 days otherwise (older ones are pruned).
+        if accepted_rows:
+            await db.commit()
+        checkpoint_path.unlink(missing_ok=True)
 
     from .synth_playbooks.base import short_snippet  # local import — keeps top-level light
 
-    return {
+    result: dict[str, Any] = {
         "rows": accepted_rows,
         "backend_used": selected_backend.describe(),
         "elapsed_sec": round(elapsed, 3),
@@ -306,6 +336,182 @@ async def run_playbook(
         "raw_llm_snippet": short_snippet(raw_llm_output),
         "refusal_detected": _looks_like_refusal(raw_llm_output),
     }
+    if chunk_meta:
+        result.update(chunk_meta)
+    return result  # type: ignore[return-value]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Chunked + checkpointed generation (backends with playbook_rows_per_call)
+# ─────────────────────────────────────────────────────────────────────
+
+CHECKPOINT_DIR = "playbook_checkpoints"
+CHECKPOINT_MAX_AGE_SECONDS = 7 * 24 * 3600
+_DEDUP_FIELDS = ("text", "input", "prompt", "question", "source", "instruction", "message")
+
+
+def chunk_sizes(target_count: int, rows_per_call: int) -> list[int]:
+    """Split ``target_count`` into the fewest chunks of at most ``rows_per_call``, evenly."""
+    n = max(1, math.ceil(target_count / max(1, rows_per_call)))
+    base, extra = divmod(target_count, n)
+    return [base + (1 if i < extra else 0) for i in range(n)]
+
+
+def checkpoint_path_for(
+    project_id: int, recipe_id: str, mode: SynthMode, backend_describe: str,
+    target_count: int, target_class: str | None, failure_cluster: dict[str, Any] | None,
+    prompt_hash: str = "",
+) -> Path:
+    """Checkpoint file for one run's parameters. ``prompt_hash`` (sha256 of the
+    first chunk's built prompt) ties it to the answer key / examples the prompt
+    was built from: change them and an old checkpoint is no longer reused."""
+    key = json.dumps(
+        [recipe_id, mode.value, backend_describe, target_count, target_class, failure_cluster, prompt_hash],
+        sort_keys=True, default=str, ensure_ascii=False,
+    )
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+    return settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / CHECKPOINT_DIR / f"{digest}.jsonl"
+
+
+def _prune_stale_checkpoints(directory: Path) -> None:
+    """Remove checkpoints older than 7 days (a stale one is never reused)."""
+    try:
+        cutoff = time.time() - CHECKPOINT_MAX_AGE_SECONDS
+        for f in directory.glob("*.jsonl"):
+            if f.stat().st_mtime < cutoff:
+                f.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _load_checkpoint(path: Path) -> dict[int, dict[str, Any]]:
+    done: dict[int, dict[str, Any]] = {}
+    if not path.exists():
+        return done
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return done
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue  # a torn last line from a crash
+        if isinstance(entry, dict) and isinstance(entry.get("chunk"), int) and isinstance(entry.get("rows"), list):
+            done[entry["chunk"]] = entry
+    return done
+
+
+def _append_checkpoint(path: Path, entry: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+def _row_key(row: SynthRow) -> str:
+    payload = row.get("payload") or {}
+    for field in _DEDUP_FIELDS:
+        value = payload.get(field)
+        if isinstance(value, str) and value.strip():
+            return re.sub(r"\s+", " ", value).strip().lower()
+    return re.sub(r"\s+", " ", json.dumps(payload, sort_keys=True, ensure_ascii=False)).strip().lower()
+
+
+async def _run_chunked(
+    playbook: Playbook,
+    ctx: PlaybookContext,
+    mode: SynthMode,
+    backend: SynthBackend,
+    rows_per_call: int,
+    *,
+    progress: Callable[[float, str], Awaitable[None]] | None,
+    recipe_id: str,
+    target_class: str | None,
+    failure_cluster: dict[str, Any] | None,
+) -> tuple[str, str, list[SynthRow], float, dict[str, Any], Path]:
+    """Generate ``ctx['target_count']`` rows as chunks of ≤ ``rows_per_call``.
+
+    Each chunk is its own backend call (prompt = the playbook's prompt for the
+    chunk's row count + "Batch k of n: vary topics…"); its accepted rows are
+    appended (fsynced) to a checkpoint file keyed by the run's parameters, and
+    a re-run with the same parameters reuses finished chunks instead of
+    calling them again. A chunk that fails (after the backend's own retries)
+    or yields no rows is recorded in ``failed_chunks`` and the run goes on;
+    zero rows overall is the caller's error to raise. Exact-duplicate rows
+    across chunks are dropped. Returns (last prompt, last raw output,
+    rows, elapsed seconds, result metadata, checkpoint path)."""
+    from app.services import jobs_service
+
+    target_count = int(ctx["target_count"])
+    sizes = chunk_sizes(target_count, rows_per_call)
+    n = len(sizes)
+    first_prompt = playbook.build_prompt({**ctx, "target_count": sizes[0]}) + (  # type: ignore[typeddict-item]
+        f"\n\nBatch 1 of {n}: vary topics and wording; do not repeat earlier batches."
+    )
+    path = checkpoint_path_for(
+        int(ctx["project_id"]), recipe_id, mode, backend.describe(), target_count, target_class, failure_cluster,
+        prompt_hash=hashlib.sha256(first_prompt.encode("utf-8")).hexdigest(),
+    )
+    _prune_stale_checkpoints(path.parent)
+    saved = _load_checkpoint(path)
+
+    rows: list[SynthRow] = []
+    seen: set[str] = set()
+    failed: list[dict[str, Any]] = []
+    resumed = 0
+    last_prompt = ""
+    last_raw = ""
+    started_at = time.monotonic()
+
+    def _take(chunk_rows: list[SynthRow]) -> None:
+        for row in chunk_rows:
+            key = _row_key(row)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+
+    for k, size in enumerate(sizes):
+        handle = jobs_service.current_job_handle.get()
+        if handle is not None and await handle.check_cancelled():
+            raise asyncio.CancelledError()
+        if k in saved:
+            _take(list(saved[k]["rows"]))
+            resumed += 1
+            last_raw = str(saved[k].get("raw_snippet") or last_raw)
+        else:
+            chunk_ctx: PlaybookContext = {**ctx, "target_count": size}  # type: ignore[typeddict-item]
+            prompt = playbook.build_prompt(chunk_ctx) + (
+                f"\n\nBatch {k + 1} of {n}: vary topics and wording; do not repeat earlier batches."
+            )
+            last_prompt = prompt
+            try:
+                raw = await backend.complete(
+                    prompt,
+                    system_prompt=_system_prompt_for_mode(mode),
+                    max_tokens=2048,
+                    temperature=0.7,
+                    response_schema=get_response_schema(playbook, chunk_ctx),
+                    **llm_usage.cache_kwargs(backend),
+                )
+            except SynthBackendError as exc:
+                failed.append({"chunk": k + 1, "reason": str(exc)[:300]})
+            else:
+                last_raw = raw
+                accepted = playbook.validate(playbook.parse_output(raw, chunk_ctx), chunk_ctx)
+                if accepted:
+                    from .synth_playbooks.base import short_snippet
+
+                    _append_checkpoint(path, {"chunk": k, "rows": accepted, "raw_snippet": short_snippet(raw)})
+                    _take(list(accepted))
+                else:
+                    failed.append({"chunk": k + 1, "reason": "no rows accepted from the reply"})
+        if progress is not None:
+            await progress((k + 1) / n, f"chunk {k + 1}/{n} · {len(rows)} rows so far")
+    meta: dict[str, Any] = {"chunks": n, "resumed_chunks": resumed, "failed_chunks": failed}
+    return last_prompt, last_raw, rows, time.monotonic() - started_at, meta, path
 
 
 # Phrases that almost always indicate a guard-rail refusal rather than

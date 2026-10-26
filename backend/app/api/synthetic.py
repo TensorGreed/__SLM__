@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.services import llm_budget_guard
 from app.services.cloud_backend_pins import (
     CLOUD_PROVIDER_SECRET_COORDS,
     CloudPinError,
@@ -70,6 +71,12 @@ async def _with_budget_warning(db: AsyncSession, project_id: int, payload: dict[
     return {**payload, "budget_warning": warning} if warning else payload
 
 
+def _command_paused() -> bool:
+    from app.services.synth_backends.command import is_paused
+
+    return is_paused()
+
+
 async def _resolve_cloud_backend_override(
     db: AsyncSession, project_id: int, backend_pin: str | None,
 ):
@@ -77,9 +84,13 @@ async def _resolve_cloud_backend_override(
     saved key (``cloud_backend_pins.resolve_cloud_backend``); None for other
     pins. 400 for a malformed pin, 402 when no key is saved."""
     try:
-        return await resolve_cloud_backend(db, project_id, backend_pin)
+        backend = await resolve_cloud_backend(db, project_id, backend_pin)
     except CloudPinError as exc:
         raise HTTPException(exc.status_code, exc.message) from exc
+    if backend is not None:
+        # Metered backend: 402 ``llm_budget_exceeded`` when a monthly cap is reached.
+        await llm_budget_guard.assert_can_start(project_id)
+    return backend
 
 
 class GenerateRequest(BaseModel):
@@ -1105,6 +1116,21 @@ async def get_weak_entity_types(
     return await weak_entity_types(db, project_id, threshold)
 
 
+def _billing_for(cls: Any) -> str:
+    from app.api.eval_judge import _billing_for_class
+
+    return _billing_for_class(cls)
+
+
+def _detail_for(cls: Any, available: bool) -> str | None:
+    if not available or not callable(getattr(cls, "detail", None)):
+        return None
+    try:
+        return str(cls().detail()) or None
+    except Exception:  # noqa: BLE001 — provenance text never 500s the picker
+        return None
+
+
 @router.get("/backends")
 async def list_synth_backends(project_id: int):
     """List the synth backends registered on this BrewSLM install +
@@ -1142,6 +1168,12 @@ async def list_synth_backends(project_id: int):
             # False for backends that accept-and-ignore (Ollama, Teacher).
             # The picker uses this to badge schema-honoring options.
             "schema_aware": bool(getattr(cls, "schema_aware", False)),
+            # Money model: "local" (free), "metered" (API credits) or
+            # "subscription" (a CLI signed in to a plan — not billed per call);
+            # ``detail`` is the picker's provenance line (None when the
+            # backend has none).
+            "billing": _billing_for(cls),
+            "detail": _detail_for(cls, available),
         })
     return {"project_id": project_id, "backends": entries}
 
@@ -1509,6 +1541,8 @@ async def run_synth_playbook(
             start_job,
         )
 
+        # A cloud pin at the cap is refused up front (402) instead of failing the Job.
+        await _resolve_cloud_backend_override(db, project_id, req.backend)
         target_class_label = (
             f" (target: {req.target_class})" if req.target_class else ""
         )
@@ -1525,6 +1559,14 @@ async def run_synth_playbook(
             # cancels as soon as the main work returns.
             started = time.monotonic()
             stop_heartbeat = asyncio.Event()
+            # Chunked runs (command backend) publish their own "chunk k/n"
+            # progress, and a usage-limit pause its own message: the elapsed
+            # heartbeat must not overwrite either.
+            own_progress = {"on": False}
+
+            async def _chunk_progress(fraction: float, message: str) -> None:
+                own_progress["on"] = True
+                await handle.set_progress(fraction=fraction, message=message)
 
             async def _heartbeat() -> None:
                 while not stop_heartbeat.is_set():
@@ -1534,6 +1576,8 @@ async def run_synth_playbook(
                         )
                         return
                     except asyncio.TimeoutError:
+                        if own_progress["on"] or _command_paused():
+                            continue
                         elapsed = int(time.monotonic() - started)
                         await handle.set_progress(
                             message=(
@@ -1566,6 +1610,7 @@ async def run_synth_playbook(
                         target_class=req.target_class,
                         backend=req.backend if cloud_override is None else None,
                         backend_override=cloud_override,
+                        progress=_chunk_progress,
                     )
                     await runner_db.commit()
             finally:
@@ -1592,6 +1637,13 @@ async def run_synth_playbook(
             if row_count == 0:
                 raw_snippet = result.get("raw_llm_snippet") or ""
                 refused = bool(result.get("refusal_detected"))
+                failed_chunks = result.get("failed_chunks") or []
+                if failed_chunks:
+                    raise RuntimeError(
+                        f"Playbook {req.mode} produced 0 accepted rows via {backend_used}: "
+                        f"{len(failed_chunks)} of {result.get('chunks')} chunks failed. "
+                        f"First failure (chunk {failed_chunks[0]['chunk']}): {failed_chunks[0]['reason']}"
+                    )
                 if refused:
                     raise RuntimeError(
                         f"Playbook {req.mode} produced 0 accepted rows via "
@@ -1633,6 +1685,9 @@ async def run_synth_playbook(
                 "elapsed_sec": elapsed_sec,
                 "mode": req.mode,
                 "target_class": req.target_class,
+                # Chunked runs (command backend): chunks that failed after the
+                # backend's retries — the rest of the rows were kept.
+                **({"chunks": result["chunks"], "failed_chunks": result.get("failed_chunks") or []} if result.get("chunks") else {}),
             }
 
         job = await start_job(
@@ -1668,6 +1723,8 @@ async def run_synth_playbook(
         )
     except SynthBackendError as e:
         raise HTTPException(503, str(e))
+    except llm_budget_guard.LlmBudgetExceeded:
+        raise  # -> 402 llm_budget_exceeded (main.py handler)
     except ValueError as e:
         message = str(e)
         if "not found" in message.lower():

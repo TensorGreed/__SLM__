@@ -16,6 +16,7 @@ import { fetchDocumentsQaFlowPreview, startDocumentsQaFlow, type DocumentsQaFlow
 import { rerouteToRagAsync } from '../../api/rerouteAnalysis';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
+import { budgetExceededMessage } from '../../api/llmSpend';
 import './DocumentsQaFlowCard.css';
 import { retrievalLabel } from '../evaluation/retrievalLabel';
 import GenerationModelPicker from '../shared/GenerationModelPicker';
@@ -123,7 +124,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
             );
             void useJobsStore.getState().refreshAfterLocalChange();
         } catch (err) {
-            toast.error(errorText(err));
+            toast.error(budgetExceededMessage(err) ?? errorText(err), 8000);
         } finally {
             setStarting(false);
         }
@@ -136,7 +137,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
             toast.info(`Cloning into a RAG-first project — the bell will link to it when ready (job #${job.id}).`, 6000);
             void useJobsStore.getState().refreshAfterLocalChange();
         } catch (err) {
-            toast.error(errorText(err));
+            toast.error(budgetExceededMessage(err) ?? errorText(err), 8000);
         } finally {
             setStarting(false);
         }
@@ -188,7 +189,7 @@ export default function DocumentsQaFlowCard({ projectId, onRunStarted }: Props) 
                     localOptionLabel="The checker itself (its verdict's reason, no extra call)"
                 />
             )}
-            <label className="documents-qa-flow__option" title="Anthropic models only: every call goes as one Message Batch — half the price, can take up to a few hours.">
+            <label className="documents-qa-flow__option" title="Anthropic models (one Message Batch — half the price, can take up to a few hours) or the local CLI backend (several requests packed per CLI call).">
                 <input type="checkbox" checked={useBatch} onChange={(e) => setUseBatch(e.target.checked)} data-testid="documents-qa-flow-batch" />
                 {' '}Batch (half price, slower)
             </label>

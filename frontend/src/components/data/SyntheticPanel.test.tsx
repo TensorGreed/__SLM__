@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useToastStore } from '../../stores/toastStore';
 
 const { apiMock, mockLocation } = vi.hoisted(() => ({
     apiMock: {
@@ -213,6 +214,22 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
             expect(apiMock.post).toHaveBeenCalledWith('/projects/1/synthetic/relabel-answer-key', {
                 split: 'test', backend: 'ollama', entity_types: ['email', 'passport'],
             });
+        });
+    });
+
+    it('a 402 llm_budget_exceeded on the answer-key start toasts the budget message', async () => {
+        installGetRouter({
+            'prepared-manifest': { task_profile: 'structured_extraction', output_schema: { scoring_mode: 'span_set' }, entity_types: ['email'] },
+        });
+        apiMock.post.mockRejectedValueOnce({
+            message: 'Request failed with status code 402',
+            response: { status: 402, data: { error_code: 'llm_budget_exceeded', detail: 'API budget reached (global: $100.00 of $100.00 this month) — switch to a local or subscription backend' } },
+        });
+        useToastStore.setState({ toasts: [] });
+        render(<SyntheticPanel projectId={1} />);
+        await userEvent.click(await screen.findByTestId('synthetic-write-answer-key'));
+        await waitFor(() => {
+            expect(useToastStore.getState().toasts.some((t) => t.type === 'error' && t.message.startsWith('API budget reached'))).toBe(true);
         });
     });
 

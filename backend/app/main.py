@@ -12,6 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.services.llm_budget_guard import LlmBudgetExceeded
 from app.database import async_session_factory, init_db
 from app.models.auth import AuditLog
 from app.security import authorize_request, ensure_bootstrap_auth, extract_project_id_from_path
@@ -40,6 +41,7 @@ from app.api.synthetic import router as synthetic_router
 from app.api.compliance import router as compliance_router
 from app.api.llm_spend import budget_router as llm_budget_router
 from app.api.llm_spend import router as llm_spend_router
+from app.api.eval_judge import router as eval_judge_router
 from app.api.coach import router as coach_router
 from app.api.curriculum import router as curriculum_router
 from app.api.jobs import router as jobs_router
@@ -394,6 +396,7 @@ app.include_router(synthetic_router, prefix="/api", dependencies=API_DEPENDENCIE
 app.include_router(compliance_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(llm_spend_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(llm_budget_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(eval_judge_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(coach_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(curriculum_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(jobs_router, prefix="/api", dependencies=API_DEPENDENCIES)
@@ -525,6 +528,29 @@ async def slm_exception_handler(request: Request, exc: SLMError):
             stage=stage,
             status_code=exc.status_code,
             detail=exc.detail,
+        ),
+    )
+
+
+@app.exception_handler(LlmBudgetExceeded)
+async def llm_budget_exceeded_handler(request: Request, exc: LlmBudgetExceeded):
+    # Hard API budget: a metered cloud call (or a Job start pinned to one) was
+    # refused. 402 with the structured envelope (error_code / metadata at top level).
+    stage = _infer_structured_error_stage(request.url.path) or "general"
+    return JSONResponse(
+        status_code=402,
+        content=_structured_error_payload(
+            stage=stage,
+            status_code=402,
+            detail={
+                "error_code": "llm_budget_exceeded",
+                "message": str(exc),
+                "actionable_fix": (
+                    "Raise the monthly budget (project budget or LLM_MONTHLY_BUDGET_USD), or switch to a "
+                    "local (Ollama) or subscription backend."
+                ),
+                "metadata": exc.metadata(),
+            },
         ),
     )
 

@@ -34,6 +34,7 @@ from typing import Any, Awaitable, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import Project
+from app.services.llm_budget_guard import LlmBudgetExceeded
 
 # A strategy fn takes the cloud-safe profile and returns the raw LLM dict (or
 # None on any failure). Injectable so tests never touch the network — the same
@@ -474,6 +475,8 @@ def _build_cloud_strategy_fn(config: dict[str, Any]) -> StrategyFn:
                 )
             payload = extract_json_payload(resp.content)
             return payload if isinstance(payload, dict) else None
+        except LlmBudgetExceeded:
+            raise  # the hard API budget is not a "fall back to the deterministic plan" case
         except Exception:  # noqa: BLE001 — any failure → deterministic fallback
             return None
 

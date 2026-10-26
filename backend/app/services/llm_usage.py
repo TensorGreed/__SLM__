@@ -35,6 +35,7 @@ from typing import Any, Iterator
 from urllib.parse import urlparse
 
 from app.config import settings
+from app.services import llm_budget_guard
 
 _LOG = logging.getLogger(__name__)
 
@@ -121,15 +122,17 @@ def record(
     cache_write_tokens: int = 0,
     cache_read_tokens: int = 0,
 ) -> None:
-    """Report one call to every open meter. Never raises."""
+    """Report one call to every open meter (and, when priced, to the monthly
+    budget ledger — ``llm_budget_guard``). Never raises."""
     try:
-        meters = _ACTIVE.get()
-        if not meters:
-            return
         counts = {
             "calls": 1, "input_tokens": input_tokens, "output_tokens": output_tokens,
             "cache_write_tokens": cache_write_tokens, "cache_read_tokens": cache_read_tokens,
         }
+        llm_budget_guard.note_usage(provider, str(model or "unknown"), counts)
+        meters = _ACTIVE.get()
+        if not meters:
+            return
         for meter in meters:
             meter.add(provider, str(model or "unknown"), counts)
     except Exception:  # noqa: BLE001 — accounting never breaks a call
@@ -187,12 +190,23 @@ def metered_operation(project_id: int | None, kind: str) -> Iterator[UsageMeter]
     """A meter for a non-Job operation; the outermost one records the spend in
     the project's ledger (also when the operation raises)."""
     outermost = not has_active_meter()
-    with metered() as meter:
-        try:
-            yield meter
-        finally:
-            if outermost and project_id is not None:
-                append_ledger(project_id, kind, meter)
+    # The project context: which project's monthly cap a metered call inside
+    # counts against (and its command-backend overrides). Inside a Job the
+    # Job's context stays unless this operation names a project.
+    outer = llm_budget_guard.current_project.get()
+    token = llm_budget_guard.current_project.set(
+        llm_budget_guard.ProjectContext(project_id=project_id, synth_command=dict(outer.synth_command) if outer else {})
+    ) if project_id is not None else None
+    try:
+        with metered() as meter:
+            try:
+                yield meter
+            finally:
+                if outermost and project_id is not None:
+                    append_ledger(project_id, kind, meter)
+    finally:
+        if token is not None:
+            llm_budget_guard.current_project.reset(token)
 
 
 def ledger_path(project_id: int):

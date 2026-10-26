@@ -493,3 +493,23 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   usage?}` (all-or-nothing; a changed licence resets verification unless the call sets it; verifying
   stamps the principal's username or `local`). `DocumentResponse` gains `data_source_id`, `usage`,
   `licence`, `licence_flags`, `source_ref`, `retrieved_at`.
+
+- **Command (CLI) synth backend + chunked playbooks (G9)** — `synth_backends/command.py`
+  (`CommandBackend`: `auto_pick=False`, `sends_data_off_machine`, `billing="subscription"`,
+  `supports_batch`, `detail()`); allow-list + no shell + minimal env + temp cwd; argv / binary / env /
+  prompt mode only from settings (`SYNTH_COMMAND_*`), per-project `runtime_config["synth_command"]`
+  limited to model / concurrency / batch_size / timeout_seconds / cooldown_seconds / max_retries, read
+  through `llm_budget_guard.current_project`. `pick_backend(None)` and `resolve_answer_judge`'s
+  auto-walk skip `auto_pick is False` classes; `ResolvedJudge.local` = not `sends_data_off_machine`.
+  `complete_batch(requests, progress=async (message, done, total))` has the CloudLlmBackend contract
+  (packed JSON-lines; `batch_report` = one CloudLlmBackend-shaped summary per call incl. `rejected:
+  [{id, reason}]`, `rejected_items` the flat list); it keeps no `usage` / `batch_usage` attrs on purpose
+  (`usage_block` would price them at list price) — spend comes from `llm_usage.record` once per CLI call.
+  Usage-limit pause: module-level shared cool-down, Job message via `jobs_service.current_job_handle`
+  (+ `JobProgressHandle.set_message`), waiting tallied by `jobs_service.PauseTally` → result
+  `paused_seconds`. `run_playbook` chunks when the backend has `playbook_rows_per_call`
+  (`_run_chunked`, checkpoint `synthetic/playbook_checkpoints/<sha256[:16]>.jsonl`, deleted once rows are
+  saved, >7 d pruned); the run-playbook Job result gains `chunks` / `failed_chunks`; the elapsed
+  heartbeat steps aside while chunk progress / a pause message is showing. Judge picker API:
+  `api/eval_judge.py`. Tests `tests/test_command_backend.py` (fake CLI = a shebang script in a tmp dir,
+  allow-listed by absolute path).

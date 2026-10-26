@@ -38,6 +38,8 @@ from typing import Any, Callable, TypedDict
 from uuid import uuid4
 
 import httpx
+
+from app.services.llm_budget_guard import LlmBudgetExceeded as _LlmBudgetExceeded
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -130,6 +132,11 @@ async def call_teacher_with_logprobs(
         raise ValueError(
             "Teacher model API URL not configured. Set TEACHER_MODEL_API_URL in .env"
         )
+
+    from app.services import llm_budget_guard, llm_usage as _llm_usage
+
+    if not _llm_usage.is_local_url(url):  # hard monthly API budget (metered endpoints only)
+        await llm_budget_guard.acheck_budget(_llm_usage.provider_for_url(url), model_name)
 
     bounded_k = max(1, min(int(top_k), _MAX_TOP_K))
 
@@ -398,6 +405,8 @@ async def capture_teacher_outputs(
                     model_name=teacher_model,
                     top_k=bounded_k,
                 )
+            except _LlmBudgetExceeded:
+                raise  # a reached API cap ends the capture, it is not a per-row failure
             except Exception as exc:  # noqa: BLE001 — isolate per-row failures
                 skipped_count += 1
                 chunk_errors.append({"row_index": index, "error": str(exc)})

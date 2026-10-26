@@ -24,6 +24,29 @@ You don't need to set anything for a first dev run — SQLite + simulated traini
 | `ALLOW_SQLITE_AUTOCREATE` | `true` | Auto-create schema specifically for SQLite. Convenient in dev. |
 | `DB_REQUIRE_ALEMBIC_HEAD` | `true` in prod | Refuse boot if DB isn't at the migration head. |
 
+## Synthetic-data CLI backend + API budget
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SYNTH_COMMAND_ALLOWED_BINARIES` | empty | Allow-list for the command (local CLI) synth backend; empty disables it. |
+| `SYNTH_COMMAND_ARGV` | `["claude","-p","--output-format","json","--model","{model}"]` | argv template (JSON list). |
+| `SYNTH_COMMAND_PROMPT_MODE` | `stdin` | `stdin` or `arg`. |
+| `SYNTH_COMMAND_OUTPUT` | `.result` | `raw` or a dotted JSON path into the CLI's reply. |
+| `SYNTH_COMMAND_DEFAULT_MODEL` | `sonnet` | Value for `{model}`. |
+| `SYNTH_COMMAND_CONCURRENCY` | `1` | Parallel CLI processes. |
+| `SYNTH_COMMAND_TIMEOUT_SECONDS` | `600` | Per-call timeout. |
+| `SYNTH_COMMAND_MAX_RETRIES` | `2` | Retries for non-usage-limit failures. |
+| `SYNTH_COMMAND_BACKOFF_SECONDS` | `5.0` | First backoff (doubles). |
+| `SYNTH_COMMAND_BATCH_SIZE` | `8` | Requests packed per CLI call. |
+| `SYNTH_COMMAND_USAGE_LIMIT_REGEX` | `usage limit\|rate limit\|429` | What marks a usage-limit failure. |
+| `SYNTH_COMMAND_COOLDOWN_SECONDS` | `900` | Pause after a usage-limit failure. |
+| `SYNTH_COMMAND_MAX_PAUSE_SECONDS` | `28800` | Total pause per Job before failing. |
+| `SYNTH_COMMAND_ENV_PASSTHROUGH` | empty | Extra env var names forwarded to the CLI. |
+| `SYNTH_COMMAND_PLAYBOOK_ROWS_PER_CALL` | `25` | Rows per CLI call in a synthetic playbook. |
+| `LLM_MONTHLY_BUDGET_USD` | unset | Account-wide hard cap on metered cloud-API spend per calendar month (UTC), all projects. |
+
+Details: [Synthetic-data backends](../extensions/synth-backends.md#command-local-cli-backend).
+
 ## Auth variables
 
 | Variable | Default | Effect |

@@ -1034,4 +1034,21 @@ describe('PlaybookPickerPanel', () => {
         expect(screen.queryByTestId('playbook-picker-retry-qwen')).not.toBeInTheDocument();
         expect(screen.getByTestId('playbook-picker-preflight-snippet').textContent).toMatch(/json/);
     });
+    it('labels a selected subscription CLI backend with its billing and detail', async () => {
+        apiMock.get.mockImplementation((url: string) => {
+            if (url.endsWith('/synthetic/backends')) {
+                return Promise.resolve({ data: { project_id: 1, backends: [
+                    { name: 'ollama', available: true, describe: 'ollama', billing: 'local', detail: null },
+                    { name: 'command', available: true, describe: 'command', billing: 'subscription', detail: 'claude CLI (subscription) · batch 8' },
+                ] } });
+            }
+            return Promise.resolve({ data: { project_id: 1, recipe_id: 'classification', playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }] } });
+        });
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
+        const picker = await screen.findByTestId('playbook-picker-backend');
+        expect(screen.queryByTestId('playbook-picker-subscription-chip')).toBeNull();
+        await userEvent.selectOptions(picker, 'command');
+        expect((await screen.findByTestId('playbook-picker-subscription-chip')).textContent).toContain('not billed per call');
+        expect(screen.getByTestId('playbook-picker-backend-detail').textContent).toContain('claude CLI');
+    });
 });

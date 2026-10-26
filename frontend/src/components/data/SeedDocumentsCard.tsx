@@ -4,6 +4,7 @@ import { fetchSeedDocumentsDefaults, startSeedDocuments } from '../../api/flows'
 import { checkPrompt, offendingValuesFromError, promptCheckText, type PromptCheckReport } from '../../api/promptCheck';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
+import { budgetExceededMessage } from '../../api/llmSpend';
 import { extractApiErrorMessage } from '../../utils/apiError';
 import GenerationModelPicker from '../shared/GenerationModelPicker';
 
@@ -97,7 +98,7 @@ export default function SeedDocumentsCard({ projectId, onDone }: SeedDocumentsCa
                 // list here (not a toast) so the user can fix the text or override.
                 setBlocked(extractApiErrorMessage(err, 'The prompt carries benchmark values.').message);
             } else {
-                toast.error(extractApiErrorMessage(err, 'Could not start writing documents.').message, 5000);
+                toast.error(budgetExceededMessage(err) ?? extractApiErrorMessage(err, 'Could not start writing documents.').message, 8000);
             }
         } finally {
             setStarting(false);

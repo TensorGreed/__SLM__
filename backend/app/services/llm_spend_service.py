@@ -19,6 +19,12 @@ Monthly budget: ``runtime_config["llm_budget_usd"] = {monthly, warn_at}``
 month-to-date spend (UTC) and ``budget_status`` → ok / warning (≥ warn_at
 share) / over. A budget never blocks anything: the Coach warns and Job starts
 carry a ``budget_warning`` once the month is over.
+
+The budget is a HARD stop for metered cloud-API calls (``llm_budget_guard``):
+the per-project monthly amount and the account-wide ``LLM_MONTHLY_BUDGET_USD``.
+Subscription-CLI usage (``subscription:<binary>`` rows, priced $0) and local
+models are never counted against it; the tally shows subscription calls and
+tokens separately.
 """
 
 from __future__ import annotations
@@ -76,7 +82,10 @@ def read_ledger(project_id: int, since: datetime) -> list[dict[str, Any]]:
 
 def tally(operations: list[dict[str, Any]]) -> dict[str, Any]:
     """Pure roll-up of ``[{kind, at, usage: [estimate_cost dicts]}]``."""
-    totals: dict[str, Any] = {"operations": 0, "calls": 0, **{f: 0 for f in _TOKEN_FIELDS}, "cost_usd": 0.0, "unpriced_tokens": 0}
+    totals: dict[str, Any] = {
+        "operations": 0, "calls": 0, **{f: 0 for f in _TOKEN_FIELDS}, "cost_usd": 0.0, "unpriced_tokens": 0,
+        "subscription_calls": 0, "subscription_tokens": 0,
+    }
     by_model: dict[str, dict[str, Any]] = {}
     by_kind: dict[str, dict[str, Any]] = {}
     for op in operations:
@@ -92,7 +101,14 @@ def tally(operations: list[dict[str, Any]]) -> dict[str, Any]:
             calls = int(u.get("calls") or 0)
             tokens = int(u.get("total_tokens") or 0)
             usd = u.get("usd")
-            row = by_model.setdefault(model, {"model": model, "calls": 0, **{f: 0 for f in _TOKEN_FIELDS}, "cost_usd": 0.0, "priced": True})
+            subscription = model.startswith("subscription:") or str(u.get("backend") or "").startswith("subscription:")
+            row = by_model.setdefault(model, {
+                "model": model, "billing": "subscription" if subscription else "metered",
+                "calls": 0, **{f: 0 for f in _TOKEN_FIELDS}, "cost_usd": 0.0, "priced": True,
+            })
+            if subscription:
+                totals["subscription_calls"] += calls
+                totals["subscription_tokens"] += tokens
             row["calls"] += calls
             totals["calls"] += calls
             kind_row["calls"] += calls
@@ -235,11 +251,26 @@ async def budget_warning(db: AsyncSession, project_id: int) -> dict[str, Any] | 
             **status,
             "message": (
                 f"This project's cloud-LLM spend this month (~${status['spent']:.2f}) is over its "
-                f"${status['budget']:.2f} budget. The job runs anyway — local models (Ollama) cost nothing."
+                f"${status['budget']:.2f} budget. Cloud API calls are stopped at the cap — "
+                "local models (Ollama) and subscription backends still run."
             ),
         }
     except Exception:  # noqa: BLE001 — a budget read never blocks a Job start
         return None
+
+
+async def month_spend_by_project(db: AsyncSession, now: datetime | None = None) -> dict[int, dict[str, Any]]:
+    """``{project_id: {spent_usd, cap}}`` — month-to-date metered spend of every
+    project (same tally as the project card) and its hard monthly cap (None
+    without a budget). Subscription / local usage adds $0."""
+    start = month_start(now)
+    out: dict[int, dict[str, Any]] = {}
+    for pid, runtime_config in (await db.execute(select(Project.id, Project.runtime_config))).all():
+        ops = await _operations_since(db, int(pid), start)
+        spent = tally(_since(ops, start))["totals"]["cost_usd"] if ops else 0.0
+        budget = read_budget(type("P", (), {"runtime_config": runtime_config})())
+        out[int(pid)] = {"spent_usd": float(spent), "cap": budget["monthly"] if budget else None}
+    return out
 
 
 async def project_llm_spend(db: AsyncSession, project_id: int, days: int = DEFAULT_DAYS) -> dict[str, Any]:
@@ -270,7 +301,8 @@ async def project_llm_spend(db: AsyncSession, project_id: int, days: int = DEFAU
         "basis": "list-price estimate",
         "note": (
             "Estimated from each call's token counts at list prices (LLM_PRICES_JSON overrides); "
-            "the provider's invoice is the truth. Local models (Ollama) cost nothing and are not counted."
+            "the provider's invoice is the truth. Local models (Ollama) cost nothing and are not counted; "
+            "subscription CLI calls are shown separately and are not billed per call."
         ),
     }
 

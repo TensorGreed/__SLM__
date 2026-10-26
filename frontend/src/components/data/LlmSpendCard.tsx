@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { fetchLlmSpend, saveLlmBudget, type LlmSpend } from '../../api/llmSpend';
+import { fetchLlmBudget, fetchLlmSpend, saveLlmBudget, type LlmGlobalBudget, type LlmSpend } from '../../api/llmSpend';
 import './LlmSpendCard.css';
 
 /** "12k" / "940" / "1.2M" token counts. */
@@ -39,7 +39,7 @@ export function budgetLineText(status: { spent: number; budget: number; share: n
 }
 
 /** Month-to-date budget line + a small editor (monthly $ + warn-at %). */
-function BudgetSection({ projectId, spend, onSaved }: { projectId: number; spend: LlmSpend; onSaved: () => void }) {
+function BudgetSection({ projectId, spend, global, onSaved }: { projectId: number; spend: LlmSpend; global: LlmGlobalBudget | null; onSaved: () => void }) {
     const budget = spend.budget ?? null;
     const status = spend.budget_status ?? null;
     const [editing, setEditing] = useState(false);
@@ -86,12 +86,21 @@ function BudgetSection({ projectId, spend, onSaved }: { projectId: number; spend
                     data-testid="llm-spend-budget-line"
                 >
                     <strong>{budgetLineText(status)}</strong>
-                    {status.status === 'over' && ' — over budget. Nothing is blocked; local models (Ollama) cost nothing.'}
+                    {status.status === 'over' && ' — over budget. Cloud API calls are stopped; local models (Ollama) and a subscription CLI still run.'}
                     {status.status === 'warning' && ` — past the ${Math.round(status.warn_at * 100)}% warning mark.`}
                 </p>
             ) : (
                 <p className="llm-spend-card__muted" data-testid="llm-spend-budget-line">
                     This month: {formatUsd(monthCost)} · no monthly budget set.
+                </p>
+            )}
+            {global && global.monthly != null && (
+                <p
+                    className={`llm-spend-card__budget-line llm-spend-card__budget-line--${global.status}`}
+                    data-testid="llm-spend-global-line"
+                >
+                    All projects this month: {formatUsd(global.spent_usd)} of ${global.monthly.toFixed(2)} (API credits)
+                    {global.status === 'over' && ' — cap reached, cloud API calls are stopped.'}
                 </p>
             )}
             {!editing && (
@@ -140,7 +149,7 @@ function BudgetSection({ projectId, spend, onSaved }: { projectId: number; spend
                         Cancel
                     </button>
                     <p className="llm-spend-card__muted">
-                        Advisory: the Coach warns at the mark and job starts say when the month is over. Nothing is blocked.
+                        Cloud API calls stop at the cap (one call may overshoot by its own cost). The warning mark is advisory. Local models and a subscription CLI are never blocked.
                     </p>
                 </div>
             )}
@@ -155,6 +164,7 @@ export default function LlmSpendCard({ projectId, days = 30 }: { projectId: numb
     const [spend, setSpend] = useState<LlmSpend | null>(null);
     const [failed, setFailed] = useState(false);
     const [reloadKey, setReloadKey] = useState(0);
+    const [globalBudget, setGlobalBudget] = useState<LlmGlobalBudget | null>(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -163,6 +173,10 @@ export default function LlmSpendCard({ projectId, days = 30 }: { projectId: numb
         fetchLlmSpend(projectId, days)
             .then((data) => { if (!cancelled) setSpend(data); })
             .catch(() => { if (!cancelled) setFailed(true); });
+        setGlobalBudget(null);
+        fetchLlmBudget(projectId)
+            .then((data) => { if (!cancelled) setGlobalBudget(data?.global ?? null); })
+            .catch(() => undefined);
         return () => { cancelled = true; };
     }, [projectId, days, reloadKey]);
 
@@ -172,7 +186,7 @@ export default function LlmSpendCard({ projectId, days = 30 }: { projectId: numb
         <div className="card llm-spend-card" data-testid="llm-spend-card">
             <h3 className="llm-spend-card__title">Cloud LLM spend (last {days} days)</h3>
             {!spend && <p className="llm-spend-card__muted">Loading…</p>}
-            {spend && <BudgetSection projectId={projectId} spend={spend} onSaved={() => setReloadKey((k) => k + 1)} />}
+            {spend && <BudgetSection projectId={projectId} spend={spend} global={spend.global ?? globalBudget} onSaved={() => setReloadKey((k) => k + 1)} />}
             {spend && totals && totals.operations === 0 && (
                 <p className="llm-spend-card__muted" data-testid="llm-spend-empty">
                     No cloud-model calls in this window. Local models (Ollama) cost nothing and are not counted.
@@ -194,6 +208,13 @@ export default function LlmSpendCard({ projectId, days = 30 }: { projectId: numb
                             {formatTokens(totals.unpriced_tokens)} tokens are on models with no known price and carry no $ figure.
                         </p>
                     )}
+                    {(totals.subscription_calls ?? 0) > 0 && (
+                        <p className="llm-spend-card__muted" data-testid="llm-spend-subscription">
+                            <strong>Subscription CLI:</strong> {totals.subscription_calls} calls
+                            {(totals.subscription_tokens ?? 0) > 0 && `, ${formatTokens(totals.subscription_tokens ?? 0)} tokens`}
+                            {' '}— not counted against the API budget.
+                        </p>
+                    )}
                     <table className="llm-spend-card__table" data-testid="llm-spend-by-model">
                         <thead>
                             <tr><th>Model</th><th>Calls</th><th>Tokens</th><th>~$</th></tr>
@@ -204,7 +225,7 @@ export default function LlmSpendCard({ projectId, days = 30 }: { projectId: numb
                                     <td>{row.model}</td>
                                     <td>{row.calls}</td>
                                     <td>{formatTokens(row.total_tokens)}</td>
-                                    <td>{row.priced ? formatUsd(row.cost_usd) : 'price unknown'}</td>
+                                    <td>{row.billing === 'subscription' ? 'subscription' : row.priced ? formatUsd(row.cost_usd) : 'price unknown'}</td>
                                 </tr>
                             ))}
                         </tbody>

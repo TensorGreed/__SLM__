@@ -197,6 +197,28 @@ class TeacherCaptureTests(unittest.TestCase):
         self.assertEqual(len(final["chunk_errors"]), 1)
         self.assertIn("teacher timeout", final["chunk_errors"][0]["error"])
 
+    def test_reached_api_budget_fails_the_capture_instead_of_skipping_every_row(self):
+        from app.services.llm_budget_guard import LlmBudgetExceeded
+
+        pid = self._create_project("distill-budget")
+        ds_id = self._seed_dataset(pid, self._sample_rows(3))
+        state = {"calls": 0}
+
+        async def _capped(prompt: str, **kwargs):
+            state["calls"] += 1
+            raise LlmBudgetExceeded("global", 10.0, 10.5)
+
+        with patch(_CAPTURE_FN, new=_capped):
+            start = self.client.post(
+                f"/api/projects/{pid}/distillation/capture",
+                json={"dataset_id": ds_id},
+            )
+            final = self._wait_terminal(pid, start.json()["task_id"])
+
+        self.assertEqual(final["status"], "failed")
+        self.assertIn("API budget reached", final["error"])
+        self.assertEqual(state["calls"], 1)  # stopped at the first refusal, not per-row
+
     def test_limit_caps_captured_rows(self):
         pid = self._create_project("distill-limit")
         ds_id = self._seed_dataset(pid, self._sample_rows(5))

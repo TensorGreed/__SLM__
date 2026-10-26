@@ -54,3 +54,34 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   (`cloud_llm_<provider>` / `api_key`) and flips the "✓ saved on project"
   badge; the span tools' cloud pins resolve it server-side. (Before this the
   only UI that saved one was the Answer Key tab's LLM-gold panel checkbox.)
+
+- **Money model (G9, 2026-10-26)** — metered API credits (`call_anthropic_chat`,
+  `call_openai_chat` / `call_teacher_model` / `call_teacher_with_logprobs` on non-local URLs,
+  `CloudLlmBackend`): HARD cap per calendar month UTC — `LLM_MONTHLY_BUDGET_USD` (account-wide,
+  UI-editable in `runtime_settings_service`, string-typed spec because blank = none) and the per-project
+  `llm_budget_usd.monthly` (`warn_at` stays advisory). `services/llm_budget_guard.py`: in-process month
+  ledger (seeded from `llm_spend_service.month_spend_by_project`, refreshed every 60 s, never lowered
+  within the month, incremented by every priced `llm_usage.record`), `check_budget` / async
+  `acheck_budget` (only touches the DB when a cap can apply), `assert_can_start(project_id)` for Job
+  starts (`_resolve_cloud_backend_override` in `api/synthetic.py`, `_cloud_backend_or_http` in
+  `api/flows.py`), `current_project` contextvar (set by `jobs_service._run_runner` and
+  `metered_operation`; carries `runtime_config["synth_command"]`). `LlmBudgetExceeded` is a
+  `RuntimeError`, NOT a `SynthBackendError`, so per-call handlers don't swallow it (the judge loops,
+  the passages gate and `TeacherModelBackend` re-raise it); `main.py` maps it to 402
+  `llm_budget_exceeded` (metadata scope / monthly / spent_usd); a Job stopped by it fails with the bare
+  "API budget reached (...)" message. One call may overshoot by its own cost. Tests that exercise it set
+  the ledger with `llm_budget_guard.seed_for_tests(...)` (no DB read).
+  **Ledger gaps (documented, accepted):** a Job's usage reaches the DB only when it ends, so in-flight
+  spend is lost on a restart; calls outside any project context count against the global cap only; N
+  concurrent calls started before the first returns can overshoot by N calls' cost. A metered model with
+  no price is counted at `llm_pricing.fallback_cost` (highest listed in/out rate; views still say "price
+  unknown"). Message-Batch spend enters via `llm_budget_guard.note_usage(..., batch=True)` after
+  `CloudLlmBackend.complete_batch` collects results (never via `record`: the meter already counts
+  `batch_usage`); the temperature resubmit re-checks the cap. The playground (`check_chat_budget`, in the
+  chat / stream / RAG-compare routes) and the probe judge / plan refinement / teacher capture / synthetic
+  batches re-raise `LlmBudgetExceeded`. `command:<model>` pins are validated (`validate_pin`, via
+  `resolve_cloud_backend`) — a leading "-" would parse as a CLI flag.
+- **Subscription CLI (`command` backend)** — usage recorded as `subscription:<binary>`;
+  `llm_pricing.estimate_cost` prices that prefix at $0 BEFORE substring matching; `llm_spend_service.tally`
+  adds `billing` per by_model row and `subscription_calls` / `subscription_tokens` totals. Never counted
+  by the guard. See `agent-notes/data.md` for the backend's design.

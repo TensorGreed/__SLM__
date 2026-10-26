@@ -128,6 +128,74 @@ For most users, Ollama is fine — the playbook parser already handles markdown-
 - You're running a small (≤ 8B) instruction-tuned model where the format-following capability isn't reliable — vLLM's schema constraint compensates.
 - You want vLLM's higher per-GPU throughput vs. Ollama for large batches.
 
+## Command (local CLI) backend
+
+`CommandBackend` (pin: `command` or `command:<model>`) runs an **allow-listed command-line tool** as the teacher. It is meant for a vendor CLI signed in to a *subscription* (for example `claude -p`), so generation costs no per-call API credits. It is **off until you allow-list a binary**, and it is **never auto-picked**: `pick_backend(None)` and the judge's automatic choice skip it; you choose it explicitly (the backend picker, a flow's model dropdown, or the **Judge model** card in project Settings).
+
+Prompts go to whatever the CLI talks to, so a CLI judge counts as *not local* (a local-only external benchmark skips it).
+
+### Settings
+
+All install-wide environment variables (nothing below can be set per project, except the short list after the table).
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SYNTH_COMMAND_ALLOWED_BINARIES` | empty | Comma list: bare names (match only when `argv[0]` is itself a bare name, never an absolute path with the same basename) or absolute paths (match the resolved executable's real path). **Empty disables the backend.** |
+| `SYNTH_COMMAND_ARGV` | `["claude","-p","--output-format","json","--model","{model}"]` | JSON list. `{model}` is replaced inside an element; in `arg` mode an element that is exactly `{prompt}` receives the prompt. |
+| `SYNTH_COMMAND_PROMPT_MODE` | `stdin` | `stdin` or `arg`. In `arg` mode a prompt starting with `-` gets one leading space so it can never parse as a flag. |
+| `SYNTH_COMMAND_OUTPUT` | `.result` | `raw` (stdout text) or a dotted JSON path: `.result`, `.data.text`, `.choices.0.text`. |
+| `SYNTH_COMMAND_DEFAULT_MODEL` | `sonnet` | Substituted for `{model}`; `command:opus` pins another. Must match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$` (no leading `-`, so a model name can never parse as a flag; a bad `command:<model>` pin is a 400, and `PUT /eval-judge` a 422). |
+| `SYNTH_COMMAND_CONCURRENCY` | `1` | CLI processes at once (1 to 8). One process-wide limit sized by this setting; a per-project `concurrency` override can only lower it. |
+| `SYNTH_COMMAND_TIMEOUT_SECONDS` | `600` | The process is killed after this. |
+| `SYNTH_COMMAND_MAX_RETRIES` | `2` | Other failures retry with exponential backoff. |
+| `SYNTH_COMMAND_BACKOFF_SECONDS` | `5.0` | First backoff; doubles each retry. |
+| `SYNTH_COMMAND_BATCH_SIZE` | `8` | Requests packed into one CLI call (1 to 32; 1 = no packing). |
+| `SYNTH_COMMAND_USAGE_LIMIT_REGEX` | `usage limit\|rate limit\|\b429\b` | Case-insensitive, matched against stdout + stderr of a call that **failed** (non-zero exit or `is_error`); text in a successful reply is never matched. An optional named group `reset` holding a unix epoch sets the cool-down (an epoch in the past falls back to the cool-down). |
+| `SYNTH_COMMAND_COOLDOWN_SECONDS` | `900` | Pause after a usage-limit failure (when no `reset` epoch). Never shorter than 60 s, whatever is configured. |
+| `SYNTH_COMMAND_MAX_PAUSE_SECONDS` | `28800` | Total pause per Job before it fails. |
+| `SYNTH_COMMAND_ENV_PASSTHROUGH` | empty | Extra environment variable names to forward. |
+| `SYNTH_COMMAND_PLAYBOOK_ROWS_PER_CALL` | `25` | Rows asked per CLI call by a synthetic playbook. |
+
+A project may override only `model`, `concurrency`, `batch_size`, `timeout_seconds`, `cooldown_seconds` and `max_retries`, through `runtime_config["synth_command"]` (values are clamped; unknown keys are ignored). The binary, argv, environment and prompt mode are never per project: a project editor must not choose flags.
+
+### Safety model
+
+- **Allow-list**, checked when the backend is built and again on every call. A binary that is on `PATH` but not listed is refused (`binary not allow-listed: <name>`).
+- **No shell**: `create_subprocess_exec` with an argv list. Placeholders are substituted inside single argv elements, so a prompt of `; touch x; $(touch y)` arrives as literal text.
+- **Minimal environment**: only `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_ALL`, `TMPDIR` and the `XDG_*` directories (those that are set) plus the names in `SYNTH_COMMAND_ENV_PASSTHROUGH`.
+- **Denied key variables**: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `OPENAI_API_KEY` are never forwarded, even when listed in the passthrough. A key in the environment makes such CLIs bill the metered API instead of your subscription.
+- **Temporary working directory** per call, so the CLI never reads this repository's instructions or files.
+- The process (and its children) is killed on timeout and when the Job is cancelled: a cancel is noticed before each call and while one is running (polled about every 2 s), and cancelling one chunk of a packed batch stops its sibling chunks.
+
+`max_tokens` and `temperature` are ignored (a CLI has no such knobs). A `response_schema` becomes an instruction in the prompt ("reply with only JSON matching ...").
+
+### Batching
+
+`complete_batch` packs up to `SYNTH_COMMAND_BATCH_SIZE` requests into one call under a strict JSON-lines contract: the prompt lists items `{"id": "r<k>", "system": ..., "prompt": ...}` and demands exactly one line `{"id": "r<k>", "output": "<answer as a JSON string>"}` per item and nothing else (a code fence is tolerated). Items missing, malformed or duplicated in the reply are retried **once, individually**; still failing, they come back as `None` with a reason (`missing_from_batch`, `malformed_json`, `empty_output`, `call_failed`) in `batch_report` and `rejected_items`. A packed call that fails outright is not retried per item. The documents-to-Q&A flow, teacher answers and the relabel tools use this path, and **Batch** in the documents flow now accepts the CLI backend as well as Anthropic models.
+
+### Pause and resume
+
+When a failed call matches the usage-limit regex, every call in the process waits on a shared cool-down. The running Job's message reads **waiting for usage window - resumes ~HH:MM UTC** (the bell shows a "paused" chip), then the same call is retried; a pause does not use up a retry. The Job result gains `paused_seconds`. Past `SYNTH_COMMAND_MAX_PAUSE_SECONDS` in total the Job fails, and one call that hits the limit 20 times in a row gives up. Calls queued behind the concurrency limit re-check the pause before they start, so a pause never lets a burst through. The message shown before the pause is restored afterwards.
+
+Synthetic playbooks ask a CLI for at most `SYNTH_COMMAND_PLAYBOOK_ROWS_PER_CALL` rows per call, so a larger target runs as **chunks** ("chunk 3/8 - 60 rows so far"), each told "Batch k of n: vary topics and wording" and de-duplicated against earlier chunks. Each finished chunk is appended and fsynced to `data/projects/<id>/synthetic/playbook_checkpoints/<hash>.jsonl`; a re-run with the same parameters (recipe, mode, backend, count, class, cluster) reuses finished chunks instead of calling them again. The checkpoint key also includes a hash of the first chunk's prompt, so changing the answer key or examples starts fresh. The file is deleted only after the rows are saved and committed; a crashed run can be resumed for up to 7 days (older files are ignored and removed). A chunk that fails after the backend's retries is listed under `failed_chunks` in the Job result and the run goes on; zero rows overall still fails the Job.
+
+### Spend
+
+Usage is recorded as `subscription:<binary>` (tokens from the CLI's JSON when present; the call counts either way), priced **$0** and shown on its own "Subscription CLI" line in the spend card, never against the API budget. See [Cloud LLM spend](../workflows/data-ingestion.md).
+
+The hard API budget that protects metered calls is a guard rail, not an invoice. Known gaps: spend of a Job still running when the backend restarts is lost to the ledger until the Job ends; calls made outside any project count against the account-wide cap only; calls started together can each overshoot the cap, so N concurrent calls can exceed it by up to N calls' cost; a metered model with no known price is counted at the highest listed price (the spend card still says "price unknown"); Message Batches spend is added to the ledger when the batch results are collected, at half price.
+
+### Recipe: Claude Code (headless)
+
+```sh
+export SYNTH_COMMAND_ALLOWED_BINARIES=claude
+export SYNTH_COMMAND_ARGV='["claude","-p","--output-format","json","--model","{model}","--tools","","--no-session-persistence","--strict-mcp-config"]'
+```
+
+- Do **not** add `--bare`: it only authenticates with an API key, which means metered billing instead of your subscription.
+- Keep `ANTHROPIC_API_KEY` out of the environment (BrewSLM never forwards it anyway).
+- Confirm that your plan's terms allow this automated use before you rely on it.
+
 ## How auto-pick works
 
 When the playbook is run without an explicit backend pin (the default for every existing call site, including Coach click-to-execute actions), `pick_backend(None)` walks the registry in this order and returns the first that's available:
@@ -136,6 +204,8 @@ When the playbook is run without an explicit backend pin (the default for every 
 2. `TeacherModelBackend`
 3. `NemoBackend`
 4. `VllmBackend`
+
+`CommandBackend` and `CloudLlmBackend` are **never** auto-picked: they cost money or send data off the machine, so you pin them.
 
 **NeMo and vLLM are positioned last on purpose.** Existing Ollama-only installs see no behavior change — the auto-pick still returns Ollama. They're only used when:
 

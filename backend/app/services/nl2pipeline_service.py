@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from app.services.synthetic_service import call_teacher_model
+from app.services.llm_budget_guard import LlmBudgetExceeded
 
 
 def _extract_vram_gb(prompt: str) -> float | None:
@@ -115,6 +116,8 @@ async def magic_create_pipeline_recipe(
             max_tokens=600,
             temperature=0.2,
         )
+    except LlmBudgetExceeded:
+        raise
     except Exception:
         if allow_fallback:
             return _fallback_magic_recommendation(prompt)

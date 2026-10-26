@@ -7,7 +7,7 @@ title: Auto API index
 
 # Auto-generated API reference
 
-**SLM Platform** — version `0.1.0`. 538 endpoint(s) across 69 tag(s).
+**SLM Platform** — version `0.1.0`. 540 endpoint(s) across 69 tag(s).
 
 This section is auto-generated from the FastAPI OpenAPI spec. For curated narrative
 + UI / CLI walkthroughs see the linked workflow pages. The live Swagger UI is at
@@ -48,7 +48,7 @@ This section is auto-generated from the FastAPI OpenAPI spec. For curated narrat
 | [Domain Profiles](domain-profiles.md) | 5 |
 | [Drift](drift.md) | 5 |
 | [Eval Gaps](eval-gaps.md) | 3 |
-| [Evaluation](evaluation.md) | 34 |
+| [Evaluation](evaluation.md) | 36 |
 | [Export](export.md) | 16 |
 | [Extensions](extensions.md) | 4 |
 | [External benchmarks](external-benchmarks.md) | 7 |

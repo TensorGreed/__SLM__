@@ -14,7 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
 import { toast } from '../../stores/toastStore';
-import { budgetWarningMessage } from '../../api/llmSpend';
+import { budgetExceededMessage, budgetWarningMessage } from '../../api/llmSpend';
 
 import type {
     ReviewQueueGroup,
@@ -691,7 +691,7 @@ function StaleConventionsStrip({ projectId, groups, onMarked, labellerPins = [] 
                 6000,
             );
         } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Could not start the relabel.', 5000);
+            toast.error(budgetExceededMessage(err) ?? (err instanceof Error ? err.message : 'Could not start the relabel.'), 8000);
         }
     };
     return (

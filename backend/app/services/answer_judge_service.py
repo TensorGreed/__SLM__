@@ -36,7 +36,7 @@ from statistics import median
 from typing import Any, Awaitable, Callable
 
 from app.config import settings
-from app.services import llm_usage
+from app.services import llm_budget_guard, llm_usage
 
 _LOG = logging.getLogger(__name__)
 
@@ -273,7 +273,7 @@ class ResolvedJudge:
     # The same model asked whether the retrieved passages held the answer
     # (None for judges built without one, e.g. tests' fakes).
     retrieval_judge: RetrievalJudgeFn | None = None
-    # False for a cloud model: rows sent to it leave this machine
+    # False for a cloud model or a command-line teacher: rows sent to it leave this machine
     # (a local-only external benchmark skips such a judge).
     local: bool = True
 
@@ -377,8 +377,21 @@ def _judge_from_cloud(provider: str, model: str, api_key: str) -> JudgeFn:
 
 
 async def resolve_answer_judge(db: Any, project_id: int, project: Any = None) -> ResolvedJudge | None:
-    """Pick the judge for this project, or None (→ no ``judge_correct``)."""
-    from app.services.synth_backends import BACKEND_REGISTRY, CloudLlmBackend, pick_backend
+    """Pick the judge for this project, or None (→ no ``judge_correct``).
+
+    Outside a Job (no project context open) the choice is made inside the
+    project's context, so its ``synth_command`` overrides apply to a command
+    backend judge exactly as they do inside a Job."""
+    if llm_budget_guard.current_project.get() is None:
+        rc = getattr(project, "runtime_config", None) if project is not None else None
+        override = rc.get("synth_command") if isinstance(rc, dict) else None
+        with llm_budget_guard.project_context(project_id, override if isinstance(override, dict) else None):
+            return await _resolve_answer_judge(db, project_id, project)
+    return await _resolve_answer_judge(db, project_id, project)
+
+
+async def _resolve_answer_judge(db: Any, project_id: int, project: Any = None) -> ResolvedJudge | None:
+    from app.services.synth_backends import BACKEND_REGISTRY, pick_backend
 
     requested = (os.getenv("EVAL_JUDGE_BACKEND") or "").strip()
     config = {}
@@ -415,17 +428,20 @@ async def resolve_answer_judge(db: Any, project_id: int, project: Any = None) ->
             return None
         return ResolvedJudge(label=await _backend_label(backend), judge=_judge_from_synth_backend(backend, requested),
                              retrieval_judge=_retrieval_judge_from_synth_backend(backend),
-                             local=not isinstance(backend, CloudLlmBackend))
+                             local=not getattr(backend, "sends_data_off_machine", False))
 
     # Nothing requested: a local model first, then a configured cloud judge.
     for cls in BACKEND_REGISTRY:
-        if cls is CloudLlmBackend:
+        # Backends that bill or send data off the machine (auto_pick False)
+        # are chosen explicitly only.
+        if getattr(cls, "auto_pick", True) is False:
             continue
         try:
             if cls.is_available():
                 backend = cls()
                 return ResolvedJudge(label=await _backend_label(backend), judge=_judge_from_synth_backend(backend, cls.name),
-                                     retrieval_judge=_retrieval_judge_from_synth_backend(backend))
+                                     retrieval_judge=_retrieval_judge_from_synth_backend(backend),
+                                     local=not getattr(backend, "sends_data_off_machine", False))
         except Exception:  # noqa: BLE001
             continue
     cloud = await _cloud_config(db, project_id, None)
@@ -504,6 +520,8 @@ async def _judge_predictions(
             result = None
             try:
                 result = await judge(question, reference, prediction)
+            except llm_budget_guard.LlmBudgetExceeded:
+                raise  # the hard API budget ends the run; it is not a per-row failure
             except Exception as exc:  # noqa: BLE001 — the judge never breaks the eval
                 _LOG.warning("answer judge failed on row %s: %s", index, exc)
             calls += 1
@@ -577,6 +595,8 @@ async def _judge_retrieval(
                 result = None
                 try:
                     result = await judge(question, reference, passages)
+                except llm_budget_guard.LlmBudgetExceeded:
+                    raise
                 except Exception as exc:  # noqa: BLE001 — never breaks the comparison
                     _LOG.warning("retrieval judge failed on row %s: %s", index, exc)
                 calls += 1

@@ -32,6 +32,7 @@ from app.schemas.domain_blueprint import (
 from app.services.artifact_registry_service import publish_artifact
 from app.services.decision_engine_service import infer_recommended_approach
 from app.services.synthetic_service import call_teacher_model
+from app.services.llm_budget_guard import LlmBudgetExceeded
 
 
 TASK_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -750,6 +751,8 @@ async def _llm_enrich_blueprint(
 
     try:
         response = await call_teacher_model(prompt=prompt, max_tokens=800, temperature=0.1)
+    except LlmBudgetExceeded:
+        raise
     except Exception as e:
         return blueprint, {"enabled": True, "applied": False, "reason": f"llm_call_failed:{e}"}
 

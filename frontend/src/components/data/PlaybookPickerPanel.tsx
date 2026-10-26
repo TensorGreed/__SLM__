@@ -391,6 +391,10 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
         ? availableBackends.find((b) => b.describe === selectedBackend)
         : availableBackends[0];
     const activeIsSchemaAware = Boolean(activeBackend?.schema_aware);
+    // Billing chip + detail follow the pin that will actually run.
+    const runningBackend = effectiveBackend
+        ? availableBackends.find((b) => b.describe === effectiveBackend)
+        : availableBackends[0];
 
     if (catalogLoading) {
         return (
@@ -546,6 +550,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                                 <option key={b.name} value={b.describe}>
                                     {b.describe}
                                     {b.schema_aware ? ' · schema-aware' : ''}
+                                    {b.billing === 'subscription' ? ' · subscription' : ''}
                                 </option>
                             ))}
                         </select>
@@ -694,6 +699,16 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                             ? `auto · ollama:${ollamaAutoPick}`
                             : 'auto (server picks)')}
                 </code>
+                {runningBackend?.billing === 'subscription' && (
+                    <span className="u-hint" data-testid="playbook-picker-subscription-chip">
+                        subscription — not billed per call
+                    </span>
+                )}
+                {runningBackend?.detail && (
+                    <span className="u-hint" data-testid="playbook-picker-backend-detail">
+                        {runningBackend.detail}
+                    </span>
+                )}
             </div>
 
             <div className="playbook-picker__actions">

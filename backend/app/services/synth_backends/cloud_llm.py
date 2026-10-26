@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Literal
 
-from app.services import cloud_llm_service
+from app.services import cloud_llm_service, llm_budget_guard
 from app.services.cloud_llm_service import (
     CloudLlmError,
     call_anthropic_chat,
@@ -58,6 +58,9 @@ class CloudLlmBackend:
     # (``response_format=json_schema``) — that's vLLM/NeMo territory —
     # but enough that the picker can badge cloud as schema-adjacent.
     schema_aware: bool = False
+    # Prompts leave this machine; billed per token against API credits.
+    sends_data_off_machine: bool = True
+    billing: str = "metered"
 
     def __init__(
         self,
@@ -134,9 +137,12 @@ class CloudLlmBackend:
         same 400; those are resubmitted once without it."""
         if not self.supports_batch:
             raise SynthBackendError(f"Message batches are Anthropic-only (this backend is {self.describe()}).")
+        await llm_budget_guard.acheck_budget(self._provider, self._model)  # hard monthly API budget, before submitting
         out: list[str | None] = [None] * len(requests)
         todo = list(range(len(requests)))
         for attempt in range(2):
+            if attempt:  # the temperature resubmit is a new spend: re-check the cap
+                await llm_budget_guard.acheck_budget(self._provider, self._model)
             batch_req = [
                 {
                     "custom_id": f"r{i}",
@@ -174,6 +180,7 @@ class CloudLlmBackend:
             except CloudLlmError as e:
                 raise SynthBackendError(f"Cloud LLM batch ({self._provider}:{self._model}) failed: {e}") from e
             failed: list[int] = []
+            attempt_usage = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 0}
             temperature_rejected = False
             for i in todo:
                 result = results.get(f"r{i}")
@@ -191,6 +198,16 @@ class CloudLlmBackend:
                 self.batch_usage["output_tokens"] += resp.completion_tokens
                 self.batch_usage["cache_write_tokens"] += resp.cache_write_tokens
                 self.batch_usage["cache_read_tokens"] += resp.cache_read_tokens
+                attempt_usage["calls"] += 1
+                attempt_usage["input_tokens"] += resp.prompt_tokens
+                attempt_usage["output_tokens"] += resp.completion_tokens
+                attempt_usage["cache_write_tokens"] += resp.cache_write_tokens
+                attempt_usage["cache_read_tokens"] += resp.cache_read_tokens
+            # Batch spend feeds the budget ledger at half price. Not through
+            # ``llm_usage.record``: the Job meter already counts batch usage via
+            # ``batch_usage`` (recording would double count it).
+            if attempt_usage["calls"]:
+                llm_budget_guard.note_usage(self._provider, self._model, attempt_usage, batch=True)
             self.batch_report.append({
                 "batch_id": batch_id, "requests": len(todo),
                 "succeeded": len(todo) - len(failed), "failed": len(failed),
@@ -219,6 +236,7 @@ class CloudLlmBackend:
         mark the system prompt itself as the cached block (same content —
         for callers whose stable instructions already live there; OpenAI
         caches long prefixes on its own, so nothing changes there)."""
+        await llm_budget_guard.acheck_budget(self._provider, self._model)  # hard monthly API budget
         # call_*_chat both return CloudLlmResponse with a ``content``
         # str. Map any CloudLlmError to SynthBackendError so the
         # playbook framework's existing 5xx handling kicks in.

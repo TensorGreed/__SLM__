@@ -12,6 +12,7 @@ import { useState, type ReactNode } from 'react';
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 
 import api from '../api/client';
+import JudgeModelCard from '../components/settings/JudgeModelCard';
 import ManifestExportButton from '../components/manifest/ManifestExportButton';
 import DecisionLogPanel from '../components/autopilot/DecisionLogPanel';
 import DetailsDrawer, { type DetailSection } from '../components/shared/DetailsDrawer';
@@ -196,6 +197,8 @@ export default function ProjectSettingsPage() {
                     </button>
                 </div>
             </section>
+
+            <JudgeModelCard projectId={projectId} />
 
             <DetailsDrawer
                 testId="settings-details"

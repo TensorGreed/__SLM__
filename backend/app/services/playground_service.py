@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 
-from app.services import llm_usage
+from app.services import llm_budget_guard, llm_usage
 
 DEFAULT_OPENAI_COMPATIBLE_URL = "http://localhost:11434/v1/chat/completions"
 DEFAULT_LLAMA_CPP_URL = "http://localhost:8080/v1/chat/completions"
@@ -491,6 +491,18 @@ def is_metered_chat(provider: str | None, endpoint: str | None) -> bool:
     Mock, the in-process trained run, llama.cpp and Ollama / LAN servers are
     free and never metered."""
     return _normalize_provider(provider) == "openai_compatible" and not llm_usage.is_local_url(endpoint)
+
+
+async def check_chat_budget(project_id: int, provider: str | None, api_url: str | None, model_name: str) -> None:
+    """Hard monthly API budget for a metered playground chat: raises
+    ``LlmBudgetExceeded`` (HTTP 402 ``llm_budget_exceeded``) before the request
+    when the account-wide or the project's cap is reached. Local / mock /
+    in-process providers are never checked."""
+    endpoint = str(api_url or DEFAULT_OPENAI_COMPATIBLE_URL).strip() or DEFAULT_OPENAI_COMPATIBLE_URL
+    if not is_metered_chat(provider, endpoint):
+        return
+    with llm_budget_guard.project_context(project_id):
+        await llm_budget_guard.acheck_budget(llm_usage.provider_for_url(endpoint), model_name)
 
 
 def playground_usage_counts(

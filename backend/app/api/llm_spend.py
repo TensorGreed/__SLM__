@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.project import Project
-from app.services import llm_spend_service
+from app.services import llm_budget_guard, llm_spend_service
 
 router = APIRouter(prefix="/projects/{project_id}/llm-spend", tags=["LLM spend"])
 budget_router = APIRouter(prefix="/projects/{project_id}/llm-budget", tags=["LLM spend"])
@@ -36,11 +36,24 @@ class LlmBudgetUpdate(BaseModel):
     warn_at: float | None = None
 
 
+async def _global_block(db: AsyncSession) -> dict[str, Any]:
+    """The account-wide cap (``LLM_MONTHLY_BUDGET_USD``) against every project's month-to-date metered spend."""
+    rows = await llm_spend_service.month_spend_by_project(db)
+    spent = sum(float(r["spent_usd"]) for r in rows.values())
+    # A running Job's spend reaches the DB only when it ends: the live ledger
+    # is the higher of the two (what the guard enforces).
+    spent = max(spent, llm_budget_guard.snapshot()["global"])
+    return llm_budget_guard.global_status(spent)
+
+
 async def _budget_payload(db: AsyncSession, project: Project) -> dict[str, Any]:
     return {
         "project_id": project.id,
         "budget": llm_spend_service.read_budget(project),
         "status": await llm_spend_service.month_budget_status(db, project),
+        # Hard stop: metered cloud calls are refused at the cap (project and account-wide).
+        "global": await _global_block(db),
+        "hard_stop": True,
     }
 
 
@@ -55,8 +68,9 @@ async def get_llm_budget(project_id: int, db: AsyncSession = Depends(get_db)) ->
 
 @budget_router.put("")
 async def put_llm_budget(project_id: int, body: LlmBudgetUpdate, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    """Set (or clear, with ``monthly: null``) the monthly budget. Advisory
-    only — nothing is ever blocked by it."""
+    """Set (or clear, with ``monthly: null``) the monthly budget. A hard cap
+    for metered cloud-API calls (``warn_at`` stays advisory); local and
+    subscription backends are never blocked."""
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
@@ -72,4 +86,5 @@ async def put_llm_budget(project_id: int, body: LlmBudgetUpdate, db: AsyncSessio
     project.runtime_config = cfg
     await db.commit()
     await db.refresh(project)
+    llm_budget_guard.invalidate()  # the guard re-reads caps on its next check
     return await _budget_payload(db, project)

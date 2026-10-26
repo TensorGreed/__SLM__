@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.services import llm_budget_guard
 from app.services.cloud_backend_pins import CloudPinError, resolve_cloud_backend
 from app.services.documents_qa_flow_service import (
     DEFAULT_MAX_PASSAGES,
@@ -44,10 +45,21 @@ async def _cloud_backend_or_http(db: AsyncSession, project_id: int, pin: str | N
     saved key (None for local backend names — ``pick_backend`` resolves
     those). Same 400 / 402 as the Synthetic tab's span routes."""
     try:
-        return await resolve_cloud_backend(db, project_id, pin)
+        backend = await resolve_cloud_backend(db, project_id, pin)
     except CloudPinError as exc:
         error_code = "CLOUD_KEY_MISSING" if exc.status_code == 402 else "BAD_BACKEND_PIN"
         raise HTTPException(exc.status_code, {"error_code": error_code, "message": exc.message}) from exc
+    if backend is not None:
+        # Metered backend: 402 ``llm_budget_exceeded`` when a monthly cap is reached.
+        await llm_budget_guard.assert_can_start(project_id)
+    return backend
+
+
+def _can_batch(pin: str | None) -> bool:
+    """A pin that can take batched requests: Anthropic Message Batches, or the
+    command backend (packed calls)."""
+    text = str(pin or "")
+    return text.startswith("cloud:anthropic:") or text.split(":", 1)[0] == "command"
 
 
 class DocumentsQaFlowRequest(BaseModel):
@@ -161,10 +173,13 @@ async def start_documents_to_qa(
         pins = [req.backend] if not req.reuse_existing else []
         if req.answers_from_teacher:
             pins.append(req.teacher_backend or req.backend)
-        if not pins or any(not str(pin or "").startswith("cloud:anthropic:") for pin in pins):
+        if not pins or any(not _can_batch(pin) for pin in pins):
             raise HTTPException(400, {
                 "error_code": "BATCH_NEEDS_ANTHROPIC",
-                "message": "use_batch needs an Anthropic cloud model (cloud:anthropic:<model>) for every model it sends calls to.",
+                "message": (
+                    "use_batch needs an Anthropic cloud model (cloud:anthropic:<model>) or the command-line "
+                    "backend (command) for every model it sends calls to."
+                ),
             })
     preview = await documents_to_qa_preview(project_id, req.backend, req.decision_gap, db)
     if not preview["eligible"]:

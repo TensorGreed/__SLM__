@@ -374,7 +374,9 @@ class VllmRegistryTests(unittest.TestCase):
         for power users who already configured NeMo."""
         # The template smoke backend (CI stand-in, env-gated, never
         # auto-picked on a dev box) trails every real backend.
-        names = [c.name for c in BACKEND_REGISTRY if c.name != "template"]
+        # The command (CLI) backend is explicit-pin only (auto_pick False): it
+        # sits between vLLM and the template backend and is never auto-picked.
+        names = [c.name for c in BACKEND_REGISTRY if c.name not in {"template", "command"}]
         self.assertIn("vllm", names)
         self.assertEqual(names[-1], "vllm")
         # NeMo is still second-to-last (Phase 5a ordering preserved).

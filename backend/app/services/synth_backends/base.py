@@ -64,6 +64,14 @@ class SynthBackend(Protocol):
         """
         ...
 
+    # Optional class attributes (read with getattr, defaults in brackets):
+    #   auto_pick [True]  — False: ``pick_backend(None)`` and the judge
+    #     auto-walk skip this backend; it is chosen only by an explicit pin.
+    #   sends_data_off_machine [False] — True when prompts leave this machine
+    #     (cloud APIs, a vendor CLI): such a judge is not "local".
+    # Optional methods: ``detail()`` -> short provenance text for the picker;
+    # ``billing`` class/instance attr: "local" | "metered" | "subscription".
+
     def describe(self) -> str:  # pragma: no cover - default no-op
         """Human-readable backend identifier (for PlaybookResult.backend_used).
         e.g. "ollama:llama3.1:8b" or "teacher:http://localhost:11434/v1/…"."""
@@ -144,6 +152,10 @@ def pick_backend(
 
     if requested is None:
         for cls in registry:
+            # Backends that cost money or send data off the machine (the
+            # command backend) are only ever chosen explicitly.
+            if getattr(cls, "auto_pick", True) is False:
+                continue
             try:
                 if cls.is_available():
                     return cls()

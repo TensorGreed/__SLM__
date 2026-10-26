@@ -62,6 +62,7 @@ session-start guidance.
 - `backend/app/api/domain_profiles.py` — Domain profile API routes.
 - `backend/app/api/drift.py` — Project-scoped drift API (E4).
 - `backend/app/api/eval_gaps.py` — Eval Gap API — Coach-stage-2 phases 3 + 5.
+- `backend/app/api/eval_judge.py` — Judge-model selection for a project (``runtime_config["eval_judge"]``).
 - `backend/app/api/evaluation.py` — Evaluation API routes.
 - `backend/app/api/export.py` — Export API routes.
 - `backend/app/api/extensions.py` — Extensions API — plugin contract validators + scaffold generator
@@ -220,6 +221,7 @@ session-start guidance.
 - `backend/app/services/job_service.py` — Shared Celery job helpers for status and cancellation.
 - `backend/app/services/jobs_service.py` — Generic background-job framework (Hardening Phase H1).
 - `backend/app/services/label_noise_scoring_service.py` — Quality-Lift phase 4 slice 1 — Label-noise scoring (Confident-Learning-lite).
+- `backend/app/services/llm_budget_guard.py` — Hard API budget for metered cloud-LLM calls.
 - `backend/app/services/llm_pricing.py` — List-price cost estimates for cloud LLM token usage.
 - `backend/app/services/llm_spend_service.py` — Project cloud-LLM spend tally.
 - `backend/app/services/llm_usage.py` — Cloud-LLM token metering: who spent what, per operation.
@@ -296,6 +298,7 @@ session-start guidance.
 - `backend/app/services/support_bundle_service.py` — Support-bundle service with redaction (priority.md P34, Wave G).
 - `backend/app/services/synth_backends/base.py` — SynthBackend protocol + registry helpers (USER-SUCCESS Epic 2).
 - `backend/app/services/synth_backends/cloud_llm.py` — Cloud-LLM synth backend — OpenAI, Anthropic, Deepseek.
+- `backend/app/services/synth_backends/command.py` — Command (local CLI) synth backend.
 - `backend/app/services/synth_backends/nemo.py` — NVIDIA NeMo Data Designer / NIM synth backend (USER-SUCCESS Epic 5 Phase 5a + 5b).
 - `backend/app/services/synth_backends/ollama.py` — Ollama-based synthetic-data backend (USER-SUCCESS Epic 2).
 - `backend/app/services/synth_backends/teacher.py` — Teacher-model backend — fallback that talks to whatever
@@ -488,6 +491,7 @@ session-start guidance.
 - `frontend/src/api/drift.ts` — Typed client for the drift API (E4 UI).
 - `frontend/src/api/errors.ts` — Shared error parsing + types for the platform's structured error
 - `frontend/src/api/evalGaps.ts` — Eval Gaps API client — Coach-stage-2 phases 3 + 5.
+- `frontend/src/api/evalJudge.ts` — _(no docstring)_
 - `frontend/src/api/evalPackScaffold.ts` — Typed client for the recipe-aware eval-pack scaffolder (E5).
 - `frontend/src/api/evalSummary.ts` — The Eval tab's default card (Wave 3b).
 - `frontend/src/api/experimentCompare.ts` — Typed client for the eval-aware experiment comparison endpoint (E3).
@@ -678,6 +682,7 @@ session-start guidance.
 - `frontend/src/components/pipeline/WorkflowRunMonitor.tsx` — Workflow execution tracker with autopilot gating, queueing, and run-history display.
 - `frontend/src/components/projects/ApproachChip.tsx` — Decision-engine chip (Theme 7).
 - `frontend/src/components/projects/ProjectTemplateGallery.tsx` — Project-template gallery — surfaces every available template on
+- `frontend/src/components/settings/JudgeModelCard.tsx` — JudgeModelCard — Settings → "Judge model". Picks which model scores the
 - `frontend/src/components/shared/CommandSnippet.tsx` — CommandSnippet — collapsed "Show as CLI / API" disclosure rendered
 - `frontend/src/components/shared/DetailsDrawer.tsx` — "Details" — the collapsed drawer under a step's short form (Epic U phase
 - `frontend/src/components/shared/EmptyState.tsx` — EmptyState — the one way a surface says "nothing here yet" (Epic U
@@ -786,6 +791,7 @@ session-start guidance.
 - `backend/tests/test_coach_reroute_nudge.py` — Tests for the Phase 7d Coach Mode reroute nudge.
 - `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
 - `backend/tests/test_code_chunker.py` — Code chunker: declaration-level chunks with exact line ranges.
+- `backend/tests/test_command_backend.py` — Command (local CLI) synth backend + the hard API budget (phase G9).
 - `backend/tests/test_compliance_bundles.py` — Compliance bundles: built-in bundles are data (types + definitions +
 - `backend/tests/test_continued_pretraining.py` — Continued pretraining for documents-only projects (Wave 2c-1).
 - `backend/tests/test_curriculum_ab.py` — Tests for the Phase 6c A/B harness (pure-function pieces).
@@ -1179,10 +1185,12 @@ session-start guidance.
 - `frontend/src/components/observability/TimelineTree.test.tsx` — _(no docstring)_
 - `frontend/src/components/pipeline/WorkflowRunMonitor.test.tsx` — _(no docstring)_
 - `frontend/src/components/projects/ProjectTemplateGallery.test.tsx` — _(no docstring)_
+- `frontend/src/components/settings/JudgeModelCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/CommandSnippet.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/DetailsDrawer.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/EmptyState.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/ErrorPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/shared/GenerationModelPicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/HealthCheckModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/Term.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/Toast.test.tsx` — Toast renderer — focused on the new optional ``action`` field

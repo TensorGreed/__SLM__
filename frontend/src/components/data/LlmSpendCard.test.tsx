@@ -5,7 +5,7 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: { get: vi.fn(), post: vi.fn(), 
 vi.mock('../../api/client', () => ({ default: apiMock }));
 
 import LlmSpendCard, { budgetLineText, formatTokens, formatUsd } from './LlmSpendCard';
-import { budgetWarningMessage } from '../../api/llmSpend';
+import { budgetExceededMessage, budgetWarningMessage } from '../../api/llmSpend';
 
 const SPEND = {
     project_id: 7,
@@ -119,5 +119,46 @@ describe('LlmSpendCard', () => {
     it('reads a Job start\'s budget_warning', () => {
         expect(budgetWarningMessage({ id: 3 })).toBeNull();
         expect(budgetWarningMessage({ id: 3, budget_warning: { message: 'over its $1.00 budget' } })).toBe('over its $1.00 budget');
+    });
+    it('reads a 402 llm_budget_exceeded start error, and nothing else', () => {
+        const envelope = { response: { status: 402, data: { error_code: 'llm_budget_exceeded', message: 'API budget reached (global: $5.00 of $5.00 this month) — switch to a local or subscription backend', detail: 'x' } } };
+        expect(budgetExceededMessage(envelope)).toContain('API budget reached');
+        expect(budgetExceededMessage({ response: { status: 402, data: { error_code: 'CLOUD_KEY_MISSING', detail: 'no key' } } })).toBeNull();
+        expect(budgetExceededMessage(new Error('boom'))).toBeNull();
+        expect(budgetExceededMessage({ response: { data: { error_code: 'llm_budget_exceeded' } } })).toContain('monthly API budget');
+    });
+    it('shows subscription rows without a $ figure, a Subscription CLI line, and the account-wide cap', async () => {
+        apiMock.get.mockImplementation((url: string) => {
+            if (url.endsWith('/llm-budget')) {
+                return Promise.resolve({ data: { project_id: 7, budget: null, status: null, hard_stop: true, global: { monthly: 100, spent_usd: 42.5, status: 'ok' } } });
+            }
+            return Promise.resolve({
+                data: {
+                    ...SPEND,
+                    totals: { ...SPEND.totals, subscription_calls: 12, subscription_tokens: 30_000 },
+                    by_model: [
+                        ...SPEND.by_model,
+                        { model: 'subscription:claude', calls: 12, input_tokens: 0, output_tokens: 0, cache_write_tokens: 0,
+                            cache_read_tokens: 0, total_tokens: 30_000, cost_usd: 0, priced: true, billing: 'subscription' },
+                    ],
+                },
+            });
+        });
+        render(<LlmSpendCard projectId={7} />);
+        const sub = await screen.findByTestId('llm-spend-subscription');
+        expect(sub.textContent).toContain('12 calls');
+        expect(sub.textContent).toContain('not counted against the API budget');
+        const row = screen.getByTestId('llm-spend-by-model').textContent ?? '';
+        expect(row).toContain('subscription:claude');
+        expect(row).toContain('subscription');
+        const line = await screen.findByTestId('llm-spend-global-line');
+        expect(line.textContent).toContain('All projects this month: ~$42.50 of $100.00 (API credits)');
+    });
+
+    it('describes the budget as a hard stop for cloud API calls', async () => {
+        apiMock.get.mockResolvedValue({ data: SPEND });
+        render(<LlmSpendCard projectId={7} />);
+        fireEvent.click(await screen.findByTestId('llm-spend-budget-edit'));
+        expect(screen.getByTestId('llm-spend-budget-form').textContent).toContain('Cloud API calls stop at the cap');
     });
 });

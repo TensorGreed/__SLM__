@@ -250,3 +250,17 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `data-testid="training-run-<id>"`, never the first row. API reference pages
   (`slm-docs/docs/reference/api/`) are regenerated per `slm-docs/scripts/README.md`
   (dump with DATABASE_URL/DATA_DIR on a scratch DB, then `npx docusaurus build`).
+
+## Judge picker, subscription backend and hard API budget (G9)
+
+- Settings has a "Judge model" card (`components/settings/JudgeModelCard.tsx`, `api/evalJudge.ts`): select from
+  `GET /eval-judge` options, enabled toggle, the resolved judge with a billing badge (local / metered /
+  subscription) and an `EVAL_JUDGE_BACKEND` override notice. PUT returns the same shape.
+- `GenerationModelPicker` adds a "Local CLI (subscription) — <detail>" option when `/synthetic/backends` reports an
+  available `billing === "subscription"` backend; the pin is that backend's `describe`. `PlaybookPickerPanel` shows
+  a "subscription — not billed per call" chip + the backend `detail` for the pin that will run.
+- `LlmSpendCard`: subscription rows show "subscription" instead of $; a separate "Subscription CLI" line; the budget
+  copy is a hard stop for cloud API calls; "All projects this month" appears when `global.monthly` is set
+  (read from `/llm-budget`).
+- `NotificationBell`: a running Job whose message starts "waiting for usage window" gets a "paused" chip.
+- A 402 `llm_budget_exceeded` start surfaces through the existing `extractApiErrorMessage` toasts (envelope message).

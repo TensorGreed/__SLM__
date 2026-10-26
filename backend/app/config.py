@@ -105,6 +105,35 @@ class Settings(BaseSettings):
     VLLM_DEFAULT_MODEL: str = ""
     VLLM_TIMEOUT_SECONDS: float = 600.0
 
+    # ── Command (local CLI) synth backend ───────────────────────────────
+    # Runs an allow-listed command-line tool (e.g. a vendor CLI signed in to a
+    # subscription) as a teacher. Disabled while the allow-list is empty.
+    # Entries: bare binary names (match argv[0]) or absolute paths (match the
+    # resolved executable). argv/binary/env/prompt mode are install-wide and
+    # never per-project. See slm-docs/docs/extensions/synth-backends.md.
+    SYNTH_COMMAND_ALLOWED_BINARIES: str = ""
+    SYNTH_COMMAND_ARGV: str = '["claude","-p","--output-format","json","--model","{model}"]'
+    SYNTH_COMMAND_PROMPT_MODE: str = "stdin"  # "stdin" | "arg"
+    SYNTH_COMMAND_OUTPUT: str = ".result"  # "raw" or a dotted JSON path
+    SYNTH_COMMAND_DEFAULT_MODEL: str = "sonnet"
+    SYNTH_COMMAND_CONCURRENCY: int = 1
+    SYNTH_COMMAND_TIMEOUT_SECONDS: float = 600.0
+    SYNTH_COMMAND_MAX_RETRIES: int = 2
+    SYNTH_COMMAND_BACKOFF_SECONDS: float = 5.0
+    SYNTH_COMMAND_BATCH_SIZE: int = 8
+    SYNTH_COMMAND_USAGE_LIMIT_REGEX: str = "usage limit|rate limit|\\b429\\b"
+    SYNTH_COMMAND_COOLDOWN_SECONDS: float = 900.0
+    SYNTH_COMMAND_MAX_PAUSE_SECONDS: float = 28800.0
+    SYNTH_COMMAND_ENV_PASSTHROUGH: str = ""
+    SYNTH_COMMAND_PLAYBOOK_ROWS_PER_CALL: int = 25
+
+    # ── Hard API budget (metered cloud calls only) ──────────────────────
+    # Account-wide cap in US dollars per calendar month (UTC) across all
+    # projects; unset = no account-wide cap. Local models and subscription
+    # CLIs are never counted. A project's own llm_budget_usd.monthly is a
+    # hard cap too.
+    LLM_MONTHLY_BUDGET_USD: float | None = None
+
     # ── Judge Model (for evaluation) ────────────────────────────────────
     JUDGE_MODEL_API_URL: str = ""
     JUDGE_MODEL_API_KEY: str = ""

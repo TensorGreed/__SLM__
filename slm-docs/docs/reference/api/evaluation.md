@@ -7,11 +7,62 @@ title: Evaluation
 
 # Evaluation
 
-Auto-generated reference for the **Evaluation** API. 34 endpoint(s).
+Auto-generated reference for the **Evaluation** API. 36 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
 [Observability](../../observability/run-events.md), or [Extensions](../../extensions/contracts.md).
+
+### `GET /api/projects/{project_id}/eval-judge`
+
+**Get Eval Judge**
+
+The project's judge setting, what it resolves to now, and the choices.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `PUT /api/projects/{project_id}/eval-judge`
+
+**Put Eval Judge**
+
+Set the judge: ``backend`` null/"" = automatic; a registry backend's pin
+(``ollama:…``, ``command``, ``teacher``…) or a cloud provider
+(``anthropic`` / ``openai`` / ``deepseek``, optionally ``:<model>``).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `EvalJudgeUpdate`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `enabled` | `boolean` | no |  |
+| `backend` | `string \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
 
 ### `POST /api/projects/{project_id}/evaluation/adopt-gate-from-cluster`
 

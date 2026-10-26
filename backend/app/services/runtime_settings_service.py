@@ -36,6 +36,17 @@ _RUNTIME_SETTING_SPECS: tuple[RuntimeSettingSpec, ...] = (
         requires_restart=False,
     ),
     RuntimeSettingSpec(
+        key="LLM_MONTHLY_BUDGET_USD",
+        label="Monthly API budget (USD)",
+        description=(
+            "Hard cap on metered cloud-LLM spend per calendar month across all projects "
+            "(leave blank for no cap). Local models and subscription CLIs are not counted."
+        ),
+        category="integrations",
+        value_type="string",
+        requires_restart=False,
+    ),
+    RuntimeSettingSpec(
         key="JUDGE_MODEL_API_URL",
         label="Judge Model API URL",
         description="Evaluation judge model endpoint.",
@@ -226,6 +237,16 @@ def _normalize_int(value: Any) -> int:
     return int(token)
 
 
+def _normalize_budget_cap(value: Any) -> float | None:
+    """Blank / null clears the cap; otherwise a number of dollars > 0."""
+    if value is None or str(value).strip() == "":
+        return None
+    amount = float(str(value).strip())
+    if not amount > 0 or amount == float("inf"):
+        raise ValueError("LLM_MONTHLY_BUDGET_USD must be greater than 0 (leave blank for no cap)")
+    return round(amount, 4)
+
+
 def _coerce_value(spec: RuntimeSettingSpec, value: Any) -> Any:
     if spec.value_type == "bool":
         return _normalize_bool(value)
@@ -234,6 +255,8 @@ def _coerce_value(spec: RuntimeSettingSpec, value: Any) -> Any:
         if spec.key == "EXTERNAL_COMMAND_TIMEOUT_SECONDS":
             return max(1, normalized)
         return normalized
+    if spec.key == "LLM_MONTHLY_BUDGET_USD":
+        return _normalize_budget_cap(value)
     normalized = str(value).strip()
     if spec.options and normalized not in set(spec.options):
         raise ValueError(f"{spec.key} must be one of: {', '.join(spec.options)}")
@@ -268,6 +291,12 @@ def apply_persisted_runtime_overrides() -> dict[str, Any]:
     }
 
 
+def _display_value(spec: RuntimeSettingSpec, value: Any) -> Any:
+    if spec.key == "LLM_MONTHLY_BUDGET_USD":
+        return "" if value is None else str(value)
+    return value
+
+
 def list_runtime_settings() -> dict[str, Any]:
     overrides = _load_persisted_overrides()
     fields: list[dict[str, Any]] = []
@@ -283,7 +312,7 @@ def list_runtime_settings() -> dict[str, Any]:
                 "options": list(spec.options),
                 "multiline": spec.multiline,
                 "source": "override" if spec.key in overrides else "env",
-                "value": getattr(settings, spec.key),
+                "value": _display_value(spec, getattr(settings, spec.key)),
             }
         )
     return {

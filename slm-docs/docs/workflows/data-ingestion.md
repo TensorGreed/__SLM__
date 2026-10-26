@@ -303,7 +303,13 @@ The **Cloud LLM spend (last 30 days)** card on the **Data** → **Generate** ste
 curl http://localhost:8000/api/projects/1/llm-spend?days=30
 ```
 
-**Monthly budget.** Set one on the same card (**Set a monthly budget**: an amount in dollars and a warn-at share, default 80%), or through the API. The card shows "This month: ~$4.10 of $5.00 (82%)" for the calendar month to date (UTC), whatever window the rest of the card covers. The line is amber once spend passes the warn-at share and red once it is over the budget. The Coach's Synthetic stage gives a warning at the warn-at share and a critical nudge (`synthetic:llm-budget`) once you are over. When the month is already over budget, starting a relabel or a playbook still starts the job, but the response carries a `budget_warning` that the UI shows as a toast. The budget is advisory: nothing is blocked, and you decide. It uses the same list-price estimate as the card.
+**Monthly budget (a hard stop for API credits).** Set one on the same card (**Set a monthly budget**: an amount in dollars and a warn-at share, default 80%), or through the API. The card shows "This month: ~$4.10 of $5.00 (82%)" for the calendar month to date (UTC), whatever window the rest of the card covers. The line is amber once spend passes the warn-at share and red once it is over. The Coach's Synthetic stage gives a warning at the warn-at share and a critical nudge (`synthetic:llm-budget`) once you are over.
+
+The budget **stops metered cloud-API calls** (Anthropic, OpenAI, DeepSeek, and teacher endpoints on non-local hosts) once the month's spend reaches it: starting a job pinned to a cloud model answers `402` with `error_code: llm_budget_exceeded` (`metadata`: `scope`, `monthly`, `spent_usd`), and a job that crosses the cap mid-run fails with "API budget reached (...) - switch to a local or subscription backend". One call may overshoot the cap by its own cost, because the spend is only known after the call. `warn_at` stays advisory.
+
+There is also an **account-wide cap across all projects**: set `LLM_MONTHLY_BUDGET_USD` (environment, or the runtime settings screen; blank = none). The card then adds "All projects this month: ~$x of $y (API credits)". The project budget and the account cap both apply; whichever is reached first blocks.
+
+Local models (Ollama, vLLM, LAN endpoints) and **subscription CLI** calls (the `command` backend, recorded at $0) are never blocked and never counted against either cap. The card shows subscription calls and tokens on a separate "Subscription CLI" line. Dollar figures use the same list-price estimate as the rest of the card.
 
 ```sh
 curl -X PUT http://localhost:8000/api/projects/1/llm-budget \

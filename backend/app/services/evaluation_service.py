@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services.llm_budget_guard import LlmBudgetExceeded
 from app.models.dataset import Dataset, DatasetType
 from app.models.experiment import EvalResult, Experiment
 from app.models.project import Project
@@ -653,6 +654,8 @@ async def _judge_probe_via_cloud(
         if verdict in ("pass", "fail"):
             return (verdict == "pass", f"judge: {reason}", tokens)
         return None
+    except LlmBudgetExceeded:
+        raise  # the hard API budget ends the run; it must not silently fall back to the heuristic
     except Exception:  # noqa: BLE001 — never let the judge break the run
         return None
 

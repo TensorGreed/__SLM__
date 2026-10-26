@@ -119,3 +119,17 @@
 .settings-link small {
     color: var(--text-secondary);
 }
+
+.settings-hint {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin: var(--space-xs) 0;
+}
+
+.settings-chip {
+    display: inline-block;
+    padding: 0 6px;
+    border-radius: 8px;
+    font-size: var(--font-size-sm);
+    background: var(--accent-bg);
+}

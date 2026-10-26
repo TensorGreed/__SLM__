@@ -38,7 +38,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from app.services import llm_usage
+from app.services import llm_budget_guard, llm_usage
 
 
 _LOG = logging.getLogger("cloud_llm")
@@ -106,6 +106,9 @@ async def call_openai_chat(
     if not api_key:
         raise CloudLlmError("OpenAI API key is required.")
     url = api_url or _OPENAI_DEFAULT_URL
+    # Hard monthly API budget: a metered (non-local) call is refused once a cap is reached.
+    if not llm_usage.is_local_url(url):
+        await llm_budget_guard.acheck_budget(llm_usage.provider_for_url(url), model)
     payload: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -276,6 +279,7 @@ async def call_anthropic_chat(
     """
     if not api_key:
         raise CloudLlmError("Anthropic API key is required.")
+    await llm_budget_guard.acheck_budget("anthropic", model)  # hard monthly API budget
     payload = anthropic_message_params(
         model=model, system_prompt=system_prompt, user_prompt=user_prompt,
         max_tokens=max_tokens, temperature=temperature, cached_system=cached_system,

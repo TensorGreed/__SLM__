@@ -35,7 +35,7 @@ Object.defineProperty(window, 'location', {
     writable: true,
 });
 
-import NotificationBell, { cloudSpendText, jobOutcomeSummary } from './NotificationBell';
+import NotificationBell, { cloudSpendText, isPausedJob, jobOutcomeSummary } from './NotificationBell';
 import { useJobsStore } from '../../stores/jobsStore';
 
 
@@ -92,6 +92,21 @@ describe('NotificationBell', () => {
         toastMock.error.mockReset();
         toastMock.info.mockReset();
         resetStore();
+    });
+
+    it('flags a job waiting for its usage window as paused', () => {
+        expect(isPausedJob(jobFixture({ progress_message: 'waiting for usage window — resumes ~14:05 UTC' }))).toBe(true);
+        expect(isPausedJob(jobFixture({ progress_message: 'chunk 2/4 · 50 rows so far' }))).toBe(false);
+        expect(isPausedJob(jobFixture({ status: 'failed', progress_message: 'waiting for usage window' }))).toBe(false);
+    });
+
+    it('renders a paused chip on the row', async () => {
+        const data = { count: 1, jobs: [jobFixture({ id: 5, progress_message: 'waiting for usage window — resumes ~14:05 UTC' })] };
+        apiMock.get.mockResolvedValue({ data });
+        render(<NotificationBell />);
+        await waitFor(() => expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument());
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+        expect(await screen.findByTestId('notification-bell-row-5-paused')).toHaveTextContent('paused');
     });
 
     it('renders the bell button with no badge when no jobs are in-flight', async () => {

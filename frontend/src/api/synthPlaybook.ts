@@ -61,6 +61,11 @@ export interface SynthBackendInfo {
      *  response_schema as response_format=json_schema (NeMo, vLLM).
      *  False for backends that silently ignore it (Ollama, Teacher). */
     schema_aware?: boolean;
+    /** How calls are paid for: free local, metered API credits, or a
+     *  subscription CLI (recorded at $0, shown separately). */
+    billing?: 'local' | 'metered' | 'subscription';
+    /** One-line provenance, e.g. "claude CLI (subscription) · batch 8 · concurrency 1". */
+    detail?: string | null;
 }
 
 export interface SynthBackendsResponse {

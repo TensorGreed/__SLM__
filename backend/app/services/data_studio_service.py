@@ -44,6 +44,7 @@ from app.services.synth_backends import BACKEND_REGISTRY
 from app.services.synth_playbook_service import available_playbooks_for_recipe
 from app.services.synth_playbooks import list_playbooks
 from app.services.synthetic_service import call_teacher_model
+from app.services.llm_budget_guard import LlmBudgetExceeded
 from app.services.synth_review_queue_service import list_review_queue
 
 
@@ -5208,6 +5209,8 @@ async def build_data_studio_llm_assist(
             max_tokens=1800,
             force_json=True,
         )
+    except LlmBudgetExceeded:
+        raise
     except Exception as exc:  # noqa: BLE001
         return _assist_unavailable_payload(
             project_id=project_id,

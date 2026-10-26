@@ -13,7 +13,7 @@ import SynthReviewQueue from './SynthReviewQueue';
 import StepFooter from '../shared/StepFooter';
 import { checkPrompt, offendingValuesFromError, promptCheckText, type PromptCheckReport } from '../../api/promptCheck';
 import { toast } from '../../stores/toastStore';
-import { budgetWarningMessage } from '../../api/llmSpend';
+import { budgetExceededMessage, budgetWarningMessage } from '../../api/llmSpend';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 import SpanAddTypeForm from './SpanAddTypeForm';
 import SpanTypeDefinitionsEditor from './SpanTypeDefinitionsEditor';
@@ -772,7 +772,7 @@ export default function SyntheticPanel({ projectId, onNextStep , extraDetails = 
                 6000,
             );
         } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Could not start the answer key.', 5000);
+            toast.error(budgetExceededMessage(err) ?? (err instanceof Error ? err.message : 'Could not start the answer key.'), 8000);
         } finally {
             setRelabelStarting(false);
         }

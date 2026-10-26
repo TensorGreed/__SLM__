@@ -20,6 +20,7 @@ from app.config import settings
 from app.database import async_session_factory
 from app.models.dataset import Dataset, DatasetType, RawDocument
 from app.services import provenance_service
+from app.services.llm_budget_guard import LlmBudgetExceeded
 from app.services.split_role_service import is_test_role_document
 import logging
 
@@ -153,6 +154,11 @@ async def call_teacher_model(
             "tokens_used": (anth_resp.prompt_tokens or 0) + (anth_resp.completion_tokens or 0),
             "model": anth_resp.model or model_name,
         }
+
+    from app.services import llm_budget_guard, llm_usage as _llm_usage
+
+    if not _llm_usage.is_local_url(url):  # hard monthly API budget (metered endpoints only)
+        await llm_budget_guard.acheck_budget(_llm_usage.provider_for_url(url), model_name)
 
     headers = {"Content-Type": "application/json"}
     if key:
@@ -2009,6 +2015,8 @@ async def _run_span_generation_task(task: SyntheticSpanTask) -> None:
                     )
                     _stamp_batch_documents(batch_rows, batch_docs)
                     task.rows.extend(batch_rows)
+                except LlmBudgetExceeded:
+                    raise
                 except Exception as exc:  # noqa: BLE001
                     # One bad batch shouldn't sink the job — record + continue.
                     task.error = (
@@ -2215,6 +2223,8 @@ async def _run_qa_generation_task(task: SyntheticQaTask) -> None:
                     )
                     _stamp_batch_documents(batch_rows, batch_docs)
                     task.rows.extend(batch_rows)
+                except LlmBudgetExceeded:
+                    raise  # the hard API budget ends the task (outer handler records it)
                 except Exception as exc:  # noqa: BLE001
                     task.error = (
                         f"batch {task.batches_done + 1}/{task.batches_total}: {exc}"
@@ -2387,6 +2397,8 @@ async def _run_conversation_generation_task(task: SyntheticConversationTask) -> 
                     )
                     _stamp_batch_documents(batch_rows, batch_docs)
                     task.rows.extend(batch_rows)
+                except LlmBudgetExceeded:
+                    raise  # the hard API budget ends the task (outer handler records it)
                 except Exception as exc:  # noqa: BLE001
                     task.error = (
                         f"batch {task.batches_done + 1}/{task.batches_total}: {exc}"

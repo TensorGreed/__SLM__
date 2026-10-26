@@ -86,10 +86,22 @@ def missing_key_message(provider: str) -> str:
     )
 
 
+def check_command_pin(pin: str | None) -> None:
+    """``command:<model>`` with a model that could parse as a CLI flag (or is
+    otherwise malformed) → ``CloudPinError`` 400."""
+    from app.services.synth_backends.command import validate_pin
+
+    try:
+        validate_pin(pin)
+    except ValueError as exc:
+        raise CloudPinError(400, str(exc)) from exc
+
+
 async def resolve_cloud_backend(db: AsyncSession, project_id: int, pin: str | None) -> Any:
     """A ``CloudLlmBackend`` for a cloud pin, using the project's saved key;
     None for any other pin shape (the caller's ``pick_backend`` handles
     those). Raises ``CloudPinError`` (400 / 402)."""
+    check_command_pin(pin)
     parsed = parse_cloud_pin(pin)
     if parsed is None:
         return None

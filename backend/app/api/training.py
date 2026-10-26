@@ -88,6 +88,7 @@ from app.services.training_telemetry_service import (
 )
 from app.services.playground_service import (
     list_playground_provider_catalog,
+    check_chat_budget,
     meter_playground_reply,
     normalize_playground_messages,
     run_playground_chat,
@@ -3678,6 +3679,7 @@ async def playground_chat(
         db, project_id, req, normalized_messages
     )
 
+    await check_chat_budget(project_id, runtime_provider, req.api_url, resolved_model_name)
     try:
         result = await run_playground_chat(
             provider=runtime_provider,
@@ -3824,6 +3826,9 @@ async def playground_chat_stream(
     normalized_messages, auto_rag_block = await _apply_playground_auto_rag(
         db, project_id, req, normalized_messages
     )
+
+    # Before the stream opens, so a reached cap is a plain 402 (not a broken stream).
+    await check_chat_budget(project_id, runtime_provider, req.api_url, resolved_model_name)
 
     async def stream_events() -> AsyncIterator[str]:
         try:
@@ -4072,6 +4077,7 @@ async def playground_rag_compare(
     base_model_name = str(req.base_model_name or project.base_model_name or "").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
     tuned_model_name = str(req.tuned_model_name or base_model_name).strip() or base_model_name
 
+    await check_chat_budget(project_id, provider, req.api_url, tuned_model_name)
     try:
         base_response = await run_playground_chat(
             provider=provider,

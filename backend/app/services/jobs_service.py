@@ -38,7 +38,9 @@ needs it most.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
+import time
 import traceback
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
@@ -48,7 +50,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory
 from app.models.job import Job, JobStatus
-from app.services import llm_usage
+from app.services import llm_budget_guard, llm_usage
 
 
 _LOG = logging.getLogger("jobs")
@@ -75,6 +77,32 @@ def _utcnow() -> datetime:
 # ─────────────────────────────────────────────────────────────────────
 
 
+class PauseTally:
+    """Seconds a Job spent waiting for a usage window (command backend). Wall
+    intervals are merged, so concurrent waiters in one Job count once."""
+
+    def __init__(self) -> None:
+        self.seconds = 0.0
+        self._counted_to = 0.0
+
+    def add_interval(self, start: float, end: float) -> None:
+        begin = max(start, self._counted_to)
+        if end > begin:
+            self.seconds += end - begin
+            self._counted_to = end
+
+
+# The running Job's progress handle / pause tally, set by ``_runner_wrapper`` so
+# deep code (the command backend waiting out a usage limit) can publish a
+# message and account its waiting without threading the handle through.
+current_job_handle: contextvars.ContextVar["JobProgressHandle | None"] = contextvars.ContextVar(
+    "jobs_current_handle", default=None,
+)
+current_pause_tally: contextvars.ContextVar[PauseTally | None] = contextvars.ContextVar(
+    "jobs_current_pause_tally", default=None,
+)
+
+
 class JobProgressHandle:
     """The progress-publishing interface handed to runner coroutines.
 
@@ -86,6 +114,15 @@ class JobProgressHandle:
     def __init__(self, job_id: int) -> None:
         self.job_id = job_id
         self._cancelled = False
+        # The last message published (restored after a pause message).
+        self.last_message: str | None = None
+        # The message shown before a usage-window pause (restored after it).
+        self.pre_pause_message: str | None = None
+
+    async def set_message(self, message: str | None) -> None:
+        """Publish a message, keeping the last fraction."""
+        if message is not None:
+            await self.set_progress(message=message)
 
     async def set_progress(
         self,
@@ -105,6 +142,7 @@ class JobProgressHandle:
                 job.progress = max(0.0, min(1.0, float(fraction)))
             if message is not None:
                 job.progress_message = str(message)[:1024]
+                self.last_message = str(message)
             # A runner reporting progress IS running. On the shared
             # single-connection engine the wrapper's QUEUED→RUNNING update
             # can be rolled back by another session closing on the same
@@ -247,16 +285,59 @@ async def _runner_wrapper(job_id: int, runner: JobRunner) -> None:
     # Every cloud-LLM call the runner makes is counted on this Job (root:
     # a Job started from inside another Job counts only its own calls) —
     # the result gains usage / cost_usd / tokens, read by the spend tally.
-    with llm_usage.metered(root=True) as meter:
+    project_id, synth_command = await _job_project_context(job_id)
+    tally = PauseTally()
+    handle_token = current_job_handle.set(handle)
+    tally_token = current_pause_tally.set(tally)
+    try:
+        await _run_runner(job_id, runner, handle, tally, project_id, synth_command)
+    finally:
+        current_job_handle.reset(handle_token)
+        current_pause_tally.reset(tally_token)
+
+
+async def _job_project_context(job_id: int) -> tuple[int | None, dict[str, Any]]:
+    """The Job's project id + that project's ``synth_command`` overrides."""
+    try:
+        from app.models.project import Project
+
+        async with async_session_factory() as db:
+            job = await db.get(Job, job_id)
+            pid = job.project_id if job is not None else None
+            overrides: dict[str, Any] = {}
+            if pid is not None:
+                project = await db.get(Project, pid)
+                cfg = getattr(project, "runtime_config", None)
+                raw = cfg.get("synth_command") if isinstance(cfg, dict) else None
+                overrides = dict(raw) if isinstance(raw, dict) else {}
+            return pid, overrides
+    except Exception:  # noqa: BLE001 — context is best-effort
+        return None, {}
+
+
+async def _run_runner(
+    job_id: int, runner: JobRunner, handle: JobProgressHandle, tally: PauseTally,
+    project_id: int | None, synth_command: dict[str, Any],
+) -> None:
+    result_payload: dict[str, Any] | None = None
+    error_text: str | None = None
+    def _extras(block: dict[str, Any]) -> dict[str, Any] | None:
+        # Seconds spent waiting out a usage window ride along with the usage.
+        if tally.seconds > 0:
+            block = {**block, "paused_seconds": round(tally.seconds, 1)}
+        return block or None
+
+    with llm_budget_guard.project_context(project_id, synth_command), llm_usage.metered(root=True) as meter:
         try:
             result_payload = await runner(handle)
         except asyncio.CancelledError:
             # Honor task cancellation explicitly so we don't mis-record
             # it as a generic failure.
-            await _finish_job(job_id, status=JobStatus.CANCELLED, result=meter.block() or None)
+            await _finish_job(job_id, status=JobStatus.CANCELLED, result=_extras(meter.block()))
             raise
         except Exception as exc:  # noqa: BLE001 — boundary
-            error_text = f"{type(exc).__name__}: {exc}"
+            # The API budget stop reads as its own message (no class prefix).
+            error_text = str(exc) if isinstance(exc, llm_budget_guard.LlmBudgetExceeded) else f"{type(exc).__name__}: {exc}"
             _LOG.exception("Job %s failed: %s", job_id, error_text)
             # Keep the traceback in the progress_message slot so the UI
             # has something to surface to a power user. Truncated.
@@ -264,7 +345,7 @@ async def _runner_wrapper(job_id: int, runner: JobRunner) -> None:
             # Tokens spent on a failed run are still spent.
             await _finish_job(
                 job_id, status=JobStatus.FAILED, error=error_text, progress_message=tb,
-                result=meter.block() or None,
+                result=_extras(meter.block()),
             )
             return
 
@@ -273,7 +354,8 @@ async def _runner_wrapper(job_id: int, runner: JobRunner) -> None:
     # don't overwrite that.
     await _finish_job(
         job_id, status=JobStatus.SUCCEEDED,
-        result=llm_usage.merge_into_result(dict(result_payload or {}), meter), progress=1.0,
+        result=llm_usage.merge_into_result({**dict(result_payload or {}), **({"paused_seconds": round(tally.seconds, 1)} if tally.seconds > 0 else {})}, meter),
+        progress=1.0,
     )
 
 

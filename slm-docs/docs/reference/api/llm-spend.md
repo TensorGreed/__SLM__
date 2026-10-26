@@ -37,8 +37,9 @@ The project's monthly cloud-LLM budget and this month's status.
 
 **Put Llm Budget**
 
-Set (or clear, with ``monthly: null``) the monthly budget. Advisory
-only — nothing is ever blocked by it.
+Set (or clear, with ``monthly: null``) the monthly budget. A hard cap
+for metered cloud-API calls (``warn_at`` stays advisory); local and
+subscription backends are never blocked.
 
 **Parameters**
 

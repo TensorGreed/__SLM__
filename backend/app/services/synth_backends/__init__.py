@@ -24,6 +24,7 @@ from .base import (
     pick_schema_aware_backend_describe,
 )
 from .cloud_llm import CloudLlmBackend
+from .command import CommandBackend
 from .nemo import NemoBackend
 from .ollama import OllamaBackend
 from .teacher import TeacherModelBackend
@@ -46,6 +47,9 @@ BACKEND_REGISTRY: list[type[SynthBackend]] = [
     TeacherModelBackend,
     NemoBackend,
     VllmBackend,
+    # Local CLI teacher (subscription): explicit pin only (auto_pick=False);
+    # enabled by SYNTH_COMMAND_ALLOWED_BINARIES.
+    CommandBackend,
     # Deterministic smoke backend; available only with BREWSLM_TEMPLATE_SYNTH=1.
     TemplateBackend,
 ]
@@ -54,6 +58,7 @@ BACKEND_REGISTRY: list[type[SynthBackend]] = [
 __all__ = [
     "BACKEND_REGISTRY",
     "CloudLlmBackend",
+    "CommandBackend",
     "NemoBackend",
     "OllamaBackend",
     "SynthBackend",

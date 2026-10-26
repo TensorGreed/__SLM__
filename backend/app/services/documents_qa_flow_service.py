@@ -54,6 +54,7 @@ from app.config import settings
 from app.models.dataset import DatasetType
 from app.models.project import Project
 from app.services import provenance_service
+from app.services.llm_budget_guard import LlmBudgetExceeded
 from app.services.synth_backends.base import SynthBackend, SynthBackendError
 
 _LOG = logging.getLogger("documents_qa_flow")
@@ -522,6 +523,8 @@ async def preview_documents_qa_flow(
             backend_blocker = missing_key_message(cloud[0])
     elif backend_blocker is None:
         for cls in BACKEND_REGISTRY:
+            if getattr(cls, "auto_pick", True) is False:
+                continue  # explicit-pin-only backends (the command CLI) are never defaulted
             try:
                 if cls.is_available():
                     backend_name = cls.name
@@ -582,10 +585,13 @@ def _active_split_ratios(project_id: int) -> float | None:
 
 
 def _enable_batch(llm: Any) -> None:
-    """Ask a backend for Message Batches; ``ValueError`` when it can't."""
+    """Ask a backend for batched calls (Anthropic Message Batches, or the command
+    backend's packed calls); ``ValueError`` when it can't."""
     if not getattr(llm, "supports_batch", False) or not hasattr(llm, "complete_batch"):
         label = llm.describe() if hasattr(llm, "describe") else getattr(llm, "name", "backend")
-        raise ValueError(f"use_batch needs an Anthropic cloud backend (cloud:anthropic:<model>); {label} can't batch.")
+        raise ValueError(
+            f"use_batch needs an Anthropic cloud backend (cloud:anthropic:<model>) or the command backend; {label} can't batch."
+        )
     llm.use_batch = True
 
 
@@ -1433,6 +1439,8 @@ async def _run_passages_gate(
             # on the test examples.
             state.update(scored=0, total=0, label="", phase=" (chosen retrieval on test)")
             await asyncio.to_thread(fn, progress_callback=_cb, split="test", sweep_retrieval=False)
+    except LlmBudgetExceeded:
+        raise  # the hard API budget ends the flow
     except Exception as exc:  # noqa: BLE001 — the gate never blocks the flow
         _LOG.warning("documents_qa_flow passages check failed: %s", exc)
         return {"status": "error", "reason": f"{exc.__class__.__name__}: {exc}"[:300]}

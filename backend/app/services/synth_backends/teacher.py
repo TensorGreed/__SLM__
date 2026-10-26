@@ -18,6 +18,7 @@ errors surface when ``complete()`` is actually called.
 from __future__ import annotations
 
 from app.config import settings
+from app.services.llm_budget_guard import LlmBudgetExceeded
 
 
 class TeacherModelBackend:
@@ -34,6 +35,13 @@ class TeacherModelBackend:
         # Default to a small chat-capable model; callers/playbooks
         # can override per-request via the `model` constructor arg.
         self._model = model or "llama3"
+
+    @property
+    def sends_data_off_machine(self) -> bool:
+        """Prompts leave this machine when the teacher endpoint is not local."""
+        from app.services.llm_usage import is_local_url
+
+        return not is_local_url(self._api_url)
 
     @classmethod
     def is_available(cls) -> bool:
@@ -73,6 +81,8 @@ class TeacherModelBackend:
                 max_tokens=max_tokens,
                 force_json=False,
             )
+        except LlmBudgetExceeded:
+            raise  # hard API budget: not a transport failure (never wrapped)
         except ValueError as e:
             # `call_teacher_model` raises ValueError when no URL is configured.
             raise SynthBackendError(str(e)) from e

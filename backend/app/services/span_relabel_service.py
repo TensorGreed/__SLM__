@@ -479,7 +479,7 @@ def batch_info(llm: Any) -> dict[str, Any] | None:
         return None
     return {
         "batches": list(report),
-        "requests": report[0]["requests"],
+        "requests": sum(int(r.get("requests") or 0) for r in report) if len(report) > 1 else report[0].get("requests", 0),
         "succeeded": sum(int(r.get("succeeded") or 0) for r in report),
         "fell_back": report[-1].get("failed", 0),
     }
