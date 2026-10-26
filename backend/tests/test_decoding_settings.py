@@ -205,6 +205,56 @@ class EvalPassesAndRecordsTests(unittest.TestCase):
         self.assertFalse(runtime["decoding"]["do_sample"])
 
 
+class AutoRagHarnessTests(unittest.TestCase):
+    """scripts/auto_rag_ab.py scores every passage-reader comparison; its
+    generate() must use the same explicit settings."""
+
+    def test_harness_generate_passes_neutral_kwargs(self):
+        import torch
+        from transformers import BatchEncoding
+
+        from scripts import auto_rag_ab
+
+        seen: list[dict] = []
+
+        class FakeTok:
+            pad_token_id = 0
+            eos_token_id = 1
+
+            def __call__(self, text, return_tensors=None, **kw):
+                return BatchEncoding({"input_ids": torch.tensor([[2, 3]]), "attention_mask": torch.ones(1, 2, dtype=torch.long)})
+
+            def decode(self, ids, skip_special_tokens=True):
+                return "an answer"
+
+        class FakeModel:
+            def to(self, *_a, **_k):
+                return self
+
+            def eval(self):
+                return self
+
+            def generate(self, **kw):
+                seen.append({k: v for k, v in kw.items() if k not in ("input_ids", "attention_mask")})
+                return torch.tensor([[2, 3, 4]])
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=FakeTok()), \
+             mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=FakeModel()), \
+             mock.patch("torch.cuda.is_available", return_value=False), \
+             mock.patch.object(auto_rag_ab, "_build_inference_prompt", return_value=("q?", True)), \
+             mock.patch.object(auto_rag_ab, "_stop_token_ids", return_value=[1]), \
+             mock.patch.object(auto_rag_ab, "_generation_cap", return_value=8):
+            f1s, _records = auto_rag_ab.evaluate_with_inference(
+                base_model="org/base", model_dir=None, val_rows=[{"question": "q?", "answer": "an answer"}],
+                train_rows=[], with_rag=False, index_dir_override=Path(tmp),
+            )
+        self.assertEqual(len(f1s), 1)
+        self.assertEqual(seen[0]["repetition_penalty"], 1.0)
+        self.assertEqual((seen[0]["num_beams"], seen[0]["no_repeat_ngram_size"], seen[0]["do_sample"]), (1, 0, False))
+        self.assertEqual(seen[0]["max_new_tokens"], 8)
+
+
 class ExportAlignsGenerationConfigTests(unittest.TestCase):
     def test_neutral_config_turns_off_processors_and_keeps_the_rest(self):
         out = neutral_generation_config(QWEN_INSTRUCT_CONFIG)

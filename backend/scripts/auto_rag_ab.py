@@ -583,6 +583,7 @@ def evaluate_with_inference(
         build_bm25_index,
         retrieve_ranked,
     )
+    from app.services.decoding_settings import generation_kwargs
     from app.services.evaluation_service import f1_score
 
     use_documents = corpus == "documents"
