@@ -158,6 +158,13 @@ _STRUCTURED_OUTPUT_ALIASES = (
 )
 JSON_EXTRACTION_RECIPE_ID = "json-extraction"
 CODE_FINDINGS_RECIPE_ID = "code-findings"
+CODE_REMEDIATION_RECIPE_ID = "code-remediation"
+
+
+def _is_remediation_row(row: dict[str, Any]) -> bool:
+    from app.services.code_remediation_prompt import is_remediation_row
+
+    return is_remediation_row(row)
 
 
 def _is_findings_row(row: dict[str, Any]) -> bool:
@@ -183,7 +190,9 @@ def structured_recipe_for_rows(
     ``entities`` list (a fixed-field record); ``span-extraction`` (``default``)
     for entity lists or when nothing can be read. ``code-findings`` when rows
     are findings rows (``row_kind == "findings"``, or a ``findings_json`` /
-    payload object with a ``findings`` list)."""
+    payload object with a ``findings`` list); ``code-remediation`` when rows are
+    remediation rows (``row_kind == "remediation"``, or a ``remediation_json`` object
+    with a ``patch`` string)."""
     import json
 
     saw_record = False
@@ -195,6 +204,8 @@ def structured_recipe_for_rows(
     for row in rows[:50]:
         if not isinstance(row, dict):
             continue
+        if _is_remediation_row(row):
+            return CODE_REMEDIATION_RECIPE_ID
         if _is_findings_row(row):
             return CODE_FINDINGS_RECIPE_ID
         payload: Any = None
@@ -212,6 +223,8 @@ def structured_recipe_for_rows(
         if isinstance(payload, list):
             return default
         if isinstance(payload, dict):
+            if isinstance(payload.get("patch"), str) and ("rationale" in payload or "citations" in payload):
+                return CODE_REMEDIATION_RECIPE_ID
             if isinstance(payload.get("findings"), list):
                 return CODE_FINDINGS_RECIPE_ID
             if isinstance(payload.get("entities"), list):

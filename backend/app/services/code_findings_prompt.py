@@ -33,13 +33,9 @@ def _as_int(value: Any, default: int) -> int:
         return default
 
 
-def build_code_findings_prompt(
-    code: str,
-    language: str | None,
-    path: str | None,
-    start_line: int | None,
-    labels: list[str] | None,
-) -> str:
+def render_numbered_code(code: Any, start_line: int | None) -> tuple[str, str, int]:
+    """``(rendered, line_range, first_line)``: the chunk with each line prefixed by its
+    absolute line number -- the one rendering every code prompt shares."""
     code = code if isinstance(code, str) else ""
     first = _as_int(start_line, 1) if start_line is not None else 1
     # Same line rule as the findings mappers / validators: split on "\n" only
@@ -53,6 +49,17 @@ def build_code_findings_prompt(
     else:
         rendered = "(empty)"
         line_range = "(none)"
+    return rendered, line_range, first
+
+
+def build_code_findings_prompt(
+    code: str,
+    language: str | None,
+    path: str | None,
+    start_line: int | None,
+    labels: list[str] | None,
+) -> str:
+    rendered, line_range, _first = render_numbered_code(code, start_line)
     header = [
         f"Language: {language or 'unknown'}",
         f"Path: {path or 'unknown'}",

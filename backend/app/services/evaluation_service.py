@@ -2544,6 +2544,11 @@ def _prediction_failed(prediction: dict[str, Any]) -> bool:
     """A held-out row the model got wrong: the handler's per-row exact
     match when it recorded one, otherwise a normalized exact comparison
     of prediction vs reference (classification labels, short answers)."""
+    if prediction.get("row_skipped"):
+        return False
+    if isinstance(prediction.get("row_remediation_pass"), bool):
+        # A patch passes or fails on its own checks; the judge score is reported beside it.
+        return not prediction["row_remediation_pass"]
     judge_score = prediction.get("row_judge_score")
     if isinstance(judge_score, (int, float)) and not isinstance(judge_score, bool):
         # A judged long answer: wrong or partial is a failure; exact match
@@ -2583,6 +2588,7 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
     span_tp: list[int] = []
     span_fp: list[int] = []
     span_fn: list[int] = []
+    rem_pass: list[float | None] = []
     for p in predictions:
         if not isinstance(p, dict):
             continue
@@ -2597,6 +2603,10 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
             span_tp.append(len(p.get("row_matched_findings") or []))
             span_fp.append(len(p.get("row_spurious_findings") or []))
             span_fn.append(len(p.get("row_missed_findings") or []))
+        # code-remediation: 1 / 0 per scored row; a skipped row (no finding) has no pass flag.
+        rem_pass.append(
+            float(p["row_remediation_pass"]) if isinstance(p.get("row_remediation_pass"), bool) else None
+        )
         row_f1 = p.get("row_f1")
         f1.append(float(row_f1) if isinstance(row_f1, (int, float)) and not isinstance(row_f1, bool) else None)
         row_judge = p.get("row_judge_score")
@@ -2612,7 +2622,43 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
     # Rows the judge couldn't score stay None; the pairing skips them.
     if any(value is not None for value in judge):
         scores[JUDGE_METRIC] = judge
+    if any(value is not None for value in rem_pass):
+        scores["remediation_pass"] = rem_pass
     return scores
+
+
+def _manifest_scoring_mode(eval_ctx: Any) -> str | None:
+    schema = (getattr(eval_ctx, "manifest", None) or {}).get("output_schema")
+    mode = str((schema or {}).get("scoring_mode") or "").strip().lower() if isinstance(schema, dict) else ""
+    return mode or None
+
+
+async def _prepare_remediation_predictions(
+    db: AsyncSession,
+    project_id: int,
+    task_handler: Any,
+    eval_ctx: Any,
+    predictions: list[dict[str, Any]],
+) -> None:
+    """Before scoring a ``remediation`` eval: apply every patch and run the code checks in a worker
+    thread (external checks can be slow), then -- when the project configures a detector -- run it
+    over the original and patched chunks (the remediation model is already done and freed). Best-effort:
+    anything that fails here is recomputed (or reported) by the scorer; it never blocks the eval."""
+    from app.services import remediation_detector, remediation_scoring
+    from app.services.code_remediation_prompt import effective_remediation_config
+
+    try:
+        schema = task_handler._resolve_schema(predictions, eval_ctx)
+        parse_json = task_handler._parse_json_safely
+        await asyncio.to_thread(remediation_scoring.precompute, predictions, schema, parse_json)
+        project = await db.get(Project, project_id)
+        cfg = effective_remediation_config(getattr(project, "runtime_config", None), project_id)
+        if cfg["detector"]:
+            await remediation_detector.annotate_predictions(
+                db, project_id, predictions, cfg["detector"], schema, parse_json,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("remediation preparation skipped: %s", exc)
 
 
 async def _safe_judge_answers(
@@ -2622,12 +2668,20 @@ async def _safe_judge_answers(
     task_profile: str | None,
     predictions: list[dict[str, Any]],
     judge: "ResolvedJudge | None",
+    scoring_mode: str | None = None,
 ) -> dict[str, Any]:
     """LLM-judge the held-out answers when the task is long-answer
     generative and a judge is reachable. Empty dict otherwise or on any
-    failure — the judge adds a metric, it never blocks the eval."""
+    failure — the judge adds a metric, it never blocks the eval.
+
+    ``scoring_mode="remediation"``: the judge grades each patch + rationale against the
+    reference fix (a remediation rubric) unless the project turned it off
+    (``runtime_config["remediation"]["judge"] = false``), and — when rows carry passages and
+    the judge has a retrieval judge — checks whether the passages held the guidance
+    (``snapshot["retrieval"]``)."""
     from app.services.answer_judge_service import (
         judge_predictions,
+        judge_retrieval,
         project_cache,
         resolve_answer_judge,
         should_judge,
@@ -2635,14 +2689,42 @@ async def _safe_judge_answers(
 
     try:
         references = [str(p.get("reference") or "") for p in predictions if isinstance(p, dict)]
-        if not should_judge(task_profile, references):
+        remediation = str(scoring_mode or "") == "remediation"
+        project = None
+        if remediation:
+            from app.services.code_remediation_prompt import effective_remediation_config
+
+            project = await db.get(Project, project_id)
+            if not effective_remediation_config(getattr(project, "runtime_config", None))["judge"]:
+                return {"skipped": "disabled_for_project"}
+        if not should_judge(task_profile, references, scoring_mode):
             return {"skipped": "not_long_answer_task"}
         resolved = judge
         if resolved is None:
-            project = await db.get(Project, project_id)
+            project = project or await db.get(Project, project_id)
             resolved = await resolve_answer_judge(db, project_id, project)
         if resolved is None:
             return {"skipped": "no_judge_available"}
+        if remediation:
+            from app.services import remediation_scoring as rs
+            from app.services.eval_task_handler_service import StructuredExtractionHandler
+
+            parse_json = StructuredExtractionHandler()._parse_json_safely
+            snapshot = await judge_predictions(
+                predictions, resolved.judge, label=resolved.label, cache=project_cache(project_id),
+                instruction=rs.JUDGE_INSTRUCTION, view=lambda p: rs.judge_view(p, parse_json),
+            )
+            rows = rs.retrieval_judge_rows(predictions, parse_json)
+            if rows and resolved.retrieval_judge is not None:
+                try:
+                    snapshot["retrieval"] = await judge_retrieval(
+                        rows, resolved.retrieval_judge, label=resolved.label, cache=project_cache(project_id),
+                        instruction="The reference is a fix for a code finding; a passage is 'found' when it holds "
+                        "the guidance that fix follows.",
+                    )
+                except Exception as exc:  # noqa: BLE001 - best-effort
+                    logging.getLogger(__name__).warning("retrieval judge skipped: %s", exc)
+            return snapshot
         return await judge_predictions(
             predictions, resolved.judge, label=resolved.label, cache=project_cache(project_id),
         )
@@ -2755,6 +2837,14 @@ async def _generate_heldout_predictions(
                 predictions[idx]["alignment_rejected"] = pair.get("alignment_rejected")
             if pair.get("alignment_has_pair") is not None:
                 predictions[idx]["alignment_has_pair"] = pair.get("alignment_has_pair")
+            # Code remediation: the row behind the patch (code, start_line, language, path,
+            # finding, passages) is what the scorer applies it to; path / language /
+            # start_line also place the chunk in the UI.
+            if pair.get("remediation_row") is not None:
+                predictions[idx]["remediation_row"] = pair.get("remediation_row")
+            for key in ("path", "language", "start_line"):
+                if pair.get(key) is not None:
+                    predictions[idx][key] = pair.get(key)
 
     settings = {
         "model_ref": model_ref,
@@ -2823,7 +2913,9 @@ async def run_heldout_evaluation(
         dataset_name=dataset_name,
         experiment_task_type=experiment_task_type,
     )
-    pairs = _load_heldout_pairs(
+    # Off the event loop: a remediation row without passages is retrieved for (embedding + search).
+    pairs = await asyncio.to_thread(
+        _load_heldout_pairs,
         dataset_path,
         max_samples=max_samples,
         handler=task_handler,
@@ -2860,6 +2952,10 @@ async def run_heldout_evaluation(
     effective_max_new_tokens = gen_settings["max_new_tokens"]
     handler_stop_sequences = gen_settings["stop_sequences"]
 
+    heldout_scoring_mode = _manifest_scoring_mode(eval_ctx)
+    if heldout_scoring_mode == "remediation":
+        await _prepare_remediation_predictions(db, project_id, task_handler, eval_ctx, predictions)
+
     eval_dataset_name = dataset.dataset_type.value
     if eval_type == "llm_judge":
         result = await evaluate_with_llm_judge(
@@ -2883,6 +2979,17 @@ async def run_heldout_evaluation(
     metrics = dict(result.metrics or {})
     metrics["evaluated_samples"] = len(predictions)
     metrics["inference"] = runtime
+    if heldout_scoring_mode == "remediation":
+        try:
+            from app.services.remediation_detector import remediation_scoring_fingerprint
+
+            project_row = await db.get(Project, project_id)
+            metrics["remediation_fingerprint"] = await remediation_scoring_fingerprint(
+                db, project_id, getattr(project_row, "runtime_config", None),
+                (getattr(eval_ctx, "manifest", None) or {}).get("output_schema"),
+            )
+        except Exception as exc:  # noqa: BLE001 - a fingerprint failure must not fail the eval
+            logging.getLogger(__name__).warning("remediation fingerprint skipped: %s", exc)
     metrics["modality_breakdown"] = modality_counts
     # Story 1.5 Gate 2 — surface "the model is emitting a different
     # JSON schema than gold" as a top-level metric so the UI banner
@@ -2895,12 +3002,15 @@ async def run_heldout_evaluation(
     if eval_type in ("exact_match", "f1") and answer_judge_enabled:
         judge_snapshot = await _safe_judge_answers(
             db, project_id=project_id, task_profile=eval_ctx.task_profile,
-            predictions=predictions, judge=answer_judge,
+            predictions=predictions, judge=answer_judge, scoring_mode=heldout_scoring_mode,
         )
         if judge_snapshot:
             metrics["judge"] = judge_snapshot
             if judge_snapshot.get("score") is not None:
                 metrics[JUDGE_METRIC] = judge_snapshot["score"]
+            retrieval_snapshot = judge_snapshot.get("retrieval")
+            if isinstance(retrieval_snapshot, dict) and retrieval_snapshot.get("found_rate") is not None:
+                metrics["retrieval_found_rate"] = retrieval_snapshot["found_rate"]
     result.metrics = metrics
 
     details = dict(result.details or {})
@@ -2970,6 +3080,27 @@ async def run_heldout_evaluation(
             "path": p.get("path"),
             "language": p.get("language"),
             "start_line": p.get("start_line"),
+            # code-remediation (remediation): the finding, the predicted patch and what happened to it.
+            "row_skipped": p.get("row_skipped"),
+            "row_finding": p.get("row_finding"),
+            "row_patch": p.get("row_patch"),
+            "row_patch_applies": p.get("row_patch_applies"),
+            "row_patch_reason": p.get("row_patch_reason"),
+            "row_patch_offsets": p.get("row_patch_offsets"),
+            "row_code_checkable": p.get("row_code_checkable"),
+            "row_code_parses": p.get("row_code_parses"),
+            "row_check_messages": p.get("row_check_messages"),
+            "row_issue_resolved": p.get("row_issue_resolved"),
+            "row_new_findings": p.get("row_new_findings"),
+            "row_detector": p.get("row_detector"),
+            "row_detector_note": p.get("row_detector_note"),
+            "row_citations_valid": p.get("row_citations_valid"),
+            "row_cited": p.get("row_cited"),
+            "row_cited_ids": p.get("row_cited_ids"),
+            "row_passage_ids": p.get("row_passage_ids"),
+            "row_passage_headers": p.get("row_passage_headers"),
+            "row_extra_fields": p.get("row_extra_fields"),
+            "row_remediation_pass": p.get("row_remediation_pass"),
             # Phase 5.3.5: RAGHandler enrichments — the context the
             # model was given, the row's faithfulness score (token
             # overlap of pred with context), context recall (gold

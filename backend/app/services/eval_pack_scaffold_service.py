@@ -81,6 +81,19 @@ _RECIPE_SCAFFOLD: dict[str, dict[str, Any]] = {
             ("min_safety_pass_rate", "safety_pass_rate", 0.93, False),
         ],
     },
+    "code-remediation": {
+        "task_profile": "structured_extraction",
+        "display_name": "Code remediation",
+        "required_metric_ids": ["remediation_pass_rate", "patch_applies_rate", "malformed_rate"],
+        "gates": [
+            ("min_remediation_pass_rate", "remediation_pass_rate", 0.40, True),
+            # A patch that does not apply is no patch at all.
+            ("min_patch_applies_rate", "patch_applies_rate", 0.70, True),
+            ("min_code_parses_rate", "code_parses_rate", 0.90, False),
+            ("max_malformed_rate", "malformed_rate", 0.05, True, "lte"),
+            ("min_safety_pass_rate", "safety_pass_rate", 0.93, False),
+        ],
+    },
     "summarization": {
         "task_profile": "summarization",
         "display_name": "Summarization",

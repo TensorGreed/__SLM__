@@ -523,6 +523,10 @@ _PACKS_BY_RECIPE_ID: dict[str, list[dict[str, Any]]] = {
     "code-findings": _CODE_FINDINGS_PROBES,
 }
 
+# Recipes whose output is not what the task-profile pack probes (a patch, not a record):
+# no built-in pack rather than a misleading generic one.
+_RECIPES_WITHOUT_PROBE_PACK = frozenset({"code-remediation"})
+
 _PACKS_BY_TASK_PROFILE: dict[str, list[dict[str, Any]]] = {
     "classification": _CLASSIFICATION_PROBES,
     "instruction_sft": _INSTRUCTION_SFT_PROBES,
@@ -540,7 +544,9 @@ def get_probe_pack(task_profile: str | None, recipe_id: str | None = None) -> di
     when no pack is registered for the profile.
     """
     recipe_probes = _PACKS_BY_RECIPE_ID.get(recipe_id or "")
-    probes = recipe_probes or _PACKS_BY_TASK_PROFILE.get(task_profile or "")
+    probes = recipe_probes or (
+        None if recipe_id in _RECIPES_WITHOUT_PROBE_PACK else _PACKS_BY_TASK_PROFILE.get(task_profile or "")
+    )
     if not probes:
         return {
             "task_profile": task_profile,

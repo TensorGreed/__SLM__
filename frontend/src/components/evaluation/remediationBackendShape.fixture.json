@@ -1,0 +1,243 @@
+{
+  "metrics": {
+    "scoring_mode": "remediation",
+    "skipped_non_remediation_rows": 0,
+    "remediation_pass_rate": 0.3333,
+    "patch_applies_rate": 0.6667,
+    "code_parses_rate": 0.3333,
+    "code_checkable_count": 3,
+    "json_validity_rate": 0.6667,
+    "malformed_rate": 0.3333,
+    "patch_reasons": {
+      "malformed": 1
+    },
+    "total": 3,
+    "correct": 1,
+    "exact_match": 0.3333,
+    "detector_evaluated_count": 2,
+    "issue_resolved_rate": 1.0,
+    "new_findings_rate": 0.0,
+    "issue_resolved_overall_rate": 0.6667,
+    "detector": "Toy detector \u00b7 run 4",
+    "citations_valid_rate": 0.6667,
+    "citation_rate": 0.6667,
+    "rows_with_passages": 3,
+    "extra_fields": {
+      "severity": {
+        "correct": 1,
+        "total": 3,
+        "accuracy": 0.3333
+      }
+    },
+    "extra_field_accuracy_mean": 0.3333
+  },
+  "predictions_preview": [
+    {
+      "row_exact_match": 1.0,
+      "row_f1": null,
+      "row_judge_verdict": null,
+      "row_judge_reason": null,
+      "is_valid_json": true,
+      "parsed_prediction": {
+        "patch": "--- a/app/db.py\n+++ b/app/db.py\n@@ -10,4 +10,4 @@\n def f(cur, uid):\n-    q = \"SELECT * FROM t WHERE id = \" + uid\n-    cur.execute(q)\n+    q = \"SELECT * FROM t WHERE id = ?\"\n+    cur.execute(q, (uid,))\n     return cur.fetchone()\n",
+        "rationale": "Bind it.",
+        "citations": [
+          "P1"
+        ],
+        "severity": "high"
+      },
+      "row_field_results": null,
+      "scoring_mode": "remediation",
+      "row_matched_entities": null,
+      "row_missed_entities": null,
+      "row_hallucinated_entities": null,
+      "row_precision": null,
+      "row_recall": null,
+      "row_matched_findings": null,
+      "row_missed_findings": null,
+      "row_spurious_findings": null,
+      "row_malformed": false,
+      "row_is_clean_reference": null,
+      "path": "app/db.py",
+      "language": "python",
+      "start_line": 10,
+      "row_skipped": null,
+      "row_finding": {
+        "label": "injection.query",
+        "start_line": 11,
+        "end_line": 12
+      },
+      "row_patch": "--- a/app/db.py\n+++ b/app/db.py\n@@ -10,4 +10,4 @@\n def f(cur, uid):\n-    q = \"SELECT * FROM t WHERE id = \" + uid\n-    cur.execute(q)\n+    q = \"SELECT * FROM t WHERE id = ?\"\n+    cur.execute(q, (uid,))\n     return cur.fetchone()\n",
+      "row_patch_applies": true,
+      "row_patch_reason": null,
+      "row_patch_offsets": [
+        0
+      ],
+      "row_code_checkable": true,
+      "row_code_parses": true,
+      "row_check_messages": [],
+      "row_issue_resolved": true,
+      "row_new_findings": [],
+      "row_detector": "Toy detector \u00b7 run 4",
+      "row_detector_note": null,
+      "row_citations_valid": true,
+      "row_cited": true,
+      "row_cited_ids": [
+        "P1"
+      ],
+      "row_passage_ids": [
+        "P1",
+        "P2"
+      ],
+      "row_passage_headers": [
+        {
+          "id": "P1",
+          "where": "query-guidelines"
+        },
+        {
+          "id": "P2",
+          "where": "lib/db.py:3-4 (run)"
+        }
+      ],
+      "row_extra_fields": {
+        "severity": true
+      },
+      "row_remediation_pass": true
+    },
+    {
+      "row_exact_match": 0.0,
+      "row_f1": null,
+      "row_judge_verdict": null,
+      "row_judge_reason": null,
+      "is_valid_json": true,
+      "parsed_prediction": {
+        "patch": "--- a/app/db.py\n+++ b/app/db.py\n@@ -10,4 +10,4 @@\n def f(cur, uid):\n-    q = \"SELECT * FROM t WHERE id = \" + uid\n-    cur.execute(q)\n+    q = \"SELECT * FROM t WHERE id = ?\"\n+    cur.execute(q, (uid,\n     return cur.fetchone()\n",
+        "rationale": "Bind it.",
+        "citations": [
+          "P1"
+        ],
+        "severity": "low"
+      },
+      "row_field_results": null,
+      "scoring_mode": "remediation",
+      "row_matched_entities": null,
+      "row_missed_entities": null,
+      "row_hallucinated_entities": null,
+      "row_precision": null,
+      "row_recall": null,
+      "row_matched_findings": null,
+      "row_missed_findings": null,
+      "row_spurious_findings": null,
+      "row_malformed": false,
+      "row_is_clean_reference": null,
+      "path": "app/db.py",
+      "language": "python",
+      "start_line": 10,
+      "row_skipped": null,
+      "row_finding": {
+        "label": "injection.query",
+        "start_line": 11,
+        "end_line": 12
+      },
+      "row_patch": "--- a/app/db.py\n+++ b/app/db.py\n@@ -10,4 +10,4 @@\n def f(cur, uid):\n-    q = \"SELECT * FROM t WHERE id = \" + uid\n-    cur.execute(q)\n+    q = \"SELECT * FROM t WHERE id = ?\"\n+    cur.execute(q, (uid,\n     return cur.fetchone()\n",
+      "row_patch_applies": true,
+      "row_patch_reason": null,
+      "row_patch_offsets": [
+        0
+      ],
+      "row_code_checkable": true,
+      "row_code_parses": false,
+      "row_check_messages": [
+        "python_ast: line 3: '(' was never closed"
+      ],
+      "row_issue_resolved": true,
+      "row_new_findings": [],
+      "row_detector": "Toy detector \u00b7 run 4",
+      "row_detector_note": null,
+      "row_citations_valid": true,
+      "row_cited": true,
+      "row_cited_ids": [
+        "P1"
+      ],
+      "row_passage_ids": [
+        "P1",
+        "P2"
+      ],
+      "row_passage_headers": [
+        {
+          "id": "P1",
+          "where": "query-guidelines"
+        },
+        {
+          "id": "P2",
+          "where": "lib/db.py:3-4 (run)"
+        }
+      ],
+      "row_extra_fields": {
+        "severity": false
+      },
+      "row_remediation_pass": false
+    },
+    {
+      "row_exact_match": 0.0,
+      "row_f1": null,
+      "row_judge_verdict": null,
+      "row_judge_reason": null,
+      "is_valid_json": false,
+      "parsed_prediction": null,
+      "row_field_results": null,
+      "scoring_mode": "remediation",
+      "row_matched_entities": null,
+      "row_missed_entities": null,
+      "row_hallucinated_entities": null,
+      "row_precision": null,
+      "row_recall": null,
+      "row_matched_findings": null,
+      "row_missed_findings": null,
+      "row_spurious_findings": null,
+      "row_malformed": true,
+      "row_is_clean_reference": null,
+      "path": "app/db.py",
+      "language": "python",
+      "start_line": 10,
+      "row_skipped": null,
+      "row_finding": {
+        "label": "injection.query",
+        "start_line": 11,
+        "end_line": 12
+      },
+      "row_patch": null,
+      "row_patch_applies": false,
+      "row_patch_reason": "malformed",
+      "row_patch_offsets": [],
+      "row_code_checkable": true,
+      "row_code_parses": false,
+      "row_check_messages": [],
+      "row_issue_resolved": null,
+      "row_new_findings": null,
+      "row_detector": null,
+      "row_detector_note": null,
+      "row_citations_valid": false,
+      "row_cited": false,
+      "row_cited_ids": [],
+      "row_passage_ids": [
+        "P1",
+        "P2"
+      ],
+      "row_passage_headers": [
+        {
+          "id": "P1",
+          "where": "query-guidelines"
+        },
+        {
+          "id": "P2",
+          "where": "lib/db.py:3-4 (run)"
+        }
+      ],
+      "row_extra_fields": {
+        "severity": false
+      },
+      "row_remediation_pass": false
+    }
+  ]
+}

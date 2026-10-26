@@ -166,6 +166,10 @@ _RECOMMENDED_METRIC_IDS_PER_RECIPE: dict[str, list[str]] = {
     "code-findings": [
         "f1", "clean_chunk_fp_rate", "malformed_rate", "attr_accuracy_mean", "safety_pass_rate",
     ],
+    "code-remediation": [
+        "remediation_pass_rate", "patch_applies_rate", "code_parses_rate", "issue_resolved_rate",
+        "citations_valid_rate", "malformed_rate", "safety_pass_rate",
+    ],
     "rag-protocol": [
         "citation_rate", "hallucination_rate",
         "appropriate_refusal_rate", "format_consistency",

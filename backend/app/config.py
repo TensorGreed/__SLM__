@@ -238,6 +238,15 @@ class Settings(BaseSettings):
     # DATASET_MAPPER_PLUGIN_MODULES='["app.plugins.dataset_mappers.example_mappers"]'
     DATASET_MAPPER_PLUGIN_MODULES: list[str] = []
 
+    # ── Code checks (remediation scoring, /api/code-checks) ──────────────
+    # External checks (compilers / linters) run only when their id is listed here
+    # AND the binary is on PATH. Built-in in-process checks are always on.
+    CODE_CHECK_ALLOWED: str = ""  # comma list of check ids, e.g. "java_syntax,go_syntax"
+    # Comma list of modules exposing register_code_checks(register) or CODE_CHECKS.
+    CODE_CHECK_PLUGIN_MODULES: str = ""
+    # Sandbox network isolation (unshare -rn): "auto" | "off" | "require".
+    CODE_CHECK_NETWORK_ISOLATION: str = "auto"
+
     # ── Dataset Import LLM-assist (Phase H) ─────────────────────────────
     # When enabled, the introspector can optionally consult the teacher
     # model for a mapping suggestion via ``introspect_locator(llm_assist=True)``

@@ -45,6 +45,7 @@ session-start guidance.
 - `backend/app/api/benchmarks.py` — External benchmarks API (Epic G-B1) — see external_benchmark_service.
 - `backend/app/api/cleaning.py` — Data Cleaning API routes.
 - `backend/app/api/coach.py` — Coach Mode API routes (USER-SUCCESS Epic 4 Phase 1).
+- `backend/app/api/code_checks.py` — Code-check registry API: list checks, run them over a snippet.
 - `backend/app/api/comparison.py` — Comparison API for experiments.
 - `backend/app/api/compliance.py` — Compliance bundles API: named groups of entity types tagged with the
 - `backend/app/api/compression.py` — Compression API routes.
@@ -88,6 +89,7 @@ session-start guidance.
 - `backend/app/api/redact.py` — Redact text with a project's span-tagging (token classification) run.
 - `backend/app/api/registry.py` — Model registry API routes.
 - `backend/app/api/remediation.py` — Remediation event tracking API (E2).
+- `backend/app/api/remediation_config.py` — Code-remediation settings API: the detector behind ``issue_resolved``, the code checks that
 - `backend/app/api/run_event_clusters.py` — Project-wide failure-cluster API (priority.md P33, Wave G).
 - `backend/app/api/run_events.py` — Run-events + timeline API (priority.md P31 + P32, Wave G).
 - `backend/app/api/secrets.py` — Project secret management API routes.
@@ -135,8 +137,13 @@ session-start guidance.
 - `backend/app/services/cloud_llm_service.py` — Thin client wrappers for flagship cloud LLM providers (OpenAI +
 - `backend/app/services/cluster_explanation_service.py` — Per-cluster failure explanations (Theme 8 Epic 3).
 - `backend/app/services/coach_service.py` — Coach Mode service (USER-SUCCESS Epic 4).
+- `backend/app/services/code_check_service.py` — Code-check registry: cheap, deterministic "does this code still parse" checks.
+- `backend/app/services/code_checks/base.py` — Shared types for code checks (no registry dependency, so built-ins can import it).
+- `backend/app/services/code_checks/builtin.py` — In-process code checks: no subprocess, always available.
+- `backend/app/services/code_checks/external.py` — External (sandboxed) syntax checks. Each is gated by CODE_CHECK_ALLOWED + PATH.
 - `backend/app/services/code_chunker.py` — Code-aware chunking — one retrievable unit per function / method / block.
 - `backend/app/services/code_findings_prompt.py` — Shared prompt + schema helpers for the ``code-findings`` recipe.
+- `backend/app/services/code_remediation_prompt.py` — Shared prompt + payload helpers for the ``code-remediation`` recipe.
 - `backend/app/services/compliance_bundles_service.py` — Compliance bundles: named groups of entity types, each type tagged with
 - `backend/app/services/compression_service.py` — Compression engine service — quantization, LoRA merge, benchmarking.
 - `backend/app/services/continued_pretraining_policy.py` — Continued pretraining for projects whose data is plain documents.
@@ -278,6 +285,8 @@ session-start guidance.
 - `backend/app/services/record_normalization.py` — Generic record normalization utilities for arbitrary tabular/text datasets.
 - `backend/app/services/redaction_service.py` — Redact text with a trained token-classification run (Epic P5).
 - `backend/app/services/registry_service.py` — Model registry and promotion governance service.
+- `backend/app/services/remediation_detector.py` — Detector for ``issue_resolved``: does a finding still appear once the patch is applied?
+- `backend/app/services/remediation_scoring.py` — ``remediation`` scoring: a model proposes ``{"patch", "rationale", "citations", ...}`` for one
 - `backend/app/services/remediation_tracking_service.py` — Remediation tracking service (E2).
 - `backend/app/services/rerun_service.py` — P15 — Rerun-from-manifest + clone-from-run services.
 - `backend/app/services/retrieval_decisions_service.py` — Pin decisions: what users chose when they compared retrievals.
@@ -285,6 +294,7 @@ session-start guidance.
 - `backend/app/services/run_event_clustering_service.py` — Failure clustering over RunEvents (priority.md P33, Wave G).
 - `backend/app/services/run_event_service.py` — Canonical RunEvent emission + read service (priority.md P31, Wave G).
 - `backend/app/services/runtime_settings_service.py` — Runtime-manageable system settings service.
+- `backend/app/services/sandbox_exec.py` — Run an external command in a throw-away sandbox (synchronous).
 - `backend/app/services/scaffold_service.py` — Plugin scaffold templating service (priority.md P38, Wave H).
 - `backend/app/services/secret_service.py` — Project secret storage service with reversible at-rest encryption.
 - `backend/app/services/seed_documents_service.py` — Seed documents: write sample documents for a domain when the user has
@@ -317,14 +327,17 @@ session-start guidance.
 - `backend/app/services/synth_playbook_service.py` — Orchestrator for the synthetic-data playbook framework
 - `backend/app/services/synth_playbooks/_cluster_targeted_common.py` — Helpers shared by the 6 CLUSTER_TARGETED playbooks.
 - `backend/app/services/synth_playbooks/_code_findings_common.py` — Helpers shared by the three `code-findings` playbooks.
+- `backend/app/services/synth_playbooks/_code_remediation_common.py` — Helpers shared by the two `code-remediation` playbooks.
 - `backend/app/services/synth_playbooks/base.py` — Playbook contract + registry (USER-SUCCESS Epic 2).
 - `backend/app/services/synth_playbooks/classification_class_balance_fill.py` — CLASS_BALANCE_FILL playbook for the `classification` recipe.
 - `backend/app/services/synth_playbooks/classification_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `classification` recipe.
 - `backend/app/services/synth_playbooks/classification_hard_negatives.py` — HARD_NEGATIVES playbook for the `classification` recipe.
 - `backend/app/services/synth_playbooks/classification_paraphrase.py` — POSITIVES_PARAPHRASE playbook for the `classification` recipe.
+- `backend/app/services/synth_playbooks/code_examples.py` — CODE_EXAMPLES playbook for the `code-remediation` recipe.
 - `backend/app/services/synth_playbooks/code_findings_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `code-findings` recipe.
 - `backend/app/services/synth_playbooks/code_findings_hard_negatives.py` — HARD_NEGATIVES playbook for the `code-findings` recipe.
 - `backend/app/services/synth_playbooks/code_findings_seeded_defect.py` — SEEDED_DEFECT playbook for the `code-findings` recipe.
+- `backend/app/services/synth_playbooks/code_remediation_from_findings.py` — REMEDIATION_FROM_FINDINGS playbook for the `code-remediation` recipe.
 - `backend/app/services/synth_playbooks/code_review_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `code-review` recipe.
 - `backend/app/services/synth_playbooks/code_review_hard_negatives.py` — HARD_NEGATIVES playbook for the `code-review` recipe.
 - `backend/app/services/synth_playbooks/code_review_paraphrase.py` — POSITIVES_PARAPHRASE playbook for the `code-review` recipe.
@@ -359,6 +372,7 @@ session-start guidance.
 - `backend/app/services/training_runtime_service.py` — Training runtime plugin SDK and registry.
 - `backend/app/services/training_service.py` — Training pipeline service — SFT, LoRA, checkpoint management.
 - `backend/app/services/training_telemetry_service.py` — Training wizard telemetry persistence helpers.
+- `backend/app/services/unified_diff.py` — Unified-diff parser / applier for code chunks (pure, no subprocess).
 - `backend/app/services/unlabeled_pool_scoring_service.py` — Quality-Lift phase 3, slice 1 — Unlabeled-pool uncertainty scoring.
 - `backend/app/services/vibe_check_service.py` — Vibe-check timeline service for qualitative prompt snapshots during training.
 - `backend/app/services/workflow_graph_service.py` — Workflow graph and contract-runtime helpers for pipeline execution.
@@ -498,6 +512,7 @@ session-start guidance.
 - `frontend/src/api/blueprintAnalyze.ts` — Typed wrapper for the brief-analysis endpoint
 - `frontend/src/api/client.ts` — Axios HTTP client configured with /api base URL and auth-token interceptor that redirects on 401.
 - `frontend/src/api/coach.ts` — Coach suggestion types + async fetcher for stage-specific coaching recommendations.
+- `frontend/src/api/codeChecks.ts` — Typed client for the code-check registry (syntax / parse / lint checks that
 - `frontend/src/api/compliance.ts` — _(no docstring)_
 - `frontend/src/api/dataStudio.ts` — Types and verdict enums for DataStudio dashboard panels (mapping, domain, synthetic, quality).
 - `frontend/src/api/datasetImport.ts` — Typed wrappers around the Phase A–E dataset-import API.
@@ -595,6 +610,7 @@ session-start guidance.
 - `frontend/src/components/data/AutofixPreviewModal.tsx` — AutofixPreviewModal — D3.2 + D4 of the data-quality arc.
 - `frontend/src/components/data/CleaningPanel.tsx` — Panel for async batch document cleaning with progress tracking and quality scoring.
 - `frontend/src/components/data/CodeFindingsParamsForm.tsx` — CodeFindingsParamsForm — the seeded-defect knobs of the `code-findings`
+- `frontend/src/components/data/CodeRemediationParamsForm.tsx` — CodeRemediationParamsForm — the knobs of the two `code-remediation` synth
 - `frontend/src/components/data/ComplianceBundlePicker.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataHealthReportPanel.tsx` — DataHealthReportPanel — D1+D2 of the data-quality arc.
 - `frontend/src/components/data/DataStudioAssistPanel.tsx` — Panel for running AI-assisted suggestions on mapping and domain with provider configuration.
@@ -671,6 +687,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/PerSliceMetricsTable.tsx` — Quality-Lift phase 8 slice 2 — PerSliceMetricsTable.
 - `frontend/src/components/evaluation/ProbePackPanel.tsx` — ProbePackPanel — Coach-stage-2 phase 8.
 - `frontend/src/components/evaluation/RedactionTryBox.tsx` — "Try redaction" — paste a text, run it through a span-tagging run
+- `frontend/src/components/evaluation/RemediationMetricsPanel.tsx` — RemediationMetricsPanel — results of a code-remediation eval (the
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.tsx` — RerouteRecommendationPanel — USER-SUCCESS Epic 7 Phase 7c.
 - `frontend/src/components/evaluation/ScorecardPanel.tsx` — Quality gate reporter showing pass/fail decisions with missing-metric detection.
 - `frontend/src/components/evaluation/SeedShipTable.tsx` — SeedShipTable — on a multi-seed run's Eval summary: every seed with its
@@ -741,6 +758,7 @@ session-start guidance.
 - `frontend/src/components/training/ParetoComparisonPanel.tsx` — ParetoComparisonPanel — Track 1, Epic C.
 - `frontend/src/components/training/PlanRefinementCard.tsx` — PlanRefinementCard — Phase 1 of the post-data plan-refinement pass.
 - `frontend/src/components/training/PreRunConfirmModal.tsx` — PreRunConfirmModal — P20 pre-run confirm with cost provenance badge.
+- `frontend/src/components/training/RemediationConfigCard.tsx` — RemediationConfigCard — how a code-remediation project's patches are
 - `frontend/src/components/training/TokenLengthDistributionPanel.tsx` — TokenLengthDistributionPanel — V3 of the ML-native visualisations arc.
 - `frontend/src/components/training/TokenizationPanel.tsx` — Token distribution analyzer with histogram and sequence-length statistics.
 - `frontend/src/components/training/TrainAnywayButton.tsx` — TrainAnywayButton — USER-SUCCESS Epic 1 supplement.
@@ -815,6 +833,7 @@ session-start guidance.
 - `backend/tests/test_coach_probe_divergence.py` — Coach-stage-2 phase 11 — probe-vs-gold divergence nudge.
 - `backend/tests/test_coach_reroute_nudge.py` — Tests for the Phase 7d Coach Mode reroute nudge.
 - `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
+- `backend/tests/test_code_checks.py` — Code-check registry, built-ins, external checks (sandbox stubbed), plugins, API.
 - `backend/tests/test_code_chunker.py` — Code chunker: declaration-level chunks with exact line ranges.
 - `backend/tests/test_code_finding_mappers.py` — Findings-row mappers (code_label_to_findings, fix_pair, contrast_functions)
 - `backend/tests/test_code_findings_e2e.py` — code-findings end to end on the simulate runtime: create a project, apply
@@ -822,6 +841,9 @@ session-start guidance.
 - `backend/tests/test_code_findings_playbooks.py` — `code-findings` synth playbooks: seeded_defect, hard_negatives, cluster_targeted.
 - `backend/tests/test_code_findings_probes.py` — Probe pack for the code-findings recipe: recipe-keyed pack, the two new
 - `backend/tests/test_code_findings_recipe.py` — The ``code-findings`` recipe: catalog entry, header sniffing, detection from
+- `backend/tests/test_code_remediation_acceptance.py` — Acceptance: a code-remediation project with a baseline and a trained run, evaluated on the same
+- `backend/tests/test_code_remediation_playbooks.py` — `code-remediation` synth playbooks: remediation_from_findings and code_examples.
+- `backend/tests/test_code_remediation_recipe.py` — The ``code-remediation`` recipe: catalog entry, detection, the shared prompt (train == eval,
 - `backend/tests/test_command_backend.py` — Command (local CLI) synth backend + the hard API budget (phase G9).
 - `backend/tests/test_compliance_bundles.py` — Compliance bundles: built-in bundles are data (types + definitions +
 - `backend/tests/test_continued_pretraining.py` — Continued pretraining for documents-only projects (Wave 2c-1).
@@ -868,6 +890,7 @@ session-start guidance.
 - `backend/tests/test_finding_set_scoring.py` — ``finding_set`` scoring (code findings): label + inclusive line-range IoU
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_frontier_comparison.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
+- `backend/tests/test_g5_fixes.py` — Regression tests for the G5 review fixes (diff applier, scoring denominators, fingerprint,
 - `backend/tests/test_generate_api_ref.py` — The API-reference generator escapes MDX-significant prose in docstrings.
 - `backend/tests/test_generic_intake.py` — Generic intake (Wave 2a): any file a newcomer brings lands correctly.
 - `backend/tests/test_git_repo_source.py` — Git repository document source: ref pinning, URL safety, globs, licence,
@@ -1049,6 +1072,7 @@ session-start guidance.
 - `backend/tests/test_remediation_tracking.py` — Tests for the remediation tracking service + API (E2).
 - `backend/tests/test_retrieval_decisions.py` — Pin decisions (retrieval_decisions_service): append-only record of what
 - `backend/tests/test_retrieval_reranker.py` — Cross-encoder reranking + per-project retrieval settings.
+- `backend/tests/test_sandbox_exec.py` — Sandbox runner: real tiny commands only (/bin/echo, /bin/sleep, env, sh-free).
 - `backend/tests/test_seed_documents.py` — Seed documents: a generation model writes sample documents for a domain
 - `backend/tests/test_seed_group_drilldown_endpoint.py` — Quality-Lift phase 8 slice 1 — seed-group drill-down endpoint.
 - `backend/tests/test_seed_selection.py` — Ship the best seed of a multi-seed group (``seed_selection_service``).
@@ -1099,6 +1123,7 @@ session-start guidance.
 - `backend/tests/test_training_data_gate.py` — Pre-training data-shape gate (training_data_gate).
 - `backend/tests/test_training_memory_defaults.py` — Memory defaults for long-prompt runs: gradient checkpointing "auto" looks
 - `backend/tests/test_training_reproducibility.py` — Training reproducibility: one config + one dataset → the same weights.
+- `backend/tests/test_unified_diff.py` — Unified-diff parser / applier (pure).
 - `backend/tests/test_unlabeled_pool_scoring_slice1.py` — Quality-Lift phase 3 slice 1 — Unlabeled-pool scoring service.
 - `backend/tests/test_user_probe_packs.py` — User-authored probe packs: runner properties, severity / critical
 - `backend/tests/test_vision_language_adapter_prompt_wrap.py` — ι-fix tests — vision-language-pair adapter writes the
@@ -1123,6 +1148,7 @@ session-start guidance.
 - `frontend/src/components/data/AutofixPreviewModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/CleaningPanel.test.tsx` — Data → Prepare: the "Remove repeated page headers and footers" option is
 - `frontend/src/components/data/CodeFindingsPlaybook.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/CodeRemediationParamsForm.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/ComplianceBundlePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataHealthReportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataPanels.stepper.test.tsx` — Epic U phase U4: each data panel in ``layout="stepper"`` keeps its short
@@ -1184,6 +1210,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPanel.findingset.test.tsx` — EvalPanel in finding_set scoring mode: metrics block + per-row findings.
 - `frontend/src/components/evaluation/EvalPanel.qa.test.tsx` — Phase 5.3.2 — Sample Predictions card with QA-style per-row enrichment.
 - `frontend/src/components/evaluation/EvalPanel.rag.test.tsx` — Phase 5.3.5 — Sample Predictions card with RAG (grounded QA) enrichment.
+- `frontend/src/components/evaluation/EvalPanel.remediation.test.tsx` — EvalPanel in remediation scoring mode: metrics block + per-row patch.
 - `frontend/src/components/evaluation/EvalPanel.runSelection.test.tsx` — One selected run across the Results tabs (picked-data provenance): the
 - `frontend/src/components/evaluation/EvalPanel.spanset.test.tsx` — Phase 5.3.4b — Sample Predictions card in span_set scoring mode.
 - `frontend/src/components/evaluation/EvalPanel.test.tsx` — _(no docstring)_
@@ -1198,6 +1225,8 @@ session-start guidance.
 - `frontend/src/components/evaluation/PerSliceMetricsTable.test.tsx` — Quality-Lift phase 8 slice 2 — PerSliceMetricsTable tests.
 - `frontend/src/components/evaluation/ProbePackPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/RedactionTryBox.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/RemediationBackendShape.test.tsx` — Feeds the panel and the row view a payload generated by the real backend: the metrics are the
+- `frontend/src/components/evaluation/RemediationMetricsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ScorecardPanel.test.tsx` — Quality-Lift phase 1, slice 3 — ScorecardPanel variance + drill-down.
 - `frontend/src/components/evaluation/SeedShipTable.test.tsx` — _(no docstring)_
@@ -1247,6 +1276,7 @@ session-start guidance.
 - `frontend/src/components/training/ParetoComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/PlanRefinementCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/PreRunConfirmModal.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/RemediationConfigCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TokenLengthDistributionPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainAnywayButton.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainForm.test.tsx` — _(no docstring)_

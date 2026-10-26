@@ -59,6 +59,10 @@ from . import code_findings_seeded_defect  # noqa: F401 — SEEDED_DEFECT
 from . import code_findings_hard_negatives  # noqa: F401 — HARD_NEGATIVES
 from . import code_findings_cluster_targeted  # noqa: F401 — CLUSTER_TARGETED
 
+# G5: code-remediation playbooks (findings -> patch + rationale + citations; code examples)
+from . import code_remediation_from_findings  # noqa: F401 — REMEDIATION_FROM_FINDINGS
+from . import code_examples  # noqa: F401 — CODE_EXAMPLES
+
 
 __all__ = [
     "Playbook",

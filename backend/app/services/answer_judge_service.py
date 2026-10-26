@@ -51,8 +51,9 @@ VERDICT_SCORES: dict[str, float] = {"correct": 1.0, "partial": 0.5, "wrong": 0.0
 MAX_JUDGE_TOKENS = 200
 CACHE_MAX_ENTRIES = 5000
 
-# judge(question, reference, prediction) -> (score, verdict, reason, tokens) | None
-JudgeFn = Callable[[str, str, str], Awaitable["tuple[float, str, str, int] | None"]]
+# judge(question, reference, prediction[, instruction]) -> (score, verdict, reason, tokens) | None
+# (the 4th argument is only passed when an instruction is given, so 3-argument judges keep working)
+JudgeFn = Callable[..., Awaitable["tuple[float, str, str, int] | None"]]
 
 _SYSTEM_PROMPT = (
     "You grade a small language model's answer against a reference answer. "
@@ -96,7 +97,14 @@ _RETRIEVAL_RESPONSE_SCHEMA: dict[str, Any] = {
 }
 
 
-def build_retrieval_judge_prompt(question: str, reference: str, passages: list[str]) -> str:
+def _instruction_block(instruction: str | None) -> str:
+    text = str(instruction or "").strip()
+    return f"GRADING INSTRUCTION:\n{text}\n\n" if text else ""
+
+
+def build_retrieval_judge_prompt(
+    question: str, reference: str, passages: list[str], instruction: str | None = None
+) -> str:
     numbered = "\n\n".join(f"[{i}] {p.strip()}" for i, p in enumerate(passages, start=1)) or "(no passages)"
     return (
         "QUESTION:\n"
@@ -105,6 +113,7 @@ def build_retrieval_judge_prompt(question: str, reference: str, passages: list[s
         f"{reference.strip()}\n\n"
         "RETRIEVED PASSAGES:\n"
         f"{numbered}\n\n"
+        f"{_instruction_block(instruction)}"
         "Verdict rules:\n"
         "- found: at least one passage states the reference's key facts (a model reading it "
         "could give the reference answer). Name that passage.\n"
@@ -142,9 +151,12 @@ def parse_retrieval_verdict(raw: str | None) -> tuple[str, int | None, str] | No
     return verdict, (passage if verdict == "found" and passage > 0 else None), reason
 
 
-def should_judge(task_profile: str | None, references: list[str]) -> bool:
+def should_judge(task_profile: str | None, references: list[str], scoring_mode: str | None = None) -> bool:
     """Long-answer generative task? (profile in ``JUDGE_PROFILES`` and the
-    median reference is at least ``MIN_REFERENCE_WORDS`` words.)"""
+    median reference is at least ``MIN_REFERENCE_WORDS`` words.) A ``remediation`` scoring
+    mode (a patch and its rationale) is always judge-eligible when there are references."""
+    if str(scoring_mode or "").strip().lower() == "remediation":
+        return any(str(r or "").strip() for r in references)
     profile = str(task_profile or "").strip().lower()
     if profile not in JUDGE_PROFILES:
         return False
@@ -154,7 +166,9 @@ def should_judge(task_profile: str | None, references: list[str]) -> bool:
     return median(lengths) >= MIN_REFERENCE_WORDS
 
 
-def build_judge_prompt(question: str, reference: str, prediction: str) -> str:
+def build_judge_prompt(question: str, reference: str, prediction: str, instruction: str | None = None) -> str:
+    """The grading prompt. ``instruction`` (optional) adds a task-specific rubric before the
+    verdict rules; ``None`` is the plain prompt, byte for byte."""
     return (
         "QUESTION:\n"
         f"{question.strip()}\n\n"
@@ -162,6 +176,7 @@ def build_judge_prompt(question: str, reference: str, prediction: str) -> str:
         f"{reference.strip()}\n\n"
         "MODEL ANSWER:\n"
         f"{prediction.strip() or '(empty)'}\n\n"
+        f"{_instruction_block(instruction)}"
         "Verdict rules:\n"
         "- correct: the model answer states the reference's key facts (paraphrase is fine) "
         "and nothing that contradicts them.\n"
@@ -198,8 +213,13 @@ def parse_verdict(raw: str | None) -> tuple[float, str, str] | None:
     return VERDICT_SCORES[verdict], verdict, reason
 
 
-def cache_key(judge_label: str, question: str, reference: str, prediction: str) -> str:
-    raw = "\x00".join((judge_label, question.strip(), reference.strip(), prediction.strip()))
+def cache_key(
+    judge_label: str, question: str, reference: str, prediction: str, instruction: str | None = None
+) -> str:
+    parts = [judge_label, question.strip(), reference.strip(), prediction.strip()]
+    if instruction and instruction.strip():
+        parts.append(instruction.strip())  # a different rubric is a different verdict
+    raw = "\x00".join(parts)
     return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()
 
 
@@ -263,7 +283,7 @@ def project_cache(project_id: int) -> AnswerJudgeCache:
 
 
 # retrieval_judge(question, reference, passages) -> (verdict, passage, reason, tokens) | None
-RetrievalJudgeFn = Callable[[str, str, list[str]], Awaitable["tuple[str, int | None, str, int] | None"]]
+RetrievalJudgeFn = Callable[..., Awaitable["tuple[str, int | None, str, int] | None"]]
 
 
 @dataclass
@@ -279,9 +299,9 @@ class ResolvedJudge:
 
 
 def _judge_from_synth_backend(backend: Any, label: str) -> JudgeFn:
-    async def _judge(question: str, reference: str, prediction: str):
+    async def _judge(question: str, reference: str, prediction: str, instruction: str | None = None):
         raw = await backend.complete(
-            build_judge_prompt(question, reference, prediction),
+            build_judge_prompt(question, reference, prediction, instruction),
             system_prompt=_SYSTEM_PROMPT,
             max_tokens=MAX_JUDGE_TOKENS,
             temperature=0.0,
@@ -298,9 +318,9 @@ def _judge_from_synth_backend(backend: Any, label: str) -> JudgeFn:
 
 
 def _retrieval_judge_from_synth_backend(backend: Any) -> RetrievalJudgeFn:
-    async def _judge(question: str, reference: str, passages: list[str]):
+    async def _judge(question: str, reference: str, passages: list[str], instruction: str | None = None):
         raw = await backend.complete(
-            build_retrieval_judge_prompt(question, reference, passages),
+            build_retrieval_judge_prompt(question, reference, passages, instruction),
             system_prompt=_RETRIEVAL_SYSTEM_PROMPT,
             max_tokens=MAX_JUDGE_TOKENS,
             temperature=0.0,
@@ -317,10 +337,10 @@ def _retrieval_judge_from_synth_backend(backend: Any) -> RetrievalJudgeFn:
 
 
 def _retrieval_judge_from_cloud(provider: str, model: str, api_key: str) -> RetrievalJudgeFn:
-    async def _judge(question: str, reference: str, passages: list[str]):
+    async def _judge(question: str, reference: str, passages: list[str], instruction: str | None = None):
         from app.services.cloud_llm_service import call_anthropic_chat, call_openai_chat
 
-        user = build_retrieval_judge_prompt(question, reference, passages)
+        user = build_retrieval_judge_prompt(question, reference, passages, instruction)
         if provider == "anthropic":
             # The judge instructions repeat on every row: Anthropic's cached
             # system block (same text; below the cacheable minimum it
@@ -347,10 +367,10 @@ def _retrieval_judge_from_cloud(provider: str, model: str, api_key: str) -> Retr
 
 
 def _judge_from_cloud(provider: str, model: str, api_key: str) -> JudgeFn:
-    async def _judge(question: str, reference: str, prediction: str):
+    async def _judge(question: str, reference: str, prediction: str, instruction: str | None = None):
         from app.services.cloud_llm_service import call_anthropic_chat, call_openai_chat
 
-        user = build_judge_prompt(question, reference, prediction)
+        user = build_judge_prompt(question, reference, prediction, instruction)
         if provider == "anthropic":
             # The judge instructions repeat on every row: Anthropic's cached
             # system block (same text; below the cacheable minimum it
@@ -493,11 +513,17 @@ async def _judge_predictions(
     label: str,
     cache: AnswerJudgeCache | None = None,
     progress: Callable[[int, int], Awaitable[None]] | None = None,
+    instruction: str | None = None,
+    view: Callable[[dict[str, Any]], "tuple[str, str, str] | None"] | None = None,
 ) -> dict[str, Any]:
     """Annotate each prediction in place with ``row_judge_score`` /
     ``row_judge_verdict`` / ``row_judge_reason`` and return the snapshot
     for ``metrics["judge"]``. Rows the judge couldn't score stay
-    unannotated and are counted as ``unjudged``."""
+    unannotated and are counted as ``unjudged``.
+
+    ``instruction`` is a task rubric added to the judge prompt. ``view(prediction)`` maps a row to
+    ``(question, reference, prediction)`` (default: its prompt / reference / prediction);
+    ``None`` skips the row (not counted)."""
     counts = {"correct": 0, "partial": 0, "wrong": 0}
     scores: list[float] = []
     unjudged = 0
@@ -508,10 +534,16 @@ async def _judge_predictions(
         if not isinstance(p, dict):
             unjudged += 1
             continue
-        question = str(p.get("prompt") or "")
-        reference = str(p.get("reference") or "")
-        prediction = str(p.get("prediction") or "")
-        key = cache_key(label, question, reference, prediction)
+        if view is not None:
+            viewed = view(p)
+            if viewed is None:
+                continue
+            question, reference, prediction = viewed
+        else:
+            question = str(p.get("prompt") or "")
+            reference = str(p.get("reference") or "")
+            prediction = str(p.get("prediction") or "")
+        key = cache_key(label, question, reference, prediction, instruction)
         hit = cache.get(key) if cache is not None else None
         if hit is not None:
             score, verdict, reason = hit
@@ -519,7 +551,10 @@ async def _judge_predictions(
         else:
             result = None
             try:
-                result = await judge(question, reference, prediction)
+                if instruction:
+                    result = await judge(question, reference, prediction, instruction)
+                else:
+                    result = await judge(question, reference, prediction)
             except llm_budget_guard.LlmBudgetExceeded:
                 raise  # the hard API budget ends the run; it is not a per-row failure
             except Exception as exc:  # noqa: BLE001 — the judge never breaks the eval
@@ -562,6 +597,7 @@ async def _judge_retrieval(
     *,
     label: str,
     cache: AnswerJudgeCache | None = None,
+    instruction: str | None = None,
 ) -> dict[str, Any]:
     """For each row ``{prompt, reference, passages: [str], row_judge_verdict?}``
     ask whether the retrieved passages contained the answer; annotate in
@@ -586,7 +622,7 @@ async def _judge_retrieval(
             # Nothing retrieved: missed by definition, no call.
             verdict, passage, reason = "missed", None, "no passages were retrieved"
         else:
-            key = cache_key(f"{label}:retrieval", question, reference, _PASSAGE_SEPARATOR.join(passages))
+            key = cache_key(f"{label}:retrieval", question, reference, _PASSAGE_SEPARATOR.join(passages), instruction)
             hit = cache.get_retrieval(key) if cache is not None else None
             if hit is not None:
                 verdict, passage, reason = hit
@@ -594,7 +630,10 @@ async def _judge_retrieval(
             else:
                 result = None
                 try:
-                    result = await judge(question, reference, passages)
+                    if instruction:
+                        result = await judge(question, reference, passages, instruction)
+                    else:
+                        result = await judge(question, reference, passages)
                 except llm_budget_guard.LlmBudgetExceeded:
                     raise
                 except Exception as exc:  # noqa: BLE001 — never breaks the comparison

@@ -35,6 +35,10 @@ class SynthMode(str, Enum):
     CLUSTER_TARGETED = "cluster_targeted"
     # code-findings: ask the teacher to plant ONE defect in a clean chunk.
     SEEDED_DEFECT = "seeded_defect"
+    # code-remediation: findings (or fix pairs) -> a patch + rationale + cited passages.
+    REMEDIATION_FROM_FINDINGS = "remediation_from_findings"
+    # code-remediation: tasks answered with code that uses an API shown in a code chunk.
+    CODE_EXAMPLES = "code_examples"
 
 
 class PlaybookContext(TypedDict, total=False):
@@ -65,6 +69,9 @@ class PlaybookContext(TypedDict, total=False):
     chunk_index: int
     seed_nonce: int
     code_seeds: dict[str, Any]
+    # code-remediation: findings / fix-pair seeds (passages attached), filled by the orchestrator.
+    remediation_seeds: list[dict[str, Any]]
+    remediation_extra_fields: dict[str, dict[str, Any]]
 
 
 class SynthRow(TypedDict):

@@ -39,6 +39,9 @@ from app.services.evaluation_pack_service import (
 # the "the model went from X to Y" headline (used by the UI summary
 # line). Everything else still renders, just below the anchor.
 _PREFERRED_HEADLINE_METRICS: tuple[str, ...] = (
+    # code-remediation: the share of patches that apply, still parse, resolve the
+    # finding and cite only the passages they were given (exists only for that mode).
+    "remediation_pass_rate",
     # "Is the answer right" (LLM judge, long-answer tasks) outranks token
     # overlap when both evals have it — see answer_judge_service.
     "judge_correct",
@@ -63,6 +66,16 @@ _LOWER_IS_BETTER: frozenset[str] = frozenset({
     "bits_per_byte",
     "hallucination_rate",
     "eval_loss",
+    # code-remediation: patches that make the detector report a NEW finding.
+    "new_findings_rate",
+    # structured / finding-set / remediation: failure rates (a drop is the improvement).
+    "malformed_rate",
+    "clean_chunk_fp_rate",
+    "fp_total",
+    "fn_total",
+    "invalid_finding_count",
+    "malformed_count",
+    "clean_chunk_fp_count",
 })
 
 
@@ -77,6 +90,17 @@ _HIDDEN_METRICS: frozenset[str] = frozenset({
     # Perplexity-eval bookkeeping (sizes, not quality).
     "eval_tokens",
     "eval_documents",
+    # code-remediation bookkeeping (sizes, not quality).
+    "code_checkable_count",
+    "detector_evaluated_count",
+    "detector_error_count",
+    "rows_with_passages",
+    "skipped_non_remediation_rows",
+    "detector_blind_count",
+    # prediction-dependent denominators (rows whose patch applied): informational, not lift;
+    # ``issue_resolved_overall_rate`` (every scored row) is the lift metric.
+    "issue_resolved_rate",
+    "new_findings_rate",
 })
 
 
@@ -208,6 +232,7 @@ _ROW_SCORE_FOR_METRIC: dict[str, str] = {
     "f1": "f1",
     "exact_match": "correct",
     "accuracy": "correct",
+    "remediation_pass_rate": "remediation_pass",
 }
 
 

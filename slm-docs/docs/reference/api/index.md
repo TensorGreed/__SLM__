@@ -7,7 +7,7 @@ title: Auto API index
 
 # Auto-generated API reference
 
-**SLM Platform** — version `0.1.0`. 546 endpoint(s) across 70 tag(s).
+**SLM Platform** — version `0.1.0`. 550 endpoint(s) across 72 tag(s).
 
 This section is auto-generated from the FastAPI OpenAPI spec. For curated narrative
 + UI / CLI walkthroughs see the linked workflow pages. The live Swagger UI is at
@@ -31,6 +31,8 @@ This section is auto-generated from the FastAPI OpenAPI spec. For curated narrat
 | [BehavioralTests](behavioraltests.md) | 2 |
 | [Cleaning](cleaning.md) | 5 |
 | [Coach](coach.md) | 1 |
+| [Code Checks](code-checks.md) | 2 |
+| [Code Remediation](code-remediation.md) | 2 |
 | [Comparison](comparison.md) | 1 |
 | [Compliance](compliance.md) | 3 |
 | [Compression](compression.md) | 7 |

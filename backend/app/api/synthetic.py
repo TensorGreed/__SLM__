@@ -756,9 +756,39 @@ class RunPlaybookRequest(BaseModel):
         description=(
             "Per-mode parameters handed to the playbook (ctx['params']). code-findings seeded_defect: "
             "label_id (required, a project-taxonomy id), attrs, context_dataset_id + context_column, "
-            "context_sample_size."
+            "context_sample_size. code-remediation remediation_from_findings: findings_dataset_id "
+            "(findings rows, fix pairs or remediation rows; not an answer key), top_k (1-10), "
+            "retrieve_passages; code_examples: per_chunk (1-5)."
         ),
     )
+
+
+def _check_remediation_params(params: dict, *, require_dataset_kind: bool) -> None:
+    """Range-check the code-remediation playbook params (400 ``invalid_playbook_param``)."""
+
+    def bad(name: str, message: str) -> HTTPException:
+        return HTTPException(400, {
+            "error_code": "invalid_playbook_param", "message": message, "metadata": {"param": name, "value": params.get(name)},
+        })
+
+    def whole(value: Any) -> int | None:
+        return value if isinstance(value, int) and not isinstance(value, bool) else (
+            int(value) if isinstance(value, str) and value.strip().isdigit() else None
+        )
+
+    if require_dataset_kind:
+        if params.get("findings_dataset_id") is not None and whole(params["findings_dataset_id"]) is None:
+            raise bad("findings_dataset_id", "params.findings_dataset_id must be a dataset id.")
+        if params.get("top_k") is not None:
+            top_k = whole(params["top_k"])
+            if top_k is None or not 1 <= top_k <= 10:
+                raise bad("top_k", "params.top_k must be a whole number from 1 to 10.")
+        if params.get("retrieve_passages") is not None and not isinstance(params["retrieve_passages"], bool):
+            raise bad("retrieve_passages", "params.retrieve_passages must be true or false.")
+    elif params.get("per_chunk") is not None:
+        per_chunk = whole(params["per_chunk"])
+        if per_chunk is None or not 1 <= per_chunk <= 5:
+            raise bad("per_chunk", "params.per_chunk must be a whole number from 1 to 5.")
 
 
 async def _checked_playbook_params(db: AsyncSession, project_id: int, mode: Any, params: dict | None) -> dict:
@@ -792,6 +822,31 @@ async def _checked_playbook_params(db: AsyncSession, project_id: int, mode: Any,
                 "metadata": {"dataset_id": dataset.id, "dataset_type": getattr(dataset.dataset_type, "value", str(dataset.dataset_type))},
             })
     mode_value = getattr(mode, "value", mode)
+    if mode_value == "remediation_from_findings":
+        _check_remediation_params(out, require_dataset_kind=True)
+        raw_findings = out.get("findings_dataset_id")
+        if raw_findings is not None:
+            from app.models.dataset import Dataset, DatasetType
+
+            try:
+                findings_ds = await db.get(Dataset, int(raw_findings))
+            except (TypeError, ValueError):
+                findings_ds = None
+            if findings_ds is not None and findings_ds.project_id == project_id and findings_ds.dataset_type in (
+                DatasetType.GOLD_DEV, DatasetType.GOLD_TEST,
+            ):
+                raise HTTPException(400, {
+                    "error_code": "findings_dataset_not_allowed",
+                    "message": (
+                        "The answer key cannot be used as the findings dataset: its rows are held out for "
+                        "evaluation. Pick a raw or training dataset (answer-key dev rows are used as seeds automatically)."
+                    ),
+                    "metadata": {"dataset_id": findings_ds.id},
+                })
+        return out
+    if mode_value == "code_examples":
+        _check_remediation_params(out, require_dataset_kind=False)
+        return out
     if mode_value not in ("seeded_defect", "cluster_targeted"):
         return out
     from app.services import label_taxonomy_service as lts

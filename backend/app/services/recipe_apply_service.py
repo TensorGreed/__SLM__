@@ -161,7 +161,8 @@ class OutputSchemaNotSupportedError(ValueError):
 
 
 # Recipes whose scorer reads a declared record schema.
-OUTPUT_SCHEMA_RECIPES = frozenset({"json-extraction"})
+# (``code-remediation`` declares extra fields beside patch / rationale / citations.)
+OUTPUT_SCHEMA_RECIPES = frozenset({"json-extraction", "code-remediation"})
 
 
 async def set_recipe_output_schema(
@@ -181,7 +182,7 @@ async def set_recipe_output_schema(
     snapshot = project.selected_recipe if isinstance(project.selected_recipe, dict) else {}
     if snapshot.get("recipe_id") not in OUTPUT_SCHEMA_RECIPES:
         raise OutputSchemaNotSupportedError(
-            "An output schema applies to the json-extraction task type; pick it first."
+            "An output schema applies to the json-extraction and code-remediation task types; pick one first."
         )
     updated = dict(snapshot)
     if output_schema is None:

@@ -13,7 +13,9 @@ export type SynthMode =
     | 'refusals'
     | 'format_robustness'
     | 'cluster_targeted'
-    | 'seeded_defect';
+    | 'seeded_defect'
+    | 'remediation_from_findings'
+    | 'code_examples';
 
 export interface PlaybookCatalogEntry {
     recipe_id: string;

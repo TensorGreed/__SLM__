@@ -76,7 +76,7 @@ class Recipe(BaseModel):
     # Pipeline-level defaults
     task_profile: str
     adapter_id: str
-    scoring_mode: str  # "field_match" | "span_set"
+    scoring_mode: str  # "field_match" | "span_set" | "finding_set" | "remediation"
 
     # Data shape defaults
     default_input_column: str
@@ -842,6 +842,129 @@ def _code_findings_recipe() -> Recipe:
     )
 
 
+def _code_remediation_recipe() -> Recipe:
+    return Recipe(
+        id="code-remediation",
+        name="Code remediation",
+        headline="Train a model to fix a finding in a code chunk with a patch, a rationale and citations.",
+        description=(
+            "For datasets where each row is a code chunk, one finding in it (label, "
+            "lines, evidence) and the fix: a unified diff against the chunk, a short "
+            "rationale and the reference passages it relied on. Lines are absolute "
+            "file line numbers. A patch is scored on whether it applies, whether the "
+            "patched code still parses, whether a detector no longer reports the "
+            "finding, and whether its citations point at passages it was given. "
+            "Declared extra output fields are scored beside them."
+        ),
+        icon="🩹",
+        task_profile="structured_extraction",
+        adapter_id="structured-extraction",
+        scoring_mode="remediation",
+        default_input_column="code",
+        default_output_column="remediation_json",
+        suggested_base_model="Qwen/Qwen2.5-Coder-7B-Instruct",
+        alt_base_models=[
+            "Qwen/Qwen2.5-Coder-3B-Instruct",
+            "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+        ],
+        target_profile="vllm_server",
+        training_plan_profile="balanced",
+        eval_pack_id="evalpack.general.default",
+        gold_template=GoldTemplate(
+            shape_label="code_remediation",
+            min_rows_recommended=150,
+            fields=[
+                GoldFieldSpec(name="code", description="The code chunk containing the finding."),
+                GoldFieldSpec(
+                    name="finding",
+                    description="The finding to fix: {label, start_line, end_line, evidence, attrs}.",
+                ),
+                GoldFieldSpec(
+                    name="remediation_json",
+                    description=(
+                        'A JSON object {"patch": <unified diff>, "rationale": str, "citations": ["P1", ...]}; '
+                        "declared extra fields are added to it."
+                    ),
+                ),
+                GoldFieldSpec(name="language", required=False, description="Source language of the chunk."),
+                GoldFieldSpec(name="path", required=False, description="File path the chunk came from."),
+                GoldFieldSpec(
+                    name="start_line",
+                    required=False,
+                    description="Absolute file line number of the chunk's first line (default 1).",
+                ),
+                GoldFieldSpec(
+                    name="passages",
+                    required=False,
+                    description="Reference passages [{id: P1, text, path, start_line, end_line, symbol}] the fix may cite.",
+                ),
+            ],
+            example_row={
+                "row_kind": "remediation",
+                "code": 'query = "SELECT * FROM users WHERE id = " + user_id\ncursor.execute(query)',
+                "language": "python",
+                "path": "app/db.py",
+                "start_line": 10,
+                "end_line": 11,
+                "finding": {
+                    "label": "injection.query",
+                    "start_line": 10,
+                    "end_line": 11,
+                    "evidence": "query = \"SELECT * FROM users WHERE id = \" + user_id",
+                    "attrs": {},
+                },
+                "passages": [
+                    {
+                        "id": "P1",
+                        "text": "Pass user input as bound parameters, never concatenate it into the query text.",
+                        "source": "query-guidelines",
+                    }
+                ],
+                "remediation_json": {
+                    "patch": (
+                        "--- a/app/db.py\n+++ b/app/db.py\n@@ -10,2 +10,2 @@\n"
+                        '-query = "SELECT * FROM users WHERE id = " + user_id\n'
+                        "-cursor.execute(query)\n"
+                        '+query = "SELECT * FROM users WHERE id = ?"\n'
+                        "+cursor.execute(query, (user_id,))\n"
+                    ),
+                    "rationale": "The user id is passed as a bound parameter instead of being concatenated.",
+                    "citations": ["P1"],
+                },
+            },
+        ),
+        sample_eval_prompts=[
+            "[ a chunk that builds a database query by string concatenation, finding: injection.query ]",
+            "[ a chunk that writes a password to a log line, finding: logging.sensitive ]",
+            "[ a chunk with a hardcoded credential, finding: secret.hardcoded, with a passage on reading it from the environment ]",
+        ],
+        data_acquisition_hints=[
+            "Generate remediations from findings you already have (Data -> Generate: remediation from findings), with a teacher model and the project's documents as passages.",
+            "Import fix pairs (code before and after) and let a teacher write the rationale and citations.",
+            "Add the project's documentation as passages so patches can cite the guidance they follow.",
+        ],
+        shape_signatures=[
+            ShapeSignature(
+                columns=[
+                    ShapeColumn(
+                        name_patterns=["code", "source", "snippet", "chunk"],
+                        column_role="input",
+                    ),
+                    ShapeColumn(
+                        name_patterns=["finding"],
+                        column_role="auxiliary",
+                    ),
+                    ShapeColumn(
+                        name_patterns=["remediation_json", "remediation"],
+                        column_role="output",
+                    ),
+                ],
+                base_confidence=0.96,
+            ),
+        ],
+    )
+
+
 _BUILTIN_RECIPE_FACTORIES = [
     _qa_sft_recipe,
     _classification_recipe,
@@ -850,6 +973,7 @@ _BUILTIN_RECIPE_FACTORIES = [
     _summarization_recipe,
     _code_review_recipe,
     _code_findings_recipe,
+    _code_remediation_recipe,
     _generic_sft_recipe,
     _rag_protocol_recipe,
 ]

@@ -48,6 +48,8 @@ class OutputProperty(BaseModel):
 
     type: str | list[str] | None = None
     enum: list[Any] | None = None
+    # Shown to the model in the ``code-remediation`` prompt; ignored by scoring.
+    description: str | None = Field(default=None, max_length=300)
 
     @field_validator("type")
     @classmethod
@@ -122,6 +124,7 @@ def validate_output_schema(raw: Any) -> dict[str, Any]:
             name: {
                 **({"type": prop.type} if prop.type is not None else {}),
                 **({"enum": list(prop.enum)} if prop.enum is not None else {}),
+                **({"description": prop.description.strip()} if prop.description and prop.description.strip() else {}),
             }
             for name, prop in decl.properties.items()
         },

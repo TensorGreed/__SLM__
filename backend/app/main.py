@@ -20,7 +20,9 @@ from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.audit import router as audit_router
 from app.api.drift import router as drift_router
+from app.api.code_checks import router as code_checks_router
 from app.api.remediation import router as remediation_router
+from app.api.remediation_config import router as remediation_config_router
 from app.api.settings import router as settings_router
 from app.api.projects import router as projects_router
 from app.api.document_sources import router as document_sources_router
@@ -109,6 +111,7 @@ from app.services.data_adapter_service import load_data_adapter_plugins_from_set
 from app.services.dataset_import.plugin_loader import (
     load_dataset_mapper_plugins_from_settings,
 )
+from app.services.code_check_service import load_code_check_plugins_from_settings
 from app.services.model_selection_service import load_model_catalog_plugins_from_settings
 from app.services.runtime_settings_service import apply_persisted_runtime_overrides
 from app.services.starter_pack_service import load_starter_pack_plugins_from_settings
@@ -297,6 +300,7 @@ async def lifespan(app: FastAPI):
     load_hook_plugins_from_settings()
     load_data_adapter_plugins_from_settings()
     load_dataset_mapper_plugins_from_settings()
+    load_code_check_plugins_from_settings()
     load_target_profile_plugins_from_settings()
     load_model_catalog_plugins_from_settings()
     load_starter_pack_plugins_from_settings()
@@ -376,6 +380,8 @@ API_DEPENDENCIES = [Depends(authorize_request)]
 app.include_router(auth_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(admin_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(remediation_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(remediation_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(code_checks_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(drift_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(audit_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(settings_router, prefix="/api", dependencies=API_DEPENDENCIES)

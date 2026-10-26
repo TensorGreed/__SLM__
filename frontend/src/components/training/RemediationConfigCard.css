@@ -1,0 +1,9 @@
+.remediation-config__group { margin: var(--space-sm) 0 0; padding: var(--space-sm); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+.remediation-config__group legend { font-size: var(--font-size-sm); color: var(--text-secondary); padding: 0 var(--space-xs); }
+.remediation-config__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); margin: var(--space-xs) 0; }
+.remediation-config__checks { margin: 0; padding: 0; list-style: none; font-size: var(--font-size-sm); }
+.remediation-config__checks li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); padding: 2px 0; }
+.remediation-config__status { color: var(--text-tertiary); }
+.remediation-config__status.is-ready { color: var(--color-success); }
+.remediation-config__status.is-off { color: var(--color-error); }
+.remediation-config__error { color: var(--color-error); font-size: var(--font-size-sm); }

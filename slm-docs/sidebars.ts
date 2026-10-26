@@ -49,6 +49,7 @@ const sidebars: SidebarsConfig = {
         'workflows/data-ingestion',
         'workflows/label-taxonomy',
         'workflows/code-findings',
+        'workflows/code-remediation',
         'workflows/newbie-autopilot',
         'workflows/training',
         'workflows/distillation',
@@ -88,6 +89,7 @@ const sidebars: SidebarsConfig = {
         'extensions/validate-and-reload',
         'extensions/extension-studio',
         'extensions/cli',
+        'extensions/code-checks',
       ],
     },
     {

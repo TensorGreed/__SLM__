@@ -36,6 +36,7 @@ import { getJob } from '../../api/jobs';
 import type { Job } from '../../api/jobs';
 import type { PlaybookParams, RejectFields } from '../../api/synthPlaybook';
 import CodeFindingsParamsForm from './CodeFindingsParamsForm';
+import CodeRemediationParamsForm from './CodeRemediationParamsForm';
 import SynthRejectSummary from './SynthRejectSummary';
 import ErrorPanel from '../shared/ErrorPanel';
 import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
@@ -53,7 +54,12 @@ const VALID_SYNTH_MODES: ReadonlySet<SynthMode> = new Set([
     'format_robustness',
     'cluster_targeted',
     'seeded_defect',
+    'remediation_from_findings',
+    'code_examples',
 ]);
+
+/** Modes that send a `params` dict from a mode-specific form. */
+const PARAM_MODES: ReadonlySet<SynthMode> = new Set(['seeded_defect', 'remediation_from_findings', 'code_examples']);
 
 interface Props {
     projectId: number;
@@ -91,6 +97,14 @@ const MODE_LABELS: Record<SynthMode, { label: string; hint: string }> = {
     seeded_defect: {
         label: 'Seed a defect',
         hint: 'Have the teacher write clean code, then insert one defect of a chosen label and mark its lines.',
+    },
+    remediation_from_findings: {
+        label: 'Remediate findings',
+        hint: 'Take reported findings (or fix pairs) and have the teacher write a patch, rationale and citations; only patches that apply and still parse are kept.',
+    },
+    code_examples: {
+        label: 'Write code examples',
+        hint: 'Have the teacher write short tasks and idiomatic code that uses the API shown in your code documents, citing the chunk.',
     },
 };
 
@@ -313,7 +327,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 mode: selectedMode,
                 targetCount,
                 backend,
-                params: selectedMode === 'seeded_defect' ? playbookParams : null,
+                params: PARAM_MODES.has(selectedMode) ? playbookParams : null,
             });
             setJobRejects(null);
             setWatchedJobId(job.id);
@@ -353,7 +367,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 mode: selectedMode,
                 targetCount: 1,
                 backend: effectiveBackend,
-                params: selectedMode === 'seeded_defect' ? playbookParams : null,
+                params: PARAM_MODES.has(selectedMode) ? playbookParams : null,
             });
             setPreflight(result);
             if (!result.ok) {
@@ -557,6 +571,15 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                     );
                 })}
             </fieldset>
+
+            {recipeId === 'code-remediation' && (selectedMode === 'remediation_from_findings' || selectedMode === 'code_examples') && (
+                <CodeRemediationParamsForm
+                    key={selectedMode}
+                    projectId={projectId}
+                    mode={selectedMode}
+                    onChange={setPlaybookParams}
+                />
+            )}
 
             {recipeId === 'code-findings' && selectedMode === 'seeded_defect' && (
                 <CodeFindingsParamsForm projectId={projectId} onChange={setPlaybookParams} />

@@ -56,3 +56,65 @@ export async function recordRemediationEvent(
         return null;
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// Code-remediation settings (the `code-remediation` recipe)
+//
+//   GET /projects/{id}/remediation-config
+//   PUT /projects/{id}/remediation-config
+// ---------------------------------------------------------------------------
+export type RemediationDetector =
+    | { kind: 'project'; project_id: number; experiment_id: number | null }
+    | { kind: 'command'; check_id: string };
+
+export interface RemediationConfig {
+    detector: RemediationDetector | null;
+    /** null = every check that applies to the language. */
+    checks: string[] | null;
+    judge: boolean | null;
+    retrieve_passages: boolean | null;
+    top_k: number | null;
+}
+
+export interface RemediationEffective {
+    detector?: RemediationDetector | null;
+    checks?: string[] | null;
+    judge: boolean;
+    retrieve_passages: boolean;
+    top_k: number;
+}
+
+export interface AvailableDetector {
+    project_id: number;
+    project_name: string;
+    experiment_id: number;
+    run_name: string | null;
+    completed_at: string | null;
+}
+
+export interface RemediationConfigResponse {
+    config: RemediationConfig;
+    effective: RemediationEffective;
+    /** "<project name> · run <id>" for the configured project detector. */
+    detector_label: string | null;
+    available_detectors: AvailableDetector[];
+}
+
+export async function getRemediationConfig(projectId: number): Promise<RemediationConfigResponse> {
+    const res = await api.get<RemediationConfigResponse>(`/projects/${projectId}/remediation-config`);
+    return res.data;
+}
+
+export async function putRemediationConfig(
+    projectId: number,
+    config: RemediationConfig,
+): Promise<RemediationConfigResponse> {
+    const res = await api.put<RemediationConfigResponse>(`/projects/${projectId}/remediation-config`, config);
+    return res.data;
+}
+
+/** The picker label for a detector run, so the user can correlate it. */
+export function detectorOptionLabel(d: AvailableDetector): string {
+    return `${d.project_name} · run ${d.experiment_id}`;
+}

@@ -41,7 +41,6 @@ import logging
 import os
 import re
 import shutil
-import signal
 import tempfile
 import time
 import weakref
@@ -50,6 +49,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from app.config import settings
+from app.services import sandbox_exec
 
 from .base import SynthBackendError
 
@@ -64,13 +64,9 @@ _MIN_COOLDOWN_SECONDS = 60.0
 _MAX_LIMIT_HITS = 20
 _CANCEL_POLL_SECONDS = 2.0
 _WAITING_PREFIX = "waiting for usage window"
-_BASE_ENV = (
-    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR",
-    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
-)
-# A key in the environment makes such CLIs bill the metered API instead of
-# the subscription: never forwarded, even when named in the passthrough list.
-_DENIED_ENV = frozenset({"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY"})
+# Minimal-env / kill helpers are shared with the code-check sandbox.
+_BASE_ENV = sandbox_exec.BASE_ENV
+_DENIED_ENV = sandbox_exec.DENIED_ENV
 _OVERRIDE_KEYS = ("model", "concurrency", "batch_size", "timeout_seconds", "cooldown_seconds", "max_retries")
 _PAUSE_SLICE_SECONDS = 5.0
 _TAIL_CHARS = 400
@@ -100,8 +96,7 @@ def _prompt_mode() -> str:
 
 
 def _minimal_env() -> dict[str, str]:
-    names = list(_BASE_ENV) + [n.strip() for n in str(settings.SYNTH_COMMAND_ENV_PASSTHROUGH or "").split(",") if n.strip()]
-    return {n: os.environ[n] for n in names if n in os.environ and n not in _DENIED_ENV}
+    return sandbox_exec.minimal_env(settings.SYNTH_COMMAND_ENV_PASSTHROUGH)
 
 
 def _resolve_executable(argv0: str) -> str | None:
@@ -606,10 +601,7 @@ def _tail(text: str) -> str:
 
 
 def _kill(proc: "asyncio.subprocess.Process") -> None:
-    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-        os.killpg(proc.pid, signal.SIGKILL)
-    with contextlib.suppress(ProcessLookupError):
-        proc.kill()
+    sandbox_exec.kill_process(proc)
 
 
 def _request_text(req: dict[str, Any]) -> str:

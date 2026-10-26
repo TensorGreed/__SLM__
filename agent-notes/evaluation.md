@@ -413,3 +413,44 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   operator as a fifth item). Code-findings probe generation uses the structured handler's
   `max_new_tokens_override` budget (512), not the 128 probe default.
 - Tests: `test_finding_set_scoring.py`, `test_code_findings_probes.py`, `test_code_findings_e2e.py`, `test_code_findings_g4_fixes.py`.
+
+## Code checks, sandbox, unified diffs (G5, lane B1)
+
+- `services/code_check_service.py` is the registry (`register_code_check`, `list_code_checks`, `checks_for_language`, `run_code_checks`); built-ins in `services/code_checks/builtin.py`, sandboxed externals in `code_checks/external.py`. Externals run only when listed in `CODE_CHECK_ALLOWED` and the binary is on PATH; plugins via `CODE_CHECK_PLUGIN_MODULES`. API: `api/code_checks.py`. Docs: `slm-docs/docs/extensions/code-checks.md`.
+- `services/sandbox_exec.py` (`run_sandboxed`) is the only place external code-check commands run; tests patch `sandbox_exec.run_sandboxed`. It also owns the minimal-env/kill helpers that `synth_backends/command.py` imports. Network isolation uses `unshare -rn` when it works (probe cached; `CODE_CHECK_NETWORK_ISOLATION` auto/off/require); it does NOT work on the dev host (user namespaces refused), so checks there report `network_isolated: false`. `auto` FALLS BACK to no isolation when `unshare -rn` fails; only `require` refuses to run (docs say so, and the Train > Remediation checks card shows "network not isolated" per ready external check). Real built-ins are trusted by identity (`code_check_service._CORE_BUILTINS`), never by a self-declared `kind == "builtin"`; plugins always need `CODE_CHECK_ALLOWED`. Java: a fragment is wrapped (member, then statement) with a sentinel member after the code and a brace-balance lexer; `java_is_toplevel` only accepts a column-0 declaration with no leading statements.
+- Remediation scoring (fix lane): `code_checkable_count` / `code_parses_rate` depend on the ORIGINAL chunk only (malformed = checkable but not parsing), so base and fine-tuned share denominators. `issue_resolved_rate` / `new_findings_rate` are over rows whose patch applied (informational, hidden from the lift table); the lift metric is `issue_resolved_overall_rate` = resolved / (scored rows - detector-blind - detector-error rows). A finding the detector did not report on the ORIGINAL chunk is `detector_blind` (`row_detector_note`, `detector_blind_count`): `row_issue_resolved` None, excluded from both rates, ignored by the pass rule. Metrics carry `remediation_fingerprint` (detector identity incl. run id, effective check ids, `CODE_CHECK_ALLOWED`, retrieval settings, extra-field schema hash); a cached base result is reused only when it matches (`post_training_eval_service._baseline_scoring_matches`). Detector cache keys include the findings-prompt builder + decoding fingerprint and, for command detectors, the binary realpath/mtime/size. Retrieval for rows without passages runs in worker threads (`combine_datasets`, `_load_heldout_pairs`); own-chunk exclusion matches by normalised path suffix, source document id, or text containment (>= 80% of the row's lines).
+- `services/unified_diff.py`: `apply_patch_to_chunk` (absolute line numbers, exact match ± `max_offset`, reasons `empty_patch/not_a_diff/other_file/multiple_files/context_mismatch/overlapping_hunks/out_of_range/no_op`), `make_unified_diff` round-trips with it. `offsets[i]` = applied position minus stated position.
+
+## `remediation` scoring + the code-remediation recipe (G5, lane B2)
+
+- Recipe `code-remediation` (`structured_extraction`, scoring mode `remediation`). Prompt + payload helpers live in
+  `services/code_remediation_prompt.py` (`build_code_remediation_prompt(_from_row)`, `build_code_example_prompt(_from_row)`,
+  `canonical_remediation_json`, `retrieve_passages_for_row`, `effective_remediation_config`); code is rendered by
+  `code_findings_prompt.render_numbered_code`. One builder serves the adapter (`data_adapter_service._map_remediation`),
+  `StructuredExtractionHandler._build_remediation_prompt`, the playbooks and the judge; chat template for train AND eval
+  (`wraps_own_prompt` false for `finding_set` and `remediation`).
+- Manifest stamp (`dataset_service._remediation_schema_stamp`): `required` = the three base fields + declared extras,
+  `properties` = declared EXTRAS only (base names stripped; `description` is kept — `OutputProperty.description`),
+  `remediation {checks, retrieve_passages, top_k, retrieval}`, `label_parents`, `label_titles`. `combine_datasets` puts
+  `adapter_config["remediation"]` (extra fields, project id, retrieval settings) on the structured-extraction adapter.
+  Retrieved passages are stored on the prepared row (`passages_retrieved`), so eval re-renders the identical prompt and only
+  retrieves for a row prepared another way (the handler's `schema["project_id"]` comes from `ctx.project_id`).
+- Scoring: `remediation_scoring.py`. `analyze_row` (apply patch via `unified_diff.apply_patch_to_chunk`, original/patched
+  `run_code_checks`) is cached on the prediction (`_remediation_analysis`); `run_heldout_evaluation` precomputes it in a worker
+  thread (`_prepare_remediation_predictions`), then runs the detector, then scores. A row whose context
+  (`prediction["remediation_row"]`, copied across in `_generate_heldout_predictions` with path/language/start_line) is missing
+  or has no `finding` is skipped (`skipped_non_remediation_rows`) — so predictions injected through
+  `POST /evaluation/run` (no extras) score as 0 rows; only the held-out path scores remediation. A malformed row has all
+  checks false and is not "checkable". `exact_match` = `remediation_pass_rate` (the `pass_rate` fallback).
+  Lift: `remediation_pass_rate` heads `_PREFERRED_HEADLINE_METRICS`, pairs on `row_scores.remediation_pass`;
+  `_prediction_failed` for a remediation row = not `row_remediation_pass` (the judge score does not decide).
+- Detector (`remediation_detector.py`): `{"kind":"project",...}` runs the code-findings run through
+  `_run_local_inference` (patched as `remediation_detector._infer_findings_text` in tests); `{"kind":"command",check_id}`
+  needs a registered `kind="detector"` check, allow-listed + available, and calls its `run()` directly (so it may return a
+  `findings` list; `make_result` would drop it). Cache: `data/projects/<id>/remediation_detector_cache.json`.
+- Judge: `answer_judge_service.build_judge_prompt/build_retrieval_judge_prompt/cache_key` take `instruction` (None = the old
+  prompt byte for byte); the 4th judge argument is only passed when an instruction is set, so 3-arg fakes still work.
+  `_safe_judge_answers(scoring_mode="remediation")` uses `remediation_scoring.JUDGE_INSTRUCTION`/`judge_view`.
+- API: `api/remediation_config.py` (`/projects/{id}/remediation-config`; `api/remediation.py` is the older failure-plan API).
+  Probe packs: `_RECIPES_WITHOUT_PROBE_PACK`. Not wired: `coach_service._PER_CLASS_RECIPE_IDS` (no `per_class` is emitted).
+- Tests: `tests/test_code_remediation_recipe.py`. Docs: `slm-docs/docs/workflows/code-remediation.md`.

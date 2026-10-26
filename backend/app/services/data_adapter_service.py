@@ -1323,10 +1323,50 @@ def _is_finding_set_config(config: dict[str, Any]) -> bool:
     return bool(config.get("finding_set")) or "finding_labels" in config
 
 
+def _is_remediation_config(config: dict[str, Any]) -> bool:
+    """Code-remediation mode: the recipe's scoring mode is ``remediation`` (``combine_datasets``
+    puts ``config["remediation"]`` -- extra fields, passage retrieval settings -- on the adapter)."""
+    return isinstance(config.get("remediation"), dict)
+
+
+def _remediation_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[str, str, Any, str | None]:
+    """Remediation rows: input = the code chunk, target = the canonical remediation JSON.
+    ``code_example`` rows (training only) take the task as input and the code-example JSON as target."""
+    from app.services.code_remediation_prompt import (
+        canonical_code_example_json,
+        canonical_remediation_json,
+        code_example_payload,
+        is_remediation_row,
+        remediation_payload,
+    )
+
+    cfg = config["remediation"]
+    if not is_remediation_row(record):
+        example = code_example_payload(record)
+        if example is not None:
+            task = record.get("task")
+            if not isinstance(task, str) or not task.strip():
+                return "", "", example, "adapter_unmappable_or_empty"
+            return task, canonical_code_example_json(example), example, None
+    payload = remediation_payload(record)
+    if payload is None:
+        return "", "", None, "remediation_json_missing"
+    code = record.get("code") if isinstance(record.get("code"), str) else record.get("text")
+    if not isinstance(code, str) or not code.strip():
+        return "", "", payload, "adapter_unmappable_or_empty"
+    finding = record.get("finding")
+    if not (isinstance(finding, dict) and str(finding.get("label") or "").strip()):
+        return "", "", payload, "remediation_finding_missing"
+    return code, canonical_remediation_json(payload, cfg.get("extra_fields")), payload, None
+
+
 def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[str, str, Any, str | None]:
     """``(source, target, target_payload, reject_reason)``. Rejected when no input is found or
     when the canonical fallback built the input out of the gold record itself."""
     from app.services.code_findings_prompt import canonical_findings_json, findings_payload
+
+    if _is_remediation_config(config):
+        return _remediation_parts(record, config)
 
     if _is_finding_set_config(config):
         # Code findings: the input is the raw chunk (indentation intact), the
@@ -1402,6 +1442,9 @@ def _map_structured_extraction(record: dict[str, Any], config: dict[str, Any]) -
 
     from app.services.code_findings_prompt import build_code_findings_prompt_from_row
 
+    if _is_remediation_config(config):
+        return _map_remediation(record, config, source, target, target_payload)
+
     if _is_finding_set_config(config):
         # Same builder the eval handler uses; chat-template rows (no handler
         # prefix), so no leading space on the target.
@@ -1455,6 +1498,54 @@ def _map_structured_extraction(record: dict[str, Any], config: dict[str, Any]) -
         # the trainer consumes. Loss is computed on target_text only.
         "source_text": wrapped_prompt,
         "target_text": target_with_space,
+    }
+
+
+def _map_remediation(
+    record: dict[str, Any], config: dict[str, Any], source: str, target: str, target_payload: Any
+) -> dict[str, Any]:
+    """Same builders the eval handler uses; chat-template rows (no handler prefix), so no
+    leading space on the target. A remediation row without passages gets the retrieved ones
+    (``code_remediation_prompt.retrieve_passages_for_row``) when the project asks for it; the
+    prepared row carries them so held-out eval renders the identical prompt."""
+    from app.services import code_remediation_prompt as crp
+
+    cfg = config["remediation"]
+    if crp.is_remediation_row(record):
+        row = {**record, "code": source}
+        passages = crp.normalize_passages(record.get("passages"))
+        retrieved = False
+        if not passages and cfg.get("retrieve_passages") and cfg.get("project_id"):
+            finding = record.get("finding") if isinstance(record.get("finding"), dict) else {}
+            titles = cfg.get("label_titles") if isinstance(cfg.get("label_titles"), dict) else {}
+            passages = crp.retrieve_passages_for_row(
+                int(cfg["project_id"]), row, cfg.get("retrieval"), cfg.get("top_k") or crp.DEFAULT_TOP_K,
+                label_title=titles.get(str(finding.get("label") or "")),
+            )
+            retrieved = True
+        row["passages"] = passages
+        prompt = crp.build_code_remediation_prompt_from_row(row, cfg.get("extra_fields"))
+        out: dict[str, Any] = {
+            "text": source,
+            "answer": target,
+            "structured_output": target_payload,
+            "source_text": prompt,
+            "target_text": target,
+            "passages": passages,
+        }
+        if retrieved:
+            out["passages_retrieved"] = True
+        return out
+    # A code example: task + its passages -> {code, rationale, citations}.
+    row = {**record, "task": source}
+    prompt = crp.build_code_example_prompt_from_row(row)
+    return {
+        "text": source,
+        "answer": target,
+        "structured_output": target_payload,
+        "source_text": prompt,
+        "target_text": target,
+        "passages": crp.normalize_passages(record.get("passages")),
     }
 
 

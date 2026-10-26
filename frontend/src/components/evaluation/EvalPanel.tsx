@@ -14,6 +14,7 @@ import LoadingState from '../shared/LoadingState';
 import StepFooter from '../shared/StepFooter';
 import { Term } from '../shared/Term';
 import ClassificationChartsPanel from './ClassificationChartsPanel';
+import RemediationMetricsPanel, { RemediationRowView, isRemediationMetrics, isRemediationRow, type RemediationMetrics, type RemediationRow } from './RemediationMetricsPanel';
 import FindingSetMetricsPanel, { FindingSetRowView, isFindingSetMetrics, type FindingSetMetrics, type FindingSetRow } from './FindingSetMetricsPanel';
 import FieldMatchMetricsPanel, { hasFieldMatchBreakdown, type FieldMatchMetrics } from './FieldMatchMetricsPanel';
 import './ClassificationChartsPanel.css';
@@ -119,7 +120,7 @@ interface EvalMetrics {
     overall_em?: number | null;
 }
 
-interface PredictionPreviewRow extends FindingSetRow {
+interface PredictionPreviewRow extends FindingSetRow, RemediationRow {
     prompt?: string;
     reference?: string;
     prediction?: string;
@@ -2047,7 +2048,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                             so projects with both gold-dev and gold-test results show two
                             distinct charts. */}
                         {evalResults
-                            .filter((r) => !isFindingSetMetrics(r.metrics) && r.metrics?.per_class && Object.keys(r.metrics.per_class).length > 0)
+                            .filter((r) => !isFindingSetMetrics(r.metrics) && !isRemediationMetrics(r.metrics) && r.metrics?.per_class && Object.keys(r.metrics.per_class).length > 0)
                             .map((r) => (
                                 <ClassificationChartsPanel
                                     key={`cls-charts-${r.id}`}
@@ -2067,6 +2068,18 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 <FindingSetMetricsPanel
                                     key={`fs-metrics-${r.id}`}
                                     metrics={r.metrics as unknown as FindingSetMetrics}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                />
+                            ))}
+
+                        {/* Code-remediation evals (remediation): pass / applies / parses /
+                            resolved / citation rates, patch failure reasons, judge score. */}
+                        {evalResults
+                            .filter((r) => isRemediationMetrics(r.metrics))
+                            .map((r) => (
+                                <RemediationMetricsPanel
+                                    key={`rem-metrics-${r.id}`}
+                                    metrics={r.metrics as unknown as RemediationMetrics}
                                     provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
                                 />
                             ))}
@@ -2362,6 +2375,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                         )}
                                                         {row.scoring_mode === 'finding_set' && (
                                                             <FindingSetRowView row={row} />
+                                                        )}
+                                                        {isRemediationRow(row) && (
+                                                            <RemediationRowView row={row} />
                                                         )}
                                                         {isSpanSetMode &&
                                                             (matchedEntities.length > 0 ||

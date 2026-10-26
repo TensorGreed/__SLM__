@@ -186,6 +186,89 @@ async def _prepare_code_context(
     ctx["context_column"] = column
 
 
+async def _prepare_remediation_context(
+    db: AsyncSession, project_id: int, ctx: PlaybookContext, params: dict[str, Any], *, target_count: int
+) -> None:
+    """Fill ``ctx['remediation_seeds']`` for ``remediation_from_findings``.
+
+    Seeds come from (a) ``params.findings_dataset_id``, a dataset of THIS project (never an answer
+    key; rows from eval- or rag-only ledger sources are skipped) holding findings rows, fix pairs or
+    remediation rows, and (b) the GOLD_DEV remediation / findings rows already in ``ctx['gold_rows']``
+    (ledger-filtered by ``_prepare_code_context``; GOLD_TEST is never loaded). One seed per finding.
+    A seed with no passages of its own gets them from ``retrieve_passages_for_row`` when the project's
+    ``runtime_config['remediation']['retrieve_passages']`` allows (``params.retrieve_passages`` overrides;
+    default on) and the project has a document index; ``params.top_k`` (else the project's) sets how many.
+    """
+    from app.services import provenance_service
+    from app.services.synth_playbooks._code_remediation_common import (
+        MAX_REMEDIATION_SEEDS, build_seeds_from_rows, normalise_passages,
+    )
+
+    seed_rejects: list[tuple[str, str]] = []
+    seeds = build_seeds_from_rows(ctx.get("gold_rows") or [], "answer_key", seed_rejects)
+    raw_id = params.get("findings_dataset_id")
+    if raw_id is not None:
+        try:
+            dataset_id = int(raw_id)
+        except (TypeError, ValueError):
+            raise ValueError("params.findings_dataset_id must be a dataset id.") from None
+        dataset = await db.get(Dataset, dataset_id)
+        if dataset is None or dataset.project_id != project_id:
+            raise ValueError(f"Findings dataset {dataset_id} not found in this project.")
+        if dataset.dataset_type in (DatasetType.GOLD_DEV, DatasetType.GOLD_TEST):
+            raise ValueError(
+                f"Findings dataset {dataset_id} is an answer key (held out for evaluation); pick a raw or "
+                "training dataset. Answer-key dev rows are used as seeds automatically."
+            )
+        if not dataset.file_path or not Path(dataset.file_path).exists():
+            raise ValueError(f"Findings dataset {dataset_id} has no data file.")
+        usage = await provenance_service.source_usage_map(db, project_id)
+        records = [
+            r for r in _load_records_from_file(Path(dataset.file_path))
+            if not _row_source_blocked(r, usage, provenance_service)
+        ]
+        seeds = build_seeds_from_rows(records, "findings_dataset", seed_rejects) + seeds
+    from app.services.synth_playbooks.base import record_reject as _record_reject
+
+    for _reason, _detail in seed_rejects:
+        _record_reject(ctx, _reason, _detail)
+    if not seeds:
+        from app.services.synth_playbooks.code_remediation_from_findings import no_seed_message
+
+        raise ValueError(no_seed_message())
+    seeds = seeds[: max(40, min(MAX_REMEDIATION_SEEDS, target_count * 2))]
+
+    from app.services import auto_rag_service, code_remediation_prompt
+
+    project = await db.get(Project, project_id)
+    recipe_snapshot = getattr(project, "selected_recipe", None)
+    ctx["remediation_extra_fields"] = code_remediation_prompt.extra_fields_from_schema(
+        recipe_snapshot.get("output_schema") if isinstance(recipe_snapshot, dict) else None
+    )
+    cfg = await asyncio.to_thread(
+        code_remediation_prompt.effective_remediation_config, getattr(project, "runtime_config", None), project_id
+    )
+    retrieve = params.get("retrieve_passages", cfg["retrieve_passages"])
+    top_k = int(params["top_k"]) if params.get("top_k") is not None else cfg["top_k"]
+    if retrieve is not False:
+        retrieval = auto_rag_service.retrieval_settings(project)
+        taxonomy = ctx.get("taxonomy")
+
+        def _fill() -> None:
+            for seed in seeds:
+                if seed.get("passages"):
+                    continue
+                entry = taxonomy.entries.get(seed["finding"]["label"]) if taxonomy is not None else None
+                row = {k: seed[k] for k in ("code", "language", "path", "start_line", "end_line", "finding")}
+                found = code_remediation_prompt.retrieve_passages_for_row(
+                    project_id, row, retrieval, top_k, label_title=(entry or {}).get("title"),
+                )
+                seed["passages"] = normalise_passages(found) or None
+
+        await asyncio.to_thread(_fill)
+    ctx["remediation_seeds"] = seeds
+
+
 _DEFENSIVE_USE_PREAMBLE = (
     "You are generating training data for a defensive machine-learning "
     "classifier. The classifier learns to DETECT and BLOCK malicious "
@@ -369,6 +452,8 @@ async def run_playbook(
     }
     if uses_code_seeds:
         await _prepare_code_context(db, project_id, ctx, ctx["params"])
+        if getattr(playbook, "uses_remediation_seeds", False):
+            await _prepare_remediation_context(db, project_id, ctx, ctx["params"], target_count=target_count)
         # Varies the seed window from run to run (stable within a run, so a resumed run agrees).
         ctx["seed_nonce"] = _peek_next_id(settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl")
 

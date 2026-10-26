@@ -13,6 +13,7 @@ import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom
 
 import AlignmentScaffoldPanel from '../components/training/AlignmentScaffoldPanel';
 import ArchetypeComparisonPanel from '../components/training/ArchetypeComparisonPanel';
+import RemediationConfigCard from '../components/training/RemediationConfigCard';
 import DocumentsQaFlowCard from '../components/training/DocumentsQaFlowCard';
 import PlanRefinementCard from '../components/training/PlanRefinementCard';
 import TokenizationPanel from '../components/training/TokenizationPanel';
@@ -48,7 +49,17 @@ export default function ProjectTrainPage() {
 
     const trainUrl = projectPath(projectId, 'train');
 
+    const isRemediation = (project.selected_recipe as { recipe_id?: string } | null | undefined)?.recipe_id === 'code-remediation';
+
     const extraSections: TrainFormSection[] = [
+        ...(isRemediation
+            ? [{
+                id: 'remediation',
+                title: 'Remediation checks',
+                hint: 'detector, code checks, judge and passages that score patches',
+                render: () => <RemediationConfigCard projectId={projectId} />,
+            }]
+            : []),
         {
             id: 'plan',
             title: 'Plan and gaps',

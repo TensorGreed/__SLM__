@@ -74,6 +74,7 @@ def eval_type_for_project(project: Project) -> str:
     scoring_mode = str(snapshot.get("scoring_mode") or "").strip()
     if scoring_mode in ("span_set", "finding_set"):
         return "f1"
+    # ``remediation`` scores a patch per row: its pass rate is also ``exact_match``.
     return "exact_match"
 
 
@@ -198,6 +199,14 @@ def _baseline_judge_matches(result: EvalResult, judge_label: str | None) -> bool
     return str(judge.get("judge") or "") == judge_label
 
 
+def _baseline_scoring_matches(result: EvalResult, fingerprint: str | None) -> bool:
+    """A cached remediation result stands only if it was scored under the current scoring config."""
+    if fingerprint is None:
+        return True
+    metrics = result.metrics if isinstance(result.metrics, dict) else {}
+    return metrics.get("remediation_fingerprint") == fingerprint
+
+
 def _baseline_decoding_matches(result: EvalResult, decoding: str = "neutral") -> bool:
     """A cached base-model result stands for one bar only if it was decoded
     that way (lift evals are greedy): neutral, or the model's own settings
@@ -225,10 +234,13 @@ async def _reusable_baseline_result(
     *,
     judge_label: str | None = None,
     decoding: str = "neutral",
+    scoring_fingerprint: str | None = None,
 ) -> EvalResult | None:
     """Newest baseline result on the test split decoded as ``decoding``, if
     newer than the split file (base models are deterministic under greedy
-    decoding, so a fresh-enough result is exact, not approximate)."""
+    decoding, so a fresh-enough result is exact, not approximate).
+    ``scoring_fingerprint`` (remediation evals): the result must have been scored under the
+    same detector / checks / retrieval / extra-field schema."""
     result = await db.execute(
         select(EvalResult)
         .where(EvalResult.experiment_id == baseline_exp.id)
@@ -253,6 +265,8 @@ async def _reusable_baseline_result(
         if not _baseline_judge_matches(candidate, judge_label):
             continue
         if not _baseline_decoding_matches(candidate, decoding):
+            continue
+        if scoring_fingerprint is not None and not _baseline_scoring_matches(candidate, scoring_fingerprint):
             continue
         return candidate
     return None
@@ -309,6 +323,25 @@ async def _mark_bar_results(db: AsyncSession, baseline_exp: Experiment, chosen: 
         _mark_bar(other, bar, False)
 
 
+async def _remediation_fingerprint_for(db: AsyncSession, project_id: int) -> str | None:
+    """The scoring fingerprint a reusable remediation baseline must carry (None for any other
+    project: nothing to match)."""
+    try:
+        from app.services.code_remediation_prompt import project_is_code_remediation
+        from app.services.eval_task_handler_service import read_prepared_manifest
+        from app.services.remediation_detector import remediation_scoring_fingerprint
+
+        project = await db.get(Project, project_id)
+        if project is None or not project_is_code_remediation(project):
+            return None
+        schema = read_prepared_manifest(project_id).get("output_schema")
+        return await remediation_scoring_fingerprint(
+            db, project_id, getattr(project, "runtime_config", None), schema if isinstance(schema, dict) else None
+        )
+    except Exception:  # noqa: BLE001 - cannot fingerprint: never reuse blindly
+        return "unavailable"
+
+
 async def _baseline_bar(
     db: AsyncSession,
     *,
@@ -334,7 +367,10 @@ async def _baseline_bar(
     from app.services.decoding_settings import MODEL_DECODING, model_decoding_differs
     from app.services.evaluation_service import PERPLEXITY_EVAL_TYPE, run_heldout_evaluation
 
-    neutral = await _reusable_baseline_result(db, baseline_exp, project_id, judge_label=judge_label)
+    scoring_fp = await _remediation_fingerprint_for(db, project_id)
+    neutral = await _reusable_baseline_result(
+        db, baseline_exp, project_id, judge_label=judge_label, scoring_fingerprint=scoring_fp
+    )
     reused = neutral is not None
     if neutral is None:
         await report(fractions[0], f"Evaluating base model {short_model_name(base_model)}")
@@ -353,7 +389,8 @@ async def _baseline_bar(
         own_result = None
     else:
         own_result = await _reusable_baseline_result(
-            db, baseline_exp, project_id, judge_label=judge_label, decoding=MODEL_DECODING
+            db, baseline_exp, project_id, judge_label=judge_label, decoding=MODEL_DECODING,
+            scoring_fingerprint=scoring_fp,
         )
         if own_result is None:
             reused = False

@@ -88,6 +88,60 @@ def code_findings_rows(prompt: str, mode: str) -> str:
     return "\n".join(json.dumps(item) for item in out)
 
 
+_CR_MARKER_RE = re.compile(r"\[brewslm:code-remediation:(\w+)\]")
+_CR_TASK_RE = re.compile(r"<task ([^>]*)>\n(.*?)\n</task>", re.DOTALL)
+_CR_SEED_RE = re.compile(r"<seed ([^>]*)>\n(.*?)\n</seed>", re.DOTALL)
+_CR_ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
+_CR_LINE_RE = re.compile(r"^\s*(\d+) \| ?(.*)$")
+_HASH_COMMENT_LANGS = {"python", "shell", "yaml", "terraform", "ruby"}
+
+
+def code_remediation_rows(prompt: str, mode: str) -> str:
+    """Deterministic teacher output for the `code-remediation` playbook prompts (marked
+    ``[brewslm:code-remediation:<mode>]``). remediation_from_findings: a one-line patch that appends a
+    comment to the first line of the finding (cites P1 when the task lists passages; a fixed-patch
+    task gets only rationale + citations). code_examples: ``per_chunk`` small examples per chunk that
+    cite P1."""
+    out: list[dict[str, Any]] = []
+    if mode == "code_examples":
+        for match in _CR_SEED_RE.finditer(prompt):
+            attrs = dict(_CR_ATTR_RE.findall(match.group(1)))
+            index, per_chunk = int(attrs.get("index", 1)), int(attrs.get("per_chunk", 1))
+            for j in range(1, per_chunk + 1):
+                out.append({
+                    "seed": index, "task": f"Use the documented API in scenario {index}.{j}",
+                    "code": f"result_{index}_{j} = {index * 10 + j}\nprint(result_{index}_{j})",
+                    "rationale": "Calls the API the way the reference shows.", "citations": ["P1"],
+                })
+        if not out:
+            raise SynthBackendError("template backend: no <seed> blocks in the code-remediation prompt")
+        return "\n".join(json.dumps(item) for item in out)
+    for match in _CR_TASK_RE.finditer(prompt):
+        attrs = dict(_CR_ATTR_RE.findall(match.group(1)))
+        index, first = int(attrs.get("index", 1)), int(attrs.get("start_line", 1))
+        target = int(attrs.get("finding_start", first))
+        lines: dict[int, str] = {}
+        for raw in match.group(2).split("\n"):
+            hit = _CR_LINE_RE.match(raw)
+            if hit:
+                lines[int(hit.group(1))] = hit.group(2)
+            elif lines:
+                break
+        citations = ["P1"] if int(attrs.get("passages", 0)) > 0 else []
+        if attrs.get("fixed_patch") == "yes":
+            out.append({"task": index, "patch": "", "rationale": "The fix removes the defect.", "citations": citations})
+            continue
+        old = lines.get(target, "")
+        mark = "#" if attrs.get("language") in _HASH_COMMENT_LANGS else "//"
+        new = f"{old}  {mark} reviewed"
+        name = attrs.get("path") if attrs.get("path") not in (None, "", "unknown") else "code"
+        patch = f"--- a/{name}\n+++ b/{name}\n@@ -{target},1 +{target},1 @@\n-{old}\n+{new}"
+        out.append({"task": index, "patch": patch, "rationale": "Marks the line after review.", "citations": citations})
+    if not out:
+        raise SynthBackendError("template backend: no <task> blocks in the code-remediation prompt")
+    return "\n".join(json.dumps(item) for item in out)
+
+
 def passage_pairs(passage: str, pairs_per_passage: int) -> dict[str, Any]:
     """``pairs_per_passage`` training pairs + one eval pair, each a sentence
     of the passage asked about by its opening words."""
@@ -137,11 +191,14 @@ class TemplateBackend:
         cf = _CF_MARKER_RE.search(prompt)
         if cf:
             return code_findings_rows(prompt, cf.group(1))
+        cr = _CR_MARKER_RE.search(prompt)
+        if cr:
+            return code_remediation_rows(prompt, cr.group(1))
         passage = _PASSAGE_RE.search(prompt)
         if passage:
             count = _PAIRS_RE.search(prompt)
             return json.dumps(passage_pairs(passage.group(1), int(count.group(1)) if count else 3))
         raise SynthBackendError(
-            "template backend only answers the documents → Q&A flow, the answer judge and the code-findings playbooks; "
+            "template backend only answers the documents → Q&A flow, the answer judge and the code-findings / code-remediation playbooks; "
             "use a real model for anything else"
         )

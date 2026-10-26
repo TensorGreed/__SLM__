@@ -609,6 +609,43 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
 - Tests offline: the template backend answers prompts carrying `[brewslm:code-findings:<mode>]`
   (`TemplateBackend`, `BREWSLM_TEMPLATE_SYNTH=1`). `tests/test_code_findings_playbooks.py`, `tests/test_code_findings_g4_fixes.py` (dev-split seeds, anchoring, rotation, reject resume, catalog).
 
+## Code-remediation synth playbooks (G5)
+
+- Recipe `code-remediation`, two playbooks (`SynthMode.REMEDIATION_FROM_FINDINGS`, `SynthMode.CODE_EXAMPLES`):
+  `synth_playbooks/code_remediation_from_findings.py`, `code_examples.py`, shared helpers in
+  `_code_remediation_common.py`. Both set `uses_code_seeds` (dev-split-only gold rows, ledger gating from
+  `_prepare_code_context`); the first also sets `uses_remediation_seeds`, so `synth_playbook_service.
+  _prepare_remediation_context` fills `ctx["remediation_seeds"]`.
+- `remediation_from_findings` seeds: `params.findings_dataset_id` (a raw / training dataset of THIS project, never a
+  GOLD_DEV / GOLD_TEST dataset: 400 `findings_dataset_not_allowed`; rows from eval- / rag-only ledger sources are
+  dropped) and GOLD_DEV rows (GOLD_TEST is never loaded). Row shapes: findings rows (one seed per finding, clean
+  rows skipped), fix pairs (`row_kind: "patch"` with `fixed_code`: the finding is the first label over the lines the
+  fix changed, `fix_pair.changed_before_lines`) and remediation rows (their own passages kept). Seeds without
+  passages get them from `code_remediation_prompt.retrieve_passages_for_row` when retrieval is on
+  (`params.retrieve_passages` overrides `runtime_config["remediation"]["retrieve_passages"]`, default on iff the
+  project has a document index; `params.top_k` 1-10, else the project's). The seed pool is capped at
+  `max(40, min(200, 2 * target_count))` before retrieval.
+- Teacher prompt = one `<task index=...>` block per seed (up to 5 per call) wrapping the shared
+  `build_code_remediation_prompt`; the teacher answers one JSON line per task: `{"task", "patch", "rationale",
+  "citations"}`. For a fix pair the real diff (`make_unified_diff`) is the patch, the teacher writes rationale +
+  citations only. Accepted rows store the CANONICAL diff (`make_unified_diff(original, patched)`), not the teacher's
+  spelling, so training targets are normalised.
+- Reject reasons (grouped in the result's `reject_summary`): `parse_error`, `unknown_label` (finding label not in
+  the project taxonomy, when one exists; aliases resolve), `empty_patch`, `code_too_long`, `patch_does_not_apply`
+  (detail = the applier's reason), `no_op_patch`, `bad_citation` (id not among the seed's passages), 
+  `code_does_not_parse` (only when the original passes `run_code_checks`; the patched code is re-run with the
+  checks that ran on the original), `missing_extra_field` (the project's declared extra output fields are named in the teacher prompt, required in its reply and carried into `remediation_json`), and from seed building `no_label` / `no_changed_lines` (a fix pair with no label, or whose fix changes no lines).
+- `code_examples`: seeds are code-document chunks (`ctx["document_chunks"]`, ledger-gated). Per chunk the teacher
+  writes `params.per_chunk` (default 2, max 5; 400 `invalid_playbook_param` outside 1-5) tasks answered with code that
+  uses the API, citing `P1` = the chunk plus up to two neighbour chunks of the same document (`P2`/`P3`). Rows:
+  `{row_kind: "code_example", task, language, passages, code_example_json: {code, rationale, citations}}`.
+  Rejects: `parse_error`, `empty_code`, `code_too_long`, `bad_citation` (also no citation at all),
+  `copied_chunk` (>= 90% difflib ratio to a cited chunk), `code_does_not_parse` (skipped when no check applies to
+  the language). Training-only rows: the remediation scorer skips rows without a `finding`.
+- Template backend: prompts carrying `[brewslm:code-remediation:<mode>]` get a deterministic answer
+  (`synth_backends/template.py: code_remediation_rows`: a one-line comment patch citing `P1` when passages exist; code
+  examples that cite `P1`). Tests: `tests/test_code_remediation_playbooks.py`.
+
 ## Code-findings recipe: detection, adapter, manifest, guided JSON (G4)
 
 - `recipe_service._code_findings_recipe` (`code-findings`, adapter `structured-extraction`, scoring

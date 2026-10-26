@@ -733,6 +733,8 @@ class StructuredExtractionHandler:
     SCHEMA_SAMPLE_SIZE: int = 20
     MAX_NEW_TOKENS_FLOOR: int = 128
     MAX_NEW_TOKENS_HARDCAP: int = 512
+    REMEDIATION_MAX_NEW_TOKENS: int = 1024
+    REMEDIATION_MAX_NEW_TOKENS_FLOOR: int = 768
 
     # Scoring modes within structured_extraction. ``field_match`` is
     # today's per-field EM/F1 (invoice-style extraction). ``span_set``
@@ -744,10 +746,13 @@ class StructuredExtractionHandler:
     # ``finding_set``: code findings -- {label, start_line, end_line, ...}
     # matched on label + line-range IoU (see finding_set_scoring.py).
     SCORING_MODE_FINDING_SET: str = "finding_set"
+    # ``remediation``: a patch + rationale + citations per finding (see remediation_scoring.py).
+    SCORING_MODE_REMEDIATION: str = "remediation"
     _SUPPORTED_SCORING_MODES: set[str] = {
         SCORING_MODE_FIELD_MATCH,
         SCORING_MODE_SPAN_SET,
         SCORING_MODE_FINDING_SET,
+        SCORING_MODE_REMEDIATION,
     }
 
     def __init__(self) -> None:
@@ -781,6 +786,9 @@ class StructuredExtractionHandler:
                     "prompt_labels": list(manifest_schema.get("prompt_labels") or []),
                 }
                 return self._schema
+            if scoring_mode == self.SCORING_MODE_REMEDIATION:
+                self._schema = self._remediation_schema(manifest_schema, ctx)
+                return self._schema
             properties = manifest_schema.get("properties")
             required = manifest_schema.get("required")
             if isinstance(properties, dict) and properties:
@@ -813,6 +821,26 @@ class StructuredExtractionHandler:
             "scoring_mode": scoring_mode,
         }
         return self._schema
+
+    def _remediation_schema(self, manifest_schema: dict[str, Any], ctx: EvalContext) -> dict[str, Any]:
+        from app.services.code_remediation_prompt import BASE_FIELDS, extra_fields_from_schema
+
+        extra = extra_fields_from_schema(manifest_schema)
+        props = manifest_schema.get("properties") if isinstance(manifest_schema.get("properties"), dict) else {}
+        required = manifest_schema.get("required")
+        remediation = manifest_schema.get("remediation") if isinstance(manifest_schema.get("remediation"), dict) else {}
+        return {
+            "fields": [*BASE_FIELDS, *extra],
+            "required": list(required) if isinstance(required, list) else list(BASE_FIELDS),
+            "scoring_mode": self.SCORING_MODE_REMEDIATION,
+            # Only the declared extras are field-matched; the base three are scored on their own terms.
+            "properties": {name: normalize_property(props[name]) for name in extra if name in props},
+            "extra_fields": extra,
+            "remediation": dict(remediation),
+            "label_parents": dict(manifest_schema.get("label_parents") or {}),
+            "label_titles": dict(manifest_schema.get("label_titles") or {}),
+            "project_id": getattr(ctx, "project_id", None),
+        }
 
     # ── Field extraction ──
 
@@ -848,6 +876,9 @@ class StructuredExtractionHandler:
             "structured_output",
             # Code findings rows: {"findings": [...]}.
             "findings_json",
+            # Code remediation / code example rows.
+            "remediation_json",
+            "code_example_json",
             # Span rows: {text, entities: [...]} / entities_json.
             "entities",
             "entities_json",
@@ -956,7 +987,11 @@ class StructuredExtractionHandler:
         fields = schema["fields"]
         built: list[BuiltPrompt] = []
         finding_mode = schema.get("scoring_mode") == self.SCORING_MODE_FINDING_SET
+        remediation_mode = schema.get("scoring_mode") == self.SCORING_MODE_REMEDIATION
         for row in rows:
+            if remediation_mode:
+                built.append(self._build_remediation_prompt(row, schema))
+                continue
             if finding_mode:
                 built.append(self._build_finding_prompt(row, schema))
                 continue
@@ -999,6 +1034,56 @@ class StructuredExtractionHandler:
                 extras[key] = row[key]
         return BuiltPrompt(prompt=prompt, reference=reference, extras=extras)
 
+    def _build_remediation_prompt(self, row: dict[str, Any], schema: dict[str, Any]) -> BuiltPrompt:
+        """Code-remediation prompt from the shared builder -- byte-identical to the training
+        row's ``source_text`` (``data_adapter_service._map_remediation``). A row without passages
+        gets the retrieved ones when the manifest asks for it and the adapter did not already try.
+        Code-example rows (no finding) get their own prompt and are skipped by the scorer."""
+        from app.services import code_remediation_prompt as crp
+
+        extra = schema.get("extra_fields") or {}
+        settings_cfg = schema.get("remediation") or {}
+        if not crp.is_remediation_row(row) and crp.is_code_example_row(row):
+            prompt = crp.build_code_example_prompt_from_row({**row, "task": row.get("task") or row.get("text")})
+            payload = crp.code_example_payload(row)
+            reference = crp.canonical_code_example_json(payload)
+            return BuiltPrompt(prompt=prompt, reference=reference, extras={"structured_fields": ["code"]})
+        payload = crp.remediation_payload(row)
+        reference = crp.canonical_remediation_json(payload, extra) if payload is not None else self._reference_as_string(row)
+        code = crp._row_code(row)
+        full = {**row, "code": code}
+        passages = crp.normalize_passages(row.get("passages"))
+        if (
+            not passages
+            and not row.get("passages_retrieved")
+            and settings_cfg.get("retrieve_passages")
+            and schema.get("project_id")
+            and isinstance(row.get("finding"), dict)
+        ):
+            passages = crp.retrieve_passages_for_row(
+                int(schema["project_id"]), full, settings_cfg.get("retrieval"), settings_cfg.get("top_k") or crp.DEFAULT_TOP_K,
+                label_title=(schema.get("label_titles") or {}).get(str(row["finding"].get("label") or "")),
+            )
+        full["passages"] = passages
+        prompt = crp.build_code_remediation_prompt_from_row(full, extra)
+        remediation_row = {
+            "code": code,
+            "language": row.get("language") if isinstance(row.get("language"), str) else None,
+            "path": row.get("path") if isinstance(row.get("path"), str) else None,
+            "start_line": row.get("start_line") if isinstance(row.get("start_line"), int) and not isinstance(row.get("start_line"), bool) else 1,
+            "finding": row.get("finding") if isinstance(row.get("finding"), dict) else None,
+            "passages": passages,
+        }
+        extras: dict[str, Any] = {
+            "structured_fields": list(schema.get("fields") or []),
+            "structured_input": code,
+            "remediation_row": remediation_row,
+        }
+        for key in ("path", "language", "start_line"):
+            if row.get(key) is not None:
+                extras[key] = row[key]
+        return BuiltPrompt(prompt=prompt, reference=reference, extras=extras)
+
     # ── Generation hint ──
 
     def max_new_tokens_override(self, default: int) -> int:
@@ -1006,6 +1091,9 @@ class StructuredExtractionHandler:
         but should be bounded — extraction isn't a place for rambling.
         Raise tiny defaults to a sane floor; cap at the hard limit."""
 
+        if (self._schema or {}).get("scoring_mode") == self.SCORING_MODE_REMEDIATION:
+            # A unified diff plus a rationale outgrows the 512-token record cap.
+            return min(self.REMEDIATION_MAX_NEW_TOKENS, max(self.REMEDIATION_MAX_NEW_TOKENS_FLOOR, int(default or 0)))
         baseline = max(self.MAX_NEW_TOKENS_FLOOR, int(default or 0))
         return min(self.MAX_NEW_TOKENS_HARDCAP, baseline)
 
@@ -1054,6 +1142,10 @@ class StructuredExtractionHandler:
             from app.services.finding_set_scoring import score_finding_set
 
             return score_finding_set(predictions, schema, self._parse_json_safely)
+        if scoring_mode == self.SCORING_MODE_REMEDIATION:
+            from app.services.remediation_scoring import score_remediation
+
+            return score_remediation(predictions, schema, self._parse_json_safely)
         return self._score_field_match(predictions, schema)
 
     # ── Field-match scoring (default — today's invoice-style flow) ──
@@ -1569,7 +1661,7 @@ class StructuredExtractionHandler:
         else:
             manifest_schema = (ctx.manifest if ctx is not None else {}).get("output_schema")
             mode = str((manifest_schema or {}).get("scoring_mode") or "").strip().lower() if isinstance(manifest_schema, dict) else ""
-        return mode != self.SCORING_MODE_FINDING_SET
+        return mode not in (self.SCORING_MODE_FINDING_SET, self.SCORING_MODE_REMEDIATION)
 
     def expected_prompt_prefixes(self) -> list[str]:
         """See ClassificationHandler.expected_prompt_prefixes — same

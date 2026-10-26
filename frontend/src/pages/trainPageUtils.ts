@@ -1,6 +1,6 @@
 /** Pure helpers for the Train page (section ids, labels). */
 
-export const TRAIN_SECTION_IDS = ['model', 'lora', 'seeds', 'checks', 'cloud', 'presets', 'plan', 'models', 'task', 'pipeline-presets', 'adapters', 'tokenization'] as const;
+export const TRAIN_SECTION_IDS = ['model', 'lora', 'seeds', 'checks', 'cloud', 'presets', 'plan', 'models', 'task', 'pipeline-presets', 'adapters', 'tokenization', 'remediation'] as const;
 export type TrainSectionId = (typeof TRAIN_SECTION_IDS)[number];
 
 export function isTrainSectionId(value: string | null | undefined): value is TrainSectionId {

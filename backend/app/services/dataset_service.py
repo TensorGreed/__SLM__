@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import hashlib
 import json
 import random
@@ -650,6 +652,7 @@ def _resolve_adapter_for_rows(
 # random split reports in the manifest instead of dropping silently.
 INPUT_REJECT_REASONS = (
     "classification_input_is_label", "structured_input_contains_gold", "findings_json_missing",
+    "remediation_json_missing", "remediation_finding_missing",
 )
 
 
@@ -981,6 +984,44 @@ def _finding_schema_stamp(
     return stamp
 
 
+def _remediation_schema_stamp(project: Any, schema: dict[str, Any]) -> dict[str, Any]:
+    """Remediation manifest stamp: only the declared EXTRA properties (the base ``patch`` /
+    ``rationale`` / ``citations`` are fixed and always required), the effective
+    ``remediation`` settings the eval handler reads, and the taxonomy's ``label_parents`` /
+    ``label_titles`` (descendant labels for ``issue_resolved``; retrieval queries)."""
+    from app.services import label_taxonomy_service as lts
+    from app.services.code_findings_prompt import taxonomy_label_parents
+    from app.services.code_remediation_prompt import BASE_FIELDS, effective_remediation_config
+
+    props = {k: v for k, v in (schema.get("properties") or {}).items() if k not in BASE_FIELDS}
+    declared_required = [r for r in (schema.get("required") or []) if r not in BASE_FIELDS and r in props]
+    stamp: dict[str, Any] = {"required": list(BASE_FIELDS) + declared_required}
+    if props:
+        stamp["properties"] = props
+    else:
+        stamp["properties"] = {}
+    cfg = effective_remediation_config(
+        project.runtime_config if project is not None else None, getattr(project, "id", None)
+    )
+    from app.services.auto_rag_service import retrieval_settings
+
+    stamp["remediation"] = {
+        "checks": cfg["checks"],
+        "retrieve_passages": cfg["retrieve_passages"],
+        "top_k": cfg["top_k"],
+        # The served retrieval (top-k / reranker / chunk size) the passages come from.
+        "retrieval": retrieval_settings(project) if project is not None else None,
+    }
+    tax = lts.project_taxonomy(project) if project is not None else None
+    stamp["label_parents"] = taxonomy_label_parents(tax)
+    stamp["label_titles"] = {
+        str(e["id"]): str(e["title"])
+        for e in (tax or {}).get("entries") or []
+        if isinstance(e, dict) and e.get("id") and e.get("title") and str(e["title"]) != str(e["id"])
+    }
+    return stamp
+
+
 async def _recipe_output_schema(
     db: AsyncSession,
     project_id: int,
@@ -1007,14 +1048,22 @@ async def _recipe_output_schema(
 
         # A project-declared record schema (json-extraction) adds properties
         # (types / enums) and its own required list.
-        required_default = ["entities"] if mode == "span_set" else ["findings"] if mode == "finding_set" else []
+        required_default = (
+            ["entities"] if mode == "span_set"
+            else ["findings"] if mode == "finding_set"
+            else ["patch", "rationale", "citations"] if mode == "remediation"
+            else []
+        )
         schema = merge_manifest_output_schema(
             mode,
             required_default,
-            snapshot.get("output_schema") if mode == "field_match" else None,
+            # remediation merges the declared EXTRA fields (the base three are fixed).
+            snapshot.get("output_schema") if mode in ("field_match", "remediation") else None,
         )
         if mode == "finding_set":
             schema.update(_finding_schema_stamp(project, splits))
+        if mode == "remediation":
+            schema.update(_remediation_schema_stamp(project, schema))
         return schema
     except Exception:  # noqa: BLE001 — never block a split over the recipe
         return None
@@ -1101,6 +1150,28 @@ async def combine_datasets(
             if "finding_labels" not in adapter_config and declared.get("prompt_labels"):
                 adapter_config["finding_labels"] = list(declared["prompt_labels"])
 
+    # code-remediation: the declared extra fields the prompt names and the passage-retrieval
+    # settings (stamped into the manifest too), so training rows match what eval will render.
+    if adapter_id == "structured-extraction" and not (adapter_config and "remediation" in adapter_config):
+        declared = await _recipe_output_schema(db, project_id)
+        if (declared or {}).get("scoring_mode") == "remediation":
+            from app.services.auto_rag_service import retrieval_settings
+            from app.services.code_remediation_prompt import extra_fields_from_schema
+
+            project_row = await db.get(Project, project_id)
+            settings_cfg = declared.get("remediation") or {}
+            adapter_config = dict(adapter_config or {})
+            adapter_config["remediation"] = {
+                "extra_fields": extra_fields_from_schema(
+                    (project_row.selected_recipe or {}).get("output_schema") if project_row else None
+                ),
+                "project_id": project_id,
+                "retrieve_passages": bool(settings_cfg.get("retrieve_passages")),
+                "top_k": settings_cfg.get("top_k"),
+                "retrieval": retrieval_settings(project_row) if project_row else None,
+                "label_titles": declared.get("label_titles") or {},
+            }
+
     result = await db.execute(
         select(Dataset).where(
             Dataset.project_id == project_id,
@@ -1143,7 +1214,8 @@ async def combine_datasets(
                 doc_path = Path(doc.file_path)
                 rows = _load_records_from_file(doc_path)
                 row_rejects: list[tuple[int, str]] = []
-                normalized = _normalize_rows_for_training(
+                normalized = await asyncio.to_thread(functools.partial(
+                    _normalize_rows_for_training,
                     rows,
                     ds.dataset_type,
                     chat_template,
@@ -1153,7 +1225,7 @@ async def combine_datasets(
                     field_mapping=field_mapping,
                     task_profile=task_profile,
                     rejected=row_rejects,
-                )
+                ))
                 _count_input_rejects(row_rejects, input_rejected)
                 _stamp_source_document(normalized, doc.id, doc.filename)
                 all_entries.extend(usage_ctx.partition(normalized, provenance))
@@ -1176,7 +1248,8 @@ async def combine_datasets(
                 )
             rows = labelled
         row_rejects: list[tuple[int, str]] = []
-        normalized = _normalize_rows_for_training(
+        normalized = await asyncio.to_thread(functools.partial(
+            _normalize_rows_for_training,
             rows,
             ds.dataset_type,
             chat_template,
@@ -1186,7 +1259,7 @@ async def combine_datasets(
             field_mapping=field_mapping,
             task_profile=task_profile,
             rejected=row_rejects,
-        )
+        ))
         _count_input_rejects(row_rejects, input_rejected)
         all_entries.extend(usage_ctx.partition(normalized, provenance))
 
