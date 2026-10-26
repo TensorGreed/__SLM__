@@ -25,7 +25,13 @@ export type ProbeProperty =
     | 'handles_degenerate_gracefully'
     | 'does_not_over_refuse'
     | 'returns_empty_findings'
-    | 'findings_stable_vs_base';
+    | 'findings_stable_vs_base'
+    | 'must_match'
+    | 'must_not_match'
+    | 'json_pointer_not_in';
+
+export type ProbeSeverity = 'low' | 'medium' | 'high';
+export type ProbeSource = 'platform' | 'user';
 
 /** Probe input of the code-findings pack: a chunk rendered with the shared prompt builder. */
 export interface CodeProbeInput {
@@ -46,6 +52,11 @@ export interface Probe {
     /** Set only for stability probes — the model's output on this is
      * compared against its output on `input`. */
     base_input?: ProbeInput;
+    /** User-authored checks only. */
+    source?: ProbeSource;
+    pack_id?: string;
+    severity?: ProbeSeverity;
+    critical?: boolean;
 }
 
 export interface ProbeResult {
@@ -60,6 +71,16 @@ export interface ProbeResult {
     note?: string | null;
     /** Phase 21 — per-probe weight (by kind, or per-probe override). */
     weight?: number;
+    source?: ProbeSource;
+    pack_id?: string;
+    severity?: ProbeSeverity;
+    critical?: boolean;
+}
+
+export interface ProbeSourceScore {
+    passed: number;
+    total: number;
+    pass_rate: number;
 }
 
 export interface ProbePropertyScore {
@@ -77,10 +98,14 @@ export interface ProbeKindScore {
 
 export interface ProbeRun {
     status: 'graded';
-    /** Weighted (by probe kind) — the headline + gate score. */
-    probe_pass_rate: number;
-    /** Raw pass fraction, for honesty next to the weighted score. */
-    unweighted_pass_rate?: number;
+    /** Weighted (by probe kind) — the headline + gate score. Built-in checks
+     * only; null when only your own checks ran. */
+    probe_pass_rate: number | null;
+    /** Raw pass fraction of the built-in checks, next to the weighted score. */
+    unweighted_pass_rate?: number | null;
+    /** Severity-weighted pass rate of your own checks (absent when none ran). */
+    user_probe_pass_rate?: number;
+    user_per_property?: Record<string, ProbePropertyScore>;
     passed: number;
     total: number;
     per_property: Record<string, ProbePropertyScore>;
@@ -93,6 +118,11 @@ export interface ProbeRun {
     /** Phase 18 — LLM-judge cost accounting for this run. */
     judge_calls?: number;
     judge_cached?: number;
+    /** Critical user checks: any failure blocks the gate, even with the optional gate off. */
+    critical_total?: number;
+    critical_failed?: number;
+    critical_failures?: { id: string; reason: string }[];
+    by_source?: Partial<Record<ProbeSource, ProbeSourceScore>>;
 }
 
 export interface ProbeGateConfig {
@@ -139,6 +169,53 @@ export interface ProbePack {
     kind_weights?: Record<string, number>;
     /** Phase 24 — cumulative LLM-judge spend across recent runs. */
     judge_spend?: JudgeSpend;
+    /** User-authored check packs applying to this project. */
+    user_packs?: UserPackSummary[];
+    user_probes?: Probe[];
+}
+
+export interface UserPackSummary {
+    id: string;
+    name?: string | null;
+    version?: string | null;
+    probe_count: number;
+    critical_count: number;
+    source?: { kind: 'domain_pack' | 'manual'; pack_id?: string; version?: string } | null;
+}
+
+export interface UserProbePackIssue {
+    code: string;
+    path?: string | null;
+    message: string;
+}
+
+export interface UserProbePacks {
+    packs: Record<string, unknown>[];
+    version: string | null;
+    source: { kind: 'domain_pack' | 'manual'; pack_id?: string; version?: string } | null;
+    history: UserProbeHistoryEntry[];
+}
+
+export interface UserProbeHistoryEntry {
+    version: string;
+    updated_at?: string;
+    source?: { kind: 'domain_pack' | 'manual'; pack_id?: string; version?: string } | null;
+    pack_count: number;
+    probe_count: number;
+    /** This is the set in use now. */
+    current: boolean;
+    /** Its full content is still stored, so it can be restored. */
+    restorable: boolean;
+}
+
+export interface UserProbeValidation {
+    valid: boolean;
+    errors: UserProbePackIssue[];
+    pack_count: number;
+    probe_count: number;
+    critical_count: number;
+    /** Normalized packs (empty when invalid). */
+    packs: Record<string, unknown>[];
 }
 
 export interface JudgeSpend {
@@ -175,4 +252,45 @@ export async function setProbeKindWeights(
         { weights },
     );
     return res.data;
+}
+
+export async function fetchUserProbePacks(projectId: number): Promise<UserProbePacks> {
+    const res = await api.get<UserProbePacks>(`/projects/${projectId}/probe-pack/user`);
+    return res.data;
+}
+
+export async function validateUserProbePack(
+    projectId: number,
+    content: string,
+): Promise<UserProbeValidation> {
+    const res = await api.post<UserProbeValidation>(
+        `/projects/${projectId}/probe-pack/user/validate`,
+        { content },
+    );
+    return res.data;
+}
+
+export async function saveUserProbePack(
+    projectId: number,
+    content: string,
+): Promise<UserProbePacks> {
+    const res = await api.put<UserProbePacks>(`/projects/${projectId}/probe-pack/user`, {
+        content,
+        mode: 'merge',
+    });
+    return res.data;
+}
+
+export async function restoreUserProbePacks(
+    projectId: number,
+    version: string,
+): Promise<UserProbePacks> {
+    const res = await api.post<UserProbePacks>(`/projects/${projectId}/probe-pack/user/restore`, {
+        version,
+    });
+    return res.data;
+}
+
+export async function deleteUserProbePacks(projectId: number): Promise<void> {
+    await api.delete(`/projects/${projectId}/probe-pack/user`);
 }

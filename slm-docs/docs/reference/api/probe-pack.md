@@ -7,7 +7,7 @@ title: Probe Pack
 
 # Probe Pack
 
-Auto-generated reference for the **Probe Pack** API. 3 endpoint(s).
+Auto-generated reference for the **Probe Pack** API. 7 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -89,3 +89,103 @@ Content type: `application/json` — `ProbeKindWeightsBody`
 |---|---|---|
 | `200` | `any` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/probe-pack/user`
+
+**Get User Probe Packs**
+
+The project's own checks: `{packs, version, source, updated_at, history}`. `source` is `{kind: "manual"}` or
+`{kind: "domain_pack", pack_id, version}`; `history` lists the newest 10 versions (the newest 5 keep their content).
+
+### `PUT /api/projects/{project_id}/probe-pack/user`
+
+**Put User Probe Packs**
+
+Save the project's user probe packs. Body: `{content: "<one pack as YAML or JSON>"}` or `{packs: [<pack>, ...]}`
+(exactly one), plus an optional `mode`: `merge` (the default for `content`) replaces the pack with the same id and
+keeps the others; `replace` (the default for `packs`) makes the sent packs the whole set. Invalid input returns `422` with `error_code: "INVALID_PROBE_PACK"` and `metadata.errors`
+(`[{code, path, message}]`); nothing is saved.
+
+### `POST /api/projects/{project_id}/probe-pack/user/restore`
+
+**Restore User Probe Packs**
+
+Body `{version}`. Restores a remembered snapshot from `history` (only entries with `restorable: true`; the newest 5
+keep their content). `404` for an unknown or trimmed version. Returns the same shape as `GET`.
+
+### `POST /api/projects/{project_id}/probe-pack/user/validate`
+
+**Validate User Probe Packs**
+
+Same body as `PUT`. Returns `{valid, errors, pack_count, probe_count, critical_count, packs}` without saving.
+
+### `DELETE /api/projects/{project_id}/probe-pack/user`
+
+**Delete User Probe Packs**
+
+Clear the project's user probe packs (history is kept). Returns the same shape as `GET`.
+
+## User probe packs (your own checks)
+
+*Hand-written; keep when regenerating this page.*
+
+One file is one pack (YAML or JSON):
+
+```yaml
+id: core-safety                 # ^[a-z0-9][a-z0-9._-]{0,63}$
+name: Core safety               # optional
+version: "1"                    # optional
+applies_to: {recipe_ids: [], task_profiles: []}   # optional; empty = every project
+probes:
+  - id: no-key-material
+    prompt: "..."               # or input: {...} (rendered with the recipe's input renderer)
+    property: must_not_match
+    pattern: "(?i)begin private key"   # Python re, up to 500 characters
+    flags: [i, m, s]            # optional (also x)
+    severity: high              # low | medium | high (default medium)
+    critical: true              # default false
+    kind: safety_refusal        # optional; default format_robustness
+    rationale: "..."
+```
+
+Properties: any built-in property (`prediction_stable_vs_base` and `findings_stable_vs_base` also need
+`base_input`), plus three deterministic ones:
+
+| Property | Needs | Passes when |
+|---|---|---|
+| `must_match` | `pattern` | the pattern is found in the output |
+| `must_not_match` | `pattern` | it is not found; the failure reason quotes the first match |
+| `json_pointer_not_in` | `pointer` (RFC 6901, `*` fans out over every array element or object value), `values` (non-empty scalars) | the output parses as JSON (a fenced block or JSON embedded in prose is accepted) and no resolved value is in `values`; unparseable output fails with `output_not_json`; a pointer that resolves to nothing passes with `note: "pointer_absent"` |
+
+Output is truncated to 20 000 characters before matching. Patterns are run with a per-search time limit (0.5 s);
+a pattern that backtracks catastrophically fails the probe with reason `regex_timeout`. For `json_pointer_not_in`,
+every decodable JSON value in the output is checked (a stray `[1]` in prose does not hide a later object); the
+probe fails if any holds a forbidden value. YAML aliases are refused in probe files.
+
+Validator error codes: `missing_id`, `bad_id`, `duplicate_id`, `unknown_property`, `missing_prompt`,
+`missing_base_input`, `missing_pattern`, `bad_regex`, `missing_pointer`, `bad_pointer`, `missing_values`,
+`bad_severity`, `bad_kind`, `bad_critical` (`critical` must be a real boolean), `bad_weight` (a number above 0 and
+at most 10) (also `bad_pack`, `no_probes`, `bad_applies_to`).
+
+Scoring and the gate:
+
+- **Severity is the weight** of a user probe: low 1.0, medium 2.0, high 3.0 (an explicit `weight` wins). The
+  project's kind-weight overrides do not apply to user probes, and user probes are left out of
+  `weighted_by_kind`.
+- **User checks never move the built-in numbers.** `probe_pass_rate`, `unweighted_pass_rate`, `per_property`,
+  `min_probe_pass_rate` and the divergence history are computed over built-in (platform) results only (`probe_pass_rate`
+  is `null` when only your checks ran). Your checks report `user_probe_pass_rate` (severity-weighted),
+  `user_per_property` and `by_source`.
+- Each run result carries `source` (`platform` or `user`); user results add `pack_id`, `severity`, `critical`.
+  User probe ids are `user:<pack_id>/<probe_id>`.
+- The snapshot gains `critical_total`, `critical_failed`, `critical_failures: [{id, reason}]` and
+  `by_source: {platform|user: {passed, total, pass_rate}}`; `metrics["probe_critical_failures"]` is set when
+  any critical probe ran. `GET /probe-pack` returns the same fields under `run`, plus `user_packs`
+  (`{id, name, version, probe_count, critical_count, applies_to, applicable, source}`), `user_probes` and
+  `user_probe_count` / `critical_probe_count`.
+- **A critical probe always blocks.** Whenever the project has at least one applicable critical user probe, the
+  auto-gates include a required `probe_critical_failures <= 0` gate (`gate_source: "probe_pack"`), even when the
+  optional probe gate is off. If the probes did not run (no metric), the required gate fails with
+  `missing_metric_required`.
+

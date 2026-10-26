@@ -194,6 +194,7 @@ session-start guidance.
 - `backend/app/services/documents_qa_flow_service.py` — Documents → generated Q&A → answer key → split → train → lift check, as
 - `backend/app/services/domain_blueprint_service.py` — Domain blueprint analysis, validation, versioning, and project-apply service.
 - `backend/app/services/domain_hook_service.py` — Domain hook registry, plugin loading, and safe execution helpers.
+- `backend/app/services/domain_pack_content_service.py` — Domain packs as data: a pack zip carries the contract (overlay / hooks) *and*
 - `backend/app/services/domain_pack_service.py` — Domain pack service for pack persistence and project assignment.
 - `backend/app/services/domain_profile_service.py` — Domain profile service for contract persistence and project assignment.
 - `backend/app/services/domain_runtime_service.py` — Runtime resolution for effective domain defaults (core + profile + pack overlay).
@@ -501,6 +502,7 @@ session-start guidance.
 - `frontend/src/api/dataStudio.ts` — Types and verdict enums for DataStudio dashboard panels (mapping, domain, synthetic, quality).
 - `frontend/src/api/datasetImport.ts` — Typed wrappers around the Phase A–E dataset-import API.
 - `frontend/src/api/documentSources.ts` — Typed client for the document-source importers (website crawl, git
+- `frontend/src/api/domainPacks.ts` — Domain-pack content API client: import (preview + commit), per-pack content,
 - `frontend/src/api/drift.ts` — Typed client for the drift API (E4 UI).
 - `frontend/src/api/errors.ts` — Shared error parsing + types for the platform's structured error
 - `frontend/src/api/evalGaps.ts` — Eval Gaps API client — Coach-stage-2 phases 3 + 5.
@@ -643,6 +645,8 @@ session-start guidance.
 - `frontend/src/components/deployment/DeployedVersionsList.tsx` — DeployedVersionsList — served-versions table for the deployment page
 - `frontend/src/components/deployment/DriftPanel.tsx` — DriftPanel — drift verdict + history for a deployment version
 - `frontend/src/components/deployment/TelemetryPanel.tsx` — TelemetryPanel — live request volume / latency / error / token-throughput
+- `frontend/src/components/domain/DomainPackContentList.tsx` — Domain packs that carry content: versions, counts, "create a project from
+- `frontend/src/components/domain/DomainPackImportPanel.tsx` — Import a domain pack zip: preview (validation issues grouped by code, content
 - `frontend/src/components/domain/DomainPackManager.tsx` — Editor for policy bundles including normalizer, validator, and evaluator hook selection.
 - `frontend/src/components/domain/DomainProfileManager.tsx` — CRUD interface for task schemas with quality checks, split rules, and normalization config.
 - `frontend/src/components/evaluation/ActiveLearningPanel.tsx` — Active-learning recommender panel (Theme 8 Epic 2).
@@ -674,6 +678,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/SlicesSection.tsx` — Quality-Lift phase 7 slice 1 — Slices editor section.
 - `frontend/src/components/evaluation/SpanThresholdTuner.tsx` — Threshold tuning for a span-tagging run, with per-type recall floors.
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.tsx` — Student-vs-teacher distillation comparison panel (Track 1, Epic A, slice 3).
+- `frontend/src/components/evaluation/UserProbeEditor.tsx` — Paste-YAML editor for the project's own checks: validate, save, delete.
 - `frontend/src/components/export/ExportPanel.tsx` — Model export orchestrator supporting format conversion and deployment-target provisioning.
 - `frontend/src/components/export/GuidedJsonCard.tsx` — GuidedJsonCard — read-only "Structured output hint" on Ship > Package.
 - `frontend/src/components/extensions/ExtensionKindList.tsx` — ExtensionKindList — left column of the Extension Studio page
@@ -845,6 +850,8 @@ session-start guidance.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
 - `backend/tests/test_documents_qa_flow.py` — Documents → generated Q&A → answer key → split → train, as one Job.
 - `backend/tests/test_domain_hook_builtins.py` — Unit tests for the Gap-#1/#2 slice 1 built-in domain hooks.
+- `backend/tests/test_domain_pack_acceptance.py` — Acceptance: a toy domain pack goes zip -> import -> instantiate -> eval
+- `backend/tests/test_domain_pack_content.py` — Domain packs as data: validation, versioned import + diff, instantiate,
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).
 - `backend/tests/test_eval_gap_patch.py` — Eval Gap patch engine — Coach-stage-2 phase 5.
 - `backend/tests/test_eval_gap_service.py` — Eval Gap scanner — Coach-stage-2 phase 3.
@@ -1093,6 +1100,7 @@ session-start guidance.
 - `backend/tests/test_training_memory_defaults.py` — Memory defaults for long-prompt runs: gradient checkpointing "auto" looks
 - `backend/tests/test_training_reproducibility.py` — Training reproducibility: one config + one dataset → the same weights.
 - `backend/tests/test_unlabeled_pool_scoring_slice1.py` — Quality-Lift phase 3 slice 1 — Unlabeled-pool scoring service.
+- `backend/tests/test_user_probe_packs.py` — User-authored probe packs: runner properties, severity / critical
 - `backend/tests/test_vision_language_adapter_prompt_wrap.py` — ι-fix tests — vision-language-pair adapter writes the
 - `backend/tests/test_warmstart_checkpoint.py` — Unit tests for the warm-start checkpoint trainer's non-GPU logic.
 - `backend/tests/test_web_crawl_source.py` — Website document source: crawler policy (robots, prefixes, rejects, cache),
@@ -1158,6 +1166,7 @@ session-start guidance.
 - `frontend/src/components/deployment/DeployedVersionsList.test.tsx` — _(no docstring)_
 - `frontend/src/components/deployment/DriftPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/deployment/TelemetryPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/domain/DomainPackImportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/domain/DomainPackManager.test.tsx` — _(no docstring)_
 - `frontend/src/components/domain/DomainProfileManager.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ActiveLearningPanel.test.tsx` — _(no docstring)_

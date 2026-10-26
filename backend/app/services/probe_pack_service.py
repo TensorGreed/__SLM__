@@ -631,7 +631,14 @@ async def _latest_probe_run(
                 "passed": probe.get("passed"),
                 "total": probe.get("total"),
                 "per_property": probe.get("per_property", {}),
+                "user_per_property": probe.get("user_per_property") or {},
+                "user_probe_pass_rate": probe.get("user_probe_pass_rate"),
+                "unweighted_pass_rate": probe.get("unweighted_pass_rate"),
                 "results": probe.get("results", []),
+                "critical_total": int(probe.get("critical_total") or 0),
+                "critical_failed": int(probe.get("critical_failed") or 0),
+                "critical_failures": probe.get("critical_failures") or [],
+                "by_source": probe.get("by_source") or {},
                 "run_at": row.created_at.isoformat() if row.created_at else None,
                 "eval_result_id": row.id,
                 "experiment_id": row.experiment_id,
@@ -974,6 +981,422 @@ def build_probe_judge_cache(project_id: int) -> ProbeJudgeCache:
     return ProbeJudgeCache(path)
 
 
+# ─────────────────────────────────────────────────────────────────────
+# User-authored probe packs (G12). A project carries its own checks in
+# ``runtime_config["user_probe_packs"]``; they run beside the built-in
+# pack, are weighted by severity, and a *critical* one always blocks the
+# gate. Deterministic only (regex / JSON pointer / the existing properties).
+# ─────────────────────────────────────────────────────────────────────
+
+import hashlib as _hashlib
+import json as _json
+import re as _re
+
+import regex as _regex
+from datetime import datetime as _datetime, timezone as _timezone
+
+USER_PROBE_PACKS_KEY = "user_probe_packs"
+USER_PROBE_PACKS_HISTORY_KEY = "user_probe_packs_history"
+USER_PROBE_HISTORY_KEEP = 10
+USER_PROBE_HISTORY_FULL = 5
+USER_PROBE_PATTERN_MAX = 500
+USER_PROBE_MAX_PACKS = 50
+USER_PROBE_MAX_PROBES_PER_PACK = 500
+USER_PROBE_MAX_TEXT_BYTES = 1024 * 1024
+USER_PROBE_WEIGHT_MAX = 10.0
+USER_PROBE_ID_RE = _re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+USER_PROBE_SEVERITIES = ("low", "medium", "high")
+USER_PROBE_PROPERTIES = ("must_match", "must_not_match", "json_pointer_not_in")
+_STABLE_PROPERTIES = ("prediction_stable_vs_base", "findings_stable_vs_base")
+_PROBE_KINDS = tuple(ProbeKind.__args__)  # type: ignore[attr-defined]
+_ALL_USER_ALLOWED_PROPERTIES = tuple(ProbeProperty.__args__) + USER_PROBE_PROPERTIES  # type: ignore[attr-defined]
+
+
+class UserProbePackError(ValueError):
+    """Raised by ``set_project_user_probe_packs`` on invalid packs."""
+
+    def __init__(self, errors: list[dict[str, Any]]):
+        self.errors = errors
+        first = errors[0]["message"] if errors else "Invalid probe pack."
+        super().__init__(first + (f" (and {len(errors) - 1} more)" if len(errors) > 1 else ""))
+
+
+def _uerr(code: str, path: str, message: str) -> dict[str, Any]:
+    return {"code": code, "path": path, "message": message}
+
+
+def parse_user_probe_pack_text(text: "str | bytes") -> Any:
+    """Parse one pack's YAML/JSON text into a document (not validated).
+    Raises ``ValueError`` for unparseable / oversized text."""
+    import yaml
+
+    from app.services.label_taxonomy_service import _NoAliasLoader
+
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", "replace")
+    if len(text.encode("utf-8")) > USER_PROBE_MAX_TEXT_BYTES:
+        raise ValueError("The probe pack is larger than 1 MB.")
+    try:
+        # Aliases are refused: a tiny text could expand into a huge object.
+        return yaml.load(text, Loader=_NoAliasLoader)  # noqa: S506 - SafeLoader subclass
+    except yaml.YAMLError as exc:
+        first = str(exc).splitlines()[0] if str(exc) else "parse error"
+        raise ValueError(f"Not valid YAML/JSON: {first}") from exc
+    except RecursionError as exc:
+        raise ValueError("The probe pack is nested too deeply.") from exc
+
+
+def _is_json_scalar(v: Any) -> bool:
+    return v is None or isinstance(v, (str, int, float, bool))
+
+
+def _str_list(value: Any) -> list[str] | None:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list) and all(isinstance(x, (str, int)) and str(x).strip() for x in value):
+        return [str(x).strip() for x in value]
+    return None
+
+
+def _validate_user_probe(raw: Any, idx: int, errors: list[dict[str, Any]]) -> dict[str, Any] | None:
+    from app.services.probe_runner import compile_probe_regex, split_json_pointer
+
+    base = f"probes[{idx}]"
+    if not isinstance(raw, dict):
+        errors.append(_uerr("bad_probe", base, "A probe must be a mapping."))
+        return None
+    pid = raw.get("id")
+    where = f"probes[{pid}]" if isinstance(pid, str) and pid else base
+    if not isinstance(pid, str) or not pid.strip():
+        errors.append(_uerr("missing_id", base, "A probe needs an id."))
+        pid = None
+    elif not USER_PROBE_ID_RE.match(pid):
+        errors.append(_uerr("bad_id", where, f"Probe id {pid!r} must match {USER_PROBE_ID_RE.pattern}."))
+    prop = raw.get("property")
+    out: dict[str, Any] = {"id": pid, "property": prop}
+    if prop not in _ALL_USER_ALLOWED_PROPERTIES:
+        errors.append(_uerr("unknown_property", f"{where}.property", f"Unknown property {prop!r}; use one of {', '.join(_ALL_USER_ALLOWED_PROPERTIES)}."))
+    # input
+    prompt, inp = raw.get("prompt"), raw.get("input")
+    if isinstance(prompt, str) and prompt.strip():
+        out["prompt"] = prompt
+    elif isinstance(inp, dict) and inp or (isinstance(inp, str) and inp.strip()):
+        out["input"] = inp
+    else:
+        errors.append(_uerr("missing_prompt", where, "A probe needs a 'prompt' string or an 'input' object."))
+    # base_input
+    if prop in _STABLE_PROPERTIES:
+        base_input = raw.get("base_input")
+        if (isinstance(base_input, str) and base_input.strip()) or (isinstance(base_input, dict) and base_input):
+            out["base_input"] = base_input
+        else:
+            errors.append(_uerr("missing_base_input", f"{where}.base_input", f"{prop} needs a base_input."))
+    elif raw.get("base_input") not in (None, ""):
+        out["base_input"] = raw["base_input"]
+    # property specifics
+    if prop in ("must_match", "must_not_match"):
+        pattern = raw.get("pattern")
+        flags = raw.get("flags")
+        if not isinstance(pattern, str) or not pattern:
+            errors.append(_uerr("missing_pattern", f"{where}.pattern", f"{prop} needs a pattern."))
+        else:
+            out["pattern"] = pattern
+            if len(pattern) > USER_PROBE_PATTERN_MAX:
+                errors.append(_uerr("bad_regex", f"{where}.pattern", f"The pattern is longer than {USER_PROBE_PATTERN_MAX} characters."))
+            else:
+                try:
+                    flag_list = [] if flags is None else (list(flags) if isinstance(flags, (list, tuple)) else [flags])
+                    compile_probe_regex(pattern, flag_list)
+                    if flag_list:
+                        out["flags"] = [str(f).lower() for f in flag_list]
+                except (_re.error, _regex.error, ValueError, TypeError) as exc:
+                    errors.append(_uerr("bad_regex", f"{where}.pattern", f"Invalid regular expression or flags: {exc}"))
+    elif prop == "json_pointer_not_in":
+        pointer, values = raw.get("pointer"), raw.get("values")
+        if not isinstance(pointer, str) or not pointer:
+            errors.append(_uerr("missing_pointer", f"{where}.pointer", "json_pointer_not_in needs a pointer."))
+        elif split_json_pointer(pointer) is None:
+            errors.append(_uerr("bad_pointer", f"{where}.pointer", f"{pointer!r} is not a valid JSON pointer (start with '/', escapes are ~0 and ~1)."))
+        else:
+            out["pointer"] = pointer
+        if not isinstance(values, list) or not values:
+            errors.append(_uerr("missing_values", f"{where}.values", "json_pointer_not_in needs a non-empty list of values."))
+        elif not all(_is_json_scalar(v) for v in values):
+            errors.append(_uerr("missing_values", f"{where}.values", "values must be JSON scalars (string, number, boolean or null)."))
+        else:
+            out["values"] = list(values)
+    # severity / critical / kind
+    severity = raw.get("severity", "medium")
+    if severity is None:
+        severity = "medium"
+    if severity not in USER_PROBE_SEVERITIES:
+        errors.append(_uerr("bad_severity", f"{where}.severity", f"severity must be one of {', '.join(USER_PROBE_SEVERITIES)}."))
+        severity = "medium"
+    out["severity"] = severity
+    critical = raw.get("critical", False)
+    if critical is None:
+        critical = False
+    if not isinstance(critical, bool):
+        errors.append(_uerr("bad_critical", f"{where}.critical", "critical must be true or false (a real boolean)."))
+        critical = False
+    out["critical"] = critical
+    weight = raw.get("weight")
+    if weight is not None:
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not (0 < float(weight) <= USER_PROBE_WEIGHT_MAX):
+            errors.append(_uerr("bad_weight", f"{where}.weight", f"weight must be a number above 0 and at most {USER_PROBE_WEIGHT_MAX:g}."))
+        else:
+            out["weight"] = float(weight)
+    kind = raw.get("kind")
+    if kind is not None:
+        if kind not in _PROBE_KINDS:
+            errors.append(_uerr("bad_kind", f"{where}.kind", f"kind must be one of {', '.join(_PROBE_KINDS)}."))
+        else:
+            out["kind"] = kind
+    if isinstance(raw.get("rationale"), str) and raw["rationale"].strip():
+        out["rationale"] = raw["rationale"].strip()
+    return out
+
+
+def validate_user_probe_pack(doc: Any) -> "tuple[dict[str, Any], list[dict[str, Any]]]":
+    """Validate one pack document. Returns ``(normalized_pack, errors)``;
+    ``errors`` is ``[]`` when valid. Codes: ``missing_id`` ``bad_id``
+    ``duplicate_id`` ``unknown_property`` ``missing_prompt``
+    ``missing_base_input`` ``missing_pattern`` ``bad_regex``
+    ``missing_pointer`` ``bad_pointer`` ``missing_values`` ``bad_severity``
+    ``bad_kind`` (plus ``bad_pack`` / ``no_probes`` / ``bad_applies_to``)."""
+    errors: list[dict[str, Any]] = []
+    if not isinstance(doc, dict):
+        return {}, [_uerr("bad_pack", "", "A probe pack must be a mapping with an id and probes.")]
+    pack_id = doc.get("id")
+    if not isinstance(pack_id, str) or not pack_id.strip():
+        errors.append(_uerr("missing_id", "id", "The pack needs an id."))
+        pack_id = None
+    elif not USER_PROBE_ID_RE.match(pack_id):
+        errors.append(_uerr("bad_id", "id", f"Pack id {pack_id!r} must match {USER_PROBE_ID_RE.pattern}."))
+    applies: dict[str, list[str]] = {"recipe_ids": [], "task_profiles": []}
+    raw_applies = doc.get("applies_to")
+    if raw_applies is not None:
+        if not isinstance(raw_applies, dict):
+            errors.append(_uerr("bad_applies_to", "applies_to", "applies_to must be a mapping."))
+        else:
+            for key in applies:
+                got = _str_list(raw_applies.get(key))
+                if got is None:
+                    errors.append(_uerr("bad_applies_to", f"applies_to.{key}", f"{key} must be a list of strings."))
+                else:
+                    applies[key] = got
+    raw_probes = doc.get("probes")
+    probes: list[dict[str, Any]] = []
+    if not isinstance(raw_probes, list) or not raw_probes:
+        errors.append(_uerr("no_probes", "probes", "The pack needs a non-empty 'probes' list."))
+    elif len(raw_probes) > USER_PROBE_MAX_PROBES_PER_PACK:
+        errors.append(_uerr("no_probes", "probes", f"A pack may hold at most {USER_PROBE_MAX_PROBES_PER_PACK} probes."))
+    else:
+        seen: set[str] = set()
+        for i, raw in enumerate(raw_probes):
+            probe = _validate_user_probe(raw, i, errors)
+            if probe is None:
+                continue
+            pid = probe.get("id")
+            if pid:
+                if pid in seen:
+                    errors.append(_uerr("duplicate_id", f"probes[{pid}]", f"Probe id {pid!r} appears more than once in the pack."))
+                seen.add(pid)
+            probes.append(probe)
+    pack: dict[str, Any] = {"id": pack_id}
+    if isinstance(doc.get("name"), str) and doc["name"].strip():
+        pack["name"] = doc["name"].strip()
+    if doc.get("version") not in (None, ""):
+        pack["version"] = str(doc["version"])
+    pack["applies_to"] = applies
+    pack["probes"] = probes
+    return pack, errors
+
+
+def _user_pack_set_version(packs: list[dict[str, Any]]) -> str:
+    blob = _json.dumps(packs, sort_keys=True, separators=(",", ":"), default=str)
+    return _hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def validate_user_probe_pack_set(packs: Any) -> "tuple[list[dict[str, Any]], list[dict[str, Any]]]":
+    """Validate a list of pack documents (also checks pack ids are unique)."""
+    if not isinstance(packs, list):
+        return [], [_uerr("bad_pack", "", "packs must be a list.")]
+    if len(packs) > USER_PROBE_MAX_PACKS:
+        return [], [_uerr("bad_pack", "", f"At most {USER_PROBE_MAX_PACKS} packs per project.")]
+    normalized: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for i, doc in enumerate(packs):
+        pack, errs = validate_user_probe_pack(doc)
+        for e in errs:
+            e["path"] = f"packs[{pack.get('id') or i}]" + (f".{e['path']}" if e["path"] else "")
+        errors.extend(errs)
+        pid = pack.get("id")
+        if pid:
+            if pid in seen:
+                errors.append(_uerr("duplicate_id", f"packs[{pid}]", f"Pack id {pid!r} appears more than once."))
+            seen.add(pid)
+        if pack:
+            normalized.append(pack)
+    return normalized, errors
+
+
+def _user_pack_state(project: Any) -> "dict[str, Any] | None":
+    rc = getattr(project, "runtime_config", None)
+    state = rc.get(USER_PROBE_PACKS_KEY) if isinstance(rc, dict) else None
+    return state if isinstance(state, dict) and isinstance(state.get("packs"), list) else None
+
+
+def set_project_user_probe_packs(
+    project: Any, packs: list[dict[str, Any]], *, source: "dict[str, Any] | None" = None
+) -> str | None:
+    """Replace the project's user probe packs (an empty list clears them).
+    Validates (raises ``UserProbePackError``); the caller commits. Returns
+    the new set version (``None`` when cleared). The previous and new sets
+    are remembered in ``user_probe_packs_history`` (newest 10 versions,
+    newest 5 with full content)."""
+    normalized, errors = validate_user_probe_pack_set(list(packs or []))
+    if errors:
+        raise UserProbePackError(errors)
+    cfg = dict(getattr(project, "runtime_config", None) or {})
+    now = _datetime.now(_timezone.utc).isoformat()
+    src = dict(source) if isinstance(source, dict) and source else {"kind": "manual"}
+    src.setdefault("kind", "manual")
+    history = [h for h in (cfg.get(USER_PROBE_PACKS_HISTORY_KEY) or []) if isinstance(h, dict)]
+    if not normalized:
+        cfg.pop(USER_PROBE_PACKS_KEY, None)
+        version = None
+    else:
+        version = _user_pack_set_version(normalized)
+        cfg[USER_PROBE_PACKS_KEY] = {"packs": normalized, "version": version, "source": src, "updated_at": now}
+        history = [h for h in history if h.get("version") != version]
+        history.append({
+            "version": version,
+            "updated_at": now,
+            "source": src,
+            "pack_count": len(normalized),
+            "probe_count": sum(len(p["probes"]) for p in normalized),
+            "packs": normalized,
+        })
+        history = history[-USER_PROBE_HISTORY_KEEP:]
+        for h in history[:-USER_PROBE_HISTORY_FULL]:
+            h.pop("packs", None)
+    cfg[USER_PROBE_PACKS_HISTORY_KEY] = history
+    project.runtime_config = cfg
+    return version
+
+
+def restore_user_probe_packs_version(project: Any, version: str) -> str | None:
+    """Restore a remembered full snapshot (only ``restorable`` history
+    entries). Raises ``LookupError`` when the version is unknown or its
+    content was trimmed from history. The caller commits."""
+    cfg = project.runtime_config if isinstance(getattr(project, "runtime_config", None), dict) else {}
+    for h in cfg.get(USER_PROBE_PACKS_HISTORY_KEY) or []:
+        if isinstance(h, dict) and h.get("version") == version:
+            if not isinstance(h.get("packs"), list):
+                raise LookupError(f"Version {version} is no longer restorable (only the newest {USER_PROBE_HISTORY_FULL} keep their content).")
+            return set_project_user_probe_packs(
+                project, [dict(p) for p in h["packs"]], source={"kind": "manual", "restored_from": version}
+            )
+    raise LookupError(f"Version {version} was not found in this project's history.")
+
+
+def get_project_user_probe_packs(project: Any) -> list[dict[str, Any]]:
+    state = _user_pack_state(project)
+    return [dict(p) for p in state["packs"] if isinstance(p, dict)] if state else []
+
+
+def user_probe_packs_status(project: Any) -> dict[str, Any]:
+    """The API's GET shape: ``{packs, version, source, history}``."""
+    state = _user_pack_state(project)
+    cfg = project.runtime_config if isinstance(getattr(project, "runtime_config", None), dict) else {}
+    current = state.get("version") if state else None
+    history = [
+        {
+            "version": h.get("version"),
+            "updated_at": h.get("updated_at"),
+            "source": h.get("source"),
+            "pack_count": h.get("pack_count"),
+            "probe_count": h.get("probe_count"),
+            "current": h.get("version") == current,
+            "restorable": isinstance(h.get("packs"), list),
+        }
+        for h in reversed([x for x in (cfg.get(USER_PROBE_PACKS_HISTORY_KEY) or []) if isinstance(x, dict)])
+    ]
+    return {
+        "packs": get_project_user_probe_packs(project),
+        "version": current,
+        "source": state.get("source") if state else None,
+        "updated_at": state.get("updated_at") if state else None,
+        "history": history,
+    }
+
+
+def _pack_applies(pack: dict[str, Any], task_profile: str | None, recipe_id: str | None) -> bool:
+    applies = pack.get("applies_to") if isinstance(pack.get("applies_to"), dict) else {}
+    recipes = [r for r in (applies.get("recipe_ids") or []) if r]
+    profiles = [t for t in (applies.get("task_profiles") or []) if t]
+    if recipes and recipe_id not in recipes:
+        return False
+    if profiles and task_profile not in profiles:
+        return False
+    return True
+
+
+def applicable_user_probes(project: Any, task_profile: str | None, recipe_id: str | None) -> list[dict[str, Any]]:
+    """Runner-ready probes from the project's user packs whose ``applies_to``
+    matches. Each carries ``id = "user:<pack_id>/<probe_id>"``, ``source``,
+    ``pack_id``, ``severity``, ``critical`` and a severity-derived ``weight``."""
+    from app.services.probe_runner import severity_weight
+
+    out: list[dict[str, Any]] = []
+    for pack in get_project_user_probe_packs(project):
+        if not _pack_applies(pack, task_profile, recipe_id):
+            continue
+        pack_id = str(pack.get("id"))
+        for p in pack.get("probes") or []:
+            probe = {k: v for k, v in p.items() if k not in ("prompt", "kind")}
+            probe.update({
+                "id": f"user:{pack_id}/{p['id']}",
+                "probe_id": p["id"],
+                "source": "user",
+                "pack_id": pack_id,
+                "pack_version": pack.get("version"),
+                "input": p["prompt"] if "prompt" in p else p.get("input", ""),
+                "probe_kind": p.get("kind") or "format_robustness",
+                "severity": p.get("severity") or "medium",
+                "critical": bool(p.get("critical")),
+                "weight": (
+                    float(p["weight"])
+                    if isinstance(p.get("weight"), (int, float)) and not isinstance(p.get("weight"), bool)
+                    else severity_weight(p.get("severity"))
+                ),
+            })
+            out.append(probe)
+    return out
+
+
+def user_pack_summaries(project: Any, task_profile: str | None = None, recipe_id: str | None = None) -> list[dict[str, Any]]:
+    state = _user_pack_state(project)
+    src = state.get("source") if state else None
+    return [
+        {
+            "id": p.get("id"),
+            "name": p.get("name") or p.get("id"),
+            "version": p.get("version"),
+            "probe_count": len(p.get("probes") or []),
+            "critical_count": sum(1 for x in (p.get("probes") or []) if x.get("critical")),
+            "applies_to": p.get("applies_to"),
+            "applicable": _pack_applies(p, task_profile, recipe_id),
+            "source": src,
+        }
+        for p in get_project_user_probe_packs(project)
+    ]
+
+
 async def get_probe_pack_for_project(
     db: AsyncSession, project_id: int
 ) -> dict[str, Any]:
@@ -992,11 +1415,25 @@ async def get_probe_pack_for_project(
     if project is None:
         raise ValueError(f"Project {project_id} not found")
     task_profile = _resolve_task_profile_id(project)
-    pack = get_probe_pack(task_profile, _resolve_recipe_id(project))
+    recipe_id = _resolve_recipe_id(project)
+    pack = get_probe_pack(task_profile, recipe_id)
     pack["project_id"] = int(project_id)
     pack["gate_config"] = read_probe_gate_config(project)
     current_weights = read_probe_kind_weights(project)
     pack["kind_weights"] = current_weights
+    user_probes = applicable_user_probes(project, task_profile, recipe_id)
+    pack["user_packs"] = user_pack_summaries(project, task_profile, recipe_id)
+    pack["user_probes"] = user_probes
+    pack["user_probe_count"] = len(user_probes)
+    pack["critical_probe_count"] = sum(1 for p in user_probes if p.get("critical"))
+    if user_probes and not pack.get("applicable"):
+        # Your own checks make the pack applicable even with no built-in pack.
+        pack["applicable"] = True
+        pack["status"] = "ready_not_run"
+        pack["note"] = (
+            "No built-in checks exist for this task shape, but your own "
+            "checks will run against the trained model."
+        )
     if pack.get("applicable"):
         run = await _latest_probe_run(db, project_id)
         if run is not None:

@@ -162,6 +162,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   decision log; it was a floating drawer on every page until 2026-10-18); the
   routes `/autopilot`, `/workflow`, `/domain`, `/domain/packs`,
   `/domain/profiles`, `/extensions` redirect (`SETTINGS_SECTION_BY_LEGACY_PATH`);
+  the Domain Packs section also carries pack *content* (`api/domainPacks.ts`):
+  `DomainPackImportPanel` (zip -> preview with issues grouped by code, summary,
+  diff / unchanged -> import) and `DomainPackContentList` (packs with content,
+  "Create project from this pack" via `window.location.assign`, "Export this
+  project as a pack"); `ProbePackPanel` also lists *your checks* (source label,
+  severity, critical tag, `by_source`, critical failures) with a paste-YAML
+  `UserProbeEditor` (validate / save / delete); the `probe_critical_failures`
+  gate sits under Scorecard's "Independent ruler";
   ProjectDomainPage deleted. **The ⌘K palette** renders
   `utils/workspaceCommands.workspaceCommands(projectId)` — every destination,
   Data step/section, Train section, Results workflow, Ship stage, Settings

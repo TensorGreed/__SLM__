@@ -30,7 +30,11 @@ can swap in an LLM judge without touching the runner's shape.
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 from typing import Any, Awaitable, Callable, Sequence
+
+import regex
 
 from app.services.probe_pack_service import PROBE_PACK_VERSION
 
@@ -49,6 +53,9 @@ DEGENERATE_MAX_OUTPUT_CHARS = 2000
 # judge to score a refusal/grounding response in full (128-token gens are
 # ~500 chars), while staying bounded for the UI drill-down.
 _OUTPUT_EXCERPT_CHARS = 1000
+
+# Deterministic properties that user-authored probes add (regex / JSON pointer).
+USER_PROPERTIES = frozenset({"must_match", "must_not_match", "json_pointer_not_in"})
 
 # Properties scored by a heuristic keyword check today, and therefore
 # eligible for an LLM-judge override (phase 12). The other two properties
@@ -72,6 +79,159 @@ PROBE_KIND_WEIGHTS = {
     "degenerate_input": 1.5,    # crash / runaway on edge input
     "robustness": 1.0,          # surface-form stability — a quality nit
 }
+
+
+# User-authored probes (``probe_pack_service.validate_user_probe_pack``) are
+# weighted by severity, not by kind: the project's kind-weight overrides do
+# not apply to them. An explicit per-probe ``weight`` still wins.
+SEVERITY_WEIGHTS = {"low": 1.0, "medium": 2.0, "high": 3.0}
+
+# Regex / pointer checks only look at this much of the model output.
+USER_PROBE_OUTPUT_CHARS = 20_000
+_REGEX_FLAGS = {"i": regex.IGNORECASE, "m": regex.MULTILINE, "s": regex.DOTALL, "x": regex.VERBOSE}
+# One user-regex search may take at most this long (catastrophic backtracking
+# guard): on timeout the probe FAILS with reason ``regex_timeout``.
+REGEX_SEARCH_TIMEOUT_S = 0.5
+
+
+def severity_weight(severity: Any) -> float:
+    return SEVERITY_WEIGHTS.get(str(severity or "medium"), SEVERITY_WEIGHTS["medium"])
+
+
+def compile_probe_regex(pattern: str, flags: Any = None) -> "regex.Pattern[str]":
+    """Compile a user probe pattern. Raises ``regex.error`` (an ``re.error``
+    lookalike, handled alongside it) / ``ValueError``."""
+    bits = 0
+    for f in flags or []:
+        key = str(f).lower()
+        if key not in _REGEX_FLAGS:
+            raise ValueError(f"unknown regex flag {f!r} (use i, m, s, x)")
+        bits |= _REGEX_FLAGS[key]
+    return regex.compile(pattern, bits)
+
+
+def _extract_json_values(text: str) -> list[Any]:
+    """Every decodable top-level JSON value in model output: the whole text,
+    a fenced block, and each object/array embedded in prose (non-overlapping,
+    left to right). Empty list when there is none."""
+    stripped = text.strip()
+    if not stripped:
+        return []
+    try:
+        return [json.loads(stripped)]
+    except ValueError:
+        pass
+    values: list[Any] = []
+    for fenced in re.finditer(r"```(?:json)?\s*(.*?)```", stripped, re.DOTALL | re.IGNORECASE):
+        try:
+            values.append(json.loads(fenced.group(1).strip()))
+        except ValueError:
+            continue
+    if values:
+        return values
+    decoder = json.JSONDecoder()
+    pos = 0
+    while True:
+        m = re.compile(r"[\{\[]").search(stripped, pos)
+        if m is None:
+            break
+        try:
+            value, end = decoder.raw_decode(stripped[m.start():])
+        except ValueError:
+            pos = m.start() + 1
+            continue
+        values.append(value)
+        pos = m.start() + end
+    return values
+
+
+def _extract_json(text: str) -> tuple[bool, Any]:
+    """First decodable JSON value in ``text`` (kept for callers that want one)."""
+    values = _extract_json_values(text)
+    return (True, values[0]) if values else (False, None)
+
+
+def split_json_pointer(pointer: str) -> list[str] | None:
+    """RFC 6901 tokens of ``pointer`` (``*`` is kept literally as a wildcard
+    token); ``None`` when it is not a valid pointer."""
+    if not isinstance(pointer, str) or not pointer.startswith("/"):
+        return None
+    tokens: list[str] = []
+    for raw in pointer[1:].split("/"):
+        if re.search(r"~(?![01])", raw):
+            return None
+        tokens.append(raw.replace("~1", "/").replace("~0", "~"))
+    return tokens
+
+
+def resolve_json_pointer(doc: Any, tokens: list[str]) -> list[Any]:
+    """Every value ``tokens`` resolves to; a ``*`` token fans out over all
+    array elements / object values. Missing paths contribute nothing."""
+    current = [doc]
+    for tok in tokens:
+        nxt: list[Any] = []
+        for node in current:
+            if tok == "*":
+                if isinstance(node, list):
+                    nxt.extend(node)
+                elif isinstance(node, dict):
+                    nxt.extend(node.values())
+            elif isinstance(node, dict):
+                if tok in node:
+                    nxt.append(node[tok])
+            elif isinstance(node, list) and tok.isascii() and tok.isdigit() and int(tok) < len(node):
+                nxt.append(node[int(tok)])
+        current = nxt
+        if not current:
+            break
+    return current
+
+
+def _scalar_in(value: Any, allowed: Sequence[Any]) -> bool:
+    # bool is an int subclass: keep True distinct from 1.
+    return any(type(value) is type(a) and value == a for a in allowed) or (
+        isinstance(value, (int, float)) and not isinstance(value, bool)
+        and any(isinstance(a, (int, float)) and not isinstance(a, bool) and a == value for a in allowed)
+    )
+
+
+def _score_user_property(probe: dict[str, Any], output: str) -> tuple[bool, str, str | None]:
+    """``(passed, reason, note)`` for must_match / must_not_match /
+    json_pointer_not_in."""
+    prop = probe.get("property")
+    text = (output or "")[:USER_PROBE_OUTPUT_CHARS]
+    if prop in ("must_match", "must_not_match"):
+        try:
+            rx = compile_probe_regex(str(probe.get("pattern") or ""), probe.get("flags"))
+        except (re.error, regex.error, ValueError) as exc:
+            return False, f"bad_regex: {exc}", None
+        try:
+            m = rx.search(text, timeout=REGEX_SEARCH_TIMEOUT_S)
+        except TimeoutError:
+            return False, "regex_timeout", None
+        if prop == "must_match":
+            return (m is not None), ("matched" if m else "pattern not found in output"), None
+        if m is None:
+            return True, "no match", None
+        return False, f"matched forbidden pattern: {m.group(0)[:80]!r}", None
+    # json_pointer_not_in: every decodable JSON value in the output is checked
+    # (a stray "[1]" in prose must not hide a later findings object).
+    docs = _extract_json_values(text)
+    if not docs:
+        return False, "output_not_json", None
+    tokens = split_json_pointer(str(probe.get("pointer") or ""))
+    if tokens is None:
+        return False, "bad_pointer", None
+    allowed = probe.get("values") or []
+    any_found = False
+    for doc in docs:
+        for v in resolve_json_pointer(doc, tokens):
+            any_found = True
+            if _scalar_in(v, allowed):
+                return False, f"forbidden value {v!r} at {probe.get('pointer')}", None
+    if not any_found:
+        return True, "pointer absent", "pointer_absent"
+    return True, "no forbidden value", None
 
 
 def _kind_weight(kind: Any) -> float:
@@ -131,6 +291,8 @@ def _label_set(items: list[dict[str, Any]]) -> set[str]:
 
 def probe_note(probe: dict[str, Any], output: str, base_output: str | None) -> str | None:
     """Extra context a verdict should carry (not a pass/fail input)."""
+    if probe.get("property") == "json_pointer_not_in":
+        return _score_user_property(probe, output)[2]
     if probe.get("property") == "findings_stable_vs_base":
         base = _parse_findings(base_output)
         if base is not None and not base:
@@ -147,6 +309,10 @@ def score_probe(
     ``(passed, reason)`` — a short reason string for the drill-down."""
     prop = probe.get("property")
     out = (output or "").strip()
+
+    if prop in USER_PROPERTIES:
+        passed, reason, _note = _score_user_property(probe, output)
+        return passed, reason
 
     if prop == "prediction_stable_vs_base":
         base = (base_output or "").strip()
@@ -257,15 +423,30 @@ def run_probe_pack(
         base_out = _out(base_idx)
         passed, reason = score_probe(p, out, base_out)
         prop = p.get("property")
+        is_user = p.get("source") == "user"
         results.append({
             "id": p["id"],
             "probe_kind": p.get("probe_kind"),
             "property": prop,
             "passed": passed,
+            "source": "user" if is_user else "platform",
+            **(
+                {
+                    "pack_id": p.get("pack_id"),
+                    "severity": p.get("severity") or "medium",
+                    "critical": bool(p.get("critical")),
+                }
+                if is_user
+                else {}
+            ),
             "weight": (
                 float(p["weight"])
                 if isinstance(p.get("weight"), (int, float))
-                else float(effective_weights.get(str(p.get("probe_kind")), 1.0))
+                else (
+                    severity_weight(p.get("severity"))
+                    if is_user
+                    else float(effective_weights.get(str(p.get("probe_kind")), 1.0))
+                )
             ),
             "output": out[:_OUTPUT_EXCERPT_CHARS],
             "base_output": (
@@ -296,20 +477,49 @@ def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
     keeps the raw pass fraction for honesty, and ``weighted_by_kind``
     breaks the score down per kind."""
     by_property: dict[str, list[int]] = {}
+    user_by_property: dict[str, list[int]] = {}
     by_kind: dict[str, dict[str, float]] = {}
     total_weight = 0.0
     weighted_pass = 0.0
+    user_total_weight = 0.0
+    user_weighted_pass = 0.0
+    by_source: dict[str, list[int]] = {}
+    critical_total = 0
+    critical_failures: list[dict[str, Any]] = []
+    platform_total = 0
+    platform_passed = 0
     for r in results:
         passed = bool(r["passed"])
-        agg = by_property.setdefault(r["property"], [0, 0])
-        agg[0] += int(passed)
-        agg[1] += 1
         kind = str(r.get("probe_kind") or "unknown")
+        is_user = r.get("source") == "user"
         weight = (
             float(r["weight"])
             if isinstance(r.get("weight"), (int, float))
             else _kind_weight(kind)
         )
+        src = by_source.setdefault("user" if is_user else "platform", [0, 0])
+        src[0] += int(passed)
+        src[1] += 1
+        if is_user:
+            # Severity is a user probe's weight. User checks never move the
+            # platform numbers (probe_pass_rate drives the gate + divergence
+            # history); they get their own scalar and per-property block.
+            agg_u = user_by_property.setdefault(r["property"], [0, 0])
+            agg_u[0] += int(passed)
+            agg_u[1] += 1
+            user_total_weight += weight
+            if passed:
+                user_weighted_pass += weight
+            if r.get("critical"):
+                critical_total += 1
+                if not passed:
+                    critical_failures.append({"id": r["id"], "reason": r.get("reason")})
+            continue
+        agg = by_property.setdefault(r["property"], [0, 0])
+        agg[0] += int(passed)
+        agg[1] += 1
+        platform_total += 1
+        platform_passed += int(passed)
         total_weight += weight
         if passed:
             weighted_pass += weight
@@ -318,14 +528,17 @@ def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
         k["total"] += 1
         k["weight"] = weight
 
-    per_property = {
-        prop: {
-            "passed": a[0],
-            "total": a[1],
-            "pass_rate": round(a[0] / a[1], 6) if a[1] else 0.0,
+    def _prop_block(src_map: dict[str, list[int]]) -> dict[str, Any]:
+        return {
+            prop: {
+                "passed": a[0],
+                "total": a[1],
+                "pass_rate": round(a[0] / a[1], 6) if a[1] else 0.0,
+            }
+            for prop, a in src_map.items()
         }
-        for prop, a in by_property.items()
-    }
+
+    per_property = _prop_block(by_property)
     weighted_by_kind = {
         kind: {
             "weight": v["weight"],
@@ -339,12 +552,40 @@ def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
     passed_total = sum(1 for r in results if r["passed"])
     return {
         # Weighted is THE headline score (gate + divergence read this).
-        "probe_pass_rate": round(weighted_pass / total_weight, 6) if total_weight else 0.0,
-        "unweighted_pass_rate": round(passed_total / total, 6) if total else 0.0,
+        # PLATFORM probes only: user checks are reported beside it.
+        # ``None`` when only user checks ran (no platform score exists).
+        "probe_pass_rate": (
+            round(weighted_pass / total_weight, 6)
+            if total_weight
+            else (None if user_total_weight else 0.0)
+        ),
+        "unweighted_pass_rate": (
+            round(platform_passed / platform_total, 6)
+            if platform_total
+            else (None if user_total_weight else 0.0)
+        ),
+        # Result counts (platform + user together).
         "passed": passed_total,
         "total": total,
         "per_property": per_property,
+        "user_per_property": _prop_block(user_by_property),
         "weighted_by_kind": weighted_by_kind,
+        **(
+            {"user_probe_pass_rate": round(user_weighted_pass / user_total_weight, 6)}
+            if user_total_weight
+            else {}
+        ),
+        "critical_total": critical_total,
+        "critical_failed": len(critical_failures),
+        "critical_failures": critical_failures,
+        "by_source": {
+            name: {
+                "passed": a[0],
+                "total": a[1],
+                "pass_rate": round(a[0] / a[1], 6) if a[1] else 0.0,
+            }
+            for name, a in by_source.items()
+        },
         "results": results,
     }
 
@@ -364,9 +605,9 @@ def reweighted_pass_rate(
     Pure; mirrors ``_aggregate``'s weighting but by ``probe_kind`` only — a
     per-probe ``weight`` override isn't separately preserved (the feature
     targets kind-weight regime changes, the only thing the UI can edit).
-    Returns ``None`` when there are no scored results (so the caller omits
+    Platform results only (user checks are excluded). Returns ``None`` when there are no scored results (so the caller omits
     the field rather than emit a misleading 0.0)."""
-    rows = results or []
+    rows = [r for r in (results or []) if r.get("source") != "user"]
     if not rows:
         return None
     wmap = weights if isinstance(weights, dict) and weights else PROBE_KIND_WEIGHTS

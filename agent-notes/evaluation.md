@@ -144,7 +144,35 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   distinct from `_evaluate_gate`'s metric-provenance `source`), so the
   scorecard groups all `gate_source==="probe_pack"` gates under an
   "Independent ruler" subsection (detection now prefers `gate_source`,
-  falling back to the metric id). **Phase 16 (cross-run memory)** —
+  falling back to the metric id). **User probe packs (G12)** — a project
+  carries its own checks in `runtime_config["user_probe_packs"]`
+  (`probe_pack_service`: `validate_user_probe_pack`, `parse_user_probe_pack_text`,
+  `set_project_user_probe_packs` / `get_project_user_probe_packs`,
+  `applicable_user_probes`; API `…/probe-pack/user` GET/PUT/DELETE +
+  `/validate`, `/restore {version}`, 422 `INVALID_PROBE_PACK`; PUT `mode`
+  merge (default for `content`: same-id pack replaced, others kept) | replace). `probe_runner.score_probe` adds
+  `must_match` / `must_not_match` / `json_pointer_not_in` (deterministic,
+  output cut to 20k chars; regexes use the `regex` module with a 0.5 s
+  per-search timeout -> `regex_timeout` fail; `json_pointer_not_in` checks every
+  decodable JSON value in the output; YAML aliases refused; `critical` must be a
+  bool, per-probe `weight` is validated 0<w<=10 and wins over severity).
+  Severity is the weight (1/2/3; kind-weight
+  overrides don't apply; user probes stay out of `weighted_by_kind`).
+  **`probe_pass_rate` / `unweighted_pass_rate` / `per_property` /
+  `reweighted_pass_rate` are PLATFORM-only** (null when only user checks ran);
+  user checks add `user_probe_pass_rate` + `user_per_property`;
+  `evaluation_service.fold_probe_metrics` folds a snapshot into eval metrics.
+  `run_probe_pack` runs via `asyncio.to_thread`.
+  `_safe_run_probe_pack` runs platform + user probes in one call (user probes
+  also run with no built-in pack if the profile has a predict path); results
+  carry `source`, user ones `pack_id/severity/critical`; the snapshot has
+  `critical_total/critical_failed/critical_failures/by_source` and
+  `metrics["probe_critical_failures"]`. `_resolve_critical_probe_gate` injects
+  a required `probe_critical_failures <= 0` gate whenever an applicable
+  critical user probe exists, **even with `probe_gate` off**; a missing
+  metric fails it (`missing_metric_required`). Docs:
+  `slm-docs/docs/reference/api/probe-pack.md`. Tests: `test_user_probe_packs.py`.
+  **Phase 16 (cross-run memory)** —
   `probe_pack_service.get_divergence_history` derives the gold-vs-probe
   series from the immutable EvalResult rows (**no new table**, one point
   per training run); `divergence_streak` counts consecutive diverging

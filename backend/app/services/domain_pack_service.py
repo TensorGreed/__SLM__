@@ -73,6 +73,12 @@ def _hydrate_pack_from_contract(
     pack.status = contract.status
     pack.schema_ref = contract.schema_ref
     pack.default_profile_id = contract.default_profile_id
+    # Imported content is indexed in the contract; a plain contract edit (the
+    # manager's PUT) must not drop it.
+    previous = pack.contract if isinstance(pack.contract, dict) else {}
+    for key in ("content", "content_versions"):
+        if key not in payload and key in previous:
+            payload[key] = previous[key]
     pack.contract = payload
     if is_system is not None:
         pack.is_system = bool(is_system)
@@ -160,6 +166,9 @@ async def duplicate_domain_pack(
         raise ValueError("Source domain pack has no valid contract")
 
     payload = copy.deepcopy(source_contract)
+    # Content files are stored per pack_id; a duplicate starts without them.
+    payload.pop("content", None)
+    payload.pop("content_versions", None)
     payload["pack_id"] = new_pack_id or await _derive_next_pack_id(db, source.pack_id)
     payload["version"] = new_version or _bump_patch_version(str(payload.get("version", source.version or "1.0.0")))
     if status_override:

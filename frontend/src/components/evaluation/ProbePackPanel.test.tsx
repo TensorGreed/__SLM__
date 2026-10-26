@@ -51,6 +51,9 @@ const INAPPLICABLE_PACK = {
 describe('ProbePackPanel', () => {
     beforeEach(() => {
         apiMock.get.mockReset();
+        apiMock.post.mockReset();
+        apiMock.put.mockReset();
+        apiMock.delete.mockReset();
     });
 
     it('renders the assembled-not-graded status + provenance + probe kinds', async () => {
@@ -411,5 +414,117 @@ describe('ProbePackPanel', () => {
         expect(props).toHaveTextContent('Same labels as the chunk without the added comment or rename');
         await user.click(screen.getByRole('button', { name: 'Expand cf.injection' }));
         expect(await screen.findByTestId('probe-note-cf.injection')).toHaveTextContent('unmodified chunk had no findings');
+    });
+    const USER_PACK = {
+        ...APPLICABLE_PACK,
+        status: 'graded' as const,
+        user_packs: [
+            { id: 'toy', name: 'Toy', version: '1', probe_count: 1, critical_count: 1,
+              source: { kind: 'manual' as const } },
+        ],
+        user_probes: [
+            {
+                id: 'user:toy/no-key', probe_kind: 'format_robustness' as const,
+                property: 'must_not_match' as const, input: 'say a key', rationale: 'r',
+                source: 'user' as const, pack_id: 'toy', severity: 'high' as const, critical: true,
+            },
+        ],
+        run: {
+            status: 'graded' as const, probe_pass_rate: 0.5, passed: 1, total: 2,
+            per_property: {}, run_at: null, results: [],
+            critical_total: 1, critical_failed: 1,
+            critical_failures: [{ id: 'user:toy/no-key', reason: 'matched secret' }],
+            by_source: {
+                platform: { passed: 1, total: 1, pass_rate: 1 },
+                user: { passed: 0, total: 1, pass_rate: 0 },
+            },
+        },
+    };
+
+    it('labels user checks by source, severity, critical and shows critical failures + by_source', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: USER_PACK });
+        render(<ProbePackPanel projectId={7} />);
+        expect(await screen.findByTestId('probe-source-user:toy/no-key')).toHaveTextContent('user · toy');
+        expect(screen.getByTestId('probe-source-sft.safety.injection')).toHaveTextContent('built-in');
+        expect(screen.getByTestId('probe-severity-user:toy/no-key')).toHaveTextContent('high');
+        expect(screen.getByTestId('probe-critical-user:toy/no-key')).toBeInTheDocument();
+        expect(screen.getByTestId('probe-pack-critical')).toHaveTextContent('Critical checks failed: 1 of 1');
+        expect(screen.getByTestId('probe-pack-critical-failures')).toHaveTextContent('matched secret');
+        expect(screen.getByTestId('probe-by-source-user')).toHaveTextContent('0/1');
+        expect(screen.getByTestId('probe-by-source-platform')).toHaveTextContent('1/1');
+    });
+
+    it('validates with errors grouped by code, then saves and reloads', async () => {
+        apiMock.get.mockResolvedValue({ data: USER_PACK });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                valid: false,
+                errors: [
+                    { code: 'bad_regex', path: 'probes[0]', message: 'x' },
+                    { code: 'bad_regex', path: 'probes[1]', message: 'y' },
+                    { code: 'missing_id', path: 'probes[2]', message: 'z' },
+                ],
+            },
+        });
+        apiMock.put.mockResolvedValueOnce({ data: {} });
+        const user = userEvent.setup();
+        render(<ProbePackPanel projectId={7} />);
+        await user.type(await screen.findByTestId('user-probe-text'), 'id: toy');
+        await user.click(screen.getByTestId('user-probe-validate'));
+        expect(await screen.findByTestId('user-probe-errors-bad_regex')).toHaveTextContent('(2)');
+        expect(screen.getByTestId('user-probe-errors-missing_id')).toHaveTextContent('(1)');
+        expect(apiMock.post).toHaveBeenCalledWith('/projects/7/probe-pack/user/validate', { content: 'id: toy' });
+
+        await user.click(screen.getByTestId('user-probe-save'));
+        await waitFor(() =>
+            expect(apiMock.put).toHaveBeenCalledWith('/projects/7/probe-pack/user', { content: 'id: toy', mode: 'merge' }),
+        );
+        await waitFor(() => expect(apiMock.get.mock.calls.length).toBeGreaterThan(1));
+    });
+
+    it('deletes user checks', async () => {
+        apiMock.get.mockResolvedValue({ data: USER_PACK });
+        apiMock.delete.mockResolvedValueOnce({ data: {} });
+        const user = userEvent.setup();
+        render(<ProbePackPanel projectId={7} />);
+        await user.click(await screen.findByTestId('user-probe-delete'));
+        await waitFor(() => expect(apiMock.delete).toHaveBeenCalledWith('/projects/7/probe-pack/user'));
+    });
+
+    it('states which pack a save replaces and offers restore for older versions', async () => {
+        apiMock.get.mockImplementation((url: string) =>
+            Promise.resolve({
+                data: url.endsWith('/probe-pack/user')
+                    ? {
+                          packs: [], version: 'v2', source: null,
+                          history: [
+                              { version: 'v2', pack_count: 1, probe_count: 1, current: true, restorable: true },
+                              { version: 'v1abcdefgh', pack_count: 2, probe_count: 3, current: false, restorable: true },
+                          ],
+                      }
+                    : USER_PACK,
+            }),
+        );
+        apiMock.post.mockResolvedValueOnce({ data: {} });
+        const user = userEvent.setup();
+        render(<ProbePackPanel projectId={7} />);
+        await user.type(await screen.findByTestId('user-probe-text'), 'id: toy');
+        expect(screen.getByTestId('user-probe-replace-note')).toHaveTextContent('replaces your pack "toy"');
+        await user.click(await screen.findByTestId('user-probe-restore-v1abcdefgh'));
+        await waitFor(() =>
+            expect(apiMock.post).toHaveBeenCalledWith('/projects/7/probe-pack/user/restore', { version: 'v1abcdefgh' }),
+        );
+    });
+
+    it('shows your-checks rate separately and n/a when only user checks ran', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                ...USER_PACK,
+                run: { ...USER_PACK.run, probe_pass_rate: null, user_probe_pass_rate: 0.4 },
+            },
+        });
+        render(<ProbePackPanel projectId={7} />);
+        expect(await screen.findByTestId('probe-pack-score')).toHaveTextContent('n/a');
+        expect(screen.getByTestId('probe-pack-user-rate')).toHaveTextContent('40%');
     });
 });

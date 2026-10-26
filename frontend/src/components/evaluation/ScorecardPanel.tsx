@@ -234,6 +234,9 @@ const formatMetricLabel = (gate: GateCheck): string => {
   return gate.metric_id;
 };
 
+const isCriticalProbeGate = (gate: GateCheck): boolean =>
+  gate.metric_id === 'probe_critical_failures' || gate.gate_id === 'probe_critical_failures';
+
 const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId, runLabel }) => {
   const [scorecard, setScorecard] = useState<Scorecard | null>(null);
   const [loading, setLoading] = useState(true);
@@ -358,7 +361,14 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                           </span>
                         )}
                       </td>
-                      <td>{formatMetricLabel(gate)}</td>
+                      <td>
+                        {formatMetricLabel(gate)}
+                        {isCriticalProbeGate(gate) && typeof gate.actual === 'number' && (
+                          <span className="scorecard-metric-n" data-testid="scorecard-critical-probes">
+                            {' '}Critical checks failed: {gate.actual}
+                          </span>
+                        )}
+                      </td>
                       <td>{gate.operator} {gate.threshold}</td>
                       <td>
                         {notMeasured ? (

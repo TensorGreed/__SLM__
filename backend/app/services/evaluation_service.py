@@ -717,8 +717,14 @@ async def _safe_run_probe_pack(
         project_row = await db.get(Project, project_id) if db is not None else None
         recipe_id = _resolve_recipe_id(project_row)
         pack = get_probe_pack(task_profile, recipe_id)
-        probes = pack.get("probes") or []
-        if not pack.get("applicable") or not probes:
+        platform_probes = (pack.get("probes") or []) if pack.get("applicable") else []
+        # The project's own checks run in the same call (they also run when the
+        # task shape has no built-in pack, as long as it has a predict path).
+        from app.services.probe_pack_service import applicable_user_probes
+
+        user_probes = applicable_user_probes(project_row, task_profile, recipe_id) if project_row is not None else []
+        probes = [*platform_probes, *user_probes]
+        if not probes:
             return {}
 
         ckpt_path = (experiment.output_dir or "").strip()
@@ -773,8 +779,13 @@ async def _safe_run_probe_pack(
             def input_renderer(row: dict) -> str:  # noqa: F811
                 return build_code_findings_prompt_from_row(row, prompt_labels or None)
 
-        snapshot = run_probe_pack(
-            list(probes), predict_fn, weights=weights, input_renderer=input_renderer
+        # Off the event loop: model inference and user regex scoring both block.
+        snapshot = await asyncio.to_thread(
+            run_probe_pack,
+            list(probes),
+            predict_fn,
+            weights=weights,
+            input_renderer=input_renderer,
         )
 
         # Phase 12 — override the keyword heuristic on refusal/grounding
@@ -812,6 +823,25 @@ async def _safe_run_probe_pack(
             flush=True,
         )
         return {}
+
+
+def fold_probe_metrics(metrics: dict[str, Any], probe_metrics: dict[str, Any] | None) -> dict[str, Any]:
+    """Fold a probe snapshot into the eval ``metrics`` (in place, returned).
+
+    ``probe_pass_rate`` is the PLATFORM score (gate + divergence history read
+    it); it is only set when platform probes ran. User checks add
+    ``user_probe_pass_rate`` and, when any is critical, the
+    ``probe_critical_failures`` scalar the always-on critical gate reads."""
+    if not probe_metrics:
+        return metrics
+    metrics["probe"] = probe_metrics
+    if isinstance(probe_metrics.get("probe_pass_rate"), (int, float)):
+        metrics["probe_pass_rate"] = probe_metrics["probe_pass_rate"]
+    if isinstance(probe_metrics.get("user_probe_pass_rate"), (int, float)):
+        metrics["user_probe_pass_rate"] = probe_metrics["user_probe_pass_rate"]
+    if int(probe_metrics.get("critical_total") or 0) > 0:
+        metrics["probe_critical_failures"] = int(probe_metrics.get("critical_failed") or 0)
+    return metrics
 
 
 async def run_evaluation(
@@ -896,9 +926,7 @@ async def run_evaluation(
         experiment=exp,
         task_profile=eval_ctx.task_profile,
     )
-    if probe_metrics:
-        metrics["probe"] = probe_metrics
-        metrics["probe_pass_rate"] = probe_metrics.get("probe_pass_rate")
+    fold_probe_metrics(metrics, probe_metrics)
 
     hook_state = await resolve_project_domain_hooks(db, project_id)
     metrics = apply_evaluator_hook(

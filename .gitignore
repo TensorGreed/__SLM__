@@ -32,6 +32,7 @@ backend/data/*.sqlite*
 *.sqlite-wal
 *.db-journal
 data/projects/
+data/domain_packs/
 data/exports/
 data/models/
 data/support_bundles/

@@ -1197,6 +1197,11 @@ async def apply_patch(
 def read_overrides(project: Project) -> dict[str, Any]:
     """Public helper for the ``GET /overrides`` endpoint. Returns a
     plain dict the frontend can plumb directly into
-    ``applySuggestedConfig``.
+    ``applySuggestedConfig``. Unlike the gap scanner (which only layers
+    ``PATCHABLE_FIELDS``), this returns every stored key: a domain pack's
+    ``project_template.training_defaults`` lands in this block too and the
+    Train form should prefill all of it.
     """
-    return _get_overrides(project)
+    runtime = project.runtime_config or {}
+    block = runtime.get(OVERRIDES_KEY) if isinstance(runtime, dict) else None
+    return dict(block) if isinstance(block, dict) else {}

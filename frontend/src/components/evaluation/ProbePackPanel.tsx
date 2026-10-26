@@ -25,6 +25,7 @@ import type {
     ProbePack,
     ProbeResult,
 } from '../../api/probePack';
+import UserProbeEditor from './UserProbeEditor';
 import './ProbePackPanel.css';
 
 interface ProbePackPanelProps {
@@ -151,10 +152,16 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
         });
 
     // Defensive: never throw on a malformed payload — degrade to empty.
-    const probes: Probe[] = useMemo(
-        () => (Array.isArray(pack?.probes) ? pack!.probes : []),
-        [pack],
-    );
+    const probes: Probe[] = useMemo(() => {
+        const base = Array.isArray(pack?.probes) ? pack!.probes : [];
+        const seen = new Set(base.map((p) => p.id));
+        const user = (Array.isArray(pack?.user_probes) ? pack!.user_probes : []).filter(
+            (p) => !seen.has(p.id),
+        );
+        return [...base, ...user];
+    }, [pack]);
+
+    const userPacks = pack?.user_packs ?? [];
 
     // Gold-vs-probe history for the trend sparkline (defensive).
     const history: DivergencePoint[] = useMemo(
@@ -200,6 +207,7 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                     <h3 className="probe-pack__title">Built-in checks</h3>
                 </header>
                 <p className="probe-pack__note">{pack.note}</p>
+                <UserProbeEditor projectId={projectId} packs={userPacks} onChanged={() => void load()} />
             </section>
         );
     }
@@ -232,12 +240,24 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                     <div className="probe-pack__score" data-testid="probe-pack-score">
                         <span className="probe-pack__score-headline">
                             Weighted built-in check pass rate:{' '}
-                            <strong>{Math.round((run.probe_pass_rate ?? 0) * 100)}%</strong>{' '}
-                            ({run.passed}/{run.total}
+                            <strong>
+                                {typeof run.probe_pass_rate === 'number'
+                                    ? `${Math.round(run.probe_pass_rate * 100)}%`
+                                    : 'n/a (only your checks ran)'}
+                            </strong>{' '}
+                            ({run.by_source?.platform
+                                ? `${run.by_source.platform.passed}/${run.by_source.platform.total}`
+                                : `${run.passed}/${run.total}`}
                             {typeof run.unweighted_pass_rate === 'number' &&
                                 ` · raw ${Math.round(run.unweighted_pass_rate * 100)}%`}
                             )
                         </span>
+                        {typeof run.user_probe_pass_rate === 'number' && (
+                            <span className="probe-pack__score-note" data-testid="probe-pack-user-rate">
+                                Your checks (severity-weighted, not part of the score above):{' '}
+                                <strong>{Math.round(run.user_probe_pass_rate * 100)}%</strong>
+                            </span>
+                        )}
                         {run.weighted_by_kind &&
                             Object.keys(run.weighted_by_kind).length > 0 && (
                                 <ul
@@ -264,6 +284,37 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                                 </li>
                             ))}
                         </ul>
+                        {run.by_source && Object.keys(run.by_source).length > 0 && (
+                            <ul className="probe-pack__props" data-testid="probe-pack-by-source">
+                                {Object.entries(run.by_source).map(([src, sc]) => (
+                                    <li key={src} className="probe-pack__prop-chip" data-testid={`probe-by-source-${src}`}>
+                                        {src === 'user' ? 'Your checks' : 'Built-in checks'}:{' '}
+                                        <strong>
+                                            {sc!.passed}/{sc!.total} ({Math.round(sc!.pass_rate * 100)}%)
+                                        </strong>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                        {(run.critical_total ?? 0) > 0 && (
+                            <div
+                                className={`probe-pack__critical${(run.critical_failed ?? 0) > 0 ? ' probe-pack__critical--failed' : ''}`}
+                                data-testid="probe-pack-critical"
+                            >
+                                <strong>
+                                    Critical checks failed: {run.critical_failed ?? 0} of {run.critical_total}
+                                </strong>
+                                {(run.critical_failures ?? []).length > 0 && (
+                                    <ul data-testid="probe-pack-critical-failures">
+                                        {run.critical_failures!.map((f) => (
+                                            <li key={f.id}>
+                                                <code>{f.id}</code> {f.reason}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                        )}
                         <p className="probe-pack__score-note">
                             Graded against checks you didn't author — independent of
                             your answer-key pass rate.
@@ -545,6 +596,8 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                 </div>
             )}
 
+            <UserProbeEditor projectId={projectId} packs={userPacks} onChanged={() => void load()} />
+
             <ul className="probe-pack__list">
                 {probes.map((p) => {
                     const open = expanded.has(p.id);
@@ -573,6 +626,19 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                                 <span className={`probe-pack__kind probe-pack__kind--${p.probe_kind}`}>
                                     {kindLabel(p.probe_kind)}
                                 </span>
+                                <span className="probe-pack__source" data-testid={`probe-source-${p.id}`}>
+                                    {p.source === 'user' ? `user · ${p.pack_id ?? ''}` : 'built-in'}
+                                </span>
+                                {p.source === 'user' && p.severity && (
+                                    <span className="probe-pack__severity" data-testid={`probe-severity-${p.id}`}>
+                                        {p.severity}
+                                    </span>
+                                )}
+                                {p.critical && (
+                                    <span className="probe-pack__critical-tag" data-testid={`probe-critical-${p.id}`}>
+                                        critical
+                                    </span>
+                                )}
                                 <span className="probe-pack__probe-prop">
                                     {PROPERTY_LABEL[p.property] ?? p.property}
                                 </span>

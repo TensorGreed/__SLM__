@@ -2,8 +2,11 @@
  * Page for assigning reusable domain pack policy bundles and hook defaults to projects.
  */
 
+import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 
+import DomainPackContentList from '../components/domain/DomainPackContentList';
+import DomainPackImportPanel from '../components/domain/DomainPackImportPanel';
 import DomainPackManager from '../components/domain/DomainPackManager';
 import Term from '../components/shared/Term';
 import { useProjectStore } from '../stores/projectStore';
@@ -13,6 +16,7 @@ import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 export default function ProjectDomainPacksPage({ embedded = false }: { embedded?: boolean } = {}) {
     const { projectId, project } = useOutletContext<ProjectWorkspaceContextValue>();
     const { setActiveProject } = useProjectStore();
+    const [refreshKey, setRefreshKey] = useState(0);
 
     return (
         <div className="workspace-page">
@@ -28,7 +32,10 @@ export default function ProjectDomainPacksPage({ embedded = false }: { embedded?
                 </div>
             </section>
             )}
+            <DomainPackImportPanel onImported={() => setRefreshKey((k) => k + 1)} />
+            <DomainPackContentList projectId={projectId} refreshKey={refreshKey} />
             <DomainPackManager
+                key={refreshKey}
                 projectId={projectId}
                 activeDomainPackId={project.domain_pack_id}
                 onAssigned={(updated: Project) => setActiveProject(updated)}

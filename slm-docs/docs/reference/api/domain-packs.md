@@ -7,7 +7,7 @@ title: Domain Packs
 
 # Domain Packs
 
-Auto-generated reference for the **Domain Packs** API. 7 endpoint(s).
+Auto-generated reference for the **Domain Packs** API. 12 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -170,3 +170,107 @@ Content type: `application/json` — `DomainPackDuplicateRequest`
 |---|---|---|
 | `201` | `DomainPackResponse` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
+
+
+## Pack format (content packs)
+
+A domain pack can carry content as well as the overlay / hooks contract. A pack is a zip whose root (or single
+top-level folder) holds `pack.yaml`:
+
+```
+pack.yaml  taxonomy.yaml  probes/*.yaml  rubrics/*  schemas/*.json  tool_catalog.yaml
+documents/*  gold/dev.jsonl  gold/test.jsonl
+```
+
+```yaml
+schema: brewslm.domain-pack/v2        # "$schema: slm.domain-pack/v1" is accepted too
+pack_id: toy-pack                     # ^[a-z0-9][a-z0-9._-]{1,63}$
+version: 1.0.0                        # MAJOR.MINOR.PATCH
+display_name: Toy pack
+description: ...
+owner: ...
+tags: [toy]
+overlay: {...}                        # optional, unchanged semantics
+hooks: {...}                          # optional, unchanged semantics
+default_profile_id: ...               # optional
+taxonomy: {path: taxonomy.yaml, crosswalk_from: [..], name: ..}
+probe_packs: [probes/core.yaml]       # one user probe pack per file (see Probe Pack)
+rubrics: [{id: plan-quality, path: rubrics/plan.yaml}]
+schemas: [{id: findings, path: schemas/findings.json, apply_as_output_schema: false}]
+tool_catalog: {path: tool_catalog.yaml}
+documents: [{path: documents/matrix.md, title: .., licence: CC-BY-4.0, usage: rag, locator: ..}]
+gold: {dev: gold/dev.jsonl, test: gold/test.jsonl}     # rows in the recipe's shape
+project_template:
+  recipe_id: json-extraction          # must exist in the recipe catalog
+  base_model: some/model
+  target_profile: ...
+  plan_profile: ...
+  training_defaults: {num_epochs: 2}  # TrainingConfig fields
+  retrieval: {k: 5}                   # normalised like the retrieval settings
+```
+
+Rubrics, schemas and the tool catalog have no consumer yet: they are validated and carried as versioned
+artifacts (copied into the project, exported back). The one exception is a schema flagged
+`apply_as_output_schema: true`, which is applied through the output-schema path when the project's recipe
+supports one (otherwise the instantiate summary carries an `output_schema_not_applied` warning).
+
+### Validation
+
+`import/preview` and `import` report issues as `{code, path, message}`. Errors block the import:
+`missing_pack_yaml`, `bad_yaml`, `bad_zip`, `bad_pack_id`, `bad_version`, `missing_file`, `unsafe_path`
+(absolute, `..`, symlink, zip-slip), `too_large` (50 MB expanded, 20 MB per file, 2000 files),
+`duplicate_id` (probe ids in a pack, probe-pack ids, rubric / schema ids, repeated documents),
+`invalid_taxonomy`, `invalid_probe` (the user-probe validator's code is in the message), `invalid_rubric`,
+`invalid_schema`, `invalid_tool_catalog`, `invalid_template`, `invalid_contract`, `unknown_recipe`,
+`unsupported_document`, `bad_licence_usage`, `bad_gold_row` (line N), and (preview / import only) `system_pack`.
+Warnings: `unknown_key`, `unknown_schema`, `unreferenced_file`, `system_pack_id`, `missing_licence`,
+`multiple_output_schemas`.
+
+### Storage and versions
+
+Each imported version is copied (pack.yaml plus the referenced files) to
+`DATA_DIR/domain_packs/<pack_id>/<version>/`. The `DomainPack` row indexes it in `contract.content`
+(`{version, content_hash, imported_at, files, summary, manifest}`) and `contract.content_versions`
+(`[{version, content_hash, imported_at}]`, newest last; every version stays on disk). No table, no migration.
+The content hash covers the normalised manifest (without `version`) and the referenced files' hashes.
+
+### `POST /api/domain-packs/import/preview`
+
+Multipart `file` (the zip). Writes nothing. Returns `{valid, errors, warnings, summary, manifest, content_hash,
+existing, proposed_version, unchanged, diff}`. `existing` is `null` or `{version, content_hash}`; `diff` is
+`null` for a new pack, otherwise
+`{version: {from, to}, sections: {taxonomy, probes, rubrics, schemas, documents: {added, removed, changed},
+gold: {dev: {from, to, changed}, test: {...}}, project_template: {changed_fields}, overlay: {changed},
+tool_catalog: {changed}}}`. Probe ids are `pack_id/probe_id`; document ids are paths compared by sha256.
+
+### `POST /api/domain-packs/import`
+
+Multipart `file`. `422 INVALID_DOMAIN_PACK` with `metadata.errors` when invalid; `409 system_pack` for platform
+packs. Success: `{pack, version, unchanged, diff, warnings}`. The same content hash as the current version is
+`unchanged: true` and nothing is written. A version that is not greater than the current one is
+patch-bumped past it (`version` reports the stored one).
+
+### `GET /api/domain-packs/{pack_id}/content?version=`
+
+`{pack_id, version, versions[], manifest, summary, files[{path, sha256, size}]}`; `404` when the pack has no
+imported content or the version is unknown.
+
+### `POST /api/domain-packs/{pack_id}/instantiate`
+
+Body `{project_name?, version?}` -> `201 {project, summary}`. Creates a project bound to the pack (so the overlay
+and hooks apply as today) and copies, all-or-nothing: the project template (recipe, base model, profiles;
+`training_defaults` go to `runtime_config.training_config_overrides`, which the Train form prefills from (they are
+not applied to API or autopilot training starts, which send their own config);
+`retrieval` to `runtime_config.auto_rag_retrieval`), the taxonomy (and the guided-JSON hint), the user probe
+packs (`source: {kind: "domain_pack", pack_id, version}`), the documents (one `domain_pack` data source each,
+`locator` `<pack_id>@<version>:<path>`, with the declared licence and usage), the gold rows, and the artifacts
+(`runtime_config.pack_artifacts`). `runtime_config.domain_pack_source` records `{pack_id, version, content_hash,
+instantiated_at}`. The summary lists counts and `warnings`.
+
+### `GET /api/projects/{project_id}/domain-pack/export`
+
+Query `pack_id`, `version`, `include_documents=pack|all|none` (default `pack`: only documents whose data source
+kind is `domain_pack`). Returns `application/zip` named `<pack_id>-<version>.zip`. Defaults: the project's
+`domain_pack_source` (version patch-bumped), else the slugified project name at `1.0.0`. The zip is validated
+before it is returned; a document that is over the limits is skipped (`X-Pack-Skipped-Documents` header).
+Exporting an instantiated project and diffing it against its source pack shows no section changes.

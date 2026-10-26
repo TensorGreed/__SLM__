@@ -80,14 +80,14 @@ export interface TrainingConfigPatchPreview {
 export interface TrainingConfigPatchResult
     extends TrainingConfigPatchPreview {
     applied: true;
-    overrides_after: Record<string, number>;
+    overrides_after: Record<string, string | number | boolean>;
 }
 
 /** The persisted overrides block — what TrainingPanel reads on mount
  * so the visible form matches the gap scanner's effective config. */
 export interface TrainingConfigOverridesResponse {
     project_id: number;
-    overrides: Record<string, number>;
+    overrides: Record<string, string | number | boolean>;
 }
 
 export async function fetchOverrides(
@@ -130,5 +130,5 @@ export const TRAINING_OVERRIDES_APPLIED_EVENT =
  * pipes `overrides` directly into `applySuggestedConfig`. */
 export interface TrainingOverridesAppliedDetail {
     projectId: number;
-    overrides: Record<string, number>;
+    overrides: Record<string, string | number | boolean>;
 }

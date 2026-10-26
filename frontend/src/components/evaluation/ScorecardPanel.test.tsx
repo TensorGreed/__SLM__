@@ -734,4 +734,20 @@ describe('ScorecardPanel', () => {
     await waitFor(() => expect(screen.getByText('min_f1')).toBeInTheDocument());
     expect(screen.queryByTestId('scorecard-independent-section')).not.toBeInTheDocument();
   });
+  it('groups the critical-checks gate under Independent ruler with the failure count', async () => {
+    const sc = scorecardWithProbeGate(true);
+    sc.gate_report.checks = [
+      sc.gate_report.checks[0],
+      {
+        gate_id: 'probe_critical_failures', metric_id: 'probe_critical_failures',
+        operator: 'lte', threshold: 0, required: true, actual: 2, passed: false,
+        reason: 'above_threshold', gate_source: 'probe_pack',
+      },
+    ];
+    apiMock.get.mockResolvedValueOnce({ data: sc });
+    render(<ScorecardPanel projectId={1} experimentId={7} />);
+    expect(await screen.findByTestId('scorecard-independent-section')).toBeInTheDocument();
+    expect(screen.getByTestId('scorecard-critical-probes')).toHaveTextContent('Critical checks failed: 2');
+    expect(screen.getByTestId('scorecard-probe-gate')).toBeInTheDocument();
+  });
 });

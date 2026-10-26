@@ -631,3 +631,31 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   delete, dropped when the recipe changes; `GET /api/projects/{id}/guided-json`; copied into the export
   manifest as `guided_json`.
 - Tests: `test_code_findings_recipe.py` (recipe, detection, prompt identity, adapter, stamp, hint, export).
+
+## Domain packs as data (content packs)
+
+A `DomainPack` (the existing overlay / hooks contract) can also carry content: taxonomy, user probe packs,
+rubrics, schemas, tool catalog, documents, gold rows and a project template. Format, validation codes and the
+API are in `slm-docs/docs/reference/api/domain-packs.md`; code is `domain_pack_content_service.py` +
+`api/domain_packs.py`.
+
+- No table: versions live at `DATA_DIR/domain_packs/<pack_id>/<version>/`; the row's `contract["content"]` /
+  `contract["content_versions"]` index them. `_hydrate_pack_from_contract` keeps those keys across a plain
+  contract PUT; `duplicate_domain_pack` drops them.
+- Content hash = normalised manifest minus `version` + referenced file hashes. Same hash -> `unchanged`;
+  otherwise a version not above the current one is patch-bumped.
+- `project_template.training_defaults` -> `runtime_config["training_config_overrides"]` (validated against
+  `TrainingConfig`). `read_overrides` returns the whole block so the Train form prefills every key; the gap
+  scanner still layers only `PATCHABLE_FIELDS`. It **prefills the Train form only** (TrainingPanel reads
+  `GET .../training-config-gaps/overrides`; values may be string/number/boolean) and is NOT applied to API /
+  autopilot training starts, which send their own config. Pack-level `overlay.training_defaults` is a different thing
+  (applied by `domain_runtime_service`).
+- Instantiate is all-or-nothing (project data dir removed on failure, caller's session rolls back). Documents
+  are ingested and processed (a failure is a `document_not_processed` summary warning; the passages index is built separately, noted by `passages_index_not_built`) with a `domain_pack` data source (`KIND_DOMAIN_PACK`), locator
+  `<pack_id>@<version>:<path>`. `runtime_config["domain_pack_source"]` (not to be confused with the derived
+  `domain_pack_source` string in `domain_runtime_service` payloads) and `["pack_artifacts"]` record provenance.
+- Export validates its own zip; gold rows drop `id` / `created_at` / default-valued QA flags, and a project
+  template omits values the project carries anyway (default target / plan profile, the recipe's suggested
+  base model) so an instantiate -> export round trip diffs clean.
+- Tests: `test_domain_pack_content.py`.
+

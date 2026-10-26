@@ -391,3 +391,39 @@
     font-size: 11px;
     color: var(--text-muted);
 }
+
+.probe-pack__source,
+.probe-pack__severity,
+.probe-pack__critical-tag {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  margin-right: var(--space-xs);
+}
+
+.probe-pack__critical-tag {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.probe-pack__critical--failed {
+  border-left: 3px solid var(--border-strong, currentColor);
+  padding-left: var(--space-sm);
+}
+
+.probe-pack__user-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: var(--space-md) 0;
+}
+
+.probe-pack__user-text {
+  width: 100%;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-sm);
+}
+
+.probe-pack__user-actions {
+  display: flex;
+  gap: var(--space-sm);
+}

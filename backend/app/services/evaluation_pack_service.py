@@ -2322,6 +2322,33 @@ def _resolve_probe_gate(project: Any) -> dict[str, Any] | None:
     }
 
 
+def _resolve_critical_probe_gate(project: Any, *task_profiles: str | None) -> dict[str, Any] | None:
+    """G12 — the always-on critical-probe gate. Injected whenever the project
+    has at least one applicable *critical* user probe, regardless of
+    ``probe_gate.enabled``. ``probe_critical_failures`` must be 0; a run that
+    never produced the metric (probes did not run) fails the required gate
+    (``missing_metric_required``)."""
+    from app.services.probe_pack_service import (
+        _resolve_recipe_id,
+        _resolve_task_profile_id,
+        applicable_user_probes,
+    )
+
+    recipe_id = _resolve_recipe_id(project)
+    profiles = {t for t in (*task_profiles, _resolve_task_profile_id(project)) if t} or {None}
+    for profile in profiles:
+        if any(p.get("critical") for p in applicable_user_probes(project, profile, recipe_id)):
+            return {
+                "gate_id": "probe_critical_failures",
+                "metric_id": "probe_critical_failures",
+                "operator": "lte",
+                "threshold": 0,
+                "required": True,
+                "source": "probe_pack",
+            }
+    return None
+
+
 async def evaluate_experiment_auto_gates(
     db: AsyncSession,
     *,
@@ -2357,6 +2384,9 @@ async def evaluate_experiment_auto_gates(
     probe_gate = _resolve_probe_gate(project)
     if probe_gate is not None:
         gates = [*gates, probe_gate]
+    critical_gate = _resolve_critical_probe_gate(project, resolved_task_profile, selected_task_profile)
+    if critical_gate is not None and not any(g.get("gate_id") == critical_gate["gate_id"] for g in gates):
+        gates = [*gates, critical_gate]
     metric_schema = dict(task_spec.get("metric_schema") or {})
 
     latest_by_type = await _latest_eval_by_type(db, experiment_id)
