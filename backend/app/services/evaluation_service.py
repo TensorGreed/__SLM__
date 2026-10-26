@@ -712,7 +712,11 @@ async def _safe_run_probe_pack(
 
         profile = (task_profile or "").strip().lower()
 
-        pack = get_probe_pack(task_profile)
+        from app.services.probe_pack_service import _resolve_recipe_id
+
+        project_row = await db.get(Project, project_id) if db is not None else None
+        recipe_id = _resolve_recipe_id(project_row)
+        pack = get_probe_pack(task_profile, recipe_id)
         probes = pack.get("probes") or []
         if not pack.get("applicable") or not probes:
             return {}
@@ -738,7 +742,15 @@ async def _safe_run_probe_pack(
                 label_space=label_space,
             )
         elif profile in _GENERATIVE_PROBE_PROFILES:
-            predict_fn = _build_generative_predict_fn(ckpt_path)
+            gen_kwargs: dict[str, Any] = {}
+            if recipe_id == "code-findings":
+                # A findings list outgrows the 128-token probe default: give the probe
+                # the structured handler's full JSON budget so a long answer is not cut off.
+                from app.services.eval_task_handler_service import StructuredExtractionHandler
+
+                handler = StructuredExtractionHandler()
+                gen_kwargs["max_new_tokens"] = handler.max_new_tokens_override(handler.MAX_NEW_TOKENS_HARDCAP)
+            predict_fn = _build_generative_predict_fn(ckpt_path, **gen_kwargs)
         else:
             return {}
 
@@ -748,7 +760,22 @@ async def _safe_run_probe_pack(
         )
 
         weights = await get_probe_kind_weights_for_project(db, project_id)
-        snapshot = run_probe_pack(list(probes), predict_fn, weights=weights)
+        input_renderer = None
+        if recipe_id == "code-findings":
+            # Dict probe inputs go through the same prompt builder as training
+            # and held-out eval, naming the manifest's labels when it has them.
+            from app.services.code_findings_prompt import build_code_findings_prompt_from_row
+            from app.services.eval_task_handler_service import read_prepared_manifest
+
+            schema = (read_prepared_manifest(project_id).get("output_schema") or {})
+            prompt_labels = schema.get("prompt_labels") if isinstance(schema, dict) else None
+
+            def input_renderer(row: dict) -> str:  # noqa: F811
+                return build_code_findings_prompt_from_row(row, prompt_labels or None)
+
+        snapshot = run_probe_pack(
+            list(probes), predict_fn, weights=weights, input_renderer=input_renderer
+        )
 
         # Phase 12 — override the keyword heuristic on refusal/grounding
         # probes with an LLM judge when one is configured. Best-effort:
@@ -2538,6 +2565,10 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
             span_tp.append(len(p.get("row_matched_entities") or []))
             span_fp.append(len(p.get("row_hallucinated_entities") or []))
             span_fn.append(len(p.get("row_missed_entities") or []))
+        elif p.get("scoring_mode") == "finding_set":
+            span_tp.append(len(p.get("row_matched_findings") or []))
+            span_fp.append(len(p.get("row_spurious_findings") or []))
+            span_fn.append(len(p.get("row_missed_findings") or []))
         row_f1 = p.get("row_f1")
         f1.append(float(row_f1) if isinstance(row_f1, (int, float)) and not isinstance(row_f1, bool) else None)
         row_judge = p.get("row_judge_score")
@@ -2654,9 +2685,9 @@ async def _generate_heldout_predictions(
     # model wrapped in a chat template becomes a chat-completion model
     # at inference time and emits natural language instead of class
     # labels (the very bug that motivated this code path).
-    handler_wraps_prompt = bool(
-        getattr(task_handler, "wraps_own_prompt", lambda: False)()
-    )
+    from app.services.eval_task_handler_service import handler_wraps_own_prompt
+
+    handler_wraps_prompt = handler_wraps_own_prompt(task_handler, getattr(eval_ctx, "manifest", None))
     apply_chat_template = not handler_wraps_prompt
     predictions, runtime = await asyncio.to_thread(
         _run_local_inference,
@@ -2901,6 +2932,16 @@ async def run_heldout_evaluation(
             "row_hallucinated_entities": p.get("row_hallucinated_entities"),
             "row_precision": p.get("row_precision"),
             "row_recall": p.get("row_recall"),
+            # code-findings (finding_set): line-range matches per row plus
+            # the chunk's provenance, so the UI can show where a finding sits.
+            "row_matched_findings": p.get("row_matched_findings"),
+            "row_missed_findings": p.get("row_missed_findings"),
+            "row_spurious_findings": p.get("row_spurious_findings"),
+            "row_malformed": p.get("row_malformed"),
+            "row_is_clean_reference": p.get("row_is_clean_reference"),
+            "path": p.get("path"),
+            "language": p.get("language"),
+            "start_line": p.get("start_line"),
             # Phase 5.3.5: RAGHandler enrichments — the context the
             # model was given, the row's faithfulness score (token
             # overlap of pred with context), context recall (gold

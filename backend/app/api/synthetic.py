@@ -751,6 +751,91 @@ class RunPlaybookRequest(BaseModel):
     target_count: int = Field(30, ge=1, le=500)
     target_class: str | None = Field(default=None)
     backend: str | None = Field(default=None, description="Optional backend pin, e.g. 'ollama:llama3.1:8b'.")
+    params: dict | None = Field(
+        default=None,
+        description=(
+            "Per-mode parameters handed to the playbook (ctx['params']). code-findings seeded_defect: "
+            "label_id (required, a project-taxonomy id), attrs, context_dataset_id + context_column, "
+            "context_sample_size."
+        ),
+    )
+
+
+async def _checked_playbook_params(db: AsyncSession, project_id: int, mode: Any, params: dict | None) -> dict:
+    """Validate ``params`` before any work starts.
+
+    * A context dataset must not be an answer-key (gold dev/test) dataset: 400
+      ``context_dataset_not_allowed``.
+    * A seeded-defect run needs ``label_id`` (400 ``missing_label_id``); a cluster-targeted run
+      validates it when given. With a project taxonomy it must resolve (400 ``unknown_label``) and
+      the resolved canonical id replaces the caller's spelling; without a taxonomy any non-empty
+      label is accepted as a free label (trimmed).
+    """
+    out = dict(params or {})
+    raw_dataset = out.get("context_dataset_id")
+    if raw_dataset is not None:
+        from app.models.dataset import Dataset, DatasetType
+
+        try:
+            dataset = await db.get(Dataset, int(raw_dataset))
+        except (TypeError, ValueError):
+            dataset = None
+        if dataset is not None and dataset.project_id == project_id and dataset.dataset_type in (
+            DatasetType.GOLD_DEV, DatasetType.GOLD_TEST,
+        ):
+            raise HTTPException(400, {
+                "error_code": "context_dataset_not_allowed",
+                "message": (
+                    "The answer key cannot be used as a context dataset: its rows are held out for "
+                    "evaluation. Pick a raw, training or other data dataset."
+                ),
+                "metadata": {"dataset_id": dataset.id, "dataset_type": getattr(dataset.dataset_type, "value", str(dataset.dataset_type))},
+            })
+    mode_value = getattr(mode, "value", mode)
+    if mode_value not in ("seeded_defect", "cluster_targeted"):
+        return out
+    from app.services import label_taxonomy_service as lts
+
+    raw = out.get("label_id")
+    index = await lts.load_taxonomy_index(db, project_id)
+    given = raw is not None and not (isinstance(raw, str) and not raw.strip())
+    if not given:
+        if mode_value == "cluster_targeted":
+            out.pop("label_id", None)
+            return out
+        raise HTTPException(400, {
+            "error_code": "missing_label_id",
+            "message": "A seeded-defect run needs params.label_id (a label id; from the project taxonomy when it has one).",
+            "metadata": {"taxonomy_version": index.version if index else None},
+        })
+    if index is None:
+        if not isinstance(raw, str):
+            raise HTTPException(400, {
+                "error_code": "unknown_label",
+                "message": "params.label_id must be a text label.",
+                "metadata": {"label_id": raw, "taxonomy_version": None, "known_labels": [], "ambiguous": False},
+            })
+        out["label_id"] = raw.strip()
+        return out
+    label, how = index.resolve(raw) if isinstance(raw, str) else (None, None)
+    if label is None:
+        known = list(index.entries)[:40]
+        if how == "ambiguous":
+            message = f"Label {raw!r} matches more than one taxonomy entry; use the entry id."
+        else:
+            message = f"Label {raw!r} is not in the project's label taxonomy."
+        raise HTTPException(400, {
+            "error_code": "unknown_label",
+            "message": message,
+            "metadata": {
+                "label_id": raw,
+                "taxonomy_version": index.version,
+                "known_labels": known,
+                "ambiguous": how == "ambiguous",
+            },
+        })
+    out["label_id"] = label
+    return out
 
 
 class RelabelAnswerKeyRequest(BaseModel):
@@ -1528,6 +1613,7 @@ async def run_synth_playbook(
         mode = SynthMode(req.mode)
     except ValueError:
         raise HTTPException(400, f"Unknown synth mode '{req.mode}'.")
+    playbook_params = await _checked_playbook_params(db, project_id, mode, req.params)
 
     if async_job:
         import asyncio
@@ -1611,6 +1697,7 @@ async def run_synth_playbook(
                         backend=req.backend if cloud_override is None else None,
                         backend_override=cloud_override,
                         progress=_chunk_progress,
+                        params=playbook_params,
                     )
                     await runner_db.commit()
             finally:
@@ -1658,9 +1745,17 @@ async def run_synth_playbook(
                         f"reframe the project's label vocabulary to be "
                         f"less alarm-bell-y for the model."
                     )
+                import json
+
+                reject_note = ""
+                if result.get("rejected_count"):
+                    reject_note = (
+                        f"{result['rejected_count']} teacher rows were rejected: "
+                        f"{json.dumps(result.get('reject_summary') or {}, sort_keys=True)}. "
+                    )
                 raise RuntimeError(
                     f"Playbook {req.mode} produced 0 accepted rows via "
-                    f"{backend_used} in {elapsed_sec:.1f}s. "
+                    f"{backend_used} in {elapsed_sec:.1f}s. {reject_note}"
                     f"Likely causes: (1) LLM backend returned text that "
                     f"didn't match the playbook's expected JSON shape, "
                     f"(2) every generated row failed validation (e.g. "
@@ -1685,6 +1780,9 @@ async def run_synth_playbook(
                 "elapsed_sec": elapsed_sec,
                 "mode": req.mode,
                 "target_class": req.target_class,
+                "rejected_count": result.get("rejected_count", 0),
+                "reject_summary": result.get("reject_summary") or {},
+                "rejected_examples": result.get("rejected_examples") or [],
                 # Chunked runs (command backend): chunks that failed after the
                 # backend's retries — the rest of the rows were kept.
                 **({"chunks": result["chunks"], "failed_chunks": result.get("failed_chunks") or []} if result.get("chunks") else {}),
@@ -1701,6 +1799,7 @@ async def run_synth_playbook(
                 "target_count": req.target_count,
                 "target_class": req.target_class,
                 "backend": req.backend,
+                **({"params": playbook_params} if playbook_params else {}),
             },
         )
         return JSONResponse(
@@ -1720,6 +1819,7 @@ async def run_synth_playbook(
             target_class=req.target_class,
             backend=req.backend if cloud_override is None else None,
             backend_override=cloud_override,
+            params=playbook_params,
         )
     except SynthBackendError as e:
         raise HTTPException(503, str(e))
@@ -1781,6 +1881,7 @@ async def dry_run_synth_playbook(
         mode = SynthMode(req.mode)
     except ValueError:
         raise HTTPException(400, f"Unknown synth mode '{req.mode}'.")
+    playbook_params = await _checked_playbook_params(db, project_id, mode, req.params)
 
     try:
         cloud_override = await _resolve_cloud_backend_override(
@@ -1795,6 +1896,7 @@ async def dry_run_synth_playbook(
             backend=req.backend if cloud_override is None else None,
             backend_override=cloud_override,
             dry_run=True,
+            params=playbook_params,
         )
     except HTTPException:
         # Re-raise the 402-no-key / 400-malformed-pin errors from
@@ -1837,4 +1939,7 @@ async def dry_run_synth_playbook(
         "backend_used": result.get("backend_used", req.backend or "auto"),
         "elapsed_sec": result.get("elapsed_sec", 0.0),
         "prompt_snippet": result.get("prompt_snippet", ""),
+        "rejected_count": result.get("rejected_count", 0),
+        "reject_summary": result.get("reject_summary") or {},
+        "rejected_examples": result.get("rejected_examples") or [],
     }

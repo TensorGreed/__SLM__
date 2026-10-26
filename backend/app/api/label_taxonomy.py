@@ -14,8 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.project import Project
 from app.services import label_taxonomy_service as lts
+from app.services.code_findings_prompt import refresh_guided_json
 
 router = APIRouter(prefix="/projects/{project_id}/label-taxonomy", tags=["Label Taxonomy"])
+guided_json_router = APIRouter(prefix="/projects/{project_id}/guided-json", tags=["Label Taxonomy"])
 
 
 class TaxonomyBody(BaseModel):
@@ -70,6 +72,7 @@ async def put_taxonomy(project_id: int, body: TaxonomyBody, db: AsyncSession = D
     if errors or tax is None:
         raise _invalid(errors)
     lts.set_project_taxonomy(project, tax)
+    refresh_guided_json(project)
     await db.commit()
     return lts.taxonomy_status(project)
 
@@ -99,6 +102,7 @@ async def restore_taxonomy(project_id: int, body: RestoreBody, db: AsyncSession 
         raise HTTPException(404, f"Taxonomy version '{body.version}' not found")
     if outcome == "stub":
         raise HTTPException(409, f"Taxonomy version '{body.version}' can no longer be restored: its snapshot is no longer kept.")
+    refresh_guided_json(project)
     await db.commit()
     return lts.taxonomy_status(project)
 
@@ -108,6 +112,7 @@ async def delete_taxonomy(project_id: int, db: AsyncSession = Depends(get_db)) -
     """Remove the taxonomy (its versions stay in the history for restore)."""
     project = await _project(db, project_id)
     lts.set_project_taxonomy(project, None)
+    refresh_guided_json(project)
     await db.commit()
     return lts.taxonomy_status(project)
 
@@ -123,3 +128,13 @@ async def resolve(project_id: int, label: str = Query(..., min_length=0), db: As
         "title": index.title(label_id) if index and label_id else None,
         "candidates": index.candidates(label) if index and matched_by == "ambiguous" else [],
     }
+
+
+@guided_json_router.get("")
+async def get_guided_json(project_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """The JSON Schema a serving layer can constrain generation with (code-findings
+    projects), or ``null``. Refreshed whenever the taxonomy changes."""
+    project = await _project(db, project_id)
+    cfg = project.runtime_config if isinstance(project.runtime_config, dict) else {}
+    hint = cfg.get("guided_json")
+    return {"guided_json": hint if isinstance(hint, dict) else None}

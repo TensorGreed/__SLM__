@@ -95,6 +95,9 @@ async def apply_recipe_to_project(
     project.selected_recipe = snapshot
     project.base_model_name = recipe.suggested_base_model
     _sync_dataset_adapter_preset(project, recipe)
+    from app.services.code_findings_prompt import sync_guided_json
+
+    sync_guided_json(project)
 
     await db.flush()
     await db.refresh(project)
@@ -145,6 +148,9 @@ async def clear_recipe_from_project(db: AsyncSession, project_id: int) -> Projec
     if project is None:
         raise ValueError(f"Project {project_id} not found")
     project.selected_recipe = None
+    from app.services.code_findings_prompt import sync_guided_json
+
+    sync_guided_json(project)
     await db.flush()
     await db.refresh(project)
     return project

@@ -157,6 +157,21 @@ _STRUCTURED_OUTPUT_ALIASES = (
     "structured_output", "json", "labels", "entities", "extracted", "target", "answer", "output",
 )
 JSON_EXTRACTION_RECIPE_ID = "json-extraction"
+CODE_FINDINGS_RECIPE_ID = "code-findings"
+
+
+def _is_findings_row(row: dict[str, Any]) -> bool:
+    import json
+
+    if row.get("row_kind") == "findings":
+        return True
+    value = row.get("findings_json")
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (ValueError, TypeError):
+            return False
+    return isinstance(value, dict) and isinstance(value.get("findings"), list)
 
 
 def structured_recipe_for_rows(
@@ -166,7 +181,9 @@ def structured_recipe_for_rows(
 ) -> str:
     """``json-extraction`` when the gold payload is a JSON object WITHOUT an
     ``entities`` list (a fixed-field record); ``span-extraction`` (``default``)
-    for entity lists or when nothing can be read."""
+    for entity lists or when nothing can be read. ``code-findings`` when rows
+    are findings rows (``row_kind == "findings"``, or a ``findings_json`` /
+    payload object with a ``findings`` list)."""
     import json
 
     saw_record = False
@@ -178,6 +195,8 @@ def structured_recipe_for_rows(
     for row in rows[:50]:
         if not isinstance(row, dict):
             continue
+        if _is_findings_row(row):
+            return CODE_FINDINGS_RECIPE_ID
         payload: Any = None
         for alias in (*mapped_columns, *_STRUCTURED_OUTPUT_ALIASES):
             value = row.get(alias)
@@ -193,6 +212,8 @@ def structured_recipe_for_rows(
         if isinstance(payload, list):
             return default
         if isinstance(payload, dict):
+            if isinstance(payload.get("findings"), list):
+                return CODE_FINDINGS_RECIPE_ID
             if isinstance(payload.get("entities"), list):
                 return default
             saw_record = True
@@ -407,7 +428,7 @@ async def confirm_task_shape(
     if profile == "structured_extraction":
         # An entity list keeps span-extraction; a fixed-field JSON record is
         # json-extraction. The caller may pass the detector's pick.
-        if recipe_id in ("span-extraction", JSON_EXTRACTION_RECIPE_ID):
+        if recipe_id in ("span-extraction", JSON_EXTRACTION_RECIPE_ID, CODE_FINDINGS_RECIPE_ID):
             chosen_recipe_id = recipe_id
         else:
             try:
@@ -427,6 +448,9 @@ async def confirm_task_shape(
         snapshot["confirmed_via"] = "task_shape"
         snapshot["confirmed_at"] = datetime.now(timezone.utc).isoformat()
         project.selected_recipe = snapshot
+        from app.services.code_findings_prompt import sync_guided_json
+
+        sync_guided_json(project)
         if not (project.base_model_name or "").strip():
             project.base_model_name = recipe.suggested_base_model
     await db.flush()

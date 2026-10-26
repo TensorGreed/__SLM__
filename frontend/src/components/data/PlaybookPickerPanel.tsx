@@ -32,6 +32,11 @@ import {
     listSynthBackends,
     runPlaybookAsync,
 } from '../../api/synthPlaybook';
+import { getJob } from '../../api/jobs';
+import type { Job } from '../../api/jobs';
+import type { PlaybookParams, RejectFields } from '../../api/synthPlaybook';
+import CodeFindingsParamsForm from './CodeFindingsParamsForm';
+import SynthRejectSummary from './SynthRejectSummary';
 import ErrorPanel from '../shared/ErrorPanel';
 import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
 import { useJobsStore } from '../../stores/jobsStore';
@@ -47,6 +52,7 @@ const VALID_SYNTH_MODES: ReadonlySet<SynthMode> = new Set([
     'refusals',
     'format_robustness',
     'cluster_targeted',
+    'seeded_defect',
 ]);
 
 interface Props {
@@ -81,6 +87,10 @@ const MODE_LABELS: Record<SynthMode, { label: string; hint: string }> = {
     cluster_targeted: {
         label: 'Target a failure cluster',
         hint: 'Generate examples mirroring a specific eval failure pattern.',
+    },
+    seeded_defect: {
+        label: 'Seed a defect',
+        hint: 'Have the teacher write clean code, then insert one defect of a chosen label and mark its lines.',
     },
 };
 
@@ -123,6 +133,11 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
     // remediation + metadata, instead of an opaque banner.
     const [runError, setRunError] = useState<ErrorEnvelope | null>(null);
     const [result, setResult] = useState<PlaybookResult | null>(null);
+    // code-findings seeded-defect params (null until a label is picked) and
+    // the queued job whose result carries the reject summary.
+    const [playbookParams, setPlaybookParams] = useState<PlaybookParams | null>(null);
+    const [watchedJobId, setWatchedJobId] = useState<number | null>(null);
+    const [jobRejects, setJobRejects] = useState<RejectFields | null>(null);
     // ── Backend picker (Epic 5 Phase 5a) ──────────────────────────
     // ``null`` selectedBackend means "auto-pick on the server" (the
     // default for v1 + every existing call site). The dropdown only
@@ -262,6 +277,25 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
 
+    // Follow the queued job until it ends, then show what it rejected.
+    useEffect(() => {
+        if (watchedJobId === null) return;
+        let cancelled = false;
+        const tick = async () => {
+            try {
+                const job: Job = await getJob(watchedJobId);
+                if (cancelled) return;
+                if (['succeeded', 'failed', 'cancelled'].includes(job.status)) {
+                    setJobRejects((job.result ?? null) as RejectFields | null);
+                    setWatchedJobId(null);
+                }
+            } catch { /* the bell still shows the job */ }
+        };
+        void tick();
+        const timer = window.setInterval(() => { void tick(); }, 4000);
+        return () => { cancelled = true; window.clearInterval(timer); };
+    }, [watchedJobId]);
+
     // Kicks the actual async job. Separated from handleRun so the
     // retry-with-Qwen button can call it directly after the model
     // is changed — without re-running the dry-run that we just did.
@@ -279,7 +313,10 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 mode: selectedMode,
                 targetCount,
                 backend,
+                params: selectedMode === 'seeded_defect' ? playbookParams : null,
             });
+            setJobRejects(null);
+            setWatchedJobId(job.id);
             toast.info(
                 `Synth started — track in the notification bell (↑ top-right)`,
                 4000,
@@ -298,7 +335,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
         } finally {
             setRunning(false);
         }
-    }, [projectId, selectedMode, targetCount, effectiveBackend]);
+    }, [projectId, selectedMode, targetCount, effectiveBackend, playbookParams]);
 
     // P2 — pre-flight dry-run. Generates 1 row against the chosen
     // model + playbook, reports back in ~3-10s. If it succeeds, we
@@ -316,6 +353,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 mode: selectedMode,
                 targetCount: 1,
                 backend: effectiveBackend,
+                params: selectedMode === 'seeded_defect' ? playbookParams : null,
             });
             setPreflight(result);
             if (!result.ok) {
@@ -330,7 +368,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
         } finally {
             setPreflighting(false);
         }
-    }, [projectId, selectedMode, effectiveBackend, submitJob]);
+    }, [projectId, selectedMode, effectiveBackend, submitJob, playbookParams]);
 
     // P1 — "Retry with Qwen 2.5". Pick the largest qwen2.5 we know
     // about, swap the model picker to it, re-run the dry-run. We
@@ -519,6 +557,10 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                     );
                 })}
             </fieldset>
+
+            {recipeId === 'code-findings' && selectedMode === 'seeded_defect' && (
+                <CodeFindingsParamsForm projectId={projectId} onChange={setPlaybookParams} />
+            )}
 
             <div className="playbook-picker__count">
                 <label htmlFor="playbook-target-count">Target rows</label>
@@ -716,7 +758,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                     type="button"
                     className="btn btn-primary"
                     onClick={handleRun}
-                    disabled={!selectedMode || running || preflighting}
+                    disabled={!selectedMode || running || preflighting || (selectedMode === 'seeded_defect' && !playbookParams)}
                     data-testid="playbook-picker-run"
                 >
                     {preflighting
@@ -823,6 +865,8 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                     testIdPrefix="playbook-picker-run-error"
                 />
             )}
+
+            <SynthRejectSummary result={jobRejects ?? result} />
 
             {result && (
                 <div className="playbook-picker__result" data-testid="playbook-picker-result">

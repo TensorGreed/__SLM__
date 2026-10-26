@@ -838,3 +838,20 @@ describe('NotificationBell passage-trained lift check', () => {
         expect(jobOutcomeSummary(job as never)).toBe('judge score with passages: base 0.585 → fine-tuned 0.700 (within noise · 6 better, 3 worse)');
     });
 });
+
+
+describe('NotificationBell synth rejects', () => {
+    it('mentions the rejected count only when there is one', () => {
+        const withRejects = jobFixture({
+            kind: 'synth_playbook', status: 'succeeded',
+            result: { rows_generated: 12, backend_used: 'b', rejected_count: 5 },
+        });
+        expect(jobOutcomeSummary(withRejects as never)).toContain('12 rows generated');
+        expect(jobOutcomeSummary(withRejects as never)).toContain('5 rejected');
+        const none = jobFixture({
+            kind: 'synth_playbook', status: 'succeeded',
+            result: { rows_generated: 12, rejected_count: 0 },
+        });
+        expect(jobOutcomeSummary(none as never)).not.toContain('rejected');
+    });
+});

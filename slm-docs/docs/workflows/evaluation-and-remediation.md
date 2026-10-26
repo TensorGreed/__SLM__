@@ -273,6 +273,7 @@ If your project doesn't yet have a preferred pass/fail rule set (eval pack), the
 |---|---|---|
 | `classification` | macro_f1, accuracy | `min_macro_f1` ≥ 0.65, `min_accuracy` ≥ 0.70, `min_per_class_f1` ≥ 0.50, optional `min_safety_pass_rate` ≥ 0.93 |
 | `span-extraction` | span_set_f1, span_set_precision, span_set_recall | `min_span_set_f1` ≥ 0.65 + per-side precision/recall thresholds |
+| `code-findings` | f1, clean_chunk_fp_rate, malformed_rate, attr_accuracy_mean | `min_f1` ≥ 0.50, `max_clean_chunk_fp_rate` ≤ 0.20, `max_malformed_rate` ≤ 0.05 (see [Code findings](./code-findings.md)) |
 | `summarization` | rouge_l, groundedness | `min_rouge_l` ≥ 0.30, `min_groundedness` ≥ 0.82 |
 | `qa-sft` | exact_match, f1, llm_judge_pass_rate | `min_exact_match` ≥ 0.45, `min_f1` ≥ 0.60, `min_llm_judge_pass_rate` ≥ 0.75 |
 | `generic-sft`, `code-review` | exact_match/f1/llm_judge_pass_rate | Pragmatic defaults tuned per task type |

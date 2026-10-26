@@ -54,6 +54,7 @@ from app.services.synth_playbooks import (
     get_response_schema,
     list_playbooks,
 )
+from app.services.synth_playbooks.base import reject_report
 from app.config import settings
 from app.services.synthetic_service import get_or_create_synthetic_dataset
 
@@ -63,12 +64,14 @@ from app.services.synthetic_service import get_or_create_synthetic_dataset
 # ─────────────────────────────────────────────────────────────────────
 
 
-async def _load_gold_rows(db: AsyncSession, project_id: int) -> list[dict[str, Any]]:
+async def _load_gold_rows(
+    db: AsyncSession, project_id: int, *, dev_only: bool = False
+) -> list[dict[str, Any]]:
+    """The project's answer-key rows. ``dev_only`` loads the dev split alone (the code-findings
+    playbooks seed from it; the held-out test split is never a seed)."""
+    types = [DatasetType.GOLD_DEV] if dev_only else [DatasetType.GOLD_DEV, DatasetType.GOLD_TEST]
     result = await db.execute(
-        select(Dataset).where(
-            Dataset.project_id == project_id,
-            Dataset.dataset_type.in_([DatasetType.GOLD_DEV, DatasetType.GOLD_TEST]),
-        )
+        select(Dataset).where(Dataset.project_id == project_id, Dataset.dataset_type.in_(types))
     )
     rows: list[dict[str, Any]] = []
     for dataset in result.scalars():
@@ -79,6 +82,108 @@ async def _load_gold_rows(db: AsyncSession, project_id: int) -> list[dict[str, A
             continue
         rows.extend(_load_records_from_file(path))
     return rows
+
+
+def _row_source_blocked(record: Any, usage: dict, provenance_service: Any) -> bool:
+    """True when the row's ``data_source_id`` is an evaluation-only / retrieval-only source."""
+    if not isinstance(record, dict):
+        return False
+    sid = record.get("data_source_id")
+    try:
+        return sid is not None and usage.get(int(sid)) in (provenance_service.USAGE_EVAL, provenance_service.USAGE_RAG)
+    except (TypeError, ValueError):
+        return False
+
+
+DEFAULT_CONTEXT_SAMPLE_SIZE = 20
+MAX_DOCUMENT_CHUNKS = 2000
+
+
+async def _prepare_code_context(
+    db: AsyncSession, project_id: int, ctx: PlaybookContext, params: dict[str, Any]
+) -> None:
+    """Fill the seeds the code-findings playbooks draw from (``uses_code_seeds``):
+
+    * ``document_chunks``: code chunks of the project's code documents (git repository /
+      website sources; cleaned passages that carry ``path`` + ``start_line``). Documents whose
+      source is ``eval``- or ``rag``-only in the licence ledger never seed training data and
+      are skipped, the same gate as the documents -> Q&A flow. They are UNLABELLED, so the
+      playbooks treat them as assumed-clean candidates.
+    * ``taxonomy``: the project's label taxonomy index (None when it has none).
+    * ``context_values`` / ``context_column``: up to ``context_sample_size`` distinct values of
+      ``params.context_column`` in dataset ``params.context_dataset_id`` (a data-carrying context),
+      skipping rows whose ledger source is eval- or rag-only.
+    """
+    from app.services import label_taxonomy_service, provenance_service
+    from app.services.span_relabel_service import load_document_passages
+
+    ctx["taxonomy"] = await label_taxonomy_service.load_taxonomy_index(db, project_id)
+
+    # Answer-key (dev) rows from an evaluation-only / retrieval-only source never seed training data.
+    usage_map = await provenance_service.source_usage_map(db, project_id)
+    ctx["gold_rows"] = [
+        r for r in ctx.get("gold_rows") or []
+        if not _row_source_blocked(r, usage_map, provenance_service)
+    ]
+
+    excluded = await provenance_service.training_excluded_document_ids(db, project_id)
+    passages = provenance_service.drop_excluded_passages(load_document_passages(project_id), excluded)
+    chunks = [
+        p for p in passages
+        if isinstance(p.get("path"), str) and p.get("path")
+        and isinstance(p.get("start_line"), int) and not isinstance(p.get("start_line"), bool)
+    ]
+    ctx["document_chunks"] = chunks[:MAX_DOCUMENT_CHUNKS]
+
+    dataset_id = params.get("context_dataset_id")
+    column = params.get("context_column")
+    if dataset_id is None and column is None:
+        return
+    if dataset_id is None or not isinstance(column, str) or not column.strip():
+        raise ValueError("params.context_dataset_id and params.context_column must be given together.")
+    try:
+        dataset_id = int(dataset_id)
+    except (TypeError, ValueError):
+        raise ValueError("params.context_dataset_id must be a dataset id.") from None
+    dataset = await db.get(Dataset, dataset_id)
+    if dataset is None or dataset.project_id != project_id:
+        raise ValueError(f"Context dataset {dataset_id} not found in this project.")
+    if dataset.dataset_type in (DatasetType.GOLD_DEV, DatasetType.GOLD_TEST):
+        raise ValueError(
+            f"Context dataset {dataset_id} is an answer key (held out for evaluation); "
+            "pick a raw, training or other data dataset."
+        )
+    if not dataset.file_path or not Path(dataset.file_path).exists():
+        raise ValueError(f"Context dataset {dataset_id} has no data file.")
+    column = column.strip()
+    records = _load_records_from_file(Path(dataset.file_path))
+    if not any(isinstance(r, dict) and column in r for r in records):
+        raise ValueError(f"Column {column!r} is not in context dataset {dataset_id}.")
+    usage = usage_map
+    seen: dict[str, None] = {}
+    for record in records:
+        if not isinstance(record, dict) or _row_source_blocked(record, usage, provenance_service):
+            continue
+        value = record.get(column)
+        if isinstance(value, (dict, list)):
+            continue
+        text = "" if value is None else str(value).strip()
+        if text:
+            seen.setdefault(text, None)
+    if not seen:
+        raise ValueError(
+            f"Column {column!r} of dataset {dataset_id} has no usable values "
+            "(empty, or every row comes from an evaluation-only / retrieval-only source)."
+        )
+    import random
+
+    try:
+        size = max(1, min(100, int(params.get("context_sample_size") or DEFAULT_CONTEXT_SAMPLE_SIZE)))
+    except (TypeError, ValueError):
+        size = DEFAULT_CONTEXT_SAMPLE_SIZE
+    values = list(seen)
+    ctx["context_values"] = values if len(values) <= size else sorted(random.Random(0).sample(values, size))
+    ctx["context_column"] = column
 
 
 _DEFENSIVE_USE_PREAMBLE = (
@@ -202,6 +307,7 @@ async def run_playbook(
     backend_override: SynthBackend | None = None,
     dry_run: bool = False,
     progress: Callable[[float, str], Awaitable[None]] | None = None,
+    params: dict[str, Any] | None = None,
 ) -> PlaybookResult:
     """Run the playbook matching (project's recipe, mode) and persist
     accepted rows into the project's synthetic dataset.
@@ -240,8 +346,11 @@ async def run_playbook(
             f"v1 ships POSITIVES_PARAPHRASE only — Epic 2b adds the rest."
         )
 
-    gold_rows = await _load_gold_rows(db, project_id)
-    if not gold_rows:
+    # code-findings playbooks can seed from code documents instead of an answer key, and from
+    # the dev split only: the held-out test split never becomes a training prompt.
+    uses_code_seeds = bool(getattr(playbook, "uses_code_seeds", False))
+    gold_rows = await _load_gold_rows(db, project_id, dev_only=uses_code_seeds)
+    if not gold_rows and not uses_code_seeds:
         raise ValueError(
             "Project has no answer-key rows. Import an answer key or instantiate "
             "from a project template first."
@@ -255,7 +364,13 @@ async def run_playbook(
         "failure_cluster": failure_cluster,
         "target_class": target_class,
         "target_count": target_count,
+        "params": dict(params or {}),
+        "rejects": [],
     }
+    if uses_code_seeds:
+        await _prepare_code_context(db, project_id, ctx, ctx["params"])
+        # Varies the seed window from run to run (stable within a run, so a resumed run agrees).
+        ctx["seed_nonce"] = _peek_next_id(settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl")
 
     selected_backend = backend_override or pick_backend(backend, registry=BACKEND_REGISTRY)
 
@@ -336,6 +451,7 @@ async def run_playbook(
         "raw_llm_snippet": short_snippet(raw_llm_output),
         "refusal_detected": _looks_like_refusal(raw_llm_output),
     }
+    result.update(reject_report(ctx.get("rejects")))
     if chunk_meta:
         result.update(chunk_meta)
     return result  # type: ignore[return-value]
@@ -412,6 +528,10 @@ def _append_checkpoint(path: Path, entry: dict[str, Any]) -> None:
 
 def _row_key(row: SynthRow) -> str:
     payload = row.get("payload") or {}
+    if payload.get("row_kind") == "findings" and isinstance(payload.get("code"), str):
+        # Same code with different findings is a different example.
+        findings = json.dumps(payload.get("findings_json"), sort_keys=True, ensure_ascii=False)
+        return re.sub(r"\s+", " ", payload["code"]).strip().lower() + "\n" + findings
     for field in _DEDUP_FIELDS:
         value = payload.get(field)
         if isinstance(value, str) and value.strip():
@@ -447,7 +567,7 @@ async def _run_chunked(
     target_count = int(ctx["target_count"])
     sizes = chunk_sizes(target_count, rows_per_call)
     n = len(sizes)
-    first_prompt = playbook.build_prompt({**ctx, "target_count": sizes[0]}) + (  # type: ignore[typeddict-item]
+    first_prompt = playbook.build_prompt({**ctx, "target_count": sizes[0], "chunk_index": 0}) + (  # type: ignore[typeddict-item]
         f"\n\nBatch 1 of {n}: vary topics and wording; do not repeat earlier batches."
     )
     path = checkpoint_path_for(
@@ -479,10 +599,14 @@ async def _run_chunked(
             raise asyncio.CancelledError()
         if k in saved:
             _take(list(saved[k]["rows"]))
+            saved_rejects = saved[k].get("rejects")
+            if isinstance(saved_rejects, list) and isinstance(ctx.get("rejects"), list):
+                ctx["rejects"].extend(r for r in saved_rejects if isinstance(r, dict))
             resumed += 1
             last_raw = str(saved[k].get("raw_snippet") or last_raw)
         else:
-            chunk_ctx: PlaybookContext = {**ctx, "target_count": size}  # type: ignore[typeddict-item]
+            chunk_ctx: PlaybookContext = {**ctx, "target_count": size, "chunk_index": k}  # type: ignore[typeddict-item]
+            rejects_before = len(ctx["rejects"]) if isinstance(ctx.get("rejects"), list) else 0
             prompt = playbook.build_prompt(chunk_ctx) + (
                 f"\n\nBatch {k + 1} of {n}: vary topics and wording; do not repeat earlier batches."
             )
@@ -504,7 +628,12 @@ async def _run_chunked(
                 if accepted:
                     from .synth_playbooks.base import short_snippet
 
-                    _append_checkpoint(path, {"chunk": k, "rows": accepted, "raw_snippet": short_snippet(raw)})
+                    chunk_rejects = (
+                        list(ctx["rejects"][rejects_before:]) if isinstance(ctx.get("rejects"), list) else []
+                    )
+                    _append_checkpoint(path, {
+                        "chunk": k, "rows": accepted, "raw_snippet": short_snippet(raw), "rejects": chunk_rejects,
+                    })
                     _take(list(accepted))
                 else:
                     failed.append({"chunk": k + 1, "reason": "no rows accepted from the reply"})

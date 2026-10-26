@@ -561,3 +561,73 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
 - Tests: `tests/test_label_taxonomy.py`, `tests/test_code_finding_mappers.py` (mappers, introspector,
   acceptance through the API).
 
+
+## Code-findings synth playbooks + the reject mechanism (G4)
+
+- Recipe `code-findings`, three playbooks under `synth_playbooks/`: `code_findings_seeded_defect.py`
+  (`SynthMode.SEEDED_DEFECT`, new), `code_findings_hard_negatives.py`, `code_findings_cluster_targeted.py`
+  (shares the seeded validator via `build_defect_rows`; helpers in `_code_findings_common.py`). Output
+  rows are canonical findings rows (`row_kind`, `code`, `language`, `path`, `start_line`, recomputed
+  `end_line`, `findings_json`, `labels_raw`, `taxonomy_version`); hard negatives also carry
+  `negative_kind` (`fixed` / `safe_lookalike` / `test_fixture`). Finding lines are absolute.
+- Seeds: seeded + cluster modes need CLEAN chunks: answer-key rows with `findings == []` from the **GOLD_DEV
+  split only** (`_load_gold_rows(dev_only=True)` for `uses_code_seeds` playbooks; GOLD_TEST is held out and
+  never a seed; rows whose `data_source_id` is eval/rag-only are dropped), plus the
+  code chunks of the project's code documents (git repo / website sources: cleaned passages with `path`
+  + `start_line`; `_prepare_code_context` in `synth_playbook_service.py`). Document chunks are unlabelled,
+  so the prompt calls them only "assumed clean". Documents whose ledger source is `eval`/`rag`-only are
+  skipped (`training_excluded_document_ids`). Hard negatives need answer-key rows WITH findings. A project
+  with no answer key still runs when it has code documents (`uses_code_seeds` on the playbook). No seed
+  -> a diagnostic `ValueError` (400 sync, FAILED Job), never a silent 0-row success.
+- `POST .../synthetic/run-playbook` (+ `/dry-run`) takes `params`, handed to the playbook as
+  `ctx["params"]`. `seeded_defect`: `label_id` (required; resolved through the project taxonomy, else
+  400 `unknown_label` / `missing_label_id` in the structured envelope; the canonical id replaces the
+  caller's spelling), `attrs`, `context_dataset_id` + `context_column` (+ `context_sample_size`, default
+  20): distinct column values go into the prompt so defects involve real field names/values; rows from
+  eval/rag-only ledger sources are skipped. A context dataset may not be GOLD_DEV / GOLD_TEST (400
+  `context_dataset_not_allowed`, checked in `api/synthetic._checked_playbook_params`; the service raises
+  too). `label_id` is a free trimmed label when the project has no taxonomy; with one it resolves
+  (`unknown_label`); cluster_targeted validates it up front when given.
+- Seed rotation: `_code_findings_common.resolve_seeds(ctx, kind)` picks a window of seeds that moves with
+  `ctx["chunk_index"]` (set per chunk by `_run_chunked`) and `ctx["seed_nonce"]` (= next synthetic row id,
+  stable within a run) and stores it in `ctx["code_seeds"]`, so `build_prompt` and `validate` agree per chunk.
+  Per-chunk rejects are saved in the checkpoint entry (`rejects`) and re-added on resume.
+- The teacher returns `{"chunk": n, "code": ..., "finding": {...}}` (the prompt numbers every line with
+  its absolute line number); the validator re-checks the claim against the returned code (label, lines
+  inside the chunk, whitespace-normalised `evidence` inside the stated lines of at least 4 non-space
+  characters, code changed, length). The finding's lines must also overlap a line the teacher changed or
+  inserted (`difflib` of the returned code against the seed; the two lines bordering a pure deletion count):
+  a defect cited on untouched lines is `lines_not_changed`. Cluster-targeted reuses this validator.
+- Reject mechanism: any playbook validator may call `base.record_reject(ctx, reason, detail, payload)`;
+  `run_playbook` adds `rejected_count`, `reject_summary` ({reason: n}) and `rejected_examples` (cap 50)
+  to every result, and the async Job result carries them too (an all-rejected run fails with the summary
+  in its error). Reasons: seeded `parse_error empty_code unchanged_code label_mismatch line_out_of_range
+  evidence_not_in_lines evidence_too_short lines_not_changed code_too_long`; hard negatives `parse_error empty_code has_findings
+  code_too_long unchanged_code`; cluster adds `unknown_label`. Existing playbooks record none.
+- Dataset picker endpoints (`api/dataset_catalog.py`): `GET /projects/{id}/datasets` and
+  `GET /projects/{id}/datasets/{dataset_id}/columns` (first 200 rows; answer-key datasets refused).
+- Tests offline: the template backend answers prompts carrying `[brewslm:code-findings:<mode>]`
+  (`TemplateBackend`, `BREWSLM_TEMPLATE_SYNTH=1`). `tests/test_code_findings_playbooks.py`, `tests/test_code_findings_g4_fixes.py` (dev-split seeds, anchoring, rotation, reject resume, catalog).
+
+## Code-findings recipe: detection, adapter, manifest, guided JSON (G4)
+
+- `recipe_service._code_findings_recipe` (`code-findings`, adapter `structured-extraction`, scoring
+  `finding_set`; `code-review` is a different shape and untouched). Task-family maps still send
+  `structured_extraction` to `span-extraction`; `task_shape_service.structured_recipe_for_rows` returns
+  `code-findings` for rows with `row_kind == "findings"` or a `findings_json`/payload object holding a
+  `findings` list, and `confirm_task_shape` accepts it. Header sniffing: `code` + `findings[_json]`.
+- Adapter: `data_adapter_service._structured_parts` handles findings rows only in code-findings mode
+  (`adapter_config["finding_set"]`, stamped by `dataset_service` from the recipe's scoring mode, or a
+  `finding_labels` list); a json-extraction row that merely has a `findings_json` list keeps the field-match
+  prompt, and a code-findings row without `findings_json` is rejected as `findings_json_missing` (an
+  `INPUT_REJECT_REASONS` entry). Rows are handled as (raw `code`, indentation intact;
+  target = canonical compact JSON of `findings_json`; a clean chunk is a valid row). Prepared rows keep
+  `code`/`language`/`path`/`start_line` (the eval handler rebuilds the prompt from them).
+- Manifest `output_schema` (`dataset_service._finding_schema_stamp`): `scoring_mode`, `required:["findings"]`,
+  `finding_match`, `labels`, `label_parents` (taxonomy snapshot), `prompt_labels` + `taxonomy_version` (with a
+  taxonomy). Without one, `labels` = labels seen in the split and no label list is prompted.
+- Guided-JSON hint: `Project.runtime_config["guided_json"]` (`code_findings_prompt.sync_guided_json` /
+  `refresh_guided_json`), written on recipe apply / task-shape confirm, refreshed on taxonomy save / restore /
+  delete, dropped when the recipe changes; `GET /api/projects/{id}/guided-json`; copied into the export
+  manifest as `guided_json`.
+- Tests: `test_code_findings_recipe.py` (recipe, detection, prompt identity, adapter, stamp, hint, export).

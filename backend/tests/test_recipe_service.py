@@ -33,10 +33,11 @@ SCORING_MODE_SPAN_SET = "span_set"
 class RecipeCatalogTests(unittest.TestCase):
     """Sanity checks on the built-in recipe catalog itself."""
 
-    def test_ships_eight_built_in_recipes(self):
-        # Arc R-1 added `rag-protocol`; json-extraction is the 8th.
+    def test_ships_nine_built_in_recipes(self):
+        # Arc R-1 added `rag-protocol`; json-extraction is the 8th,
+        # code-findings the 9th.
         recipes = recipe_service.list_recipes()
-        self.assertEqual(len(recipes), 8)
+        self.assertEqual(len(recipes), 9)
         ids = {r.id for r in recipes}
         self.assertEqual(
             ids,
@@ -47,6 +48,7 @@ class RecipeCatalogTests(unittest.TestCase):
                 "summarization",
                 "json-extraction",
                 "code-review",
+                "code-findings",
                 "generic-sft",
                 "rag-protocol",
             },
@@ -62,7 +64,7 @@ class RecipeCatalogTests(unittest.TestCase):
             )
 
     def test_every_recipe_uses_a_known_scoring_mode(self):
-        valid_modes = {SCORING_MODE_FIELD_MATCH, SCORING_MODE_SPAN_SET}
+        valid_modes = {SCORING_MODE_FIELD_MATCH, SCORING_MODE_SPAN_SET, "finding_set"}
         for recipe in recipe_service.list_recipes():
             self.assertIn(
                 recipe.scoring_mode,
@@ -100,8 +102,8 @@ class RecipeCatalogTests(unittest.TestCase):
             recipe_service.RECIPE_CATALOG_VERSION,
         )
         self.assertEqual(catalog["catalog_source"], "builtin")
-        self.assertEqual(catalog["recipe_count"], 8)
-        self.assertEqual(len(catalog["recipes"]), 8)
+        self.assertEqual(catalog["recipe_count"], 9)
+        self.assertEqual(len(catalog["recipes"]), 9)
 
     def test_supported_task_profiles_subset_of_data_adapter_set(self):
         for profile in recipe_service.list_supported_task_profiles_for_recipes():
@@ -201,8 +203,8 @@ class RecipeApiTests(unittest.TestCase):
         resp = self.client.get("/api/recipes")
         self.assertEqual(resp.status_code, 200, resp.text)
         payload = resp.json()
-        self.assertEqual(payload["recipe_count"], 8)
-        self.assertEqual(len(payload["recipes"]), 8)
+        self.assertEqual(payload["recipe_count"], 9)
+        self.assertEqual(len(payload["recipes"]), 9)
         self.assertEqual(
             payload["catalog_version"],
             recipe_service.RECIPE_CATALOG_VERSION,

@@ -745,6 +745,103 @@ def _rag_protocol_recipe() -> Recipe:
     )
 
 
+def _code_findings_recipe() -> Recipe:
+    return Recipe(
+        id="code-findings",
+        name="Code findings",
+        headline="Train a model to point at the exact lines in a code chunk that match a label taxonomy.",
+        description=(
+            "For datasets where each row is a code chunk paired with a JSON "
+            "list of findings -- label, start line, end line, evidence, and "
+            "optional attributes. Lines are absolute file line numbers and "
+            "the model is scored on label + line-range overlap, so a clean "
+            "chunk (no findings) is as important as a flagged one. Works "
+            "with any label taxonomy you upload."
+        ),
+        icon="🔎",
+        task_profile="structured_extraction",
+        adapter_id="structured-extraction",
+        scoring_mode="finding_set",
+        default_input_column="code",
+        default_output_column="findings_json",
+        suggested_base_model="Qwen/Qwen2.5-Coder-7B-Instruct",
+        alt_base_models=[
+            "Qwen/Qwen2.5-Coder-3B-Instruct",
+            "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+        ],
+        target_profile="vllm_server",
+        training_plan_profile="balanced",
+        eval_pack_id="evalpack.general.default",
+        gold_template=GoldTemplate(
+            shape_label="code_findings",
+            min_rows_recommended=200,
+            fields=[
+                GoldFieldSpec(name="code", description="The code chunk to inspect."),
+                GoldFieldSpec(
+                    name="findings_json",
+                    description=(
+                        'A JSON object {"findings": [{label, start_line, end_line, evidence, attrs}]}; '
+                        'use {"findings": []} for a clean chunk.'
+                    ),
+                ),
+                GoldFieldSpec(name="language", required=False, description="Source language of the chunk."),
+                GoldFieldSpec(name="path", required=False, description="File path the chunk came from."),
+                GoldFieldSpec(
+                    name="start_line",
+                    required=False,
+                    description="Absolute file line number of the chunk's first line (default 1).",
+                ),
+            ],
+            example_row={
+                "row_kind": "findings",
+                "code": 'query = "SELECT * FROM users WHERE id = " + user_id\ncursor.execute(query)',
+                "language": "python",
+                "path": "app/db.py",
+                "start_line": 10,
+                "end_line": 11,
+                "findings_json": {
+                    "findings": [
+                        {
+                            "label": "injection.query",
+                            "start_line": 10,
+                            "end_line": 11,
+                            "evidence": "query = \"SELECT * FROM users WHERE id = \" + user_id",
+                            "attrs": {},
+                        }
+                    ]
+                },
+                "labels_raw": ["injection.query"],
+                "taxonomy_version": None,
+            },
+        ),
+        sample_eval_prompts=[
+            "[ a chunk that builds a database query by string concatenation with user input ]",
+            "[ a chunk that writes a password to a log line ]",
+            "[ a chunk of plain helper code with nothing to flag ]",
+        ],
+        data_acquisition_hints=[
+            "Import findings from a scanner or an existing labelled dataset (Data -> Import, code-dataset mappers) and upload your label taxonomy first.",
+            "Seed known defects into clean code with a teacher model (Data -> Generate: seeded defect).",
+            "Add hard negatives: look-alike code that must return no findings, so the model learns to stay quiet.",
+        ],
+        shape_signatures=[
+            ShapeSignature(
+                columns=[
+                    ShapeColumn(
+                        name_patterns=["code", "source", "snippet", "chunk"],
+                        column_role="input",
+                    ),
+                    ShapeColumn(
+                        name_patterns=["findings_json", "findings"],
+                        column_role="output",
+                    ),
+                ],
+                base_confidence=0.95,
+            ),
+        ],
+    )
+
+
 _BUILTIN_RECIPE_FACTORIES = [
     _qa_sft_recipe,
     _classification_recipe,
@@ -752,6 +849,7 @@ _BUILTIN_RECIPE_FACTORIES = [
     _json_extraction_recipe,
     _summarization_recipe,
     _code_review_recipe,
+    _code_findings_recipe,
     _generic_sft_recipe,
     _rag_protocol_recipe,
 ]

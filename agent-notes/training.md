@@ -190,3 +190,21 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `quality_retained=student/teacher` (`student_teacher_comparison_service.py`,
   `StudentTeacherComparisonPanel`). Same-tokenizer assumption. See
   `slm-docs/docs/workflows/distillation.md`.
+
+## Code-findings: chat template, not a handler wrap (G4)
+
+- code-findings rows train AND evaluate through the tokenizer chat template (Coder-Instruct base). The prompt
+  (`code_findings_prompt.build_code_findings_prompt`) deliberately starts with none of
+  `train._WRAPS_OWN_PROMPT_PREFIXES`, so `_rewrap_prompt_completion_row` re-wraps the adapter's
+  `source_text`/`target_text`; held-out eval applies the same template (`_apply_chat_template_if_present`).
+  Keep it that way: a new prefix would make the trainer pass the row through un-templated.
+- `StructuredExtractionHandler.wraps_own_prompt(ctx)` is mode-aware: False for `finding_set`, True for
+  field_match / span_set. Call sites use `eval_task_handler_service.handler_wraps_own_prompt(handler,
+  manifest)` (evaluation, teacher capture, train.py KD). The prompt is returned stripped because the
+  trainer strips `source_text` and eval does not; train and eval prompts are byte-identical (tested).
+- The prompt lists `output_schema.prompt_labels` (taxonomy ids, <= 80) - the adapter gets the same list as
+  `adapter_config["finding_labels"]`, injected in `dataset_service.combine_datasets`. Without a taxonomy
+  neither side lists labels. Offline distillation capture still sends the raw code row (not this prompt):
+  not supported for code-findings yet.
+- Training preflight treats `path` as a media reference only with a media extension (source-file paths on
+  findings rows were read as missing images).

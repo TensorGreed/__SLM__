@@ -1316,9 +1316,30 @@ def _build_structured_extraction_training_prompt(
     )
 
 
+def _is_finding_set_config(config: dict[str, Any]) -> bool:
+    """The structured-extraction adapter runs in code-findings mode only when the project's
+    scoring mode is ``finding_set`` (``finding_set`` flag, or an allowed-label list in the
+    config); a json-extraction row that merely has a ``findings_json`` list keeps its prompt."""
+    return bool(config.get("finding_set")) or "finding_labels" in config
+
+
 def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[str, str, Any, str | None]:
     """``(source, target, target_payload, reject_reason)``. Rejected when no input is found or
     when the canonical fallback built the input out of the gold record itself."""
+    from app.services.code_findings_prompt import canonical_findings_json, findings_payload
+
+    if _is_finding_set_config(config):
+        # Code findings: the input is the raw chunk (indentation intact), the
+        # target the canonical findings JSON. A clean chunk is a valid row. A
+        # row without a findings payload is rejected, never given the field-match prompt.
+        code = record.get("code") if isinstance(record.get("code"), str) else record.get("text")
+        payload = findings_payload(record)
+        if payload is None:
+            return "", "", None, "findings_json_missing"
+        if not isinstance(code, str) or not code.strip():
+            return "", "", payload, "adapter_unmappable_or_empty"
+        return code, canonical_findings_json(payload), payload, None
+
     source_fields = config.get("source_fields")
     output_fields = config.get("output_fields")
     source_aliases = list(source_fields) if isinstance(source_fields, list) and source_fields else [
@@ -1378,6 +1399,23 @@ def _map_structured_extraction(record: dict[str, Any], config: dict[str, Any]) -
     source, target, target_payload, reason = _structured_parts(record, config)
     if reason:
         return None
+
+    from app.services.code_findings_prompt import build_code_findings_prompt_from_row
+
+    if _is_finding_set_config(config):
+        # Same builder the eval handler uses; chat-template rows (no handler
+        # prefix), so no leading space on the target.
+        labels = config.get("finding_labels")
+        prompt = build_code_findings_prompt_from_row(
+            {**record, "code": source}, labels if isinstance(labels, list) else None
+        )
+        return {
+            "text": source,
+            "answer": target,
+            "structured_output": target_payload,
+            "source_text": prompt,
+            "target_text": target,
+        }
 
     # ζ-fix — wrap source_text with the handler's instruction
     # prompt so training rows match what the eval handler will

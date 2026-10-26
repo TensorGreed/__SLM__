@@ -648,7 +648,9 @@ def _resolve_adapter_for_rows(
 
 # Adapter-specific rejections (a row whose input would be its own label / gold record) that a
 # random split reports in the manifest instead of dropping silently.
-INPUT_REJECT_REASONS = ("classification_input_is_label", "structured_input_contains_gold")
+INPUT_REJECT_REASONS = (
+    "classification_input_is_label", "structured_input_contains_gold", "findings_json_missing",
+)
 
 
 def _count_input_rejects(rejected: list[tuple[int, str]], into: dict[str, int] | None) -> None:
@@ -932,11 +934,63 @@ async def resolve_training_dataset_types(
     return requested_list, report
 
 
-async def _recipe_output_schema(db: AsyncSession, project_id: int) -> dict[str, Any] | None:
+def _finding_match_config(project: Any) -> dict[str, Any]:
+    """Defaults for ``output_schema.finding_match``, overridable from
+    ``Project.runtime_config["finding_match"]``."""
+    match: dict[str, Any] = {"iou_threshold": 0.5, "attrs": [], "hierarchy": False, "parent_credit": 0.5}
+    cfg = project.runtime_config if project is not None and isinstance(project.runtime_config, dict) else {}
+    override = cfg.get("finding_match")
+    if isinstance(override, dict):
+        for key in match:
+            if key in override:
+                match[key] = override[key]
+    return match
+
+
+def _finding_schema_stamp(
+    project: Any, splits: dict[str, list[dict[str, Any]]] | None
+) -> dict[str, Any]:
+    """``finding_match`` + ``labels`` + ``label_parents`` (+ ``prompt_labels``,
+    the list the training/eval prompt names) for a code-findings manifest. A
+    project taxonomy supplies the ids and a parent snapshot; without one the
+    labels are those seen in the split and the prompt names none."""
+    from app.services import label_taxonomy_service as lts
+    from app.services.code_findings_prompt import (
+        findings_payload,
+        taxonomy_label_ids,
+        taxonomy_label_parents,
+    )
+
+    tax = lts.project_taxonomy(project) if project is not None else None
+    stamp: dict[str, Any] = {"finding_match": _finding_match_config(project)}
+    if tax:
+        stamp["labels"] = taxonomy_label_ids(tax)
+        stamp["label_parents"] = taxonomy_label_parents(tax)
+        stamp["prompt_labels"] = list(stamp["labels"])
+        stamp["taxonomy_version"] = lts.taxonomy_version(tax)
+    else:
+        seen: set[str] = set()
+        for rows in (splits or {}).values():
+            for row in rows:
+                payload = findings_payload(row) if isinstance(row, dict) else None
+                for item in (payload or {}).get("findings") or []:
+                    if isinstance(item, dict) and str(item.get("label") or "").strip():
+                        seen.add(str(item["label"]).strip())
+        stamp["labels"] = sorted(seen)
+        stamp["label_parents"] = {}
+    return stamp
+
+
+async def _recipe_output_schema(
+    db: AsyncSession,
+    project_id: int,
+    splits: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any] | None:
     """``{"scoring_mode", "required"[, "properties"]}`` from the project's
     selected recipe (``recipe_service.Recipe.scoring_mode``) plus the declared
     ``output_schema`` properties, None when the project has no recipe or it has
-    no scoring mode. Best-effort."""
+    no scoring mode. ``finding_set`` recipes also stamp ``finding_match`` /
+    ``labels`` / ``label_parents``. Best-effort."""
     try:
         project = await db.get(Project, project_id)
         snapshot = (project.selected_recipe if project and isinstance(project.selected_recipe, dict) else {})
@@ -953,11 +1007,15 @@ async def _recipe_output_schema(db: AsyncSession, project_id: int) -> dict[str, 
 
         # A project-declared record schema (json-extraction) adds properties
         # (types / enums) and its own required list.
-        return merge_manifest_output_schema(
+        required_default = ["entities"] if mode == "span_set" else ["findings"] if mode == "finding_set" else []
+        schema = merge_manifest_output_schema(
             mode,
-            ["entities"] if mode == "span_set" else [],
+            required_default,
             snapshot.get("output_schema") if mode == "field_match" else None,
         )
+        if mode == "finding_set":
+            schema.update(_finding_schema_stamp(project, splits))
+        return schema
     except Exception:  # noqa: BLE001 — never block a split over the recipe
         return None
 
@@ -1032,6 +1090,16 @@ async def combine_datasets(
         if isinstance(declared_props, dict) and declared_props:
             adapter_config = dict(adapter_config or {})
             adapter_config["fields"] = sorted(declared_props)
+
+    # code-findings: the allowed-label list the prompt names comes from the
+    # project taxonomy, the same list the manifest stamps for the eval handler.
+    if adapter_id == "structured-extraction" and not (adapter_config and "finding_set" in adapter_config):
+        declared = await _recipe_output_schema(db, project_id)
+        if (declared or {}).get("scoring_mode") == "finding_set":
+            adapter_config = dict(adapter_config or {})
+            adapter_config["finding_set"] = True
+            if "finding_labels" not in adapter_config and declared.get("prompt_labels"):
+                adapter_config["finding_labels"] = list(declared["prompt_labels"])
 
     result = await db.execute(
         select(Dataset).where(
@@ -1665,7 +1733,8 @@ async def split_dataset(
         if input_rejected:
             raise ValueError(
                 "No data available to split: every row's input would have been its own label or gold "
-                f"record ({input_rejected}). Name the input column with a field mapping (text / question)."
+                f"record ({input_rejected}). Name the input column with a field mapping (text / question); "
+                "a code-findings row needs a `findings_json` column holding its findings."
             )
         if prov_state.get("eval_rows") or prov_state.get("excluded_rag"):
             raise ValueError(
@@ -1883,7 +1952,7 @@ async def split_dataset(
         "task_profile_requested": _normalize_task_profile_value(task_profile),
         # The recipe's scoring mode (span_set / field_match) for the
         # structured-extraction eval handler, which reads it from here.
-        "output_schema": await _recipe_output_schema(db, project_id),
+        "output_schema": await _recipe_output_schema(db, project_id, splits),
         "stratify_by": str(stratify_by).strip() if stratify_by else None,
         "stratify_auto": auto_stratified,
         "stratification_report": stratification_report,

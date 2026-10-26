@@ -1,0 +1,19 @@
+.guided-json__facts {
+    margin: 0 0 var(--space-sm);
+    padding-left: var(--space-lg);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.guided-json__schema {
+    margin: 0;
+    padding: var(--space-sm);
+    max-height: 320px;
+    overflow: auto;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
+}

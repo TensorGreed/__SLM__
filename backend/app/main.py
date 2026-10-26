@@ -35,6 +35,7 @@ from app.api.eval_gaps import router as eval_gaps_router
 from app.api.distillation import router as distillation_router
 from app.api.hardware import router as hardware_router
 from app.api.dataset import router as dataset_router
+from app.api.dataset_catalog import router as dataset_catalog_router
 from app.api.data_studio import router as data_studio_router
 from app.api.gold import router as gold_router
 from app.api.synthetic import router as synthetic_router
@@ -54,7 +55,7 @@ from app.api.label_noise import router as label_noise_router
 from app.api.behavioral_tests import router as behavioral_tests_router
 from app.api.annotation import router as annotation_router
 from app.api.task_shape import router as task_shape_router
-from app.api.label_taxonomy import router as label_taxonomy_router
+from app.api.label_taxonomy import guided_json_router, router as label_taxonomy_router
 from app.api.dataset_import import (
     catalog_router as dataset_import_catalog_router,
     project_router as dataset_import_project_router,
@@ -391,6 +392,7 @@ app.include_router(training_config_gaps_router, prefix="/api", dependencies=API_
 app.include_router(eval_gaps_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(distillation_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(dataset_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(dataset_catalog_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(data_studio_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(gold_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(synthetic_router, prefix="/api", dependencies=API_DEPENDENCIES)
@@ -412,6 +414,7 @@ app.include_router(annotation_router, prefix="/api", dependencies=API_DEPENDENCI
 app.include_router(dataset_import_catalog_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(dataset_import_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(label_taxonomy_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(guided_json_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(task_shape_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(tokenization_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(redact_router, prefix="/api", dependencies=API_DEPENDENCIES)

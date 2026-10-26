@@ -2438,6 +2438,7 @@ def _auto_rag_eval_nudge(
 _PER_CLASS_RECIPE_IDS: frozenset[str] = frozenset({
     "classification",
     "span-extraction",
+    "code-findings",
 })
 
 

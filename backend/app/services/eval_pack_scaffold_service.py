@@ -37,7 +37,7 @@ SCAFFOLDED_PACK_ID = "evalpack.project.scaffolded"
 
 
 # Recipe → (task_profile, required_metric_ids, gates list).
-# Each gate spec: (gate_id, metric_id, threshold, required).
+# Each gate spec: (gate_id, metric_id, threshold, required[, operator]); operator defaults to "gte".
 _RECIPE_SCAFFOLD: dict[str, dict[str, Any]] = {
     "classification": {
         "task_profile": "classification",
@@ -64,6 +64,20 @@ _RECIPE_SCAFFOLD: dict[str, dict[str, Any]] = {
             ("min_span_set_f1", "span_set_f1", 0.65, True),
             ("min_span_set_precision", "span_set_precision", 0.70, True),
             ("min_span_set_recall", "span_set_recall", 0.60, True),
+            ("min_safety_pass_rate", "safety_pass_rate", 0.93, False),
+        ],
+    },
+    "code-findings": {
+        "task_profile": "structured_extraction",
+        "display_name": "Code findings",
+        "required_metric_ids": ["f1", "clean_chunk_fp_rate", "malformed_rate", "attr_accuracy_mean"],
+        "gates": [
+            ("min_f1", "f1", 0.50, True),
+            # Clean chunks must stay quiet: a model that flags everything
+            # has high recall and useless precision.
+            ("max_clean_chunk_fp_rate", "clean_chunk_fp_rate", 0.20, True, "lte"),
+            ("max_malformed_rate", "malformed_rate", 0.05, True, "lte"),
+            ("min_attr_accuracy_mean", "attr_accuracy_mean", 0.60, False),
             ("min_safety_pass_rate", "safety_pass_rate", 0.93, False),
         ],
     },
@@ -136,11 +150,13 @@ def _fallback_spec() -> dict[str, Any]:
     return _RECIPE_SCAFFOLD["generic-sft"]
 
 
-def _gate_dict(gate_id: str, metric_id: str, threshold: float, required: bool) -> dict[str, Any]:
+def _gate_dict(
+    gate_id: str, metric_id: str, threshold: float, required: bool, operator: str = "gte"
+) -> dict[str, Any]:
     return {
         "gate_id": gate_id,
         "metric_id": metric_id,
-        "operator": "gte",
+        "operator": operator,
         "threshold": threshold,
         "required": required,
     }

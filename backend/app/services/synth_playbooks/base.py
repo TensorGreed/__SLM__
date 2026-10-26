@@ -33,6 +33,8 @@ class SynthMode(str, Enum):
     REFUSALS = "refusals"
     FORMAT_ROBUSTNESS = "format_robustness"
     CLUSTER_TARGETED = "cluster_targeted"
+    # code-findings: ask the teacher to plant ONE defect in a clean chunk.
+    SEEDED_DEFECT = "seeded_defect"
 
 
 class PlaybookContext(TypedDict, total=False):
@@ -43,6 +45,26 @@ class PlaybookContext(TypedDict, total=False):
     failure_cluster: dict[str, Any] | None
     target_class: str | None
     target_count: int
+    # Free-form per-mode parameters from the API (``params`` on run-playbook).
+    params: dict[str, Any]
+    # Validators append {reason, detail, payload} here for every teacher row
+    # they drop; ``run_playbook`` aggregates it into the result
+    # (rejected_count / reject_summary / rejected_examples). Optional: playbooks
+    # that don't record rejects leave it empty.
+    rejects: list[dict[str, Any]]
+    # code-findings seeds, filled by the orchestrator (see _prepare_code_context):
+    # code chunks from the project's code documents, the project's label
+    # taxonomy index, and sampled values of a data-carrying context column.
+    document_chunks: list[dict[str, Any]]
+    taxonomy: Any
+    context_values: list[str]
+    context_column: str | None
+    # Seed rotation (code-findings): the 0-based chunk of a chunked run, a
+    # per-run nonce, and the seeds chosen for this (chunk) context so
+    # build_prompt and validate agree on them.
+    chunk_index: int
+    seed_nonce: int
+    code_seeds: dict[str, Any]
 
 
 class SynthRow(TypedDict):
@@ -68,6 +90,39 @@ class Playbook(Protocol):
     def parse_output(self, raw_llm_output: str, ctx: PlaybookContext) -> list[dict[str, Any]]: ...
 
     def validate(self, parsed_rows: list[dict[str, Any]], ctx: PlaybookContext) -> list[SynthRow]: ...
+
+
+def record_reject(ctx: PlaybookContext, reason: str, detail: str = "", payload: Any = None) -> None:
+    """Note a dropped teacher row on ``ctx['rejects']`` (a no-op when the caller
+    didn't provide the list). ``payload`` is trimmed so the Job result stays small."""
+    sink = ctx.get("rejects")
+    if sink is None:
+        return
+    sink.append({"reason": reason, "detail": detail[:300], "payload": _trim_payload(payload)})
+
+
+def _trim_payload(value: Any, *, limit: int = 600) -> Any:
+    if isinstance(value, str):
+        return value if len(value) <= limit else value[: limit - 1] + "…"
+    if isinstance(value, dict):
+        return {str(k): _trim_payload(v, limit=limit) for k, v in list(value.items())[:12]}
+    if isinstance(value, list):
+        return [_trim_payload(v, limit=limit) for v in value[:8]]
+    return value
+
+
+def reject_report(rejects: list[dict[str, Any]] | None, *, cap: int = 50) -> dict[str, Any]:
+    """``rejected_count`` / ``reject_summary`` / ``rejected_examples`` for a run result."""
+    rejects = rejects or []
+    summary: dict[str, int] = {}
+    for item in rejects:
+        reason = str(item.get("reason") or "unknown")
+        summary[reason] = summary.get(reason, 0) + 1
+    return {
+        "rejected_count": len(rejects),
+        "reject_summary": summary,
+        "rejected_examples": list(rejects[:cap]),
+    }
 
 
 def get_response_schema(playbook: Playbook, ctx: PlaybookContext) -> dict | None:

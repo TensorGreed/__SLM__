@@ -163,6 +163,9 @@ _RECOMMENDED_METRIC_IDS_PER_RECIPE: dict[str, list[str]] = {
     "qa-sft": ["exact_match", "f1", "llm_judge_pass_rate", "safety_pass_rate"],
     "generic-sft": ["exact_match", "f1", "llm_judge_pass_rate", "safety_pass_rate"],
     "code-review": ["llm_judge_pass_rate", "f1", "safety_pass_rate"],
+    "code-findings": [
+        "f1", "clean_chunk_fp_rate", "malformed_rate", "attr_accuracy_mean", "safety_pass_rate",
+    ],
     "rag-protocol": [
         "citation_rate", "hallucination_rate",
         "appropriate_refusal_rate", "format_consistency",

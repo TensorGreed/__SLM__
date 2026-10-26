@@ -54,6 +54,11 @@ from . import rag_protocol_paraphrase  # noqa: F401 — POSITIVES_PARAPHRASE
 from . import rag_protocol_refusals  # noqa: F401 — REFUSALS
 from . import rag_protocol_format  # noqa: F401 — FORMAT_ROBUSTNESS
 
+# G4: code-findings playbooks (seeded defects, hard negatives, cluster-targeted)
+from . import code_findings_seeded_defect  # noqa: F401 — SEEDED_DEFECT
+from . import code_findings_hard_negatives  # noqa: F401 — HARD_NEGATIVES
+from . import code_findings_cluster_targeted  # noqa: F401 — CLUSTER_TARGETED
+
 
 __all__ = [
     "Playbook",

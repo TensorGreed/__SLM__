@@ -142,6 +142,8 @@ function jobOutcomeSummaryCore(job: Job): string | null {
         if (clusterId) parts.push(`cluster ${clusterId.slice(0, 16)}`);
         if (backend) parts.push(`via ${backend}`);
         if (elapsed !== null) parts.push(`${elapsed.toFixed(1)}s`);
+        const rejected = typeof r.rejected_count === 'number' ? r.rejected_count : 0;
+        if (rejected > 0) parts.push(`${rejected} rejected`);
         return parts.length ? parts.join(' · ') : null;
     }
 

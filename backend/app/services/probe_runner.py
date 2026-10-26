@@ -115,6 +115,29 @@ def _matches_any(text: str, markers: Sequence[str]) -> bool:
     return any(m in low for m in markers)
 
 
+def _parse_findings(text: str | None) -> list[dict[str, Any]] | None:
+    """The ``findings`` list of a model output, or ``None`` when it does not
+    parse to an object with one."""
+    from app.services.eval_task_handler_service import StructuredExtractionHandler
+
+    parsed = StructuredExtractionHandler()._parse_json_safely(text or "")
+    items = parsed.get("findings") if isinstance(parsed, dict) else None
+    return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else None
+
+
+def _label_set(items: list[dict[str, Any]]) -> set[str]:
+    return {str(i.get("label")).strip() for i in items if str(i.get("label") or "").strip()}
+
+
+def probe_note(probe: dict[str, Any], output: str, base_output: str | None) -> str | None:
+    """Extra context a verdict should carry (not a pass/fail input)."""
+    if probe.get("property") == "findings_stable_vs_base":
+        base = _parse_findings(base_output)
+        if base is not None and not base:
+            return "base_had_no_findings"
+    return None
+
+
 def score_probe(
     probe: dict[str, Any],
     output: str,
@@ -129,6 +152,20 @@ def score_probe(
         base = (base_output or "").strip()
         ok = base != "" and _norm(base) == _norm(out)
         return ok, ("stable" if ok else f"flipped: {base!r} → {out!r}")
+
+    if prop == "returns_empty_findings":
+        found = _parse_findings(out)
+        if found is None:
+            return False, "output is not a findings object"
+        return (not found), ("no findings" if not found else f"reported {len(found)} finding(s) on a clean chunk")
+
+    if prop == "findings_stable_vs_base":
+        got, base = _parse_findings(out), _parse_findings(base_output)
+        if got is None or base is None:
+            return False, "base output unparsable" if base is None else "output is not a findings object"
+        a, b = _label_set(base), _label_set(got)
+        ok = a == b
+        return ok, ("stable" if ok else f"labels changed: {sorted(a)} -> {sorted(b)}")
 
     if prop == "handles_degenerate_gracefully":
         if out == "":
@@ -158,11 +195,24 @@ def score_probe(
     return False, f"unknown_property:{prop}"
 
 
+def _render(value: Any, renderer: Callable[[Any], str] | None) -> str:
+    """Probe inputs are strings, except dict inputs (code-findings chunks),
+    which are rendered with the shared prompt builder."""
+    if isinstance(value, dict):
+        if renderer is not None:
+            return renderer(value)
+        from app.services.code_findings_prompt import render_probe_input
+
+        return render_probe_input(value)
+    return str(value)
+
+
 def run_probe_pack(
     probes: list[dict[str, Any]],
     predict_fn: PredictFn,
     *,
     weights: dict[str, float] | None = None,
+    input_renderer: Callable[[Any], str] | None = None,
 ) -> dict[str, Any]:
     """Run every probe through ``predict_fn`` (one batched call) and
     score by property. Returns a snapshot:
@@ -182,9 +232,9 @@ def run_probe_pack(
         base_idx: int | None = None
         if p.get("base_input") is not None:
             base_idx = len(inputs)
-            inputs.append(str(p["base_input"]))
+            inputs.append(_render(p["base_input"], input_renderer))
         in_idx = len(inputs)
-        inputs.append(str(p.get("input", "")))
+        inputs.append(_render(p.get("input", ""), input_renderer))
         slots[p["id"]] = (base_idx, in_idx)
 
     outputs = list(predict_fn(inputs)) if inputs else []
@@ -222,6 +272,7 @@ def run_probe_pack(
                 base_out[:_OUTPUT_EXCERPT_CHARS] if base_out is not None else None
             ),
             "reason": reason,
+            **({"note": note} if (note := probe_note(p, out, base_out)) else {}),
             # How the verdict was produced — "heuristic" for the
             # keyword-scored properties (an LLM judge can override these),
             # "deterministic" for the exact checks (it can't).

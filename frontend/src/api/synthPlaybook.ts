@@ -12,7 +12,8 @@ export type SynthMode =
     | 'edge_cases'
     | 'refusals'
     | 'format_robustness'
-    | 'cluster_targeted';
+    | 'cluster_targeted'
+    | 'seeded_defect';
 
 export interface PlaybookCatalogEntry {
     recipe_id: string;
@@ -36,12 +37,38 @@ export interface SynthRow {
     synth_source: string;
 }
 
-export interface PlaybookResult {
+/** One candidate row a playbook's validator turned away. */
+export interface RejectedExample {
+    reason: string;
+    detail?: string | null;
+    /** The candidate as the teacher produced it (code excerpt, label, lines). */
+    payload?: Record<string, unknown> | null;
+}
+
+export interface RejectFields {
+    rejected_count?: number;
+    /** reason -> how many candidates were turned away for it. */
+    reject_summary?: Record<string, number>;
+    /** Up to 50 examples across the reasons. */
+    rejected_examples?: RejectedExample[];
+}
+
+export interface PlaybookResult extends RejectFields {
     rows: SynthRow[];
     backend_used: string;
     elapsed_sec: number;
     prompt_snippet: string;
 }
+
+/** Playbook-specific knobs (the `code-findings` seeded-defect mode). */
+export interface SeededDefectParams {
+    label_id: string;
+    attrs?: Record<string, string>;
+    context_dataset_id?: number;
+    context_column?: string;
+    context_sample_size?: number;
+}
+export type PlaybookParams = Record<string, unknown>;
 
 export async function listPlaybooks(projectId: number): Promise<PlaybookCatalogResponse> {
     const resp = await api.get(`/projects/${projectId}/synthetic/playbooks`);
@@ -85,18 +112,25 @@ export interface RunPlaybookArgs {
     targetCount: number;
     targetClass?: string | null;
     backend?: string | null;
+    /** Optional playbook params, sent as `params` (seeded_defect: label_id, ...). */
+    params?: PlaybookParams | null;
+}
+
+function playbookBody(args: RunPlaybookArgs) {
+    return {
+        mode: args.mode,
+        target_count: args.targetCount,
+        target_class: args.targetClass ?? null,
+        backend: args.backend ?? null,
+        ...(args.params && Object.keys(args.params).length > 0 ? { params: args.params } : {}),
+    };
 }
 
 export async function runPlaybook(
     projectId: number,
     args: RunPlaybookArgs,
 ): Promise<PlaybookResult> {
-    const resp = await api.post(`/projects/${projectId}/synthetic/run-playbook`, {
-        mode: args.mode,
-        target_count: args.targetCount,
-        target_class: args.targetClass ?? null,
-        backend: args.backend ?? null,
-    });
+    const resp = await api.post(`/projects/${projectId}/synthetic/run-playbook`, playbookBody(args));
     return resp.data as PlaybookResult;
 }
 
@@ -137,12 +171,7 @@ export async function dryRunPlaybook(
 ): Promise<DryRunPlaybookResult> {
     const resp = await api.post(
         `/projects/${projectId}/synthetic/run-playbook/dry-run`,
-        {
-            mode: args.mode,
-            target_count: args.targetCount,
-            target_class: args.targetClass ?? null,
-            backend: args.backend ?? null,
-        },
+        playbookBody(args),
     );
     return resp.data as DryRunPlaybookResult;
 }
@@ -226,12 +255,7 @@ export async function runPlaybookAsync(
 ): Promise<Job> {
     const resp = await api.post(
         `/projects/${projectId}/synthetic/run-playbook?async_job=true`,
-        {
-            mode: args.mode,
-            target_count: args.targetCount,
-            target_class: args.targetClass ?? null,
-            backend: args.backend ?? null,
-        },
+        playbookBody(args),
     );
     return resp.data as Job;
 }

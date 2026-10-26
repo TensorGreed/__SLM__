@@ -44,6 +44,50 @@ def judge_verdict(reference: str, prediction: str) -> dict[str, str]:
     return {"verdict": verdict, "reason": f"template judge: {score:.0%} of the reference's words present"}
 
 
+_CF_MARKER_RE = re.compile(r"\[brewslm:code-findings:(\w+)\]")
+_CF_CHUNK_RE = re.compile(r"<chunk index=\"(\d+)\"[^>]*?start_line=\"(\d+)\"[^>]*>\n(.*?)\n</chunk>", re.DOTALL)
+_CF_COUNT_RE = re.compile(r"Output exactly (\d+) JSON lines")
+_CF_LABEL_RE = re.compile(r"Target label id: (\S+)")
+_CF_ALLOWED_RE = re.compile(r"Allowed label ids: ([^\s,]+)")
+_CF_NUMBERED_RE = re.compile(r"^\s*\d+ \| ?")
+_CF_KINDS = ("fixed", "safe_lookalike", "test_fixture")
+
+
+def code_findings_rows(prompt: str, mode: str) -> str:
+    """Deterministic teacher output for the `code-findings` playbook prompts (marked
+    ``[brewslm:code-findings:<mode>]``). Seeded / cluster: append a line that builds a query by
+    string concatenation and report that line. Hard negatives: append a parameterised variant,
+    ``findings: []``."""
+    chunks = []
+    for match in _CF_CHUNK_RE.finditer(prompt):
+        code = "\n".join(_CF_NUMBERED_RE.sub("", line, count=1) for line in match.group(3).split("\n"))
+        chunks.append((int(match.group(1)), int(match.group(2)), code))
+    if not chunks:
+        raise SynthBackendError("template backend: no <chunk> blocks in the code-findings prompt")
+    count_match = _CF_COUNT_RE.search(prompt)
+    count = int(count_match.group(1)) if count_match else len(chunks)
+    label_match = _CF_LABEL_RE.search(prompt) or _CF_ALLOWED_RE.search(prompt)
+    label = label_match.group(1) if label_match else "unknown"
+    out = []
+    for i in range(count):
+        index, start, code = chunks[i % len(chunks)]
+        n_lines = code.count("\n") + 1
+        if mode == "hard_negatives":
+            line = f'query_{i} = db.prepare("SELECT 1 WHERE id = ?", [user_input])'
+            out.append({
+                "chunk": index, "negative_kind": _CF_KINDS[i % len(_CF_KINDS)],
+                "code": f"{code}\n{line}", "findings": [],
+            })
+            continue
+        line = f'query_{i} = "SELECT 1 WHERE id = " + user_input'
+        number = start + n_lines
+        out.append({
+            "chunk": index, "code": f"{code}\n{line}",
+            "finding": {"label": label, "start_line": number, "end_line": number, "evidence": line, "attrs": {}},
+        })
+    return "\n".join(json.dumps(item) for item in out)
+
+
 def passage_pairs(passage: str, pairs_per_passage: int) -> dict[str, Any]:
     """``pairs_per_passage`` training pairs + one eval pair, each a sentence
     of the passage asked about by its opening words."""
@@ -90,11 +134,14 @@ class TemplateBackend:
             if not reference or not model:
                 raise SynthBackendError("template backend: unrecognised judge prompt")
             return json.dumps(judge_verdict(reference.group(1), model.group(1)))
+        cf = _CF_MARKER_RE.search(prompt)
+        if cf:
+            return code_findings_rows(prompt, cf.group(1))
         passage = _PASSAGE_RE.search(prompt)
         if passage:
             count = _PAIRS_RE.search(prompt)
             return json.dumps(passage_pairs(passage.group(1), int(count.group(1)) if count else 3))
         raise SynthBackendError(
-            "template backend only answers the documents → Q&A flow and the answer judge; "
+            "template backend only answers the documents → Q&A flow, the answer judge and the code-findings playbooks; "
             "use a real model for anything else"
         )

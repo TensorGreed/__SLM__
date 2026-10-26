@@ -72,7 +72,7 @@ def eval_type_for_project(project: Project) -> str:
         return "perplexity"
     snapshot = project.selected_recipe or {}
     scoring_mode = str(snapshot.get("scoring_mode") or "").strip()
-    if scoring_mode == "span_set":
+    if scoring_mode in ("span_set", "finding_set"):
         return "f1"
     return "exact_match"
 

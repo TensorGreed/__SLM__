@@ -15,6 +15,7 @@ import { useLocation, useNavigate, useOutletContext, useSearchParams } from 'rea
 import CompressionPanel from '../components/compression/CompressionPanel';
 import SeedShipTable from '../components/evaluation/SeedShipTable';
 import ExportPanel from '../components/export/ExportPanel';
+import GuidedJsonCard from '../components/export/GuidedJsonCard';
 import DetailsDrawer from '../components/shared/DetailsDrawer';
 import CoachNotices from '../components/coach/CoachNotices';
 import StepHelp from '../components/coach/StepHelp';
@@ -109,6 +110,8 @@ export default function ProjectShipPage() {
             <CoachNotices projectId={projectId} stage="export" />
             <div className="stage-page__content stage-page__stack">
                 {stage === 'package' && <SeedPickCard projectId={projectId} />}
+
+                {stage === 'package' && <GuidedJsonCard projectId={projectId} />}
 
                 <ExportPanel projectId={projectId} stage={stage} />
 

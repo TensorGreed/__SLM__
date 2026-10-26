@@ -446,7 +446,11 @@ def _pick_media_ref(row: dict[str, Any], fields: tuple[str, ...]) -> str:
     for field in fields:
         value = row.get(field)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            ref = value.strip()
+            # On a code-findings row ``path`` is the source file's path, not a media file.
+            if field == "path" and (row.get("row_kind") == "findings" or "code" in row):
+                continue
+            return ref
     return ""
 
 

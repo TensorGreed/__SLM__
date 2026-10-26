@@ -1052,6 +1052,14 @@ async def run_export(
             },
             "artifacts": artifacts,
         }
+        # Constrained-decoding hint for a serving layer (code-findings projects).
+        guided_json = (
+            (project.runtime_config or {}).get("guided_json")
+            if project is not None and isinstance(project.runtime_config, dict)
+            else None
+        )
+        if isinstance(guided_json, dict) and guided_json:
+            manifest["guided_json"] = guided_json
         optimization_evidence = _build_export_optimization_evidence(
             project_id=project_id,
             export_format=export.export_format,

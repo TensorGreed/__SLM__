@@ -14,6 +14,7 @@ import LoadingState from '../shared/LoadingState';
 import StepFooter from '../shared/StepFooter';
 import { Term } from '../shared/Term';
 import ClassificationChartsPanel from './ClassificationChartsPanel';
+import FindingSetMetricsPanel, { FindingSetRowView, isFindingSetMetrics, type FindingSetMetrics, type FindingSetRow } from './FindingSetMetricsPanel';
 import FieldMatchMetricsPanel, { hasFieldMatchBreakdown, type FieldMatchMetrics } from './FieldMatchMetricsPanel';
 import './ClassificationChartsPanel.css';
 import ScorecardPanel from './ScorecardPanel';
@@ -118,7 +119,7 @@ interface EvalMetrics {
     overall_em?: number | null;
 }
 
-interface PredictionPreviewRow {
+interface PredictionPreviewRow extends FindingSetRow {
     prompt?: string;
     reference?: string;
     prediction?: string;
@@ -2046,7 +2047,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                             so projects with both gold-dev and gold-test results show two
                             distinct charts. */}
                         {evalResults
-                            .filter((r) => r.metrics?.per_class && Object.keys(r.metrics.per_class).length > 0)
+                            .filter((r) => !isFindingSetMetrics(r.metrics) && r.metrics?.per_class && Object.keys(r.metrics.per_class).length > 0)
                             .map((r) => (
                                 <ClassificationChartsPanel
                                     key={`cls-charts-${r.id}`}
@@ -2055,6 +2056,18 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                     candidates={r.metrics.candidate_set}
                                     macroF1={r.metrics.macro_f1 ?? null}
                                     accuracy={r.metrics.accuracy ?? null}
+                                />
+                            ))}
+
+                        {/* Findings evals (finding_set): strict P/R/F1, clean-chunk
+                            false positives, malformed output, per-label table. */}
+                        {evalResults
+                            .filter((r) => isFindingSetMetrics(r.metrics))
+                            .map((r) => (
+                                <FindingSetMetricsPanel
+                                    key={`fs-metrics-${r.id}`}
+                                    metrics={r.metrics as unknown as FindingSetMetrics}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
                                 />
                             ))}
 
@@ -2346,6 +2359,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                                         </span>
                                                                     )}
                                                             </span>
+                                                        )}
+                                                        {row.scoring_mode === 'finding_set' && (
+                                                            <FindingSetRowView row={row} />
                                                         )}
                                                         {isSpanSetMode &&
                                                             (matchedEntities.length > 0 ||

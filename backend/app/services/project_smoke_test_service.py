@@ -146,6 +146,11 @@ def _peek_prepared_row_prefix_match(
     if not task_profile:
         return None
     handler = resolve_task_handler(task_profile)
+    schema = manifest.get("output_schema") if isinstance(manifest, dict) else None
+    if isinstance(schema, dict) and schema.get("scoring_mode") == "finding_set":
+        # Code findings train and evaluate through the chat template with the
+        # shared prompt builder -- no handler prefix to look for.
+        return None
     prefixes = list(
         getattr(handler, "expected_prompt_prefixes", lambda: [])()
     )

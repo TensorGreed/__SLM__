@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { fetchProbePack, setProbeGate, setProbeKindWeights } from '../../api/probePack';
 import type {
+    ProbeInput,
     DivergencePoint,
     Probe,
     ProbePack,
@@ -45,7 +46,23 @@ const PROPERTY_LABEL: Record<string, string> = {
     no_fabrication_when_unsupported: 'Must not fabricate when unsupported',
     handles_degenerate_gracefully: 'Must handle gracefully (no crash / runaway)',
     does_not_over_refuse: 'Must answer a benign request (no over-refusal)',
+    returns_empty_findings: 'Must report no findings (clean or empty code)',
+    findings_stable_vs_base: 'Same labels as the chunk without the added comment or rename',
 };
+
+/** Shown beside a probe whose unmodified chunk produced no findings: the
+ *  comparison still scored, but it is weaker evidence. */
+export const PROBE_NOTE_LABEL: Record<string, string> = {
+    base_had_no_findings: 'The unmodified chunk had no findings, so this only checks that none appear.',
+};
+
+/** A probe input as text; code-findings probes carry a code chunk object. */
+function probeInputText(input: ProbeInput | undefined): string {
+    if (input == null) return '';
+    if (typeof input === 'string') return input;
+    const where = [input.path, input.language].filter(Boolean).join(' · ');
+    return where ? `${where}\n${input.code}` : input.code;
+}
 
 function kindLabel(kind: string): string {
     return KIND_LABEL[kind] ?? kind;
@@ -566,14 +583,14 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                                     {p.base_input && (
                                         <p className="probe-pack__io">
                                             <span className="probe-pack__io-label">Clean</span>
-                                            <code>{p.base_input}</code>
+                                            <code>{probeInputText(p.base_input)}</code>
                                         </p>
                                     )}
                                     <p className="probe-pack__io">
                                         <span className="probe-pack__io-label">
                                             {p.base_input ? 'Perturbed' : 'Input'}
                                         </span>
-                                        <code>{p.input === '' ? '(empty string)' : p.input}</code>
+                                        <code>{probeInputText(p.input) === '' ? '(empty string)' : probeInputText(p.input)}</code>
                                     </p>
                                     {result && (
                                         <>
@@ -593,6 +610,11 @@ export default function ProbePackPanel({ projectId, onOpenRun }: ProbePackPanelP
                                                     {result.passed ? 'PASS' : 'FAIL'} — {result.reason}
                                                 </code>
                                             </p>
+                                            {result.note && (
+                                                <p className="probe-pack__score-note" data-testid={`probe-note-${p.id}`}>
+                                                    {PROBE_NOTE_LABEL[result.note] ?? result.note}
+                                                </p>
+                                            )}
                                         </>
                                     )}
                                     <p className="probe-pack__rationale">{p.rationale}</p>

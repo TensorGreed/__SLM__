@@ -358,3 +358,30 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   header names run / dataset / result id; shown when the result has null
   metrics). Declaring the schema: see `agent-notes/data.md` (json-extraction).
   Tests: `tests/test_json_extraction_scoring.py`, `FieldMatchMetricsPanel.test.tsx`.
+
+## `finding_set` scoring + code-findings probes (G4)
+
+- Mode inside `StructuredExtractionHandler` (`output_schema.scoring_mode == "finding_set"`); the scorer is
+  the pure `finding_set_scoring.score_finding_set` (manifest-only inputs: `finding_match`, `label_parents`).
+  A finding `{label, start_line, end_line, evidence, attrs}` is correct when the label is equal and the
+  inclusive line-range IoU is >= `finding_match.iou_threshold` (0.5; exactly 0.5 matches). Greedy one-to-one
+  per row, best IoU first; duplicates beyond one match are FP. Metrics: micro `precision/recall/f1`
+  (strict), `*_macro`, `per_class` (= per label; `evaluation_pack_service._flatten_per_class_metrics` turns
+  it into `f1_<label>` / `per_class.<label>.f1` gates), `clean_chunk_fp_rate`, `malformed_rate`,
+  `invalid_finding_count`, `attr_accuracy(_mean)` (strict-matched pairs, configured `finding_match.attrs`
+  only), `exact_match`, `json_validity_rate`. `hierarchical{}` (ancestor label + IoU gives
+  `parent_credit`) exists only when `finding_match.hierarchy` is on and never changes the strict numbers.
+  Override `finding_match` via `Project.runtime_config["finding_match"]` (no API sets it yet).
+- Per-row keys (`row_matched/missed/spurious_findings`, `row_malformed`, `row_is_clean_reference`) flow into
+  `predictions_preview`; per-row tp/fp/fn are exported to `row_scores.span_*` so paired comparison works.
+  Headline metric is `f1` (`_PREFERRED_HEADLINE_METRICS`); `eval_type_for_project` -> `f1`.
+- Probes: recipe-keyed pack (`get_probe_pack(task_profile, recipe_id)`; code-findings has its own, other
+  recipes keep the profile pack). Inputs are dicts `{code, language, path, start_line}`; `run_probe_pack`
+  renders them with `code_findings_prompt` (the eval path passes the manifest's `prompt_labels`). Properties
+  `returns_empty_findings` and `findings_stable_vs_base` (predicted label SETS equal; a base with no findings
+  still scores and records `note:"base_had_no_findings"`).
+- Macro scores fall back to the micro score when `per_class` is empty (empty-on-empty is 1.0). The scaffolded
+  pack gates `max_clean_chunk_fp_rate` / `max_malformed_rate` with `lte` (scaffold tuples may carry an
+  operator as a fifth item). Code-findings probe generation uses the structured handler's
+  `max_new_tokens_override` budget (512), not the 128 probe default.
+- Tests: `test_finding_set_scoring.py`, `test_code_findings_probes.py`, `test_code_findings_e2e.py`, `test_code_findings_g4_fixes.py`.

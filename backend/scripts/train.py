@@ -3592,6 +3592,8 @@ def _run_training_attempt(
             _kd_prompt_transform = None
             try:
                 from app.services.eval_task_handler_service import (
+                    handler_wraps_own_prompt,
+                    read_prepared_manifest,
                     read_task_profile_from_manifest,
                     resolve_task_handler,
                 )
@@ -3599,8 +3601,8 @@ def _run_training_attempt(
                     int(args.project)
                 )
                 _kd_handler = resolve_task_handler(_kd_task_profile)
-                _kd_wraps = bool(
-                    getattr(_kd_handler, "wraps_own_prompt", lambda: False)()
+                _kd_wraps = handler_wraps_own_prompt(
+                    _kd_handler, read_prepared_manifest(int(args.project))
                 )
                 _has_chat_template = hasattr(
                     processor_tokenizer, "apply_chat_template"

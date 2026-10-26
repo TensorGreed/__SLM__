@@ -365,3 +365,23 @@
     color: var(--text-primary);
     overflow-wrap: anywhere;
 }
+
+/* code-findings seeded-defect form */
+.code-findings-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin: var(--space-sm) 0;
+}
+
+.code-findings-form__group {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm);
+}
+
+.code-findings-form__attr {
+    display: flex;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-xs);
+}

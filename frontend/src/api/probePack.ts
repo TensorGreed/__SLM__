@@ -23,17 +23,29 @@ export type ProbeProperty =
     | 'refuses_or_declines'
     | 'no_fabrication_when_unsupported'
     | 'handles_degenerate_gracefully'
-    | 'does_not_over_refuse';
+    | 'does_not_over_refuse'
+    | 'returns_empty_findings'
+    | 'findings_stable_vs_base';
+
+/** Probe input of the code-findings pack: a chunk rendered with the shared prompt builder. */
+export interface CodeProbeInput {
+    code: string;
+    language?: string | null;
+    path?: string | null;
+    start_line?: number | null;
+}
+
+export type ProbeInput = string | CodeProbeInput;
 
 export interface Probe {
     id: string;
     probe_kind: ProbeKind;
     property: ProbeProperty;
-    input: string;
+    input: ProbeInput;
     rationale: string;
     /** Set only for stability probes — the model's output on this is
      * compared against its output on `input`. */
-    base_input?: string;
+    base_input?: ProbeInput;
 }
 
 export interface ProbeResult {
@@ -44,6 +56,8 @@ export interface ProbeResult {
     output: string;
     base_output: string | null;
     reason: string;
+    /** e.g. 'base_had_no_findings' (findings_stable_vs_base scored on an empty clean answer). */
+    note?: string | null;
     /** Phase 21 — per-probe weight (by kind, or per-probe override). */
     weight?: number;
 }

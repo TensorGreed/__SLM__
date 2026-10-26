@@ -52,6 +52,7 @@ session-start guidance.
 - `backend/app/api/data_health.py` — Data Health Report API — D1/D3/D4 of the data-quality arc.
 - `backend/app/api/data_studio.py` — Data Studio API routes.
 - `backend/app/api/dataset.py` — Dataset preparation API routes.
+- `backend/app/api/dataset_catalog.py` — Dataset catalog routes: list a project's datasets and peek at a dataset's columns.
 - `backend/app/api/dataset_import.py` — Dataset-import API surface (Phase A).
 - `backend/app/api/demo_projects.py` — Demo projects API — pre-loaded showcases for new ML engineers.
 - `backend/app/api/deployments.py` — Deployment versions + rollback + telemetry API (priority.md P25 + P26).
@@ -135,6 +136,7 @@ session-start guidance.
 - `backend/app/services/cluster_explanation_service.py` — Per-cluster failure explanations (Theme 8 Epic 3).
 - `backend/app/services/coach_service.py` — Coach Mode service (USER-SUCCESS Epic 4).
 - `backend/app/services/code_chunker.py` — Code-aware chunking — one retrievable unit per function / method / block.
+- `backend/app/services/code_findings_prompt.py` — Shared prompt + schema helpers for the ``code-findings`` recipe.
 - `backend/app/services/compliance_bundles_service.py` — Compliance bundles: named groups of entity types, each type tagged with
 - `backend/app/services/compression_service.py` — Compression engine service — quantization, LoRA merge, benchmarking.
 - `backend/app/services/continued_pretraining_policy.py` — Continued pretraining for projects whose data is plain documents.
@@ -211,6 +213,7 @@ session-start guidance.
 - `backend/app/services/export_service.py` — Export & runtime packaging service.
 - `backend/app/services/external_benchmark_service.py` — External benchmarks: score a project's runs on a labelled set someone
 - `backend/app/services/failure_cluster_service.py` — P12 — Failure-cluster service.
+- `backend/app/services/finding_set_scoring.py` — ``finding_set`` scoring: a model proposes ``{"findings": [{label, start_line,
 - `backend/app/services/frontier_comparison_service.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
 - `backend/app/services/goal_service.py` — Arc H — End-goal contract + progress ledger.
 - `backend/app/services/gold_llm_service.py` — LLM-assisted gold-set generation across all supported recipes.
@@ -312,11 +315,15 @@ session-start guidance.
 - `backend/app/services/synth_backends/vllm.py` — vLLM synth backend (USER-SUCCESS Epic 5 Phase 5c).
 - `backend/app/services/synth_playbook_service.py` — Orchestrator for the synthetic-data playbook framework
 - `backend/app/services/synth_playbooks/_cluster_targeted_common.py` — Helpers shared by the 6 CLUSTER_TARGETED playbooks.
+- `backend/app/services/synth_playbooks/_code_findings_common.py` — Helpers shared by the three `code-findings` playbooks.
 - `backend/app/services/synth_playbooks/base.py` — Playbook contract + registry (USER-SUCCESS Epic 2).
 - `backend/app/services/synth_playbooks/classification_class_balance_fill.py` — CLASS_BALANCE_FILL playbook for the `classification` recipe.
 - `backend/app/services/synth_playbooks/classification_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `classification` recipe.
 - `backend/app/services/synth_playbooks/classification_hard_negatives.py` — HARD_NEGATIVES playbook for the `classification` recipe.
 - `backend/app/services/synth_playbooks/classification_paraphrase.py` — POSITIVES_PARAPHRASE playbook for the `classification` recipe.
+- `backend/app/services/synth_playbooks/code_findings_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `code-findings` recipe.
+- `backend/app/services/synth_playbooks/code_findings_hard_negatives.py` — HARD_NEGATIVES playbook for the `code-findings` recipe.
+- `backend/app/services/synth_playbooks/code_findings_seeded_defect.py` — SEEDED_DEFECT playbook for the `code-findings` recipe.
 - `backend/app/services/synth_playbooks/code_review_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `code-review` recipe.
 - `backend/app/services/synth_playbooks/code_review_hard_negatives.py` — HARD_NEGATIVES playbook for the `code-review` recipe.
 - `backend/app/services/synth_playbooks/code_review_paraphrase.py` — POSITIVES_PARAPHRASE playbook for the `code-review` recipe.
@@ -505,6 +512,7 @@ session-start guidance.
 - `frontend/src/api/frontierComparison.ts` — Typed wrapper for the Track 1 Epic D SLM-vs-frontier benchmark report.
 - `frontend/src/api/goal.ts` — Arc H — Project end-goal contract + progress ledger client.
 - `frontend/src/api/goldReview.ts` — Human review of the answer key (P6 Trust) —
+- `frontend/src/api/guidedJson.ts` — Structured-output hint for serving (code-findings recipe).
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
 - `frontend/src/api/labelTaxonomy.ts` — Typed client for the project label taxonomy (a hierarchical label set with
 - `frontend/src/api/llmSpend.ts` — _(no docstring)_
@@ -584,6 +592,7 @@ session-start guidance.
 - `frontend/src/components/data/AnswerKeyReviewPanel.tsx` — AnswerKeyReviewPanel — a person checks the answer key (P6 Trust).
 - `frontend/src/components/data/AutofixPreviewModal.tsx` — AutofixPreviewModal — D3.2 + D4 of the data-quality arc.
 - `frontend/src/components/data/CleaningPanel.tsx` — Panel for async batch document cleaning with progress tracking and quality scoring.
+- `frontend/src/components/data/CodeFindingsParamsForm.tsx` — CodeFindingsParamsForm — the seeded-defect knobs of the `code-findings`
 - `frontend/src/components/data/ComplianceBundlePicker.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataHealthReportPanel.tsx` — DataHealthReportPanel — D1+D2 of the data-quality arc.
 - `frontend/src/components/data/DataStudioAssistPanel.tsx` — Panel for running AI-assisted suggestions on mapping and domain with provider configuration.
@@ -625,6 +634,7 @@ session-start guidance.
 - `frontend/src/components/data/SeedDocumentsCard.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanAddTypeForm.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanTypeDefinitionsEditor.tsx` — _(no docstring)_
+- `frontend/src/components/data/SynthRejectSummary.tsx` — SynthRejectSummary — what a playbook run turned away, grouped by reason,
 - `frontend/src/components/data/SynthReviewQueue.tsx` — SynthReviewQueue — USER-SUCCESS Epic 2b.
 - `frontend/src/components/data/SyntheticPanel.tsx` — Panel for generating synthetic training data with playbook selection, batch async support, and review queue.
 - `frontend/src/components/data/TaskShapeCard.tsx` — Labels step — the task shape (Epic U phase U4): what the rows look like
@@ -650,6 +660,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/ExternalBenchmarksPanel.tsx` — External benchmarks (Epic G-B1/B2) — score the selected run on labelled
 - `frontend/src/components/evaluation/FailureClustersPanel.tsx` — Failure pattern grouper with cluster explanation and augmentation recommendations.
 - `frontend/src/components/evaluation/FieldMatchMetricsPanel.tsx` — FieldMatchMetricsPanel — per-field results of a typed JSON-record eval
+- `frontend/src/components/evaluation/FindingSetMetricsPanel.tsx` — FindingSetMetricsPanel — results of a findings eval (the finding_set
 - `frontend/src/components/evaluation/FrontierComparisonPanel.tsx` — FrontierComparisonPanel — Track 1, Epic D.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.
 - `frontend/src/components/evaluation/PackSectionEditor.tsx` — Quality-Lift phase 7 slice 1 — Generic pack section editor.
@@ -664,6 +675,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/SpanThresholdTuner.tsx` — Threshold tuning for a span-tagging run, with per-type recall floors.
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.tsx` — Student-vs-teacher distillation comparison panel (Track 1, Epic A, slice 3).
 - `frontend/src/components/export/ExportPanel.tsx` — Model export orchestrator supporting format conversion and deployment-target provisioning.
+- `frontend/src/components/export/GuidedJsonCard.tsx` — GuidedJsonCard — read-only "Structured output hint" on Ship > Package.
 - `frontend/src/components/extensions/ExtensionKindList.tsx` — ExtensionKindList — left column of the Extension Studio page
 - `frontend/src/components/extensions/ScaffoldForm.tsx` — ScaffoldForm — generate a contract-valid plugin scaffold from the
 - `frontend/src/components/extensions/ScaffoldPreview.tsx` — ScaffoldPreview — display the generated scaffold files inline with
@@ -800,6 +812,11 @@ session-start guidance.
 - `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
 - `backend/tests/test_code_chunker.py` — Code chunker: declaration-level chunks with exact line ranges.
 - `backend/tests/test_code_finding_mappers.py` — Findings-row mappers (code_label_to_findings, fix_pair, contrast_functions)
+- `backend/tests/test_code_findings_e2e.py` — code-findings end to end on the simulate runtime: create a project, apply
+- `backend/tests/test_code_findings_g4_fixes.py` — Regression tests for the G4 review fixes of the `code-findings` playbooks and plumbing:
+- `backend/tests/test_code_findings_playbooks.py` — `code-findings` synth playbooks: seeded_defect, hard_negatives, cluster_targeted.
+- `backend/tests/test_code_findings_probes.py` — Probe pack for the code-findings recipe: recipe-keyed pack, the two new
+- `backend/tests/test_code_findings_recipe.py` — The ``code-findings`` recipe: catalog entry, header sniffing, detection from
 - `backend/tests/test_command_backend.py` — Command (local CLI) synth backend + the hard API budget (phase G9).
 - `backend/tests/test_compliance_bundles.py` — Compliance bundles: built-in bundles are data (types + definitions +
 - `backend/tests/test_continued_pretraining.py` — Continued pretraining for documents-only projects (Wave 2c-1).
@@ -841,6 +858,7 @@ session-start guidance.
 - `backend/tests/test_export_scoping_and_merge.py` — Export correctness (Wave 1b).
 - `backend/tests/test_external_benchmarks.py` — External benchmarks (Epic G-B1): import a labelled set someone else made,
 - `backend/tests/test_failure_cluster_handler_drilldown.py` — Arc 2 — failure-cluster drill-down backend pass-through.
+- `backend/tests/test_finding_set_scoring.py` — ``finding_set`` scoring (code findings): label + inclusive line-range IoU
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_frontier_comparison.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
 - `backend/tests/test_generate_api_ref.py` — The API-reference generator escapes MDX-significant prose in docstrings.
@@ -1096,6 +1114,7 @@ session-start guidance.
 - `frontend/src/components/data/AnswerKeyReviewPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/AutofixPreviewModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/CleaningPanel.test.tsx` — Data → Prepare: the "Remove repeated page headers and footers" option is
+- `frontend/src/components/data/CodeFindingsPlaybook.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/ComplianceBundlePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataHealthReportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataPanels.stepper.test.tsx` — Epic U phase U4: each data panel in ``layout="stepper"`` keeps its short
@@ -1153,6 +1172,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPanel.alignment.test.tsx` — Phase 5.3.6 — Sample Predictions card with AlignmentHandler enrichment.
 - `frontend/src/components/evaluation/EvalPanel.extraction.test.tsx` — Phase 5.3.4 — Sample Predictions card with structured-extraction enrichment.
+- `frontend/src/components/evaluation/EvalPanel.findingset.test.tsx` — EvalPanel in finding_set scoring mode: metrics block + per-row findings.
 - `frontend/src/components/evaluation/EvalPanel.qa.test.tsx` — Phase 5.3.2 — Sample Predictions card with QA-style per-row enrichment.
 - `frontend/src/components/evaluation/EvalPanel.rag.test.tsx` — Phase 5.3.5 — Sample Predictions card with RAG (grounded QA) enrichment.
 - `frontend/src/components/evaluation/EvalPanel.runSelection.test.tsx` — One selected run across the Results tabs (picked-data provenance): the
@@ -1180,6 +1200,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/retrievalSplit.test.ts` — _(no docstring)_
 - `frontend/src/components/export/ExportPanel.stages.test.tsx` — Ship stages (Epic U phase U5): the export panel splits by ``stage`` —
 - `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/export/GuidedJsonCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/export/exportModelCard.test.ts` — _(no docstring)_
 - `frontend/src/components/guide/QuickstartCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/CommandPalette.test.tsx` — _(no docstring)_

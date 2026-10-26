@@ -259,6 +259,7 @@ def _resolve_handler_wrapped_prompts(
     """
     from app.services.eval_task_handler_service import (
         EvalContext,
+        handler_wraps_own_prompt,
         read_prepared_manifest,
         read_task_profile_from_manifest,
         resolve_task_handler,
@@ -271,13 +272,13 @@ def _resolve_handler_wrapped_prompts(
     # Only handlers that build their own complete prompts at eval
     # are gap-bearing — non-wrapping handlers (QA / language_modeling)
     # have a separate chat-template gap addressed elsewhere.
+    manifest = read_prepared_manifest(project_id)
     if not (
         hasattr(handler, "wraps_own_prompt")
-        and bool(handler.wraps_own_prompt())
+        and handler_wraps_own_prompt(handler, manifest)
     ):
         return None, {}
 
-    manifest = read_prepared_manifest(project_id)
     ctx = EvalContext(
         project_id=project_id,
         experiment_id=0,

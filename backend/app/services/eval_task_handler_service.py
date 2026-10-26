@@ -741,9 +741,13 @@ class StructuredExtractionHandler:
     # handler, internal dispatch so we don't fork per domain.
     SCORING_MODE_FIELD_MATCH: str = "field_match"
     SCORING_MODE_SPAN_SET: str = "span_set"
+    # ``finding_set``: code findings -- {label, start_line, end_line, ...}
+    # matched on label + line-range IoU (see finding_set_scoring.py).
+    SCORING_MODE_FINDING_SET: str = "finding_set"
     _SUPPORTED_SCORING_MODES: set[str] = {
         SCORING_MODE_FIELD_MATCH,
         SCORING_MODE_SPAN_SET,
+        SCORING_MODE_FINDING_SET,
     }
 
     def __init__(self) -> None:
@@ -765,6 +769,18 @@ class StructuredExtractionHandler:
             raw_mode = str(manifest_schema.get("scoring_mode") or "").strip().lower()
             if raw_mode in self._SUPPORTED_SCORING_MODES:
                 scoring_mode = raw_mode
+            if scoring_mode == self.SCORING_MODE_FINDING_SET:
+                required = manifest_schema.get("required")
+                self._schema = {
+                    "fields": ["findings"],
+                    "required": list(required) if isinstance(required, list) else ["findings"],
+                    "scoring_mode": scoring_mode,
+                    "finding_match": dict(manifest_schema.get("finding_match") or {}),
+                    "labels": list(manifest_schema.get("labels") or []),
+                    "label_parents": dict(manifest_schema.get("label_parents") or {}),
+                    "prompt_labels": list(manifest_schema.get("prompt_labels") or []),
+                }
+                return self._schema
             properties = manifest_schema.get("properties")
             required = manifest_schema.get("required")
             if isinstance(properties, dict) and properties:
@@ -830,6 +846,8 @@ class StructuredExtractionHandler:
             "output",
             "answer",
             "structured_output",
+            # Code findings rows: {"findings": [...]}.
+            "findings_json",
             # Span rows: {text, entities: [...]} / entities_json.
             "entities",
             "entities_json",
@@ -937,7 +955,11 @@ class StructuredExtractionHandler:
         schema = self._resolve_schema(rows, ctx)
         fields = schema["fields"]
         built: list[BuiltPrompt] = []
+        finding_mode = schema.get("scoring_mode") == self.SCORING_MODE_FINDING_SET
         for row in rows:
+            if finding_mode:
+                built.append(self._build_finding_prompt(row, schema))
+                continue
             input_text = self._extract_input_text(row)
             reference = self._reference_as_string(row)
             wrapped = self._build_prompt_text(input_text, fields)
@@ -952,6 +974,30 @@ class StructuredExtractionHandler:
                 )
             )
         return built
+
+    def _build_finding_prompt(self, row: dict[str, Any], schema: dict[str, Any]) -> BuiltPrompt:
+        """Code-findings prompt from the shared builder -- byte-identical to
+        the training row's ``source_text`` (``data_adapter_service``)."""
+        from app.services.code_findings_prompt import (
+            build_code_findings_prompt_from_row,
+            canonical_findings_json,
+            findings_payload,
+        )
+
+        prompt = build_code_findings_prompt_from_row(row, schema.get("prompt_labels") or None)
+        payload = findings_payload(row)
+        if payload is None:
+            reference = self._reference_as_string(row)
+        else:
+            reference = canonical_findings_json(payload)
+        extras: dict[str, Any] = {
+            "structured_fields": ["findings"],
+            "structured_input": str(row.get("code") or row.get("text") or ""),
+        }
+        for key in ("path", "language", "start_line"):
+            if row.get(key) is not None:
+                extras[key] = row[key]
+        return BuiltPrompt(prompt=prompt, reference=reference, extras=extras)
 
     # ── Generation hint ──
 
@@ -1004,6 +1050,10 @@ class StructuredExtractionHandler:
         scoring_mode = schema.get("scoring_mode", self.SCORING_MODE_FIELD_MATCH)
         if scoring_mode == self.SCORING_MODE_SPAN_SET:
             return self._score_span_set(predictions, schema)
+        if scoring_mode == self.SCORING_MODE_FINDING_SET:
+            from app.services.finding_set_scoring import score_finding_set
+
+            return score_finding_set(predictions, schema, self._parse_json_safely)
         return self._score_field_match(predictions, schema)
 
     # ── Field-match scoring (default — today's invoice-style flow) ──
@@ -1500,16 +1550,26 @@ class StructuredExtractionHandler:
             "schema": schema,
         }
 
-    def wraps_own_prompt(self) -> bool:
+    def wraps_own_prompt(self, ctx: EvalContext | None = None) -> bool:
         """``build_prompts`` produces the full instruction
         (``"Extract the following fields as JSON: …\\nInput: …\\nOutput:"``).
         Applying the model's chat template on top would wrap that
         whole instruction inside a user-message and the chat-tuned
         model would respond conversationally instead of emitting
         JSON. Skip the wrap so the constructed prompt reaches the
-        model verbatim."""
+        model verbatim.
 
-        return True
+        ``finding_set`` (code findings) is the exception: its prompt is a
+        plain user message, trained and evaluated through the tokenizer chat
+        template (the base is an Instruct model), so it does NOT own the wrap.
+        The mode comes from the resolved schema or ``ctx.manifest``."""
+
+        if self._schema is not None:
+            mode = self._schema.get("scoring_mode")
+        else:
+            manifest_schema = (ctx.manifest if ctx is not None else {}).get("output_schema")
+            mode = str((manifest_schema or {}).get("scoring_mode") or "").strip().lower() if isinstance(manifest_schema, dict) else ""
+        return mode != self.SCORING_MODE_FINDING_SET
 
     def expected_prompt_prefixes(self) -> list[str]:
         """See ClassificationHandler.expected_prompt_prefixes — same
@@ -3059,6 +3119,28 @@ def read_prepared_manifest(project_id: int) -> dict[str, Any]:
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def handler_wraps_own_prompt(handler: Any, manifest: dict[str, Any] | None = None) -> bool:
+    """``handler.wraps_own_prompt()`` with the prepared manifest as context:
+    mode-aware handlers (structured extraction in ``finding_set`` mode) read
+    it from ``manifest``. Handlers without a ``ctx`` parameter are called bare."""
+    fn = getattr(handler, "wraps_own_prompt", None)
+    if not callable(fn):
+        return False
+    try:
+        import inspect
+
+        takes_ctx = "ctx" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        takes_ctx = False
+    if takes_ctx:
+        ctx = EvalContext(
+            project_id=0, experiment_id=0, eval_type="", task_profile=None, handler_id="",
+            prepared_dir=Path("."), dataset_name="", manifest=dict(manifest or {}),
+        )
+        return bool(fn(ctx))
+    return bool(fn())
 
 
 def read_task_profile_from_manifest(project_id: int) -> str | None:

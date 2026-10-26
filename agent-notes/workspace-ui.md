@@ -268,3 +268,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 ## Label taxonomy card (G3)
 
 `components/data/LabelTaxonomyCard.tsx` (client `api/labelTaxonomy.ts`) sits on the Data page's labels step for every project, collapsed by default. Header shows the taxonomy version chip + entry count; body: searchable parent/child tree (id, title, aliases, crosswalk `namespace: refs`, attrs), "Try a label" resolver (`/resolve`, shows id + matched_by), editor (file upload or paste, `crosswalk_from` comma list, Validate / Save with 422 `metadata.errors` grouped by code), history with Restore, Delete with confirm. `DatasetImportWizard` shows "Labels resolved with taxonomy <version> (<n> entries)" / "No taxonomy: labels kept as-is" for the findings mappers (`code_label_to_findings`, `fix_pair`, `contrast_functions`) from the preview result's `taxonomy`.
+
+## Code-findings surfaces (phase G4)
+
+- Ship > Package: `GuidedJsonCard` (collapsible "Structured output hint", `GET /projects/{id}/guided-json`; renders nothing when null).
+- Data > Synthetic playbooks: recipe `code-findings` adds the `seeded_defect` mode; `CodeFindingsParamsForm` sends `params` (label from the taxonomy, or a typed free label when the project has none; attrs prefilled from the entry; optional dataset picker from `GET /projects/{id}/datasets` (answer-key datasets filtered out) + a column picker from `.../datasets/{id}/columns` + sample size, each shown with its id). `SynthRejectSummary` shows the finished job's `reject_summary` / `rejected_examples`; the bell appends "N rejected".
+- Eval: `FindingSetMetricsPanel` (metrics, per-label table, no confusion matrix) and `FindingSetRowView` (matched / missed / spurious lines with path, language, start line) for `scoring_mode === 'finding_set'`. Probe pack labels `returns_empty_findings` / `findings_stable_vs_base` (+ `base_had_no_findings` note); code probes carry a `{code, language, path, start_line}` input.
