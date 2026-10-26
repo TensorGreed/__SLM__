@@ -19,6 +19,7 @@ from app.config import settings
 from app.models.dataset import Dataset, DatasetType
 from app.models.experiment import EvalResult, Experiment
 from app.models.project import Project
+from app.services.decoding_settings import LLAMA_CPP_NEUTRAL, decoding_record, generation_kwargs
 from app.services.domain_hook_service import apply_evaluator_hook, resolve_project_domain_hooks
 from app.services.slice_evaluator_service import score_with_slices
 from app.services.eval_task_handler_service import (
@@ -1311,12 +1312,10 @@ def _run_transformers_inference(
                 active_stopping = stopping_criteria
         started = perf_counter()
         with torch.inference_mode():
-            gen_kwargs: dict[str, Any] = {
-                "max_new_tokens": max_new_tokens,
-                "temperature": temperature if temperature > 0 else 1.0,
-                "do_sample": temperature > 0,
-                "pad_token_id": tokenizer.pad_token_id,
-            }
+            gen_kwargs: dict[str, Any] = generation_kwargs(
+                max_new_tokens=max_new_tokens, temperature=temperature,
+                pad_token_id=tokenizer.pad_token_id,
+            )
             if active_stopping is not None:
                 gen_kwargs["stopping_criteria"] = active_stopping
             output_ids = model.generate(**inputs, **gen_kwargs)
@@ -1358,6 +1357,7 @@ def _run_transformers_inference(
         "engine": "transformers",
         "device": "cuda" if use_cuda else "cpu",
         "dtype": str(getattr(model, "dtype", "unknown")),
+        "decoding": decoding_record(generation_kwargs(max_new_tokens=max_new_tokens, temperature=temperature)),
         "model_load_seconds": round(load_seconds, 3),
         "generation_seconds": round(total_generation_seconds, 3),
         "average_latency_ms": round(avg_latency_ms, 3),
@@ -1408,6 +1408,7 @@ def _run_llama_cpp_inference(
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": max_new_tokens,
                     "temperature": temperature,
+                    **LLAMA_CPP_NEUTRAL,
                 }
                 if stops_clean:
                     chat_kwargs["stop"] = stops_clean
@@ -1424,6 +1425,7 @@ def _run_llama_cpp_inference(
             completion_kwargs: dict[str, Any] = {
                 "max_tokens": max_new_tokens,
                 "temperature": temperature,
+                **LLAMA_CPP_NEUTRAL,
             }
             if stops_clean:
                 completion_kwargs["stop"] = stops_clean
@@ -1463,6 +1465,7 @@ def _run_llama_cpp_inference(
     token_tps = generated_tokens_total / total_generation_seconds if total_generation_seconds > 0 else 0.0
     runtime = {
         "engine": "llama_cpp",
+        "decoding": {"temperature": temperature, **LLAMA_CPP_NEUTRAL},
         "device": "cpu",
         "dtype": "gguf",
         "model_load_seconds": round(load_seconds, 3),
@@ -1696,12 +1699,10 @@ def _run_multimodal_inference(
                 inputs = {k: v.to("cuda") for k, v in inputs.items()}
 
             started = perf_counter()
-            gen_kwargs: dict[str, Any] = {
-                "max_new_tokens": max_new_tokens,
-                "temperature": temperature if temperature > 0 else 1.0,
-                "do_sample": temperature > 0,
-                "pad_token_id": tokenizer.pad_token_id,
-            }
+            gen_kwargs: dict[str, Any] = generation_kwargs(
+                max_new_tokens=max_new_tokens, temperature=temperature,
+                pad_token_id=tokenizer.pad_token_id,
+            )
             try:
                 output_ids = model.generate(**inputs, **gen_kwargs)
             except Exception as gen_err:
@@ -1753,6 +1754,7 @@ def _run_multimodal_inference(
         "head": (
             "vision2seq" if modality == "vision" else "speech_seq2seq"
         ),
+        "decoding": decoding_record(generation_kwargs(max_new_tokens=max_new_tokens, temperature=temperature)),
         "device": "cuda" if use_cuda else "cpu",
         "dtype": str(model_kwargs.get("dtype", "float32")),
         "model_load_seconds": round(load_seconds, 3),
@@ -1886,12 +1888,10 @@ def _run_seq2seq_inference(
             if use_cuda:
                 inputs = {k: v.to("cuda") for k, v in inputs.items()}
             started = perf_counter()
-            gen_kwargs: dict[str, Any] = {
-                "max_new_tokens": max_new_tokens,
-                "temperature": temperature if temperature > 0 else 1.0,
-                "do_sample": temperature > 0,
-                "pad_token_id": tokenizer.pad_token_id,
-            }
+            gen_kwargs: dict[str, Any] = generation_kwargs(
+                max_new_tokens=max_new_tokens, temperature=temperature,
+                pad_token_id=tokenizer.pad_token_id,
+            )
             output_ids = model.generate(**inputs, **gen_kwargs)
             elapsed = perf_counter() - started
             latencies_s.append(elapsed)
@@ -1931,6 +1931,7 @@ def _run_seq2seq_inference(
     runtime = {
         "engine": "transformers",
         "head": "seq2seq_lm",
+        "decoding": decoding_record(generation_kwargs(max_new_tokens=max_new_tokens, temperature=temperature)),
         "device": "cuda" if use_cuda else "cpu",
         "dtype": str(model_kwargs.get("dtype", "float32")),
         "model_load_seconds": round(load_seconds, 3),
@@ -2832,6 +2833,7 @@ async def run_heldout_evaluation(
         "task_profile_resolved": eval_ctx.task_profile,
         "handler_id": eval_ctx.handler_id,
         "stop_sequences": handler_stop_sequences,
+        "decoding": (runtime or {}).get("decoding"),
     }
     details["predictions_preview"] = [
         {

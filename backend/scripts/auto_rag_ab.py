@@ -725,9 +725,10 @@ def evaluate_with_inference(
         with torch.no_grad():
             output_ids = model.generate(
                 **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=False,
-                pad_token_id=tokenizer.pad_token_id,
+                **generation_kwargs(
+                    max_new_tokens=max_new_tokens, temperature=0.0,
+                    pad_token_id=tokenizer.pad_token_id,
+                ),
                 eos_token_id=stop_ids or None,
             )
         if used_template:
@@ -1157,6 +1158,7 @@ def run_project_comparison(
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from app.config import settings
     from app.services.evaluation_service import f1_score
+    from app.services.decoding_settings import decoding_record, generation_kwargs
 
     # Reach into the SQLite directly — avoids the async-DB session
     # complexity for a CLI-only path. The schema is stable.
@@ -1445,6 +1447,7 @@ def run_project_comparison(
             "retrieval_decision": retrieval_decision,
             "phase_9c_reference_lift_pct": 146.49,
             "judge": judge_summary,
+            "decoding": decoding_record(generation_kwargs(max_new_tokens=1, temperature=0.0)),
         },
         "rows": combined_rows,
     }

@@ -44,6 +44,7 @@ if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
 from app.services import checkpoint_registry_service as registry  # noqa: E402
+from app.services.decoding_settings import generation_kwargs  # noqa: E402
 
 # ── License audit gate ──────────────────────────────────────────────────────
 # Only corpora under a clearly permissive license may train a published base.
@@ -471,7 +472,7 @@ def _run_fairness_check(model, tokenizer, *, use_cuda: bool, smoke: bool, log: C
                 pass
         inputs = tokenizer(text, return_tensors="pt").to(device)
         with torch.no_grad():
-            out = model.generate(**inputs, max_new_tokens=max_new, do_sample=False, pad_token_id=tokenizer.pad_token_id)
+            out = model.generate(**inputs, **generation_kwargs(max_new_tokens=max_new, temperature=0.0, pad_token_id=tokenizer.pad_token_id))
         gen = tokenizer.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
         samples.append({"group": item["group"], "text": gen})
     log(f"generated {len(samples)} fairness probe samples")

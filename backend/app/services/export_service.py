@@ -34,6 +34,7 @@ from app.services.adapter_merge_service import (
     merge_adapter,
     read_adapter_config,
 )
+from app.services.decoding_settings import align_exported_generation_config
 from app.services.deployment_target_service import (
     build_deploy_target_plan,
     execute_deploy_target_plan,
@@ -866,6 +867,13 @@ async def run_export(
         window_note = cap_token_classifier_window(
             model_dir, _experiment_max_seq_length(experiment),
         )
+        # The shipped model decodes the way BrewSLM evaluated it: greedy, no
+        # repetition penalty / top-k / top-p inherited from the base model.
+        decoding_note = (
+            align_exported_generation_config(model_dir)
+            if export.export_format not in COMPRESSED_EXPORT_FORMATS
+            else None
+        )
         # A span tagger ships with a model card (evidence-only) and the
         # per-type thresholds its scored decoder reads.
         # A seed picked from a multi-seed group says how it was picked.
@@ -982,6 +990,13 @@ async def run_export(
                     + ")\n"
                     if reader_package else ""
                 )
+                + (
+                    "- Decoding: generation_config.json set to greedy with no repetition penalty, "
+                    "top-k or top-p (as evaluated); replaced from the base model: "
+                    + (", ".join(f"{k}={v}" for k, v in decoding_note["replaced"].items()) or "nothing")
+                    + "\n"
+                    if decoding_note else ""
+                )
                 + (f"- Seed selection: {seed_selection['text']}\n" if seed_selection else "")
             ),
             encoding="utf-8",
@@ -991,6 +1006,7 @@ async def run_export(
         # Generate version manifest
         manifest = {
             "token_window": window_note,
+            "decoding": decoding_note,
             "span_package": span_package,
             "reader_package": reader_package,
             "seed_selection": seed_selection,
@@ -1483,8 +1499,12 @@ async def generate(req: InferenceRequest):
         output_ids = model.generate(
             **inputs,
             max_new_tokens=req.max_tokens,
-            temperature=req.temperature,
+            temperature=req.temperature if req.temperature > 0 else 1.0,
             do_sample=req.temperature > 0,
+            num_beams=1,
+            repetition_penalty=1.0,
+            no_repeat_ngram_size=0,
+            **({"top_k": 0, "top_p": 1.0} if req.temperature > 0 else {}),
         )
     prompt_tokens = inputs["input_ids"].shape[-1]
     generated_tokens = output_ids[0][prompt_tokens:]
@@ -1646,8 +1666,12 @@ async def generate(req: InferenceRequest):
     output_ids = model.generate(
         **inputs,
         max_new_tokens=req.max_tokens,
-        temperature=req.temperature,
+        temperature=req.temperature if req.temperature > 0 else 1.0,
         do_sample=req.temperature > 0,
+        num_beams=1,
+        repetition_penalty=1.0,
+        no_repeat_ngram_size=0,
+        **({"top_k": 0, "top_p": 1.0} if req.temperature > 0 else {}),
     )
     prompt_tokens = inputs["input_ids"].shape[-1]
     generated_tokens = output_ids[0][prompt_tokens:]

@@ -27,6 +27,29 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `onResolved` auto-selects the server's run). All other eval surfaces sit
   behind the "Advanced evaluation" toggle — collapsed when
   `activeProject.beginner_mode`, open otherwise; ProbePack `onOpenRun` opens it.
+- **Decoding is explicit (2026-10-26)** — every `generate()` (held-out eval:
+  causal / multimodal / seq2seq; the playground; `scripts/auto_rag_ab.py`, so
+  every passage-reader comparison; `benchmark.py`; `train_warmstart_checkpoint.py`;
+  exported `serve.py`) takes its knobs from `decoding_settings.generation_kwargs`:
+  `num_beams=1`, `repetition_penalty=1.0`, `no_repeat_ngram_size=0` always,
+  greedy at temperature 0, and when sampling also top-k / top-p / min-p /
+  typical / epsilon / eta pinned to values that filter nothing (the GGUF path:
+  `LLAMA_CPP_NEUTRAL`), as explicit values rather than `None` so a recorded
+  result reads unambiguously. Without this,
+  `generate()` fills omitted knobs from the model's `generation_config.json`,
+  and greedy decoding still applies the penalty — Qwen2.5-Instruct ships 1.1.
+  Before this, every eval on an Instruct base was decoded with it: on the
+  NTSB extractor (project 39, seed 42, val) 232 of 468 stated aircraft models
+  came out null (16 at 1.0) because `` "`` had been generated and penalised by
+  that field while `` null`` had not. Results record the settings in
+  `metrics.inference.decoding` and `details.inference.decoding` (auto-RAG
+  comparisons: `summary.decoding`); results without the key were decoded with
+  the model's own config. The lift check reuses a cached base-model result only
+  when its recorded decoding equals the current one
+  (`post_training_eval_service._baseline_decoding_matches`), so older baselines
+  are re-run once. Tests: `test_decoding_settings.py` (a tiny GPT-2 with a
+  penalised config: greedy == raw argmax chain; sampling builds no inherited
+  warper), `test_post_training_lift_eval.py`.
 - **Probe pack (held-out, platform-authored)** — `probe_pack_service`
   is the independent ruler that complements the *user-authored* gold set
   (Coach-stage-2 phase 8). Because the platform can't know the user's

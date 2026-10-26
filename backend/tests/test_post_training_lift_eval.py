@@ -56,6 +56,7 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
             await conn.run_sync(Base.metadata.create_all)
         self.eval_calls: list[dict] = []
         self.legacy_results = False
+        self.undecoded_results = False
         self.seed_scores: dict[int, float] = {}
         # The LLM answer judge is resolved per lift check (a local Ollama
         # would be picked up on a dev box); tests set it explicitly.
@@ -109,6 +110,11 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
         # Per-seed scores for seed-group tests (keyed by child id).
         score = self.seed_scores.get(experiment_id, 0.8) if not is_base else 0.1
         metrics = {"exact_match": score}
+        if not self.undecoded_results:
+            # Real held-out evals record how they decoded (lift evals: greedy).
+            from app.services.decoding_settings import decoding_record, generation_kwargs
+
+            metrics["inference"] = {"decoding": decoding_record(generation_kwargs(max_new_tokens=1, temperature=0.0))}
         if self.result_judge_block is not None:
             metrics["judge"] = dict(self.result_judge_block)
             if "score" in self.result_judge_block:
@@ -221,6 +227,26 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
             async with self.sf() as db:
                 await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=first)
             self.legacy_results = False
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=second)
+            self.assertFalse(out["baseline_reused"])
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=third)
+            self.assertTrue(out["baseline_reused"])
+
+    async def test_baseline_decoded_differently_is_re_evaluated_once(self):
+        """A cached base-model result from before decoding was recorded (it
+        inherited the model's own repetition penalty) is not paired with a
+        fine-tuned eval decoded without one — it is recomputed, then reused."""
+        pid = await self._project()
+        first, second, third = await self._run(pid), await self._run(pid), await self._run(pid)
+        with mock.patch(
+            "app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout
+        ):
+            self.undecoded_results = True
+            async with self.sf() as db:
+                await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=first)
+            self.undecoded_results = False
             async with self.sf() as db:
                 out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=second)
             self.assertFalse(out["baseline_reused"])

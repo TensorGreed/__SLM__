@@ -182,9 +182,13 @@ def _benchmark_with_transformers(
             output_ids = model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
-                temperature=0.0,
                 do_sample=False,
                 pad_token_id=tokenizer.eos_token_id,
+                # Never a processor inherited from generation_config.json
+                # (see app/services/decoding_settings.py).
+                num_beams=1,
+                repetition_penalty=1.0,
+                no_repeat_ngram_size=0,
             )
         elapsed = perf_counter() - t0
 

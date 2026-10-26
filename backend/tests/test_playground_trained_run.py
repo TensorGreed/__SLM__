@@ -218,6 +218,7 @@ class LocalChatRealModelTests(unittest.TestCase):
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         from app.services import local_chat_service
+        from app.services.decoding_settings import generation_kwargs
 
         out = local_chat_service.generate_reply(
             str(self.adapter_dir), self.messages, max_tokens=24, temperature=0.0
@@ -230,7 +231,10 @@ class LocalChatRealModelTests(unittest.TestCase):
         prompt = tok.apply_chat_template(self.messages, tokenize=False, add_generation_prompt=True)
         enc = tok(prompt, return_tensors="pt").to(device)
         with torch.no_grad():
-            gen = manual.generate(**enc, max_new_tokens=24, do_sample=False, pad_token_id=tok.pad_token_id)
+            # The playground decodes with BrewSLM's explicit settings, not the
+            # model's generation_config (which may carry a repetition penalty).
+            gen = manual.generate(**enc, **generation_kwargs(
+                max_new_tokens=24, temperature=0.0, pad_token_id=tok.pad_token_id))
         expected = tok.decode(gen[0][enc["input_ids"].shape[-1]:], skip_special_tokens=True).strip()
         self.assertTrue(out["reply"])
         self.assertEqual(out["reply"], expected)

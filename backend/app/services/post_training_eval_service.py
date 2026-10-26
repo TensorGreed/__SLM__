@@ -196,6 +196,18 @@ def _baseline_judge_matches(result: EvalResult, judge_label: str | None) -> bool
     return str(judge.get("judge") or "") == judge_label
 
 
+def _baseline_decoding_matches(result: EvalResult) -> bool:
+    """A cached base-model result pairs with the fine-tuned eval only if it
+    was decoded the same way (lift evals are greedy). Results from before
+    decoding was recorded inherited the model's own generation_config —
+    Qwen2.5-Instruct's repetition penalty 1.1 — so they are re-run once."""
+    from app.services.decoding_settings import decoding_record, generation_kwargs
+
+    metrics = result.metrics if isinstance(result.metrics, dict) else {}
+    inference = metrics.get("inference") if isinstance(metrics.get("inference"), dict) else {}
+    return inference.get("decoding") == decoding_record(generation_kwargs(max_new_tokens=1, temperature=0.0))
+
+
 async def _reusable_baseline_result(
     db: AsyncSession, baseline_exp: Experiment, project_id: int, *, judge_label: str | None = None
 ) -> EvalResult | None:
@@ -224,6 +236,8 @@ async def _reusable_baseline_result(
     if not isinstance(details.get("row_scores"), dict):
         return None
     if not _baseline_judge_matches(latest, judge_label):
+        return None
+    if not _baseline_decoding_matches(latest):
         return None
     return latest
 

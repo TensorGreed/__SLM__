@@ -21,6 +21,7 @@ from time import perf_counter
 from typing import Any, AsyncIterator
 
 from app.services.adapter_merge_service import adapter_base_model, read_adapter_config
+from app.services.decoding_settings import generation_kwargs
 
 _LOCK = threading.Lock()
 _CACHE: dict[str, Any] = {"key": None, "bundle": None}
@@ -123,15 +124,11 @@ def render_chat_prompt(tokenizer: Any, messages: list[dict[str, str]]) -> str:
 
 
 def _generation_kwargs(bundle: _Bundle, max_tokens: int, temperature: float) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {
-        "max_new_tokens": int(max_tokens),
-        "pad_token_id": bundle.tokenizer.pad_token_id,
-    }
-    if temperature and temperature > 0:
-        kwargs.update(do_sample=True, temperature=float(temperature))
-    else:
-        kwargs["do_sample"] = False
-    return kwargs
+    return generation_kwargs(
+        max_new_tokens=max_tokens,
+        temperature=float(temperature or 0.0),
+        pad_token_id=bundle.tokenizer.pad_token_id,
+    )
 
 
 def _classify(bundle: _Bundle, messages: list[dict[str, str]]) -> dict[str, Any]:
