@@ -53,6 +53,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.dataset import DatasetType
 from app.models.project import Project
+from app.services import provenance_service
 from app.services.synth_backends.base import SynthBackend, SynthBackendError
 
 _LOG = logging.getLogger("documents_qa_flow")
@@ -503,7 +504,10 @@ async def preview_documents_qa_flow(
     project = await db.get(Project, project_id)
     if project is None:
         raise ValueError(f"Project {project_id} not found")
-    passages = load_document_passages(project_id)
+    # eval-only / retrieval-only documents never seed training pairs (they stay in the index).
+    passages = provenance_service.drop_excluded_passages(
+        load_document_passages(project_id), await provenance_service.training_excluded_document_ids(db, project_id)
+    )
     backend_name: str | None = None
     backend_blocker: str | None = None
     try:
@@ -1009,7 +1013,9 @@ async def run_documents_qa_flow(
     if project is None:
         raise ValueError(f"Project {project_id} not found")
 
-    passages = load_document_passages(project_id)
+    passages = provenance_service.drop_excluded_passages(
+        load_document_passages(project_id), await provenance_service.training_excluded_document_ids(db, project_id)
+    )
     if len(passages) < MIN_PASSAGES:
         raise ValueError(
             f"Needs at least {MIN_PASSAGES} cleaned document passages (found {len(passages)}). "

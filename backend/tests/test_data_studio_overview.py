@@ -1729,6 +1729,7 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertTrue(payload["entry_point"]["requires_confirmation"])
         self.assertEqual(payload["recipe"]["status"], "missing")
         self.assertEqual(payload["mapping"]["status"], "missing")
+        self.assertIsNone(payload["manifest"]["provenance"])
         self.assertEqual(payload["splits"]["status"], "missing")
         self.assertEqual(payload["manifest"]["status"], "missing")
         issue_ids = {item["id"] for item in payload["issues"]}
@@ -1845,6 +1846,7 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
                     "adapter_config": {},
                     "field_mapping": {},
                     "task_profile": "classification",
+                    "provenance": {"by_source": {}, "excluded_rag": 0, "eval_routed_to_test": 2, "warnings": ["toy warning"]},
                 }
                 (prepared_dir / "manifest.json").write_text(
                     json.dumps(manifest),
@@ -1868,6 +1870,8 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertEqual(payload["splits"]["total_prepared_rows"], 24)
         self.assertEqual(payload["manifest"]["status"], "ready")
         self.assertEqual(payload["manifest"]["dataset_versions"], {"train": 1, "val": 1, "test": 1})
+        self.assertEqual(payload["manifest"]["provenance"]["eval_routed_to_test"], 2)
+        self.assertEqual(payload["manifest"]["provenance"]["warnings"], ["toy warning"])
         self.assertEqual(payload["inclusion"]["cleaned_rows"], 24)
         self.assertEqual(payload["inclusion"]["included_source_types"], ["cleaned"])
         self.assertEqual(payload["review_blockers"], [])

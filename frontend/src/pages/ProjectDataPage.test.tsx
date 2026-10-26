@@ -67,7 +67,7 @@ describe('ProjectDataPage', () => {
         expect(screen.getAllByRole('tab')).toHaveLength(5);
         expect(screen.getByTestId('panel-ingestion')).toHaveTextContent('open=null');
         const ids = (seen.props['panel-ingestion'].extraDetails as Array<{ id: string }>).map((s) => s.id);
-        expect(ids).toEqual(['overview', 'sources', 'assist']);
+        expect(ids).toEqual(['overview', 'sources', 'provenance', 'assist']);
     });
 
     it('Labels shows the task shape, the conventions for a span project, and the answer key panel with review + annotation details', () => {

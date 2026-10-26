@@ -1,0 +1,22 @@
+.prov__help { margin: 0 0 var(--space-sm); }
+.prov__bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    align-items: flex-end;
+    padding: var(--space-sm);
+    margin-bottom: var(--space-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+}
+.prov__bar label { display: flex; flex-direction: column; gap: var(--space-xs); }
+.prov__table { width: 100%; border-collapse: collapse; }
+.prov__table th, .prov__table td {
+    text-align: left;
+    padding: var(--space-xs) var(--space-sm);
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+.prov__locator { display: block; word-break: break-all; }
+.prov__badge-row { display: flex; flex-wrap: wrap; gap: var(--space-xs); align-items: center; }
+.prov__scroll { overflow-x: auto; }

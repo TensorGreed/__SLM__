@@ -18,6 +18,8 @@ export interface WebCrawlRequest {
     delay_seconds?: number;
     include_patterns?: string[];
     exclude_patterns?: string[];
+    /** Licence of the crawled site, recorded in the provenance ledger. */
+    licence?: string | null;
 }
 
 export interface GitRepoRequest {

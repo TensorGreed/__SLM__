@@ -79,6 +79,7 @@ session-start guidance.
 - `backend/app/api/probe_packs.py` — Probe Pack API — Coach-stage-2 phase 8.
 - `backend/app/api/project_templates.py` — Project template catalog + instantiation API.
 - `backend/app/api/projects.py` — Project CRUD API routes.
+- `backend/app/api/provenance.py` — Licence & provenance ledger API (see ``services/provenance_service``).
 - `backend/app/api/quickstart.py` — Project-guide quickstart endpoints (Theme 1 Epic 4 + Theme 8 Epic 1).
 - `backend/app/api/recipes.py` — Recipe catalog + shape-sniffer API routes.
 - `backend/app/api/redact.py` — Redact text with a project's span-tagging (token classification) run.
@@ -255,6 +256,7 @@ session-start guidance.
 - `backend/app/services/project_smoke_test_service.py` — Project smoke-test service (Diagnostics Intervention C).
 - `backend/app/services/project_template_service.py` — Project templates — cloneable starting kits for new projects.
 - `backend/app/services/prompt_contamination_service.py` — Prompts must never carry a benchmark's own values.
+- `backend/app/services/provenance_service.py` — Licence & provenance ledger.
 - `backend/app/services/rag_project_service.py` — RAG-skeleton project service (USER-SUCCESS Epic 7 Phase 7b).
 - `backend/app/services/rag_sandbox_service.py` — Lightweight RAG sandbox retrieval helpers.
 - `backend/app/services/reader_model_package_service.py` — Model card for a passage reader — a causal LM trained with retrieved
@@ -353,6 +355,7 @@ session-start guidance.
 - `backend/app/models/autopilot_repair_preview.py` — Persisted repair previews for two-step autopilot apply.
 - `backend/app/models/autopilot_snapshot.py` — Pre-change snapshots captured by autopilot so decisions can be rolled back.
 - `backend/app/models/base_model_registry.py` — Universal base model registry ORM model.
+- `backend/app/models/data_source.py` — Licence & provenance ledger: one row per place data came from.
 - `backend/app/models/dataset.py` — Dataset, DatasetVersion, and RawDocument ORM models.
 - `backend/app/models/dataset_adapter_definition.py` — Versioned non-Python dataset adapter definitions for Adapter Studio.
 - `backend/app/models/dataset_import_config.py` — Saved dataset-import mapping configs (Phase G of DATASET_IMPORT_PLAN.md).
@@ -466,6 +469,7 @@ session-start guidance.
 - `backend/alembic/versions/20260608_0047_project_slice_definitions.py` — Quality-Lift phase 2 slice 1 — Project.slice_definitions column.
 - `backend/alembic/versions/20260609_0048_label_noise_scans.py` — Quality-Lift phase 4 slice 1 — label_noise_scans table.
 - `backend/alembic/versions/20261015_0049_benchmark_dataset_type.py` — External benchmarks: 'benchmark' dataset type (Epic G-B1).
+- `backend/alembic/versions/20261026_0050_data_sources_provenance.py` — Licence & provenance ledger: data_sources + provenance columns (phase G2).
 
 ## Frontend · API clients
 
@@ -498,6 +502,7 @@ session-start guidance.
 - `frontend/src/api/probePack.ts` — Probe Pack API client — Coach-stage-2 phase 8.
 - `frontend/src/api/projectTemplates.ts` — Typed wrappers for the project-template catalog + instantiation API.
 - `frontend/src/api/promptCheck.ts` — Dry run of the benchmark-value gate: does a seed-documents or
+- `frontend/src/api/provenance.ts` — Typed client for the licence & provenance ledger. Mirrors
 - `frontend/src/api/quickstart.ts` — Typed wrappers for the project-guide quickstart endpoints
 - `frontend/src/api/recipes.ts` — Typed wrappers around the Theme 2 recipe registry + shape sniffer.
 - `frontend/src/api/redact.ts` — POST /api/projects/{id}/redact — tag a text with a span-tagging
@@ -602,6 +607,7 @@ session-start guidance.
 - `frontend/src/components/data/OutputSchemaEditor.tsx` — Optional "Output schema (JSON)" for the json-extraction task type.
 - `frontend/src/components/data/PlaybookPickerPanel.tsx` — PlaybookPickerPanel — USER-SUCCESS Epic 2.
 - `frontend/src/components/data/PredefinedSplitCard.tsx` — "Use my own train / val / test files" — import files whose split
+- `frontend/src/components/data/ProvenancePanel.tsx` — _(no docstring)_
 - `frontend/src/components/data/RecipePicker.tsx` — Recipe Picker — Theme 2 Epic 3 + 4.
 - `frontend/src/components/data/SavedMappingsPanel.tsx` — Saved dataset-import mappings panel (Phase G of DATASET_IMPORT_PLAN).
 - `frontend/src/components/data/SeedDocumentsCard.tsx` — _(no docstring)_
@@ -984,6 +990,10 @@ session-start guidance.
 - `backend/tests/test_project_smoke_test.py` — Tests for the project smoke-test service (Diagnostics Intervention C).
 - `backend/tests/test_project_template_service.py` — Tests for the project_template service + endpoints.
 - `backend/tests/test_prompt_contamination.py` — Seed-documents / span-synthesis prompts are refused when they carry a
+- `backend/tests/test_provenance_api.py` — Licence & provenance ledger through the API: lazily attached legacy
+- `backend/tests/test_provenance_enforcement.py` — The ledger's usage rules at prepare time and in seeding: ``eval`` sources
+- `backend/tests/test_provenance_migration.py` — The provenance-ledger migration is additive and idempotent: it creates
+- `backend/tests/test_provenance_service.py` — provenance_service helpers that need no database: licence normalisation +
 - `backend/tests/test_quickstart_endpoints.py` — Tests for the project-guide quickstart endpoints (Theme 1 Epic 4 +
 - `backend/tests/test_rag_adapter_prompt_wrap.py` — η-fix tests — rag-grounded adapter writes the production
 - `backend/tests/test_rag_project_service.py` — Tests for the RAG-skeleton project service
@@ -1099,6 +1109,7 @@ session-start guidance.
 - `frontend/src/components/data/OutputSchemaEditor.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/PlaybookPickerPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/PredefinedSplitCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/ProvenancePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/RecipePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SavedMappingsPanel.test.tsx` — Saved-mappings panel contract.
 - `frontend/src/components/data/SeedDocumentsCard.test.tsx` — _(no docstring)_

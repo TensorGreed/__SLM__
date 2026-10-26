@@ -11,6 +11,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
 from app.schemas.dataset import DocumentResponse, DocumentUploadResponse
+from app.services import provenance_service
 from app.services.job_service import cancel_task, get_task_status
 from app.services.ingestion_service import (
     delete_document,
@@ -120,6 +121,13 @@ class EDAOutlierRemovalRequest(BaseModel):
     max_rows: int = Field(default=100000, ge=1, le=2000000)
 
 
+def _form_usage(value: str) -> str:
+    try:
+        return provenance_service.validate_usage(value)
+    except provenance_service.ProvenanceError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)
 async def upload_file(
     project_id: int,
@@ -127,11 +135,15 @@ async def upload_file(
     source: str = Form(default="upload"),
     sensitivity: str = Form(default="internal"),
     license_info: str = Form(default=""),
+    usage: str = Form(default="any"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a document for ingestion."""
+    """Upload a document for ingestion. ``usage`` (``any`` / ``train`` /
+    ``eval`` / ``rag``) says where its rows may go; the form licence is
+    recorded on the document's provenance source."""
     if not file.filename:
         raise HTTPException(400, "No filename provided")
+    usage = _form_usage(usage)
 
     content = await file.read()
     if len(content) == 0:
@@ -147,6 +159,11 @@ async def upload_file(
             sensitivity=sensitivity,
             license_info=license_info,
         )
+        source = await provenance_service.create_source(
+            db, project_id, kind=provenance_service.KIND_UPLOAD, title=doc.filename, locator=file.filename,
+            licence=license_info, usage=usage,
+        )
+        await provenance_service.attach_document(doc, source)
         return DocumentUploadResponse.model_validate(doc)
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -158,11 +175,16 @@ async def upload_batch(
     files: list[UploadFile] = File(...),
     source: str = Form(default="upload"),
     sensitivity: str = Form(default="internal"),
+    license_info: str = Form(default=""),
+    usage: str = Form(default="any"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload multiple documents at once."""
+    """Upload multiple documents at once. One provenance source covers the
+    whole batch (``license_info`` / ``usage`` apply to it)."""
+    usage = _form_usage(usage)
     results = []
     errors = []
+    batch_source = None
     for f in files:
         if not f.filename:
             continue
@@ -175,11 +197,21 @@ async def upload_batch(
                 file_content=content,
                 source=source,
                 sensitivity=sensitivity,
+                license_info=license_info,
             )
+            if batch_source is None:
+                batch_source = await provenance_service.create_source(
+                    db, project_id, kind=provenance_service.KIND_UPLOAD, title="Upload batch",
+                    locator=f.filename, licence=license_info, usage=usage,
+                )
+            await provenance_service.attach_document(doc, batch_source)
             results.append(DocumentUploadResponse.model_validate(doc))
         except Exception as e:
             errors.append({"filename": f.filename, "error": str(e)})
 
+    if batch_source is not None:
+        batch_source.title = f"Upload batch of {len(results)} files"
+        batch_source.locator = ", ".join(r.filename for r in results[:3]) + (" ..." if len(results) > 3 else "")
     return {"uploaded": len(results), "errors": errors, "documents": results}
 
 
@@ -337,7 +369,9 @@ async def get_documents(
     """List all ingested documents for a project."""
     try:
         docs = await list_documents(db, project_id, status)
-        return [DocumentResponse.model_validate(d) for d in docs]
+        responses = [DocumentResponse.model_validate(d) for d in docs]
+        await provenance_service.enrich_document_responses(db, project_id, responses)
+        return responses
     except ValueError as e:
         raise HTTPException(404, str(e))
 
@@ -415,7 +449,9 @@ async def process_doc(
     """Process (parse) an ingested document to extract text."""
     try:
         doc = await process_document(db, project_id, document_id)
-        return DocumentResponse.model_validate(doc)
+        response = DocumentResponse.model_validate(doc)
+        await provenance_service.enrich_document_responses(db, project_id, [response])
+        return response
     except ValueError as e:
         raise HTTPException(404, str(e))
 

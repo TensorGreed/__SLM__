@@ -7,7 +7,7 @@ title: Auto API index
 
 # Auto-generated API reference
 
-**SLM Platform** — version `0.1.0`. 532 endpoint(s) across 67 tag(s).
+**SLM Platform** — version `0.1.0`. 538 endpoint(s) across 69 tag(s).
 
 This section is auto-generated from the FastAPI OpenAPI spec. For curated narrative
 + UI / CLI walkthroughs see the linked workflow pages. The live Swagger UI is at
@@ -42,6 +42,7 @@ This section is auto-generated from the FastAPI OpenAPI spec. For curated narrat
 | [DemoProjects](demoprojects.md) | 3 |
 | [Deployments](deployments.md) | 15 |
 | [Distillation](distillation.md) | 2 |
+| [Document Sources](document-sources.md) | 2 |
 | [Domain Blueprints](domain-blueprints.md) | 10 |
 | [Domain Packs](domain-packs.md) | 7 |
 | [Domain Profiles](domain-profiles.md) | 5 |
@@ -66,6 +67,7 @@ This section is auto-generated from the FastAPI OpenAPI spec. For curated narrat
 | [Probe Pack](probe-pack.md) | 3 |
 | [Project Templates](project-templates.md) | 3 |
 | [Projects](projects.md) | 28 |
+| [Provenance](provenance.md) | 2 |
 | [Quickstart](quickstart.md) | 4 |
 | [Recipes](recipes.md) | 3 |
 | [Redaction](redaction.md) | 4 |

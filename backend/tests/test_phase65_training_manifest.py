@@ -368,7 +368,7 @@ class Phase65TrainingManifestTests(unittest.TestCase):
             "id", "experiment_id", "project_id", "schema_version", "captured_at",
             "base_model", "dataset_adapter", "blueprint", "datasets",
             "recipe_id", "runtime_id", "training_mode", "tokenizer", "seed",
-            "resolved_config", "env", "artifact_ids", "warm_start", "capture_warnings",
+            "resolved_config", "env", "artifact_ids", "warm_start", "capture_warnings", "data_provenance",
         }
         self.assertEqual(set(payload.keys()), expected_keys)
 

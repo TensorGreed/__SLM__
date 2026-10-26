@@ -275,6 +275,13 @@ async def _materialize_demo_bundle_into_project(
     db.add(dataset)
     await db.flush()
 
+    from app.services import provenance_service
+
+    demo_source = await provenance_service.create_source(
+        db, project.id, kind=provenance_service.KIND_DEMO, title=f"Demo data: {slug}", locator=csv_filename,
+        metadata={"demo_slug": slug},
+    )
+
     # One RawDocument per CSV row keeps the per-stage tabs realistic.
     for idx, row in enumerate(csv_rows):
         payload = json.dumps(row, ensure_ascii=False)
@@ -289,6 +296,8 @@ async def _materialize_demo_bundle_into_project(
                 sensitivity="public",
                 status=DocumentStatus.ACCEPTED,
                 metadata_={"row_index": idx, "row": row},
+                data_source_id=demo_source.id,
+                retrieved_at=demo_source.retrieved_at,
             )
         )
 

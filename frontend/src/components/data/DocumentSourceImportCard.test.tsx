@@ -168,3 +168,18 @@ describe('DocumentSourceImportCard', () => {
         await waitFor(() => expect(screen.getByTestId('dsi-error')).toHaveTextContent('robots_disallowed=3'));
     });
 });
+
+describe('DocumentSourceImportCard licence', () => {
+    it('sends the optional licence with a crawl', async () => {
+        apiMock.post.mockReset(); apiMock.get.mockReset();
+        apiMock.post.mockResolvedValue({ data: job({}) });
+        apiMock.get.mockResolvedValue({ data: job({ status: 'running' }) });
+        const user = userEvent.setup();
+        render(<DocumentSourceImportCard projectId={5} pollMs={10} />);
+        await user.type(screen.getByTestId('dsi-seeds'), 'https://docs.example.com/guide/');
+        await user.type(screen.getByTestId('dsi-licence'), 'CC-BY-4.0');
+        await user.click(screen.getByTestId('dsi-start-web'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
+        expect(apiMock.post.mock.calls[0][1]).toMatchObject({ licence: 'CC-BY-4.0' });
+    });
+});

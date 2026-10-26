@@ -808,6 +808,18 @@ async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     # multi-FK), so purge them explicitly before the cascade drops the datasets
     # they key off — otherwise they leak orphaned rows.
     await gold_workbench_service.purge_gold_sets_for_project(db, project.id)
+    # The provenance ledger: documents point at their sources, so unlink the
+    # documents first, then drop the sources (the datasets cascade below).
+    from sqlalchemy import delete as sa_delete, update as sa_update
+
+    from app.models.data_source import DataSource
+    from app.models.dataset import Dataset, RawDocument
+
+    dataset_ids = select(Dataset.id).where(Dataset.project_id == project.id)
+    await db.execute(
+        sa_update(RawDocument).where(RawDocument.dataset_id.in_(dataset_ids)).values(data_source_id=None)
+    )
+    await db.execute(sa_delete(DataSource).where(DataSource.project_id == project.id))
     await db.delete(project)
 
 

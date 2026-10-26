@@ -26,6 +26,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.data_source import DataSource
 from app.models.dataset import Dataset, RawDocument
 from app.models.project import Project, ProjectStatus
 from app.services.rag_project_service import (
@@ -56,6 +57,100 @@ def copy_data_tree(src_id: int, dst_id: int, subdirs: tuple[str, ...] = COPIED_S
         shutil.copytree(src_sub, dst_sub)
         copied.append(subdir)
     return copied
+
+
+def _remap_copied_source_ids(project_id: int, source_map: dict[int, int]) -> None:
+    """The copied ``synthetic.jsonl`` rows and prepared manifest still carry the
+    source project's ``data_source_id``s: point them at the copy's sources
+    (a row whose source was not copied loses the key)."""
+    import json
+
+    from app.config import settings
+
+    root = settings.DATA_DIR / "projects" / str(project_id)
+    rows_path = root / "synthetic" / "synthetic.jsonl"
+    if rows_path.exists():
+        out: list[str] = []
+        changed = False
+        for line in rows_path.read_text(encoding="utf-8").splitlines():
+            if '"data_source_id"' in line:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    out.append(line)
+                    continue
+                if isinstance(row, dict) and "data_source_id" in row:
+                    new_id = source_map.get(row["data_source_id"]) if isinstance(row["data_source_id"], int) else None
+                    if new_id is None:
+                        row.pop("data_source_id")
+                    else:
+                        row["data_source_id"] = new_id
+                    line = json.dumps(row, ensure_ascii=False)
+                    changed = True
+            out.append(line)
+        if changed:
+            rows_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    manifest_path = root / "prepared" / "manifest.json"
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            by_source = (manifest.get("provenance") or {}).get("by_source")
+            if isinstance(by_source, dict):
+                manifest["provenance"]["by_source"] = {
+                    str(source_map[int(k)]): v for k, v in by_source.items() if str(k).isdigit() and int(k) in source_map
+                }
+                manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        except (OSError, json.JSONDecodeError, ValueError):
+            pass
+
+
+def _remap_copied_document_ids(project_id: int, doc_map: dict[int, int]) -> None:
+    """The copied cleaned / synthetic / gold / prepared jsonl files (and the
+    ``*.chunks.jsonl`` sidecars) name the source project's document ids in
+    ``source_document_id`` / ``_source_document_id``: point them at the copy's
+    documents, so an eval / rag mark on a copied document still reaches its
+    rows. An id with no copied document is left as it was."""
+    import json
+
+    from app.config import settings
+
+    if not doc_map:
+        return
+    root = settings.DATA_DIR / "projects" / str(project_id)
+    for sub in ("cleaned", "synthetic", "gold", "prepared", "raw"):
+        base = root / sub
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*.jsonl"):
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            changed = False
+            out: list[str] = []
+            for line in lines:
+                if "source_document_id" in line:
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        row = None
+                    if isinstance(row, dict):
+                        hit = False
+                        ids = row.get("source_document_ids")
+                        if isinstance(ids, list) and any(isinstance(i, int) and i in doc_map for i in ids):
+                            row["source_document_ids"] = [doc_map.get(i, i) if isinstance(i, int) else i for i in ids]
+                            hit = True
+                        for key in ("source_document_id", "_source_document_id"):
+                            val = row.get(key)
+                            if isinstance(val, int) and not isinstance(val, bool) and val in doc_map:
+                                row[key] = doc_map[val]
+                                hit = True
+                        if hit:
+                            line = json.dumps(row, ensure_ascii=False)
+                            changed = True
+                out.append(line)
+            if changed:
+                path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
 async def duplicate_project(
@@ -112,11 +207,27 @@ async def duplicate_project(
     await db.flush()
     # The uploaded documents (so Data → Sources lists them in the copy). The
     # cleaned passages keep the source's document ids as their identifiers.
+    # The licence & provenance ledger: same sources, new ids; documents follow.
+    source_map: dict[int, int] = {}
+    old_sources = await db.execute(select(DataSource).where(DataSource.project_id == source.id).order_by(DataSource.id))
+    for old in old_sources.scalars():
+        clone = DataSource(
+            project_id=project.id, source_kind=old.source_kind, title=old.title, locator=old.locator,
+            source_ref=old.source_ref, licence=old.licence, licence_verified=old.licence_verified,
+            licence_verified_by=old.licence_verified_by, licence_verified_at=old.licence_verified_at,
+            retrieved_at=old.retrieved_at, usage=old.usage,
+            metadata_={**dict(old.metadata_ or {}), "cloned_from_source_id": old.id},
+        )
+        db.add(clone)
+        await db.flush()
+        source_map[int(old.id)] = int(clone.id)
+    _remap_copied_source_ids(project.id, source_map)
     documents = 0
     if new_by_old:
         docs = await db.execute(select(RawDocument).where(RawDocument.dataset_id.in_(list(new_by_old))))
+        pairs: list[tuple[int, RawDocument]] = []
         for doc in docs.scalars():
-            db.add(RawDocument(
+            clone_doc = RawDocument(
                 dataset_id=new_by_old[doc.dataset_id].id,
                 filename=doc.filename,
                 file_type=doc.file_type,
@@ -129,9 +240,16 @@ async def duplicate_project(
                 quality_score=doc.quality_score,
                 chunk_count=doc.chunk_count,
                 metadata_={**dict(doc.metadata_ or {}), "cloned_from_document_id": doc.id},
-            ))
+                data_source_id=source_map.get(int(doc.data_source_id)) if doc.data_source_id is not None else None,
+                source_url=doc.source_url,
+                source_ref=doc.source_ref,
+                retrieved_at=doc.retrieved_at,
+            )
+            db.add(clone_doc)
+            pairs.append((int(doc.id), clone_doc))
             documents += 1
         await db.flush()
+        _remap_copied_document_ids(project.id, {old: int(new.id) for old, new in pairs})
     cfg: dict[str, Any] = dict(project.runtime_config or {})
     cfg["duplicated_from"] = {**cfg["duplicated_from"], "copied_subdirs": copied, "datasets": count, "documents": documents}
     project.runtime_config = cfg

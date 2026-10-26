@@ -206,6 +206,11 @@ async def get_cleaned_chunks(
     all_docs = list(result.scalars().all())
     # Your own predefined test file never seeds synthetic data (split_role_service).
     test_doc_ids = {int(d.id) for d in all_docs if is_test_role_document(d)}
+    # eval-only / retrieval-only documents never seed synthetic data either (the ledger).
+    from app.services.provenance_service import source_usage_map, training_excluded_document_ids
+
+    test_doc_ids |= await training_excluded_document_ids(db, project_id)
+    excluded_source_ids = {sid for sid, u in (await source_usage_map(db, project_id)).items() if u in ("eval", "rag")}
     docs = [d for d in all_docs if d.id not in test_doc_ids]
 
     # Two ingest paths feed a project (see data_health_service for the
@@ -270,6 +275,8 @@ async def get_cleaned_chunks(
                         except _json.JSONDecodeError:
                             continue
                         if isinstance(row, dict) and row.get("source_document_id") in test_doc_ids:
+                            continue
+                        if isinstance(row, dict) and row.get("data_source_id") in excluded_source_ids:
                             continue
                         # Map the row's text field into the
                         # cleaning-chunk shape so the picker renders

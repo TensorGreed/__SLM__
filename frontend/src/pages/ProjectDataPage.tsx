@@ -25,6 +25,7 @@ import CoachNotices from '../components/coach/CoachNotices';
 import StepHelp from '../components/coach/StepHelp';
 import type { CoachStage } from '../api/coach';
 import DataStudioOverviewPanel from '../components/data/DataStudioOverviewPanel';
+import ProvenancePanel from '../components/data/ProvenancePanel';
 import DataStudioSourcesSummaryPanel from '../components/data/DataStudioSourcesSummaryPanel';
 import DataStudioAssistPanel from '../components/data/DataStudioAssistPanel';
 import DataStudioMappingPreviewPanel from '../components/data/DataStudioMappingPreviewPanel';
@@ -130,6 +131,7 @@ export default function ProjectDataPage() {
     const sourcesDetails: DetailSection[] = [
         { id: 'overview', title: 'Readiness overview', hint: 'task type, sources, domain, reviews, the next action', render: () => <DataStudioOverviewPanel projectId={projectId} onOpenTab={(tab) => openTarget(tab)} /> },
         { id: 'sources', title: 'Sources summary', hint: 'coverage and ingestion health per source', render: () => <DataStudioSourcesSummaryPanel projectId={projectId} /> },
+        { id: 'provenance', title: 'Provenance', hint: 'licence, origin and allowed use of each source', render: () => <ProvenancePanel projectId={projectId} /> },
         { id: 'assist', title: 'Assist', hint: 'suggested fixes for the data as it is', render: () => <DataStudioAssistPanel projectId={projectId} /> },
     ];
     const prepareDetails: DetailSection[] = [

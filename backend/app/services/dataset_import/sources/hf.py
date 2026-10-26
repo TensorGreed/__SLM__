@@ -203,6 +203,14 @@ class HuggingFaceSource:
         effective_split = split or picked
         return dataset, dataset_id, effective_split, revision
 
+    def licence_of(self, locator: str) -> tuple[str | None, str | None]:
+        """``(licence, ref)`` for the ledger: the dataset's declared licence
+        (``None`` = unknown / offline) and its pinned revision, else split."""
+        from app.services.provenance_service import hf_dataset_licence
+
+        dataset_id, split, revision = _parse_locator(locator)
+        return hf_dataset_licence(dataset_id, _resolve_token()), revision or split
+
     def load(
         self,
         locator: str,
@@ -248,6 +256,7 @@ class HuggingFaceSource:
             "approximate_total_rows": None,  # streaming — unknown w/o download
             "sample_rows": sample,
             "columns": columns,
+            "licence": self.licence_of(locator)[0],
         }
 
 

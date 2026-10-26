@@ -1,5 +1,5 @@
 ---
-sidebar_position: 41
+sidebar_position: 42
 title: Ingestion
 ---
 
@@ -99,7 +99,9 @@ Content type: `application/json` — `RemoteImportRequest`
 
 **Upload File**
 
-Upload a document for ingestion.
+Upload a document for ingestion. ``usage`` (``any`` / ``train`` /
+``eval`` / ``rag``) says where its rows may go; the form licence is
+recorded on the document's provenance source.
 
 **Parameters**
 
@@ -117,6 +119,7 @@ Content type: `multipart/form-data` — `Body_upload_file_api_projects__project_
 | `source` | `string` | no |  |
 | `sensitivity` | `string` | no |  |
 | `license_info` | `string` | no |  |
+| `usage` | `string` | no |  |
 
 **Responses**
 
@@ -130,7 +133,8 @@ Content type: `multipart/form-data` — `Body_upload_file_api_projects__project_
 
 **Upload Batch**
 
-Upload multiple documents at once.
+Upload multiple documents at once. One provenance source covers the
+whole batch (``license_info`` / ``usage`` apply to it).
 
 **Parameters**
 
@@ -147,6 +151,8 @@ Content type: `multipart/form-data` — `Body_upload_batch_api_projects__project
 | `files` | `string[]` | yes |  |
 | `source` | `string` | no |  |
 | `sensitivity` | `string` | no |  |
+| `license_info` | `string` | no |  |
+| `usage` | `string` | no |  |
 
 **Responses**
 

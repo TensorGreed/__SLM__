@@ -19,6 +19,7 @@ from app.config import settings
 from app.services.code_chunker import is_code_document
 from app.models.dataset import Dataset, DatasetType, DatasetVersion, DocumentStatus, RawDocument
 from app.models.project import Project
+from app.services import provenance_service
 from app.services.split_role_service import (
     drop_test_role_rows,
     is_test_role_document,
@@ -992,9 +993,17 @@ async def combine_datasets(
     cleaned_labelled_only: bool = False,
     cleaned_report: dict[str, int] | None = None,
     input_rejected: dict[str, int] | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> list[dict]:
     """
     Combine entries from cleaned/synthetic (and, when asked, gold) datasets.
+
+    Licence & provenance ledger: rows whose source is marked ``rag`` never
+    enter the pool (counted in ``provenance["excluded_rag"]``); rows whose
+    source is ``eval`` are held out of it and collected, in order, in
+    ``provenance["eval_rows"]`` for the caller to route to the test split
+    (``provenance["usage_context"]`` is the lookup the manifest counts use).
+    With no such source the result is exactly what it was without a ledger.
 
     ``cleaned_labelled_only`` keeps only structured cleaned rows (row files
     cleaned row-by-row, marked with ``row_index``) and drops unlabelled
@@ -1007,6 +1016,11 @@ async def combine_datasets(
         include_types = list(DEFAULT_TRAINING_SOURCE_TYPES)
 
     normalizer_hook_spec = await _resolve_normalizer_hook_spec(db, project_id)
+
+    usage_ctx = await provenance_service.build_usage_context(db, project_id)
+    if provenance is None:
+        provenance = {}
+    provenance["usage_context"] = usage_ctx
 
     all_entries: list[dict[str, Any]] = []
 
@@ -1074,7 +1088,7 @@ async def combine_datasets(
                 )
                 _count_input_rejects(row_rejects, input_rejected)
                 _stamp_source_document(normalized, doc.id, doc.filename)
-                all_entries.extend(normalized)
+                all_entries.extend(usage_ctx.partition(normalized, provenance))
             continue
 
         if not ds.file_path:
@@ -1106,7 +1120,7 @@ async def combine_datasets(
             rejected=row_rejects,
         )
         _count_input_rejects(row_rejects, input_rejected)
-        all_entries.extend(normalized)
+        all_entries.extend(usage_ctx.partition(normalized, provenance))
 
     return all_entries
 
@@ -1626,6 +1640,7 @@ async def split_dataset(
 
     cleaned_report: dict[str, int] = {}
     input_rejected: dict[str, int] = {}
+    prov_state: dict[str, Any] = {}
     entries = await combine_datasets(
         db,
         project_id,
@@ -1638,6 +1653,7 @@ async def split_dataset(
         cleaned_labelled_only=dataset_type_report.get("cleaned_rows") == "labelled_only",
         cleaned_report=cleaned_report,
         input_rejected=input_rejected,
+        provenance=prov_state,
     )
     if cleaned_report:
         dataset_type_report["cleaned_filter"] = cleaned_report
@@ -1650,6 +1666,12 @@ async def split_dataset(
             raise ValueError(
                 "No data available to split: every row's input would have been its own label or gold "
                 f"record ({input_rejected}). Name the input column with a field mapping (text / question)."
+            )
+        if prov_state.get("eval_rows") or prov_state.get("excluded_rag"):
+            raise ValueError(
+                "No data available to train on: every row comes from a source marked eval-only "
+                f"({len(prov_state.get('eval_rows') or [])} rows) or retrieval-only "
+                f"({prov_state.get('excluded_rag', 0)} rows). Change a source's usage in Data > Provenance."
             )
         raise ValueError("No data available to split. Ingest and process documents first.")
 
@@ -1759,6 +1781,63 @@ async def split_dataset(
         if keep_test_report is not None:
             keep_test_report["val_kept_verbatim"] = bool(keep_val)
 
+    # Licence & provenance ledger: rows from an ``eval`` source were held out of the
+    # pool above; they join the test split now, and anything in train / val / test
+    # with the same text is dropped (the same exact key the dedup uses). With a
+    # pinned test (keep_test applied) the test split is the user's answer key, so
+    # they are not added.
+    eval_rows: list[dict[str, Any]] = prov_state.get("eval_rows") or []
+    eval_routed = 0
+    eval_not_added = 0
+    eval_duplicates_removed = 0
+    prov_warnings: list[str] = []
+    if eval_rows:
+        if keep_test_report is not None and keep_test_report.get("applied"):
+            eval_not_added = len(eval_rows)
+            prov_warnings.append(
+                f"{eval_not_added} eval-only rows were not added: the test split is pinned (keep_test). "
+                "Re-prepare without keeping the test examples to move them in."
+            )
+        else:
+            eval_keys: set[str] = set()
+            unique_eval: list[dict[str, Any]] = []
+            for row in eval_rows:
+                key = provenance_service.dedup_key(row)
+                if key not in eval_keys:
+                    eval_keys.add(key)
+                    unique_eval.append(row)
+            eval_keys.discard("")
+            before = sum(len(splits[n]) for n in ("train", "val", "test"))
+            for split_name in ("train", "val", "test"):
+                splits[split_name] = [r for r in splits[split_name] if provenance_service.dedup_key(r) not in eval_keys]
+            if dedup_rows and unique_eval:
+                # Near-identical rows too: the same matcher the dedup above uses
+                # (an eval row is always the first occurrence, so the pool copy goes).
+                combined = list(unique_eval)
+                for split_name in ("train", "val", "test"):
+                    combined.extend(splits[split_name])
+                kept_ids = {id(r) for r in _dedup_entries_for_split(combined)[0]}
+                for split_name in ("train", "val", "test"):
+                    splits[split_name] = [r for r in splits[split_name] if id(r) in kept_ids]
+            eval_duplicates_removed = before - sum(len(splits[n]) for n in ("train", "val", "test"))
+            splits["test"] = list(splits["test"]) + unique_eval
+            eval_routed = len(unique_eval)
+    provenance_report = provenance_service.prepared_provenance(
+        prov_state["usage_context"], splits, prov_state,
+        eval_routed_to_test=eval_routed, eval_not_added_pinned_test=eval_not_added,
+    )
+    provenance_report["eval_duplicates_removed"] = eval_duplicates_removed
+    if prov_warnings:
+        provenance_report["warnings"] = prov_warnings
+    if eval_routed and disjoint_report is not None:
+        disjoint_report["eval_rows_appended"] = eval_routed
+        note = (
+            f"{eval_routed} eval-only rows were appended to the test split outside the disjoint grouping "
+            f"({disjoint_by}): their groups may also appear in train."
+        )
+        disjoint_report.setdefault("warnings", []).append(note)
+        provenance_report.setdefault("warnings", []).append(note)
+
     file_paths, file_hashes, dataset_versions, prepared_version = await _write_prepared_splits(
         db,
         project_id,
@@ -1772,7 +1851,7 @@ async def split_dataset(
         "project_id": project_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "seed": seed,
-        "total_entries": total,
+        "total_entries": total + eval_routed - eval_duplicates_removed,
         "splits": {k: len(v) for k, v in splits.items()},
         "ratios": {"train": train_ratio, "val": val_ratio, "test": test_ratio},
         # Canonical split config — the same shape the split API response carries
@@ -1813,6 +1892,7 @@ async def split_dataset(
         "dedup_requested": bool(dedup_rows),
         "keep_test": keep_test_report,
         "dedup_report": dedup_report,
+        "provenance": provenance_report,
     }
     # The project's ACCEPTED test-role document still owns the test split (a keep_test
     # re-split preserved it). Added only when true, so projects that never imported their

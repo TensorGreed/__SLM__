@@ -49,8 +49,10 @@ GET    /api/projects/{id}/domain-runtime
 ```
 POST   /api/projects/{id}/ingest                Pull from HF / URL / Kaggle (queued)
 POST   /api/projects/{id}/datasets/upload       Upload local file (multipart)
-POST   /api/projects/{id}/document-sources/web-crawl   Crawl a website into documents (Job, 202)
+POST   /api/projects/{id}/document-sources/web-crawl   Crawl a website into documents (Job, 202; optional `licence`)
 POST   /api/projects/{id}/document-sources/git-repo    Import a git repo's docs + code (Job, 202; `exclude_globs` add to the defaults, `default_excludes=false` drops them)
+GET    /api/projects/{id}/provenance/sources   Licence & provenance ledger: every source, licence, usage, rows reaching the splits
+PATCH  /api/projects/{id}/provenance/sources   Bulk edit licence / licence_verified / usage (any, train, eval, rag)
 POST   /api/projects/{id}/datasets/profile      Inspect schema, sample rows
 POST   /api/projects/{id}/datasets/clean        Run cleaning stage
 POST   /api/projects/{id}/datasets/prepare      Run adapter + split

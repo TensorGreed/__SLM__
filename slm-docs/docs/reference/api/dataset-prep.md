@@ -64,6 +64,53 @@ Content type: `application/json` — `AdapterPreferenceUpdateRequest`
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `POST /api/projects/{project_id}/dataset/predefined-split`
+
+**Predefined Split**
+
+Import train / val / test files with EXACT split membership.
+
+Same row mapping, chat-template resolution, adapter-wiring rules and
+prepared artefacts as ``POST /split``, but no re-division or shuffling.
+422 lists rows that could not be used (unparseable / malformed lines,
+adapter rejects, review-queue rows) by file line; 409 lists
+train/val/test overlap (``on_leak=drop_from_train`` removes train-side
+overlap only; val/test overlap always fails). Synchronous: not wrapped in
+a Job (files arrive with the request, ~10k rows prepare in seconds).
+Re-importing WITHOUT a test file while the project has its own accepted test file
+is refused (409 ``PREDEFINED_TEST_WOULD_BE_DROPPED``) unless ``drop_existing_test``.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `multipart/form-data` — `Body_predefined_split_api_projects__project_id__dataset_predefined_split_post`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `train` | `string` | yes |  |
+| `val` | `string \\| null` | no |  |
+| `test` | `string \\| null` | no |  |
+| `on_leak` | `string` | no |  |
+| `field_mapping` | `string \\| null` | no |  |
+| `adapter_id` | `string \\| null` | no |  |
+| `adapter_config` | `string \\| null` | no |  |
+| `task_profile` | `string \\| null` | no |  |
+| `chat_template` | `string \\| null` | no |  |
+| `drop_existing_test` | `boolean` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `GET /api/projects/{project_id}/dataset/preview`
 
 **Preview**
@@ -151,7 +198,7 @@ Content type: `application/json` — `SplitRequest`
 | `dedup_rows` | `boolean` | no |  |
 | `auto_stratify` | `boolean` | no |  |
 | `keep_test` | `boolean` | no |  |
-| `discard_predefined_test` | `boolean` | no | Replace the test file you imported with a random test split: the test document is marked rejected and its rows are not used for training. Cannot be combined with `keep_test`. |
+| `discard_predefined_test` | `boolean` | no |  |
 
 **Responses**
 
@@ -159,48 +206,6 @@ Content type: `application/json` — `SplitRequest`
 |---|---|---|
 | `200` | `any` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
-
-
-### `POST /api/projects/{project_id}/dataset/predefined-split`
-
-**Predefined Split**
-
-Import train / val / test files with EXACT split membership. Same row mapping (adapter, field mapping, recipe `output_schema`) and same prepared artefacts as `POST .../dataset/split` (`prepared/{train,val,test}.jsonl`, `manifest.json`, per-split dataset versions, snapshot), but nothing is re-divided, shuffled, deduplicated or moved. Synchronous (no `?async_job`): the files arrive with the request and ~10k rows prepare in seconds.
-
-**Parameters**
-
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| `project_id` | `path` | `integer` | yes |  |
-
-**Request body** (required)
-
-Content type: `multipart/form-data`
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `train` | `file` | yes | JSONL, JSON, CSV, TSV, XLSX or Parquet, one example per row. |
-| `val` | `file` | no | Validation rows. Omit to prepare an empty validation split. |
-| `test` | `file` | no | Test rows (the answer key). |
-| `on_leak` | `string` | no | `fail` (default) or `drop_from_train`. Overlap = the same normalised model INPUT (lower-cased, whitespace collapsed) in two files. The input is read from the adapter-mapped row: the question (plus context for passage rows), the text to classify or extract from (classification reads `text`, `content`, `input`, `question`, `prompt`, `instruction`, `sentence`, `comment`, `review`, or a `premise`+`hypothesis` / `sentence1`+`sentence2` pair joined into one text), the source text, the tokens of a tagged sentence, or a chat's non-assistant turns, never the answer, label or tags, and never an id column such as `idx`. For a file whose columns are not recognised as an input by name, `field_mapping` or adapter config (for example `q`/`a`, `inputs`/`targets`, `utterance`/`reply`), nothing is guessed: the import is a `422` with `metadata.reason: input_column_unrecognised` and the file's `metadata.columns`; send `field_mapping` (`question` or `text` = the input column, `answer` = the output column). Dotted paths such as `data.q` work. When a row has a question-side column (`instruction`, `input`, `prompt`, `query`, `question`) the key uses those plus any context/passage column and ignores text-side columns such as a rendered `text`; provenance columns such as `source` never count. A row whose input column is empty is rejected (`no_input_field`, with the file's `metadata.columns`). A blank cell is skipped, so a blank `question` falls through to a `text` column. When the input found is not a real column (it equals the answer or label, or is a mix of columns the adapter concatenated; a classification or extraction file with no recognised input column), the whole import is `input_column_unrecognised` with `metadata.columns` rather than per-row errors. `drop_from_train` removes train-side overlap only (the registered train document then holds only the kept rows, so a later re-split cannot bring them back; the original file's name, hash and dropped lines stay in `source_files.train`); val and test are never edited, and val/test overlap always fails. |
-| `field_mapping` | `string` (JSON object) | no | Source column to canonical field, same semantics as `POST .../dataset/split`: sending `adapter_id`, `adapter_config` or `task_profile` makes the request the whole adapter wiring (`default-canonical` unless `adapter_id` is sent); a `field_mapping` ALONE is merged onto the project's saved adapter preference (adapter, config and task profile are kept); with nothing sent the saved preference is used. |
-| `drop_existing_test` | `boolean` | no | Default `false`. Importing without a `test` file while the project's own test file is still accepted returns `409` (`PREDEFINED_TEST_WOULD_BE_DROPPED`); send `true` to retire the old test file and import without one (the manifest then lists `dropped_existing_test_document_ids`). |
-| `adapter_id`, `adapter_config` (JSON object), `task_profile` | `string` | no | Explicit adapter wiring, as in `POST .../dataset/split`. |
-| `chat_template` | `string` | no | `llama3`, `chatml`, `zephyr` or `phi3`. Resolved like `POST .../dataset/split`: this field, else the domain profile's split default, else `llama3`. |
-
-**Responses**
-
-| Status | Schema | Description |
-|---|---|---|
-| `200` | `object` | The prepared manifest: `split_source: "predefined"`, `splits`, `file_hashes` (sha256 of each prepared file), `source_files` (original filenames + sha256), `leak_report`, `duplicate_report` (rows whose input repeats earlier in the same split; kept), `overlap_input_columns` (the columns the overlap check keyed on), `dataset_versions`, `prepared_version`, `output_schema`. |
-| `400` | error envelope | Unsupported or empty file, bad `field_mapping` / `on_leak`. |
-| `413` | error | A file is larger than 512 MB (same per-file cap as the row-file import). |
-| `409` | error envelope | Overlap. `metadata.pairs[]` has `pair` (`train_val`, `train_test`, `val_test`), `counts` per file and `sample_rows` per file (file line numbers, up to 20; see below). Nothing is written. |
-| `422` | error envelope | Rows that cannot be used. `metadata.rejected.<split>.by_reason.<reason>` has `count` and up to 20 `sample_rows`. Reasons: `unparseable_line` (a JSONL line or JSON-array item that is not a JSON object), `malformed_row` (CSV/TSV row with the wrong column count), `review_status_pending` / `review_status_rejected` (rows still in or rejected by the review queue), `input_column_unrecognised` (no column is recognised as the input, the input found is the answer or a mix of columns, or the answer column needs mapping; send a `field_mapping`. Raised for the whole file only when no row has a real input column), `input_is_answer` (that row's input is its own answer: listed per file line, never trained; an input equal to its answer that another column also holds is kept). 409 and 422 errors carry `metadata.overlap_input_columns`, `no_input_field` (the mapped input column is empty on that row), `adapter_unmappable_or_empty`, `normalizer_hook_dropped`. Nothing is written. |
-
-The uploaded files are also registered as project raw documents tagged `predefined_split:<role>` (a re-import supersedes the previous ones), so a later random `POST .../dataset/split` with `include_types: ["raw"]` re-pools the train and validation files. The test file is never pooled: `keep_test: true` keeps the imported test rows, and a re-split without `keep_test` returns `409` (`PREDEFINED_TEST_SPLIT_WOULD_BE_REPLACED`, whatever `include_types`) until you keep the test examples (every split manifest carries `predefined_test_active: true` while your test file is still the active test split), send `discard_predefined_test: true` (replace your test file with a random test split; its rows are not pooled into training), reject or delete the test document, or import new files. The test document is also kept out of cleaning (`clean` refuses it) and out of the synthetic and gold seed pickers. The import also saves its adapter wiring (including the scanned label / field list) as the project's adapter preference.
-
-**Row numbers** are file line numbers for JSONL, CSV and TSV: blank lines are skipped but still counted, and a CSV header is line 1 (its first data row is line 2). For JSON arrays, XLSX and Parquet they are the 1-based record index.
 
 
 ### `POST /api/projects/{project_id}/dataset/adapter-preference/auto-detect`

@@ -117,6 +117,11 @@ class TrainingManifest(Base):
     # blocking the training launch. Empty list on clean captures.
     capture_warnings: Mapped[list] = mapped_column(JSON, default=list)
 
+    # Where the training rows came from (licence & provenance ledger): the
+    # prepared manifest's ``provenance`` section at launch. Empty for runs
+    # captured before the ledger existed.
+    data_provenance: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
+
     schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     captured_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

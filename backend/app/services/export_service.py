@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import platform
 import re
@@ -40,6 +41,8 @@ from app.services.deployment_target_service import (
     execute_deploy_target_plan,
     run_deployment_target_suite,
 )
+
+logger = logging.getLogger(__name__)
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 _BENCHMARK_SCRIPT = _BACKEND_DIR / "scripts" / "benchmark.py"
@@ -957,6 +960,16 @@ async def run_export(
             f.write(inference_script)
         artifacts.append(_artifact_manifest_entry(serve_path, run_dir))
 
+        # Licence & provenance ledger: where the training data came from and under
+        # which licences. Warnings (unknown / non-commercial) never block the export.
+        from app.services import provenance_service
+
+        try:
+            data_provenance = await provenance_service.export_provenance(db, project_id, experiment.id)
+        except Exception as exc:  # noqa: BLE001 - a ledger read must not fail an export
+            logger.warning("export %s: provenance block skipped: %s", export.id, exc)
+            data_provenance = {"counts_from": None, "sources": [], "licences": {}, "warnings": []}
+
         release_notes_path = run_dir / "RELEASE_NOTES.md"
         release_notes_path.write_text(
             (
@@ -998,6 +1011,7 @@ async def run_export(
                     if decoding_note else ""
                 )
                 + (f"- Seed selection: {seed_selection['text']}\n" if seed_selection else "")
+                + provenance_service.release_notes_section(data_provenance)
             ),
             encoding="utf-8",
         )
@@ -1010,6 +1024,7 @@ async def run_export(
             "span_package": span_package,
             "reader_package": reader_package,
             "seed_selection": seed_selection,
+            "provenance": data_provenance,
             "run_id": run_id,
             "export_id": export.id,
             "project_id": export.project_id,

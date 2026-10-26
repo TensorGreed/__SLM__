@@ -3,6 +3,7 @@
  */
 
 import api from './client';
+import type { PreparedProvenance } from './provenance';
 
 export type DataStudioVerdict = 'blocked' | 'needs_work' | 'ready';
 export type DataStudioCoachVerdict = 'blocked' | 'attention' | 'ready';
@@ -1364,6 +1365,7 @@ export interface DataStudioPrepareManifest {
     dataset_versions: Record<string, number>;
     missing_dataset_version_splits: string[];
     missing_manifest_version_splits: string[];
+    provenance?: PreparedProvenance | null;
 }
 
 export interface DataStudioPrepareInclusion {
@@ -1564,6 +1566,7 @@ export interface DisjointReport {
 }
 
 export interface RunPrepareDatasetResult {
+    provenance?: PreparedProvenance | null;
     manifest_path?: string | null;
     train_count?: number | null;
     val_count?: number | null;

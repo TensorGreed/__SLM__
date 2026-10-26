@@ -604,9 +604,12 @@ async def _accepted_test_document_ids(db: AsyncSession, project_id: int) -> list
     return sorted(int(d.id) for d in result.scalars() if is_test_role_document(d))
 
 
-async def _discard_registered(db: AsyncSession, docs: list[RawDocument]) -> None:
+async def _discard_registered(db: AsyncSession, docs: list[RawDocument], project_id: int | None = None) -> None:
     """Best-effort cleanup of documents ``ingest_file`` registered before a
     later step failed: delete the stored file and the row."""
+    from app.services import provenance_service
+
+    source_ids = [d.data_source_id for d in docs]
     for doc in docs:
         try:
             path = Path(doc.file_path)
@@ -617,6 +620,8 @@ async def _discard_registered(db: AsyncSession, docs: list[RawDocument]) -> None
             pass
     try:
         await db.flush()
+        if project_id is not None:
+            await provenance_service.prune_empty_sources(db, project_id, source_ids)
     except Exception:  # noqa: BLE001
         pass
 
@@ -858,6 +863,7 @@ async def import_predefined_split(
 
     # 5. Register the uploads as project sources (a re-import supersedes the
     # previous predefined files so a later random re-split doesn't double them).
+    from app.services import provenance_service
     from app.services.ingestion_service import get_or_create_raw_dataset, ingest_file
 
     registered: list[RawDocument] = []
@@ -896,6 +902,12 @@ async def import_predefined_split(
                     "dropped_row_lines": dropped_lines,
                 }
             doc.metadata_ = {**(doc.metadata_ or {}), "split_role": role, "predefined_split": True, **provenance}
+            ledger = await provenance_service.create_source(
+                db, project_id, kind=provenance_service.KIND_PREDEFINED_SPLIT,
+                title=f"Predefined {role} split: {Path(name).name}", locator=Path(name).name,
+                metadata={"split_role": role},
+            )
+            await provenance_service.attach_document(doc, ledger)
             await db.flush()
             _stamp_source_document(mapped[role], doc.id, doc.filename)
             source_files[role] = {
@@ -982,6 +994,6 @@ async def import_predefined_split(
         for doc, metadata in superseded:
             doc.status = DocumentStatus.ACCEPTED
             doc.metadata_ = metadata
-        await _discard_registered(db, registered)
+        await _discard_registered(db, registered, project_id)
         raise
     return manifest

@@ -75,3 +75,11 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   UI: the expanded Export-History row of a HF export (`ExportPanel`,
   `data-testid="export-hub-publish-<id>"`). Project 31's tagger: repo
   `TensorGreed/brewslm-sensitive-data-tagger` (see the workflow doc for which export).
+- **Data provenance in the manifest** (phase G2): every format's `manifest.json` gains `provenance`
+  = `{counts_from, sources[{id, kind, title, locator, ref, licence, licence_verified, usage,
+  retrieved_at, train, val, test, excluded}], licences{<licence or "unknown">: train+val rows},
+  warnings[{source_id,title,flag,licence,message}]}` (`provenance_service.export_provenance`).
+  `counts_from` = `training_manifest` (the run's captured `data_provenance`, what it trained on) else
+  `current_prepared_manifest` (experiments record no prepared version) else null. Warnings
+  (`unknown` / `non_commercial` licences of sources that fed the run) never block an export.
+  `RELEASE_NOTES.md` gets a "Data sources & licences" section (`release_notes_section`).

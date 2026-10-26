@@ -93,6 +93,14 @@ class RawDocument(Base):
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, default=dict)
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # Licence & provenance ledger (``DataSource``): which place this document
+    # came from, the page / repo URL, the pinned commit / revision, and when.
+    data_source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("data_sources.id"), nullable=True, index=True, default=None
+    )
+    source_url: Mapped[str | None] = mapped_column(String(1024), default=None)
+    source_ref: Mapped[str | None] = mapped_column(String(255), default=None)
+    retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     dataset = relationship("Dataset", back_populates="documents")
 

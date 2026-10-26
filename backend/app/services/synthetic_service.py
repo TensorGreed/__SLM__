@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import async_session_factory
 from app.models.dataset import Dataset, DatasetType, RawDocument
+from app.services import provenance_service
 from app.services.split_role_service import is_test_role_document
 import logging
 
@@ -1844,10 +1845,23 @@ def _trim_finished_synthetic_tasks() -> None:
         _SYNTHETIC_TASKS.pop(task.task_id, None)
 
 
-async def _load_project_cleaned_chunks(project_id: int) -> list[str]:
+class _PooledChunk(str):
+    """A cleaned chunk's text that remembers the document it was cut from."""
+
+    doc_id: int | None = None
+
+
+async def _load_project_cleaned_chunks(project_id: int, *, include_eval: bool = False) -> list[str]:
     """Load every cleaned chunk text for a project. Mirrors the read
     path of :func:`app.api.cleaning.get_cleaned_chunks` but returns
-    only the text payloads (sufficient for the sampler)."""
+    only the text payloads (sufficient for the sampler); each is a ``str``
+    that also carries its ``doc_id``.
+
+    Training-seeding callers use the default: eval-only / retrieval-only
+    documents never seed synthetic data. Answer-key (gold) building passes
+    ``include_eval=True`` — an answer key is evaluation data, so eval-only
+    documents are exactly what it should be grounded in (retrieval-only
+    documents are still left out)."""
     async with async_session_factory() as db:
         result = await db.execute(
             select(RawDocument)
@@ -1855,10 +1869,13 @@ async def _load_project_cleaned_chunks(project_id: int) -> list[str]:
             .where(Dataset.project_id == project_id)
         )
         docs = list(result.scalars().all())
+        excluded_ids = await provenance_service.training_excluded_document_ids(
+            db, project_id, include_eval=include_eval
+        )
 
     texts: list[str] = []
     for doc in docs:
-        if not doc.file_path or is_test_role_document(doc):
+        if not doc.file_path or is_test_role_document(doc) or int(doc.id) in excluded_ids:
             continue
         chunks_path = Path(doc.file_path).with_suffix(".chunks.jsonl")
         if not chunks_path.exists():
@@ -1877,12 +1894,30 @@ async def _load_project_cleaned_chunks(project_id: int) -> list[str]:
                 continue
             text = (row.get("text") or "").strip()
             if text:
-                texts.append(text)
+                chunk = _PooledChunk(text)
+                chunk.doc_id = int(doc.id)
+                texts.append(chunk)
     return texts
 
 
+def _stamp_batch_documents(rows: list[Any], doc_ids: set[int]) -> None:
+    """Record which documents a generated batch was cut from: ``source_document_id``
+    for one, ``source_document_ids`` for several, so a later eval / retrieval-only
+    mark on any of them reaches these rows. Rows generated before this are
+    unattributed."""
+    if not doc_ids:
+        return
+    for row in rows:
+        if not isinstance(row, dict) or "source_document_id" in row or "source_document_ids" in row:
+            continue
+        if len(doc_ids) == 1:
+            row["source_document_id"] = next(iter(doc_ids))
+        else:
+            row["source_document_ids"] = sorted(doc_ids)
+
+
 def _sample_chunks_for_batch(
-    pool: list[str], *, target_chars: int, rng: random.Random
+    pool: list[str], *, target_chars: int, rng: random.Random, doc_ids_out: set[int] | None = None
 ) -> str:
     """Pick chunks from ``pool`` in random order, joined by ``---``,
     until accumulated char count meets ``target_chars`` (or pool is
@@ -1895,6 +1930,8 @@ def _sample_chunks_for_batch(
     total = 0
     for idx in order:
         chunk = pool[idx]
+        if doc_ids_out is not None and getattr(chunk, "doc_id", None) is not None:
+            doc_ids_out.add(int(chunk.doc_id))
         accumulated.append(chunk)
         total += len(chunk)
         if total >= target_chars:
@@ -1949,11 +1986,13 @@ async def _run_span_generation_task(task: SyntheticSpanTask) -> None:
                     target_chars = rng.randint(
                         SAMPLE_MIN_CHARS, SAMPLE_MAX_CHARS
                     )
+                    batch_docs: set[int] = set()
                     source_text = _sample_chunks_for_batch(
-                        pool, target_chars=target_chars, rng=rng
+                        pool, target_chars=target_chars, rng=rng, doc_ids_out=batch_docs
                     )
                 else:
                     source_text = task.source_text
+                    batch_docs = set()
 
                 try:
                     batch_rows = await generate_span_extraction_rows(
@@ -1968,6 +2007,7 @@ async def _run_span_generation_task(task: SyntheticSpanTask) -> None:
                         backend=task.backend,
                         focus_types=task.focus_types or None,
                     )
+                    _stamp_batch_documents(batch_rows, batch_docs)
                     task.rows.extend(batch_rows)
                 except Exception as exc:  # noqa: BLE001
                     # One bad batch shouldn't sink the job — record + continue.
@@ -2155,11 +2195,13 @@ async def _run_qa_generation_task(task: SyntheticQaTask) -> None:
                 rows_this_batch = min(PER_BATCH_ROW_CAP, remaining)
                 if task.use_all_chunks:
                     target_chars = rng.randint(SAMPLE_MIN_CHARS, SAMPLE_MAX_CHARS)
+                    batch_docs: set[int] = set()
                     source_text = _sample_chunks_for_batch(
-                        pool, target_chars=target_chars, rng=rng
+                        pool, target_chars=target_chars, rng=rng, doc_ids_out=batch_docs
                     )
                 else:
                     source_text = task.source_text
+                    batch_docs = set()
 
                 try:
                     batch_rows = await generate_qa_pairs(
@@ -2171,6 +2213,7 @@ async def _run_qa_generation_task(task: SyntheticQaTask) -> None:
                         task.api_key,
                         task.model_name,
                     )
+                    _stamp_batch_documents(batch_rows, batch_docs)
                     task.rows.extend(batch_rows)
                 except Exception as exc:  # noqa: BLE001
                     task.error = (
@@ -2322,11 +2365,13 @@ async def _run_conversation_generation_task(task: SyntheticConversationTask) -> 
                 rows_this_batch = min(PER_BATCH_CONVERSATION_CAP, remaining)
                 if task.use_all_chunks:
                     target_chars = rng.randint(SAMPLE_MIN_CHARS, SAMPLE_MAX_CHARS)
+                    batch_docs: set[int] = set()
                     source_text = _sample_chunks_for_batch(
-                        pool, target_chars=target_chars, rng=rng
+                        pool, target_chars=target_chars, rng=rng, doc_ids_out=batch_docs
                     )
                 else:
                     source_text = task.source_text
+                    batch_docs = set()
 
                 try:
                     batch_rows = await generate_conversation_dialogues(
@@ -2340,6 +2385,7 @@ async def _run_conversation_generation_task(task: SyntheticConversationTask) -> 
                         task.api_key,
                         task.model_name,
                     )
+                    _stamp_batch_documents(batch_rows, batch_docs)
                     task.rows.extend(batch_rows)
                 except Exception as exc:  # noqa: BLE001
                     task.error = (

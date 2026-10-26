@@ -262,3 +262,5 @@
 }
 .ing__import-status--ok { background: var(--color-success-bg); color: var(--color-success); }
 .ing__import-status--bad { background: var(--color-error-bg); color: var(--color-error); }
+.ing__prov-badges { display: flex; gap: var(--space-xs); flex-wrap: wrap; margin-top: var(--space-xs); }
+.ing__usage-pick { display: inline-flex; flex-direction: column; gap: var(--space-xs); margin: var(--space-sm) 0; }

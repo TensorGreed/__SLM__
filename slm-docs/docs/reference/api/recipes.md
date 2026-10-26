@@ -1,5 +1,5 @@
 ---
-sidebar_position: 52
+sidebar_position: 54
 title: Recipes
 ---
 

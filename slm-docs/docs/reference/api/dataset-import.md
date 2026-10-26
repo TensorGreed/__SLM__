@@ -135,6 +135,7 @@ Content type: `application/json` — `app__api__dataset_import__PreviewRequest`
 | `field_map` | `object` | no |  |
 | `limit` | `integer \\| null` | no |  |
 | `drop_reasons` | `string[]` | no | Rejection reason codes to silently bulk-drop (per the bulk-drop UX contract). Rejections in this set still count in rejection_counts but don't show up in the rejected_sample. |
+| `usage` | `string` | no | Where the imported rows may go: any / train / eval (held out, test split) / rag (never trained on). Recorded on the run's provenance source; ignored by preview. |
 | `sample_cap` | `integer` | no |  |
 
 **Responses**
@@ -166,6 +167,7 @@ Content type: `application/json` — `ImportRequest`
 | `field_map` | `object` | no |  |
 | `limit` | `integer \\| null` | no |  |
 | `drop_reasons` | `string[]` | no | Rejection reason codes to silently bulk-drop (per the bulk-drop UX contract). Rejections in this set still count in rejection_counts but don't show up in the rejected_sample. |
+| `usage` | `string` | no | Where the imported rows may go: any / train / eval (held out, test split) / rag (never trained on). Recorded on the run's provenance source; ignored by preview. |
 
 **Responses**
 

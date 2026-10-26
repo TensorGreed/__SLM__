@@ -46,6 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services import provenance_service
 from app.services.code_chunker import is_code_document
 from app.exceptions import StrictExecutionError
 from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
@@ -343,7 +344,10 @@ async def delete_document(
     if extracted.exists():
         extracted.unlink()
 
+    source_id = doc.data_source_id
     await db.delete(doc)
+    # A source left with no documents has nothing to list (the ledger).
+    await provenance_service.prune_empty_sources(db, project_id, [source_id])
 
 
 # ── Remote Dataset Connectors ─────────────────────────────────────────
@@ -711,6 +715,7 @@ async def ingest_remote_dataset(
     data_dir = _project_data_dir(project_id)
     raw_samples: list[dict] = []
     source_mode = "simulated"
+    remote_licence: str | None = None
     target_samples = max_samples or 200
     hook_state = await resolve_project_domain_hooks(db, project_id)
     normalizer_hook_spec = hook_state.get("normalizer")
@@ -1005,6 +1010,7 @@ async def ingest_remote_dataset(
                 api = KaggleApi()
                 api.authenticate()
                 api.dataset_download_files(identifier, path=tmp_dir, unzip=True, quiet=True)
+                remote_licence = provenance_service.kaggle_dataset_licence(api, identifier)
 
                 candidate_files = [
                     p
@@ -1183,7 +1189,7 @@ async def ingest_remote_dataset(
         file_size_bytes=len(file_content),
         source=f"{source_type}:{identifier}",
         sensitivity="public",
-        license_info=f"Imported from {source_type}",
+        license_info="",
         status=DocumentStatus.ACCEPTED,
         metadata_={
             "hash": file_hash,
@@ -1215,6 +1221,27 @@ async def ingest_remote_dataset(
     db.add(doc)
     await db.flush()
     await db.refresh(doc)
+
+    # Licence & provenance ledger: one source per import, licence read from the
+    # hub / API when the data came from there (best effort, never fatal).
+    if source_type == "huggingface" and source_mode.startswith("live"):
+        import asyncio as _aio
+
+        remote_licence = await _aio.to_thread(
+            provenance_service.hf_dataset_licence, identifier, hf_token, config_name
+        )
+    ledger_kind = {"huggingface": provenance_service.KIND_HF, "kaggle": provenance_service.KIND_KAGGLE}.get(
+        source_type, provenance_service.KIND_URL
+    )
+    ledger_ref = "/".join(p for p in (config_name, split) if p) or None
+    source = await provenance_service.create_source(
+        db, project_id, kind=ledger_kind, title=f"{source_type}: {identifier}", locator=identifier,
+        ref=ledger_ref, licence=remote_licence if source_mode.startswith("live") else None,
+        metadata={"source_mode": source_mode},
+    )
+    await provenance_service.attach_document(
+        doc, source, source_url=identifier if source_type == "url" else None, source_ref=ledger_ref
+    )
 
     raw_dataset.record_count += 1
     await db.flush()

@@ -507,7 +507,7 @@ async def generate_via_llm_cost_estimate(
     chars = 0
     chunk_count = 0
     if req.ground_in_source:
-        pool = await _load_project_cleaned_chunks(project_id)
+        pool = await _load_project_cleaned_chunks(project_id, include_eval=True)
         # Mirror the sampler's per-chunk + total budgets exactly so
         # the estimate matches the actual call's reference-material
         # size, not the raw pool's.

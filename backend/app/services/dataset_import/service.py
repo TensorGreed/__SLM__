@@ -235,8 +235,14 @@ async def run_import(
     limit: int | None = None,
     drop_reasons: set[str] | None = None,
     config_id: int | None = None,
+    usage: str = "any",
 ) -> ImportResult:
     """Persist transformed rows to the project's synthetic dataset.
+
+    Each run adds one ``dataset_import`` source to the licence & provenance
+    ledger (locator, pinned revision / split, the licence the source declares)
+    and stamps every row it appends with ``data_source_id``; ``usage``
+    (``any`` / ``train`` / ``eval`` / ``rag``) says where those rows may go.
 
     Reuses the synthetic-service write path so imported rows are
     first-class members of the project's synthetic dataset alongside
@@ -255,11 +261,13 @@ async def run_import(
         DATASET_IMPORT_RUN,
     )
     from app.models.run_event import SEVERITY_ERROR, SEVERITY_INFO
+    from app.services import provenance_service
     from app.services.synthetic_service import (
         _synthetic_dir,
         get_or_create_synthetic_dataset,
     )
 
+    usage = provenance_service.validate_usage(usage)
     try:
         ctx = _build_context(
             project_id=project_id,
@@ -281,6 +289,21 @@ async def run_import(
         syn_dir.mkdir(parents=True, exist_ok=True)
         file_path = syn_dir / "synthetic.jsonl"
 
+        ledger = None
+        if accepted:
+            licence = ref = None
+            hint = getattr(resolve_source(ctx.source_id), "licence_of", None)
+            if hint is not None:
+                try:
+                    licence, ref = await asyncio.to_thread(hint, split_locator(locator)[1])
+                except Exception:  # noqa: BLE001 - a missing licence never blocks an import
+                    licence = ref = None
+            ledger = await provenance_service.create_source(
+                db, project_id, kind=provenance_service.KIND_DATASET_IMPORT,
+                title=f"Dataset import: {locator}", locator=locator, ref=ref, licence=licence, usage=usage,
+                metadata={"source_id": ctx.source_id, "mapper_id": mapper_id},
+            )
+
         now_iso = datetime.now(timezone.utc).isoformat()
         written = 0
         with file_path.open("a", encoding="utf-8") as handle:
@@ -288,6 +311,7 @@ async def run_import(
                 entry = {
                     "id": ds.record_count + written + 1,
                     **row.payload,
+                    "data_source_id": int(ledger.id),
                     "source": "dataset_import",
                     "import_locator": locator,
                     "import_mapper": mapper_id,

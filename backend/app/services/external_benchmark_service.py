@@ -73,6 +73,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.dataset import Dataset, DatasetType
+from app.services.provenance_service import hf_dataset_licence
 
 IGNORE = "ignore"
 DEFAULT_ROWS = 300
@@ -136,20 +137,6 @@ def _label_names_from_features(features: Any) -> dict[str, list[str]]:
     return out
 
 
-def _hf_licence(dataset_id: str) -> str | None:
-    try:
-        from huggingface_hub import HfApi
-
-        info = HfApi().dataset_info(dataset_id)
-        card = info.card_data.to_dict() if info.card_data else {}
-        lic = card.get("license")
-        if isinstance(lic, list):
-            return ", ".join(str(x) for x in lic) or None
-        return str(lic) if lic else None
-    except Exception:  # noqa: BLE001 — offline / private: licence unknown
-        return None
-
-
 def load_source(locator: str, *, scan_cap: int = SCAN_CAP) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Up to ``scan_cap`` raw rows of the source + info (source id, dataset
     id, split, revision, licence, ClassLabel names per column)."""
@@ -172,7 +159,7 @@ def load_source(locator: str, *, scan_cap: int = SCAN_CAP) -> tuple[list[dict[st
             dataset, dataset_id, split, revision = source._open_streaming(rest)  # type: ignore[attr-defined]
             info.update(dataset_id=dataset_id, split=split, revision=revision)
             info["label_names"] = _label_names_from_features(getattr(dataset, "features", None))
-            info["licence"] = _hf_licence(dataset_id)
+            info["licence"] = hf_dataset_licence(dataset_id)
             for row in dataset:
                 rows.append(dict(row))
                 if len(rows) >= scan_cap:
@@ -1062,6 +1049,14 @@ async def create_benchmark(
         "rows_scanned": len(raw),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    from app.services import provenance_service
+
+    ledger = await provenance_service.create_source(
+        db, project_id, kind=provenance_service.KIND_BENCHMARK, title=f"Benchmark {manifest['name']}",
+        locator=info["locator"], ref=info.get("revision") or info.get("split"), licence=manifest["licence"],
+        usage=provenance_service.USAGE_EVAL, metadata={"benchmark_slug": slug},
+    )
+    manifest["data_source_id"] = int(ledger.id)
     (folder / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     ds = Dataset(
         project_id=project_id,
@@ -1111,6 +1106,13 @@ async def delete_benchmark(db: AsyncSession, project_id: int, benchmark_id: int)
 
     ds = await get_benchmark(db, project_id, benchmark_id)
     slug = manifest_of(ds).get("slug")
+    ledger_id = manifest_of(ds).get("data_source_id")
+    if isinstance(ledger_id, int):
+        from app.models.data_source import DataSource
+
+        ledger = await db.get(DataSource, ledger_id)
+        if ledger is not None and ledger.project_id == project_id:
+            await db.delete(ledger)
     await db.delete(ds)
     await db.commit()
     if slug:

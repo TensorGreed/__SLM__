@@ -31,6 +31,8 @@ import httpx
 
 from app.database import async_session_factory
 from app.models.dataset import DocumentStatus
+from app.services import provenance_service
+from app.services.provenance_service import _parse_iso
 from app.services.code_chunker import detect_language
 from app.services.document_sources.git_repo import GitCancelled, GitRepoConfig, RepoSnapshot, clone_repo
 from app.services.document_sources.web_crawl import CrawlCancelled, CrawlConfig, CrawlResult, WebCrawler
@@ -99,11 +101,20 @@ async def _ingest_one(
     source: str,
     license_info: str,
     metadata: dict[str, Any],
+    data_source: Any = None,
+    source_url: str | None = None,
+    source_ref: str | None = None,
 ):
     """Ingest + process one document. Returns ``(doc, error)``; on a
-    processing error the document is deleted and ``error`` is its message."""
+    processing error the document is deleted and ``error`` is its message.
+    ``data_source`` is the provenance-ledger entry the document joins."""
     doc = await ingest_file(db, project_id, filename, content, source=source, license_info=license_info)
     doc.metadata_ = {**(doc.metadata_ or {}), **metadata}
+    if data_source is not None:
+        await provenance_service.attach_document(
+            doc, data_source, source_url=source_url, source_ref=source_ref,
+            retrieved_at=_parse_iso(metadata.get("retrieved_at")),
+        )
     await db.flush()
     doc = await process_document(db, project_id, doc.id)
     if doc.status == DocumentStatus.ERROR:
@@ -118,13 +129,21 @@ async def _ingest_one(
 
 async def import_crawl(
     project_id: int, crawl: CrawlResult, *, job_id: int | None = None, progress: ProgressFn | None = None,
-    is_cancelled: Callable[[], Awaitable[bool]] | None = None,
+    is_cancelled: Callable[[], Awaitable[bool]] | None = None, licence: str | None = None,
+    locator: str | None = None,
 ) -> dict[str, Any]:
-    """Create documents for the crawl's accepted pages."""
+    """Create documents for the crawl's accepted pages. One provenance source
+    covers the whole crawl (``locator`` = the first seed; ``licence`` as the
+    caller declared it, ``None`` = unknown)."""
     rejected = [dict(row) for row in crawl.rejected]
     documents: list[dict] = []
     ids: list[int] = []
     async with async_session_factory() as db:
+        seed = locator or (crawl.pages[0].url if crawl.pages else "")
+        ledger = await provenance_service.create_source(
+            db, project_id, kind=provenance_service.KIND_WEB_CRAWL, title=f"Website {seed}", locator=seed,
+            licence=licence, metadata={"import_job_id": job_id, "pages": len(crawl.pages)},
+        )
         for index, page in enumerate(crawl.pages, start=1):
             if is_cancelled and index % 10 == 0 and await is_cancelled():
                 break
@@ -134,7 +153,8 @@ async def import_crawl(
             }
             doc, error = await _ingest_one(
                 db, project_id, filename=page_filename(page.url), content=page.read_html(),
-                source="web_crawl", license_info="", metadata=metadata,
+                source="web_crawl", license_info=ledger.licence or "", metadata=metadata,
+                data_source=ledger, source_url=page.url,
             )
             if doc is None:
                 rejected.append({"url": page.url, "reason": "parse_error", "detail": error[:300]})
@@ -143,6 +163,9 @@ async def import_crawl(
                 documents.append({"id": doc.id, "filename": doc.filename, "source_url": page.url})
             if progress:
                 await progress(0.6 + 0.4 * index / max(1, len(crawl.pages)), f"Imported {index}/{len(crawl.pages)} pages")
+        if not ids:
+            await db.delete(ledger)
+            await db.commit()
     counts = _counts(rejected)
     if not ids:
         raise ValueError(_diagnostic("web crawl", counts, crawl.limit_reached, "Check the seed URL, the allowed prefixes and robots.txt."))
@@ -156,6 +179,8 @@ async def import_crawl(
         "limit_reached": crawl.limit_reached,
         "pages_fetched": crawl.fetched,
         "cache_hits": crawl.cache_hits,
+        "data_source_id": int(ledger.id),
+        "licence": ledger.licence,
     }
 
 
@@ -171,6 +196,11 @@ async def import_repo(
 
     retrieved_at = datetime.now(timezone.utc).isoformat()
     async with async_session_factory() as db:
+        ledger = await provenance_service.create_source(
+            db, project_id, kind=provenance_service.KIND_GIT_REPO, title=f"Repository {snapshot.url}",
+            locator=snapshot.url, ref=snapshot.commit, licence=snapshot.licence,
+            metadata={"ref_requested": snapshot.ref, "licence_file": snapshot.licence_file, "import_job_id": job_id},
+        )
         for index, repo_file in enumerate(snapshot.files, start=1):
             if is_cancelled and index % 10 == 0 and await is_cancelled():
                 break
@@ -188,6 +218,7 @@ async def import_repo(
             doc, error = await _ingest_one(
                 db, project_id, filename=repo_filename(repo_file.path, language), content=content,
                 source="git_repo", license_info=snapshot.licence, metadata=metadata,
+                data_source=ledger, source_url=snapshot.url, source_ref=snapshot.commit,
             )
             if doc is None:
                 rejected.append({"path": repo_file.path, "reason": "parse_error", "detail": error[:300]})
@@ -196,6 +227,9 @@ async def import_repo(
                 documents.append({"id": doc.id, "filename": doc.filename, "source_url": snapshot.url, "path": repo_file.path})
             if progress:
                 await progress(0.5 + 0.5 * index / max(1, len(snapshot.files)), f"Imported {index}/{len(snapshot.files)} files")
+        if not ids:
+            await db.delete(ledger)
+            await db.commit()
     counts = _counts(rejected)
     if not ids:
         raise ValueError(_diagnostic("git repo", counts, snapshot.limit_reached, f"Commit {snapshot.commit[:7]}."))
@@ -210,6 +244,7 @@ async def import_repo(
         "commit": snapshot.commit,
         "ref": snapshot.ref,
         "licence": snapshot.licence,
+        "data_source_id": int(ledger.id),
     }
 
 
@@ -259,8 +294,10 @@ async def run_web_crawl(
     client: httpx.Client | None = None,
     sleep: Callable[[float], None] | None = None,
     cache_dir: Any = None,
+    licence: str | None = None,
 ) -> dict[str, Any]:
-    """Crawl, then import. The crawl runs in a worker thread."""
+    """Crawl, then import. The crawl runs in a worker thread. ``licence`` is
+    the licence the caller declares for the site (recorded on the source)."""
     state = {"fetched": 0}
 
     def on_progress(fetched: int, max_pages: int) -> None:
@@ -283,7 +320,10 @@ async def run_web_crawl(
         raise ImportCancelled("cancelled") from exc
     if progress:
         await progress(0.6, f"Fetched {crawl.fetched} pages; importing {len(crawl.pages)}")
-    return await import_crawl(project_id, crawl, job_id=job_id, progress=progress, is_cancelled=is_cancelled)
+    return await import_crawl(
+        project_id, crawl, job_id=job_id, progress=progress, is_cancelled=is_cancelled,
+        licence=licence, locator=config.seed_urls[0],
+    )
 
 
 async def run_git_repo(

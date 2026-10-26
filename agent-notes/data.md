@@ -324,7 +324,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 
 Pull documents from a site or a repo instead of uploading them (phase G1).
 No migration: provenance lives in `RawDocument.metadata_` (+ `source`,
-`license_info`); a provenance ledger is G2.
+`license_info`); the provenance ledger (below) is G2.
 
 - **Readers** (`services/document_sources/`): `web_crawl.py` (polite BFS, stdlib
   + httpx; robots per RFC 9309 via `robots.py` — product-token group, longest match, Allow wins
@@ -419,3 +419,77 @@ No migration: provenance lives in `RawDocument.metadata_` (+ `source`,
   Row loaders that go through documents (`task_shape_service.sample_project_rows`,
   `dataset_service` combine + profile sampling, `sample_document_rows`) skip / line-sample
   them via `code_chunker.is_code_document` (the one definition; cleaning reuses it).
+
+## Licence & provenance ledger (phase G2)
+
+One `DataSource` row (`models/data_source.py`, table `data_sources`, migration
+`20261026_0050`) per place data came from; `services/provenance_service.py` owns every rule.
+`source_kind`: `upload web_crawl git_repo hf kaggle url dataset_import predefined_split demo
+benchmark` (constants, not an enum column). Fields: `locator` (URL / hub id / repo URL /
+filename), `source_ref` (commit / revision / split+config), `licence` (SPDX or free text, NULL =
+unknown), `licence_verified` (+ `_by` / `_at`), `retrieved_at`, `usage`, `metadata`. Documents point
+at it through `raw_documents.data_source_id` (ORM FK only, no DB constraint - SQLite rule) and also
+carry `source_url` / `source_ref` / `retrieved_at`; rows a source wrote straight into
+`synthetic.jsonl` carry `data_source_id` themselves. `RawDocument.license_info` stays and is kept in
+sync with the source licence (PATCH writes it; the old `Imported from ...` placeholder is gone).
+
+- **Licence rules**: `normalize_licence` -> None for `""`, `unknown`, `NOASSERTION` and the old
+  placeholder (free text such as `other` is kept). `licence_flags`: `unknown` (None) and
+  `non_commercial` (`-NC-` / `nc` token / non-commercial / not for commercial use / research use or purposes only). Only
+  these two exist. `unknown` also covers the exact strings `none` and `n/a` (never `Unlicense`, a real licence).
+- **Usage** (`any | train | eval | rag`): `any`/`train` = today's behaviour. `eval`: held out of the
+  train / val pool and appended to `test` (rows equal to an eval row - `provenance_service.dedup_key`,
+  the exact key `split_dataset`'s dedup uses - are dropped from train / val / test first; not added
+  when `keep_test` pinned an existing test: counted `eval_not_added_pinned_test` + a manifest
+  warning; with `dedup_rows` on, near-identical pool rows go too - the dedup matcher - counted
+  `provenance.eval_duplicates_removed`; `total_entries` = rows the splits hold). With `disjoint_by` the appended eval rows
+  are noted in `disjoint_report.eval_rows_appended` + a warning (their groups may overlap train). `rag`: in no split (`excluded_rag`), no synthetic seeding; the document stays cleaned
+  and in the passage index. A `predefined_split` source is always `any` (`usage_locked`; PATCHing its
+  usage is a 409 `PROVENANCE_USAGE_LOCKED`; its licence is editable).
+- **Enforcement**: `combine_datasets(..., provenance=<dict>)` builds a `UsageContext`
+  (`build_usage_context` = `ensure_sources` + maps), drops `rag` rows and collects `eval` rows in
+  `provenance["eval_rows"]`; a row's source = its document (`_source_document_id` /
+  `source_document_id`; `source_document_ids` for a generated row cut from several documents - the most
+  restrictive usage wins) else its `data_source_id`. With no `eval`/`rag` source `partition` returns the
+  same list (an all-`any` project prepares byte-for-byte as before - `test_provenance_enforcement`).
+  `split_dataset` routes the eval rows after the split + `keep_test` and writes the manifest's
+  `provenance`: `by_source{<id>: {title, kind, licence, usage, train, val, test, excluded}}`,
+  `unattributed{train,val,test}`, `excluded_rag`, `eval_routed_to_test`, `eval_not_added_pinned_test`,
+  `licence_warnings[{source_id,title,flag,licence,message}]` (only sources with train/val rows),
+  optional `warnings[]`. `capture_training_manifest` copies the totals to
+  `training_manifests.data_provenance` (also in `serialize_training_manifest`). Other callers of
+  `combine_datasets` (preview, intelligence) get the same pool without the eval/rag rows.
+- **Seeding filter** (`training_excluded_document_ids`, one helper): documents-to-Q&A (preview +
+  run), `synthetic_service._load_project_cleaned_chunks` (gold / answer-key building passes
+  `include_eval=True`: an answer key is evaluation data, so eval-only documents ground it; `rag` ones still do not) and `GET /cleaning/chunks` (incl. rows of an
+  excluded dataset-import source). NOT the passage index / `load_document_passages` / passage-prompt
+  and teacher-answer rewriting (they only consume rows already generated from allowed passages and
+  retrieve over every document). Rows generated from cleaned chunks (legacy synth tasks with `use_all_chunks`)
+  are stamped `source_document_id` (one document) / `source_document_ids` (several) so a later eval / rag mark
+  reaches them; rows generated before G2 are unattributed (treated as `any`).
+- **Auto-fill**: uploads (`/upload`, `/upload-batch`: form `license_info` + `usage`; one source per
+  file, one per batch), hub import (`ingest_remote_dataset`: licence from `get_dataset_infos` then
+  the Hub card, via `hf_dataset_licence`; kaggle via `kaggle_dataset_licence(api, slug)`; url unknown;
+  licence only looked up for live imports), dataset-import `run_import` (one `dataset_import` source
+  per run, `usage` request field, hf/kaggle `licence_of()` / `describe()["licence"]`), web crawl (one
+  source per crawl, request `licence` - the dataset-import `web` source ignores it), git repo (one per
+  import, `source_ref` = commit, licence = SPDX or unknown), predefined split (one source per role
+  file), demo, benchmark (`usage="eval"`, id in the benchmark manifest, removed with it), project
+  duplicate (sources copied; `data_source_id` remapped in `synthetic.jsonl` + the prepared manifest, and
+  `source_document_id` / `_source_document_id` / `source_document_ids` remapped old -> new document id in every
+  copied cleaned / synthetic / gold / prepared / raw `*.jsonl` incl. `*.chunks.jsonl` sidecars, so eval / rag marks
+  still apply in the copy; an id with no copied document is left alone).
+  `ensure_sources` lazily attaches pre-ledger documents (grouped by kind + source string + hub identifier +
+  licence; uploads additionally by ingest day, not one per file; group key kept in `metadata.legacy_group`, looked
+  up before insert, a lost concurrent race is merged into the lowest id; one bulk flush; `seed_documents` -> kind
+  `demo`); called by the list endpoint and by prepare. `prune_empty_sources` deletes a source left with 0 documents
+  after a document delete or a failed predefined-split import (never `dataset_import` / `benchmark`; superseded
+  predefined documents are kept as rejected rows, so their sources stay). `in_prepared` is zeros for a source absent
+  from an existing prepared manifest, null only when nothing was prepared. `kaggle_dataset_licence` uses
+  `dataset_list(search=...)` (`license_name`) then `dataset_metadata(slug, tmpdir)` (writes a json file).
+  `GET /data-studio/prepare-dataset` `manifest.provenance` carries the prepared section.
+- **API** (`api/provenance.py`): `GET /projects/{id}/provenance/sources` -> `{sources, totals{sources,
+  documents, unknown_licence, non_commercial}}`; `PATCH` `{source_ids[1..500], licence?, licence_verified?,
+  usage?}` (all-or-nothing; a changed licence resets verification unless the call sets it; verifying
+  stamps the principal's username or `local`). `DocumentResponse` gains `data_source_id`, `usage`,
+  `licence`, `licence_flags`, `source_ref`, `retrieved_at`.

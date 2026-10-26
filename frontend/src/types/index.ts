@@ -136,6 +136,11 @@ export interface RawDocument {
     commit?: string | null;
     content_kind?: string | null;
     language?: string | null;
+    /** Licence & provenance ledger. */
+    data_source_id?: number | null;
+    usage?: 'any' | 'train' | 'eval' | 'rag';
+    licence?: string | null;
+    licence_flags?: string[];
 }
 
 export interface Experiment {

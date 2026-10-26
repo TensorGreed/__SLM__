@@ -68,18 +68,36 @@ class DocumentResponse(BaseModel):
     commit: str | None = None
     content_kind: str | None = None
     language: str | None = None
+    # Licence & provenance ledger: the source this document belongs to, what
+    # that source allows (``any`` / ``train`` / ``eval`` / ``rag``), its
+    # licence (``None`` = unknown) and the flags derived from it
+    # (``unknown`` / ``non_commercial``). ``usage`` / ``licence`` are refined
+    # from the source row by the endpoint (``provenance_service``).
+    data_source_id: int | None = None
+    source_ref: str | None = None
+    retrieved_at: datetime | None = None
+    usage: str = "any"
+    licence: str | None = None
+    licence_flags: list[str] = []
 
     model_config = {"from_attributes": True}
 
     @model_validator(mode="before")
     @classmethod
     def _lift_metadata(cls, data: Any) -> Any:
+        from app.services.provenance_service import _parse_iso, licence_flags, normalize_licence
+
         meta = data.get("metadata_") if isinstance(data, dict) else getattr(data, "metadata_", None)
         if not isinstance(data, dict):
             data = {name: getattr(data, name) for name in cls.model_fields if hasattr(data, name)}
         meta = meta if isinstance(meta, dict) else {}
+        licence = normalize_licence(data.get("licence") or data.get("license_info"))
         return {
             **data,
+            "licence": licence,
+            "licence_flags": licence_flags(licence),
+            "source_ref": data.get("source_ref") or meta.get("commit"),
+            "retrieved_at": data.get("retrieved_at") or _parse_iso(meta.get("retrieved_at")),
             "error": data.get("error") or meta.get("error"),
             "structured": bool(data.get("structured") or meta.get("structured")),
             "row_count": data.get("row_count") or meta.get("row_count") or meta.get("rows_kept"),

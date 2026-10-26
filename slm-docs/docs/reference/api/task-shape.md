@@ -1,5 +1,5 @@
 ---
-sidebar_position: 64
+sidebar_position: 66
 title: Task Shape
 ---
 
@@ -51,7 +51,7 @@ Content type: `application/json` — `ConfirmTaskShapeRequest`
 | `task_profile` | `string` | yes |  |
 | `field_mapping` | `object \\| null` | no |  |
 | `adapter_config` | `object \\| null` | no |  |
-| `recipe_id` | `string \\| null` | no | Optional recipe pick for `structured_extraction`: `span-extraction` (entity lists) or `json-extraction` (fixed-field JSON records). Omitted, it is chosen from the project's data. |
+| `recipe_id` | `string \\| null` | no |  |
 
 **Responses**
 

@@ -4,6 +4,7 @@
 
 import { Fragment, type ReactNode, useState, useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { USAGE_LABEL, type ProvenanceUsage } from '../../api/provenance';
 import type { RawDocument, DocumentStatus } from '../../types';
 import api from '../../api/client';
 import { ChevronDown, ChevronRight, Upload, Package, Link as LinkIcon, BarChart3, Settings2, Trash2, Lightbulb } from 'lucide-react';
@@ -147,6 +148,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
     const [isUploading, setIsUploading] = useState(false);
     const [dragOver, setDragOver] = useState(false);
     const [uploadProgress, setUploadProgress] = useState('');
+    const [uploadUsage, setUploadUsage] = useState<ProvenanceUsage>('any');
     const [showImportWizard, setShowImportWizard] = useState(false);
     const [savedMappingsRefreshKey, setSavedMappingsRefreshKey] = useState(0);
 
@@ -347,6 +349,7 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
         for (const file of Array.from(files)) {
             formData.append('files', file);
         }
+        if (uploadUsage !== 'any') formData.append('usage', uploadUsage);
 
         try {
             const res = await api.post<{ uploaded: number; errors: Array<{ error: string }> }>(
@@ -694,6 +697,16 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                                             {docProvenance(doc)}
                                                         </div>
                                                     )}
+                                                    {(doc.licence_flags?.includes('unknown') || (doc.usage && doc.usage !== 'any')) && (
+                                                        <div className="ing__prov-badges" data-testid={`doc-prov-badges-${doc.id}`}>
+                                                            {doc.licence_flags?.includes('unknown') && (
+                                                                <span className="badge badge-warning" data-testid={`doc-licence-unknown-${doc.id}`}>Unknown licence</span>
+                                                            )}
+                                                            {doc.usage && doc.usage !== 'any' && (
+                                                                <span className="badge badge-info" data-testid={`doc-usage-${doc.id}`}>{USAGE_LABEL[doc.usage]}</span>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                     {doc.structured && (
                                                         <div className="form-hint" data-testid={`doc-structured-${doc.id}`}>
                                                             Row file{doc.row_count ? ` · ${doc.row_count} rows` : ''} — columns kept for training
@@ -834,6 +847,15 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                 className="upload-input"
                                 id="file-upload"
                             />
+                            <label className="ing__usage-pick">
+                                Allowed use
+                                <select value={uploadUsage} onChange={(e) => setUploadUsage(e.target.value as ProvenanceUsage)}
+                                    data-testid="upload-usage-select">
+                                    {(Object.keys(USAGE_LABEL) as ProvenanceUsage[]).map((u) => (
+                                        <option key={u} value={u}>{USAGE_LABEL[u]}</option>
+                                    ))}
+                                </select>
+                            </label>
                             <label htmlFor="file-upload" className="btn btn-primary upload-btn">
                                 {isUploading ? 'Uploading...' : 'Choose Files'}
                             </label>

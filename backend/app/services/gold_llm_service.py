@@ -1495,7 +1495,7 @@ async def build_prompt_preview(
 
     reference_chunks: list[ReferenceChunk] = []
     if ground_in_source:
-        pool = await _load_project_cleaned_chunks(project_id)
+        pool = await _load_project_cleaned_chunks(project_id, include_eval=True)
         reference_chunks = _sample_reference_chunks(pool)
 
     known_labels: list[str] = []
@@ -1612,7 +1612,7 @@ async def generate_gold_qa_via_llm(
     # hasn't imported any data yet (fresh project, empty chunk pool).
     reference_chunks: list[ReferenceChunk] = []
     if ground_in_source:
-        pool = await _load_project_cleaned_chunks(project_id)
+        pool = await _load_project_cleaned_chunks(project_id, include_eval=True)
         reference_chunks = _sample_reference_chunks(pool)
 
     # Classification needs the project's label space so the LLM stays

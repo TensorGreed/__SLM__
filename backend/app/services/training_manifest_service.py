@@ -281,6 +281,7 @@ def serialize_training_manifest(row: TrainingManifest) -> dict[str, Any]:
         "artifact_ids": dict(row.artifact_ids or {}),
         "warm_start": dict(row.warm_start or {}),
         "capture_warnings": list(row.capture_warnings or []),
+        "data_provenance": dict(row.data_provenance or {}),
     }
 
 
@@ -337,6 +338,10 @@ async def capture_training_manifest(
     )
     blueprint_id, blueprint_version = await _resolve_blueprint_reference(db, project_id)
     dataset_snapshots = await _resolve_dataset_snapshot_ids(db, project_id)
+    # Where the prepared rows came from (licence & provenance ledger).
+    from app.services import provenance_service
+
+    data_provenance = provenance_service.provenance_totals(provenance_service.read_prepared_provenance(project_id))
 
     tokenizer_name, tokenizer_hash = _extract_tokenizer_hint(sanitized_config)
 
@@ -399,6 +404,7 @@ async def capture_training_manifest(
             artifact_ids=dict(artifact_ids or {}),
             warm_start=warm_start_block,
             capture_warnings=warnings,
+            data_provenance=data_provenance,
             schema_version=_MANIFEST_SCHEMA_VERSION,
         )
         db.add(row)
@@ -425,6 +431,7 @@ async def capture_training_manifest(
         existing.artifact_ids = dict(artifact_ids or {})
         existing.warm_start = warm_start_block
         existing.capture_warnings = warnings
+        existing.data_provenance = data_provenance
         existing.schema_version = _MANIFEST_SCHEMA_VERSION
         row = existing
 

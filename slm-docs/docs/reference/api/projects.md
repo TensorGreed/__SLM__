@@ -1,5 +1,5 @@
 ---
-sidebar_position: 50
+sidebar_position: 51
 title: Projects
 ---
 
@@ -7,7 +7,7 @@ title: Projects
 
 # Projects
 
-Auto-generated reference for the **Projects** API. 27 endpoint(s).
+Auto-generated reference for the **Projects** API. 28 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -401,35 +401,6 @@ Content type: `application/json` — `ProjectRecipeApplyRequest`
 | `422` | `HTTPValidationError` | Validation Error |
 
 
-### `PUT /api/projects/{project_id}/recipe/output-schema`
-
-**Put Project Recipe Output Schema**
-
-Declare (or clear, with `null`) the JSON-record schema, field types and enums, that the `json-extraction` scorer checks predictions against. Stored on `Project.selected_recipe.output_schema` and forwarded to the prepared manifest. `400` with a readable message when the schema is malformed or the project's task type is not `json-extraction`.
-
-**Parameters**
-
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| `project_id` | `path` | `integer` | yes |  |
-
-**Request body** (required)
-
-Content type: `application/json` — `ProjectRecipeOutputSchemaRequest`
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `output_schema` | `object \\| null` | no | `{"required": [...], "properties": {"<field>": {"type": "string" \\| [...], "enum": [...]}}}`; types: string, integer, number, boolean, null (object / array type-checked; types are strict, so `"3"` is not an integer). An explicit `required` (including `[]`) is honoured. Changes apply the next time the dataset is prepared; retrain afterwards so the training prompt lists the same fields.. |
-
-**Responses**
-
-| Status | Schema | Description |
-|---|---|---|
-| `200` | `ProjectResponse` | Successful Response |
-| `400` | `object` | Malformed schema, or task type is not json-extraction |
-| `422` | `HTTPValidationError` | Validation Error |
-
-
 ### `DELETE /api/projects/{project_id}/recipe`
 
 **Clear Project Recipe**
@@ -676,6 +647,35 @@ the user to state their own goal.
 | Status | Schema | Description |
 |---|---|---|
 | `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `PUT /api/projects/{project_id}/recipe/output-schema`
+
+**Put Project Recipe Output Schema**
+
+Declare (or clear) the JSON-record schema (field types and enums) the
+json-extraction scorer checks predictions against.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `ProjectRecipeOutputSchemaRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `output_schema` | `object \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `ProjectResponse` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 

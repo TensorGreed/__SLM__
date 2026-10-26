@@ -82,7 +82,7 @@ Instead of uploading files you can pull documents straight from a site or a repo
 ```sh
 curl -X POST "http://localhost:8000/api/projects/1/document-sources/web-crawl" \
   -H "Content-Type: application/json" \
-  -d '{"seed_urls":["https://docs.example.com/guide/"],"max_pages":100,"max_depth":2}'
+  -d '{"seed_urls":["https://docs.example.com/guide/"],"max_pages":100,"max_depth":2,"licence":"CC-BY-4.0"}'
 
 curl -X POST "http://localhost:8000/api/projects/1/document-sources/git-repo" \
   -H "Content-Type: application/json" \
@@ -90,6 +90,22 @@ curl -X POST "http://localhost:8000/api/projects/1/document-sources/git-repo" \
 ```
 
 Both return `202` with the job (`?async_job=false` runs inline and returns `201` with the summary). A run that imports nothing fails with the rejection counts in its message. The dataset-import wizard also accepts `web:<seed url>` and `git:<url>[@ref]` locators when you want rows for a mapper instead of documents.
+
+### Licences and provenance
+
+Every place data comes from (an upload, a website crawl, a git repository, a Hugging Face / Kaggle / URL import, a dataset-import run, your own train / val / test files, a demo, an external benchmark) is one **source** in the project's ledger (**Data** > **Sources** > **Provenance**, or `GET /api/projects/{id}/provenance/sources`). A source records where the data came from (URL, dataset id or repository, plus the pinned commit / revision / split), when it was fetched, and its **licence**:
+
+- Uploads use the licence you type in the upload form (`license_info`); a website crawl uses the optional `licence` you give for the site; a git repository uses the licence BrewSLM detected (unknown when unclear); Hugging Face and Kaggle imports read the dataset's declared licence when it is published. Anything else is **unknown**, and unknown or non-commercial licences get a warning badge. Editing a licence marks it unverified; **Mark licence verified** records who checked it and when.
+- Each source also has a **usage**: `any` (the default, rows train / validate / test as usual), `train`, `eval` (held out of training; its rows go to the **test** split, and any row of the same text - or, with deduplication on, a near-identical one - is removed from train and validation) or `rag` (retrieval only: the documents are cleaned and indexed for passages but their rows are never trained on, never used to seed synthetic data and never evaluated). Change it for several sources at once, then prepare again; the prepared manifest lists, per source, how many rows reached train, validation and test and how many were excluded. If your test split is pinned (**Keep the current test examples**), eval-only rows are not added to it and the manifest says so; a duplicated project keeps the marks. The usage of your own predefined train / val / test files is fixed.
+- Training runs record the same counts, and every export's `manifest.json` carries a `provenance` block plus a "Data sources & licences" section in `RELEASE_NOTES.md`, with warnings for unknown and non-commercial licences. Warnings never block an export; deciding whether you may ship a model is up to you.
+
+```sh
+curl "http://localhost:8000/api/projects/1/provenance/sources"
+
+curl -X PATCH "http://localhost:8000/api/projects/1/provenance/sources" \
+  -H "Content-Type: application/json" \
+  -d '{"source_ids":[3,4],"licence":"CC-BY-4.0","licence_verified":true,"usage":"eval"}'
+```
 
 ### Reason codes you might hit
 

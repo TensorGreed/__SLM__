@@ -32,6 +32,7 @@ export const CLEAN_FILES = [
     'components/data/DocumentSourceImportCard.tsx',
     'components/data/GoldSetPanel.tsx',
     'components/data/PredefinedSplitCard.tsx',
+    'components/data/ProvenancePanel.tsx',
     'components/data/IngestionPanel.tsx',
     'components/data/LabellingConventionsCard.tsx',
     'components/data/OutputSchemaEditor.tsx',

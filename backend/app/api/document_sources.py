@@ -57,6 +57,9 @@ class WebCrawlRequest(BaseModel):
     include_patterns: list[str] = Field(default_factory=list, max_length=50)
     exclude_patterns: list[str] = Field(default_factory=list, max_length=50)
     max_page_bytes: int = Field(2_000_000, ge=1_000, le=50_000_000)
+    # The licence you declare for the site (recorded on the import's
+    # provenance source; empty / "unknown" = unknown). Not a crawl setting.
+    licence: str | None = Field(default=None, max_length=255)
 
     @field_validator("seed_urls")
     @classmethod
@@ -87,7 +90,7 @@ class WebCrawlRequest(BaseModel):
         return value
 
     def to_config(self) -> CrawlConfig:
-        return CrawlConfig(**self.model_dump())
+        return CrawlConfig(**self.model_dump(exclude={"licence"}))
 
 
 class GitRepoRequest(BaseModel):
@@ -156,7 +159,7 @@ async def start_web_crawl(
         raise _bad_request(exc) from exc
     if not async_job:
         try:
-            return await run_web_crawl(project_id, config)
+            return await run_web_crawl(project_id, config, licence=data.licence)
         except ValueError as exc:
             raise _nothing_imported(exc) from exc
 
@@ -164,7 +167,9 @@ async def start_web_crawl(
 
     async def work(job_id: int, progress, is_cancelled) -> dict:
         try:
-            return await run_web_crawl(project_id, config, job_id=job_id, progress=progress, is_cancelled=is_cancelled)
+            return await run_web_crawl(
+                project_id, config, job_id=job_id, progress=progress, is_cancelled=is_cancelled, licence=data.licence,
+            )
         except ImportCancelled:
             return {"cancelled": True, "documents_created": 0}
 

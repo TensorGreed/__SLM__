@@ -30,6 +30,7 @@ import type {
     RunPrepareDatasetResult,
     SplitClassCoverage,
 } from '../../api/dataStudio';
+import type { PreparedProvenance } from '../../api/provenance';
 import './DataStudioPrepareDatasetPanel.css';
 
 interface DataStudioPrepareDatasetPanelProps {
@@ -68,6 +69,16 @@ function labelForToken(value: string | undefined | null): string {
 
 function compactJson(value: unknown): string {
     return JSON.stringify(value || {}, null, 2);
+}
+
+/** "12 eval-only rows moved to test · 40 retrieval-only rows excluded", or null when nothing applies. */
+function provenanceSummary(p: PreparedProvenance | null): string | null {
+    if (!p) return null;
+    const parts: string[] = [];
+    if (p.eval_routed_to_test) parts.push(`${formatNumber(p.eval_routed_to_test)} eval-only rows moved to test`);
+    if (p.excluded_rag) parts.push(`${formatNumber(p.excluded_rag)} retrieval-only rows excluded`);
+    if (p.eval_not_added_pinned_test) parts.push(`${formatNumber(p.eval_not_added_pinned_test)} eval-only rows not added (test split is pinned)`);
+    return parts.length ? parts.join(' · ') : null;
 }
 
 function statusClass(status: string): string {
@@ -155,6 +166,7 @@ export default function DataStudioPrepareDatasetPanel({
     // Epic E — per-class coverage across prepared splits. Best-effort, separate
     // from the main readiness load so a coverage read failure (or no splits yet)
     // doesn't pull down the prepare checks.
+    const [runProvenance, setRunProvenance] = useState<PreparedProvenance | null>(null);
     const [coverage, setCoverage] = useState<SplitClassCoverage | null>(null);
     // Epic E — Configure-splits controls (seed + ratios). Off → backend uses
     // recipe profile defaults; on → these override.
@@ -218,6 +230,7 @@ export default function DataStudioPrepareDatasetPanel({
                     ? `Prepared ${total.toLocaleString()} rows (train ${Number(result.train_count || 0).toLocaleString()} · val ${Number(result.val_count || 0).toLocaleString()} · test ${Number(result.test_count || 0).toLocaleString()}).`
                     : 'Prepared dataset splits — refreshing checks.',
             );
+            setRunProvenance(result.provenance ?? null);
             await loadPrepare();
             await loadCoverage();
         } catch (err: any) {
@@ -274,6 +287,9 @@ export default function DataStudioPrepareDatasetPanel({
 
     const verdict = PREPARE_VERDICT_COPY[prepare.verdict];
     const selectedRecipe = prepare.recipe.selected;
+    const activeProvenance = runProvenance ?? prepare.manifest.provenance ?? null;
+    const provenanceNote = provenanceSummary(activeProvenance);
+    const provenanceWarnings = activeProvenance?.warnings ?? [];
 
     return (
         <section
@@ -408,6 +424,18 @@ export default function DataStudioPrepareDatasetPanel({
                         </p>
                     )}
                 </div>
+            )}
+            {provenanceNote && (
+                <p className="data-studio-prepare__run-flash" data-testid="data-studio-prepare-provenance">
+                    {provenanceNote}
+                </p>
+            )}
+            {provenanceWarnings.length > 0 && (
+                <ul className="data-studio-prepare__run-flash" data-testid="data-studio-prepare-provenance-warnings">
+                    {provenanceWarnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                    ))}
+                </ul>
             )}
             {runFlash && (
                 <p

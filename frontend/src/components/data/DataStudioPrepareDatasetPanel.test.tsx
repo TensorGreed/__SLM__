@@ -470,4 +470,47 @@ describe('DataStudioPrepareDatasetPanel', () => {
         expect(screen.getByText('billing')).toBeInTheDocument();
         expect(screen.getByText('technical')).toBeInTheDocument();
     });
+
+    it('shows the provenance routing summary after a prepare run', async () => {
+        apiMock.get.mockImplementation((url: string) => {
+            if (url.includes('/prepare-dataset')) return Promise.resolve({ data: preparePayload });
+            return Promise.resolve(coverageNA);
+        });
+        apiMock.post.mockResolvedValueOnce({ data: {
+            train_count: 70, val_count: 20, test_count: 22,
+            provenance: { eval_routed_to_test: 12, excluded_rag: 40, eval_not_added_pinned_test: 0 },
+        } });
+        render(<DataStudioPrepareDatasetPanel projectId={7} onOpenTarget={vi.fn()} />);
+        await waitFor(() => expect(screen.getByTestId('data-studio-prepare-run')).toBeInTheDocument());
+        expect(screen.queryByTestId('data-studio-prepare-provenance')).toBeNull();
+        fireEvent.click(screen.getByTestId('data-studio-prepare-run'));
+        await waitFor(() => {
+            expect(screen.getByTestId('data-studio-prepare-provenance'))
+                .toHaveTextContent('12 eval-only rows moved to test · 40 retrieval-only rows excluded');
+        });
+    });
+
+    it('shows the prepared warnings (pinned test split) under the provenance line', async () => {
+        apiMock.get.mockImplementation((url: string) => {
+            if (url.includes('/prepare-dataset')) return Promise.resolve({ data: preparePayload });
+            return Promise.resolve(coverageNA);
+        });
+        apiMock.post.mockResolvedValueOnce({ data: {
+            train_count: 70, val_count: 20, test_count: 22,
+            provenance: {
+                eval_routed_to_test: 0, eval_not_added_pinned_test: 6,
+                warnings: ['6 eval-only rows were not added: the test split is pinned (keep_test).'],
+                licence_warnings: [{ source_id: 3, title: 'toy', flag: 'unknown', licence: null, message: 'toy: licence unknown.' }],
+            },
+        } });
+        render(<DataStudioPrepareDatasetPanel projectId={7} onOpenTarget={vi.fn()} />);
+        await waitFor(() => expect(screen.getByTestId('data-studio-prepare-run')).toBeInTheDocument());
+        fireEvent.click(screen.getByTestId('data-studio-prepare-run'));
+        await waitFor(() => {
+            expect(screen.getByTestId('data-studio-prepare-provenance-warnings'))
+                .toHaveTextContent('the test split is pinned');
+        });
+        expect(screen.getByTestId('data-studio-prepare-provenance'))
+            .toHaveTextContent('6 eval-only rows not added (test split is pinned)');
+    });
 });

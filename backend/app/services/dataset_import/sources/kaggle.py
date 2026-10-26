@@ -353,6 +353,19 @@ class KaggleSource:
         data_path = _pick_data_file(extracted, picked)
         return data_path, kind, slug, picked
 
+    def licence_of(self, locator: str) -> tuple[str | None, str | None]:
+        """``(licence, ref)`` for the ledger. Only community datasets declare
+        a licence; competitions (and any failure) are ``None`` = unknown."""
+        from app.services.provenance_service import kaggle_dataset_licence
+
+        try:
+            kind, slug, picked = _parse_locator(locator)
+            if kind != "dataset":
+                return None, picked
+            return kaggle_dataset_licence(_import_kaggle_api(), slug), picked
+        except Exception:  # noqa: BLE001 - best effort, never blocks an import
+            return None, None
+
     def load(
         self,
         locator: str,
@@ -391,6 +404,7 @@ class KaggleSource:
             "approximate_total_rows": total_rows,
             "sample_rows": sample,
             "columns": columns,
+            "licence": self.licence_of(locator)[0],
         }
 
 

@@ -44,6 +44,7 @@ export default function DocumentSourceImportCard({ projectId, onDone, pollMs = 2
     const [delay, setDelay] = useState(1);
     const [webInclude, setWebInclude] = useState('');
     const [webExclude, setWebExclude] = useState('');
+    const [webLicence, setWebLicence] = useState('');
     // Git form.
     const [repoUrl, setRepoUrl] = useState('');
     const [ref, setRef] = useState('HEAD');
@@ -117,6 +118,7 @@ export default function DocumentSourceImportCard({ projectId, onDone, pollMs = 2
         delay_seconds: delay,
         include_patterns: retry ? [] : lines(webInclude),
         exclude_patterns: retry ? [] : lines(webExclude),
+        ...(webLicence.trim() ? { licence: webLicence.trim() } : {}),
     }), retry ? 'Retry of rejected pages' : 'Website crawl');
 
     const startGit = () => begin(() => startGitRepoImport(projectId, {
@@ -208,6 +210,11 @@ export default function DocumentSourceImportCard({ projectId, onDone, pollMs = 2
                         Seed URLs (one per line)
                         <textarea rows={3} value={seeds} onChange={(e) => setSeeds(e.target.value)}
                             placeholder="https://docs.example.com/guide/" data-testid="dsi-seeds" />
+                    </label>
+                    <label>
+                        Licence (optional)
+                        <input type="text" value={webLicence} onChange={(e) => setWebLicence(e.target.value)}
+                            placeholder="e.g. CC-BY-4.0" data-testid="dsi-licence" />
                     </label>
                     <details className="dsi__adv">
                         <summary>Advanced</summary>

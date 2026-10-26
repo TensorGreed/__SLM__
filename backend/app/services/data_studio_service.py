@@ -7479,6 +7479,7 @@ async def build_data_studio_prepare_dataset(
             ),
             "missing_dataset_version_splits": missing_dataset_versions,
             "missing_manifest_version_splits": missing_manifest_versions,
+            "provenance": manifest.get("provenance") if isinstance(manifest.get("provenance"), dict) else None,
         },
         "inclusion": {
             "trainable_rows": trainable_rows,

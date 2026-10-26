@@ -90,6 +90,11 @@ class ImportRequest(BaseModel):
         "still count in rejection_counts but don't show up in the "
         "rejected_sample.",
     )
+    usage: str = Field(
+        default="any",
+        description="Where the imported rows may go: any / train / eval (held out, test split) / "
+        "rag (never trained on). Recorded on the run's provenance source; ignored by preview.",
+    )
 
 
 class PreviewRequest(ImportRequest):
@@ -249,6 +254,7 @@ async def run(
             field_map=req.field_map,
             limit=req.limit,
             drop_reasons=set(req.drop_reasons),
+            usage=req.usage,
         )
     except KeyError as exc:
         raise HTTPException(400, str(exc))
