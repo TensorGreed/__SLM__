@@ -55,6 +55,11 @@ os.environ.setdefault("ALLOW_SQLITE_AUTOCREATE", "true")
 # no longer reach the engine binding.
 from app.config import settings as _settings  # noqa: E402
 
+# A developer's backend/.env may enable the CLI teacher or set an account-wide
+# API cap; tests start from the defaults and patch these where they need them.
+_settings.SYNTH_COMMAND_ALLOWED_BINARIES = ""
+_settings.LLM_MONTHLY_BUDGET_USD = None
+
 _PRODUCTION_DB_MARKERS = (
     "data/slm_platform.db",
     "\\data\\slm_platform.db",

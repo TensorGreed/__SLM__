@@ -434,6 +434,38 @@ describe('DatasetImportWizard', () => {
         });
     });
 
+    it('shows which taxonomy a findings mapper resolved labels with', async () => {
+        const user = userEvent.setup();
+        let taxonomy: { version: string; entry_count: number } | null = { version: 'abc123def456', entry_count: 7 };
+        apiMock.post.mockImplementation(async (url: string) => {
+            if (url === '/dataset-import/introspect') return { data: HIGH_CONFIDENCE_INTROSPECTION };
+            if (url === '/recipes/sniff') return { data: RECIPE_SNIFF_STUB };
+            if (url === '/projects/77/dataset-import/preview') {
+                return { data: { ...PREVIEW_RESULT_WITH_REJECTS, mapper_id: 'fix_pair', taxonomy } };
+            }
+            return { data: {} };
+        });
+        const { unmount } = render(<DatasetImportWizard projectId={77} onClose={() => undefined} />);
+        await user.type(screen.getByTestId('locator-input'), '/tmp/data.jsonl');
+        await user.click(screen.getByTestId('introspect-btn'));
+        await skipRecipeStep(user);
+        await screen.findByText('Column signatures');
+        await user.click(screen.getByTestId('preview-btn'));
+        await screen.findByText('Dry-run summary');
+        expect(screen.getByTestId('taxonomy-provenance')).toHaveTextContent('Labels resolved with taxonomy abc123def456 (7 entries)');
+        unmount();
+
+        taxonomy = null;
+        render(<DatasetImportWizard projectId={77} onClose={() => undefined} />);
+        await user.type(screen.getByTestId('locator-input'), '/tmp/data.jsonl');
+        await user.click(screen.getByTestId('introspect-btn'));
+        await skipRecipeStep(user);
+        await screen.findByText('Column signatures');
+        await user.click(screen.getByTestId('preview-btn'));
+        await screen.findByText('Dry-run summary');
+        expect(screen.getByTestId('taxonomy-provenance')).toHaveTextContent('No taxonomy: labels kept as-is');
+    });
+
     it('surfaces an introspect error and stays on the source step', async () => {
         apiMock.post.mockImplementation(async (url: string) => {
             if (url === '/dataset-import/introspect') {

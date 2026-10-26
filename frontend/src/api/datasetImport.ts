@@ -142,6 +142,8 @@ export interface ImportResultDict {
     warnings: string[];
     accepted_sample: ImportRowSample[];
     rejected_sample: RejectedRowSample[];
+    /** Label taxonomy the mapper resolved labels with (findings mappers); null when the project has none. */
+    taxonomy?: { version: string | null; entry_count: number } | null;
 }
 
 export interface PreviewRequestBody {

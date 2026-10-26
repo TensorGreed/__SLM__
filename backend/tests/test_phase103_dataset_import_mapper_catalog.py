@@ -96,6 +96,9 @@ class RegistryTests(unittest.TestCase):
             "preference_pair",
             "rag_passthrough",
             "kv_to_structured",
+            "code_label_to_findings",
+            "fix_pair",
+            "contrast_functions",
         ):
             self.assertIn(mapper_id, registered)
 
@@ -111,6 +114,9 @@ class RegistryTests(unittest.TestCase):
             "preference_pair": "dpo",
             "rag_passthrough": "rag_qa",
             "kv_to_structured": "structured_extraction",
+            "code_label_to_findings": "structured_extraction",
+            "fix_pair": "structured_extraction",
+            "contrast_functions": "structured_extraction",
         }
         for mapper_id, profile in expected.items():
             self.assertEqual(
@@ -566,6 +572,9 @@ class CliEndToEndTests(unittest.TestCase):
             "preference_pair",
             "rag_passthrough",
             "kv_to_structured",
+            "code_label_to_findings",
+            "fix_pair",
+            "contrast_functions",
         ):
             self.assertIn(mapper_id, out)
 

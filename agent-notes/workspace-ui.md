@@ -264,3 +264,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   (read from `/llm-budget`).
 - `NotificationBell`: a running Job whose message starts "waiting for usage window" gets a "paused" chip.
 - A 402 `llm_budget_exceeded` start surfaces through the existing `extractApiErrorMessage` toasts (envelope message).
+
+## Label taxonomy card (G3)
+
+`components/data/LabelTaxonomyCard.tsx` (client `api/labelTaxonomy.ts`) sits on the Data page's labels step for every project, collapsed by default. Header shows the taxonomy version chip + entry count; body: searchable parent/child tree (id, title, aliases, crosswalk `namespace: refs`, attrs), "Try a label" resolver (`/resolve`, shows id + matched_by), editor (file upload or paste, `crosswalk_from` comma list, Validate / Save with 422 `metadata.errors` grouped by code), history with Restore, Delete with confirm. `DatasetImportWizard` shows "Labels resolved with taxonomy <version> (<n> entries)" / "No taxonomy: labels kept as-is" for the findings mappers (`code_label_to_findings`, `fix_pair`, `contrast_functions`) from the preview result's `taxonomy`.

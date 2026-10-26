@@ -73,6 +73,7 @@ session-start guidance.
 - `backend/app/api/ingestion.py` — Data Ingestion API routes — file upload and document management.
 - `backend/app/api/jobs.py` — Jobs API routes (Hardening Phase H1).
 - `backend/app/api/label_noise.py` — Quality-Lift phase 4 slice 1 — Label-noise scan API.
+- `backend/app/api/label_taxonomy.py` — Label taxonomy API: the project's controlled vocabulary of labels, with
 - `backend/app/api/llm_spend.py` — Project cloud-LLM spend tally + monthly budget (``llm_spend_service``).
 - `backend/app/api/manifest.py` — Pipeline-as-code manifest API (priority.md P21 + P22).
 - `backend/app/api/models.py` — Universal base-model registry + compatibility API routes.
@@ -147,8 +148,12 @@ session-start guidance.
 - `backend/app/services/dataset_import/configs.py` — Saved-config CRUD + ``run_from_config`` orchestration.
 - `backend/app/services/dataset_import/introspector.py` — Schema introspection + mapping proposal (Phase B).
 - `backend/app/services/dataset_import/llm_assist.py` — Optional LLM-assist for the schema introspector (Phase H).
+- `backend/app/services/dataset_import/mappers/_findings_common.py` — Shared pieces of the findings-row mappers (``code_label_to_findings``,
 - `backend/app/services/dataset_import/mappers/bio_to_spans.py` — BIO-tag → entity-span mapper.
 - `backend/app/services/dataset_import/mappers/chat_messages_passthrough.py` — Chat-messages passthrough — list of ``{role, content}`` → chat SFT.
+- `backend/app/services/dataset_import/mappers/code_label_to_findings.py` — Labelled code → findings rows (a piece of code + the labelled findings in it).
+- `backend/app/services/dataset_import/mappers/contrast_functions.py` — Source files with matching bad / good functions → findings rows.
+- `backend/app/services/dataset_import/mappers/fix_pair.py` — Before / after code pairs (a defect and its fix) → findings, patch or preference rows.
 - `backend/app/services/dataset_import/mappers/kv_to_structured.py` — Key-value → structured-extraction mapper.
 - `backend/app/services/dataset_import/mappers/label_to_classification.py` — Label → classification mapper.
 - `backend/app/services/dataset_import/mappers/preference_pair.py` — Preference-pair mapper — ``{prompt, chosen, rejected}`` → AlignmentHandler.
@@ -221,6 +226,7 @@ session-start guidance.
 - `backend/app/services/job_service.py` — Shared Celery job helpers for status and cancellation.
 - `backend/app/services/jobs_service.py` — Generic background-job framework (Hardening Phase H1).
 - `backend/app/services/label_noise_scoring_service.py` — Quality-Lift phase 4 slice 1 — Label-noise scoring (Confident-Learning-lite).
+- `backend/app/services/label_taxonomy_service.py` — Label taxonomy: the project's controlled vocabulary of labels.
 - `backend/app/services/llm_budget_guard.py` — Hard API budget for metered cloud-LLM calls.
 - `backend/app/services/llm_pricing.py` — List-price cost estimates for cloud LLM token usage.
 - `backend/app/services/llm_spend_service.py` — Project cloud-LLM spend tally.
@@ -500,6 +506,7 @@ session-start guidance.
 - `frontend/src/api/goal.ts` — Arc H — Project end-goal contract + progress ledger client.
 - `frontend/src/api/goldReview.ts` — Human review of the answer key (P6 Trust) —
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
+- `frontend/src/api/labelTaxonomy.ts` — Typed client for the project label taxonomy (a hierarchical label set with
 - `frontend/src/api/llmSpend.ts` — _(no docstring)_
 - `frontend/src/api/planRefinement.ts` — _(no docstring)_
 - `frontend/src/api/predefinedSplit.ts` — Predefined-split import: the user's own train / val / test files with
@@ -605,6 +612,7 @@ session-start guidance.
 - `frontend/src/components/data/GoldSetPanel.tsx` — Panel for adding and managing trusted evaluation examples in gold dev and test datasets.
 - `frontend/src/components/data/IngestionPanel.tsx` — Panel for ingesting data from files, Hugging Face, Kaggle, and URLs with validation and EDA.
 - `frontend/src/components/data/LabelNoiseReviewPanel.tsx` — Quality-Lift phase 4 slice 3 — Label-noise review surface.
+- `frontend/src/components/data/LabelTaxonomyCard.tsx` — Data page — the project's label taxonomy: a hierarchy of labels with
 - `frontend/src/components/data/LabellingConventionsCard.tsx` — Labels step — the labelling conventions of a span project (Epic U phase
 - `frontend/src/components/data/LlmGoldGeneratePanel.tsx` — LlmGoldGeneratePanel — generate gold-set Q&A pairs using a flagship
 - `frontend/src/components/data/LlmSpendCard.tsx` — _(no docstring)_
@@ -791,6 +799,7 @@ session-start guidance.
 - `backend/tests/test_coach_reroute_nudge.py` — Tests for the Phase 7d Coach Mode reroute nudge.
 - `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
 - `backend/tests/test_code_chunker.py` — Code chunker: declaration-level chunks with exact line ranges.
+- `backend/tests/test_code_finding_mappers.py` — Findings-row mappers (code_label_to_findings, fix_pair, contrast_functions)
 - `backend/tests/test_command_backend.py` — Command (local CLI) synth backend + the hard API budget (phase G9).
 - `backend/tests/test_compliance_bundles.py` — Compliance bundles: built-in bundles are data (types + definitions +
 - `backend/tests/test_continued_pretraining.py` — Continued pretraining for documents-only projects (Wave 2c-1).
@@ -849,6 +858,7 @@ session-start guidance.
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
 - `backend/tests/test_json_extraction_scoring.py` — json-extraction: typed field_match scoring, null metrics, enum/type
 - `backend/tests/test_label_noise_slice1.py` — Quality-Lift phase 4 slice 1 — Label-noise scan service + endpoints.
+- `backend/tests/test_label_taxonomy.py` — Label taxonomy: parsing layouts, crosswalk_from, validation codes,
 - `backend/tests/test_labelling_cost.py` — Labelling cost: prompt caching, usage + cost per relabel, convention-aware
 - `backend/tests/test_llm_budget.py` — Playground cloud-chat metering + the monthly cloud-LLM budget.
 - `backend/tests/test_llm_spend.py` — Cloud-LLM cost beyond relabels: usage metering at every cloud call site,
@@ -1110,6 +1120,7 @@ session-start guidance.
 - `frontend/src/components/data/GoldSetDiagnosticsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/GoldSetPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LabelNoiseReviewPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/LabelTaxonomyCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LlmGoldGeneratePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LlmSpendCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/OutputSchemaEditor.test.tsx` — _(no docstring)_

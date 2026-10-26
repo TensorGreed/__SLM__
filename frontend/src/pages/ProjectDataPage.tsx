@@ -19,6 +19,7 @@ import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
 import DatasetPrepPanel from '../components/data/DatasetPrepPanel';
+import LabelTaxonomyCard from '../components/data/LabelTaxonomyCard';
 import LabellingConventionsCard, { isSpanProject } from '../components/data/LabellingConventionsCard';
 import TaskShapeCard from '../components/data/TaskShapeCard';
 import CoachNotices from '../components/coach/CoachNotices';
@@ -164,6 +165,7 @@ export default function ProjectDataPage() {
                 return (
                     <div className="stage-page__stack">
                         <TaskShapeCard projectId={projectId} />
+                        <LabelTaxonomyCard projectId={projectId} />
                         {isSpanProject(project) && <LabellingConventionsCard projectId={projectId} />}
                         <GoldSetPanel projectId={projectId} onNextStep={goToNextTab} extraDetails={labelsDetails} openSection={openSection} />
                     </div>

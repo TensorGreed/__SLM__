@@ -181,7 +181,7 @@ python -m app.cli.dataset_import run \
   --map-json '{"entity_type_map": {"NAME_STUDENT": "person_name"}}'
 ```
 
-The introspector auto-detects every mapper in the catalog except `kv_to_structured` (which needs an explicit `fields` config). Current built-ins:
+The introspector auto-detects every mapper in the catalog except `kv_to_structured` (which needs an explicit `fields` config). For code datasets it recognises a `code` column (by name — `code`, `func`, `function`, `snippet`, `before`, `after`, … — or by multi-line values that read as source code: at least two kinds of code signal on 30% or more of the lines, so prose with a stray `;` or `{…}` does not count; `before` / `after` need those content signals too) and proposes `fix_pair` (before + after code + a label, ≈0.93), `code_label_to_findings` (code + a label column, ≈0.92) or `contrast_functions` (a code column that defines both `bad…` and `good…` functions, ≈0.9); a code column ranks the plain `label_to_classification` reading below them (it is still offered). The label column is never a language / path / project-like column, and a 0/1 `target` / `label` / `vulnerable` column becomes the `vulnerable` flag. Current built-ins:
 
 - `bio_to_spans` — BIO-tagged tokens → entity spans (NER / PII).
 - `label_to_classification` — `{text, label}` for sentiment / intent.
@@ -191,6 +191,49 @@ The introspector auto-detects every mapper in the catalog except `kv_to_structur
 - `preference_pair` — `{prompt, chosen, rejected}` for DPO / ORPO.
 - `rag_passthrough` — `{question, context, answer}` for grounded QA.
 - `kv_to_structured` — flat key-value extractions for invoices / forms (manual `--map-json '{"fields":[...]}'`).
+- `code_label_to_findings` — labelled code → [findings rows](#findings-rows-code-datasets).
+- `fix_pair` — before / after code pairs → findings, patch or preference rows.
+- `contrast_functions` — source files with matching `bad…` / `good…` functions → findings rows.
+
+### Findings rows (code datasets)
+
+The three code mappers write one canonical row: a piece of code plus the labelled findings in it.
+
+```json
+{"row_kind": "findings", "code": "...", "language": "python", "path": "pkg/mod.py",
+ "start_line": 40, "end_line": 52,
+ "findings_json": {"findings": [
+   {"label": "LEAK-1", "start_line": 44, "end_line": 46, "evidence": "log(key)", "attrs": {}}]},
+ "labels_raw": ["leakage"], "taxonomy_version": "3fa9c1d20b7e"}
+```
+
+`start_line` is the file line of the first line of `code`; finding lines are absolute in that numbering. `findings: []` means the code is clean. `evidence` defaults to the finding's own lines (stripped, at most 400 characters).
+
+**Label resolution.** If the project has a [label taxonomy](./label-taxonomy.md), each raw label is resolved to a taxonomy id (id, alias or title, ignoring case and punctuation); `field_map.label_prefix` (e.g. `"X-"`) is tried as a second chance. A label that still does not resolve rejects the row as `unknown_label` (with `allow_partial_labels: true` a multi-label row keeps the labels that resolved and warns about the rest); a label that matches several entries is rejected as `ambiguous_label`. Without a taxonomy the labels are kept as written and every accepted row carries the warning `no_taxonomy`. The preview and run results report which taxonomy was used (`taxonomy: {version, entry_count}`), and every row is stamped with `taxonomy_version`. Labels such as `none`, `clean`, `safe`, `benign`, `0`, `false`, `no` or an empty value mean "no finding" (override with `clean_labels`).
+
+Options shared by all three: `languages` (only these languages, else `language_out_of_scope`), `max_code_chars` (default 20000, else `code_too_long`), `clean_labels`, `label_prefix`, `allow_partial_labels`. The language comes from a `language` column, else the file extension.
+
+| Mapper | One input row | Key `field_map` entries |
+|---|---|---|
+| `code_label_to_findings` | a function / snippet + a label | `code`, `label` (string split on `label_separator`, JSON list or list), `vulnerable` (falsy = clean), `start_line`, `line` / `end_line` (int, `"12-15"` or a list: one span per label, or one label with several spans gives one finding per span; any other count is `line_count_mismatch`; `lines_relative`), `attr_columns`, `evidence`, `path`, `language`. No line column: the finding spans the whole code and the row warns `lines_unknown`. |
+| `fix_pair` | code before + after a fix + a label | `before`, `after`, `label`, `emit` (`findings`, `patch`, `preference`), `finding_lines` (`hunk`, `span` or `whole`), `start_line`. |
+| `contrast_functions` | one source file (works on `git:` rows) | `code`, `path`, `label` or `label_from_path` (regex, first capture group), `bad_pattern` (default `(?i)^bad`), `good_pattern` (default `(?i)^good`), `anonymize_symbols` (default on), `blank_comments` (`none` / `matching` / `all`, default `matching`), `comment_pattern`. |
+
+`fix_pair` with `emit: ["findings"]` (default) writes a positive row (code before, one finding per label per changed region — `finding_lines: "hunk"`, the default, with regions at most 2 lines apart merged; `"span"` is one finding from the first to the last changed line, `"whole"` the whole code; a pure insertion anchors on the line before it) and a negative row (code after, no findings). `patch` writes `{row_kind: "patch", code, fixed_code, labels, patch: <unified diff>}`; `preference` writes `{row_kind: "preference", prompt, chosen, rejected, reference, labels}`. Row keys end in `-pos`, `-neg`, `-patch`, `-pref`. A pair that is identical apart from trailing whitespace per line (indentation counts) is rejected as `identical_pair`.
+
+`contrast_functions` splits each file into functions with the code chunker, turns each function matching `bad_pattern` into a findings row (one finding per label spanning the whole function) and each matching `good_pattern` into a clean row; other functions are ignored (counted in a row warning). A file with neither is rejected as `no_variants`. An invalid regex rejects every row as `parse_error`.
+
+:::caution Label leakage in suites that name the answer
+A code suite often spells the answer in the code: the defective function is called `badSink`, its twin `goodG2B`, and a comment says "FLAW". A model trained on that learns the names, not the defect. `contrast_functions` therefore rewrites, by default, every identifier matching `bad_pattern` / `good_pattern` (the function's own name and the callees it mentions) to `fn_<n>`, consistently within a row, and blanks comments that match `comment_pattern` (words such as flaw, fix, bad, good, vulnerable, insecure) in place — line numbers never move, and evidence comes from the rewritten code. `blank_comments: "all"` blanks every comment; `anonymize_symbols: false` / `blank_comments: "none"` switch it off. `code_label_to_findings` and `fix_pair` accept the same options, off by default (their code columns may carry markers too; patterns default to the same `bad` / `good`). The emitted `path` is copied as-is, so a path that spells the answer leaks too.
+:::
+
+All three mappers turn an unexpected failure on one row (not just a bad value) into a `parse_error` rejection with the exception, so one odd row never stops an import; NaN cells count as blank, and `row_key` is always set and unique (`<source>-<id>`, else `<source>-<row index>`, repeats get `#2`, `#3`). Only `\r\n` is normalised to `\n`: a lone `\r` stays in the code and is not a line break.
+
+Rejection reasons for the code mappers: `parse_error`, `empty_code`, `missing_label`, `unknown_label`, `ambiguous_label`, `line_out_of_range`, `line_count_mismatch`, `code_too_long`, `language_out_of_scope`, `identical_pair`, `no_variants` — each can be bulk-dropped in the wizard like any other reason.
+
+:::caution One row kind per training set
+Rows of different `row_kind` (`findings`, `patch`, `preference`) do not belong in one training set. Import patch and preference rows into their own project.
+:::
 
 See [Schema introspection](../reference/glossary.md#schema-introspection), [Target mapper](../reference/glossary.md#target-mapper-dataset-import), and the [PII demo `--auto` walkthrough](../demos/pii-detector.md#skip-the-converter-with---auto).
 

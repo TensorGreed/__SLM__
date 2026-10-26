@@ -7,7 +7,7 @@ title: Auto API index
 
 # Auto-generated API reference
 
-**SLM Platform** — version `0.1.0`. 540 endpoint(s) across 69 tag(s).
+**SLM Platform** — version `0.1.0`. 546 endpoint(s) across 70 tag(s).
 
 This section is auto-generated from the FastAPI OpenAPI spec. For curated narrative
 + UI / CLI walkthroughs see the linked workflow pages. The live Swagger UI is at
@@ -59,6 +59,7 @@ This section is auto-generated from the FastAPI OpenAPI spec. For curated narrat
 | [Hardware](hardware.md) | 2 |
 | [Ingestion](ingestion.md) | 14 |
 | [Jobs](jobs.md) | 4 |
+| [Label Taxonomy](label-taxonomy.md) | 6 |
 | [LabelNoise](labelnoise.md) | 5 |
 | [LLM spend](llm-spend.md) | 3 |
 | [Manifest](manifest.md) | 8 |

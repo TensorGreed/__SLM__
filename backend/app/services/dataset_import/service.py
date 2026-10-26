@@ -46,6 +46,11 @@ from app.services.dataset_import.registry import (
     resolve_source,
     split_locator,
 )
+from app.services.label_taxonomy_service import (
+    TaxonomyIndex,
+    load_taxonomy_index,
+    taxonomy_summary,
+)
 from app.services.task_shape_service import detect_task_shape
 
 
@@ -57,6 +62,7 @@ def _build_context(
     mapper_id: str,
     field_map: dict[str, Any] | None,
     limit: int | None,
+    extra: dict[str, Any] | None = None,
 ) -> ImportContext:
     source_id, _ = split_locator(locator)
     return ImportContext(
@@ -67,7 +73,14 @@ def _build_context(
         locator=locator,
         field_map=dict(field_map or {}),
         limit=limit,
+        extra=dict(extra or {}),
     )
+
+
+def _taxonomy_extra(taxonomy: "TaxonomyIndex | None") -> dict[str, Any]:
+    """``ImportContext.extra`` carrying the project's label taxonomy (read by
+    the findings mappers)."""
+    return {"taxonomy": taxonomy} if taxonomy is not None else {}
 
 
 def _drain_pipeline(
@@ -94,6 +107,7 @@ def _drain_pipeline(
     rejected: list[RejectedRow] = []
     rejection_counts: dict[str, int] = {}
     warnings: list[str] = []
+    seen_warnings: set[str] = set()
 
     drop_reasons = drop_reasons or set()
     raw_iter: Iterable = source.load(source_rest, limit=ctx.limit)
@@ -108,7 +122,11 @@ def _drain_pipeline(
         if isinstance(item, TransformedRow):
             if sample_cap is None or len(accepted) < sample_cap:
                 accepted.append(item)
-            warnings.extend(item.warnings)
+            # A per-row warning (e.g. "no_taxonomy") repeats on every row: list it once.
+            for w in item.warnings:
+                if w not in seen_warnings:
+                    seen_warnings.add(w)
+                    warnings.append(w)
             continue
 
     return accepted, rejected, rejection_counts, warnings
@@ -124,6 +142,7 @@ def preview_import(
     sample_cap: int = 5,
     limit: int | None = None,
     drop_reasons: set[str] | None = None,
+    taxonomy: TaxonomyIndex | None = None,
 ) -> ImportResult:
     """Dry-run the pipeline. Returns the first ``sample_cap``
     transformed rows + all rejected rows so the UI can render
@@ -142,6 +161,7 @@ def preview_import(
         mapper_id=mapper_id,
         field_map=field_map,
         limit=effective_limit,
+        extra=_taxonomy_extra(taxonomy),
     )
     accepted, rejected, rejection_counts, warnings = _drain_pipeline(
         ctx=ctx, drop_reasons=drop_reasons, sample_cap=sample_cap
@@ -159,6 +179,7 @@ def preview_import(
         locator=locator,
         dry_run=True,
         warnings=warnings,
+        taxonomy=taxonomy_summary(taxonomy),
     )
 
 
@@ -236,6 +257,7 @@ async def run_import(
     drop_reasons: set[str] | None = None,
     config_id: int | None = None,
     usage: str = "any",
+    taxonomy: TaxonomyIndex | None = None,
 ) -> ImportResult:
     """Persist transformed rows to the project's synthetic dataset.
 
@@ -269,6 +291,10 @@ async def run_import(
 
     usage = provenance_service.validate_usage(usage)
     try:
+        # The project's label taxonomy (findings mappers resolve labels with it);
+        # loaded here, before the mapper runs on a worker thread.
+        if taxonomy is None:
+            taxonomy = await load_taxonomy_index(db, project_id)
         ctx = _build_context(
             project_id=project_id,
             project_task_profile=project_task_profile,
@@ -276,6 +302,7 @@ async def run_import(
             mapper_id=mapper_id,
             field_map=field_map,
             limit=limit,
+            extra=_taxonomy_extra(taxonomy),
         )
         # Full pipeline — no sample cap on accepted rows for a real run.
         # Off the event loop: a source may crawl a site or clone a repo.
@@ -381,6 +408,7 @@ async def run_import(
         written_path=str(file_path),
         dry_run=False,
         warnings=warnings,
+        taxonomy=taxonomy_summary(taxonomy),
     )
 
 
@@ -495,6 +523,7 @@ def result_to_dict(result: ImportResult) -> dict[str, Any]:
         "dry_run": result.dry_run,
         "rejection_counts": result.rejection_counts,
         "warnings": result.warnings,
+        "taxonomy": result.taxonomy,
         "accepted_sample": [
             {"payload": row.payload, "row_key": row.row_key, "warnings": row.warnings}
             for row in result.accepted_rows

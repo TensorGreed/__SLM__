@@ -48,6 +48,10 @@ interface DatasetImportWizardProps {
     onConfigSaved?: (config: SavedConfig) => void;
 }
 
+/** Mappers that write findings rows and resolve labels against the project taxonomy. */
+const FINDINGS_MAPPERS = new Set(['code_label_to_findings', 'fix_pair', 'contrast_functions']);
+const isFindingsMapper = (id: string) => FINDINGS_MAPPERS.has(id);
+
 type WizardStep = 'source' | 'recipe' | 'map' | 'preview';
 
 interface SourceHelp {
@@ -1092,6 +1096,14 @@ function PreviewStep({
                     />
                 </div>
             </section>
+
+            {isFindingsMapper(previewResult.mapper_id) && (
+                <div className="diw-hint" data-testid="taxonomy-provenance">
+                    {previewResult.taxonomy
+                        ? <>Labels resolved with taxonomy <code>{previewResult.taxonomy.version ?? 'unversioned'}</code> ({previewResult.taxonomy.entry_count} entries)</>
+                        : <>No taxonomy: labels kept as-is</>}
+                </div>
+            )}
 
             {/* Rejection breakdown + bulk drop */}
             {reasonEntries.length > 0 && (

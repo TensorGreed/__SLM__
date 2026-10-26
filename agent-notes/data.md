@@ -513,3 +513,51 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   heartbeat steps aside while chunk progress / a pause message is showing. Judge picker API:
   `api/eval_judge.py`. Tests `tests/test_command_backend.py` (fake CLI = a shebang script in a tmp dir,
   allow-listed by absolute path).
+
+## Label taxonomy + code-dataset mappers (phase G3)
+
+- **Taxonomy** (`services/label_taxonomy_service.py`, `api/label_taxonomy.py`): stored as
+  `Project.runtime_config["label_taxonomy"]` = `{name, source_version, entries:[{id, title, parent,
+  aliases, attrs, crosswalk}]}`; version = 12-char sha256 of canonical JSON; history in
+  `runtime_config["taxonomy_history"]` (`{version: {taxonomy, saved_at, entry_count}}`, FIFO 20; only
+  the newest `KEEP_FULL_SNAPSHOTS`=5 keep `taxonomy`, older ones are stubs: history item
+  `restorable: false`, `restore_version` -> "stub" -> 409) via `set_project_taxonomy` (remembers
+  before + after). Parsing: `_NoAliasLoader` (SafeLoader that refuses `*alias`, billion-laughs),
+  `_jsonable` (dates -> ISO, sets -> sorted lists, keys -> str, bytes -> `bad_attrs`, RecursionError ->
+  `parse_error`), floats as id/alias/parent/ref/key -> `quote_number`; a `crosswalk_from` value
+  without `:` is a whole-namespace ref (`crosswalk[ns] = []`, warning `namespace_only_ref`). `parse_taxonomy_lenient` (never raises; returns
+  `(tax, errors)`) vs `parse_taxonomy` (raises `TaxonomyError`); `validate_taxonomy` is the
+  all-or-nothing check. `TaxonomyIndex.resolve` runs tiers: exact id -> casefolded id/alias -> `norm`ed
+  (casefold, drop non-alphanumerics) id/alias -> casefolded title -> `norm`ed title; a key mapping to
+  several entries in a tier is `(None, "ambiguous")` (`candidates()`; mappers reject
+  `ambiguous_label`; warning `duplicate_title`). PUT 422 = `INVALID_TAXONOMY`, `metadata.errors`.
+- **Plumbing**: `service.preview_import(..., taxonomy=)` / `run_import(..., taxonomy=)` put a
+  `TaxonomyIndex` in `ImportContext.extra["taxonomy"]`; `run_import` loads it itself when not passed
+  (so saved-config runs and the CLI `run` get it), the API preview and CLI preview load it before the
+  `to_thread` hop. `ImportResult.taxonomy` -> `{version, entry_count}` in `result_to_dict`.
+  `_drain_pipeline` lists an identical per-row warning once (side set, not a list scan). CLI preview
+  `--project` falls back to no taxonomy + a stderr note when the load fails.
+- **Mappers** (`dataset_import/mappers/`): `_findings_common.py` (options, label resolution,
+  line validation, row builder, `RowReject`), `code_label_to_findings`, `fix_pair`,
+  `contrast_functions`. Findings row keys never include `id/source/status/row_key`. All declare
+  `structured_extraction`. Shared behaviour: NaN cells are blank, `fc.KeyMaker` gives never-empty
+  unique row keys (`#n` repeats), an unexpected per-row exception -> `parse_error` rejection,
+  only `\r\n` is normalised (lone `\r` stays; `contrast_functions` hides lone CRs from the chunker so
+  line numbers agree), one label + several spans -> a finding per span (`line_count_mismatch`
+  otherwise), `fix_pair` `finding_lines` = hunk (default, hunks <=2 lines apart merged) / span /
+  whole, `identical_pair` compares per-line rstrip. Label-leak scrubbing in `fc.scrub`:
+  `anonymize_symbols` (bad/good-pattern identifiers -> `fn_<n>`) + `blank_comments`
+  (none|matching|all, `comment_pattern`) - ON by default for `contrast_functions`, off for the other
+  two. G4 owns the `code-findings` recipe, `finding_set` scoring and task-shape
+  detection for `row_kind: findings` - not built here.
+- Introspector: `code_like` column type (a value is code only with >=2 distinct signal kinds
+  struct / keyword / indent on >=30% of lines; >=60% of values; `before`/`after` names need content
+  signals; the column keeps `also_text` so `label_to_classification` is still offered, capped below);
+  label column fallback skips language/path/project-like names; a 0/1 `target`/`label`/`vulnerable`
+  column is the `vulnerable` flag;
+  `_detect_code_shapes` proposes `fix_pair` 0.93 / `code_label_to_findings` 0.92 /
+  `contrast_functions` 0.9 (suppresses code_label for that column) and caps
+  `label_to_classification` below them.
+- Tests: `tests/test_label_taxonomy.py`, `tests/test_code_finding_mappers.py` (mappers, introspector,
+  acceptance through the API).
+

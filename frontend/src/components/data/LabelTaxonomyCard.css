@@ -1,0 +1,27 @@
+/* Label taxonomy card — layout classes (tokens only). */
+.lt-header { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
+.lt-chip {
+  padding: 2px var(--space-sm);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-subtle);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+.lt-section { margin-top: var(--space-md); }
+.lt-tree { list-style: none; margin: 0; padding: 0; }
+.lt-node { padding: var(--space-xs) 0; border-bottom: 1px solid var(--border-color); }
+.lt-node-row { display: flex; align-items: baseline; gap: var(--space-sm); flex-wrap: wrap; }
+.lt-depth-0 { padding-left: 0; }
+.lt-depth-1 { padding-left: var(--space-lg); }
+.lt-depth-2 { padding-left: calc(var(--space-lg) * 2); }
+.lt-depth-3 { padding-left: calc(var(--space-lg) * 3); }
+.lt-depth-4 { padding-left: calc(var(--space-lg) * 4); }
+.lt-depth-5 { padding-left: calc(var(--space-lg) * 5); }
+.lt-meta { font-size: var(--font-size-sm); color: var(--text-secondary); }
+.lt-textarea { width: 100%; min-height: 160px; font-family: var(--font-mono, monospace); }
+.lt-actions { display: flex; gap: var(--space-sm); flex-wrap: wrap; margin-top: var(--space-sm); }
+.lt-issues { margin: var(--space-sm) 0 0; padding-left: var(--space-lg); }
+.lt-issues-error { color: var(--color-danger, var(--color-warning)); }
+.lt-history { list-style: none; margin: 0; padding: 0; }
+.lt-history li { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) 0; }

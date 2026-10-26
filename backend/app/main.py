@@ -54,6 +54,7 @@ from app.api.label_noise import router as label_noise_router
 from app.api.behavioral_tests import router as behavioral_tests_router
 from app.api.annotation import router as annotation_router
 from app.api.task_shape import router as task_shape_router
+from app.api.label_taxonomy import router as label_taxonomy_router
 from app.api.dataset_import import (
     catalog_router as dataset_import_catalog_router,
     project_router as dataset_import_project_router,
@@ -410,6 +411,7 @@ app.include_router(behavioral_tests_router, prefix="/api", dependencies=API_DEPE
 app.include_router(annotation_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(dataset_import_catalog_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(dataset_import_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(label_taxonomy_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(task_shape_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(tokenization_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(redact_router, prefix="/api", dependencies=API_DEPENDENCIES)

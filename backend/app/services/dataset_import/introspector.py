@@ -52,6 +52,7 @@ TOKENS_LIST = "tokens_list"
 NUMERIC = "numeric"
 BOOLEAN = "boolean"
 PATH_LIKE = "path_like"
+CODE_LIKE = "code_like"
 UNKNOWN = "unknown"
 
 
@@ -71,6 +72,9 @@ class ColumnSignature:
     unique_values: list[str] = field(default_factory=list)
     sample_value: Any = None
     notes: str = ""
+    also_text: bool = False
+    """A code column whose values are also multi-word text: a plain text
+    classifier may read it (ranked below the code readings)."""
 
 
 @dataclass
@@ -170,6 +174,61 @@ def _is_boolean_str(value: Any) -> bool:
     return value.strip().lower() in {"true", "false", "0", "1", "yes", "no"}
 
 
+_CODE_COLUMN_NAMES = {
+    "code", "func", "function", "source_code", "snippet", "before", "after",
+    "func_before", "func_after", "vulnerable_code", "fixed_code", "old_code", "new_code",
+}
+# Names that are ordinary words elsewhere (grammar-correction "before"/"after"):
+# the values must read as code on their own.
+_AMBIGUOUS_CODE_NAMES = {"before", "after"}
+_CODE_STRUCT_END = re.compile(r"[{};]\s*$")
+_CODE_KEYWORD = re.compile(
+    r"^\s*(?:def \w+\s*\(|(?:async )?function\s*\w*\s*\(|class \w+|#include\s*<|import \w|from \S+ import \w|let \w+\s*="
+    r"|(?:const|var) \w+\s*=|(?:public|private|protected|static)\s+\w+.*\(|fn \w+\s*\(|func \w+\s*\()"
+    r"|\breturn\b[^\n]*;\s*$"
+)
+_CODE_BLOCK_HEAD = re.compile(
+    r"(?:\{\s*$|^\s*(?:def|if|elif|else|for|while|try|except|with|class|switch|case|finally)\b.*:\s*$)"
+)
+_CODE_INDENT = re.compile(r"^(?: {2,}|\t)\S")
+
+
+def _code_signal_kinds(value: Any) -> tuple[set[str], float]:
+    """``(distinct signal kinds, fraction of non-empty lines that look like
+    code)`` for a multi-line string. Kinds: ``struct`` (lines ending in
+    ``;`` / ``{`` / ``}``), ``keyword`` (anchored declarations), ``indent`` (an
+    indented line right after a block opener such as ``{`` or ``if x:``)."""
+    if not isinstance(value, str):
+        return set(), 0.0
+    lines = [ln for ln in value.split("\n") if ln.strip()]
+    if len(lines) < 2:
+        return set(), 0.0
+    kinds: set[str] = set()
+    code_lines = 0
+    previous_opens_block = False
+    for ln in lines:
+        hit = False
+        if _CODE_STRUCT_END.search(ln):
+            kinds.add("struct")
+            hit = True
+        if _CODE_KEYWORD.search(ln):
+            kinds.add("keyword")
+            hit = True
+        if previous_opens_block and _CODE_INDENT.match(ln):
+            kinds.add("indent")
+            hit = True
+        previous_opens_block = bool(_CODE_BLOCK_HEAD.search(ln))
+        code_lines += hit
+    return kinds, code_lines / len(lines)
+
+
+def _has_code_signals(value: Any) -> bool:
+    """A multi-line string that reads as source code: at least two distinct
+    kinds of code signal, on at least 30% of its non-empty lines."""
+    kinds, fraction = _code_signal_kinds(value)
+    return len(kinds) >= 2 and fraction >= 0.3
+
+
 def _looks_like_path(value: Any) -> bool:
     if not isinstance(value, str) or len(value) < 3:
         return False
@@ -229,6 +288,27 @@ def _classify_column(
             confidence=0.9,
             sample_value=non_empty[0],
         )
+
+    # ── Source code (multi-line values that read as code; a code-ish column name helps) ──
+    if all(isinstance(v, str) for v in non_empty):
+        code_votes = sum(1 for v in non_empty if _has_code_signals(v))
+        lowered = name.strip().lower()
+        named = lowered in _CODE_COLUMN_NAMES and lowered not in _AMBIGUOUS_CODE_NAMES
+        # A code-ish name is only believed when the values contain code punctuation
+        # (a column called "snippet" holding "ok now" is prose).
+        punctuated = sum(1 for v in non_empty if any(ch in v for ch in "(){};=[]<>\n"))
+        is_code = (named and punctuated / len(non_empty) >= 0.5) or code_votes / len(non_empty) >= 0.6
+        if is_code:
+            prosey = any(" " in v for v in non_empty) and sum(len(v) for v in non_empty) / len(non_empty) > 20
+            return ColumnSignature(
+                name=name,
+                column_type=CODE_LIKE,
+                confidence=0.92 if code_votes / len(non_empty) >= 0.6 else 0.85,
+                sample_value=non_empty[0],
+                notes=("column name says code" if named else "multi-line values with code signals")
+                + (" and the values read as code" if named and code_votes else ""),
+                also_text=prosey,
+            )
 
     # ── Scalar signatures (vote-based) ──
     bool_votes = sum(1 for v in non_empty if _is_boolean_str(v))
@@ -396,6 +476,131 @@ def _find_column(
     return None
 
 
+_LABEL_COLUMN_NAMES = ("label", "labels", "category", "class", "type", "tag")
+_BEFORE_NAMES = ("before", "func_before", "vulnerable_code", "old_code")
+_AFTER_NAMES = ("after", "func_after", "fixed_code", "new_code")
+_CODE_PRIMARY_NAMES = ("code", "func", "function", "source_code", "snippet")
+_BAD_FUNC = re.compile(r"\b(bad\w*)\s*\(", re.I)
+_GOOD_FUNC = re.compile(r"\b(good\w*)\s*\(", re.I)
+
+
+_NOT_A_LABEL = re.compile(r"(?i)^(?:language|lang|path|file|filename|file_path|filepath|project|repo|repository|url|commit|sha|hash|id|index)$")
+_FLAG_NAMES = ("vulnerable", "is_vulnerable", "vuln", "defective", "buggy", "target", "label")
+
+
+def _label_column(signatures: dict[str, ColumnSignature]) -> ColumnSignature | None:
+    """The column most likely to hold the label of a code row: one named like
+    a label, else the first categorical (or list-of-labels) column that is not
+    a language / path / project-like column."""
+    named = _find_column(signatures, _LABEL_COLUMN_NAMES, (CATEGORICAL, TEXT_LIKE, TOKENS_LIST))
+    if named:
+        return named
+    return next(
+        (s for s in signatures.values()
+         if s.column_type in (CATEGORICAL, TOKENS_LIST) and not _NOT_A_LABEL.match(s.name.strip())),
+        None,
+    )
+
+
+def _binary_flag_column(signatures: dict[str, ColumnSignature], sample_rows: list[dict[str, Any]]) -> ColumnSignature | None:
+    """A 0/1 or true/false column named like a vulnerability flag."""
+    ok = {"0", "1", "true", "false"}
+    for sig in signatures.values():
+        if sig.name.strip().lower() not in _FLAG_NAMES:
+            continue
+        values = [r.get(sig.name) for r in sample_rows if isinstance(r, dict) and r.get(sig.name) not in (None, "")]
+        if values and all(str(v).strip().lower() in ok for v in values):
+            return sig
+    return None
+
+
+def _detect_code_shapes(
+    signatures: dict[str, ColumnSignature],
+    sample_rows: list[dict[str, Any]],
+) -> list[ShapeHypothesis]:
+    """Hypotheses for code datasets: before/after pairs, labelled code, and
+    files holding paired ``bad…`` / ``good…`` functions."""
+    code_cols = [s for s in signatures.values() if s.column_type == CODE_LIKE]
+    if not code_cols:
+        return []
+    out: list[ShapeHypothesis] = []
+    label_sig = _label_column(signatures)
+    path_sig = _find_column(signatures, ("path", "file", "filename", "file_path"))
+    used: set[str] = set()
+
+    before_sig = _find_column(signatures, _BEFORE_NAMES, (CODE_LIKE,))
+    after_sig = _find_column(signatures, _AFTER_NAMES, (CODE_LIKE,))
+    if before_sig and after_sig and label_sig:
+        used |= {before_sig.name, after_sig.name}
+        out.append(ShapeHypothesis(
+            mapper_id="fix_pair",
+            target_task_profile="structured_extraction",
+            field_map={"before": before_sig.name, "after": after_sig.name, "label": label_sig.name},
+            confidence=0.93,
+            rationale=(
+                f"detected before/after code columns '{before_sig.name}' / '{after_sig.name}' "
+                f"+ label column '{label_sig.name}' — fix pairs become findings rows"
+            ),
+        ))
+
+    contrast_col = next(
+        (
+            sig for sig in code_cols
+            if sig.name not in used
+            and any(
+                isinstance(row.get(sig.name), str)
+                and _BAD_FUNC.search(row[sig.name]) and _GOOD_FUNC.search(row[sig.name])
+                for row in sample_rows if isinstance(row, dict)
+            )
+        ),
+        None,
+    )
+    if contrast_col:
+        used.add(contrast_col.name)
+        field_map: dict[str, Any] = {"code": contrast_col.name}
+        if path_sig:
+            field_map["path"] = path_sig.name
+        warnings: list[str] = []
+        if label_sig:
+            field_map["label"] = label_sig.name
+        else:
+            warnings.append("no label column found — set label_from_path (a regex over the path) or add a label column")
+        out.append(ShapeHypothesis(
+            mapper_id="contrast_functions",
+            target_task_profile="structured_extraction",
+            field_map=field_map,
+            confidence=0.9 if label_sig else 0.65,
+            rationale=(
+                f"code column '{contrast_col.name}' defines both bad… and good… functions — "
+                "each becomes a findings row (bad = finding, good = clean)"
+            ),
+            warnings=warnings,
+        ))
+
+    primary = next((s for s in code_cols if s.name not in used and s.name.lower() in _CODE_PRIMARY_NAMES), None) or next(
+        (s for s in code_cols if s.name not in used), None
+    )
+    if primary and label_sig and label_sig.name != primary.name:
+        field_map = {"code": primary.name, "label": label_sig.name}
+        flag = _binary_flag_column(signatures, sample_rows)
+        if flag is not None and flag.name == label_sig.name:
+            flag = None
+        if flag:
+            field_map["vulnerable"] = flag.name
+        out.append(ShapeHypothesis(
+            mapper_id="code_label_to_findings",
+            target_task_profile="structured_extraction",
+            field_map=field_map,
+            confidence=0.92,
+            rationale=(
+                f"detected code column '{primary.name}' + label column '{label_sig.name}'"
+                + (f" (+ flag '{flag.name}')" if flag else "")
+                + " — labelled code becomes findings rows"
+            ),
+        ))
+    return out
+
+
 def detect_shape(
     signatures: dict[str, ColumnSignature],
     sample_rows: list[dict[str, Any]],
@@ -478,12 +683,17 @@ def detect_shape(
     # ── label_to_classification ──
     # Strong signal: one text_like + one categorical with a small
     # consistent label set.
-    if text_columns and categorical_columns:
+    # A code column whose values are also multi-word text can be read as text
+    # too (ranked below the code readings, after the code shapes are known).
+    classifier_texts = text_columns + [
+        s for s in signatures.values() if s.column_type == CODE_LIKE and s.also_text
+    ]
+    if classifier_texts and categorical_columns:
         # Prefer columns named "text" / "label" when present —
         # convention bonus on top of the type score.
         text_sig = next(
-            (s for s in text_columns if s.name.lower() == "text"),
-            text_columns[0],
+            (s for s in classifier_texts if s.name.lower() == "text"),
+            classifier_texts[0],
         )
         label_sig = next(
             (s for s in categorical_columns if s.name.lower() in {"label", "class", "category"}),
@@ -524,6 +734,20 @@ def detect_shape(
                 warnings=warnings,
             )
         )
+
+    # ── code datasets (findings rows) ──
+    code_hypotheses = _detect_code_shapes(signatures, sample_rows)
+    hypotheses.extend(code_hypotheses)
+    if code_hypotheses:
+        # A code column + a label is a code dataset: the plain text classifier
+        # on some other text column is the weaker reading.
+        ceiling = min(h.confidence for h in code_hypotheses) - 0.05
+        for hyp in hypotheses:
+            if hyp.mapper_id == "label_to_classification":
+                hyp.confidence = min(hyp.confidence, ceiling)
+                hyp.warnings.append(
+                    "this dataset also has a code column — a code mapper ranks above this one"
+                )
 
     # ── chat_messages_passthrough ──
     # A column already shaped as a list of {role, content} dicts is

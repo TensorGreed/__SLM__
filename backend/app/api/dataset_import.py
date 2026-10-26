@@ -213,6 +213,9 @@ async def preview(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     task_profile = await _load_project_profile(db, project_id)
+    from app.services.label_taxonomy_service import load_taxonomy_index
+
+    taxonomy = await load_taxonomy_index(db, project_id)
     try:
         # preview_import is blocking (a source may crawl / clone): keep it off the event loop.
         result = await asyncio.to_thread(
@@ -225,6 +228,7 @@ async def preview(
             sample_cap=req.sample_cap,
             limit=req.limit,
             drop_reasons=set(req.drop_reasons),
+            taxonomy=taxonomy,
         )
     except KeyError as exc:
         raise HTTPException(400, str(exc))

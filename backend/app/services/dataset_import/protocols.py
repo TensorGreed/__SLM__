@@ -193,3 +193,6 @@ class ImportResult:
     written_path: str | None = None
     dry_run: bool = False
     warnings: list[str] = field(default_factory=list)
+    # ``{version, entry_count}`` of the project's label taxonomy the mappers
+    # resolved labels with; None when the project has none.
+    taxonomy: dict[str, Any] | None = None

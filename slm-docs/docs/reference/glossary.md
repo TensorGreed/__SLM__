@@ -60,6 +60,10 @@ The 0.8 floor the [Schema introspection](#schema-introspection) pipeline applies
 
 A version pin on a plugin contract, e.g. `slm.data_adapter/v3`. A plugin declaring an older version is rejected by the loader. See [Plugin contracts](../extensions/contracts.md).
 
+## Crosswalk
+
+The mapping from one [label taxonomy](#label-taxonomy) entry to reference ids in other namespaces (`{"stdA": ["A-12"], "stdB": ["7.3"]}`), so a label can be reported in whichever scheme a reader expects. Built from a `crosswalk` field or from `NAMESPACE:ref` strings (`crosswalk_from`). See [Label taxonomy](../workflows/label-taxonomy.md).
+
 ## Custom checks
 
 Checks you write yourself: CheckList-style invariance (INV), directional (DIR) and minimum-functionality (MFT) tests that run on every evaluation and can be gated per slice. Shown as **Custom checks** on the **Failures** tab of Results. API name: *behavioral tests* (`behavioral_tests` in the eval pack, `behavioral.*` metric ids).
@@ -96,6 +100,10 @@ A group of error events folded on `(stage, reason_code, signature)`. The signatu
 - **Cross-stage clusters** — project-wide event clusters in **Ship** → **Monitor**.
 
 See [Failure clusters](../observability/failure-clusters.md).
+
+## Findings row
+
+A code row from the [code-dataset mappers](../workflows/data-ingestion.md#findings-rows-code-datasets): `{row_kind: "findings", code, language, path, start_line, end_line, findings_json: {findings: [...]}, labels_raw, taxonomy_version}`. Each finding has a taxonomy `label`, absolute `start_line` / `end_line` and `evidence`; an empty `findings` list means the code is clean.
 
 ## Gate policy
 
@@ -236,6 +244,10 @@ as separate labels — silently fragmenting eval metrics. The classification add
 surfaces a soft amber-border warning on the Label input when you type a value not
 in the existing vocabulary (case-insensitive). Same soft-warning pattern on the
 span-extraction Type input.
+
+## Label taxonomy
+
+A project's controlled vocabulary of labels: entries with an id, title, parent, aliases, attributes and a [crosswalk](#crosswalk), versioned by a short hash of its content. Importers resolve the labels of external datasets to its ids. See [Label taxonomy](../workflows/label-taxonomy.md).
 
 ## Manifest (training)
 

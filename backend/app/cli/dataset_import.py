@@ -293,6 +293,21 @@ def _cmd_preview(args: argparse.Namespace) -> int:
     from app.services.dataset_import.service import preview_import, result_to_dict
 
     mapper_id, field_map = _resolve_mapper_and_map(args)
+    taxonomy = None
+    if args.project:
+        from app.database import async_session_factory
+        from app.services.label_taxonomy_service import load_taxonomy_index
+
+        async def _load():
+            async with async_session_factory() as db:
+                return await load_taxonomy_index(db, args.project)
+
+        try:
+            taxonomy = asyncio.run(_load())
+        except Exception as exc:  # noqa: BLE001 - a preview without labels beats no preview
+            print(f"note: could not load the label taxonomy for project {args.project} "
+                  f"({type(exc).__name__}: {exc}); labels are kept as-is.", file=sys.stderr)
+            taxonomy = None
     result = preview_import(
         project_id=args.project or 0,
         project_task_profile=None,
@@ -302,6 +317,7 @@ def _cmd_preview(args: argparse.Namespace) -> int:
         sample_cap=args.sample_cap,
         limit=args.limit,
         drop_reasons=set(args.drop or []),
+        taxonomy=taxonomy,
     )
     payload = result_to_dict(result)
     if args.json:
