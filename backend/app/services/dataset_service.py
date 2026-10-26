@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
 from app.config import settings
+from app.services.code_chunker import is_code_document
 from app.models.dataset import Dataset, DatasetType, DatasetVersion, DocumentStatus, RawDocument
 from app.models.project import Project
 from app.services.split_role_service import (
@@ -1052,6 +1053,10 @@ async def combine_datasets(
                 # A predefined-split TEST file is an answer key: never pooled
                 # into a train / val division (see ``split_role_service``).
                 if is_test_role_document(doc):
+                    continue
+                # Source / config files from a repo import are text for the passage
+                # index, not training rows (a repo's package.json is not a dataset).
+                if is_code_document(doc):
                     continue
                 doc_path = Path(doc.file_path)
                 rows = _load_records_from_file(doc_path)
@@ -2124,6 +2129,8 @@ async def _sample_records_for_dataset(
             )
             docs = docs_result.scalars().all()
             for doc in docs:
+                if is_code_document(doc):
+                    continue
                 rows = _load_records_from_file(Path(doc.file_path))
                 for row in rows:
                     records.append(row)

@@ -46,6 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services.code_chunker import is_code_document
 from app.exceptions import StrictExecutionError
 from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
 from app.models.project import Project
@@ -159,7 +160,9 @@ async def ingest_file(
     file_path = data_dir / safe_filename
     # Handle duplicate filenames
     counter = 1
-    while file_path.exists():
+    # A sibling's sidecars (``<stem>.extracted.txt`` / ``.cleaned.txt``) are keyed by stem, so
+    # ``a.py`` and ``a.java`` must not share one.
+    while file_path.exists() or file_path.with_suffix(".extracted.txt").exists():
         stem = Path(safe_filename).stem
         file_path = data_dir / f"{stem}_{counter}{ext}"
         counter += 1
@@ -260,7 +263,15 @@ async def process_document(
         # other request to the backend for the whole scan.
         import asyncio as _asyncio
 
-        text = await _asyncio.to_thread(parse_file, file_path)
+        meta = doc.metadata_ or {}
+        is_code = meta.get("content_kind") == "code"
+        parse_options: dict = {}
+        if is_code:
+            # Repo files: a ``.json`` / ``.yaml`` is source text, not rows.
+            parse_options["content_kind"] = "code"
+        elif meta.get("strip_navigation"):
+            parse_options["strip_navigation"] = True
+        text = await _asyncio.to_thread(parse_file, file_path, **parse_options)
 
         # Save extracted text
         text_path = file_path.with_suffix(".extracted.txt")
@@ -268,7 +279,7 @@ async def process_document(
 
         doc.status = DocumentStatus.ACCEPTED
         structured_meta: dict = {}
-        if is_tabular(file_path):
+        if not is_code and is_tabular(file_path):
             # Row files keep their columns through cleaning + prep; the
             # extracted text is only a readable preview.
             structured_meta = {"structured": True, "row_count": len(load_rows(file_path))}
@@ -1411,7 +1422,10 @@ async def sample_document_rows(
     rows: list[dict]
     scanned: int
     try:
-        if ext == ".jsonl":
+        if is_code_document(doc) and source_label == "raw":
+            # Source / config text (a repo's package.json too): lines, never parsed as rows.
+            rows, scanned = _sample_text_lines(path, n)
+        elif ext == ".jsonl":
             rows, scanned = _reservoir_sample_jsonl(path, n)
         elif ext == ".json":
             rows, scanned = _sample_json_array(path, n)

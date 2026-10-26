@@ -81,6 +81,16 @@ const SOURCE_HELP: Record<string, SourceHelp> = {
         authNote:
             'Gated datasets require HF_TOKEN or HUGGING_FACE_HUB_TOKEN on the server before importing.',
     },
+    web: {
+        label: 'Website page',
+        placeholder: 'https://docs.example.com/guide/',
+        helpText: 'One row per page: url, title, text. For a whole site as documents use "Documents from website / repo".',
+    },
+    git: {
+        label: 'Git repository',
+        placeholder: 'https://github.com/org/repo@v1.2',
+        helpText: 'One row per code chunk (path, language, line range, symbol, text); doc files are one row each. Append @ref for a branch, tag or commit.',
+    },
     kaggle: {
         label: 'Kaggle',
         placeholder: 'competition:pii-detection-…  or  dataset:owner/slug',

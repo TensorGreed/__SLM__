@@ -19,6 +19,7 @@ import DocumentSampleAccordion from './DocumentSampleAccordion';
 import SavedMappingsPanel from './SavedMappingsPanel';
 import './IngestionPanel.css';
 import SeedDocumentsCard from './SeedDocumentsCard';
+import DocumentSourceImportCard from './DocumentSourceImportCard';
 import DetailsDrawer, { type DetailSection } from '../shared/DetailsDrawer';
 
 interface IngestionPanelProps {
@@ -128,6 +129,16 @@ function extractErrorMessage(error: unknown): string {
         return error.message;
     }
     return 'Operation failed';
+}
+
+/** Where an imported document came from: the page URL, or `path @ commit`. */
+function docProvenance(doc: RawDocument): string {
+    if (doc.path) {
+        const commit = doc.commit ? ` @ ${doc.commit.slice(0, 7)}` : '';
+        const lic = doc.license_info ? ` · ${doc.license_info}` : '';
+        return `${doc.path}${commit}${lic}`;
+    }
+    return doc.source_url || '';
 }
 
 export default function IngestionPanel({ projectId, onNextStep , extraDetails = [], openSection = null }: IngestionPanelProps) {
@@ -678,6 +689,11 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
                                                 </td>
                                                 <td className="doc-name">
                                                     {doc.filename}
+                                                    {docProvenance(doc) && (
+                                                        <div className="form-hint" data-testid={`doc-provenance-${doc.id}`}>
+                                                            {docProvenance(doc)}
+                                                        </div>
+                                                    )}
                                                     {doc.structured && (
                                                         <div className="form-hint" data-testid={`doc-structured-${doc.id}`}>
                                                             Row file{doc.row_count ? ` · ${doc.row_count} rows` : ''} — columns kept for training
@@ -746,6 +762,8 @@ export default function IngestionPanel({ projectId, onNextStep , extraDetails = 
             {/* No corpus yet: a generation model writes sample documents for
                 the domain; they go through parse → clean like an upload. */}
             <SeedDocumentsCard projectId={projectId} onDone={() => { void fetchDocs(); }} />
+
+            <DocumentSourceImportCard projectId={projectId} onDone={() => { void fetchDocs(); }} />
 
             {/* Phase G: saved mappings panel — only renders when at
                 least one config exists for the project. Re-run / delete

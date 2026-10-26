@@ -616,6 +616,15 @@ def evaluate_with_inference(
                 f"``auto_rag_service.build_index_for_project`` (normally "
                 f"fired automatically at training completion)."
             )
+        if with_rag:
+            from app.services.auto_rag_service import index_tokenizer_is_current
+
+            if not index_tokenizer_is_current(index_dir):
+                raise RuntimeError(
+                    f"index_dir_override={index_dir} was built with an older BM25 tokenizer — "
+                    f"rebuild it via ``auto_rag_service.build_index_for_project`` (a stale index "
+                    f"would silently score the wrong tokens)."
+                )
     else:
         # Phase 9c gate path — build a transient BM25 next to the
         # model dir so each seed's index is isolated.

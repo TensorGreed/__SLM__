@@ -10,3 +10,5 @@ from app.services.dataset_import.sources import file as _file  # noqa: F401
 from app.services.dataset_import.sources import hf as _hf  # noqa: F401
 from app.services.dataset_import.sources import jsonl as _jsonl  # noqa: F401
 from app.services.dataset_import.sources import kaggle as _kaggle  # noqa: F401
+from app.services.dataset_import.sources import git as _git  # noqa: F401
+from app.services.dataset_import.sources import web as _web  # noqa: F401

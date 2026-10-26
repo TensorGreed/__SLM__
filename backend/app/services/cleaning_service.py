@@ -19,6 +19,7 @@ from app.utils.tabular_io import is_tabular, load_rows, read_text_file
 from app.database import async_session_factory
 from app.models.dataset import Dataset, DatasetType, RawDocument
 from app.services import page_furniture
+from app.services.code_chunker import LANGUAGE_BY_EXTENSION, chunk_code, detect_language, is_code_document
 from app.services.split_role_service import is_test_role_document
 
 
@@ -529,6 +530,101 @@ async def _clean_structured_document(
 # caller turns it off (a span tagger that must read page layout does).
 DEFAULT_REMOVE_PAGE_FURNITURE = True
 
+async def _clean_code_document(
+    db: AsyncSession,
+    project_id: int,
+    doc: RawDocument,
+    *,
+    chunk_size: int,
+) -> dict:
+    """Cleaning for source files: the text is kept byte-for-byte (no
+    boilerplate removal, no whitespace changes — line numbers and
+    indentation are the point) and cut at declaration boundaries with
+    ``code_chunker``. Secrets / PII are *counted* but not redacted: redacting
+    would erase exactly the hard-coded values a code model learns to find, and
+    would shift the lines a passage cites."""
+    extracted_path = _materialize_extracted_text(doc)
+    if not extracted_path.exists():
+        raise ValueError("Document has no extractable text. Run ingestion processing first.")
+    raw_text = extracted_path.read_text(encoding="utf-8")
+    if not raw_text.strip():
+        raise ValueError("Document extracted text is empty. Re-process or re-import the document.")
+
+    meta = doc.metadata_ or {}
+    path = str(meta.get("path") or doc.filename)
+    language = str(meta.get("language") or "") or detect_language(path, raw_text) or detect_language(doc.filename, raw_text)
+
+    pii_findings = detect_pii(raw_text)
+    toxicity_findings = detect_toxicity(raw_text)
+    quality = compute_quality_score(raw_text)
+    text_hash = compute_text_hash(raw_text)
+    chunks = chunk_code(raw_text, language, max_chars=chunk_size)
+
+    cleaned_path = Path(doc.file_path).with_suffix(".cleaned.txt")
+    cleaned_path.write_text(raw_text, encoding="utf-8")
+
+    rows = [
+        {
+            "chunk_id": i,
+            "text": chunk.text,
+            "source_doc": doc.filename,
+            "path": path,
+            "language": language,
+            "start_line": chunk.start_line,
+            "end_line": chunk.end_line,
+            "symbol": chunk.symbol,
+            "kind": chunk.kind,
+        }
+        for i, chunk in enumerate(chunks)
+    ]
+    chunks_path = Path(doc.file_path).with_suffix(".chunks.jsonl")
+    with open(chunks_path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    cleaned_file_path = await _replace_document_entries(
+        db, project_id, doc.id, [{"source_document_id": doc.id, **row} for row in rows]
+    )
+
+    pii_types = sorted({f["type"] for f in pii_findings})
+    doc.quality_score = quality
+    doc.chunk_count = len(chunks)
+    doc.metadata_ = {
+        **meta,
+        "extracted_text_path": str(extracted_path),
+        "cleaned_path": str(cleaned_path),
+        "chunks_path": str(chunks_path),
+        "cleaned_dataset_path": str(cleaned_file_path),
+        "text_hash": text_hash,
+        "pii_count": len(pii_findings),
+        "pii_types": pii_types,
+        "toxicity_count": len(toxicity_findings),
+        "toxicity_types": sorted({f["type"] for f in toxicity_findings}),
+        "original_chars": len(raw_text),
+        "cleaned_chars": len(raw_text),
+        "chunk_count": len(chunks),
+        "language": language,
+        "redaction": "skipped_for_code",
+        "page_furniture": {"enabled": False, "furniture_lines_removed": 0},
+    }
+    await db.flush()
+    await db.refresh(doc)
+    return {
+        "document_id": doc.id,
+        "quality_score": quality,
+        "pii_findings": pii_findings,
+        "toxicity_findings": toxicity_findings,
+        "chunk_count": len(chunks),
+        "original_chars": len(raw_text),
+        "cleaned_chars": len(raw_text),
+        "text_hash": text_hash,
+        "furniture_lines_removed": 0,
+        "page_furniture": doc.metadata_["page_furniture"],
+        "redaction": "skipped_for_code",
+        "language": language,
+    }
+
+
 async def clean_document(
     db: AsyncSession,
     project_id: int,
@@ -565,6 +661,10 @@ async def clean_document(
             f"{doc.filename} is your own test file (predefined split); it is kept out of every training "
             "source, so it is not cleaned."
         )
+
+    # Source / config files: verbatim text, declaration-level chunks, no redaction.
+    if is_code_document(doc):
+        return await _clean_code_document(db, project_id, doc, chunk_size=chunk_size)
 
     # Row files (CSV/TSV/JSON(L)/XLSX/Parquet, incl. HF/Kaggle imports) keep
     # their columns: one cleaned row per record. Flattening them into text

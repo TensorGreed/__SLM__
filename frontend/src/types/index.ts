@@ -129,6 +129,13 @@ export interface RawDocument {
     /** Row file (CSV/XLSX/JSONL…) whose columns are kept through cleaning. */
     structured?: boolean;
     row_count?: number | null;
+    /** Provenance of a website / git-repo import (null for uploads). */
+    license_info?: string | null;
+    source_url?: string | null;
+    path?: string | null;
+    commit?: string | null;
+    content_kind?: string | null;
+    language?: string | null;
 }
 
 export interface Experiment {

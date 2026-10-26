@@ -319,3 +319,103 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `{"summary": s}`-only rows to question == answer (pre-existing on main). The
   predefined-split import now reports such rows as `input_is_answer`; a matching
   `seq2seq_input_is_target` rejection on the random split is a candidate follow-up.
+
+## Document sources (website / git repo) + code chunker
+
+Pull documents from a site or a repo instead of uploading them (phase G1).
+No migration: provenance lives in `RawDocument.metadata_` (+ `source`,
+`license_info`); a provenance ledger is G2.
+
+- **Readers** (`services/document_sources/`): `web_crawl.py` (polite BFS, stdlib
+  + httpx; robots per RFC 9309 via `robots.py` — product-token group, longest match, Allow wins
+  ties, `*` / `$`, percent-encoding normalised; unreachable / 5xx → host rejected
+  `robots_unreachable`, 4xx → allow; robots.txt capped 500 KB, sitemap 10 MB;
+  a `threading.Event` cancels the crawl; allowed-prefix limit, sitemap + one level of
+  index, ETag / Last-Modified cache under `DATA_DIR/web_cache`, in-prefix
+  redirects only) and `git_repo.py` (`git` CLI shallow fetch of one ref into a
+  temp dir, commit pinned, licence → SPDX by keyword, file classes `doc` /
+  `code`). Rejections carry stable reason codes — web: `http_error` `robots_disallowed` `robots_unreachable`
+  `outside_prefix` `not_html` `too_large` `excluded_by_pattern` `duplicate_content`
+  `fetch_error`; repo: `excluded_by_glob` `too_large` `binary` `unsupported_type`;
+  importer: `parse_error`. Over-limit pages/files are only *counted*
+  (`limit_reached`). Off-site links are simply not followed (not rejected).
+- **Git safety**: URL starting `-` refused; only `https://` `http://` `ssh://`
+  `git@host:path`; `file://` / local paths only with
+  `settings.DOCUMENT_SOURCES_ALLOW_LOCAL_GIT` (default off; tests patch it on).
+  `GIT_TERMINAL_PROMPT=0`, `GIT_ALLOW_PROTOCOL` pinned, symlinks never followed.
+  A URL with embedded credentials (`https://user:token@host/…`) or an ssh host starting `-` is
+  refused (`DOCUMENT_SOURCE_INVALID`); ssh / scp targets on localhost / 127.0.0.0/8 / `::1` count
+  as local (same setting). `exclude_globs` are *added* to `DEFAULT_EXCLUDE_GLOBS`
+  (`**/.git/**`, `**/node_modules/**`, `**/vendor/**`, `**/dist/**`, `**/build/**`, `*.min.js`,
+  `*.lock`, `package-lock.json` — any depth); `default_excludes=false` drops the defaults. A glob
+  with no `/` matches the file name at any depth, one with `/` is anchored at the root. The
+  wider fallback fetch only runs when git says the ref wasn't found / not our ref (shallow, or
+  `--filter=blob:none` for a commit id). A cancelled Job sets a `threading.Event` the clone /
+  crawl polls (`git` is killed). Dataset-import `introspect` / `preview` / `run` run the source
+  in `asyncio.to_thread`; the `web` source caps preview / introspect crawls (`PREVIEW_MAX_PAGES`).
+- **Importer** (`importer.py`): `ingest_file` → `process_document` per page / file
+  (an upload's path). Web docs: `source="web_crawl"`, metadata `source_url,
+  final_url, retrieved_at, etag, title, strip_navigation, import_job_id`. Repo docs:
+  `source="git_repo"`, `license_info=<spdx>`, metadata `source_url, ref, commit, path,
+  language, content_kind, licence_file, retrieved_at, import_job_id`; filename =
+  path with `/` → `__` (an extension-less file gets its language's extension).
+  Nothing imported raises `ValueError` with the rejection counts (Job fails / inline 422).
+- **API** (`api/document_sources.py`): `POST /api/projects/{id}/document-sources/web-crawl`
+  and `.../git-repo`, `?async_job=true` (default) → 202 Job kind
+  `document_source_web_crawl` / `document_source_git_repo`; `false` → 201 summary.
+  `DocumentResponse` now also lifts `license_info`, `source_url`, `path`, `commit`,
+  `content_kind`, `language` for the provenance label. Dataset-import sources
+  `web:<seed url>` and `git:<url>[@ref]` yield rows for the `text_only` mapper.
+- **HTML**: `parse_html(path, strip_navigation=True)` (set from
+  `metadata_["strip_navigation"]` by `process_document`) drops nav / header / footer /
+  aside, navigation roles and breadcrumb / nav / menu / sidebar / toc / footer class or id
+  tokens (container tags only: div ul ol section span table form), and keeps only
+  `<main>` / `role="main"` (else `<article>`) text when present. `html` / `body` / `main` /
+  `article` / `role="main"` are never dropped; the page is parsed into a small element tree
+  (implied `</p>` / `</li>` / cell closes, stray end tags ignored) so an unclosed tag can't
+  swallow the rest. With no `<main>`, if stripping leaves < 20% of the visible text it retries
+  by tag / role only, then keeps everything. Uploads keep everything.
+- **Code files**: `utils/file_parsers.parse_code` keeps text verbatim; `PARSERS` now
+  accepts code extensions (a `.json` upload stays a row file; a repo `.json` is code via
+  `metadata_["content_kind"] == "code"`). `ingest_file` also treats an existing
+  `<stem>.extracted.txt` as a name clash (`a.py` / `a.java` must not share sidecars).
+- **Code cleaning** (`cleaning_service._clean_code_document`, runs before the tabular
+  branch): text byte-for-byte, **no redaction** (PII / secret counts recorded,
+  `metadata_["redaction"] == "skipped_for_code"`), chunks from
+  `code_chunker.chunk_code(text, language, max_chars=chunk_size)`. cleaned.jsonl /
+  `.chunks.jsonl` rows add `path, language, start_line, end_line, symbol, kind`.
+  `chunk_overlap` is ignored for code. `auto_rag_service` passes those keys through,
+  re-chunks code with `chunk_code` (never sentences) and labels a passage
+  `[n] path:start-end (symbol)` + newline + code.
+- **Code chunker** (`services/code_chunker.py`, pure): heuristic scanners (no
+  tree-sitter) over comment/string-masked text. Java / C#: one chunk per method
+  (`Class.method`), class header + fields = `class` chunk, nested classes qualified,
+  anonymous classes stay in their method. Python by indentation (decorators,
+  docstring belong to the unit); go / js / ts / c / cpp by brace balance; sh functions;
+  tf / hcl blocks (`resource.t.n`); yaml top-level keys; json top-level keys; xml
+  depth-1 children; sql statements; ini sections; properties groups; Dockerfile stages.
+  Python lines that start inside an open triple-quoted string or bracket are body of the
+  current unit, never dedent boundaries; JS / TS regex literals (`/[{]/g`) are masked; GNU-style
+  C (`int` / `name(args)` / `{`) is recognised; HCL heredoc bodies are masked; one line longer than
+  `max_chars` is cut into `max_chars` slices that all cite that line.
+  Invariant: with `context_lines=0` every source line is in exactly one chunk in order;
+  blank lines after a unit and a lone closing brace after the last member stay with the
+  previous chunk, so `end_line` can include them. Oversize units split at line
+  boundaries (blank preferred), later pieces get symbol `#2`, `#3`. Unknown language →
+  blank-line blocks packed to `max_chars`. Tests: `tests/test_code_chunker.py`.
+- **BM25 identifiers**: `_tokenize` splits `getUserName` / `HTTPServer` / `user_id` into
+  parts and keeps the whole lowercased identifier; prose tokenizes as before.
+  `BM25_TOKENIZER_VERSION = 3` is stamped in every index; a missing / different
+  version is stale (`document_index_status`, `qa_index_is_current`) and rebuilt, `retrieve()` raises
+  `AutoRagUnavailable` on one, and `scripts/auto_rag_ab.py` fails loudly on an `index_dir_override`
+  built by another version. An all-caps plural (`IDs`) is one token and a digit→capital step
+  (`5G`) is not a boundary.
+- Tests: `tests/test_web_crawl_source.py` (MockTransport site), `tests/test_git_repo_source.py`
+  (real `git init` fixture repo), `tests/test_bm25_tokenizer.py`.
+- **Not done / follow-ups**: re-importing the same site or repo creates duplicate
+  documents (no cross-import dedupe yet — G2 ledger); no SSRF guard for the crawler
+  (single-user local tool); `.json` code documents are still named `*.json`, so any
+  consumer that decides "tabular" by extension alone sees them as row files.
+  Row loaders that go through documents (`task_shape_service.sample_project_rows`,
+  `dataset_service` combine + profile sampling, `sample_document_rows`) skip / line-sample
+  them via `code_chunker.is_code_document` (the one definition; cleaning reuses it).

@@ -56,6 +56,7 @@ session-start guidance.
 - `backend/app/api/demo_projects.py` — Demo projects API — pre-loaded showcases for new ML engineers.
 - `backend/app/api/deployments.py` — Deployment versions + rollback + telemetry API (priority.md P25 + P26).
 - `backend/app/api/distillation.py` — Knowledge-distillation API routes (Track 1, Epic A).
+- `backend/app/api/document_sources.py` — Document-source API — pull documents from a website or a git repository.
 - `backend/app/api/domain_blueprints.py` — Domain blueprint API routes for beginner-mode onboarding.
 - `backend/app/api/domain_packs.py` — Domain pack API routes.
 - `backend/app/api/domain_profiles.py` — Domain profile API routes.
@@ -130,6 +131,7 @@ session-start guidance.
 - `backend/app/services/cloud_llm_service.py` — Thin client wrappers for flagship cloud LLM providers (OpenAI +
 - `backend/app/services/cluster_explanation_service.py` — Per-cluster failure explanations (Theme 8 Epic 3).
 - `backend/app/services/coach_service.py` — Coach Mode service (USER-SUCCESS Epic 4).
+- `backend/app/services/code_chunker.py` — Code-aware chunking — one retrievable unit per function / method / block.
 - `backend/app/services/compliance_bundles_service.py` — Compliance bundles: named groups of entity types, each type tagged with
 - `backend/app/services/compression_service.py` — Compression engine service — quantization, LoRA merge, benchmarking.
 - `backend/app/services/continued_pretraining_policy.py` — Continued pretraining for projects whose data is plain documents.
@@ -157,9 +159,11 @@ session-start guidance.
 - `backend/app/services/dataset_import/service.py` — Orchestrator: source → mapper → save.
 - `backend/app/services/dataset_import/sources/csv.py` — CSV source connector.
 - `backend/app/services/dataset_import/sources/file.py` — Any-format local file source (browser uploads land here).
+- `backend/app/services/dataset_import/sources/git.py` — Git repository source: one row per source chunk, one per prose file.
 - `backend/app/services/dataset_import/sources/hf.py` — HuggingFace datasets source connector.
 - `backend/app/services/dataset_import/sources/jsonl.py` — JSONL source connector.
 - `backend/app/services/dataset_import/sources/kaggle.py` — Kaggle source connector — competitions + datasets.
+- `backend/app/services/dataset_import/sources/web.py` — Website source: crawl a site and yield one row per page.
 - `backend/app/services/dataset_intelligence_service.py` — Semantic dataset intelligence: embeddings, clustering, and diversity diagnostics.
 - `backend/app/services/dataset_service.py` — Dataset preparation service — combine, profile, split, and freeze datasets.
 - `backend/app/services/dataset_telemetry_service.py` — Dataset adapter telemetry persistence helpers.
@@ -174,6 +178,10 @@ session-start guidance.
 - `backend/app/services/distillation/kd_loss.py` — Knowledge-distillation loss math (Track 1, Epic A, slice 2).
 - `backend/app/services/distillation/kd_trainer.py` — Offline-KD HF Trainer + collator (Track 1, Epic A, slice 2).
 - `backend/app/services/distillation/teacher_capture.py` — Teacher logit capture for knowledge distillation (Track 1, Epic A, slice 1).
+- `backend/app/services/document_sources/git_repo.py` — Read a git repository as a set of documents (``git`` CLI, no library).
+- `backend/app/services/document_sources/importer.py` — Turn crawled pages / repo files into ``RawDocument`` rows.
+- `backend/app/services/document_sources/robots.py` — A small ``robots.txt`` matcher following RFC 9309 (no library).
+- `backend/app/services/document_sources/web_crawl.py` — Polite breadth-first website crawler (stdlib + httpx, no HTML library).
 - `backend/app/services/documents_qa_flow_service.py` — Documents → generated Q&A → answer key → split → train → lift check, as
 - `backend/app/services/domain_blueprint_service.py` — Domain blueprint analysis, validation, versioning, and project-apply service.
 - `backend/app/services/domain_hook_service.py` — Domain hook registry, plugin loading, and safe execution helpers.
@@ -472,6 +480,7 @@ session-start guidance.
 - `frontend/src/api/compliance.ts` — _(no docstring)_
 - `frontend/src/api/dataStudio.ts` — Types and verdict enums for DataStudio dashboard panels (mapping, domain, synthetic, quality).
 - `frontend/src/api/datasetImport.ts` — Typed wrappers around the Phase A–E dataset-import API.
+- `frontend/src/api/documentSources.ts` — Typed client for the document-source importers (website crawl, git
 - `frontend/src/api/drift.ts` — Typed client for the drift API (E4 UI).
 - `frontend/src/api/errors.ts` — Shared error parsing + types for the platform's structured error
 - `frontend/src/api/evalGaps.ts` — Eval Gaps API client — Coach-stage-2 phases 3 + 5.
@@ -578,6 +587,7 @@ session-start guidance.
 - `frontend/src/components/data/DatasetPrepPanel.tsx` — Panel for dataset preparation with profiling, normalization, and split-manifest configuration.
 - `frontend/src/components/data/DatasetVersionPanel.tsx` — Panel listing prepared dataset versions with record counts, types, and creation timestamps.
 - `frontend/src/components/data/DocumentSampleAccordion.tsx` — Inline 10-random-rows preview for the Ingested Documents table.
+- `frontend/src/components/data/DocumentSourceImportCard.tsx` — _(no docstring)_
 - `frontend/src/components/data/EDADashboard.tsx` — Exploratory data analysis dashboard with row counts, token distribution, toxicity, and outlier detection.
 - `frontend/src/components/data/GoalLedgerCard.tsx` — Arc H — Goal progress ledger card.
 - `frontend/src/components/data/GoldEntryAddForm.tsx` — GoldEntryAddForm — per-recipe inline form for manually adding a
@@ -753,6 +763,7 @@ session-start guidance.
 - `backend/tests/test_behavioral_tests_endpoint_slice2.py` — Quality-Lift phase 7 slice 2 — behavioral_tests focused CRUD endpoint.
 - `backend/tests/test_bell_live_metrics.py` — Tests for the bell live-loss sparkline backend
 - `backend/tests/test_benchmark_contamination.py` — Benchmark gold-VALUE contamination scan: do the answers a benchmark
+- `backend/tests/test_bm25_tokenizer.py` — BM25 tokenizer (identifier-aware) and the index tokenizer-version stamp.
 - `backend/tests/test_chat_template_rewrap.py` — Tests for the opt-in chat-template re-wrap pass
 - `backend/tests/test_check_seeds_endpoint.py` — ``POST /evaluation/summary/check-seeds`` — the multi-seed option for the
 - `backend/tests/test_checkpoint_registry.py` — Unit tests for the warm-start checkpoint registry (Track 1, Epic B).
@@ -768,6 +779,7 @@ session-start guidance.
 - `backend/tests/test_coach_probe_divergence.py` — Coach-stage-2 phase 11 — probe-vs-gold divergence nudge.
 - `backend/tests/test_coach_reroute_nudge.py` — Tests for the Phase 7d Coach Mode reroute nudge.
 - `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
+- `backend/tests/test_code_chunker.py` — Code chunker: declaration-level chunks with exact line ranges.
 - `backend/tests/test_compliance_bundles.py` — Compliance bundles: built-in bundles are data (types + definitions +
 - `backend/tests/test_continued_pretraining.py` — Continued pretraining for documents-only projects (Wave 2c-1).
 - `backend/tests/test_curriculum_ab.py` — Tests for the Phase 6c A/B harness (pure-function pieces).
@@ -812,6 +824,7 @@ session-start guidance.
 - `backend/tests/test_frontier_comparison.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
 - `backend/tests/test_generate_api_ref.py` — The API-reference generator escapes MDX-significant prose in docstrings.
 - `backend/tests/test_generic_intake.py` — Generic intake (Wave 2a): any file a newcomer brings lands correctly.
+- `backend/tests/test_git_repo_source.py` — Git repository document source: ref pinning, URL safety, globs, licence,
 - `backend/tests/test_goal_service.py` — Tests for goal_service + the /goal/progress + /goal endpoints (Arc H).
 - `backend/tests/test_gold_add_per_recipe.py` — Endpoint tests for ``POST /api/projects/{id}/gold/add`` after the
 - `backend/tests/test_gold_llm_service.py` — Tests for the LLM-assisted gold-set generation path.
@@ -1038,6 +1051,7 @@ session-start guidance.
 - `backend/tests/test_unlabeled_pool_scoring_slice1.py` — Quality-Lift phase 3 slice 1 — Unlabeled-pool scoring service.
 - `backend/tests/test_vision_language_adapter_prompt_wrap.py` — ι-fix tests — vision-language-pair adapter writes the
 - `backend/tests/test_warmstart_checkpoint.py` — Unit tests for the warm-start checkpoint trainer's non-GPU logic.
+- `backend/tests/test_web_crawl_source.py` — Website document source: crawler policy (robots, prefixes, rejects, cache),
 
 ## Frontend · Tests
 
@@ -1075,6 +1089,7 @@ session-start guidance.
 - `frontend/src/components/data/DatasetImportWizard.test.tsx` — Phase F — UI wizard contract.
 - `frontend/src/components/data/DatasetPrepPanel.hydrate.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DocumentSampleAccordion.test.tsx` — Document-sample accordion contract.
+- `frontend/src/components/data/DocumentSourceImportCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/GoalLedgerCard.test.tsx` — Arc H — GoalLedgerCard tests.
 - `frontend/src/components/data/GoldSetDiagnosticsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/GoldSetPanel.test.tsx` — _(no docstring)_

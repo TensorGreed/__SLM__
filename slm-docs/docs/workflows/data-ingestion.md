@@ -25,7 +25,8 @@ Pulls raw data into the project's `RawDocument` table and saves files under `DAT
 | You upload | Formats | What happens |
 |---|---|---|
 | **Row files** | CSV, TSV, Excel (`.xlsx`), JSON, JSONL, Parquet | The columns are kept. Cleaning writes one cleaned row per record: PII is redacted per field, and empty or exact-duplicate rows are dropped. Fields such as `question`/`answer` or `text`/`label` reach training intact. They are **not** flattened into text and chunked. |
-| **Documents** | PDF, Word (`.docx`, including tables), HTML, TXT, Markdown | Text is extracted, then cleaning splits it into passages. |
+| **Documents** | PDF, Word (`.docx`, including tables), HTML, TXT, Markdown, reStructuredText | Text is extracted, then cleaning splits it into passages. |
+| **Source / config files** | `.py`, `.java`, `.cs`, `.go`, `.js`, `.ts`, `.c`, `.cpp`, `.sh`, `.sql`, `.tf`, `.yaml`, `.xml`, `.properties`, `.ini`, … | Text is kept exactly as written; cleaning splits it at function / class boundaries with line numbers, without redaction. |
 
 Details that apply to both:
 
@@ -68,6 +69,27 @@ curl -X POST http://localhost:8000/api/projects/1/ingest \
   -H "Content-Type: application/json" \
   -d '{"source_type":"huggingface","source_ref":"Anthropic/hh-rlhf","name":"hh_rlhf"}'
 ```
+
+### Documents from a website or git repository
+
+Instead of uploading files you can pull documents straight from a site or a repository (**Data** → **Sources** → **Documents from website / repo**). Both run as background jobs (the top-bar bell shows progress) and create ordinary documents, so cleaning, the passage index and everything after treat them like uploads. Each document keeps where it came from.
+
+- **Website.** Give one or more seed URLs. The crawler stays inside the allowed URL prefixes (by default the folder of each seed), reads `robots.txt`, waits between requests (1 second by default), follows only links and, optionally, a sitemap. Pages are cached by ETag / Last-Modified, so crawling again only downloads what changed. `robots.txt` follows the standard rules (the most specific matching rule wins, `*` and `$` work); if it cannot be read the site is skipped (`robots_unreachable`) rather than crawled blind, while a missing one (404) means everything is allowed. Menus, headers, footers, sidebars and breadcrumbs are removed; the page's `<main>` / `<article>` text is kept (a page where that would leave almost nothing keeps its text instead). Limits: up to 5000 pages, depth 0 to 10, delay 0 to 30 seconds; include / exclude regular expressions filter URLs.
+- **Git repository.** Give a URL (`https://`, `ssh://` or `git@host:path`), an optional branch, tag or commit, and optional include / exclude globs. BrewSLM fetches that ref only (no history), records the exact commit and the repository's licence (detected from its `LICENSE` file, `NOASSERTION` when unclear), and imports Markdown / text / HTML as documents and source or config files as **code**. `node_modules`, `vendor`, `dist`, `build` (at any depth), minified files, lock files, binaries and files over 200 KB are skipped by default; your exclude globs are added to those defaults, and the **Skip vendored / build folders** option (`default_excludes`) turns the defaults off. URLs with embedded credentials are refused. Cancelling the job stops the crawl or clone promptly. Local paths are refused unless the server sets `DOCUMENT_SOURCES_ALLOW_LOCAL_GIT=true`.
+- **Code is chunked by declaration, not by sentence.** Java and C# files give one passage per method, Python one per function / class / method, and so on for Go, JavaScript / TypeScript, C / C++, shell, Terraform, YAML, JSON, XML, SQL, INI and properties files. Every passage knows its file and line range, so an answer can cite `src/Greeter.java:11-15 (Greeter.getUserName)`. Code is **not redacted** during cleaning (the secrets and personal data found are counted, not removed) because that would change the very values a code model learns from; treat the repository as sensitive accordingly. Search also matches identifiers by their words: a question about "user name" finds `getUserName`.
+- **Rejected pages / files are listed by reason** (`robots_disallowed`, `not_html`, `too_large`, `http_error`, `excluded_by_pattern`, `duplicate_content`, `excluded_by_glob`, `binary`, `unsupported_type`, `parse_error`, `robots_unreachable`, …) so you can retry or drop a whole group. Pages left out because the page limit was reached are only counted.
+
+```sh
+curl -X POST "http://localhost:8000/api/projects/1/document-sources/web-crawl" \
+  -H "Content-Type: application/json" \
+  -d '{"seed_urls":["https://docs.example.com/guide/"],"max_pages":100,"max_depth":2}'
+
+curl -X POST "http://localhost:8000/api/projects/1/document-sources/git-repo" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://github.com/org/repo","ref":"v1.2","include_globs":["src/**","docs/**"]}'
+```
+
+Both return `202` with the job (`?async_job=false` runs inline and returns `201` with the summary). A run that imports nothing fails with the rejection counts in its message. The dataset-import wizard also accepts `web:<seed url>` and `git:<url>[@ref]` locators when you want rows for a mapper instead of documents.
 
 ### Reason codes you might hit
 

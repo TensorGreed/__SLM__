@@ -1,5 +1,12 @@
 # Changelog
 
+### Document sources + code-aware chunking (October 26, 2026)
+
+- Added **Documents from website / git repository**: `POST /api/projects/{id}/document-sources/web-crawl` and `/git-repo` (background Jobs `document_source_web_crawl` / `document_source_git_repo`). The crawler honours robots.txt, stays inside allowed prefixes, rate-limits, caches by ETag / Last-Modified and strips navigation; the git importer pins the commit, detects the licence and skips binaries, large files and vendored directories. The website importer follows RFC 9309 (longest match, `*` / `$`, percent-encoding; an unreachable robots.txt or a 5xx skips the host as `robots_unreachable`, a 4xx allows it) and caps robots.txt / sitemap downloads; navigation stripping never drops `html` / `body` / `main` / `article` / `role="main"` and falls back to tag-only stripping when a class name would empty the page. Git `exclude_globs` are added to the built-in defaults (`default_excludes: false` turns those off; they match at any depth), URLs with embedded credentials and loopback ssh targets are refused, and imports stop promptly when the Job is cancelled. Repo source / config files are never read as training rows or used for task-shape detection. Rejected pages / files are reported by stable reason code; each document records where it came from (`source_url`, `path`, `commit`, licence).
+- Added a **code chunker**: source and config files (Java, C#, Python, Go, JS/TS, C/C++, shell, Terraform, YAML, JSON, XML, SQL, INI, properties, Dockerfile) are cut at function / method / class boundaries with exact line ranges and symbols; code is cleaned verbatim (counted, not redacted) and passages are cited as `path:start-end (symbol)`. Source files can now also be uploaded.
+- BM25 retrieval splits `camelCase` / `snake_case` identifiers into words (and keeps the whole identifier); all-caps plurals (`IDs`, `APIs`) and `5G` stay whole; indexes are stamped `BM25_TOKENIZER_VERSION = 3`, older ones are rebuilt automatically and `retrieve()` refuses a stale one instead of mis-scoring it.
+- Dataset-import sources `web:` and `git:`; `DocumentResponse` now includes `license_info`, `source_url`, `path`, `commit`, `content_kind`, `language`; new setting `DOCUMENT_SOURCES_ALLOW_LOCAL_GIT` (default off).
+
 ### Latest Updates (March 5, 2026)
 
 - Added **Model Registry** lifecycle with readiness snapshots, promotion gates, and deploy tracking.

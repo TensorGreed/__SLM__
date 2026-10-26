@@ -18,6 +18,7 @@ removes whole rejection categories before save) per the
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -129,13 +130,18 @@ def preview_import(
     the per-reason breakdown.
     """
 
+    effective_limit = limit if limit is not None else max(sample_cap * 20, 50)
+    # A source that is expensive per row (a web crawl) caps what a preview may fetch.
+    preview_cap = getattr(resolve_source(split_locator(locator)[0]), "preview_limit_cap", None)
+    if preview_cap:
+        effective_limit = min(effective_limit, int(preview_cap))
     ctx = _build_context(
         project_id=project_id,
         project_task_profile=project_task_profile,
         locator=locator,
         mapper_id=mapper_id,
         field_map=field_map,
-        limit=limit if limit is not None else max(sample_cap * 20, 50),
+        limit=effective_limit,
     )
     accepted, rejected, rejection_counts, warnings = _drain_pipeline(
         ctx=ctx, drop_reasons=drop_reasons, sample_cap=sample_cap
@@ -264,8 +270,9 @@ async def run_import(
             limit=limit,
         )
         # Full pipeline — no sample cap on accepted rows for a real run.
-        accepted, rejected, rejection_counts, warnings = _drain_pipeline(
-            ctx=ctx, drop_reasons=drop_reasons, sample_cap=None
+        # Off the event loop: a source may crawl a site or clone a repo.
+        accepted, rejected, rejection_counts, warnings = await asyncio.to_thread(
+            _drain_pipeline, ctx=ctx, drop_reasons=drop_reasons, sample_cap=None
         )
         mapper = resolve_mapper(mapper_id)
 
@@ -382,7 +389,7 @@ async def introspect_locator(
 
     source_id, source_rest = split_locator(locator)
     source = resolve_source(source_id)
-    description = source.describe(source_rest)
+    description = await asyncio.to_thread(source.describe, source_rest)
     sample_rows = list(description.get("sample_rows") or [])[:sample_size]
 
     signatures = sniff_columns(sample_rows)

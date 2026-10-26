@@ -453,6 +453,7 @@ async def sample_project_rows(db: AsyncSession, project_id: int, limit: int = 20
 
     from app.config import settings
     from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
+    from app.services.code_chunker import is_code_document
     from app.services.dataset_service import _load_records_from_file
 
     project_dir = Path(settings.DATA_DIR) / "projects" / str(project_id)
@@ -474,6 +475,8 @@ async def sample_project_rows(db: AsyncSession, project_id: int, limit: int = 20
         for doc in docs:
             if len(rows) >= limit:
                 break
+            if is_code_document(doc):
+                continue  # source / config text (a repo's package.json) is not rows
             rows.extend(_load_records_from_file(Path(doc.file_path), max_records=limit - len(rows)))
     # Drop bookkeeping so the detector sees the user's columns.
     bookkeeping = {"id", "source_document_id", "source_doc", "chunk_id", "row_index", "status",

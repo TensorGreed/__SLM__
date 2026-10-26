@@ -15,6 +15,7 @@ to these endpoints.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from pathlib import Path
@@ -208,7 +209,9 @@ async def preview(
 ) -> dict[str, Any]:
     task_profile = await _load_project_profile(db, project_id)
     try:
-        result = preview_import(
+        # preview_import is blocking (a source may crawl / clone): keep it off the event loop.
+        result = await asyncio.to_thread(
+            preview_import,
             project_id=project_id,
             project_task_profile=task_profile,
             locator=req.locator,

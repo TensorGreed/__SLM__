@@ -22,6 +22,7 @@ from app.api.drift import router as drift_router
 from app.api.remediation import router as remediation_router
 from app.api.settings import router as settings_router
 from app.api.projects import router as projects_router
+from app.api.document_sources import router as document_sources_router
 from app.api.pipeline import router as pipeline_router
 from app.api.ingestion import router as ingestion_router
 from app.api.cleaning import router as cleaning_router
@@ -374,6 +375,7 @@ app.include_router(drift_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(audit_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(settings_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(projects_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(document_sources_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(pipeline_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(ingestion_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(hardware_router, prefix="/api", dependencies=API_DEPENDENCIES)

@@ -60,6 +60,14 @@ class DocumentResponse(BaseModel):
     error: str | None = None
     structured: bool = False
     row_count: int | None = None
+    # Provenance of documents pulled from a website / git repo (``None`` for
+    # uploads): where it came from, and for a repo file the pinned commit.
+    license_info: str | None = None
+    source_url: str | None = None
+    path: str | None = None
+    commit: str | None = None
+    content_kind: str | None = None
+    language: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -75,6 +83,12 @@ class DocumentResponse(BaseModel):
             "error": data.get("error") or meta.get("error"),
             "structured": bool(data.get("structured") or meta.get("structured")),
             "row_count": data.get("row_count") or meta.get("row_count") or meta.get("rows_kept"),
+            "license_info": data.get("license_info") or None,
+            "source_url": data.get("source_url") or meta.get("source_url"),
+            "path": data.get("path") or meta.get("path"),
+            "commit": data.get("commit") or meta.get("commit"),
+            "content_kind": data.get("content_kind") or meta.get("content_kind"),
+            "language": data.get("language") or meta.get("language"),
         }
 
 

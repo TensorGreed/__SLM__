@@ -122,18 +122,50 @@ class AutoRagUnavailable(RuntimeError):
 # ─────────────────────────────────────────────────────────────────────
 
 
-# Word-ish tokens: lowercase letters/digits + apostrophe-joined parts
-# ("don't" → one token, "user's" → one token). Stays out of
+# Word-ish tokens: letters/digits/underscore + apostrophe-joined parts
+# ("don't" → one token, "user's" → one token). Matched on the original
+# case so camelCase / snake_case identifiers can be split. Stays out of
 # punctuation/whitespace; doesn't strip stopwords (BM25's idf handles
 # common-word de-weighting naturally — explicit stopword lists tend
 # to hurt retrieval quality on short query phrases).
-_TOKEN_RE = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+(?:'[A-Za-z]+)?")
+# A lower→Upper step (``getUser``) or an acronym followed by a word (``HTTPServer``) is a
+# boundary; a digit→Upper step is not (``5G``, ``v2API`` stay whole), and an all-caps
+# plural (``IDs``, ``APIs``, ``URLs``) is one word.
+_CASE_BOUNDARY_RE = re.compile(r"[a-z][A-Z]|[A-Z][A-Z][a-z]")
+_IDENT_PART_RE = re.compile(r"[0-9]*[A-Z]+s(?![a-z])|[0-9]*[A-Z]+(?![a-z])|[0-9]*[A-Z]?[a-z]+|[0-9]+")
+_CAPS_PLURAL_RE = re.compile(r"[A-Z]+s")
+
+# Stamped into every index. v2: identifiers are split into their parts as
+# well as kept whole (``getUserName`` → get user name + getusername), which
+# is what lets a question about "user name" find code. An index built with
+# another version is stale (``document_index_status`` / ``qa_index_is_current``).
+BM25_TOKENIZER_VERSION = 3
 
 
 def _tokenize(text: str) -> list[str]:
+    """Lowercase word tokens. A token with an underscore or a case boundary
+    (``getUserName``, ``HTTPServer``, ``user_id``) emits its lowercase parts
+    (``get user name``) AND the whole lowercased identifier (``getusername``);
+    plain lowercase / Capitalised / ALLCAPS words tokenize as before."""
     if not text:
         return []
-    return _TOKEN_RE.findall(text.lower())
+    tokens: list[str] = []
+    for raw in _TOKEN_RE.findall(text):
+        if "'" in raw or ("_" not in raw and (_CAPS_PLURAL_RE.fullmatch(raw) or not _CASE_BOUNDARY_RE.search(raw))):
+            tokens.append(raw.lower())
+            continue
+        parts = [
+            part.lower()
+            for piece in raw.split("_")
+            if piece
+            for part in ([piece] if _CAPS_PLURAL_RE.fullmatch(piece) else _IDENT_PART_RE.findall(piece))
+        ]
+        whole = raw.lower()
+        if len(parts) != 1 or parts[0] != whole:
+            tokens.extend(parts)
+        tokens.append(whole)
+    return tokens
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -284,6 +316,7 @@ def build_bm25_index(
         # rather than silently mis-scoring against a stale index.
         "recipe_id": recipe_id,
         "text_keys": list(text_keys),
+        "tokenizer_version": BM25_TOKENIZER_VERSION,
         "corpus_source": corpus_source,
         "bm25_k1": _BM25_K1,
         "bm25_b": _BM25_B,
@@ -331,13 +364,27 @@ def build_bm25_index(
 QA_CORPUS_SOURCE = "training_rows_v1"
 
 
+def index_tokenizer_is_current(index_dir: Path) -> bool:
+    """Whether the BM25 index under ``index_dir`` was built with this
+    tokenizer (an index without the stamp predates it)."""
+    try:
+        payload = json.loads((index_dir / "bm25_index.json").read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    return isinstance(payload, dict) and payload.get("tokenizer_version") == BM25_TOKENIZER_VERSION
+
+
 def qa_index_is_current(index_path: Path) -> bool:
     """True when the Q&A index on disk was built over the training corpus."""
     try:
         payload = json.loads(index_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return False
-    return isinstance(payload, dict) and payload.get("corpus_source") == QA_CORPUS_SOURCE
+    return (
+        isinstance(payload, dict)
+        and payload.get("corpus_source") == QA_CORPUS_SOURCE
+        and payload.get("tokenizer_version") == BM25_TOKENIZER_VERSION
+    )
 
 
 async def _load_rag_corpus_rows(db, project_id: int) -> list[dict[str, Any]]:
@@ -473,13 +520,17 @@ def load_rechunked_passages(project_id: int, chunk_size: int) -> list[dict[str, 
     row shape as ``load_document_passages`` (document id + name from the
     cleaned.jsonl rows, chunk ids restarting at 0 per document)."""
     from app.services.cleaning_service import chunk_text
+    from app.services.code_chunker import chunk_code
 
     chunk_size = max(MIN_CHUNK_SIZE, min(MAX_CHUNK_SIZE, int(chunk_size)))
     doc_ids: dict[str, Any] = {}
+    code_docs: dict[str, dict[str, Any]] = {}
     for row in load_document_passages(project_id):
         name = row.get("source_doc")
         if isinstance(name, str) and name not in doc_ids:
             doc_ids[name] = row.get("source_document_id")
+            if row.get("language") and row.get("path"):
+                code_docs[name] = {"path": row["path"], "language": row["language"]}
     passages: list[dict[str, Any]] = []
     for path in _cleaned_text_files(project_id):
         source_doc = next(
@@ -493,6 +544,24 @@ def load_rechunked_passages(project_id: int, chunk_size: int) -> list[dict[str, 
         except OSError:
             continue
         if not text.strip():
+            continue
+        if source_doc in code_docs:
+            # Source files are re-cut at declaration boundaries, never by sentence.
+            info = code_docs[source_doc]
+            for idx, chunk in enumerate(chunk_code(text, info["language"], max_chars=chunk_size)):
+                passages.append({
+                    "id": f"{doc_ids[source_doc]}:{idx}",
+                    "text": chunk.text,
+                    "source_doc": source_doc,
+                    "source_document_id": doc_ids[source_doc],
+                    "chunk_id": idx,
+                    "path": info["path"],
+                    "language": info["language"],
+                    "start_line": chunk.start_line,
+                    "end_line": chunk.end_line,
+                    "symbol": chunk.symbol,
+                    "kind": chunk.kind,
+                })
             continue
         for idx, chunk in enumerate(chunk_text(text, chunk_size, chunk_size // 10)):
             if chunk.strip():
@@ -520,6 +589,9 @@ def _cleaned_path(project_id: int) -> Path:
     return settings.DATA_DIR / "projects" / str(project_id) / "cleaned" / "cleaned.jsonl"
 
 
+_CODE_PASSAGE_KEYS = ("path", "language", "start_line", "end_line", "symbol", "kind")
+
+
 def load_document_passages(project_id: int) -> list[dict[str, Any]]:
     """Cleaned document passages (chunks of PDF / DOCX / HTML / text).
     Rows from structured files (CSV/XLSX…, which cleaning keeps
@@ -545,13 +617,18 @@ def load_document_passages(project_id: int) -> list[dict[str, Any]]:
                 continue
             document_id = row.get("source_document_id")
             chunk_id = row.get("chunk_id")
-            passages.append({
+            passage = {
                 "id": f"{document_id}:{chunk_id}",
                 "text": text.strip(),
                 "source_doc": row.get("source_doc"),
                 "source_document_id": document_id,
                 "chunk_id": chunk_id,
-            })
+            }
+            # Code documents carry where the chunk lives (cited as path:start-end).
+            for key in _CODE_PASSAGE_KEYS:
+                if key in row:
+                    passage[key] = row[key]
+            passages.append(passage)
     return passages
 
 
@@ -569,8 +646,12 @@ def document_index_status(project_id: int, chunk_size: int | None = None) -> dic
     passages = None
     if exists:
         try:
-            passages = int(json.loads(index_path.read_text(encoding="utf-8")).get("doc_count") or 0)
-        except (OSError, json.JSONDecodeError):
+            payload = json.loads(index_path.read_text(encoding="utf-8"))
+            passages = int(payload.get("doc_count") or 0)
+            # An index built with another tokenizer scores differently: rebuild it.
+            if payload.get("tokenizer_version") != BM25_TOKENIZER_VERSION:
+                stale = True
+        except (OSError, json.JSONDecodeError, AttributeError):
             passages = None
     return {"available": exists and not stale, "exists": exists, "stale": stale, "passages": passages}
 
@@ -604,6 +685,14 @@ def ensure_document_index(project_id: int, chunk_size: int | None = None) -> dic
 def _format_passage(idx: int, hit: RetrievedChunk) -> str:
     payload = hit.get("payload") or {}
     text = str(payload.get("text") or "")
+    if payload.get("path") and isinstance(payload.get("start_line"), int) and isinstance(payload.get("end_line"), int):
+        # Source code: cite the file + line range, keep the layout (indentation matters).
+        where = f"{payload['path']}:{payload['start_line']}-{payload['end_line']}"
+        if payload.get("symbol"):
+            where += f" ({payload['symbol']})"
+        if len(text) > _PASSAGE_PREVIEW_CHARS:
+            text = text[:_PASSAGE_PREVIEW_CHARS].rsplit("\n", 1)[0] + "\n…"
+        return f"[{idx}] {where}\n{text}"
     if len(text) > _PASSAGE_PREVIEW_CHARS:
         text = text[:_PASSAGE_PREVIEW_CHARS].rsplit(" ", 1)[0] + " …"
     source = payload.get("source_doc") or "document"
@@ -865,6 +954,14 @@ def retrieve(
             f"BM25 index at {index_path} is unreadable: {e}"
         ) from e
 
+    if not isinstance(payload, dict) or payload.get("tokenizer_version") != BM25_TOKENIZER_VERSION:
+        # Query tokens from this tokenizer would be scored against differently
+        # tokenized documents — silently wrong. Say so (callers rebuild the index).
+        raise AutoRagUnavailable(
+            f"BM25 index at {index_path} was built with tokenizer version "
+            f"{payload.get('tokenizer_version') if isinstance(payload, dict) else None}, "
+            f"not {BM25_TOKENIZER_VERSION}; rebuild it."
+        )
     query_tokens = _tokenize(query)
     if not query_tokens:
         return []

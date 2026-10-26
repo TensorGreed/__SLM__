@@ -29,6 +29,7 @@ export const CLEAN_FILES = [
     'components/data/DatasetImportWizard.tsx',
     'components/data/DatasetPrepPanel.tsx',
     'components/data/DatasetVersionPanel.tsx',
+    'components/data/DocumentSourceImportCard.tsx',
     'components/data/GoldSetPanel.tsx',
     'components/data/PredefinedSplitCard.tsx',
     'components/data/IngestionPanel.tsx',

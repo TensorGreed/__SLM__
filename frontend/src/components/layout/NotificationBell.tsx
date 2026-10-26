@@ -65,6 +65,9 @@ function jobDeepLink(job: Job): string | null {
     if (job.kind === 'seed_documents' && job.project_id) {
         return stagePath(job.project_id, 'data') + '#seed-documents';
     }
+    if ((job.kind === 'document_source_web_crawl' || job.kind === 'document_source_git_repo') && job.project_id) {
+        return stagePath(job.project_id, 'data') + '#document-sources';
+    }
     if (job.kind === 'span_relabel' && job.project_id) {
         return stagePath(job.project_id, 'eval');
     }
@@ -218,6 +221,19 @@ function jobOutcomeSummaryCore(job: Job): string | null {
         if (written !== null) parts.push(`${written} sample documents written`);
         if (passages !== null) parts.push(`${passages} passages`);
         return parts.length ? parts.join(' · ') : null;
+    }
+    if (job.kind === 'document_source_web_crawl' || job.kind === 'document_source_git_repo') {
+        const made = typeof r.documents_created === 'number' ? r.documents_created : null;
+        // ``rejected`` is capped at 500 rows; ``rejection_counts`` is the full tally.
+        const counts = r.rejection_counts && typeof r.rejection_counts === 'object'
+            ? Object.values(r.rejection_counts as Record<string, unknown>)
+                .reduce<number>((sum, n) => sum + (typeof n === 'number' ? n : 0), 0)
+            : null;
+        const rej = counts !== null ? counts : Array.isArray(r.rejected) ? r.rejected.length : null;
+        const parts: string[] = [];
+        if (made !== null) parts.push(`${made} documents imported`);
+        if (rej !== null) parts.push(`${rej} rejected`);
+        return parts.length ? parts.join(', ') : null;
     }
     if (job.kind === 'documents_qa_flow') {
         const pairs = typeof r.training_pairs === 'number' ? r.training_pairs : null;

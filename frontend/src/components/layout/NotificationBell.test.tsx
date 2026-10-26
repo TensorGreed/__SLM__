@@ -795,6 +795,16 @@ describe('NotificationBell cloud spend line', () => {
     it('says what a failed job spent and stays quiet without usage', () => {
         const failed = jobFixture({ kind: 'documents_qa_flow', status: 'failed', result: { tokens: 3000, cost_usd: 0.01 } });
         expect(jobOutcomeSummary(failed as never)).toBe('spent 3k tokens (~$0.01 at list price)');
+    });
+
+    it('document-source jobs count every rejection (rejection_counts), not the capped list', () => {
+        const job = {
+            id: 1, kind: 'document_source_git_repo', status: 'succeeded', project_id: 3,
+            result: { documents_created: 4, rejected: [{ path: 'a', reason: 'binary' }], rejection_counts: { binary: 700, too_large: 12 } },
+        };
+        expect(jobOutcomeSummary(job as never)).toBe('4 documents imported, 712 rejected');
+        const noCounts = { ...job, result: { documents_created: 1, rejected: [{ path: 'a', reason: 'binary' }] } };
+        expect(jobOutcomeSummary(noCounts as never)).toBe('1 documents imported, 1 rejected');
         expect(cloudSpendText({ rows: 3 })).toBeNull();
         expect(cloudSpendText({ tokens: 0 })).toBeNull();
     });

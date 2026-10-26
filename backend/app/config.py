@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     DATA_DIR: Path = PROJECT_ROOT / "data"
     MODEL_CACHE_DIR: Path = PROJECT_ROOT / "data" / "models"
 
+    # Document sources: allow a git-repo import from a local path / file:// URL
+    # (off by default — it would read any directory the server can see).
+    DOCUMENT_SOURCES_ALLOW_LOCAL_GIT: bool = False
+
     # ── Database ────────────────────────────────────────────────────────
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/slm_platform.db"
     DB_AUTO_CREATE: bool = False
