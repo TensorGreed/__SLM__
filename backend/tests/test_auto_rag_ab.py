@@ -409,6 +409,12 @@ class DocumentsCorpusAndJudgeTests(unittest.TestCase):
         }
         self.assertEqual(names, {"comparison.json", "comparison_base.json",
                                  "comparison_documents.json", "comparison_base_documents.json"})
+        # The base decoded with its own settings (strongest-baseline rule) never
+        # replaces the neutral comparison the passages verdict reads.
+        self.assertEqual(
+            harness.comparison_file_name(base_only=True, corpus="documents", decoding="model"),
+            "comparison_base_documents_model_decoding.json",
+        )
 
     def test_document_preamble_becomes_the_system_message(self):
         class Tok:

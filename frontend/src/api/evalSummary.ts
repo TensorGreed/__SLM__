@@ -164,6 +164,19 @@ export interface EvalSummaryJudge {
     retrieval?: RetrievalSplit | null;
 }
 
+/** The strongest-baseline rule: the base model scored with neutral decoding
+ *  and, when its own generation_config differs (e.g. repetition penalty
+ *  1.1), with those settings too; the higher score is the lift's bar. */
+export interface BaselineDecodingBar {
+    chosen: 'neutral' | 'model';
+    metric_id: string | null;
+    neutral: number | null;
+    model: number | null;
+    /** The model's own greedy settings; null when they equal neutral. */
+    model_settings?: { num_beams?: number; repetition_penalty?: number; no_repeat_ngram_size?: number } | null;
+    reason?: string | null;
+}
+
 export interface EvalSummary {
     project_id: number;
     experiment_id: number | null;
@@ -222,7 +235,7 @@ export interface EvalSummary {
     representative_experiment_id?: number | null;
     /** True when the summarised run is a multi-seed leader ("Ship this seed"). */
     seed_group_leader?: boolean;
-    baseline?: { experiment_id: number; base_model: string } | null;
+    baseline?: { experiment_id: number | null; base_model: string; decoding_bar?: BaselineDecodingBar | null } | null;
     trained?: { experiment_id: number; experiment_name: string } | null;
     eval_result_id?: number;
     eval_type?: string;

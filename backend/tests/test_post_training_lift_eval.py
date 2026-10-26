@@ -6,7 +6,10 @@ Pins:
   * the runner evaluates base + fine-tuned on the same split and returns
     the paired lift; a fresh baseline result is reused, not recomputed;
   * the lift summary pairs a run with *its own* base model's baseline and
-    can be pinned to a specific experiment.
+    can be pinned to a specific experiment;
+  * the strongest-baseline rule: a base model whose own generation_config
+    differs from neutral decoding is scored both ways, the higher is the bar,
+    and both results are kept and reused.
 
 Uses a private engine per test (like test_sft_lift_summary_service), so
 the shared StaticPool engine caveat doesn't apply.
@@ -68,8 +71,18 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
 
         self._judge_patch = mock.patch.object(svc, "_resolve_lift_judge", _resolve)
         self._judge_patch.start()
+        # The base model's own decoding settings when they differ from
+        # neutral (None: same → one base eval). Patched so no test reads a
+        # real generation_config.
+        self.own_settings: dict | None = None
+        self.own_base_score = 0.1
+        self._own_patch = mock.patch(
+            "app.services.decoding_settings.model_decoding_differs", lambda ref: self.own_settings
+        )
+        self._own_patch.start()
 
     async def asyncTearDown(self):
+        self._own_patch.stop()
         self._judge_patch.stop()
         await self.engine.dispose()
         self._tmp.cleanup()
@@ -107,10 +120,17 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
     async def _fake_heldout(self, db, *, experiment_id, model_path, **kwargs):
         self.eval_calls.append({"experiment_id": experiment_id, "model_path": model_path, **kwargs})
         is_base = model_path is not None
+        own_decoding = kwargs.get("decoding") == "model"
         # Per-seed scores for seed-group tests (keyed by child id).
-        score = self.seed_scores.get(experiment_id, 0.8) if not is_base else 0.1
+        score = self.seed_scores.get(experiment_id, 0.8) if not is_base else (
+            self.own_base_score if own_decoding else 0.1
+        )
         metrics = {"exact_match": score}
-        if not self.undecoded_results:
+        if own_decoding:
+            from app.services.decoding_settings import model_decoding_record
+
+            metrics["inference"] = {"decoding": model_decoding_record(self.own_settings or {})}
+        elif not self.undecoded_results:
             # Real held-out evals record how they decoded (lift evals: greedy).
             from app.services.decoding_settings import decoding_record, generation_kwargs
 
@@ -253,6 +273,111 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
             async with self.sf() as db:
                 out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=third)
             self.assertTrue(out["baseline_reused"])
+
+    async def _lift(self, pid: int, exp_id: int) -> dict:
+        with mock.patch("app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout):
+            async with self.sf() as db:
+                return await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=exp_id)
+
+    async def test_base_scored_both_ways_and_its_own_decoding_is_the_bar_when_higher(self):
+        """Qwen2.5-Instruct ships repetition penalty 1.1: the base is scored
+        neutral AND with its own settings; the higher (own: 0.5) is the bar
+        the lift is measured from, and both are reused next time."""
+        self.own_settings = {"num_beams": 1, "repetition_penalty": 1.1, "no_repeat_ngram_size": 0}
+        self.own_base_score = 0.5
+        pid = await self._project()
+        first, second = await self._run(pid), await self._run(pid)
+        out = await self._lift(pid, first)
+        self.assertEqual(
+            [(c["model_path"], c.get("decoding", "neutral")) for c in self.eval_calls],
+            [(BASE, "neutral"), (BASE, "model"), (None, "neutral")],
+        )
+        bar = out["baseline_bar"]
+        self.assertEqual((bar["chosen"], bar["metric_id"], bar["neutral"], bar["model"]), ("model", "exact_match", 0.1, 0.5))
+        self.assertEqual(bar["model_settings"]["repetition_penalty"], 1.1)
+        self.assertEqual(out["baseline_eval_result_id"], bar["model_eval_result_id"])
+        self.assertEqual(out["headline"]["baseline_value"], 0.5)
+        async with self.sf() as db:
+            lift = await compute_sft_lift_summary(db, pid, experiment_id=first)
+        self.assertEqual(lift["baseline"]["eval_result_id"], bar["model_eval_result_id"])
+        self.assertEqual(lift["baseline"]["decoding_bar"]["chosen"], "model")
+
+        self.eval_calls.clear()
+        out = await self._lift(pid, second)
+        self.assertEqual([c["model_path"] for c in self.eval_calls], [None], "both base results reused")
+        self.assertTrue(out["baseline_reused"])
+        self.assertEqual(out["headline"]["baseline_value"], 0.5)
+
+    async def test_neutral_stays_the_bar_when_the_models_own_decoding_scores_lower(self):
+        """The own-settings result is newer but lower: the lift summary skips
+        it and pairs the run with the neutral result."""
+        self.own_settings = {"num_beams": 1, "repetition_penalty": 1.1, "no_repeat_ngram_size": 0}
+        self.own_base_score = 0.05
+        pid = await self._project()
+        exp_id = await self._run(pid)
+        out = await self._lift(pid, exp_id)
+        bar = out["baseline_bar"]
+        self.assertEqual(bar["chosen"], "neutral")
+        self.assertEqual(out["baseline_eval_result_id"], bar["neutral_eval_result_id"])
+        self.assertGreater(bar["model_eval_result_id"], bar["neutral_eval_result_id"])
+        self.assertEqual(out["headline"]["baseline_value"], 0.1)
+        async with self.sf() as db:
+            lift = await compute_sft_lift_summary(db, pid, experiment_id=exp_id)
+        self.assertEqual(lift["baseline"]["eval_result_id"], bar["neutral_eval_result_id"])
+
+    async def test_base_with_neutral_settings_is_scored_once(self):
+        pid = await self._project()
+        out = await self._lift(pid, await self._run(pid))
+        self.assertEqual([c.get("decoding", "neutral") for c in self.eval_calls if c["model_path"]], ["neutral"])
+        self.assertEqual((out["baseline_bar"]["chosen"], out["baseline_bar"]["reason"]), ("neutral", "no_other_settings"))
+
+    async def test_a_newer_unmarked_base_eval_never_replaces_the_bar(self):
+        """The own-settings bar stands although a later neutral eval (its
+        model eval failed, or the quickstart tile) is newer and unmarked."""
+        self.own_settings = {"num_beams": 1, "repetition_penalty": 1.1, "no_repeat_ngram_size": 0}
+        self.own_base_score = 0.5
+        pid = await self._project()
+        exp_id = await self._run(pid)
+        out = await self._lift(pid, exp_id)
+        async with self.sf() as db:
+            await self._fake_heldout(
+                db, experiment_id=out["baseline_experiment_id"], model_path=BASE, dataset_name="test", eval_type="exact_match",
+            )
+            await db.commit()
+            lift = await compute_sft_lift_summary(db, pid, experiment_id=exp_id)
+        self.assertEqual(lift["baseline"]["eval_result_id"], out["baseline_bar"]["model_eval_result_id"])
+
+    async def test_a_later_single_bar_clears_the_earlier_choice(self):
+        """Own settings chosen first; later the base reads as neutral-only
+        (config unreadable): the neutral result is the bar, the old own-
+        settings result no longer is."""
+        self.own_settings = {"num_beams": 1, "repetition_penalty": 1.1, "no_repeat_ngram_size": 0}
+        self.own_base_score = 0.5
+        pid = await self._project()
+        first, second = await self._run(pid), await self._run(pid)
+        await self._lift(pid, first)
+        self.own_settings = None
+        out = await self._lift(pid, second)
+        self.assertEqual(out["baseline_bar"]["chosen"], "neutral")
+        async with self.sf() as db:
+            lift = await compute_sft_lift_summary(db, pid, experiment_id=second)
+        self.assertEqual(lift["baseline"]["eval_result_id"], out["baseline_bar"]["neutral_eval_result_id"])
+        self.assertEqual(out["headline"]["baseline_value"], 0.1)
+
+    async def test_perplexity_is_not_scored_twice(self):
+        self.own_settings = {"num_beams": 1, "repetition_penalty": 1.1, "no_repeat_ngram_size": 0}
+        pid = await self._project()
+        exp_id = await self._run(pid)
+        with mock.patch.object(svc, "eval_type_for_project", return_value="perplexity"):
+            out = await self._lift(pid, exp_id)
+        self.assertEqual([c.get("decoding", "neutral") for c in self.eval_calls if c["model_path"]], ["neutral"])
+        self.assertEqual(out["baseline_bar"]["reason"], "perplexity")
+
+    def test_choose_baseline_bar_is_strict_and_respects_lower_is_better(self):
+        self.assertEqual(svc.choose_baseline_bar({"f1": 0.4}, {"f1": 0.4})["chosen"], "neutral", "tie keeps neutral")
+        self.assertEqual(svc.choose_baseline_bar({"judge_correct": 0.3, "f1": 0.9}, {"judge_correct": 0.5, "f1": 0.1})["metric_id"], "judge_correct")
+        self.assertEqual(svc.choose_baseline_bar({"perplexity": 9.0}, {"perplexity": 7.0})["chosen"], "model")
+        self.assertEqual(svc.choose_baseline_bar({"f1": 0.4}, {})["chosen"], "neutral")
 
     async def test_baseline_judged_by_another_judge_is_re_evaluated(self):
         """Both evals of one lift check must share a judge: a cached base

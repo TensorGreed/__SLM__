@@ -110,7 +110,11 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   Lift check (`passage_reader_eval_service.run_passage_reader_evaluation`, routed from
   `run_post_training_lift_eval` by `is_passage_trained`): base + passages (cached
   comparison_base_documents.json reused only when `base_comparison_usable`: judged, test, same
-  base model + retrieval + row count) vs harness `run_project_comparison(experiment_id=…,
+  base model + retrieval + row count + recorded neutral decoding; when the base ships its own
+  greedy settings it is also scored with them — `run_project_comparison(base_only=True,
+  decoding="model")` → `comparison_base_documents_model_decoding.json` — and the higher judge
+  score is the bar, `record.base_decoding` / summary `baseline.decoding_bar`: the
+  strongest-baseline rule, `evaluation.md`) vs harness `run_project_comparison(experiment_id=…,
   corpus="documents", split="test")` → `auto_rag/passage_reader/<run>.json` (paired judge
   evidence, both arms' retrieval splits); summary `kind="passage_reader"`; verdict `arms`
   `base_with_passages` vs `finetune_with_passages`. Seed groups refuse. Tests `test_passage_prompts.py`.

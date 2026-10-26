@@ -10,7 +10,12 @@ served retrieval, judged by the same answer judge, row by row:
 1. ``base + passages`` — the base-only documents comparison
    (``auto_rag/comparison_base_documents.json``), reused when it was judged
    on the test split, for this run's base model, with the retrieval the
-   project serves now; otherwise re-run (no sweep).
+   project serves now; otherwise re-run (no sweep). When the base model
+   ships decoding settings neutral decoding turns off (Qwen2.5-Instruct:
+   repetition penalty 1.1), it is also scored under those
+   (``comparison_base_documents_model_decoding.json``) and the higher
+   judge score is the bar — the strongest-baseline rule
+   (``decoding_settings``); ``base_decoding`` in the record says which.
 2. ``fine-tuned + passages`` — the auto-RAG harness on this run
    (``run_project_comparison(experiment_id=…, corpus="documents",
    split="test")``, the served retrieval, the same judge).
@@ -33,6 +38,7 @@ from typing import Any, Awaitable, Callable
 from app.config import settings
 
 READER_DIR = "passage_reader"
+MODEL_DECODING_BASE_FILE = "comparison_base_documents_model_decoding.json"
 SUMMARY_FAILURES = 5
 
 ComparisonFn = Callable[..., dict[str, Any]]
@@ -70,12 +76,19 @@ def _judge_label(payload: dict[str, Any] | None) -> str | None:
 
 
 def base_comparison_usable(
-    payload: dict[str, Any] | None, *, base_model: str, retrieval: dict[str, Any], test_rows: int | None = None
+    payload: dict[str, Any] | None,
+    *,
+    base_model: str,
+    retrieval: dict[str, Any],
+    test_rows: int | None = None,
+    decoding: str = "neutral",
 ) -> bool:
     """Pure: can the cached base + passages comparison be the bar? Judged,
     on the test split, for ``base_model``, with ``retrieval``, on as many
-    rows as the test split has (when known)."""
+    rows as the test split has (when known), decoded as ``decoding`` (a
+    comparison from before decoding was recorded is re-run)."""
     from app.services.auto_rag_service import same_retrieval
+    from app.services.decoding_settings import decoding_record, generation_kwargs, is_model_decoding
 
     if not isinstance(payload, dict) or payload.get("model") != "base":
         return False
@@ -87,8 +100,38 @@ def base_comparison_usable(
         return False
     if not same_retrieval(_summary(payload).get("retrieval"), retrieval):
         return False
+    recorded = _summary(payload).get("decoding")
+    if decoding == "model":
+        if not is_model_decoding(recorded):
+            return False
+    elif recorded != decoding_record(generation_kwargs(max_new_tokens=1, temperature=0.0)):
+        return False
     rows = payload.get("rows") if isinstance(payload.get("rows"), list) else []
     return test_rows is None or len(rows) == test_rows
+
+
+def _read_model_decoding_comparison(project_id: int) -> dict[str, Any] | None:
+    path = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / MODEL_DECODING_BASE_FILE
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def choose_base_bar(neutral_payload: dict[str, Any], model_payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Pure: the strongest-baseline rule on base + passages — the higher
+    judge score of the two decodings; a tie or a missing score keeps
+    neutral."""
+    n = _arm(neutral_payload, "with_rag").get("score")
+    m = _arm(model_payload, "with_rag").get("score") if model_payload else None
+    scored = isinstance(n, (int, float)) and isinstance(m, (int, float))
+    return {
+        "chosen": "model" if scored and float(m) > float(n) else "neutral",
+        "metric_id": "judge_correct",
+        "neutral": round(float(n), 4) if isinstance(n, (int, float)) else None,
+        "model": round(float(m), 4) if isinstance(m, (int, float)) else None,
+    }
 
 
 def _row_key(row: dict[str, Any]) -> tuple[str, str]:
@@ -267,30 +310,71 @@ async def run_passage_reader_evaluation(
     base_reused = base_comparison_usable(
         base_payload, base_model=experiment.base_model, retrieval=retrieval, test_rows=_test_row_count(project.id)
     )
-    if not base_reused:
+
+    def _require_project_base() -> None:
+        # A base-only comparison scores the PROJECT's base model.
         if str(getattr(project, "base_model_name", "") or "") != str(experiment.base_model or ""):
             raise ValueError(
                 f"Run #{experiment.id} was trained on {experiment.base_model} but the project's base model is now "
                 f"{project.base_model_name}; the base + passages bar is measured on the project's base model. "
                 "Set the project's base model back to evaluate this run."
             )
+
+    if not base_reused:
+        _require_project_base()
         await report(0.05, f"Scoring the base model + your passages ({label}) on the test examples")
         base_payload = await _run_threaded(
-            fn, report, 0.05, 0.45, "Base + passages",
+            fn, report, 0.05, 0.28, "Base + passages",
             base_only=True, corpus="documents", split="test",
         )
+    from app.services.decoding_settings import model_decoding_differs
+
+    own = await asyncio.to_thread(model_decoding_differs, experiment.base_model)
+    model_payload = None
+    if own is not None:
+        model_payload = _read_model_decoding_comparison(project.id)
+        # Judged by another judge than the neutral bar: the two can't be compared.
+        if not base_comparison_usable(
+            model_payload, base_model=experiment.base_model, retrieval=retrieval,
+            test_rows=_test_row_count(project.id), decoding="model",
+        ) or _judge_label(model_payload) != _judge_label(base_payload):
+            _require_project_base()
+            base_reused = False
+            await report(0.3, f"Scoring the base model + your passages with its own decoding settings ({label})")
+            model_payload = await _run_threaded(
+                fn, report, 0.3, 0.48, "Base + passages (its own decoding)",
+                base_only=True, corpus="documents", split="test", decoding="model",
+            )
+        if _judge_label(model_payload) != _judge_label(base_payload):
+            # The fresh own-decoding run is judged by today's judge; a reused
+            # neutral bar judged by an earlier one is re-run so the two compare.
+            _require_project_base()
+            base_reused = False
+            await report(0.48, f"Re-scoring the base model + your passages with the current judge ({label})")
+            base_payload = await _run_threaded(
+                fn, report, 0.48, 0.5, "Base + passages", base_only=True, corpus="documents", split="test",
+            )
+    base_decoding = choose_base_bar(base_payload, model_payload)
+    base_decoding["model_settings"] = own
+    if own is None:
+        base_decoding["reason"] = "no_other_settings"
+    if base_decoding["chosen"] == "model":
+        base_payload = model_payload
     await report(0.5, f"Scoring run #{experiment.id} + your passages ({label}) on the test examples")
     finetune_payload = await _run_threaded(
         fn, report, 0.5, 0.92, f"Run #{experiment.id} + passages",
         base_only=False, corpus="documents", split="test", experiment_id=experiment.id,
     )
-    if not _judge_label(base_payload) or not _judge_label(finetune_payload):
+    if not _judge_label(base_payload) or not _judge_label(finetune_payload) or (
+        model_payload is not None and not _judge_label(model_payload)
+    ):
         raise RuntimeError(
             "The passages comparison ran without an answer judge, so it can't be read on long answers. "
             "Configure a judge model (EVAL_JUDGE_BACKEND or a local Ollama model) and re-run."
         )
     record = build_reader_record(base_payload, finetune_payload, experiment_id=experiment.id)
     record["base_reused"] = base_reused
+    record["base_decoding"] = base_decoding
     path = record_path(project.id, experiment.id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -306,6 +390,7 @@ async def run_passage_reader_evaluation(
         "n_rows": record["n_rows"],
         "comparable": record["comparable"],
         "base_reused": base_reused,
+        "base_decoding": base_decoding,
         "base_with_passages": {k: arms["base_with_passages"].get(k) for k in ("score", "counts")},
         "finetune_with_passages": {k: arms["finetune_with_passages"].get(k) for k in ("score", "counts")},
         "evidence": {k: evidence.get(k) for k in ("verdict", "n", "better", "worse", "same", "mean_diff", "ci_low", "ci_high")},
@@ -387,7 +472,12 @@ def reader_summary(project_id: int, experiment: Any) -> dict[str, Any]:
         "seeds": None,
         "n_seeds": 1,
         "metric_lifts": [],
-        "baseline": {"experiment_id": None, "base_model": record.get("base_model"), "arm": "base_with_passages"},
+        "baseline": {
+            "experiment_id": None,
+            "base_model": record.get("base_model"),
+            "arm": "base_with_passages",
+            "decoding_bar": record.get("base_decoding"),
+        },
         "trained": {"experiment_id": experiment.id, "experiment_name": getattr(experiment, "name", None), "arm": "finetune_with_passages"},
         "eval_result_id": None,
         "eval_type": "passage_reader",

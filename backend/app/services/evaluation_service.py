@@ -19,7 +19,14 @@ from app.config import settings
 from app.models.dataset import Dataset, DatasetType
 from app.models.experiment import EvalResult, Experiment
 from app.models.project import Project
-from app.services.decoding_settings import LLAMA_CPP_NEUTRAL, decoding_record, generation_kwargs
+from app.services.decoding_settings import (
+    LLAMA_CPP_NEUTRAL,
+    MODEL_DECODING,
+    NEUTRAL_DECODING,
+    decoding_record,
+    generation_kwargs,
+    model_decoding_record,
+)
 from app.services.domain_hook_service import apply_evaluator_hook, resolve_project_domain_hooks
 from app.services.slice_evaluator_service import score_with_slices
 from app.services.eval_task_handler_service import (
@@ -1200,8 +1207,13 @@ def _run_transformers_inference(
     stop_sequences: list[str] | None = None,
     *,
     apply_chat_template: bool = True,
+    decoding: str = NEUTRAL_DECODING,
 ) -> tuple[list[dict], dict]:
     """Transformers-backed text generation for eval.
+
+    ``decoding="model"`` decodes greedily with the model's own
+    ``generation_config`` (a lift check's second base-model bar —
+    ``decoding_settings``); the default pins every processor off.
 
     ``apply_chat_template=False`` is set by the heldout-eval orchestrator
     for handlers that build their own complete prompts (ClassificationHandler:
@@ -1314,7 +1326,7 @@ def _run_transformers_inference(
         with torch.inference_mode():
             gen_kwargs: dict[str, Any] = generation_kwargs(
                 max_new_tokens=max_new_tokens, temperature=temperature,
-                pad_token_id=tokenizer.pad_token_id,
+                pad_token_id=tokenizer.pad_token_id, decoding=decoding,
             )
             if active_stopping is not None:
                 gen_kwargs["stopping_criteria"] = active_stopping
@@ -1357,7 +1369,11 @@ def _run_transformers_inference(
         "engine": "transformers",
         "device": "cuda" if use_cuda else "cpu",
         "dtype": str(getattr(model, "dtype", "unknown")),
-        "decoding": decoding_record(generation_kwargs(max_new_tokens=max_new_tokens, temperature=temperature)),
+        "decoding": (
+            model_decoding_record(getattr(model, "generation_config", None))
+            if decoding == MODEL_DECODING
+            else decoding_record(generation_kwargs(max_new_tokens=max_new_tokens, temperature=temperature))
+        ),
         "model_load_seconds": round(load_seconds, 3),
         "generation_seconds": round(total_generation_seconds, 3),
         "average_latency_ms": round(avg_latency_ms, 3),
@@ -2279,7 +2295,10 @@ def _run_local_inference(
     stop_sequences: list[str] | None = None,
     *,
     apply_chat_template: bool = True,
+    decoding: str = NEUTRAL_DECODING,
 ) -> tuple[list[dict], dict]:
+    """``decoding="model"`` applies to plain causal-LM checkpoints — the
+    base models a lift check scores; every other path decodes neutrally."""
     model_path = Path(model_ref).expanduser()
     if model_path.exists() and model_path.suffix.lower() == ".gguf":
         return _run_llama_cpp_inference(
@@ -2323,7 +2342,7 @@ def _run_local_inference(
         )
     return _run_transformers_inference(
         model_ref, pairs, max_new_tokens, temperature, stop_sequences,
-        apply_chat_template=apply_chat_template,
+        apply_chat_template=apply_chat_template, decoding=decoding,
     )
 
 
@@ -2581,6 +2600,7 @@ async def _generate_heldout_predictions(
     model_path: str | None,
     max_new_tokens: int,
     temperature: float,
+    decoding: str = NEUTRAL_DECODING,
 ) -> tuple[list[dict], dict, dict[str, int], dict[str, Any]]:
     """Run the experiment's model over prepared held-out ``pairs`` the way
     ``run_heldout_evaluation`` does (handler token cap / stop sequences /
@@ -2643,6 +2663,7 @@ async def _generate_heldout_predictions(
         max(0.0, float(temperature)),
         handler_stop_sequences,
         apply_chat_template=apply_chat_template,
+        decoding=decoding,
     )
     modality_counts: dict[str, int] = {}
     for idx, pair in enumerate(pairs):
@@ -2694,8 +2715,14 @@ async def run_heldout_evaluation(
     judge_model: str = "meta-llama/Meta-Llama-3-70B-Instruct",
     answer_judge: "ResolvedJudge | None" = None,
     answer_judge_enabled: bool = True,
+    decoding: str = NEUTRAL_DECODING,
 ) -> EvalResult:
     """Run end-to-end evaluation by generating predictions on held-out data.
+
+    ``decoding="model"`` scores a base model under its own
+    ``generation_config`` (``decoding_settings`` — the lift check's
+    strongest-baseline rule); the result records which in
+    ``metrics.inference.decoding``.
 
     For long-answer generative tasks (``answer_judge_service.should_judge``)
     an LLM judge also scores every row correct / partial / wrong →
@@ -2765,6 +2792,7 @@ async def run_heldout_evaluation(
         model_path=model_path,
         max_new_tokens=max_new_tokens,
         temperature=temperature,
+        decoding=decoding,
     )
     model_ref = gen_settings["model_ref"]
     effective_max_new_tokens = gen_settings["max_new_tokens"]

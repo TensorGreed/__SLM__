@@ -545,6 +545,7 @@ def evaluate_with_inference(
     reranker: str | None = None,
     pool: int | None = None,
     chunk_size: int | None = None,
+    decoding: str = "neutral",
 ) -> tuple[list[float], list[dict[str, Any]]]:
     """Load the trained model (base + LoRA adapter, or the full fine-tuned
     model when the run saved one), generate an answer for
@@ -573,6 +574,8 @@ def evaluate_with_inference(
     ``index_dir_override`` is ignored in that mode. ``pool`` is the
     reranker's BM25 candidate count; ``chunk_size`` retrieves from the
     re-chunked passage variant (``ensure_document_index(chunk_size=)``).
+    ``decoding="model"``: greedy with the model's own generation_config
+    (``decoding_settings``; the strongest-baseline rule's second bar).
     """
     import torch
     from peft import PeftModel
@@ -728,7 +731,7 @@ def evaluate_with_inference(
                 **inputs,
                 **generation_kwargs(
                     max_new_tokens=max_new_tokens, temperature=0.0,
-                    pad_token_id=tokenizer.pad_token_id,
+                    pad_token_id=tokenizer.pad_token_id, decoding=decoding,
                 ),
                 eos_token_id=stop_ids or None,
             )
@@ -1069,6 +1072,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="With --project (not --base-only): score this completed run instead of the latest one.",
     )
     parser.add_argument(
+        "--decoding", choices=("neutral", "model"), default="neutral",
+        help=(
+            "With --project: 'model' decodes greedily with the model's own generation_config "
+            "(e.g. Qwen2.5-Instruct's repetition penalty 1.1) instead of neutral settings; "
+            "the result goes to comparison*_model_decoding.json."
+        ),
+    )
+    parser.add_argument(
         "--split", choices=("val", "test"), default=None,
         help=(
             "With --project: rows to score. Default: val for Q&A-pair retrieval, "
@@ -1101,6 +1112,7 @@ def run_project_comparison(
     chunk_size: int | None = None,
     sweep_retrieval: bool = False,
     experiment_id: int | None = None,
+    decoding: str = "neutral",
 ) -> dict[str, Any]:
     """Phase 9d — generate the per-project comparison the Eval-tab
     panel reads. Reuses the per-row eval inference loop with the
@@ -1149,6 +1161,11 @@ def run_project_comparison(
     (the latest completed experiment can be a lift-check baseline, which has
     no weights of its own). Ignored with ``base_only``.
 
+    ``decoding="model"``: both arms decode greedily with the model's own
+    generation_config instead of neutral settings (``decoding_settings``) —
+    the passage-reader check's second base bar. Written to
+    ``comparison*_model_decoding.json``, so it never replaces the neutral one.
+
     This function is invoked from the CLI's ``--project`` mode (and
     can be called programmatically by a future API trigger if we
     decide to make the comparison runnable from the UI). For now,
@@ -1159,7 +1176,6 @@ def run_project_comparison(
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from app.config import settings
     from app.services.evaluation_service import f1_score
-    from app.services.decoding_settings import decoding_record, generation_kwargs
 
     # Reach into the SQLite directly — avoids the async-DB session
     # complexity for a CLI-only path. The schema is stable.
@@ -1278,12 +1294,15 @@ def run_project_comparison(
             corpus_source=QA_CORPUS_SOURCE,
         )
         print(f"[harness] rebuilt auto-RAG index over {len(train_rows)} train rows")
+    if decoding == "model" and sweep_retrieval:
+        raise ValueError("A retrieval sweep decodes neutrally; drop --decoding model or --sweep-retrieval.")
     off_f1s, off_records = evaluate_with_inference(
         base_model=base_model, model_dir=model_dir,
         val_rows=val_rows, train_rows=train_rows, with_rag=False,
         index_dir_override=project_index_dir,
         progress_callback=progress_callback,
         corpus=corpus,
+        decoding=decoding,
     )
     from app.services.auto_rag_service import normalize_retrieval
 
@@ -1313,6 +1332,7 @@ def run_project_comparison(
             reranker=retrieval["reranker"],
             pool=retrieval["pool"],
             chunk_size=retrieval["chunk_size"],
+            decoding=decoding,
         )
         if progress_callback is not None:
             try:
@@ -1448,7 +1468,11 @@ def run_project_comparison(
             "retrieval_decision": retrieval_decision,
             "phase_9c_reference_lift_pct": 146.49,
             "judge": judge_summary,
-            "decoding": decoding_record(generation_kwargs(max_new_tokens=1, temperature=0.0)),
+            # A LoRA run dir has no generation_config: generate() used the base's.
+            "decoding": _decoding_record(
+                decoding,
+                model_dir if model_dir is not None and (model_dir / "generation_config.json").exists() else base_model,
+            ),
         },
         "rows": combined_rows,
     }
@@ -1461,7 +1485,7 @@ def run_project_comparison(
             "cached_at": datetime.now(timezone.utc).isoformat(), "arms": retrieval_sweep,
         }, indent=2), encoding="utf-8")
     cache_path = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / comparison_file_name(
-        base_only=base_only, corpus=corpus
+        base_only=base_only, corpus=corpus, decoding=decoding
     )
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -1695,13 +1719,30 @@ def sweep_decision(arms: list[dict[str, Any]], best: dict[str, Any]) -> dict[str
     }
 
 
-def comparison_file_name(*, base_only: bool, corpus: str = "qa") -> str:
-    """``comparison[_base][_documents].json`` — the four cached comparisons
-    never overwrite each other."""
+def comparison_file_name(*, base_only: bool, corpus: str = "qa", decoding: str = "neutral") -> str:
+    """``comparison[_base][_documents][_model_decoding].json`` — the cached
+    comparisons never overwrite each other."""
     name = "comparison_base" if base_only else "comparison"
     if corpus == "documents":
         name += "_documents"
+    if decoding == "model":
+        name += "_model_decoding"
     return name + ".json"
+
+
+def _decoding_record(decoding: str, model_ref: Any) -> dict[str, Any]:
+    """``summary.decoding``: the neutral settings, or the model's own."""
+    from app.services.decoding_settings import decoding_record, generation_kwargs, model_decoding_record
+
+    if decoding != "model":
+        return decoding_record(generation_kwargs(max_new_tokens=1, temperature=0.0))
+    try:
+        from transformers import GenerationConfig
+
+        config: Any = GenerationConfig.from_pretrained(str(model_ref))
+    except Exception:  # noqa: BLE001 — no config: generate()'s defaults
+        config = {}
+    return model_decoding_record(config)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1713,6 +1754,7 @@ def main(argv: list[str] | None = None) -> int:
             args.project, base_only=bool(args.base_only), corpus=str(args.corpus), split=args.split,
             rag_k=args.k, reranker=args.reranker, pool=args.pool, chunk_size=args.chunk_size,
             sweep_retrieval=bool(args.sweep_retrieval), experiment_id=args.experiment_id,
+            decoding=str(args.decoding),
         )
         if args.sweep_retrieval:
             chosen = (payload.get("summary") or {}).get("retrieval")

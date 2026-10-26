@@ -108,7 +108,7 @@ async def _latest_baseline_experiment_eval(
         if cfg.get("is_baseline") is True:
             if base_model and exp.base_model != base_model:
                 continue
-            er = await _latest_eval_result(db, exp.id)
+            er = await _latest_eval_result(db, exp.id, bar_only=True)
             if er is None:
                 continue
             return _ExperimentEval(
@@ -152,15 +152,31 @@ async def _latest_trained_experiment_eval(
 
 
 async def _latest_eval_result(
-    db: AsyncSession, experiment_id: int,
+    db: AsyncSession, experiment_id: int, *, bar_only: bool = False,
 ) -> EvalResult | None:
+    """Newest eval result. ``bar_only`` (a baseline): the one the
+    strongest-baseline rule picked (``details.baseline_bar.chosen_here``,
+    exactly one at a time) when there is one — not a newer unmarked eval or
+    the decoding it passed over; else the newest not passed over."""
     result = await db.execute(
         select(EvalResult)
         .where(EvalResult.experiment_id == experiment_id)
         .order_by(desc(EvalResult.id))
-        .limit(1)
+        .limit(20 if bar_only else 1)
     )
-    return result.scalar_one_or_none()
+    rows = list(result.scalars().all())
+    if bar_only:
+        chosen = next((er for er in rows if _baseline_bar(er).get("chosen_here") is True), None)
+        if chosen is not None:
+            return chosen
+        rows = [er for er in rows if _baseline_bar(er).get("chosen_here") is not False]
+    return rows[0] if rows else None
+
+
+def _baseline_bar(er: EvalResult) -> dict[str, Any]:
+    details = er.details if isinstance(er.details, dict) else {}
+    bar = details.get("baseline_bar")
+    return bar if isinstance(bar, dict) else {}
 
 
 def _normalize_metrics(raw: Any) -> dict[str, float]:
@@ -440,6 +456,9 @@ def _serialize_experiment(item: _ExperimentEval) -> dict[str, Any]:
         "pass_rate": (
             float(er.pass_rate) if er.pass_rate is not None else None
         ),
+        # A baseline: which decoding set the bar and both scores
+        # (post_training_eval_service._baseline_bar); None otherwise.
+        "decoding_bar": {k: v for k, v in _baseline_bar(er).items() if k != "chosen_here"} or None,
     }
 
 

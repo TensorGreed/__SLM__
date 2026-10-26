@@ -15,6 +15,14 @@ So every call site passes the full set here, and evals record it
 write the same settings into ``generation_config.json``
 (``neutral_generation_config``) so the shipped model decodes the way it
 was evaluated.
+
+A lift check also scores the base model under its OWN settings
+(``decoding="model"``) when they differ, and the stronger of the two is
+the bar: an Instruct base can need its maker's penalty (the Pub 17
+reader's base + passages: 0.551 with it, 0.331 without, as it loops on
+"[1]"), and a bar the base beats by decoding differently overstates the
+fine-tune's lift. ``post_training_eval_service`` and
+``passage_reader_eval_service`` apply it.
 """
 from __future__ import annotations
 
@@ -55,14 +63,26 @@ LLAMA_CPP_NEUTRAL: dict[str, Any] = {
 }
 
 
+NEUTRAL_DECODING = "neutral"
+MODEL_DECODING = "model"
+
+
 def generation_kwargs(
     *,
     max_new_tokens: int,
     temperature: float,
     pad_token_id: int | None = None,
+    decoding: str = NEUTRAL_DECODING,
 ) -> dict[str, Any]:
     """Greedy when ``temperature <= 0``, plain sampling at ``temperature``
-    otherwise; never a processor inherited from the model."""
+    otherwise; never a processor inherited from the model.
+    ``decoding="model"``: greedy, every other knob from the model's own
+    ``generation_config`` (the strongest-baseline rule's second bar)."""
+    if decoding == MODEL_DECODING:
+        kwargs: dict[str, Any] = {"max_new_tokens": int(max_new_tokens), "do_sample": False}
+        if pad_token_id is not None:
+            kwargs["pad_token_id"] = pad_token_id
+        return kwargs
     sample = temperature > 0
     kwargs: dict[str, Any] = {
         "max_new_tokens": int(max_new_tokens),
@@ -80,6 +100,38 @@ def decoding_record(kwargs: dict[str, Any]) -> dict[str, Any]:
     """The decoding part of ``kwargs``, for eval metrics / details."""
     keys = ("do_sample", "temperature", *NEUTRAL_PROCESSORS, *NEUTRAL_SAMPLING)
     return {k: kwargs[k] for k in keys if k in kwargs}
+
+
+def model_decoding_settings(config: Any) -> dict[str, Any]:
+    """The greedy-relevant knobs a model's own ``generation_config`` (a
+    ``GenerationConfig`` or its dict) applies, defaults filled in."""
+    def get(key: str) -> Any:
+        return config.get(key) if isinstance(config, dict) else getattr(config, key, None)
+
+    return {k: (get(k) if get(k) is not None else neutral) for k, neutral in NEUTRAL_PROCESSORS.items()}
+
+
+def model_decoding_record(config: Any) -> dict[str, Any]:
+    """``decoding_record`` for a ``decoding="model"`` eval."""
+    return {"source": MODEL_DECODING, "do_sample": False, **model_decoding_settings(config)}
+
+
+def is_model_decoding(record: Any) -> bool:
+    return isinstance(record, dict) and record.get("source") == MODEL_DECODING
+
+
+def model_decoding_differs(model_ref: str) -> dict[str, Any] | None:
+    """The model's own greedy settings when they differ from neutral (so
+    scoring it under them is a second bar), else None — also when it ships
+    no ``generation_config`` or it can't be read."""
+    try:
+        from transformers import GenerationConfig
+
+        config = GenerationConfig.from_pretrained(model_ref)
+    except Exception:  # noqa: BLE001 — no config: generate() falls back to neutral defaults
+        return None
+    settings = model_decoding_settings(config)
+    return settings if settings != NEUTRAL_PROCESSORS else None
 
 
 # Written into an exported generation_config.json; sampling warpers are

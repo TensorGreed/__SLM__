@@ -29,7 +29,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   at 1.5× the longest training answer (`_generation_cap`, 32–128 tokens).
   `--project N --base-only` scores the **base model** with/without retrieval
   (the RAG-first question) → `auto_rag/comparison_base.json`; it never
-  overwrites the fine-tuned `comparison.json`. `GET /auto-rag/comparison`
+  overwrites the fine-tuned `comparison.json`. `--decoding model` decodes
+  greedily with the model's own `generation_config` instead of neutral settings
+  → `comparison*_model_decoding.json` (the passage-reader check's second base
+  bar; refuses `--sweep-retrieval`). `GET /auto-rag/comparison`
   returns the fine-tuned comparison at the top level (`summary` null if not
   run) plus `base` (or null); 404 only when neither exists. `POST
   /auto-rag/comparison/run?model=base` runs the base one (same Job kind, same

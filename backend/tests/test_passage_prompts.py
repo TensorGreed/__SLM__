@@ -22,6 +22,7 @@ import asyncio
 import json
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -180,7 +181,10 @@ class TrainScriptRewrapTests(unittest.TestCase):
         self.assertEqual(plain["source_text"], "<user>Q?</user><assistant>")
 
 
-def _comparison(model, *, rows, on_scores, off_scores, judge="ollama:j", retrieval=None, base_model="B", split="test"):
+def _comparison(model, *, rows, on_scores, off_scores, judge="ollama:j", retrieval=None, base_model="B", split="test",
+                decoding="neutral"):
+    from app.services.decoding_settings import decoding_record, generation_kwargs, model_decoding_record
+
     out_rows = []
     for (q, ref), on, off in zip(rows, on_scores, off_scores):
         out_rows.append({
@@ -195,6 +199,10 @@ def _comparison(model, *, rows, on_scores, off_scores, judge="ollama:j", retriev
         "cached_at": "2026-10-19T00:00:00+00:00",
         "summary": {
             "retrieval": retrieval or {"k": 5, "reranker": None, "pool": None, "chunk_size": None},
+            "decoding": (
+                model_decoding_record({"repetition_penalty": 1.1}) if decoding == "model"
+                else decoding_record(generation_kwargs(max_new_tokens=1, temperature=0.0))
+            ),
             "judge": {
                 "judge": judge,
                 "with_rag": {"score": mean(on_scores), "counts": {"correct": on_scores.count(1)}, "judged": len(rows),
@@ -238,6 +246,13 @@ class ReaderRecordTests(unittest.TestCase):
         self.assertFalse(reader.base_comparison_usable(base, base_model="B", retrieval=r, test_rows=13))
         val = _comparison("base", rows=ROWS, on_scores=[1] * 12, off_scores=[0] * 12, retrieval=r, split="val")
         self.assertFalse(reader.base_comparison_usable(val, base_model="B", retrieval=r))
+        # Decoded another way, or before decoding was recorded: not this bar.
+        self.assertFalse(reader.base_comparison_usable(base, base_model="B", retrieval=r, decoding="model"))
+        own = _comparison("base", rows=ROWS, on_scores=[1] * 12, off_scores=[0] * 12, retrieval=r, decoding="model")
+        self.assertTrue(reader.base_comparison_usable(own, base_model="B", retrieval=r, decoding="model"))
+        self.assertFalse(reader.base_comparison_usable(own, base_model="B", retrieval=r))
+        del base["summary"]["decoding"]
+        self.assertFalse(reader.base_comparison_usable(base, base_model="B", retrieval=r))
 
 
 class ReaderEvaluationTests(unittest.TestCase):
@@ -250,12 +265,24 @@ class ReaderEvaluationTests(unittest.TestCase):
         self.project = SimpleNamespace(id=self.pid, base_model_name="B", runtime_config={"auto_rag_retrieval": self.retrieval})
         self.exp = SimpleNamespace(id=41, project_id=self.pid, base_model="B", name="reads", config={"passage_prompts": True})
         self.calls: list[dict] = []
+        # The base model's own decoding settings when they differ (None:
+        # neutral only); its base + passages score under them.
+        self.own_settings: dict | None = None
+        self.own_on_scores = [1] * 6 + [0] * 6
+        patcher = mock.patch("app.services.decoding_settings.model_decoding_differs", lambda ref: self.own_settings)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _fn(self, **kwargs):
         self.calls.append(kwargs)
         if kwargs.get("base_only"):
-            payload = _comparison("base", rows=ROWS, on_scores=[1] * 6 + [0] * 6, off_scores=[0] * 12, retrieval=self.retrieval)
-            path = Path(settings.DATA_DIR) / "projects" / str(self.pid) / "auto_rag" / "comparison_base_documents.json"
+            own = kwargs.get("decoding") == "model"
+            payload = _comparison(
+                "base", rows=ROWS, on_scores=self.own_on_scores if own else [1] * 6 + [0] * 6,
+                off_scores=[0] * 12, retrieval=self.retrieval, decoding="model" if own else "neutral",
+            )
+            name = "comparison_base_documents_model_decoding.json" if own else "comparison_base_documents.json"
+            path = Path(settings.DATA_DIR) / "projects" / str(self.pid) / "auto_rag" / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload), encoding="utf-8")
             return payload
@@ -289,6 +316,60 @@ class ReaderEvaluationTests(unittest.TestCase):
         self.assertEqual(summary["verdict"], "better")
         self.assertEqual(summary["failed_count"], 2)
         self.assertEqual(summary["failures"][0]["row_retrieval_verdict"], "found")
+
+    def test_base_decoded_its_own_way_is_the_bar_when_it_scores_higher(self):
+        """Strongest-baseline rule: the base is also scored with its own
+        settings (repetition penalty 1.1); 9/12 beats neutral's 6/12, so the
+        fine-tune (10/12) is measured from 0.75, not 0.5. Both are reused."""
+        self.own_settings = {"num_beams": 1, "repetition_penalty": 1.1, "no_repeat_ngram_size": 0}
+        self.own_on_scores = [1] * 9 + [0] * 3
+        result = self._run()
+        self.assertEqual(
+            [(c.get("base_only"), c.get("decoding", "neutral")) for c in self.calls],
+            [(True, "neutral"), (True, "model"), (False, "neutral")],
+        )
+        bar = result["base_decoding"]
+        self.assertEqual((bar["chosen"], bar["neutral"], bar["model"]), ("model", 0.5, 0.75))
+        self.assertEqual(result["base_with_passages"]["score"], 0.75)
+        summary = reader.reader_summary(self.pid, self.exp)
+        self.assertEqual(summary["headline"]["baseline_value"], 0.75)
+        self.assertEqual(summary["baseline"]["decoding_bar"]["chosen"], "model")
+        self.calls.clear()
+        again = self._run()
+        self.assertEqual([c.get("base_only") for c in self.calls], [False])
+        self.assertTrue(again["base_reused"])
+
+    def test_own_decoding_comparison_judged_by_another_judge_is_re_run(self):
+        self.own_settings = {"num_beams": 1, "repetition_penalty": 1.1, "no_repeat_ngram_size": 0}
+        self._run()
+        path = Path(settings.DATA_DIR) / "projects" / str(self.pid) / "auto_rag" / "comparison_base_documents_model_decoding.json"
+        stale = json.loads(path.read_text(encoding="utf-8"))
+        stale["summary"]["judge"]["judge"] = "ollama:old"
+        path.write_text(json.dumps(stale), encoding="utf-8")
+        self.calls.clear()
+        self._run()
+        self.assertEqual([(c.get("base_only"), c.get("decoding", "neutral")) for c in self.calls],
+                         [(True, "model"), (False, "neutral")])
+
+    def test_a_neutral_bar_from_an_earlier_judge_is_re_run_beside_a_fresh_own_decoding_run(self):
+        self.own_settings = {"num_beams": 1, "repetition_penalty": 1.1, "no_repeat_ngram_size": 0}
+        auto = Path(settings.DATA_DIR) / "projects" / str(self.pid) / "auto_rag"
+        auto.mkdir(parents=True, exist_ok=True)
+        old = _comparison("base", rows=ROWS, on_scores=[1] * 6 + [0] * 6, off_scores=[0] * 12,
+                          retrieval=self.retrieval, judge="ollama:old")
+        (auto / "comparison_base_documents.json").write_text(json.dumps(old), encoding="utf-8")
+        result = self._run()
+        self.assertEqual([(c.get("base_only"), c.get("decoding", "neutral")) for c in self.calls],
+                         [(True, "model"), (True, "neutral"), (False, "neutral")])
+        self.assertFalse(result["base_reused"])
+        self.assertEqual(result["judge"], "ollama:j")
+
+    def test_neutral_stays_the_bar_when_its_own_decoding_scores_lower(self):
+        self.own_settings = {"num_beams": 1, "repetition_penalty": 1.1, "no_repeat_ngram_size": 0}
+        self.own_on_scores = [1] * 2 + [0] * 10
+        result = self._run()
+        self.assertEqual(result["base_decoding"]["chosen"], "neutral")
+        self.assertEqual(result["base_with_passages"]["score"], 0.5)
 
     def test_a_changed_project_base_model_refuses_rather_than_scoring_the_wrong_bar(self):
         self.project.base_model_name = "Other"

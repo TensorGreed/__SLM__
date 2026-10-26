@@ -144,8 +144,10 @@ Job kinds currently:
 - `auto_rag_comparison` — UI-triggered auto-RAG comparison harness
 - `post_training_lift_eval` — spawned by the `training_start` watcher when a
   real run completes (`post_training_eval_service`): base-model held-out eval
-  (cached per base model until `prepared/test.jsonl` changes) + fine-tuned
-  eval on the same split → paired lift. Skips simulate / baseline /
+  (cached per base model until `prepared/test.jsonl` changes — not perplexity
+  baselines, which re-run; scored under
+  neutral decoding and, when it differs, its own `generation_config` — the
+  higher is the bar) + fine-tuned eval on the same split → paired lift. Skips simulate / baseline /
   seed-child / weightless runs; opt out via `runtime_config.auto_lift_eval=false`
   or `AUTO_LIFT_EVAL_ENABLED=false`. The shared baseline helpers
   (`find_or_create_baseline_experiment`) live here; quickstart aliases them.

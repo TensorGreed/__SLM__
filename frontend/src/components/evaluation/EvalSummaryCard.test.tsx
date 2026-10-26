@@ -231,6 +231,23 @@ describe('EvalSummaryCard', () => {
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/21/auto-rag/comparison/run', null, { params: { model: 'base', corpus: 'documents', split: 'test' } }));
     });
 
+    it('says which decoding set the base-model bar when the base was scored both ways', async () => {
+        const bar = { chosen: 'model', metric_id: 'exact_match', neutral: 0.1, model: 0.2, model_settings: { num_beams: 1, repetition_penalty: 1.1, no_repeat_ngram_size: 0 } };
+        apiMock.get.mockResolvedValue({ data: { ...BETTER, baseline: { ...BETTER.baseline, decoding_bar: bar } } });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        expect(await screen.findByTestId('eval-summary-decoding-bar')).toHaveTextContent(
+            "The base model scored better with its maker's decoding (repetition penalty 1.1): 0.200 vs 0.100 with BrewSLM's plain decoding, so the better score is the bar.",
+        );
+    });
+
+    it('shows no decoding note when the base model was scored one way', async () => {
+        const bar = { chosen: 'neutral', metric_id: null, neutral: null, model: null, model_settings: null, reason: 'no_other_settings' };
+        apiMock.get.mockResolvedValue({ data: { ...BETTER, baseline: { ...BETTER.baseline, decoding_bar: bar } } });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        await screen.findByTestId('eval-summary');
+        expect(screen.queryByTestId('eval-summary-decoding-bar')).not.toBeInTheDocument();
+    });
+
     it('reads a passage-trained run against the base model + the same passages', async () => {
         apiMock.get.mockResolvedValue({
             data: {

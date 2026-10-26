@@ -50,6 +50,33 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   are re-run once. Tests: `test_decoding_settings.py` (a tiny GPT-2 with a
   penalised config: greedy == raw argmax chain; sampling builds no inherited
   warper), `test_post_training_lift_eval.py`.
+- **Strongest-baseline rule (2026-10-26)** — neutral decoding can cripple an
+  Instruct base on long answers (the Pub 17 reader's base + passages, val:
+  0.551 at its own penalty 1.1, 0.331 neutral — it answers "[1]" and stops or
+  loops), which would inflate a lift (+0.17 → +0.42). So when the base model's
+  own `generation_config` sets a greedy processor
+  (`decoding_settings.model_decoding_differs`: repetition penalty, n-gram block,
+  beams), the lift check scores it twice — neutral and `decoding="model"`
+  (greedy, every other knob from its config; `run_heldout_evaluation(decoding=)`,
+  recorded as `{"source": "model", …}`) — and the higher score on the headline
+  metric is the bar (`post_training_eval_service._baseline_bar` /
+  `choose_baseline_bar`; a tie keeps neutral; perplexity evals skip the second
+  pass). Both results are kept, cached per decoding, and marked
+  `details.baseline_bar`; exactly one recent result of the baseline experiment
+  has `chosen_here: true` (`_mark_bar_results` clears earlier marks), and the
+  lift summary pairs with it ahead of any newer unmarked eval
+  (`sft_lift_summary_service._latest_eval_result(bar_only=True)`). The bar is
+  serialized as `baseline.decoding_bar`, which the Results card turns into one
+  line (`decodingBarText`). Fine-tuned runs always decode neutrally. The
+  passage-reader check does the same on base + passages (the own-decoding
+  comparison is reused only when judged by the same judge as the neutral one;
+  `documents-qa-flow.md`). Known gap: the bar is picked on the first preferred
+  metric both base results share; if the fine-tuned eval lacks it (judge
+  unreachable mid-check), the summary headlines another metric. Not applied to
+  the pre-training passages check, a RAG-first project's verdict, or the
+  passages-vs-fine-tune verdict for a plain (not passage-trained) run — those
+  still read the neutral `comparison_base_documents.json`, which tilts that
+  verdict toward fine-tuning on an Instruct base.
 - **Probe pack (held-out, platform-authored)** — `probe_pack_service`
   is the independent ruler that complements the *user-authored* gold set
   (Coach-stage-2 phase 8). Because the platform can't know the user's

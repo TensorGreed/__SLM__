@@ -8,7 +8,9 @@
   in the result (``metrics.inference.decoding`` + ``details.inference.decoding``);
 * the playground uses the same settings;
 * an HF export rewrites ``generation_config.json`` to them (token ids kept)
-  and says what it replaced in the manifest and release notes.
+  and says what it replaced in the manifest and release notes;
+* ``decoding="model"`` (the strongest-baseline rule's second base bar)
+  decodes with the model's own settings and records them.
 """
 
 from __future__ import annotations
@@ -33,6 +35,9 @@ from app.services.decoding_settings import (
     align_exported_generation_config,
     decoding_record,
     generation_kwargs,
+    is_model_decoding,
+    model_decoding_differs,
+    model_decoding_record,
     neutral_generation_config,
 )
 
@@ -78,6 +83,29 @@ class KwargsTests(unittest.TestCase):
         self.assertEqual(set(rec), {"do_sample", "temperature", *NEUTRAL_PROCESSORS, *NEUTRAL_SAMPLING})
 
 
+class ModelDecodingTests(unittest.TestCase):
+    def test_model_mode_leaves_every_knob_to_the_models_config(self):
+        self.assertEqual(
+            generation_kwargs(max_new_tokens=8, temperature=0.0, pad_token_id=1, decoding="model"),
+            {"max_new_tokens": 8, "do_sample": False, "pad_token_id": 1},
+        )
+
+    def test_record_says_model_and_carries_its_settings(self):
+        rec = model_decoding_record(QWEN_INSTRUCT_CONFIG)
+        self.assertTrue(is_model_decoding(rec))
+        self.assertEqual((rec["repetition_penalty"], rec["num_beams"], rec["no_repeat_ngram_size"]), (1.1, 1, 0))
+        self.assertFalse(is_model_decoding(decoding_record(generation_kwargs(max_new_tokens=1, temperature=0.0))))
+
+    def test_differs_only_when_the_config_sets_a_processor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(model_decoding_differs(tmp), "no generation_config.json")
+            path = Path(tmp) / "generation_config.json"
+            path.write_text(json.dumps({"bos_token_id": 1, "do_sample": True, "top_k": 20}))
+            self.assertIsNone(model_decoding_differs(tmp), "sampling knobs only: greedy is the same")
+            path.write_text(json.dumps(QWEN_INSTRUCT_CONFIG))
+            self.assertEqual(model_decoding_differs(tmp)["repetition_penalty"], 1.1)
+
+
 class RealGenerateTests(unittest.TestCase):
     """A random 2-layer GPT-2 on CPU with Qwen-Instruct's generation_config."""
 
@@ -120,6 +148,16 @@ class RealGenerateTests(unittest.TestCase):
             out = self.model.generate(self.prompt, max_new_tokens=12, do_sample=False, pad_token_id=0)
         self.assertNotEqual(out[0, self.prompt.shape[1]:].tolist(), self._argmax_chain(12))
 
+    def test_model_mode_decodes_with_the_inherited_config(self):
+        import torch
+
+        with torch.no_grad():
+            own = self.model.generate(self.prompt, **generation_kwargs(
+                max_new_tokens=12, temperature=0.0, pad_token_id=0, decoding="model",
+            ))
+            inherited = self.model.generate(self.prompt, max_new_tokens=12, do_sample=False, pad_token_id=0)
+        self.assertEqual(own.tolist(), inherited.tolist())
+
     def test_sampling_adds_no_inherited_warper(self):
         """The config sets top_k 20 / top_p 0.8 / min_p 0.5; sampling with the
         explicit settings builds only the temperature warper (plus no-ops)."""
@@ -154,6 +192,21 @@ class PlaygroundTests(unittest.TestCase):
 
 class EvalPassesAndRecordsTests(unittest.TestCase):
     def test_transformers_eval_passes_neutral_kwargs_and_records_them(self):
+        seen, runtime = self._infer()
+        self.assertEqual(seen[0]["repetition_penalty"], 1.0)
+        self.assertEqual((seen[0]["num_beams"], seen[0]["no_repeat_ngram_size"]), (1, 0))
+        self.assertFalse(seen[0]["do_sample"])
+        self.assertEqual(runtime["decoding"]["repetition_penalty"], 1.0)
+        self.assertFalse(runtime["decoding"]["do_sample"])
+
+    def test_model_decoding_passes_no_processor_and_records_the_models_settings(self):
+        seen, runtime = self._infer(decoding="model")
+        self.assertNotIn("repetition_penalty", seen[0])
+        self.assertFalse(seen[0]["do_sample"])
+        self.assertTrue(is_model_decoding(runtime["decoding"]))
+        self.assertEqual(runtime["decoding"]["repetition_penalty"], 1.1)
+
+    def _infer(self, **kwargs):
         import torch
 
         from app.services import evaluation_service
@@ -195,14 +248,10 @@ class EvalPassesAndRecordsTests(unittest.TestCase):
              mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=FakeModel()), \
              mock.patch("torch.cuda.is_available", return_value=False):
             preds, runtime = evaluation_service._run_transformers_inference(
-                "fake/model", [{"prompt": "p", "reference": "r"}], 16, 0.0, apply_chat_template=False,
+                "fake/model", [{"prompt": "p", "reference": "r"}], 16, 0.0, apply_chat_template=False, **kwargs,
             )
         self.assertEqual(len(preds), 1)
-        self.assertEqual(seen[0]["repetition_penalty"], 1.0)
-        self.assertEqual((seen[0]["num_beams"], seen[0]["no_repeat_ngram_size"]), (1, 0))
-        self.assertFalse(seen[0]["do_sample"])
-        self.assertEqual(runtime["decoding"]["repetition_penalty"], 1.0)
-        self.assertFalse(runtime["decoding"]["do_sample"])
+        return seen, runtime
 
 
 class AutoRagHarnessTests(unittest.TestCase):
@@ -210,6 +259,17 @@ class AutoRagHarnessTests(unittest.TestCase):
     generate() must use the same explicit settings."""
 
     def test_harness_generate_passes_neutral_kwargs(self):
+        seen = self._generate()
+        self.assertEqual(seen[0]["repetition_penalty"], 1.0)
+        self.assertEqual((seen[0]["num_beams"], seen[0]["no_repeat_ngram_size"], seen[0]["do_sample"]), (1, 0, False))
+        self.assertEqual(seen[0]["max_new_tokens"], 8)
+
+    def test_harness_model_decoding_leaves_the_penalty_to_the_model(self):
+        seen = self._generate(decoding="model")
+        self.assertNotIn("repetition_penalty", seen[0])
+        self.assertFalse(seen[0]["do_sample"])
+
+    def _generate(self, **kwargs):
         import torch
         from transformers import BatchEncoding
 
@@ -247,12 +307,10 @@ class AutoRagHarnessTests(unittest.TestCase):
              mock.patch.object(auto_rag_ab, "_generation_cap", return_value=8):
             f1s, _records = auto_rag_ab.evaluate_with_inference(
                 base_model="org/base", model_dir=None, val_rows=[{"question": "q?", "answer": "an answer"}],
-                train_rows=[], with_rag=False, index_dir_override=Path(tmp),
+                train_rows=[], with_rag=False, index_dir_override=Path(tmp), **kwargs,
             )
         self.assertEqual(len(f1s), 1)
-        self.assertEqual(seen[0]["repetition_penalty"], 1.0)
-        self.assertEqual((seen[0]["num_beams"], seen[0]["no_repeat_ngram_size"], seen[0]["do_sample"]), (1, 0, False))
-        self.assertEqual(seen[0]["max_new_tokens"], 8)
+        return seen
 
 
 class ExportAlignsGenerationConfigTests(unittest.TestCase):

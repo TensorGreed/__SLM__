@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
-import { answerKeyReviewText, checkLiftAcrossSeeds, fetchEvalSummary, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
+import { answerKeyReviewText, checkLiftAcrossSeeds, fetchEvalSummary, type BaselineDecodingBar, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
 import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import RedactionTryBox from './RedactionTryBox';
 import SeedShipTable from './SeedShipTable';
@@ -215,6 +215,24 @@ function countsText(counts: Record<string, number> | null | undefined): string {
 function fmt(value: number): string {
     if (Math.abs(value) >= 10) return value.toFixed(1);
     return value.toFixed(3);
+}
+
+/** "repetition penalty 1.1" — the knobs the model's own settings turn on. */
+export function ownDecodingText(settings: BaselineDecodingBar['model_settings']): string {
+    const parts: string[] = [];
+    if (settings?.repetition_penalty != null && settings.repetition_penalty !== 1) parts.push(`repetition penalty ${settings.repetition_penalty}`);
+    if (settings?.no_repeat_ngram_size) parts.push(`no repeated ${settings.no_repeat_ngram_size}-word runs`);
+    if (settings?.num_beams != null && settings.num_beams > 1) parts.push(`${settings.num_beams}-beam search`);
+    return parts.join(', ') || 'its own settings';
+}
+
+/** Says which decoding set the base-model bar, when it was scored both ways. */
+export function decodingBarText(bar: BaselineDecodingBar | null | undefined): string | null {
+    if (!bar || !bar.model_settings || bar.neutral == null || bar.model == null) return null;
+    const own = ownDecodingText(bar.model_settings);
+    return bar.chosen === 'model'
+        ? `The base model scored better with its maker's decoding (${own}): ${fmt(bar.model)} vs ${fmt(bar.neutral)} with BrewSLM's plain decoding, so the better score is the bar.`
+        : `The base model was also scored with its maker's decoding (${own}): ${fmt(bar.model)}, no better than ${fmt(bar.neutral)} with BrewSLM's plain decoding, which stays the bar.`;
 }
 
 function errorText(err: unknown): string {
@@ -441,6 +459,11 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         {' '}{head.absolute_delta > 0 ? '+' : ''}{fmt(head.absolute_delta)}
                         {head.relative_delta_pct != null ? ` (${head.relative_delta_pct > 0 ? '+' : ''}${head.relative_delta_pct}%)` : ''}
                     </span>
+                </p>
+            )}
+            {head && decodingBarText(summary.baseline?.decoding_bar) && (
+                <p className="eval-summary__message" data-testid="eval-summary-decoding-bar">
+                    {decodingBarText(summary.baseline?.decoding_bar)}
                 </p>
             )}
             {seedEvidence && seedNote && (

@@ -7,7 +7,9 @@ the ``training_start`` watcher Job sees a real run complete, it spawns a
 
   1. evaluates the un-fine-tuned base model on the held-out ``test``
      split (reusing a cached baseline result when the split hasn't
-     changed since it was computed),
+     changed since it was computed) — under neutral decoding and, when
+     the model ships different settings, under its own too; the stronger
+     is the bar (``_baseline_bar``, the strongest-baseline rule),
   2. evaluates the fine-tuned checkpoint on the same split with the same
      settings,
   3. returns the lift for that exact (base model, run) pair.
@@ -196,50 +198,182 @@ def _baseline_judge_matches(result: EvalResult, judge_label: str | None) -> bool
     return str(judge.get("judge") or "") == judge_label
 
 
-def _baseline_decoding_matches(result: EvalResult) -> bool:
-    """A cached base-model result pairs with the fine-tuned eval only if it
-    was decoded the same way (lift evals are greedy). Results from before
-    decoding was recorded inherited the model's own generation_config —
-    Qwen2.5-Instruct's repetition penalty 1.1 — so they are re-run once."""
-    from app.services.decoding_settings import decoding_record, generation_kwargs
+def _baseline_decoding_matches(result: EvalResult, decoding: str = "neutral") -> bool:
+    """A cached base-model result stands for one bar only if it was decoded
+    that way (lift evals are greedy): neutral, or the model's own settings
+    (``decoding="model"``). Results from before decoding was recorded
+    inherited the model's generation_config without saying so — they are
+    re-run once."""
+    from app.services.decoding_settings import MODEL_DECODING, decoding_record, generation_kwargs, is_model_decoding
 
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
     inference = metrics.get("inference") if isinstance(metrics.get("inference"), dict) else {}
+    if decoding == MODEL_DECODING:
+        return is_model_decoding(inference.get("decoding"))
     return inference.get("decoding") == decoding_record(generation_kwargs(max_new_tokens=1, temperature=0.0))
 
 
+# How many recent base-model results to look through for a reusable one: the
+# two bars (neutral / the model's own decoding) interleave.
+_REUSE_SCAN = 20
+
+
 async def _reusable_baseline_result(
-    db: AsyncSession, baseline_exp: Experiment, project_id: int, *, judge_label: str | None = None
+    db: AsyncSession,
+    baseline_exp: Experiment,
+    project_id: int,
+    *,
+    judge_label: str | None = None,
+    decoding: str = "neutral",
 ) -> EvalResult | None:
-    """Latest baseline result on the test split, if newer than the split
-    file (base models are deterministic under greedy decoding, so a
-    fresh-enough result is exact, not approximate)."""
+    """Newest baseline result on the test split decoded as ``decoding``, if
+    newer than the split file (base models are deterministic under greedy
+    decoding, so a fresh-enough result is exact, not approximate)."""
     result = await db.execute(
         select(EvalResult)
         .where(EvalResult.experiment_id == baseline_exp.id)
         .where(EvalResult.dataset_name == AUTO_LIFT_DATASET)
         .order_by(desc(EvalResult.id))
-        .limit(1)
+        .limit(_REUSE_SCAN)
     )
-    latest = result.scalar_one_or_none()
-    if latest is None or latest.created_at is None:
-        return None
     split_mtime = await _test_split_mtime(project_id)
-    created = latest.created_at
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
-    if split_mtime is not None and created < split_mtime:
-        return None
-    # Results recorded before per-row scores were kept can't be paired row by
-    # row with the fine-tuned eval ("within noise?") — re-run the base once.
-    details = latest.details if isinstance(latest.details, dict) else {}
-    if not isinstance(details.get("row_scores"), dict):
-        return None
-    if not _baseline_judge_matches(latest, judge_label):
-        return None
-    if not _baseline_decoding_matches(latest):
-        return None
-    return latest
+    for candidate in result.scalars().all():
+        if candidate.created_at is None:
+            continue
+        created = candidate.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if split_mtime is not None and created < split_mtime:
+            return None  # this and every older result predate the split
+        # Results recorded before per-row scores were kept can't be paired row by
+        # row with the fine-tuned eval ("within noise?") — re-run the base once.
+        details = candidate.details if isinstance(candidate.details, dict) else {}
+        if not isinstance(details.get("row_scores"), dict):
+            continue
+        if not _baseline_judge_matches(candidate, judge_label):
+            continue
+        if not _baseline_decoding_matches(candidate, decoding):
+            continue
+        return candidate
+    return None
+
+
+def choose_baseline_bar(neutral_metrics: Any, model_metrics: Any) -> dict[str, Any]:
+    """Pure: which base-model result is the bar — the higher on the lift's
+    headline metric (the first of ``_PREFERRED_HEADLINE_METRICS`` both
+    have; lower is better for perplexity-like ones). A tie or no shared
+    metric keeps neutral."""
+    from app.services.sft_lift_summary_service import (
+        _LOWER_IS_BETTER,
+        _PREFERRED_HEADLINE_METRICS,
+        _normalize_metrics,
+    )
+
+    neutral, model = _normalize_metrics(neutral_metrics), _normalize_metrics(model_metrics)
+    metric_id = next((m for m in _PREFERRED_HEADLINE_METRICS if m in neutral and m in model), None)
+    if metric_id is None:
+        return {"chosen": "neutral", "metric_id": None, "neutral": None, "model": None}
+    n, m = float(neutral[metric_id]), float(model[metric_id])
+    model_better = m < n if metric_id in _LOWER_IS_BETTER else m > n
+    return {
+        "chosen": "model" if model_better else "neutral",
+        "metric_id": metric_id,
+        "neutral": round(n, 4),
+        "model": round(m, 4),
+    }
+
+
+def _mark_bar(result: EvalResult, bar: dict[str, Any], chosen_here: bool) -> None:
+    details = dict(result.details) if isinstance(result.details, dict) else {}
+    details["baseline_bar"] = {**bar, "chosen_here": chosen_here}
+    result.details = details  # reassigned so the JSON column is flushed
+
+
+async def _mark_bar_results(db: AsyncSession, baseline_exp: Experiment, chosen: EvalResult, other: EvalResult | None, bar: dict[str, Any]) -> None:
+    """Exactly one recent result of the baseline experiment carries
+    ``chosen_here: True`` — the bar just picked. Earlier marks are cleared, so
+    a stale bar (or a newer unmarked eval) never stands in for it in the lift
+    summary (``sft_lift_summary_service._latest_eval_result``)."""
+    rows = await db.execute(
+        select(EvalResult).where(EvalResult.experiment_id == baseline_exp.id)
+        .order_by(desc(EvalResult.id)).limit(_REUSE_SCAN)
+    )
+    for er in rows.scalars().all():
+        if er.id in (chosen.id, getattr(other, "id", None)):
+            continue
+        prior = (er.details or {}).get("baseline_bar") if isinstance(er.details, dict) else None
+        if isinstance(prior, dict) and prior.get("chosen_here"):
+            _mark_bar(er, {k: v for k, v in prior.items() if k != "chosen_here"}, False)
+    _mark_bar(chosen, bar, True)
+    if other is not None:
+        _mark_bar(other, bar, False)
+
+
+async def _baseline_bar(
+    db: AsyncSession,
+    *,
+    baseline_exp: Experiment,
+    project_id: int,
+    base_model: str,
+    common: dict[str, Any],
+    judge_label: str | None,
+    report,
+    fractions: tuple[float, float],
+) -> tuple[EvalResult, bool, dict[str, Any]]:
+    """The strongest-baseline rule: the base model scored with neutral
+    decoding and, when its own ``generation_config`` sets a processor
+    neutral decoding turns off (Qwen2.5-Instruct: repetition penalty 1.1),
+    with those settings too. The better result is the bar — a fine-tune
+    shouldn't get credit for a base decoded worse than its maker ships it
+    (the Pub 17 reader's base + passages fell 0.551 → 0.331 without the
+    penalty), nor for one decoded worse than BrewSLM decodes the run.
+    Both results are kept and marked (``details.baseline_bar``) so the lift
+    summary reads the chosen one. Returns (bar result, both reused, bar)."""
+    import asyncio
+
+    from app.services.decoding_settings import MODEL_DECODING, model_decoding_differs
+    from app.services.evaluation_service import PERPLEXITY_EVAL_TYPE, run_heldout_evaluation
+
+    neutral = await _reusable_baseline_result(db, baseline_exp, project_id, judge_label=judge_label)
+    reused = neutral is not None
+    if neutral is None:
+        await report(fractions[0], f"Evaluating base model {short_model_name(base_model)}")
+        neutral = await run_heldout_evaluation(
+            db=db, experiment_id=baseline_exp.id, model_path=base_model, **common
+        )
+        await db.commit()
+    # Perplexity scores the text, not generated answers: decoding can't move it.
+    perplexity = PERPLEXITY_EVAL_TYPE in (common.get("eval_type"), neutral.eval_type)
+    own = None if perplexity else await asyncio.to_thread(model_decoding_differs, base_model)
+    if own is None:
+        # "no_other_settings": its config sets nothing neutral turns off (or
+        # can't be read); perplexity: decoding doesn't apply.
+        reason = "perplexity" if perplexity else "no_other_settings"
+        bar = {"chosen": "neutral", "metric_id": None, "neutral": None, "model": None, "reason": reason}
+        own_result = None
+    else:
+        own_result = await _reusable_baseline_result(
+            db, baseline_exp, project_id, judge_label=judge_label, decoding=MODEL_DECODING
+        )
+        if own_result is None:
+            reused = False
+            await report(
+                fractions[1], f"Evaluating base model {short_model_name(base_model)} with its own decoding settings"
+            )
+            own_result = await run_heldout_evaluation(
+                db=db, experiment_id=baseline_exp.id, model_path=base_model, decoding=MODEL_DECODING, **common
+            )
+            await db.commit()
+        bar = choose_baseline_bar(neutral.metrics, own_result.metrics)
+    bar.update({
+        "model_settings": own,
+        "neutral_eval_result_id": neutral.id,
+        "model_eval_result_id": getattr(own_result, "id", None),
+    })
+    chosen = own_result if bar["chosen"] == "model" else neutral
+    await _mark_bar_results(db, baseline_exp, chosen, neutral if chosen is own_result else own_result, bar)
+    await db.commit()
+    return chosen, reused, bar
 
 
 async def _resolve_lift_judge(db: AsyncSession, project: Project):
@@ -455,19 +589,10 @@ async def run_post_training_lift_eval(
         db, project_id, exp.base_model, source="post_training.auto_lift"
     )
     await db.commit()
-    baseline_result = await _reusable_baseline_result(
-        db, baseline_exp, project_id, judge_label=answer_judge.label if answer_judge else None
+    baseline_result, baseline_reused, baseline_bar = await _baseline_bar(
+        db, baseline_exp=baseline_exp, project_id=project_id, base_model=exp.base_model, common=common,
+        judge_label=answer_judge.label if answer_judge else None, report=_report, fractions=(0.1, 0.3),
     )
-    baseline_reused = baseline_result is not None
-    if baseline_result is None:
-        await _report(0.1, f"Evaluating base model {short_model_name(exp.base_model)}")
-        baseline_result = await run_heldout_evaluation(
-            db=db,
-            experiment_id=baseline_exp.id,
-            model_path=exp.base_model,
-            **common,
-        )
-        await db.commit()
 
     await _report(0.55, f"Evaluating fine-tuned run #{experiment_id}")
     trained_result = await run_heldout_evaluation(
@@ -500,6 +625,7 @@ async def run_post_training_lift_eval(
         "baseline_experiment_id": baseline_exp.id,
         "baseline_eval_result_id": getattr(baseline_result, "id", None),
         "baseline_reused": baseline_reused,
+        "baseline_bar": baseline_bar,
         "trained_eval_result_id": getattr(trained_result, "id", None),
         "lift_status": summary.get("status"),
         "headline": headline,
@@ -588,16 +714,10 @@ async def _run_seed_group_lift_eval(
         db, project.id, leader.base_model, source="post_training.auto_lift"
     )
     await db.commit()
-    baseline_result = await _reusable_baseline_result(
-        db, baseline_exp, project.id, judge_label=answer_judge.label if answer_judge else None
+    baseline_result, baseline_reused, baseline_bar = await _baseline_bar(
+        db, baseline_exp=baseline_exp, project_id=project.id, base_model=leader.base_model, common=common,
+        judge_label=answer_judge.label if answer_judge else None, report=report, fractions=(0.05, 0.1),
     )
-    baseline_reused = baseline_result is not None
-    if baseline_result is None:
-        await report(0.05, f"Evaluating base model {short_model_name(leader.base_model)}")
-        baseline_result = await run_heldout_evaluation(
-            db=db, experiment_id=baseline_exp.id, model_path=leader.base_model, **common
-        )
-        await db.commit()
 
     seeds: list[dict[str, Any]] = []
     for idx, child in enumerate(children):
@@ -655,6 +775,7 @@ async def _run_seed_group_lift_eval(
         "baseline_experiment_id": baseline_exp.id,
         "baseline_eval_result_id": getattr(baseline_result, "id", None),
         "baseline_reused": baseline_reused,
+        "baseline_bar": baseline_bar,
         "trained_eval_result_id": None,
         "lift_status": "ok" if headline else "no_overlap",
         "headline": headline,
