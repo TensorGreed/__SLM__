@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Literal
 
+from app.config import settings
 from app.services import cloud_llm_service, llm_budget_guard
 from app.services.cloud_llm_service import (
     CloudLlmError,
@@ -37,6 +38,11 @@ from .base import SynthBackendError
 
 
 Provider = Literal["openai", "anthropic", "deepseek"]
+
+# Output tokens per reply that every catalogued model of the provider accepts and
+# that finish inside the 300 s HTTP timeout. Playbooks size a call's max_tokens to
+# the rows it asks for (and a scenario grid its plans per call) up to this.
+_MAX_OUTPUT_TOKENS: dict[str, int] = {"anthropic": 16000, "openai": 16384, "deepseek": 8192}
 
 
 # Provider → base URL. Deepseek is OpenAI-compatible so it routes
@@ -105,6 +111,20 @@ class CloudLlmBackend:
     @property
     def model(self) -> str:
         return self._model
+
+    @property
+    def max_output_tokens(self) -> int:
+        return _MAX_OUTPUT_TOKENS.get(self._provider, 4096)
+
+    @property
+    def playbook_rows_per_call(self) -> int:
+        """A playbook run over this many rows is chunked + checkpointed
+        (``synth_playbook_service._run_chunked``), like the command backend."""
+        try:
+            n = int(settings.SYNTH_CLOUD_PLAYBOOK_ROWS_PER_CALL)
+        except (TypeError, ValueError):
+            n = 10
+        return max(1, min(n, 100))
 
     @classmethod
     def is_available(cls) -> bool:

@@ -98,6 +98,21 @@ def _row_source_blocked(record: Any, usage: dict, provenance_service: Any) -> bo
 DEFAULT_CONTEXT_SAMPLE_SIZE = 20
 MAX_DOCUMENT_CHUNKS = 2000
 
+# Reply budget per playbook row / per scenario / per structured plan. A backend that
+# states ``max_output_tokens`` (cloud) gets max_tokens sized to what the call asks
+# for, up to that ceiling; a fixed 2048 / 4096 truncated multi-row and multi-plan
+# replies. Backends without it keep their fixed budgets.
+PLAYBOOK_TOKENS_PER_ROW = 1024
+GRID_TOKENS_PER_SCENARIO = 600
+GRID_TOKENS_PER_PLAN = 6000
+
+
+def _sized_max_tokens(backend: Any, units: int, per_unit: int, default: int) -> int:
+    ceiling = getattr(backend, "max_output_tokens", None)
+    if not isinstance(ceiling, int) or isinstance(ceiling, bool) or ceiling <= 0:
+        return default
+    return max(default, min(ceiling, max(1, units) * per_unit))
+
 
 async def _prepare_code_context(
     db: AsyncSession, project_id: int, ctx: PlaybookContext, params: dict[str, Any]
@@ -363,11 +378,13 @@ async def _run_scenario_grid(
     first_prompt = ""
     raw = ""
 
-    async def _call(prompt: str, schema: dict | None) -> str:
+    async def _call(prompt: str, schema: dict | None, max_tokens: int) -> str:
         return await selected_backend.complete(
-            prompt, system_prompt=_GRID_SYSTEM_PROMPT, max_tokens=4096, temperature=0.7, response_schema=schema,
+            prompt, system_prompt=_GRID_SYSTEM_PROMPT, max_tokens=max_tokens, temperature=0.7, response_schema=schema,
             **llm_usage.cache_kwargs(selected_backend),
         )
+
+    per_cell = common.grid_params(ctx.get("params"))["scenarios_per_cell"]
 
     async def _report(fraction: float, message: str) -> None:
         if progress is not None:
@@ -380,7 +397,10 @@ async def _run_scenario_grid(
         ctx["grid_batch"] = batch
         prompt = playbook.build_prompt(ctx)
         first_prompt = first_prompt or prompt
-        raw = await _call(prompt, get_response_schema(playbook, ctx))
+        raw = await _call(
+            prompt, get_response_schema(playbook, ctx),
+            _sized_max_tokens(selected_backend, len(batch) * per_cell, GRID_TOKENS_PER_SCENARIO, 4096),
+        )
         scenarios.extend(playbook.accept_scenarios(playbook.parse_output(raw, ctx), ctx))
         await _report(0.4 * n / len(batches), f"Scenarios: {n}/{len(batches)} calls")
     ctx.pop("grid_batch", None)
@@ -410,11 +430,21 @@ async def _run_scenario_grid(
     ]
     ctx["grid_stage"] = common.STAGE_ANSWERS
     accepted: list[SynthRow] = []
-    groups = answer_batches(tasks, playbook, ctx)
+    # A backend with an output ceiling gets only as many plans per call as fit it.
+    ceiling = getattr(selected_backend, "max_output_tokens", None)
+    max_tasks = (
+        max(1, ceiling // GRID_TOKENS_PER_PLAN)
+        if isinstance(ceiling, int) and not isinstance(ceiling, bool) and ceiling > 0
+        else common.MAX_TASKS_PER_ANSWER_CALL
+    )
+    groups = answer_batches(tasks, playbook, ctx, max_tasks)
     for n, group in enumerate(groups, start=1):
         ctx["grid_tasks"] = group
         prompt = playbook.build_answers_prompt(group, ctx)
-        raw = await _call(prompt, get_response_schema(playbook, ctx))
+        raw = await _call(
+            prompt, get_response_schema(playbook, ctx),
+            _sized_max_tokens(selected_backend, len(group), GRID_TOKENS_PER_PLAN, 4096),
+        )
         parsed = playbook.parse_output(raw, ctx)
         # Schema validation is CPU-bound (user patterns, big plans): keep it off the event loop.
         accepted.extend(await asyncio.to_thread(playbook.validate, parsed, ctx))
@@ -656,7 +686,7 @@ async def run_playbook(
         raw_llm_output = await selected_backend.complete(
             prompt,
             system_prompt=_system_prompt_for_mode(mode),
-            max_tokens=2048,
+            max_tokens=_sized_max_tokens(selected_backend, target_count, PLAYBOOK_TOKENS_PER_ROW, 2048),
             temperature=0.7,
             response_schema=response_schema,
             # The mode's system prompt repeats across playbook runs: a cloud
@@ -883,7 +913,7 @@ async def _run_chunked(
                 raw = await backend.complete(
                     prompt,
                     system_prompt=_system_prompt_for_mode(mode),
-                    max_tokens=2048,
+                    max_tokens=_sized_max_tokens(backend, size, PLAYBOOK_TOKENS_PER_ROW, 2048),
                     temperature=0.7,
                     response_schema=get_response_schema(playbook, chunk_ctx),
                     **llm_usage.cache_kwargs(backend),

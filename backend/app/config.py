@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     SYNTH_COMMAND_MAX_PAUSE_SECONDS: float = 28800.0
     SYNTH_COMMAND_ENV_PASSTHROUGH: str = ""
     SYNTH_COMMAND_PLAYBOOK_ROWS_PER_CALL: int = 25
+    # Cloud (metered) playbook runs over this many rows are chunked + checkpointed
+    # the same way; each call's max_tokens is sized to its rows (up to the
+    # provider's output ceiling, ``CloudLlmBackend.max_output_tokens``).
+    SYNTH_CLOUD_PLAYBOOK_ROWS_PER_CALL: int = 10
 
     # ── Tool catalog: MCP / OpenAPI import ──────────────────────────────
     # Stdio MCP servers launch a user-configured process, so stdio is DISABLED

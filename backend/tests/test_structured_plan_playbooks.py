@@ -331,6 +331,8 @@ class AnswerStageTests(unittest.TestCase):
 
         tasks = [{"scenario": f"s{i}", "passages": [], "cell": {"index": i, "values": {}}} for i in range(12)]
         self.assertEqual([len(b) for b in answer_batches(tasks, self.pb, self.ctx)], [5, 5, 2])
+        self.assertEqual([len(b) for b in answer_batches(tasks, self.pb, self.ctx, 2)], [2] * 6)
+        self.assertEqual([len(b) for b in answer_batches(tasks, self.pb, self.ctx, 99)], [5, 5, 2])
 
 
 class TemplateBackendBranchTests(unittest.TestCase):
@@ -497,6 +499,32 @@ class PlaybookApiTests(unittest.TestCase):
         answer_calls = [c for c in backend.calls if "scenario_grid:answers]" in c]
         self.assertEqual((len(scenario_calls), len(answer_calls)), (2, 4))
         self.assertEqual(len(result["rows"]), 20)
+
+    def test_a_backend_with_an_output_ceiling_gets_fewer_plans_per_call_and_sized_budgets(self):
+        """A fixed 4096-token reply truncated multi-plan answers from a cloud teacher:
+        a backend that states max_output_tokens gets only the plans that fit it per
+        call, and each call's max_tokens is sized to what it asks for."""
+        class CeilingBackend(StubBackend):
+            max_output_tokens = 12000
+
+            def __init__(self, answers):
+                super().__init__(answers)
+                self.budgets = []
+
+            async def complete(self, prompt, **kw):
+                self.budgets.append(("answers" if "scenario_grid:answers]" in prompt else "scenarios", kw["max_tokens"]))
+                return await super().complete(prompt, **kw)
+
+        backend = CeilingBackend(lambda prompt: structured_plan_rows(prompt, 'answers'))
+        result = self._direct(backend, {"matrix_text": MD20, "max_cells": 6})
+        self.assertEqual(len(result["rows"]), 6)
+        answers = [t for kind, t in backend.budgets if kind == "answers"]
+        self.assertEqual(answers, [12000, 12000, 12000], "2 plans per call (12000 // 6000), each sized 2 × 6000")
+        self.assertEqual([t for kind, t in backend.budgets if kind == "scenarios"], [4096], "6 scenarios × 600 < the 4096 floor")
+
+        plain = StubBackend(lambda prompt: structured_plan_rows(prompt, 'answers'))
+        self._direct(plain, {"matrix_text": MD20, "max_cells": 6})
+        self.assertEqual(len([c for c in plain.calls if "scenario_grid:answers]" in c]), 2, "no ceiling: 5 plans per call as before")
 
     def _direct(self, backend, params, count=5, **kw):
         from app.database import async_session_factory

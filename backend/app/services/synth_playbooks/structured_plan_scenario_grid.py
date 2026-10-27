@@ -266,14 +266,18 @@ class StructuredPlanScenarioGridPlaybook:
         return accepted
 
 
-def answer_batches(tasks: list[dict[str, Any]], playbook: StructuredPlanScenarioGridPlaybook, ctx: PlaybookContext) -> list[list[dict[str, Any]]]:
-    """Split tasks into prompts of at most 5 tasks and ~40k characters."""
+def answer_batches(
+    tasks: list[dict[str, Any]], playbook: StructuredPlanScenarioGridPlaybook, ctx: PlaybookContext,
+    max_tasks: int = MAX_TASKS_PER_ANSWER_CALL,
+) -> list[list[dict[str, Any]]]:
+    """Split tasks into prompts of at most ``max_tasks`` (default 5) tasks and ~40k characters."""
+    limit = max(1, min(int(max_tasks), MAX_TASKS_PER_ANSWER_CALL))
     batches: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     for task in tasks:
         candidate = current + [task]
         too_big = len(current) > 0 and (
-            len(candidate) > MAX_TASKS_PER_ANSWER_CALL
+            len(candidate) > limit
             or len(playbook.build_answers_prompt(candidate, ctx)) > MAX_ANSWER_PROMPT_CHARS
         )
         if too_big:

@@ -883,6 +883,7 @@ session-start guidance.
 - `backend/tests/test_cleaning_async_task.py` — Cleaning background-task pattern (Phase F UX fix for 100K-row cleans).
 - `backend/tests/test_cleaning_chunks_pagination.py` — GET /cleaning/chunks pagination + sampling contract.
 - `backend/tests/test_cloud_llm_temperature.py` — Newer Anthropic models reject `temperature`: the call retries without it
+- `backend/tests/test_cloud_playbook_sizing.py` — Cloud playbook synthesis: chunked runs and reply budgets sized to the rows asked for.
 - `backend/tests/test_cluster_explanation_service.py` — Tests for the per-cluster failure explanation service
 - `backend/tests/test_coach_new_stages.py` — Coach coverage for the synthetic, data-prep and export stages (Wave 3b).
 - `backend/tests/test_coach_probe_divergence.py` — Coach-stage-2 phase 11 — probe-vs-gold divergence nudge.

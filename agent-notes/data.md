@@ -510,7 +510,13 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   `paused_seconds`. `run_playbook` chunks when the backend has `playbook_rows_per_call`
   (`_run_chunked`, checkpoint `synthetic/playbook_checkpoints/<sha256[:16]>.jsonl`, deleted once rows are
   saved, >7 d pruned); the run-playbook Job result gains `chunks` / `failed_chunks`; the elapsed
-  heartbeat steps aside while chunk progress / a pause message is showing. Judge picker API:
+  heartbeat steps aside while chunk progress / a pause message is showing. `CloudLlmBackend` chunks too
+  (`playbook_rows_per_call` = `SYNTH_CLOUD_PLAYBOOK_ROWS_PER_CALL`, default 10) and states
+  `max_output_tokens` (anthropic 16000 — fits the 300 s HTTP timeout; openai 16384; deepseek 8192):
+  `_sized_max_tokens` sizes each call to rows × 1024 / scenarios × 600 / plans × 6000 up to that
+  ceiling, and `scenario_grid` packs only `ceiling // 6000` plans per answer call. Backends without
+  the attr keep the fixed 2048 / 4096 (a fixed 2048 returned 4 of 20 cloud rows; 4096 truncated
+  every 5-plan reply). Tests `tests/test_cloud_playbook_sizing.py`. Judge picker API:
   `api/eval_judge.py`. Tests `tests/test_command_backend.py` (fake CLI = a shebang script in a tmp dir,
   allow-listed by absolute path).
 
