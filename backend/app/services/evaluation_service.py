@@ -2800,6 +2800,128 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
     return scores
 
 
+def row_correct(predictions: list[dict[str, Any]]) -> list[int]:
+    """1 / 0 per prediction dict -- the ``correct`` column of
+    ``_row_scores_for_pairing`` (same rule as ``_prediction_failed``)."""
+    scores = _row_scores_for_pairing(predictions)
+    return list(scores["correct"]) if scores else []
+
+
+async def heldout_scoring_context(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    experiment_id: int = 0,
+    experiment_task_type: str | None = None,
+    dataset_name: str = "pipeline",
+) -> tuple[Any, Any]:
+    """``(eval_ctx, task_handler)`` exactly as ``run_heldout_evaluation`` builds them (the prepared
+    manifest + the live structured-plan / tool-call config) -- for callers that build rows with
+    ``task_handler.build_prompts`` and then ``score_predictions_like_heldout``."""
+    eval_ctx, task_handler = build_eval_context(
+        project_id=project_id,
+        experiment_id=experiment_id,
+        eval_type="exact_match",
+        dataset_name=dataset_name,
+        experiment_task_type=experiment_task_type,
+    )
+    await _apply_structured_plan_live_config(db, project_id, eval_ctx)
+    await _apply_tool_call_live_config(db, project_id, eval_ctx, task_handler)
+    return eval_ctx, task_handler
+
+
+_ROW_PASS_FLAGS = ("row_remediation_pass", "row_structured_plan_pass", "row_tool_call_pass")
+
+
+def judge_decides_row(prediction: dict[str, Any]) -> bool:
+    """Whether the answer judge's verdict is what decides this row's pass / fail in
+    ``_prediction_failed`` (no deterministic pass flag, not a skipped row)."""
+    if prediction.get("row_skipped"):
+        return False
+    return not any(isinstance(prediction.get(k), bool) for k in _ROW_PASS_FLAGS)
+
+
+async def _run_heldout_judges(
+    db: AsyncSession,
+    project_id: int,
+    task_handler: Any,
+    eval_ctx: Any,
+    predictions: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    mode: str | None,
+) -> dict[str, Any] | None:
+    """The judges ``run_heldout_evaluation`` (exact_match, judge enabled) would run on these rows, run
+    the same way. None when no judge applies; else ``{kind, label, ran, units, reason}`` -- ``kind`` is
+    ``rubric`` (structured-plan rubric) or ``answer`` (the long-answer judge); ``ran`` False means a judge
+    applies but none was reachable or it failed (``reason``)."""
+    if mode == "structured_plan":
+        try:
+            label = await _judge_structured_plan_rubric(db, project_id, task_handler, predictions, metrics, None, True)
+        except LlmBudgetExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001 - reported, never fails the caller
+            logging.getLogger(__name__).warning("structured-plan rubric skipped: %s", exc)
+            return {"kind": "rubric", "label": None, "ran": False, "units": 0, "reason": f"error: {exc}"[:200]}
+        status = (metrics.get("rubric") or {}).get("status") if isinstance(metrics.get("rubric"), dict) else None
+        if status is None or status == "disabled":
+            return None
+        if status == "no_judge":
+            return {"kind": "rubric", "label": None, "ran": False, "units": 0, "reason": "no_judge_available"}
+        units = sum(1 for p in predictions if isinstance(p.get("row_rubric_passed"), bool))
+        return {"kind": "rubric", "label": label, "ran": True, "units": units, "reason": None}
+    if getattr(task_handler, "profile_id", None) == "tool_calling":  # scored deterministically
+        return None
+    snapshot = await _safe_judge_answers(
+        db, project_id=project_id, task_profile=eval_ctx.task_profile,
+        predictions=predictions, judge=None, scoring_mode=mode,
+    )
+    skipped = str(snapshot.get("skipped") or "") if isinstance(snapshot, dict) else "error: no result"
+    if skipped in ("not_long_answer_task", "disabled_for_project"):
+        return None
+    if skipped:
+        return {"kind": "answer", "label": None, "ran": False, "units": 0, "reason": skipped}
+    metrics["judge"] = snapshot
+    if snapshot.get("score") is not None:
+        metrics[JUDGE_METRIC] = snapshot["score"]
+    return {"kind": "answer", "label": snapshot.get("judge"), "ran": True, "units": int(snapshot.get("judged") or 0),
+            "reason": None}
+
+
+async def score_predictions_like_heldout(
+    db: AsyncSession,
+    project_id: int,
+    predictions: list[dict[str, Any]],
+    *,
+    eval_ctx: Any,
+    task_handler: Any,
+    run_judges: bool = True,
+) -> dict[str, Any]:
+    """Score already-generated prediction dicts (built from ``task_handler.build_prompts`` rows +
+    ``copy_row_extras``) the way ``run_heldout_evaluation`` does: the pre-scoring preparation, the
+    handler, tool scoring and -- ``run_judges`` -- the judges held-out would run (``_run_heldout_judges``).
+    Enriches each dict in place; no EvalResult row. Returns ``{handler, scoring_mode, metrics, correct,
+    judge}`` (``correct`` = 1 / 0 per row, same rule as ``_prediction_failed``)."""
+    mode = _manifest_scoring_mode(eval_ctx)
+    metrics: dict[str, Any] = {}
+    judge: dict[str, Any] | None = None
+    if predictions:
+        if mode == "remediation":
+            await _prepare_remediation_predictions(db, project_id, task_handler, eval_ctx, predictions)
+        elif mode == "structured_plan":
+            await _prepare_structured_plan_predictions(task_handler, eval_ctx, predictions)
+        metrics = dict(task_handler.score(predictions, eval_ctx) or {})
+        await _apply_tool_scoring(db, project_id, task_handler, predictions, metrics, mode)
+        if run_judges:
+            judge = await _run_heldout_judges(db, project_id, task_handler, eval_ctx, predictions, metrics, mode)
+    return {
+        "handler": getattr(task_handler, "profile_id", None),
+        "scoring_mode": mode,
+        "metrics": metrics,
+        "correct": row_correct(predictions),
+        "judge": judge,
+    }
+
+
 def _manifest_scoring_mode(eval_ctx: Any) -> str | None:
     schema = (getattr(eval_ctx, "manifest", None) or {}).get("output_schema")
     mode = str((schema or {}).get("scoring_mode") or "").strip().lower() if isinstance(schema, dict) else ""
@@ -3070,6 +3192,54 @@ async def _safe_judge_answers(
         return {"skipped": f"error: {exc}"[:200]}
 
 
+# Per-row extras a handler's ``build_prompts`` attaches to a pair that its scorer (or the UI) reads back
+# off the prediction dict. Real inference builds fresh ``{prompt, reference, prediction}`` dicts, so these
+# are copied across explicitly -- by held-out eval AND pipeline eval (``pipeline_eval_service``), through
+# this one helper so the two can't drift.
+_ROW_EXTRA_KEYS: tuple[str, ...] = (
+    "history",
+    "image_path",
+    "audio_path",
+    # RAGHandler: the retrieved context, for faithfulness + context_recall.
+    "rag_context",
+    "rag_has_context",
+    # AlignmentHandler: the chosen / rejected completions, for preference accuracy.
+    "alignment_chosen",
+    "alignment_rejected",
+    "alignment_has_pair",
+    # Code remediation: the row behind the patch (code, start_line, language, path, finding, passages) is
+    # what the scorer applies it to; path / language / start_line also place the chunk in the UI.
+    "remediation_row",
+    "path",
+    "language",
+    "start_line",
+    # Structured plan: the scenario, passages and acceptable values behind the plan.
+    "plan_row",
+    # tool_calling: the gold calls the scorer compares against (None = the row has no gold call).
+    "tool_gold_calls",
+)
+
+
+def copy_row_extras(prediction: dict[str, Any], pair: dict[str, Any]) -> dict[str, Any]:
+    """Copy the scoring extras of a held-out ``pair`` (a handler-built prompt + its extras) onto the
+    ``prediction`` dict generated for it; returns the prediction. Falsy values are skipped except where
+    the value itself carries meaning (``rag_has_context`` / ``alignment_has_pair`` False,
+    ``tool_gold_calls`` []). ``_row_index`` becomes ``row_index``."""
+    if pair.get("_row_index") is not None:
+        prediction["row_index"] = pair["_row_index"]
+    for key in _ROW_EXTRA_KEYS:
+        value = pair.get(key)
+        if key in ("rag_has_context", "alignment_has_pair", "path", "language", "start_line", "remediation_row", "plan_row"):
+            if value is not None:
+                prediction[key] = value
+        elif key == "tool_gold_calls":
+            if key in pair:
+                prediction[key] = value
+        elif value:
+            prediction[key] = value
+    return prediction
+
+
 async def _generate_heldout_predictions(
     db: AsyncSession,
     *,
@@ -3152,43 +3322,7 @@ async def _generate_heldout_predictions(
         modality_counts[modality] = modality_counts.get(modality, 0) + 1
         if idx < len(predictions) and isinstance(predictions[idx], dict):
             predictions[idx]["input_modality"] = modality
-            if pair.get("history"):
-                predictions[idx]["history"] = pair["history"]
-            if pair.get("_row_index") is not None:
-                predictions[idx]["row_index"] = pair["_row_index"]
-            if pair.get("image_path"):
-                predictions[idx]["image_path"] = pair.get("image_path")
-            if pair.get("audio_path"):
-                predictions[idx]["audio_path"] = pair.get("audio_path")
-            # Phase 5.3.5: RAGHandler needs the retrieved context at
-            # score time to compute faithfulness + context_recall.
-            # The context lives on the pair (via BuiltPrompt extras)
-            # but the inference path doesn't carry it through, so we
-            # copy it across here. Handlers that don't use these keys
-            # just ignore them.
-            if pair.get("rag_context"):
-                predictions[idx]["rag_context"] = pair.get("rag_context")
-            if pair.get("rag_has_context") is not None:
-                predictions[idx]["rag_has_context"] = pair.get("rag_has_context")
-            # Phase 5.3.6: AlignmentHandler needs the chosen / rejected
-            # completions at score time to compute preference accuracy.
-            if pair.get("alignment_chosen"):
-                predictions[idx]["alignment_chosen"] = pair.get("alignment_chosen")
-            if pair.get("alignment_rejected"):
-                predictions[idx]["alignment_rejected"] = pair.get("alignment_rejected")
-            if pair.get("alignment_has_pair") is not None:
-                predictions[idx]["alignment_has_pair"] = pair.get("alignment_has_pair")
-            # Code remediation: the row behind the patch (code, start_line, language, path,
-            # finding, passages) is what the scorer applies it to; path / language /
-            # start_line also place the chunk in the UI.
-            if pair.get("remediation_row") is not None:
-                predictions[idx]["remediation_row"] = pair.get("remediation_row")
-            for key in ("path", "language", "start_line"):
-                if pair.get(key) is not None:
-                    predictions[idx][key] = pair.get(key)
-            # Structured plan: the scenario, passages and acceptable values behind the plan.
-            if pair.get("plan_row") is not None:
-                predictions[idx]["plan_row"] = pair.get("plan_row")
+            copy_row_extras(predictions[idx], pair)
 
     settings = {
         "model_ref": model_ref,

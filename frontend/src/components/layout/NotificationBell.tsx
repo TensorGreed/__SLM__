@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { benchmarkHeadlineLabel } from '../../api/benchmarks';
 import { cancelJob, dismissJob, type Job } from '../../api/jobs';
+import { percent, pipelinePath, topFirstWrongStage } from '../../api/pipelines';
 import { useJobsStore } from '../../stores/jobsStore';
 import { dataStepPath, resultsPath, stagePath, trainSectionPath } from '../../utils/workspaceRoutes';
 import { metricDisplayName, shortEvidenceText } from '../evaluation/liftEvidence';
@@ -76,6 +77,13 @@ function jobDeepLink(job: Job): string | null {
     }
     if (job.kind === 'benchmark_eval' && job.project_id) {
         return resultsPath(job.project_id, 'compare') + '#external-benchmarks';
+    }
+    if (job.kind === 'pipeline_eval') {
+        // Project-less: the run lives under /pipelines, not a project.
+        const pid = job.params?.pipeline_id ?? job.result?.pipeline_id;
+        const rid = job.params?.run_id ?? job.result?.run_id;
+        if (typeof pid === 'string' && pid) return pipelinePath(pid, typeof rid === 'string' ? rid : undefined);
+        return null;
     }
     if (job.project_id) {
         return `/project/${job.project_id}`;
@@ -177,6 +185,18 @@ function jobOutcomeSummaryCore(job: Job): string | null {
                 : `Created project #${newId}`;
         }
         return null;
+    }
+
+    if (job.kind === 'pipeline_eval') {
+        const rows = typeof r.rows === 'number' ? r.rows : null;
+        if (rows === null) return null;
+        const share = typeof r.share_fully_correct === 'number' ? r.share_fully_correct : null;
+        const attribution = r.attribution as { first_wrong_stage?: Record<string, number> } | undefined;
+        const top = topFirstWrongStage(attribution?.first_wrong_stage);
+        const parts = [`${rows} row${rows === 1 ? '' : 's'}`];
+        if (share !== null) parts.push(`${percent(share)} fully correct`);
+        if (top) parts.push(`first-wrong: ${top}`);
+        return parts.join(' · ');
     }
 
     if (job.kind === 'tool_catalog_import') {

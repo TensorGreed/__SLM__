@@ -39,6 +39,27 @@ from app.services.output_schema_service import (
 # ── Data shapes ───────────────────────────────────────────────────────
 
 
+def strip_code_fences(text: str) -> str:
+    """Drop a surrounding ```lang ... ``` fence (shared by the structured
+    handler, the gateway's guided-JSON check and pipeline evaluation)."""
+    s = str(text or "").strip()
+    if not s.startswith("```"):
+        return s
+    if "\n" not in s:  # one-line ```json {...}```
+        return re.sub(r"^```[A-Za-z]*\s*|\s*```$", "", s).strip()
+    lines = s.splitlines()
+    # Drop the opening fence (may carry a language tag like ```json).
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    # Drop the closing fence if present -- on its own line, or closing the last content line
+    # (```json\n{"a": 1}```).
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]
+    elif lines and lines[-1].rstrip().endswith("```"):
+        lines[-1] = lines[-1].rstrip()[:-3]
+    return "\n".join(lines).strip()
+
+
 @dataclass
 class EvalContext:
     """Read-only context passed to every handler call.
@@ -931,17 +952,7 @@ class StructuredExtractionHandler:
 
     @staticmethod
     def _strip_code_fences(text: str) -> str:
-        s = text.strip()
-        if not s.startswith("```"):
-            return s
-        lines = s.splitlines()
-        # Drop the opening fence (may carry a language tag like ```json).
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        # Drop the closing fence if present.
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        return "\n".join(lines).strip()
+        return strip_code_fences(text)
 
     def _parse_json_safely(self, value: Any) -> Any:
         """Best-effort JSON parse. Returns the parsed dict, or ``None`` if

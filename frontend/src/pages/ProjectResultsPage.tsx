@@ -16,6 +16,7 @@ import { useLocation, useNavigate, useOutletContext, useSearchParams } from 'rea
 
 import EvalPanel from '../components/evaluation/EvalPanel';
 import CoachNotices from '../components/coach/CoachNotices';
+import PipelineMembership from '../components/pipelines/PipelineMembership';
 import StepHelp from '../components/coach/StepHelp';
 import ChatPlaygroundPanel from '../components/training/ChatPlaygroundPanel';
 import { isResultsTab, RESULTS_TAB_BY_HASH, RESULTS_TABS, resultsPath, type ResultsTab } from '../utils/workspaceRoutes';
@@ -86,6 +87,8 @@ export default function ProjectResultsPage() {
                     </button>
                 ))}
             </div>
+
+            <PipelineMembership projectId={projectId} />
 
             <StepHelp projectId={projectId} tab="eval" sub={tab} />
             <CoachNotices projectId={projectId} stage="eval" />

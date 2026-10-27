@@ -103,7 +103,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   keys list/revoke: creator, admin or owner of every scoped project; Bearer + differing `X-API-Key` = 401. `/v1`
   errors (404/405/422/500) use the OpenAI envelope (`main.py` handlers branch on `/v1`). MCP HTTP: Origin/Host/
   Content-Type checks, `--allow-remote` for non-loopback. Telemetry: `gateway_request_logs` via `served_model_telemetry_service.
-  record_gateway_request` (timing/status/tokens only, NEVER prompt/reply text). Named tools
+  record_gateway_request` (timing/status/tokens only, NEVER prompt/reply text). In-platform callers use `run_internal` / `internal_key` (key id 0, never rate-limited, `execute_chat(record_telemetry=False)` so no log row; pipeline eval). Named tools
   (`gateway_tools_service`): safe `{field}` substitution, `@recipe` = `build_code_findings_prompt` (labels from
   the prepared manifest, else the taxonomy), name clash -> `<name>__<slug>` (lookup by exact exposed name, never suffix parsing; reserved: list_models/run_model/retrieve). Multi-LoRA:
   `serve_service.build_multi_lora_serve_plan` (shared base, rank rounding) + `/serve/multi-lora-*`.

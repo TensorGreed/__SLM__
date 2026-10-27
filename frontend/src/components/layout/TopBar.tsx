@@ -178,6 +178,7 @@ export default function TopBar({ title, subtitle, actions, withSidebar = false }
                 </div>
                 <div className="topbar-actions">
                     {actions}
+                    <a className="btn btn-ghost btn-sm" href="/pipelines" data-testid="topbar-pipelines">Pipelines</a>
                     <a
                         className="topbar-icon-btn topbar-icon-btn--link"
                         title="Help"

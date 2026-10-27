@@ -56,6 +56,7 @@ const sidebars: SidebarsConfig = {
         'workflows/multi-turn-chat',
         'workflows/distillation',
         'workflows/evaluation-and-remediation',
+        'workflows/pipeline-eval',
         'workflows/external-benchmarks',
         'workflows/export-and-deployment',
         'workflows/sensitive-data-tagging',

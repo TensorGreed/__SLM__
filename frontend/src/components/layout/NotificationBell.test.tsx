@@ -864,3 +864,24 @@ describe('NotificationBell tool catalog import', () => {
         expect(jobOutcomeSummary(bare as never)).toBeNull();
     });
 });
+
+describe('NotificationBell pipeline_eval', () => {
+    const result = { run_id: 'r-1', pipeline_id: 'pl-ab12cd34', rows: 20, share_fully_correct: 0.65, attribution: { first_wrong_stage: { extract: 2, rewrite: 5 }, correct: 13 } };
+
+    it('summarises rows, share fully correct and the top first-wrong stage', () => {
+        const job = jobFixture({ id: 70, kind: 'pipeline_eval', status: 'succeeded', project_id: null, result });
+        expect(jobOutcomeSummary(job as never)).toBe('20 rows · 65% fully correct · first-wrong: rewrite');
+    });
+
+    it('deep-links a project-less run to the pipeline results', async () => {
+        apiMock.get.mockReset();
+        locationAssignMock.mockReset();
+        resetStore();
+        const job = { ...jobFixture({ id: 71, kind: 'pipeline_eval', status: 'succeeded', project_id: null, result }), params: { pipeline_id: 'pl-ab12cd34', run_id: 'r-1' } };
+        apiMock.get.mockResolvedValue({ data: { count: 1, jobs: [job] } });
+        render(<NotificationBell />);
+        await userEvent.click(await screen.findByTestId('notification-bell-button'));
+        await userEvent.click(await screen.findByTestId('notification-bell-row-71-open'));
+        expect(locationAssignMock).toHaveBeenCalledWith('/pipelines/pl-ab12cd34?run=r-1');
+    });
+});

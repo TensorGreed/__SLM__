@@ -10,6 +10,8 @@ import ProjectTrainPage from './pages/ProjectTrainPage';
 import ProjectResultsPage from './pages/ProjectResultsPage';
 import ProjectManifestPage from './pages/ProjectManifestPage';
 import ProjectAnnotatePage from './pages/ProjectAnnotatePage';
+import PipelinesPage from './pages/PipelinesPage';
+import PipelineDetailPage from './pages/PipelineDetailPage';
 import SSOLoginPage from './pages/SSOLoginPage';
 import ToastContainer from './components/shared/Toast';
 
@@ -27,6 +29,8 @@ function App() {
         {isAuthenticated ? (
           <>
             <Route path="/" element={<ProjectListPage />} />
+            <Route path="/pipelines" element={<PipelinesPage />} />
+            <Route path="/pipelines/:id" element={<PipelineDetailPage />} />
             <Route path="/manifest/import" element={<ProjectManifestPage />} />
             <Route path="/project/:id" element={<ProjectWorkspaceLayout />}>
               <Route index element={<ProjectOverviewPage />} />

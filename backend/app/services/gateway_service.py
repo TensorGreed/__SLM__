@@ -537,10 +537,10 @@ def with_preamble(messages: list[dict[str, str]], preamble: str) -> list[dict[st
 
 
 def _validate_reply(schema: dict[str, Any], content: str, *, mode: str = "validated_only", via: str | None = None) -> dict[str, Any]:
+    from app.services.eval_task_handler_service import strip_code_fences
+
     extra = {"via": via} if via else {}
-    text = content.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+    text = strip_code_fences(content)
     try:
         value = json.loads(text)
     except ValueError as exc:
@@ -607,10 +607,12 @@ def _int_or_none(v: Any) -> int | None:
 
 
 async def execute_chat(
-    db: AsyncSession, key: KeyInfo, body: dict[str, Any], *, resolved: ResolvedModel | None = None
+    db: AsyncSession, key: KeyInfo, body: dict[str, Any], *, resolved: ResolvedModel | None = None,
+    record_telemetry: bool = True,
 ) -> dict[str, Any]:
     """Run one chat completion; returns the full OpenAI-shaped response dict
-    (plus ``citations`` / ``brewslm``) and logs a telemetry row."""
+    (plus ``citations`` / ``brewslm``) and logs a telemetry row (unless
+    ``record_telemetry=False`` -- internal callers, see ``run_internal``)."""
     from app.database import async_session_factory
     from app.services.served_model_telemetry_service import record_gateway_request
 
@@ -628,7 +630,7 @@ async def execute_chat(
         state["status"], state["code"] = 500, "internal_error"
         raise
     finally:
-        if resolved is not None:
+        if resolved is not None and record_telemetry:
             try:
                 async with async_session_factory() as log_db:
                     await record_gateway_request(
@@ -731,6 +733,44 @@ async def _execute(
             "guided_json": guided,
         },
     }
+
+
+# ---------------------------------------------------------------- internal callers
+
+
+INTERNAL_KEY_ID = 0
+
+
+def internal_key(project_ids: list[int] | tuple[int, ...]) -> KeyInfo:
+    """A key for in-platform callers (pipeline evaluation). It is never stored,
+    never passed to ``check_rate_limit`` and never logged: ``run_internal`` skips
+    the gateway telemetry row, so no request log carries a fake key id."""
+    return KeyInfo(
+        id=INTERNAL_KEY_ID, prefix="internal",
+        project_ids=tuple(int(p) for p in project_ids), rate_limit_per_minute=0,
+    )
+
+
+async def run_internal(
+    db: AsyncSession,
+    model_id: str,
+    messages: list[dict[str, str]],
+    *,
+    project_ids: list[int] | tuple[int, ...],
+    retrieval: bool | None = None,
+    max_tokens: int | None = None,
+    resolved: ResolvedModel | None = None,
+) -> dict[str, Any]:
+    """One chat completion for an internal caller: the same path as ``/v1``
+    (model resolution, retrieval, guided-JSON validation, in-process or
+    upstream) without the per-key rate limit and without gateway telemetry."""
+    key = internal_key(project_ids)
+    body: dict[str, Any] = {"model": model_id, "messages": messages}
+    if max_tokens is not None:
+        body["max_tokens"] = int(max_tokens)
+    if retrieval is not None:
+        body["brewslm"] = {"retrieval": bool(retrieval)}
+    return await execute_chat(db, key, body, resolved=resolved, record_telemetry=False)
 
 
 def sse_events(result: dict[str, Any]) -> list[str]:

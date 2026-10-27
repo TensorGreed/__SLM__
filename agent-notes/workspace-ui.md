@@ -336,3 +336,26 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - `DialogueJudgePanel`: `{skipped: reason}` renders "Per-turn judge skipped: <reason>"; `replay_cap_hit` shows how many rows were not replayed.
 - `MultiTurnParamsForm` for synth mode `documents_multi_turn` (turns_min/max (2-8), passages_per_dialogue,
   dialogues_per_passage_group); mode added to `SynthMode`, `PARAM_MODES`, `MODE_LABELS`.
+
+## Pipelines page (G10)
+
+Top-level, not under a project: `/pipelines` (list + "New pipeline"), `/pipelines/new`, `/pipelines/:id[?run=<run_id>]`
+(`pages/PipelinesPage.tsx`, `pages/PipelineDetailPage.tsx`, parts in `components/pipelines/`: `PipelineEditor`,
+`HeldoutCard`, `RunsCard`, `PipelineResults`, `PipelineMembership`; client `api/pipelines.ts`). The top bar carries a
+plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in isolation).
+- Editor save surfaces the 400 envelope's per-field errors (`parseGatewayError`); a field `stages[i]....` renders inside
+  stage i, others at the top. Model select = project default / base / `:run-N` from `gateway/settings.servable_runs`.
+- Run = `POST .../runs?async_job=true` (Job kind `pipeline_eval`, project-less). `NotificationBell.jobDeepLink` reads
+  `params.pipeline_id` + `params.run_id` (falls back to `result`) and opens `/pipelines/<id>?run=<run_id>`; the outcome
+  summary reads `result.rows`, `result.share_fully_correct`, `result.attribution.first_wrong_stage`.
+- Results: stage cards (isolated view only for stage 2+; unscored-by-reason, lost-to-error / key counts, isolated
+  `skipped_rows`; a `StageScoring` list for judge ran / not run, `scoring_error`, item comparison), headline (share of
+  SCORED final items + an "N left out" note for `unscored_items`), attribution `BarChart` (colours `var(--chart-N)`,
+  plus a text list for the same data), rows table, truncated message (names the row), `gold_mismatch` notice.
+- A run file without results (`status` running / failed / cancelled / stale, or no `stages`) renders a status panel
+  with its `error` (`isFinishedRun` guards `PipelineResults`). RunsCard lists the status and reloads after a start;
+  the list page shows the last run's status and a "project missing" badge for a deleted member project.
+- Editor: max tokens is sent as typed (empty = server default 512; 0 is not coerced, shows an inline 1..4096 hint and
+  the server's field error); a hint under Output says to use text for bare-label outputs. A member project's Results page shows
+  "Part of pipelines: …" from `GET /projects/{id}/pipelines` (hidden when empty).
+- Tests: `pages/Pipelines.test.tsx` (recharts mocked to expose the chart data), bell cases in `NotificationBell.test.tsx`.

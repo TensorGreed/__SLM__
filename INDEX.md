@@ -82,6 +82,7 @@ session-start guidance.
 - `backend/app/api/manifest.py` — Pipeline-as-code manifest API (priority.md P21 + P22).
 - `backend/app/api/models.py` — Universal base-model registry + compatibility API routes.
 - `backend/app/api/pipeline.py` — Pipeline status API routes.
+- `backend/app/api/pipelines.py` — Multi-stage pipeline evaluation routes (G10).
 - `backend/app/api/probe_packs.py` — Probe Pack API — Coach-stage-2 phase 8.
 - `backend/app/api/project_templates.py` — Project template catalog + instantiation API.
 - `backend/app/api/projects.py` — Project CRUD API routes.
@@ -269,8 +270,10 @@ session-start guidance.
 - `backend/app/services/passage_prompts_service.py` — Train a model to answer FROM retrieved passages (passage-prompt training).
 - `backend/app/services/passage_rag_verdict_service.py` — Did retrieval over the documents beat fine-tuning? (documents projects)
 - `backend/app/services/passage_reader_eval_service.py` — The lift check for a run trained with retrieved passages.
+- `backend/app/services/pipeline_eval_service.py` — Pipeline evaluation runner (G10): per-stage scores, two views, first-wrong-stage attribution.
 - `backend/app/services/pipeline_recipe_service.py` — End-to-end pipeline recipe (blueprint) service.
 - `backend/app/services/pipeline_refinement_service.py` — Pipeline plan refinement — Phase 1 (deterministic, no cloud LLM).
+- `backend/app/services/pipeline_service.py` — Multi-stage pipelines (G10): on-disk definitions, validation, held-out set and run files.
 - `backend/app/services/playbook_gap_service.py` — Gap-tied synthetic-playbook recommendations (Epic E).
 - `backend/app/services/playground_log_service.py` — Prompt/eval logging helpers for playground interactions.
 - `backend/app/services/playground_service.py` — Inference playground service for project-scoped chat experiments.
@@ -558,6 +561,7 @@ session-start guidance.
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
 - `frontend/src/api/labelTaxonomy.ts` — Typed client for the project label taxonomy (a hierarchical label set with
 - `frontend/src/api/llmSpend.ts` — _(no docstring)_
+- `frontend/src/api/pipelines.ts` — Pipeline evaluation client (G10): multi-stage pipelines that chain any
 - `frontend/src/api/planRefinement.ts` — _(no docstring)_
 - `frontend/src/api/predefinedSplit.ts` — Predefined-split import: the user's own train / val / test files with
 - `frontend/src/api/preferencePairs.ts` — _(no docstring)_
@@ -596,6 +600,8 @@ session-start guidance.
 
 ## Frontend · Pages
 
+- `frontend/src/pages/PipelineDetailPage.tsx` — Pipeline detail — editor, held-out upload, runs and the selected run's
+- `frontend/src/pages/PipelinesPage.tsx` — Pipelines — list of multi-stage evaluation pipelines (chains of projects
 - `frontend/src/pages/ProjectAdapterStudioPage.tsx` — Free-form schema explorer page for mapping custom JSON payloads to adapter-compatible structures.
 - `frontend/src/pages/ProjectAnnotatePage.tsx` — Annotation workspace (Story 1.2).
 - `frontend/src/pages/ProjectAutopilotPage.tsx` — Autopilot Planner page (priority.md P6).
@@ -760,6 +766,11 @@ session-start guidance.
 - `frontend/src/components/pipeline/PipelineGraphEditor.tsx` — Canvas-based DAG editor for node layout, contract configuration, and validation.
 - `frontend/src/components/pipeline/PipelineGraphPreview.tsx` — Read-only pipeline visualization with dry-run, validation, and execution controls.
 - `frontend/src/components/pipeline/WorkflowRunMonitor.tsx` — Workflow execution tracker with autopilot gating, queueing, and run-history display.
+- `frontend/src/components/pipelines/HeldoutCard.tsx` — HeldoutCard — upload the pipeline's held-out rows (JSONL). Valid rows are
+- `frontend/src/components/pipelines/PipelineEditor.tsx` — PipelineEditor — the stage list of a pipeline: add / remove / reorder
+- `frontend/src/components/pipelines/PipelineMembership.tsx` — PipelineMembership — "Part of pipelines: …" links on a member project's
+- `frontend/src/components/pipelines/PipelineResults.tsx` — PipelineResults — one run: an end-to-end headline, a card per stage (both
+- `frontend/src/components/pipelines/RunsCard.tsx` — RunsCard — start a pipeline run (a background Job) and list past runs.
 - `frontend/src/components/projects/ApproachChip.tsx` — Decision-engine chip (Theme 7).
 - `frontend/src/components/projects/ProjectTemplateGallery.tsx` — Project-template gallery — surfaces every available template on
 - `frontend/src/components/settings/JudgeModelCard.tsx` — JudgeModelCard — Settings → "Judge model". Picks which model scores the
@@ -1096,6 +1107,7 @@ session-start guidance.
 - `backend/tests/test_phase9_synthetic.py` — Tests for the synthetic data generation service — demo/heuristic mode.
 - `backend/tests/test_phase9_tokenization.py` — Tests for the tokenization service — tokenizer loading and analysis.
 - `backend/tests/test_phase9_training_runtime_compat.py` — Compatibility tests for external training runtime adapters.
+- `backend/tests/test_pipeline_eval.py` — Multi-stage pipeline evaluation (G10): definitions, held-out upload, the
 - `backend/tests/test_pipeline_refinement.py` — Pipeline plan refinement — Phase 1 tests.
 - `backend/tests/test_playground_trained_run.py` — Playground "experiment" provider — chat with a trained run in-process
 - `backend/tests/test_portable_paths.py` — portable_paths: what an export records carries no machine-specific path.
@@ -1371,6 +1383,7 @@ session-start guidance.
 - `frontend/src/components/training/WhyThisPlanPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/video/TabVideoLink.test.tsx` — _(no docstring)_
 - `frontend/src/components/video/YouTubeEmbedModal.test.tsx` — _(no docstring)_
+- `frontend/src/pages/Pipelines.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectAdapterStudioPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectAutopilotPage.prefill.test.tsx` — Newbie UX Phase 3.1 — pre-fill the Autopilot intent textarea from the
 - `frontend/src/pages/ProjectAutopilotPage.test.tsx` — _(no docstring)_

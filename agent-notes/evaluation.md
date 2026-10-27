@@ -601,3 +601,56 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   - pre-existing, single-turn rows too); length estimates run on display text; replay prompts skip handler rewriting.
 - Tests: `tests/test_dialogue_eval.py`, `tests/test_documents_multi_turn_and_pairs.py`. Docs: `slm-docs/docs/workflows/multi-turn-chat.md`.
 
+- **Pipeline evaluation (G10)** — chains projects into 1..8 stages and scores the chain on one held-out set.
+  ("Pipeline" = this multi-model chain; not the project lifecycle data → train → eval → ship.)
+  Files, no table: `DATA_DIR/pipelines/<pl-xxxxxxxx>/{pipeline.json, heldout.jsonl (+ heldout.meta.json row count),
+  runs/<run-xxxxxxxxxx>.json (+ .summary.json sidecar the list endpoints read)}`
+  (atomic tmp + `os.replace`; `pipeline_service`). Validation returns every problem as `{field, message}`
+  (`stages[i].inputs.<f>.from`…; 400 envelope like the gateway settings PUT). At most ONE stage fans out
+  (`fan_out: {pointer, item_key}`); later stages run per item. Fan-out gold = list of objects carrying the
+  item-key fields, reference = the object's `output` field when present, else the object. Runner
+  (`pipeline_eval_service`, Job kind `pipeline_eval`, project-less, params `{pipeline_id, run_id, max_rows}`;
+  result `{pipeline_id, run_id, rows, share_fully_correct, truncated, calls, attribution.first_wrong_stage}`):
+  stage k≥2 runs twice, `end_to_end` (predicted k-1) and `isolated` (gold k-1, `skipped_rows` without it);
+  item matching = all key pointers present and equal after str/strip/lower, greedy in order (nth↔nth); a None
+  key part matches nothing (`missing_item_key`), repeated predicted keys keep the first (`duplicate_item_key`);
+  unmatched outputs `spurious`, unmatched gold `missed_upstream` (or `lost_to_error` when the upstream unit
+  errored). Isolated view runs only with gold for the stage AND k-1. Upload rejects fan-out gold items without
+  every key value (`fan_out_gold_item_missing_key`); each run re-runs `parse_heldout` on the stored rows and
+  reports misfits as `gold_mismatch`. Templates: unknown `{x}` placeholders are a validation error.
+  **Scoring = held-out scoring (no drift).** Per unit a pseudo-row = stage input values + `source_text` (stage
+  prompt) + gold under every `REFERENCE_FIELDS` key the project's first prepared row carries (`reference` when
+  none; object-typed where the prepared row's value is an object) → the stage project's
+  `task_handler.build_prompts` (ctx from `evaluation_service.heldout_scoring_context`) → prediction dict with
+  `copy_row_extras` (THE helper `_generate_heldout_predictions` uses — add new per-row extras there, both
+  paths get them) → `score_predictions_like_heldout(..., eval_ctx, task_handler)` (prep + handler + tool
+  scoring + `_run_heldout_judges`: the structured-plan rubric or `_safe_judge_answers`, decided exactly as
+  held-out with exact_match + judge enabled; spend metered under `project_context(stage project)`). The
+  model input stays the stage's own prompt; the built row is for scoring only. UNSCORED with a reason, never
+  right/wrong: `row_context_unavailable` (empty prompt/reference, remediation row without code/finding, plan
+  without scenario, or the scorer's `row_skipped`), `needs_judge` (judge applies and gave no verdict for a
+  row it decides: answer judge where `judge_decides_row`, rubric where checks passed), `scoring_error`
+  (build_prompts / scorer raised; stage `scoring_error`). Stage block: `judge {kind,label,ran,units,reason}`,
+  `judge_not_run`. The remediation judge never decides pass/fail (the patch checks do), so its absence only
+  sets `judge_not_run`. An errored output with gold (missing_input, prompt_error — any builder exception —,
+  model_error, invalid_json) is wrong. Attribution walks each final gold item's path: first stage scored wrong
+  or errored; a stage with gold but unscored makes the item unscored (`unscored_items`, out of the share and
+  attribution). The stage producing the fan-out items is judged PER ITEM: right iff it produced an item with
+  the key that deep-equals (strings via `_normalize_answer`) the gold item at the fan pointer; no gold item →
+  key match only (`item_compare` deep_equal/key_only/mixed + counts); a key it never produced counts against
+  it (`missed_upstream_at`). Calls via
+  `gateway_service.run_internal` (no rate limit, no telemetry row), cached per (stage, messages) within a run,
+  capped at `MAX_MODEL_CALLS`=5000 (`truncated`, `truncated_at_row`, `truncated_message`; the cut row dropped
+  whole). Stage models resolve by the project's real slug (`all_slugs`), never the `p<id>` alias. Cancellation
+  is checked before every unit; "Scoring N stage outputs…" progress before scoring. Nothing produced / nothing
+  scored → raises (run file `status: failed` + `error`). Sync run path only for `max_rows <= 5` (tests); else
+  400 "use async_job=true". Upload cap `MAX_HELDOUT_BYTES` 50 MB → 413 (file and JSON). Run files carry
+  `job_id`; `pipeline_service.mark_stale` shows a `running` run whose Job is terminal / missing (sync: not in
+  `ACTIVE_SYNC_RUNS`) as `stale`. Auth (`api/pipelines.py`): with `AUTH_ENABLED`, VIEWER on every member
+  project to see (else hidden / 403), EDITOR on every member to write/run; admins pass. Known gaps: deleting a
+  project does not touch pipelines that reference it (the list flags `project_missing`; a run fails at model
+  resolution); no `:run-N` re-check after save; one fan-out level only; `/api/jobs` (`/active`, `/{id}`) does no
+  per-user / per-project filtering at all (pre-existing jobs-API gap), so a project-less `pipeline_eval` Job's
+  title, params and result summary are visible to anyone who can reach the jobs API — not fixed in G10. Tests: `test_pipeline_eval.py`, held-out tool-call
+  regression in `test_tool_scoring_acceptance.py`.
+  Docs: `slm-docs/docs/workflows/pipeline-eval.md`.

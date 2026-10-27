@@ -29,6 +29,10 @@ from app.api.remediation_config import router as remediation_config_router
 from app.api.structured_plan_config import router as structured_plan_config_router
 from app.api.tool_scoring_config import router as tool_scoring_config_router
 from app.api.settings import router as settings_router
+from app.api.pipelines import (
+    project_router as pipelines_project_router,
+    router as pipelines_router,
+)
 from app.api.gateway import (
     GatewayError,
     gateway_exception_handler,
@@ -403,6 +407,9 @@ app.include_router(audit_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(settings_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(gateway_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(gateway_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
+# Multi-stage pipeline evaluation (G10): workspace-level; per-pipeline access checked in the routes.
+app.include_router(pipelines_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(pipelines_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
 # OpenAI-compatible gateway: its own scoped keys (always required), OpenAI error envelope.
 app.include_router(gateway_v1_router)
 app.add_exception_handler(GatewayError, gateway_exception_handler)

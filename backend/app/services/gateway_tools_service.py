@@ -28,6 +28,11 @@ MAX_TEMPLATE_CHARS = 20_000
 MAX_TOOLS_PER_PROJECT = 50
 
 
+def template_placeholders(template: str) -> set[str]:
+    """The ``{name}`` placeholders ``render_template`` would substitute."""
+    return set(_PLACEHOLDER_RE.findall(str(template or "")))
+
+
 def render_template(template: str, arguments: dict[str, Any]) -> str:
     """Replace ``{name}`` with ``arguments[name]`` (strings as-is, anything else
     as JSON); unknown names and every other brace stay literal."""

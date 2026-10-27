@@ -362,6 +362,31 @@ class ToolScoringAcceptanceTests(unittest.TestCase):
         self.assertNotIn("tools", m)
         self.assertEqual((m["tool_selection_accuracy"], m["tool_call_pass_rate"]), (1.0, 0.5))
 
+    def test_heldout_gold_calls_reach_the_scorer_without_the_generator_copying_pairs(self):
+        """Regression: real inference builds fresh ``{prompt, reference, prediction}`` dicts (it does not
+        copy the pair), so the gold calls must be carried over by ``copy_row_extras`` -- before, every
+        tool-call held-out eval scored 0 whatever the model said."""
+        pid = self.new_project(None)
+        prepared = Path(settings.DATA_DIR) / "projects" / str(pid) / "prepared"
+        prepared.mkdir(parents=True, exist_ok=True)
+        (prepared / "manifest.json").write_text(json.dumps({"task_profile": "tool_calling", "adapter_id": "tool-call-json"}))
+        rows = [map_record_with_adapter({"prompt": f"Look up svc-{i}", "tool_name": "get_service", "tool_args": {"name": f"svc-{i}"}, "result": "ok"},
+                                        adapter_id="tool-call-json", adapter_config={}) for i in range(3)]
+        _, trained_id = self.finish_seed(pid, prepared, rows)
+
+        def run(model_ref, pairs, max_new_tokens, temperature, stop_sequences=None, *, apply_chat_template=True, decoding="neutral"):
+            preds = [{"prompt": p["prompt"], "formatted_prompt": "", "reference": p["reference"],
+                      "prediction": json.dumps({"tool": "get_service", "args": {"name": f"svc-{i}"}}),
+                      "generated_tokens": 5, "latency_ms": 1.0} for i, p in enumerate(pairs)]
+            return preds, {"engine": "stub", "decoding": {"mode": decoding}}
+
+        with patch("app.services.evaluation_service._run_local_inference", run):
+            resp = client.post(f"/api/projects/{pid}/evaluation/run-heldout", json={
+                "experiment_id": trained_id, "dataset_name": "test", "eval_type": "exact_match", "max_samples": 10, "model_path": None})
+        self.assertEqual(resp.status_code, 201, resp.text)
+        m = resp.json()["metrics"]
+        self.assertEqual((m["tool_selection_accuracy"], m["tool_args_match_rate"], m["tool_call_pass_rate"]), (1.0, 1.0, 1.0))
+
     def test_adapter_target_is_the_call_and_the_gold_call_scores_one(self):
         """Raw prompt / tool_name / tool_args / tool_result rows through the real adapter: the training target
         is the call JSON, a model that emits it scores 1.0, and a JSON tool result with ``name`` keys never
