@@ -236,6 +236,31 @@ class ResolutionTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"EVAL_JUDGE_BACKEND": ""}):
             self.assertIsNone(asyncio.run(judge_svc.resolve_answer_judge(_FakeDb(), 1, P())))
 
+    def test_project_setting_is_loaded_when_the_caller_passes_only_a_session(self):
+        """A caller with a session but no project still gets the project's
+        judge setting (here: opted out) instead of the automatic pick."""
+        class P:
+            runtime_config = {"eval_judge": {"enabled": False}}
+
+        class DbWithProject:
+            async def get(self, *_args, **_kwargs):
+                return P()
+
+        class AutoBackend:
+            name = "autob"
+
+            @classmethod
+            def is_available(cls):
+                return True
+
+            def describe(self):
+                return "autob:any"
+
+        with mock.patch("app.services.synth_backends.BACKEND_REGISTRY", [AutoBackend]), \
+                mock.patch.dict(os.environ, {"EVAL_JUDGE_BACKEND": ""}):
+            self.assertIsNone(asyncio.run(judge_svc.resolve_answer_judge(DbWithProject(), 1)))
+            self.assertEqual(asyncio.run(judge_svc.resolve_answer_judge(_FakeDb(), 1)).label, "autob:any")
+
     def test_requested_local_backend_is_used(self):
         class FakeBackend:
             name = "fakeb"

@@ -212,6 +212,12 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `ollama[:model]` / `anthropic|openai|deepseek[:model]`) → project
   `runtime_config["eval_judge"]` → first available local synth backend →
   probe-judge cloud config; never cloud over a reachable local model.
+  The project pin needs the project: a caller with a session but no project
+  gets it loaded (`db.get`); the auto-RAG harness (no async session) passes
+  `SimpleNamespace(runtime_config=…)` from its SQLite project row
+  (`_judge_comparison_rows(..., runtime_config)`). Before this, both paths
+  skipped a pinned judge for the automatic pick (gemma4 judged a sweep pinned
+  to gpt-oss, 2026-10-27).
   File cache `data/projects/<id>/eval_judge_cache.json` keyed by judge label +
   question + reference + prediction. The lift runner resolves ONE judge for
   both evals (`_resolve_lift_judge`, passed as `answer_judge=`) and

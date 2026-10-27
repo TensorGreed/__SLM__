@@ -405,13 +405,21 @@ def _project_id_from_index_dir(index_dir: Path | None) -> int:
 
 
 def _judge_comparison_rows(
-    project_id: int, off_records: list[dict[str, Any]], on_records: list[dict[str, Any]]
+    project_id: int,
+    off_records: list[dict[str, Any]],
+    on_records: list[dict[str, Any]],
+    runtime_config: Any = None,
 ) -> dict[str, Any] | None:
     """Score both arms with the answer judge (``answer_judge_service``) when
     the task is long-answer and a judge is reachable. Annotates each record
     with ``judge`` = {score, verdict, reason}; returns the judge summary
-    (label + per-arm means) or None when it doesn't apply."""
+    (label + per-arm means) or None when it doesn't apply.
+
+    ``runtime_config`` is the project's stored config (dict or JSON text):
+    it carries the pinned judge, which the resolver can't load itself here
+    (no async session in the harness)."""
     import asyncio
+    from types import SimpleNamespace
 
     from app.services.answer_judge_service import (
         judge_predictions,
@@ -425,8 +433,15 @@ def _judge_comparison_rows(
     if not should_judge("qa", references):
         return None
 
+    if isinstance(runtime_config, str):
+        try:
+            runtime_config = json.loads(runtime_config)
+        except ValueError:
+            runtime_config = None
+    project = SimpleNamespace(runtime_config=runtime_config) if isinstance(runtime_config, dict) else None
+
     async def _run() -> dict[str, Any] | None:
-        resolved = await resolve_answer_judge(None, project_id, None)
+        resolved = await resolve_answer_judge(None, project_id, project)
         if resolved is None:
             return None
         cache = project_cache(project_id)
@@ -1350,7 +1365,9 @@ def run_project_comparison(
                 pass
         # The judge sees the shared without-RAG answers each time; its cache
         # makes the repeats free.
-        arm_judge = _judge_comparison_rows(project_id, off_records, arm_records)
+        arm_judge = _judge_comparison_rows(
+            project_id, off_records, arm_records, project_row["runtime_config"] if project_row else None
+        )
         arms.append({
             "retrieval": retrieval,
             "label": label,

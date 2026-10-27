@@ -617,5 +617,32 @@ class DocumentsCorpusAndJudgeTests(unittest.TestCase):
         self.assertEqual((split["wrong_missed"], split["wrong_misread"], split["correct_missed"]), (1, 1, 0))
         self.assertNotIn("retrieval", summary["without_rag"])
 
+    def test_judge_resolution_sees_the_projects_pinned_judge(self):
+        """The harness has no async session, so it hands the resolver the
+        project's stored runtime_config (JSON text from SQLite) — without it
+        a pinned judge was skipped for the automatic pick."""
+        from unittest import mock
+
+        from app.services import answer_judge_service as judge_svc
+
+        long = "The head of a government institution shall retain a record of any use of personal information."
+        rows = [{"question": "Q1?", "reference": long, "generated": "x"}]
+        seen = []
+
+        async def judge(q, r, p):
+            return (0.0, "wrong", "no", 0)
+
+        async def resolve(db, pid, project):
+            seen.append(project)
+            return judge_svc.ResolvedJudge(label="fake:judge", judge=judge)
+
+        stored = json.dumps({"eval_judge": {"enabled": True, "backend": "ollama:big-judge"}})
+        with mock.patch.object(judge_svc, "resolve_answer_judge", resolve), \
+                mock.patch.object(judge_svc, "project_cache", lambda pid: None):
+            harness._judge_comparison_rows(999, rows, [dict(r) for r in rows], stored)
+            harness._judge_comparison_rows(999, rows, [dict(r) for r in rows], None)
+        self.assertEqual(seen[0].runtime_config["eval_judge"]["backend"], "ollama:big-judge")
+        self.assertIsNone(seen[1])
+
 if __name__ == "__main__":
     unittest.main()

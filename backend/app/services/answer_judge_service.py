@@ -472,7 +472,16 @@ async def resolve_answer_judge(db: Any, project_id: int, project: Any = None) ->
 
     Outside a Job (no project context open) the choice is made inside the
     project's context, so its ``synth_command`` overrides apply to a command
-    backend judge exactly as they do inside a Job."""
+    backend judge exactly as they do inside a Job.
+
+    ``project`` carries the pinned judge (``runtime_config["eval_judge"]``);
+    a caller with a session but no project gets it loaded here, so the pin
+    is never skipped for automatic. Callers without a session pass any
+    object with ``runtime_config``."""
+    if project is None and db is not None:
+        from app.models.project import Project
+
+        project = await db.get(Project, project_id)
     if llm_budget_guard.current_project.get() is None:
         rc = getattr(project, "runtime_config", None) if project is not None else None
         override = rc.get("synth_command") if isinstance(rc, dict) else None
