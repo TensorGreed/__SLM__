@@ -255,6 +255,17 @@ class AnswerJudgeCache:
         passage = entry.get("passage")
         return str(entry["verdict"]), (int(passage) if isinstance(passage, int) and passage > 0 else None), str(entry.get("reason") or "")
 
+    def get_raw(self, key: str) -> dict[str, Any] | None:
+        """A cached free-form entry (the rubric judge's), or None."""
+        entry = self._data.get(key)
+        return entry if isinstance(entry, dict) else None
+
+    def set_raw(self, key: str, entry: dict[str, Any]) -> None:
+        self._data[key] = dict(entry)
+        self._dirty = True
+        while len(self._data) > CACHE_MAX_ENTRIES:
+            self._data.pop(next(iter(self._data)), None)
+
     def set(self, key: str, verdict: str, reason: str, *, passage: int | None = None) -> None:
         entry: dict[str, Any] = {"score": VERDICT_SCORES.get(verdict, 0.0), "verdict": verdict, "reason": reason}
         if passage is not None:
@@ -296,6 +307,63 @@ class ResolvedJudge:
     # False for a cloud model or a command-line teacher: rows sent to it leave this machine
     # (a local-only external benchmark skips such a judge).
     local: bool = True
+    # Free-form completion on the same model: ``complete(prompt, system_prompt, response_schema,
+    # max_tokens) -> raw text | None`` (temperature 0). SYNCHRONOUS — call it off the event loop
+    # (``asyncio.to_thread``); the real ones drive the async client with ``run_sync``. Used by the
+    # rubric judge; None for judges built without one (tests' fakes).
+    complete: Callable[[str, "str | None", "dict | None", int], "str | None"] | None = None
+
+
+def run_sync(coro: Any) -> Any:
+    """Run ``coro`` to completion from synchronous code. Safe off the event loop (the usual case:
+    a worker thread); if the calling thread already runs a loop, a helper thread does it."""
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+def _complete_from_synth_backend(backend: Any) -> Callable[..., "str | None"]:
+    def complete(prompt: str, system_prompt: "str | None", response_schema: "dict | None", max_tokens: int):
+        async def _go():
+            return await backend.complete(
+                prompt, system_prompt=system_prompt, max_tokens=max_tokens, temperature=0.0,
+                **llm_usage.cache_kwargs(backend), response_schema=response_schema,
+            )
+
+        return run_sync(_go())
+
+    return complete
+
+
+def _complete_from_cloud(provider: str, model: str, api_key: str) -> Callable[..., "str | None"]:
+    def complete(prompt: str, system_prompt: "str | None", response_schema: "dict | None", max_tokens: int):
+        from app.services.cloud_llm_service import call_anthropic_chat, call_openai_chat
+
+        async def _go():
+            if provider == "anthropic":
+                resp = await call_anthropic_chat(
+                    api_key=api_key, model=model, system_prompt=system_prompt or "",
+                    user_prompt=prompt, max_tokens=max_tokens, temperature=0.0,
+                )
+            else:
+                api_url = "https://api.deepseek.com/v1/chat/completions" if provider == "deepseek" else None
+                resp = await call_openai_chat(
+                    api_key=api_key, model=model, system_prompt=system_prompt or "",
+                    user_prompt=prompt, max_tokens=max_tokens, temperature=0.0,
+                    api_url=api_url, force_json=True,
+                )
+            return getattr(resp, "content", None)
+
+        return run_sync(_go())
+
+    return complete
 
 
 def _judge_from_synth_backend(backend: Any, label: str) -> JudgeFn:
@@ -439,6 +507,7 @@ async def _resolve_answer_judge(db: Any, project_id: int, project: Any = None) -
             judge=_judge_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
             retrieval_judge=_retrieval_judge_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
             local=False,
+            complete=_complete_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
         )
     if requested:
         try:
@@ -448,7 +517,8 @@ async def _resolve_answer_judge(db: Any, project_id: int, project: Any = None) -
             return None
         return ResolvedJudge(label=await _backend_label(backend), judge=_judge_from_synth_backend(backend, requested),
                              retrieval_judge=_retrieval_judge_from_synth_backend(backend),
-                             local=not getattr(backend, "sends_data_off_machine", False))
+                             local=not getattr(backend, "sends_data_off_machine", False),
+                             complete=_complete_from_synth_backend(backend))
 
     # Nothing requested: a local model first, then a configured cloud judge.
     for cls in BACKEND_REGISTRY:
@@ -461,7 +531,8 @@ async def _resolve_answer_judge(db: Any, project_id: int, project: Any = None) -
                 backend = cls()
                 return ResolvedJudge(label=await _backend_label(backend), judge=_judge_from_synth_backend(backend, cls.name),
                                      retrieval_judge=_retrieval_judge_from_synth_backend(backend),
-                                     local=not getattr(backend, "sends_data_off_machine", False))
+                                     local=not getattr(backend, "sends_data_off_machine", False),
+                                     complete=_complete_from_synth_backend(backend))
         except Exception:  # noqa: BLE001
             continue
     cloud = await _cloud_config(db, project_id, None)
@@ -471,6 +542,7 @@ async def _resolve_answer_judge(db: Any, project_id: int, project: Any = None) -
             judge=_judge_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
             retrieval_judge=_retrieval_judge_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
             local=False,
+            complete=_complete_from_cloud(cloud["provider"], cloud["model"], cloud["api_key"]),
         )
     return None
 

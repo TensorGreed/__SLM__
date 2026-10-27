@@ -96,6 +96,7 @@ session-start guidance.
 - `backend/app/api/seed_groups.py` — Seed groups API: pick the seed of a multi-seed run to ship (by a
 - `backend/app/api/settings.py` — System settings API routes.
 - `backend/app/api/starter_packs.py` — Starter-pack catalog API routes.
+- `backend/app/api/structured_plan_config.py` — Structured-plan settings API: the JSON Schema bundle plans must validate against, the optional
 - `backend/app/api/support_bundles.py` — Support-bundle API (priority.md P34, Wave G).
 - `backend/app/api/synthetic.py` — Synthetic data generation API routes.
 - `backend/app/api/targets.py` — Hardware target catalog API — list deploy-target profiles and check base-model compatibility against them.
@@ -236,6 +237,8 @@ session-start guidance.
 - `backend/app/services/ingestion_service.py` — Data Ingestion service — handles file uploads, parsing, and storage.
 - `backend/app/services/job_service.py` — Shared Celery job helpers for status and cancellation.
 - `backend/app/services/jobs_service.py` — Generic background-job framework (Hardening Phase H1).
+- `backend/app/services/json_pointer.py` — RFC 6901 JSON-pointer helpers shared by the probe runner, the schema bundle and structured-plan scoring.
+- `backend/app/services/json_schema_bundle.py` — Multi-file JSON-Schema bundles: validate offline, flatten for guided decoding, build minimal instances.
 - `backend/app/services/label_noise_scoring_service.py` — Quality-Lift phase 4 slice 1 — Label-noise scoring (Confident-Learning-lite).
 - `backend/app/services/label_taxonomy_service.py` — Label taxonomy: the project's controlled vocabulary of labels.
 - `backend/app/services/llm_budget_guard.py` — Hard API budget for metered cloud-LLM calls.
@@ -291,6 +294,7 @@ session-start guidance.
 - `backend/app/services/rerun_service.py` — P15 — Rerun-from-manifest + clone-from-run services.
 - `backend/app/services/retrieval_decisions_service.py` — Pin decisions: what users chose when they compared retrievals.
 - `backend/app/services/retrieval_reranker.py` — Cross-encoder reranking for auto-RAG retrieval.
+- `backend/app/services/rubric_service.py` — Rubric judge: weighted 1-5 criteria with anchors, scored by an LLM, with critical-criterion gating.
 - `backend/app/services/run_event_clustering_service.py` — Failure clustering over RunEvents (priority.md P33, Wave G).
 - `backend/app/services/run_event_service.py` — Canonical RunEvent emission + read service (priority.md P31, Wave G).
 - `backend/app/services/runtime_settings_service.py` — Runtime-manageable system settings service.
@@ -314,6 +318,8 @@ session-start guidance.
 - `backend/app/services/span_type_definitions_service.py` — Entity-type definitions: one labelling convention for every model that
 - `backend/app/services/split_role_service.py` — The one predicate for "this source must never feed training".
 - `backend/app/services/starter_pack_service.py` — Dynamic starter-pack registry for domain-specific onboarding defaults.
+- `backend/app/services/structured_plan_prompt.py` — Shared prompt + payload helpers for the ``structured-plan`` recipe.
+- `backend/app/services/structured_plan_scoring.py` — Scoring for the ``structured-plan`` recipe (``scoring_mode == "structured_plan"``).
 - `backend/app/services/student_teacher_comparison_service.py` — Student-vs-teacher distillation comparison (Track 1, Epic A, slice 3).
 - `backend/app/services/support_bundle_service.py` — Support-bundle service with redaction (priority.md P34, Wave G).
 - `backend/app/services/synth_backends/base.py` — SynthBackend protocol + registry helpers (USER-SUCCESS Epic 2).
@@ -328,6 +334,7 @@ session-start guidance.
 - `backend/app/services/synth_playbooks/_cluster_targeted_common.py` — Helpers shared by the 6 CLUSTER_TARGETED playbooks.
 - `backend/app/services/synth_playbooks/_code_findings_common.py` — Helpers shared by the three `code-findings` playbooks.
 - `backend/app/services/synth_playbooks/_code_remediation_common.py` — Helpers shared by the two `code-remediation` playbooks.
+- `backend/app/services/synth_playbooks/_structured_plan_common.py` — Helpers for the `structured-plan` `scenario_grid` playbook.
 - `backend/app/services/synth_playbooks/base.py` — Playbook contract + registry (USER-SUCCESS Epic 2).
 - `backend/app/services/synth_playbooks/classification_class_balance_fill.py` — CLASS_BALANCE_FILL playbook for the `classification` recipe.
 - `backend/app/services/synth_playbooks/classification_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `classification` recipe.
@@ -352,6 +359,7 @@ session-start guidance.
 - `backend/app/services/synth_playbooks/span_extraction_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `span-extraction` recipe.
 - `backend/app/services/synth_playbooks/span_extraction_hard_negatives.py` — HARD_NEGATIVES playbook for the `span-extraction` recipe.
 - `backend/app/services/synth_playbooks/span_extraction_paraphrase.py` — POSITIVES_PARAPHRASE playbook for the `span-extraction` recipe.
+- `backend/app/services/synth_playbooks/structured_plan_scenario_grid.py` — SCENARIO_GRID playbook for the `structured-plan` recipe.
 - `backend/app/services/synth_playbooks/summarization_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `summarization` recipe.
 - `backend/app/services/synth_playbooks/summarization_paraphrase.py` — POSITIVES_PARAPHRASE playbook for the `summarization` recipe.
 - `backend/app/services/synth_review_queue_service.py` — Synth review queue service (USER-SUCCESS Epic 2b).
@@ -550,6 +558,7 @@ session-start guidance.
 - `frontend/src/api/sliceDefinitions.ts` — Slice-definitions CRUD client.
 - `frontend/src/api/smokeTest.ts` — Typed client for the project smoke-test endpoint (Diagnostics
 - `frontend/src/api/spanThresholds.ts` — Span-tagger threshold tuning (validation split) and the project's
+- `frontend/src/api/structuredPlan.ts` — Typed wrapper for the structured-plan settings API (the `structured-plan` recipe).
 - `frontend/src/api/studentTeacherComparison.ts` — Typed wrapper for the Track 1 Epic A slice 3 student-vs-teacher comparison.
 - `frontend/src/api/synthPlaybook.ts` — Typed API wrapper for the synth playbook framework
 - `frontend/src/api/taskShape.ts` — Typed wrapper for the unified task-shape detector (Wave 2b).
@@ -649,6 +658,7 @@ session-start guidance.
 - `frontend/src/components/data/ProvenancePanel.tsx` — _(no docstring)_
 - `frontend/src/components/data/RecipePicker.tsx` — Recipe Picker — Theme 2 Epic 3 + 4.
 - `frontend/src/components/data/SavedMappingsPanel.tsx` — Saved dataset-import mappings panel (Phase G of DATASET_IMPORT_PLAN).
+- `frontend/src/components/data/ScenarioGridParamsForm.tsx` — ScenarioGridParamsForm — the knobs of the `structured-plan` `scenario_grid`
 - `frontend/src/components/data/SeedDocumentsCard.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanAddTypeForm.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanTypeDefinitionsEditor.tsx` — _(no docstring)_
@@ -694,6 +704,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Did SFT help?" lift summary panel (Theme 8 Epic 4).
 - `frontend/src/components/evaluation/SlicesSection.tsx` — Quality-Lift phase 7 slice 1 — Slices editor section.
 - `frontend/src/components/evaluation/SpanThresholdTuner.tsx` — Threshold tuning for a span-tagging run, with per-type recall floors.
+- `frontend/src/components/evaluation/StructuredPlanMetricsPanel.tsx` — StructuredPlanMetricsPanel — results of a structured-plan eval (the
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.tsx` — Student-vs-teacher distillation comparison panel (Track 1, Epic A, slice 3).
 - `frontend/src/components/evaluation/UserProbeEditor.tsx` — Paste-YAML editor for the project's own checks: validate, save, delete.
 - `frontend/src/components/export/ExportPanel.tsx` — Model export orchestrator supporting format conversion and deployment-target provisioning.
@@ -759,6 +770,7 @@ session-start guidance.
 - `frontend/src/components/training/PlanRefinementCard.tsx` — PlanRefinementCard — Phase 1 of the post-data plan-refinement pass.
 - `frontend/src/components/training/PreRunConfirmModal.tsx` — PreRunConfirmModal — P20 pre-run confirm with cost provenance badge.
 - `frontend/src/components/training/RemediationConfigCard.tsx` — RemediationConfigCard — how a code-remediation project's patches are
+- `frontend/src/components/training/StructuredPlanConfigCard.tsx` — StructuredPlanConfigCard — how a structured-plan project's JSON plans are
 - `frontend/src/components/training/TokenLengthDistributionPanel.tsx` — TokenLengthDistributionPanel — V3 of the ML-native visualisations arc.
 - `frontend/src/components/training/TokenizationPanel.tsx` — Token distribution analyzer with histogram and sequence-length statistics.
 - `frontend/src/components/training/TrainAnywayButton.tsx` — TrainAnywayButton — USER-SUCCESS Epic 1 supplement.
@@ -905,6 +917,7 @@ session-start guidance.
 - `backend/tests/test_hyperparameter_sweep.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
 - `backend/tests/test_json_extraction_scoring.py` — json-extraction: typed field_match scoring, null metrics, enum/type
+- `backend/tests/test_json_schema_bundle.py` — Multi-file JSON-Schema bundles: refs across files, offline-only, flattening parity, minimal instances.
 - `backend/tests/test_label_noise_slice1.py` — Quality-Lift phase 4 slice 1 — Label-noise scan service + endpoints.
 - `backend/tests/test_label_taxonomy.py` — Label taxonomy: parsing layouts, crosswalk_from, validation codes,
 - `backend/tests/test_labelling_cost.py` — Labelling cost: prompt caching, usage + cost per relabel, convention-aware
@@ -1072,6 +1085,7 @@ session-start guidance.
 - `backend/tests/test_remediation_tracking.py` — Tests for the remediation tracking service + API (E2).
 - `backend/tests/test_retrieval_decisions.py` — Pin decisions (retrieval_decisions_service): append-only record of what
 - `backend/tests/test_retrieval_reranker.py` — Cross-encoder reranking + per-project retrieval settings.
+- `backend/tests/test_rubric_service.py` — Rubric parsing, prompt/response handling, scoring rules and the row judge.
 - `backend/tests/test_sandbox_exec.py` — Sandbox runner: real tiny commands only (/bin/echo, /bin/sleep, env, sh-free).
 - `backend/tests/test_seed_documents.py` — Seed documents: a generation model writes sample documents for a domain
 - `backend/tests/test_seed_group_drilldown_endpoint.py` — Quality-Lift phase 8 slice 1 — seed-group drill-down endpoint.
@@ -1096,6 +1110,10 @@ session-start guidance.
 - `backend/tests/test_sprint2.py` — _(no docstring)_
 - `backend/tests/test_stratified_split.py` — Unit tests for ``_stratified_split_entries`` (Gap #4 fix).
 - `backend/tests/test_structured_adapter_prompt_wrap.py` — ζ-fix tests — structured-extraction adapter writes the
+- `backend/tests/test_structured_plan_acceptance.py` — Acceptance: a structured-plan project (recipe applied, schema bundle + rubric + pointers uploaded
+- `backend/tests/test_structured_plan_hardening.py` — Hardening of the structured-plan recipe: bundle fixes surfaced through the API, off-loop schema
+- `backend/tests/test_structured_plan_playbooks.py` — `structured-plan` scenario_grid playbook.
+- `backend/tests/test_structured_plan_recipe.py` — The ``structured-plan`` recipe: catalog entry + detection, the shared prompt (train == eval, chat
 - `backend/tests/test_student_teacher_comparison.py` — Student-vs-teacher distillation comparison — Track 1, Epic A, slice 3.
 - `backend/tests/test_support_faq_demo_bundle.py` — The Support FAQ demo bundle must be big enough to measure, and honest.
 - `backend/tests/test_synth_backends_schema_aware.py` — Tests for the ``schema_aware`` backend flag (USER-SUCCESS Epic 5 Phase 5c).
@@ -1182,6 +1200,7 @@ session-start guidance.
 - `frontend/src/components/data/ProvenancePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/RecipePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SavedMappingsPanel.test.tsx` — Saved-mappings panel contract.
+- `frontend/src/components/data/ScenarioGridParamsForm.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SeedDocumentsCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanAddTypeForm.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanTypeDefinitionsEditor.test.tsx` — _(no docstring)_
@@ -1213,6 +1232,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPanel.remediation.test.tsx` — EvalPanel in remediation scoring mode: metrics block + per-row patch.
 - `frontend/src/components/evaluation/EvalPanel.runSelection.test.tsx` — One selected run across the Results tabs (picked-data provenance): the
 - `frontend/src/components/evaluation/EvalPanel.spanset.test.tsx` — Phase 5.3.4b — Sample Predictions card in span_set scoring mode.
+- `frontend/src/components/evaluation/EvalPanel.structuredPlan.test.tsx` — EvalPanel in structured_plan scoring mode: metrics block + per-row view, no confusion matrix.
 - `frontend/src/components/evaluation/EvalPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPanel.workflows.test.tsx` — Results workflows (Epic U phase U3): the one-page panel splits by
 - `frontend/src/components/evaluation/EvalSummaryCard.test.tsx` — _(no docstring)_
@@ -1233,6 +1253,8 @@ session-start guidance.
 - `frontend/src/components/evaluation/SftLiftPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/SlicesSection.test.tsx` — Quality-Lift phase 7 slice 1 — SlicesSection tests.
 - `frontend/src/components/evaluation/SpanThresholdTuner.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/StructuredPlanBackendShape.test.tsx` — Feeds the panel and the row view a payload shaped by the G6 contract: the metrics follow
+- `frontend/src/components/evaluation/StructuredPlanMetricsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalLabel.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalSplit.test.ts` — _(no docstring)_
@@ -1277,6 +1299,7 @@ session-start guidance.
 - `frontend/src/components/training/PlanRefinementCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/PreRunConfirmModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/RemediationConfigCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/StructuredPlanConfigCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TokenLengthDistributionPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainAnywayButton.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainForm.test.tsx` — _(no docstring)_

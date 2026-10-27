@@ -1,0 +1,12 @@
+.sp-config__group { margin: var(--space-sm) 0 0; padding: var(--space-sm); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+.sp-config__group legend { font-size: var(--font-size-sm); color: var(--text-secondary); padding: 0 var(--space-xs); }
+.sp-config__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); margin: var(--space-xs) 0; }
+.sp-config__files { margin: 0; padding: 0; list-style: none; font-size: var(--font-size-sm); }
+.sp-config__files li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); padding: 2px 0; }
+.sp-config__textarea { width: 100%; min-height: 6em; font-family: var(--font-mono); font-size: var(--font-size-sm); }
+.sp-config__table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+.sp-config__table th,
+.sp-config__table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--border-default); }
+.sp-config__ok { color: var(--color-success); font-size: var(--font-size-sm); }
+.sp-config__errors { margin: var(--space-xs) 0; padding-left: var(--space-md); color: var(--color-error); font-size: var(--font-size-sm); }
+.sp-config__error { color: var(--color-error); font-size: var(--font-size-sm); }

@@ -525,7 +525,7 @@ _PACKS_BY_RECIPE_ID: dict[str, list[dict[str, Any]]] = {
 
 # Recipes whose output is not what the task-profile pack probes (a patch, not a record):
 # no built-in pack rather than a misleading generic one.
-_RECIPES_WITHOUT_PROBE_PACK = frozenset({"code-remediation"})
+_RECIPES_WITHOUT_PROBE_PACK = frozenset({"code-remediation", "structured-plan"})
 
 _PACKS_BY_TASK_PROFILE: dict[str, list[dict[str, Any]]] = {
     "classification": _CLASSIFICATION_PROBES,

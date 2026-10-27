@@ -63,6 +63,9 @@ from . import code_findings_cluster_targeted  # noqa: F401 — CLUSTER_TARGETED
 from . import code_remediation_from_findings  # noqa: F401 — REMEDIATION_FROM_FINDINGS
 from . import code_examples  # noqa: F401 — CODE_EXAMPLES
 
+# G6: structured-plan playbook (matrix of scenario dimensions -> scenarios -> schema-valid plans)
+from . import structured_plan_scenario_grid  # noqa: F401 — SCENARIO_GRID
+
 
 __all__ = [
     "Playbook",

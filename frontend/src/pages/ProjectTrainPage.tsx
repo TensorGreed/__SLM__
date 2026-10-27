@@ -14,6 +14,7 @@ import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom
 import AlignmentScaffoldPanel from '../components/training/AlignmentScaffoldPanel';
 import ArchetypeComparisonPanel from '../components/training/ArchetypeComparisonPanel';
 import RemediationConfigCard from '../components/training/RemediationConfigCard';
+import StructuredPlanConfigCard from '../components/training/StructuredPlanConfigCard';
 import DocumentsQaFlowCard from '../components/training/DocumentsQaFlowCard';
 import PlanRefinementCard from '../components/training/PlanRefinementCard';
 import TokenizationPanel from '../components/training/TokenizationPanel';
@@ -51,7 +52,17 @@ export default function ProjectTrainPage() {
 
     const isRemediation = (project.selected_recipe as { recipe_id?: string } | null | undefined)?.recipe_id === 'code-remediation';
 
+    const isStructuredPlan = (project.selected_recipe as { recipe_id?: string } | null | undefined)?.recipe_id === 'structured-plan';
+
     const extraSections: TrainFormSection[] = [
+        ...(isStructuredPlan
+            ? [{
+                id: 'structured-plan',
+                title: 'Plan schema and rubric',
+                hint: 'JSON Schema bundle, pointer checks, rubric judge and passages that score plans',
+                render: () => <StructuredPlanConfigCard projectId={projectId} />,
+            }]
+            : []),
         ...(isRemediation
             ? [{
                 id: 'remediation',

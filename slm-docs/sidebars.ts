@@ -50,6 +50,7 @@ const sidebars: SidebarsConfig = {
         'workflows/label-taxonomy',
         'workflows/code-findings',
         'workflows/code-remediation',
+        'workflows/structured-plan',
         'workflows/newbie-autopilot',
         'workflows/training',
         'workflows/distillation',

@@ -1360,6 +1360,56 @@ def _remediation_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[
     return code, canonical_remediation_json(payload, cfg.get("extra_fields")), payload, None
 
 
+def _is_structured_plan_config(config: dict[str, Any]) -> bool:
+    """Structured-plan mode: ``combine_datasets`` puts ``config["structured_plan"]`` (schema files,
+    passage retrieval settings) on the adapter when the recipe's scoring mode is ``structured_plan``."""
+    return isinstance(config.get("structured_plan"), dict)
+
+
+def _structured_plan_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[str, str, Any, str | None]:
+    """Plan rows: input = the scenario, target = the canonical plan JSON."""
+    from app.services import structured_plan_prompt as spp
+
+    plan = spp.plan_payload(record)
+    if plan is None:
+        return "", "", None, "structured_plan_missing"
+    scenario = spp.row_scenario(record)
+    if not scenario.strip():
+        return "", "", plan, "adapter_unmappable_or_empty"
+    return scenario, spp.canonical_plan_json(plan), plan, None
+
+
+def _map_structured_plan(
+    record: dict[str, Any], config: dict[str, Any], source: str, target: str, target_payload: Any
+) -> dict[str, Any]:
+    """Same builder the eval handler uses; chat-template rows (no handler prefix). A row without
+    passages gets the retrieved ones when the project asks for it; the prepared row carries them so
+    held-out eval renders the identical prompt."""
+    from app.services import structured_plan_prompt as spp
+
+    cfg = config["structured_plan"]
+    bundle = spp.bundle_for_config(cfg)
+    passages = spp.normalize_passages(record.get("passages"))
+    retrieved = False
+    if not passages and cfg.get("retrieve_passages") and cfg.get("project_id"):
+        passages = spp.retrieve_passages_for_scenario(
+            int(cfg["project_id"]), source, cfg.get("top_k") or spp.DEFAULT_TOP_K, retrieval_cfg=cfg.get("retrieval")
+        )
+        retrieved = True
+    prompt = spp.build_structured_plan_prompt(source, passages, bundle)
+    out: dict[str, Any] = {
+        "text": source,
+        "answer": target,
+        "structured_output": target_payload,
+        "source_text": prompt,
+        "target_text": target,
+        "passages": passages,
+    }
+    if retrieved:
+        out["passages_retrieved"] = True
+    return out
+
+
 def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[str, str, Any, str | None]:
     """``(source, target, target_payload, reject_reason)``. Rejected when no input is found or
     when the canonical fallback built the input out of the gold record itself."""
@@ -1367,6 +1417,9 @@ def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[s
 
     if _is_remediation_config(config):
         return _remediation_parts(record, config)
+
+    if _is_structured_plan_config(config):
+        return _structured_plan_parts(record, config)
 
     if _is_finding_set_config(config):
         # Code findings: the input is the raw chunk (indentation intact), the
@@ -1444,6 +1497,9 @@ def _map_structured_extraction(record: dict[str, Any], config: dict[str, Any]) -
 
     if _is_remediation_config(config):
         return _map_remediation(record, config, source, target, target_payload)
+
+    if _is_structured_plan_config(config):
+        return _map_structured_plan(record, config, source, target, target_payload)
 
     if _is_finding_set_config(config):
         # Same builder the eval handler uses; chat-template rows (no handler

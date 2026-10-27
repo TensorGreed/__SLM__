@@ -39,6 +39,8 @@ class SynthMode(str, Enum):
     REMEDIATION_FROM_FINDINGS = "remediation_from_findings"
     # code-remediation: tasks answered with code that uses an API shown in a code chunk.
     CODE_EXAMPLES = "code_examples"
+    # structured-plan: a matrix of scenario dimensions -> scenarios -> schema-valid plans.
+    SCENARIO_GRID = "scenario_grid"
 
 
 class PlaybookContext(TypedDict, total=False):
@@ -72,6 +74,16 @@ class PlaybookContext(TypedDict, total=False):
     # code-remediation: findings / fix-pair seeds (passages attached), filled by the orchestrator.
     remediation_seeds: list[dict[str, Any]]
     remediation_extra_fields: dict[str, dict[str, Any]]
+    # structured-plan scenario_grid (filled by the orchestrator): the sampled grid cells
+    # ({"index", "values"}), the saved schema bundle + its dereferenced schema, the cells of the
+    # current scenarios call, the scenarios already taken, and the tasks of the current answers call.
+    grid_cells: list[dict[str, Any]]
+    grid_bundle: Any
+    grid_schema: dict[str, Any]
+    grid_batch: list[dict[str, Any]]
+    grid_seen: Any
+    grid_stage: str
+    grid_tasks: list[dict[str, Any]]
 
 
 class SynthRow(TypedDict):

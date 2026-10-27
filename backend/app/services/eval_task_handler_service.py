@@ -735,6 +735,7 @@ class StructuredExtractionHandler:
     MAX_NEW_TOKENS_HARDCAP: int = 512
     REMEDIATION_MAX_NEW_TOKENS: int = 1024
     REMEDIATION_MAX_NEW_TOKENS_FLOOR: int = 768
+    STRUCTURED_PLAN_MAX_NEW_TOKENS: int = 1024
 
     # Scoring modes within structured_extraction. ``field_match`` is
     # today's per-field EM/F1 (invoice-style extraction). ``span_set``
@@ -748,11 +749,15 @@ class StructuredExtractionHandler:
     SCORING_MODE_FINDING_SET: str = "finding_set"
     # ``remediation``: a patch + rationale + citations per finding (see remediation_scoring.py).
     SCORING_MODE_REMEDIATION: str = "remediation"
+    # ``structured_plan``: a JSON plan validated against a schema bundle, with JSON-pointer field
+    # matches and an optional rubric (see structured_plan_scoring.py).
+    SCORING_MODE_STRUCTURED_PLAN: str = "structured_plan"
     _SUPPORTED_SCORING_MODES: set[str] = {
         SCORING_MODE_FIELD_MATCH,
         SCORING_MODE_SPAN_SET,
         SCORING_MODE_FINDING_SET,
         SCORING_MODE_REMEDIATION,
+        SCORING_MODE_STRUCTURED_PLAN,
     }
 
     def __init__(self) -> None:
@@ -788,6 +793,9 @@ class StructuredExtractionHandler:
                 return self._schema
             if scoring_mode == self.SCORING_MODE_REMEDIATION:
                 self._schema = self._remediation_schema(manifest_schema, ctx)
+                return self._schema
+            if scoring_mode == self.SCORING_MODE_STRUCTURED_PLAN:
+                self._schema = self._structured_plan_schema(manifest_schema, ctx)
                 return self._schema
             properties = manifest_schema.get("properties")
             required = manifest_schema.get("required")
@@ -842,6 +850,21 @@ class StructuredExtractionHandler:
             "project_id": getattr(ctx, "project_id", None),
         }
 
+    def _structured_plan_schema(self, manifest_schema: dict[str, Any], ctx: EvalContext) -> dict[str, Any]:
+        settings_cfg = manifest_schema.get("structured_plan") if isinstance(manifest_schema.get("structured_plan"), dict) else {}
+        return {
+            "fields": ["plan_json"],
+            "required": ["plan_json"],
+            "scoring_mode": self.SCORING_MODE_STRUCTURED_PLAN,
+            "structured_plan": dict(settings_cfg),
+            "project_id": getattr(ctx, "project_id", None),
+        }
+
+    def _structured_plan_bundle(self, schema: dict[str, Any]) -> Any:
+        from app.services import structured_plan_prompt as spp
+
+        return spp.bundle_for_config(schema.get("structured_plan"))
+
     # ── Field extraction ──
 
     def _extract_input_text(self, row: dict[str, Any]) -> str:
@@ -876,6 +899,8 @@ class StructuredExtractionHandler:
             "structured_output",
             # Code findings rows: {"findings": [...]}.
             "findings_json",
+            # Structured plan rows.
+            "plan_json",
             # Code remediation / code example rows.
             "remediation_json",
             "code_example_json",
@@ -988,7 +1013,11 @@ class StructuredExtractionHandler:
         built: list[BuiltPrompt] = []
         finding_mode = schema.get("scoring_mode") == self.SCORING_MODE_FINDING_SET
         remediation_mode = schema.get("scoring_mode") == self.SCORING_MODE_REMEDIATION
+        plan_mode = schema.get("scoring_mode") == self.SCORING_MODE_STRUCTURED_PLAN
         for row in rows:
+            if plan_mode:
+                built.append(self._build_structured_plan_prompt(row, schema))
+                continue
             if remediation_mode:
                 built.append(self._build_remediation_prompt(row, schema))
                 continue
@@ -1084,6 +1113,36 @@ class StructuredExtractionHandler:
                 extras[key] = row[key]
         return BuiltPrompt(prompt=prompt, reference=reference, extras=extras)
 
+    def _build_structured_plan_prompt(self, row: dict[str, Any], schema: dict[str, Any]) -> BuiltPrompt:
+        """Structured-plan prompt from the shared builder -- byte-identical to the training row's
+        ``source_text`` (``data_adapter_service._map_structured_plan``). A row without passages gets
+        the retrieved ones when the settings ask for it and the adapter did not already try."""
+        from app.services import structured_plan_prompt as spp
+
+        cfg = schema.get("structured_plan") or {}
+        bundle = self._structured_plan_bundle(schema)
+        plan = spp.plan_payload(row)
+        reference = spp.canonical_plan_json(plan) if plan is not None else self._reference_as_string(row)
+        scenario = spp.row_scenario(row)
+        passages = spp.normalize_passages(row.get("passages"))
+        if not passages and not row.get("passages_retrieved") and cfg.get("retrieve_passages") and schema.get("project_id"):
+            passages = spp.retrieve_passages_for_scenario(
+                int(schema["project_id"]), scenario, cfg.get("top_k") or spp.DEFAULT_TOP_K,
+                retrieval_cfg=cfg.get("retrieval"),
+            )
+        prompt = spp.build_structured_plan_prompt(scenario, passages, bundle)
+        extras: dict[str, Any] = {
+            "structured_fields": ["plan_json"],
+            "structured_input": scenario,
+            "plan_row": {
+                "scenario": scenario,
+                "passages": passages,
+                "acceptable": spp.normalize_acceptable(row.get("acceptable")),
+                "grid_cell": row.get("grid_cell") if isinstance(row.get("grid_cell"), dict) else None,
+            },
+        }
+        return BuiltPrompt(prompt=prompt, reference=reference, extras=extras)
+
     # ── Generation hint ──
 
     def max_new_tokens_override(self, default: int) -> int:
@@ -1091,6 +1150,8 @@ class StructuredExtractionHandler:
         but should be bounded — extraction isn't a place for rambling.
         Raise tiny defaults to a sane floor; cap at the hard limit."""
 
+        if (self._schema or {}).get("scoring_mode") == self.SCORING_MODE_STRUCTURED_PLAN:
+            return self.STRUCTURED_PLAN_MAX_NEW_TOKENS
         if (self._schema or {}).get("scoring_mode") == self.SCORING_MODE_REMEDIATION:
             # A unified diff plus a rationale outgrows the 512-token record cap.
             return min(self.REMEDIATION_MAX_NEW_TOKENS, max(self.REMEDIATION_MAX_NEW_TOKENS_FLOOR, int(default or 0)))
@@ -1146,6 +1207,20 @@ class StructuredExtractionHandler:
             from app.services.remediation_scoring import score_remediation
 
             return score_remediation(predictions, schema, self._parse_json_safely)
+        if scoring_mode == self.SCORING_MODE_STRUCTURED_PLAN:
+            from app.services import structured_plan_prompt as spp
+            from app.services.structured_plan_scoring import score_structured_plan
+
+            cfg = schema.get("structured_plan") or {}
+            metrics = score_structured_plan(
+                predictions, schema, self._parse_json_safely,
+                bundle=self._structured_plan_bundle(schema), pointers=list(cfg.get("pointers") or []),
+            )
+            if cfg.get("schema_changed_since_prep"):
+                # The live schema differs from the one the split was prepared with (set by the eval overlay).
+                metrics["schema_changed_since_prep"] = True
+                metrics["prep_schema_sha256"] = cfg.get("prep_schema_sha256")
+            return metrics
         return self._score_field_match(predictions, schema)
 
     # ── Field-match scoring (default — today's invoice-style flow) ──
@@ -1661,7 +1736,9 @@ class StructuredExtractionHandler:
         else:
             manifest_schema = (ctx.manifest if ctx is not None else {}).get("output_schema")
             mode = str((manifest_schema or {}).get("scoring_mode") or "").strip().lower() if isinstance(manifest_schema, dict) else ""
-        return mode not in (self.SCORING_MODE_FINDING_SET, self.SCORING_MODE_REMEDIATION)
+        return mode not in (
+            self.SCORING_MODE_FINDING_SET, self.SCORING_MODE_REMEDIATION, self.SCORING_MODE_STRUCTURED_PLAN,
+        )
 
     def expected_prompt_prefixes(self) -> list[str]:
         """See ClassificationHandler.expected_prompt_prefixes — same

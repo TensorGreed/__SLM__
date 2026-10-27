@@ -696,3 +696,21 @@ API are in `slm-docs/docs/reference/api/domain-packs.md`; code is `domain_pack_c
   base model) so an instantiate -> export round trip diffs clean.
 - Tests: `test_domain_pack_content.py`.
 
+## Structured-plan rows + the `scenario_grid` playbook (G6)
+
+- Canonical row (`row_kind: "structured_plan"`): `scenario`, optional `passages` (`P1..Pk`), `plan_json` (the gold artifact),
+  optional `acceptable` (`{"/pointer": [v1, ...]}`) and `grid_cell` (`{dimension: value}`). The adapter rejects a row without a
+  plan object as `structured_plan_missing` (an `INPUT_REJECT_REASONS` entry); passages are retrieved once at prep
+  (`structured_plan_prompt.retrieve_passages_for_scenario`, the scenario is the query) and stored with `passages_retrieved`.
+- `scenario_grid` (recipe `structured-plan`, `SynthMode.SCENARIO_GRID`): params `matrix_text` (markdown pipe table or CSV, at
+  most 200 KB), `matrix_format` (`auto|markdown|csv`), `max_cells` (1..200, default 20), `scenarios_per_cell` (1..5),
+  `seed`, `extra_instructions`. Each COLUMN is a dimension; the grid is the cartesian product, deterministically sampled by
+  `seed` when it exceeds `max_cells` (order kept). Two stages in `run_playbook` (flag `uses_scenario_grid`): (1) the teacher
+  writes scenarios per cell (marker `[brewslm:structured-plan:scenario_grid:scenarios]`, up to 10 cells per call), (2)
+  passages are retrieved per scenario when retrieval is effective (`asyncio.to_thread`), (3) the teacher writes
+  `plan_json` per scenario (marker `...:answers`, schema = the dereferenced bundle). Every answer is validated with
+  `SchemaBundle.validate`; rejects are grouped by reason: `schema_invalid` (top error as detail), `unparseable`,
+  `empty_scenario`, `duplicate_scenario`, `missing_answer`, `cell_out_of_range`. No saved schema fails up front; a 0-row
+  success raises. Accepted rows carry `grid_cell` and `passages`. Never seeded from the test set.
+- Detection: `task_shape_service.structured_recipe_for_rows` returns `structured-plan` for `row_kind: "structured_plan"` or a
+  `scenario` beside a `plan_json` object.

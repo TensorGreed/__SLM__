@@ -268,6 +268,127 @@ async def _prepare_remediation_context(
         await asyncio.to_thread(_fill)
     ctx["remediation_seeds"] = seeds
 
+_GRID_SYSTEM_PROMPT = (
+    "You are generating training data for a model that writes structured plans (JSON documents) from "
+    "scenarios. Reply with ONE valid JSON object and nothing else. Use DOUBLE QUOTES around every string. "
+    "Never wrap your output in markdown code fences."
+)
+
+
+def structured_plan_bundle(project: Any) -> Any:
+    """The project's saved schema bundle (``runtime_config['structured_plan']``) or None."""
+    from app.services.json_schema_bundle import SchemaBundleError, bundle_from_config
+
+    rc = getattr(project, "runtime_config", None)
+    cfg = rc.get("structured_plan") if isinstance(rc, dict) else None
+    try:
+        return bundle_from_config(cfg if isinstance(cfg, dict) else None)
+    except SchemaBundleError:
+        return None
+
+
+NO_SCHEMA_MESSAGE = (
+    "scenario_grid needs the project's plan schema. Save a schema (and its root file) in the "
+    "Structured plan settings on the Train page first: every generated plan is validated against it."
+)
+
+
+async def _prepare_grid_context(
+    db: AsyncSession, project: Project, ctx: PlaybookContext, params: dict[str, Any], *, dry_run: bool
+) -> None:
+    """Fill ``grid_cells`` / ``grid_bundle`` / ``grid_schema`` for ``scenario_grid``. Raises
+    ValueError for a bad matrix or a missing schema."""
+    from app.services.synth_playbooks import _structured_plan_common as common
+
+    problem = common.check_params(params)
+    if problem is not None:
+        raise ValueError(problem[1])
+    bundle = structured_plan_bundle(project)
+    if bundle is None:
+        raise ValueError(NO_SCHEMA_MESSAGE)
+    gp = common.grid_params(params)
+    matrix = common.parse_matrix(gp["matrix_text"], gp["matrix_format"])
+    max_cells = 1 if dry_run else gp["max_cells"]
+    cells = common.build_grid(matrix["dimensions"], max_cells, gp["seed"])
+    ctx["grid_cells"] = [{"index": i, "values": c} for i, c in enumerate(cells)]
+    ctx["grid_bundle"] = bundle
+    ctx["grid_schema"] = bundle.dereferenced()
+    ctx["grid_seen"] = set()
+
+
+async def _run_scenario_grid(
+    project: Project, playbook: Any, ctx: PlaybookContext, selected_backend: SynthBackend,
+    *, dry_run: bool, progress: Callable[[float, str], Awaitable[None]] | None,
+) -> tuple[str, str, list[SynthRow], float]:
+    """The two teacher stages of ``scenario_grid`` (scenarios per batch of cells, retrieval-grounding,
+    then plans per batch of scenarios). Returns ``(first prompt, last raw reply, accepted rows, elapsed)``."""
+    from app.services.synth_playbooks import _structured_plan_common as common
+    from app.services.synth_playbooks.structured_plan_scenario_grid import answer_batches
+
+    started = time.monotonic()
+    cells = ctx["grid_cells"]
+    batches = [cells[i : i + common.CELLS_PER_CALL] for i in range(0, len(cells), common.CELLS_PER_CALL)]
+    first_prompt = ""
+    raw = ""
+
+    async def _call(prompt: str, schema: dict | None) -> str:
+        return await selected_backend.complete(
+            prompt, system_prompt=_GRID_SYSTEM_PROMPT, max_tokens=4096, temperature=0.7, response_schema=schema,
+            **llm_usage.cache_kwargs(selected_backend),
+        )
+
+    async def _report(fraction: float, message: str) -> None:
+        if progress is not None:
+            await progress(fraction, message)
+
+    # Stage 1: scenarios
+    scenarios: list[dict[str, Any]] = []
+    ctx["grid_stage"] = common.STAGE_SCENARIOS
+    for n, batch in enumerate(batches, start=1):
+        ctx["grid_batch"] = batch
+        prompt = playbook.build_prompt(ctx)
+        first_prompt = first_prompt or prompt
+        raw = await _call(prompt, get_response_schema(playbook, ctx))
+        scenarios.extend(playbook.accept_scenarios(playbook.parse_output(raw, ctx), ctx))
+        await _report(0.4 * n / len(batches), f"Scenarios: {n}/{len(batches)} calls")
+    ctx.pop("grid_batch", None)
+    if not scenarios:
+        return first_prompt, raw, [], time.monotonic() - started
+
+    # Grounding: passages per scenario when retrieval is effective and the project has an index.
+    from app.services import structured_plan_prompt as spp
+
+    cfg = await asyncio.to_thread(
+        spp.effective_structured_plan_config, getattr(project, "runtime_config", None), project.id
+    )
+    if cfg.get("retrieve_passages"):
+        top_k = int(cfg.get("top_k") or 4)
+
+        def _fill() -> None:
+            for item in scenarios:
+                found = spp.retrieve_passages_for_scenario(project.id, item["scenario"], top_k)
+                item["passages"] = common.normalise_passages(found)
+
+        await _report(0.45, "Retrieving passages for the scenarios")
+        await asyncio.to_thread(_fill)
+
+    # Stage 2: answers
+    tasks = [
+        {"scenario": s["scenario"], "passages": s.get("passages") or [], "cell": s["cell"]} for s in scenarios
+    ]
+    ctx["grid_stage"] = common.STAGE_ANSWERS
+    accepted: list[SynthRow] = []
+    groups = answer_batches(tasks, playbook, ctx)
+    for n, group in enumerate(groups, start=1):
+        ctx["grid_tasks"] = group
+        prompt = playbook.build_answers_prompt(group, ctx)
+        raw = await _call(prompt, get_response_schema(playbook, ctx))
+        parsed = playbook.parse_output(raw, ctx)
+        # Schema validation is CPU-bound (user patterns, big plans): keep it off the event loop.
+        accepted.extend(await asyncio.to_thread(playbook.validate, parsed, ctx))
+        await _report(0.5 + 0.5 * n / len(groups), f"Plans: {n}/{len(groups)} calls")
+    return first_prompt, raw, accepted, time.monotonic() - started
+
 
 _DEFENSIVE_USE_PREAMBLE = (
     "You are generating training data for a defensive machine-learning "
@@ -432,8 +553,9 @@ async def run_playbook(
     # code-findings playbooks can seed from code documents instead of an answer key, and from
     # the dev split only: the held-out test split never becomes a training prompt.
     uses_code_seeds = bool(getattr(playbook, "uses_code_seeds", False))
-    gold_rows = await _load_gold_rows(db, project_id, dev_only=uses_code_seeds)
-    if not gold_rows and not uses_code_seeds:
+    uses_grid = bool(getattr(playbook, "uses_scenario_grid", False))
+    gold_rows = await _load_gold_rows(db, project_id, dev_only=uses_code_seeds or uses_grid)
+    if not gold_rows and not uses_code_seeds and not uses_grid:
         raise ValueError(
             "Project has no answer-key rows. Import an answer key or instantiate "
             "from a project template first."
@@ -457,13 +579,32 @@ async def run_playbook(
         # Varies the seed window from run to run (stable within a run, so a resumed run agrees).
         ctx["seed_nonce"] = _peek_next_id(settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl")
 
+    if uses_grid:
+        # The grid is built from params.matrix_text alone: the answer key is never a seed.
+        ctx["gold_rows"] = []
+        await _prepare_grid_context(db, project, ctx, ctx["params"], dry_run=dry_run)
+
     selected_backend = backend_override or pick_backend(backend, registry=BACKEND_REGISTRY)
 
     rows_per_call = getattr(selected_backend, "playbook_rows_per_call", None)
-    chunked = isinstance(rows_per_call, int) and rows_per_call > 0 and target_count > rows_per_call and not dry_run
+    chunked = (
+        isinstance(rows_per_call, int) and rows_per_call > 0 and target_count > rows_per_call and not dry_run
+        and not uses_grid
+    )
     chunk_meta: dict[str, Any] = {}
     checkpoint_path: Path | None = None
-    if chunked:
+    if uses_grid:
+        prompt, raw_llm_output, accepted_rows, elapsed = await _run_scenario_grid(
+            project, playbook, ctx, selected_backend, dry_run=dry_run, progress=progress,
+        )
+        if not accepted_rows and not dry_run:
+            summary = reject_report(ctx.get("rejects"))["reject_summary"]
+            detail = ", ".join(f"{k}: {v}" for k, v in sorted(summary.items())) or "the teacher returned no usable output"
+            raise ValueError(
+                f"scenario_grid produced 0 accepted rows ({detail}). Check that the schema is satisfiable "
+                "and that the teacher model follows the reply format."
+            )
+    elif chunked:
         prompt, raw_llm_output, accepted_rows, elapsed, chunk_meta, checkpoint_path = await _run_chunked(
             playbook, ctx, mode, selected_backend, int(rows_per_call), progress=progress,
             recipe_id=recipe_id, target_class=target_class, failure_cluster=failure_cluster,

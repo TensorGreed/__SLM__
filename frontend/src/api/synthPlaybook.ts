@@ -15,7 +15,8 @@ export type SynthMode =
     | 'cluster_targeted'
     | 'seeded_defect'
     | 'remediation_from_findings'
-    | 'code_examples';
+    | 'code_examples'
+    | 'scenario_grid';
 
 export interface PlaybookCatalogEntry {
     recipe_id: string;

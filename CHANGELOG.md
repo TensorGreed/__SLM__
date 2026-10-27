@@ -1,5 +1,14 @@
 # Changelog
 
+### Structured-plan recipe, JSON-Schema bundles and a rubric judge (October 27, 2026)
+
+- Added the **Structured plan** recipe (`structured-plan`, structured extraction, scoring mode `structured_plan`): a scenario (and optional reference passages) in, one JSON plan out that must validate against a JSON Schema bundle you upload (several files joined by `$ref`, resolved inside the bundle only, no network). Suggested base `Qwen/Qwen2.5-7B-Instruct`.
+- **Scoring**: valid JSON, schema validity (grouped top errors), and JSON-pointer field matches (wildcards, order-insensitive multisets, several acceptable values per pointer). Headline `structured_plan_pass_rate` paired with the base model; base results are reused only under the same scoring fingerprint.
+- **Rubric judge**: an optional YAML / JSON rubric of weighted criteria with five anchors each and critical flags, graded by the same judge the answer judge would pick (local model first); per-criterion table, `rubric_pass_rate` and `rubric_mean_score`. Without a judge the rubric is reported as unavailable and the pass ignores it.
+- **Settings API** `GET` / `PUT /api/projects/{id}/structured-plan-config` and `POST /api/projects/{id}/structured-plan/validate`; a valid schema also becomes the project's structured-output hint (`guided-json`) and the export manifest carries it.
+- **Playbook `scenario_grid`**: write scenarios from a matrix of dimensions (uploaded markdown table or CSV), ground them in the project's documents, and have the teacher write plans that are validated against the schema before they are accepted.
+- UI: a "Structured plan" card on Train (schema upload, rubric, pointers, toggles, paste-a-JSON validator), the structured-plan metrics panel and row view in Evaluate, and the scenario-grid parameter form.
+
 ### Code-remediation recipe + code-check registry (October 26, 2026)
 
 - Added the **Code remediation** recipe (`code-remediation`, structured extraction, scoring mode `remediation`): a code chunk (absolute line numbers) plus one finding plus optional reference passages in, `{patch, rationale, citations, ...declared extra fields}` out, the patch a unified diff against the shown lines. One shared prompt builder serves training and held-out eval (chat template, byte-identical). On a project with a document index, passages are retrieved once at dataset prep (never the row's own chunk) and stored on the prepared row, so eval sees the same prompt. Settings: `GET` / `PUT /api/projects/{id}/remediation-config` (detector, checks, judge, passages, top_k).

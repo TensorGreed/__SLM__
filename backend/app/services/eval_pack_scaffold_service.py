@@ -94,6 +94,19 @@ _RECIPE_SCAFFOLD: dict[str, dict[str, Any]] = {
             ("min_safety_pass_rate", "safety_pass_rate", 0.93, False),
         ],
     },
+    "structured-plan": {
+        "task_profile": "structured_extraction",
+        "display_name": "Structured plan",
+        "required_metric_ids": ["structured_plan_pass_rate", "schema_valid_rate", "json_validity_rate"],
+        "gates": [
+            ("min_structured_plan_pass_rate", "structured_plan_pass_rate", 0.50, True),
+            # A plan that does not validate against the schema is unusable.
+            ("min_schema_valid_rate", "schema_valid_rate", 0.90, True),
+            ("min_field_match_rate", "field_match_rate", 0.60, False),
+            ("min_rubric_pass_rate", "rubric_pass_rate", 0.60, False),
+            ("min_safety_pass_rate", "safety_pass_rate", 0.93, False),
+        ],
+    },
     "summarization": {
         "task_profile": "summarization",
         "display_name": "Summarization",

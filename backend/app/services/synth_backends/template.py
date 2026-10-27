@@ -142,6 +142,66 @@ def code_remediation_rows(prompt: str, mode: str) -> str:
     return "\n".join(json.dumps(item) for item in out)
 
 
+_SP_MARKER_RE = re.compile(r"\[brewslm:structured-plan:scenario_grid:(\w+)\]")
+_SP_CELL_RE = re.compile(r'<cell index="(\d+)">\n(.*?)\n</cell>', re.DOTALL)
+_SP_PER_CELL_RE = re.compile(r"exactly (\d+) realistic")
+_SP_SCHEMA_RE = re.compile(r"<schema>\n(.*?)\n</schema>", re.DOTALL)
+_SP_TASK_RE = re.compile(r'<task index="(\d+)">')
+
+
+def structured_plan_rows(prompt: str, stage: str) -> str:
+    """Deterministic teacher output for the `structured-plan` scenario_grid prompts (marked
+    ``[brewslm:structured-plan:scenario_grid:<stage>]``). scenarios: ``per_cell`` scenario strings per
+    cell, built from the cell's values. answers: ``minimal_instance`` of the schema in the prompt for
+    every task (valid for simple schemas)."""
+    items: list[dict[str, Any]] = []
+    if stage == "scenarios":
+        per_match = _SP_PER_CELL_RE.search(prompt)
+        per_cell = int(per_match.group(1)) if per_match else 1
+        for match in _SP_CELL_RE.finditer(prompt):
+            index = int(match.group(1))
+            values = "; ".join(line.strip() for line in match.group(2).split("\n") if line.strip())
+            for j in range(1, per_cell + 1):
+                items.append({"cell_index": index, "scenario": f"Plan a rollout for cell {index} ({values}), variant {j}."})
+        if not items:
+            raise SynthBackendError("template backend: no <cell> blocks in the scenario_grid prompt")
+        return json.dumps({"items": items})
+    schema_match = _SP_SCHEMA_RE.search(prompt)
+    if not schema_match:
+        raise SynthBackendError("template backend: no <schema> block in the scenario_grid prompt")
+    from app.services.json_schema_bundle import minimal_instance
+
+    schema = json.loads(schema_match.group(1))
+    for match in _SP_TASK_RE.finditer(prompt):
+        items.append({"index": int(match.group(1)), "plan_json": minimal_instance(schema, root=schema)})
+    if not items:
+        raise SynthBackendError("template backend: no <task> blocks in the scenario_grid prompt")
+    return json.dumps({"items": items})
+
+
+def _rubric_marker() -> str:
+    try:
+        from app.services.rubric_service import RUBRIC_JUDGE_MARKER
+
+        return RUBRIC_JUDGE_MARKER
+    except ImportError:  # the rubric service is optional for the other template branches
+        return "[brewslm:rubric-judge]"
+
+
+def rubric_scores(prompt: str) -> str:
+    """Deterministic rubric-judge reply: every criterion scores 4, except criteria whose id contains
+    ``fail`` (score 2), so the critical-failure rule is testable end to end."""
+    from app.services.rubric_service import criterion_ids_from_prompt
+
+    ids = [cid for cid, _critical in criterion_ids_from_prompt(prompt)]
+    if not ids:
+        raise SynthBackendError("template backend: no criteria found in the rubric prompt")
+    scores = [
+        {"id": cid, "score": 2 if "fail" in cid else 4, "reason": "template judge: fixed score"} for cid in ids
+    ]
+    return json.dumps({"scores": scores})
+
+
 def passage_pairs(passage: str, pairs_per_passage: int) -> dict[str, Any]:
     """``pairs_per_passage`` training pairs + one eval pair, each a sentence
     of the passage asked about by its opening words."""
@@ -182,6 +242,8 @@ class TemplateBackend:
         temperature: float = 0.7,
         response_schema: dict | None = None,
     ) -> str:
+        if _rubric_marker() in prompt:
+            return rubric_scores(prompt)
         if "REFERENCE ANSWER" in prompt and "MODEL ANSWER" in prompt:
             reference = _REFERENCE_RE.search(prompt)
             model = _MODEL_RE.search(prompt)
@@ -194,11 +256,14 @@ class TemplateBackend:
         cr = _CR_MARKER_RE.search(prompt)
         if cr:
             return code_remediation_rows(prompt, cr.group(1))
+        sp = _SP_MARKER_RE.search(prompt)
+        if sp:
+            return structured_plan_rows(prompt, sp.group(1))
         passage = _PASSAGE_RE.search(prompt)
         if passage:
             count = _PAIRS_RE.search(prompt)
             return json.dumps(passage_pairs(passage.group(1), int(count.group(1)) if count else 3))
         raise SynthBackendError(
-            "template backend only answers the documents → Q&A flow, the answer judge and the code-findings / code-remediation playbooks; "
+            "template backend only answers the documents → Q&A flow, the answer judge and the code-findings / code-remediation / structured-plan playbooks, the rubric judge; "
             "use a real model for anything else"
         )

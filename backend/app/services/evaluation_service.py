@@ -883,6 +883,7 @@ async def run_evaluation(
     # the overall metrics. The phase 1 aggregator already recurses
     # through nested dicts so multi-seed runs get per-slice
     # ``{mean, std, ...}`` for free.
+    await _apply_structured_plan_live_config(db, project_id, eval_ctx)
     project_row = await db.execute(select(Project).where(Project.id == project_id))
     project = project_row.scalar_one_or_none()
     slice_defs = None
@@ -2549,6 +2550,9 @@ def _prediction_failed(prediction: dict[str, Any]) -> bool:
     if isinstance(prediction.get("row_remediation_pass"), bool):
         # A patch passes or fails on its own checks; the judge score is reported beside it.
         return not prediction["row_remediation_pass"]
+    if isinstance(prediction.get("row_structured_plan_pass"), bool):
+        # A plan passes or fails on its schema / pointer / rubric checks.
+        return not prediction["row_structured_plan_pass"]
     judge_score = prediction.get("row_judge_score")
     if isinstance(judge_score, (int, float)) and not isinstance(judge_score, bool):
         # A judged long answer: wrong or partial is a failure; exact match
@@ -2589,6 +2593,7 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
     span_fp: list[int] = []
     span_fn: list[int] = []
     rem_pass: list[float | None] = []
+    plan_pass: list[float | None] = []
     for p in predictions:
         if not isinstance(p, dict):
             continue
@@ -2607,6 +2612,9 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         rem_pass.append(
             float(p["row_remediation_pass"]) if isinstance(p.get("row_remediation_pass"), bool) else None
         )
+        plan_pass.append(
+            float(p["row_structured_plan_pass"]) if isinstance(p.get("row_structured_plan_pass"), bool) else None
+        )
         row_f1 = p.get("row_f1")
         f1.append(float(row_f1) if isinstance(row_f1, (int, float)) and not isinstance(row_f1, bool) else None)
         row_judge = p.get("row_judge_score")
@@ -2624,6 +2632,8 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         scores[JUDGE_METRIC] = judge
     if any(value is not None for value in rem_pass):
         scores["remediation_pass"] = rem_pass
+    if any(value is not None for value in plan_pass):
+        scores["structured_plan_pass"] = plan_pass
     return scores
 
 
@@ -2631,6 +2641,110 @@ def _manifest_scoring_mode(eval_ctx: Any) -> str | None:
     schema = (getattr(eval_ctx, "manifest", None) or {}).get("output_schema")
     mode = str((schema or {}).get("scoring_mode") or "").strip().lower() if isinstance(schema, dict) else ""
     return mode or None
+
+
+async def _apply_structured_plan_live_config(db: AsyncSession, project_id: int, eval_ctx: Any) -> None:
+    """A structured-plan eval prompts and scores with the project's CURRENT schema bundle, pointers and
+    retrieval settings (the manifest only stamps what the split was prepared with)."""
+    if _manifest_scoring_mode(eval_ctx) != "structured_plan":
+        return
+    from app.services import structured_plan_prompt as spp
+    from app.services.auto_rag_service import retrieval_settings
+
+    project = await db.get(Project, project_id)
+    cfg = spp.effective_structured_plan_config(getattr(project, "runtime_config", None), project_id)
+    stamp = dict(eval_ctx.manifest["output_schema"].get("structured_plan") or {})
+    prep_sha = stamp.get("schema_sha256") if isinstance(stamp.get("schema_sha256"), str) else None
+    live_bundle = spp.bundle_for_config(cfg)
+    live_sha = live_bundle.sha256 if live_bundle is not None else None
+    if prep_sha and live_sha != prep_sha:
+        stamp["schema_changed_since_prep"] = True
+        stamp["prep_schema_sha256"] = prep_sha
+    stamp.update({
+        "schema_files": cfg["schema_files"],
+        "root_schema": cfg["root_schema"],
+        "pointers": cfg["pointers"],
+        "retrieve_passages": cfg["retrieve_passages"],
+        "top_k": cfg["top_k"],
+        "retrieval": retrieval_settings(project) if project is not None else stamp.get("retrieval"),
+    })
+    eval_ctx.manifest["output_schema"]["structured_plan"] = stamp
+
+
+async def _prepare_structured_plan_predictions(
+    task_handler: Any, eval_ctx: Any, predictions: list[dict[str, Any]]
+) -> None:
+    """Before scoring a ``structured_plan`` eval: validate every plan against the schema bundle in a
+    worker thread (a hostile ``pattern`` may be slow even with its timeout) so the scorer, which runs
+    on the event loop, only reuses the verdicts. Best-effort: the scorer revalidates anything missing."""
+    from app.services import structured_plan_scoring as sps
+
+    def _work() -> None:
+        schema = task_handler._resolve_schema(predictions, eval_ctx)
+        bundle = task_handler._structured_plan_bundle(schema)
+        sps.precompute(predictions, bundle, task_handler._parse_json_safely)
+
+    try:
+        await asyncio.to_thread(_work)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("structured-plan schema precompute skipped: %s", exc)
+
+
+async def _judge_structured_plan_rubric(
+    db: AsyncSession,
+    project_id: int,
+    task_handler: Any,
+    predictions: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    judge: "ResolvedJudge | None",
+    judge_enabled: bool,
+) -> "str | None":
+    """Grade every plan against the project's rubric (when it has one and the judge is enabled) off the
+    event loop and fold the verdicts into the pass rate. Returns the judge label used (None = none).
+    No judge reachable: ``metrics["rubric"] = {"status": "no_judge", ...}`` and the pass ignores the rubric."""
+    from app.services import structured_plan_prompt as spp
+    from app.services import structured_plan_scoring as sps
+
+    project = await db.get(Project, project_id)
+    cfg = spp.effective_structured_plan_config(getattr(project, "runtime_config", None), project_id)
+    rubric = spp.rubric_for_config(cfg)
+    if rubric is None:
+        return None
+    ident = {"id": rubric.id, "title": rubric.title, "sha256": rubric.sha256}
+    if not (cfg["judge_enabled"] and judge_enabled):
+        metrics["rubric"] = {"status": "disabled", **ident}
+        return None
+    from app.services.answer_judge_service import project_cache, resolve_answer_judge
+    from app.services.rubric_service import judge_rows_with_rubric
+
+    resolved = judge
+    if resolved is None:
+        try:
+            resolved = await resolve_answer_judge(db, project_id, project)
+        except Exception as exc:  # noqa: BLE001 - best-effort
+            logging.getLogger(__name__).warning("rubric judge unavailable: %s", exc)
+            resolved = None
+    if resolved is None or getattr(resolved, "complete", None) is None:
+        metrics["rubric"] = {"status": "no_judge", **ident}
+        return None
+    parse_json = task_handler._parse_json_safely
+    # The worker thread runs its own event loop; the shared single-connection engine must not be used
+    # from it. Refresh the budget ledger here on the main loop and let the thread use the cached one
+    # (the caps are still enforced from the ledger, LlmBudgetExceeded still propagates).
+    from app.services import llm_budget_guard
+
+    await llm_budget_guard.refresh_if_stale()
+
+    def _grade() -> dict[str, Any]:
+        with llm_budget_guard.cached_ledger_only():
+            return judge_rows_with_rubric(
+                predictions, rubric, resolved,
+                cache=project_cache(project_id), view=lambda p: sps.rubric_view(p, parse_json),
+            )
+
+    block = await asyncio.to_thread(_grade)
+    sps.finalize_with_rubric(predictions, metrics, block)
+    return resolved.label
 
 
 async def _prepare_remediation_predictions(
@@ -2845,6 +2959,9 @@ async def _generate_heldout_predictions(
             for key in ("path", "language", "start_line"):
                 if pair.get(key) is not None:
                     predictions[idx][key] = pair.get(key)
+            # Structured plan: the scenario, passages and acceptable values behind the plan.
+            if pair.get("plan_row") is not None:
+                predictions[idx]["plan_row"] = pair.get("plan_row")
 
     settings = {
         "model_ref": model_ref,
@@ -2913,6 +3030,7 @@ async def run_heldout_evaluation(
         dataset_name=dataset_name,
         experiment_task_type=experiment_task_type,
     )
+    await _apply_structured_plan_live_config(db, project_id, eval_ctx)
     # Off the event loop: a remediation row without passages is retrieved for (embedding + search).
     pairs = await asyncio.to_thread(
         _load_heldout_pairs,
@@ -2955,6 +3073,8 @@ async def run_heldout_evaluation(
     heldout_scoring_mode = _manifest_scoring_mode(eval_ctx)
     if heldout_scoring_mode == "remediation":
         await _prepare_remediation_predictions(db, project_id, task_handler, eval_ctx, predictions)
+    elif heldout_scoring_mode == "structured_plan":
+        await _prepare_structured_plan_predictions(task_handler, eval_ctx, predictions)
 
     eval_dataset_name = dataset.dataset_type.value
     if eval_type == "llm_judge":
@@ -2999,7 +3119,22 @@ async def run_heldout_evaluation(
     schema_mismatch = detect_schema_mismatch(predictions)
     if schema_mismatch is not None:
         metrics["schema_mismatch"] = schema_mismatch
-    if eval_type in ("exact_match", "f1") and answer_judge_enabled:
+    if heldout_scoring_mode == "structured_plan":
+        try:
+            from app.services.structured_plan_scoring import structured_plan_scoring_fingerprint
+
+            judge_label = await _judge_structured_plan_rubric(
+                db, project_id, task_handler, predictions, metrics, answer_judge, answer_judge_enabled
+            )
+            project_row = await db.get(Project, project_id)
+            metrics["structured_plan_fingerprint"] = structured_plan_scoring_fingerprint(
+                getattr(project_row, "runtime_config", None), judge_label, project_id
+            )
+        except LlmBudgetExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a rubric failure must not fail the eval
+            logging.getLogger(__name__).warning("structured-plan rubric skipped: %s", exc)
+    if eval_type in ("exact_match", "f1") and answer_judge_enabled and heldout_scoring_mode != "structured_plan":
         judge_snapshot = await _safe_judge_answers(
             db, project_id=project_id, task_profile=eval_ctx.task_profile,
             predictions=predictions, judge=answer_judge, scoring_mode=heldout_scoring_mode,
@@ -3101,6 +3236,17 @@ async def run_heldout_evaluation(
             "row_passage_headers": p.get("row_passage_headers"),
             "row_extra_fields": p.get("row_extra_fields"),
             "row_remediation_pass": p.get("row_remediation_pass"),
+            # structured-plan: schema errors, pointer results and rubric scores per row.
+            "row_schema_valid": p.get("row_schema_valid"),
+            "schema_errors": p.get("schema_errors"),
+            "row_pointer_results": p.get("row_pointer_results"),
+            "row_structured_plan_pass": p.get("row_structured_plan_pass"),
+            "row_rubric_scores": p.get("row_rubric_scores"),
+            "row_rubric_weighted": p.get("row_rubric_weighted"),
+            "row_rubric_critical_failed": p.get("row_rubric_critical_failed"),
+            "row_rubric_passed": p.get("row_rubric_passed"),
+            "row_rubric_status": p.get("row_rubric_status"),
+            "grid_cell": (p.get("plan_row") or {}).get("grid_cell") if isinstance(p.get("plan_row"), dict) else None,
             # Phase 5.3.5: RAGHandler enrichments — the context the
             # model was given, the row's faithfulness score (token
             # overlap of pred with context), context recall (gold

@@ -170,6 +170,10 @@ _RECOMMENDED_METRIC_IDS_PER_RECIPE: dict[str, list[str]] = {
         "remediation_pass_rate", "patch_applies_rate", "code_parses_rate", "issue_resolved_rate",
         "citations_valid_rate", "malformed_rate", "safety_pass_rate",
     ],
+    "structured-plan": [
+        "structured_plan_pass_rate", "schema_valid_rate", "json_validity_rate", "field_match_rate",
+        "rubric_pass_rate", "rubric_mean_score", "safety_pass_rate",
+    ],
     "rag-protocol": [
         "citation_rate", "hallucination_rate",
         "appropriate_refusal_rate", "format_consistency",

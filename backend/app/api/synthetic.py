@@ -791,6 +791,29 @@ def _check_remediation_params(params: dict, *, require_dataset_kind: bool) -> No
             raise bad("per_chunk", "params.per_chunk must be a whole number from 1 to 5.")
 
 
+async def _check_scenario_grid_params(db: AsyncSession, project_id: int, params: dict) -> None:
+    """Range-check the structured-plan scenario_grid params and parse the matrix (400
+    ``invalid_playbook_param``); a project with no saved schema is 400 ``structured_plan_schema_missing``."""
+    from app.services.synth_playbooks._structured_plan_common import check_params
+
+    problem = check_params(params)
+    if problem is not None:
+        name, message = problem
+        raise HTTPException(400, {
+            "error_code": "invalid_playbook_param", "message": message,
+            "metadata": {"param": name, "value": None if name == "matrix_text" else params.get(name)},
+        })
+    from app.models.project import Project
+    from app.services.synth_playbook_service import NO_SCHEMA_MESSAGE, structured_plan_bundle
+
+    project = await db.get(Project, project_id)
+    recipe = (project.selected_recipe or {}).get("recipe_id") if project is not None else None
+    if project is not None and recipe == "structured-plan" and structured_plan_bundle(project) is None:
+        raise HTTPException(400, {
+            "error_code": "structured_plan_schema_missing", "message": NO_SCHEMA_MESSAGE, "metadata": {},
+        })
+
+
 async def _checked_playbook_params(db: AsyncSession, project_id: int, mode: Any, params: dict | None) -> dict:
     """Validate ``params`` before any work starts.
 
@@ -846,6 +869,9 @@ async def _checked_playbook_params(db: AsyncSession, project_id: int, mode: Any,
         return out
     if mode_value == "code_examples":
         _check_remediation_params(out, require_dataset_kind=False)
+        return out
+    if mode_value == "scenario_grid":
+        await _check_scenario_grid_params(db, project_id, out)
         return out
     if mode_value not in ("seeded_defect", "cluster_targeted"):
         return out

@@ -232,6 +232,10 @@ def sync_guided_json(project: Any) -> None:
         return
     cfg = dict(getattr(project, "runtime_config", None) or {})
     existing = cfg.get("guided_json")
-    if isinstance(existing, dict) and existing.get("source") == GUIDED_JSON_SOURCE:
+    if isinstance(existing, dict) and existing.get("source") in (GUIDED_JSON_SOURCE, "structured_plan"):
+        # structured-plan owns its own hint (written by its config API) while the recipe stays.
+        snap = getattr(project, "selected_recipe", None)
+        if existing.get("source") == "structured_plan" and isinstance(snap, dict) and snap.get("recipe_id") == "structured-plan":
+            return
         cfg.pop("guided_json", None)
         project.runtime_config = cfg

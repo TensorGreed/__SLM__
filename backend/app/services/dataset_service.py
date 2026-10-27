@@ -652,7 +652,7 @@ def _resolve_adapter_for_rows(
 # random split reports in the manifest instead of dropping silently.
 INPUT_REJECT_REASONS = (
     "classification_input_is_label", "structured_input_contains_gold", "findings_json_missing",
-    "remediation_json_missing", "remediation_finding_missing",
+    "remediation_json_missing", "remediation_finding_missing", "structured_plan_missing",
 )
 
 
@@ -1022,6 +1022,25 @@ def _remediation_schema_stamp(project: Any, schema: dict[str, Any]) -> dict[str,
     return stamp
 
 
+def _structured_plan_schema_stamp(project: Any, schema: dict[str, Any]) -> dict[str, Any]:
+    """Structured-plan manifest stamp: the schema root + sha, pointers and the passage-retrieval
+    settings the eval handler reads. Held-out eval refreshes it from the project's live settings."""
+    from app.services import structured_plan_prompt as spp
+    from app.services.auto_rag_service import retrieval_settings
+
+    rc = project.runtime_config if project is not None else None
+    cfg = spp.effective_structured_plan_config(rc, getattr(project, "id", None))
+    bundle = spp.bundle_for_config(cfg)
+    return {"structured_plan": {
+        "root_schema": cfg["root_schema"],
+        "schema_sha256": bundle.sha256 if bundle is not None else None,
+        "pointers": cfg["pointers"],
+        "retrieve_passages": cfg["retrieve_passages"],
+        "top_k": cfg["top_k"],
+        "retrieval": retrieval_settings(project) if project is not None else None,
+    }}
+
+
 async def _recipe_output_schema(
     db: AsyncSession,
     project_id: int,
@@ -1052,6 +1071,7 @@ async def _recipe_output_schema(
             ["entities"] if mode == "span_set"
             else ["findings"] if mode == "finding_set"
             else ["patch", "rationale", "citations"] if mode == "remediation"
+            else ["plan_json"] if mode == "structured_plan"
             else []
         )
         schema = merge_manifest_output_schema(
@@ -1064,6 +1084,8 @@ async def _recipe_output_schema(
             schema.update(_finding_schema_stamp(project, splits))
         if mode == "remediation":
             schema.update(_remediation_schema_stamp(project, schema))
+        if mode == "structured_plan":
+            schema.update(_structured_plan_schema_stamp(project, schema))
         return schema
     except Exception:  # noqa: BLE001 — never block a split over the recipe
         return None
@@ -1170,6 +1192,25 @@ async def combine_datasets(
                 "top_k": settings_cfg.get("top_k"),
                 "retrieval": retrieval_settings(project_row) if project_row else None,
                 "label_titles": declared.get("label_titles") or {},
+            }
+
+    # structured-plan: the schema bundle the prompt embeds and the passage-retrieval settings.
+    if adapter_id == "structured-extraction" and not (adapter_config and "structured_plan" in adapter_config):
+        declared = await _recipe_output_schema(db, project_id)
+        if (declared or {}).get("scoring_mode") == "structured_plan":
+            from app.services import structured_plan_prompt as spp
+            from app.services.auto_rag_service import retrieval_settings
+
+            project_row = await db.get(Project, project_id)
+            plan_cfg = spp.effective_structured_plan_config(project_row.runtime_config if project_row else None, project_id)
+            adapter_config = dict(adapter_config or {})
+            adapter_config["structured_plan"] = {
+                "schema_files": plan_cfg["schema_files"],
+                "root_schema": plan_cfg["root_schema"],
+                "project_id": project_id,
+                "retrieve_passages": plan_cfg["retrieve_passages"],
+                "top_k": plan_cfg["top_k"],
+                "retrieval": retrieval_settings(project_row) if project_row else None,
             }
 
     result = await db.execute(

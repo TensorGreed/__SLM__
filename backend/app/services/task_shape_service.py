@@ -159,12 +159,19 @@ _STRUCTURED_OUTPUT_ALIASES = (
 JSON_EXTRACTION_RECIPE_ID = "json-extraction"
 CODE_FINDINGS_RECIPE_ID = "code-findings"
 CODE_REMEDIATION_RECIPE_ID = "code-remediation"
+STRUCTURED_PLAN_RECIPE_ID = "structured-plan"
 
 
 def _is_remediation_row(row: dict[str, Any]) -> bool:
     from app.services.code_remediation_prompt import is_remediation_row
 
     return is_remediation_row(row)
+
+
+def _is_structured_plan_row(row: dict[str, Any]) -> bool:
+    from app.services.structured_plan_prompt import is_structured_plan_row
+
+    return is_structured_plan_row(row)
 
 
 def _is_findings_row(row: dict[str, Any]) -> bool:
@@ -192,7 +199,8 @@ def structured_recipe_for_rows(
     are findings rows (``row_kind == "findings"``, or a ``findings_json`` /
     payload object with a ``findings`` list); ``code-remediation`` when rows are
     remediation rows (``row_kind == "remediation"``, or a ``remediation_json`` object
-    with a ``patch`` string)."""
+    with a ``patch`` string); ``structured-plan`` when rows are plan rows (``row_kind ==
+    "structured_plan"``, or a ``scenario`` beside a ``plan_json`` object)."""
     import json
 
     saw_record = False
@@ -206,6 +214,8 @@ def structured_recipe_for_rows(
             continue
         if _is_remediation_row(row):
             return CODE_REMEDIATION_RECIPE_ID
+        if _is_structured_plan_row(row):
+            return STRUCTURED_PLAN_RECIPE_ID
         if _is_findings_row(row):
             return CODE_FINDINGS_RECIPE_ID
         payload: Any = None
@@ -441,7 +451,7 @@ async def confirm_task_shape(
     if profile == "structured_extraction":
         # An entity list keeps span-extraction; a fixed-field JSON record is
         # json-extraction. The caller may pass the detector's pick.
-        if recipe_id in ("span-extraction", JSON_EXTRACTION_RECIPE_ID, CODE_FINDINGS_RECIPE_ID):
+        if recipe_id in ("span-extraction", JSON_EXTRACTION_RECIPE_ID, CODE_FINDINGS_RECIPE_ID, STRUCTURED_PLAN_RECIPE_ID):
             chosen_recipe_id = recipe_id
         else:
             try:

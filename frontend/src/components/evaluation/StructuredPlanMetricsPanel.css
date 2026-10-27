@@ -1,0 +1,41 @@
+.sp-metrics { margin-top: var(--space-md); }
+.sp-metrics__title { margin: 0 0 var(--space-xs); font-size: 1rem; color: var(--text-primary); }
+.sp-metrics__h4 { margin: var(--space-md) 0 var(--space-xs); font-size: 0.9rem; color: var(--text-primary); }
+
+.sp-metrics__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: var(--space-sm);
+    margin: var(--space-sm) 0 0;
+}
+.sp-metrics__grid dt { font-size: var(--font-size-sm); color: var(--text-secondary); }
+.sp-metrics__grid dd { margin: 0; font-family: var(--font-mono); color: var(--text-primary); }
+.sp-metrics__sub { display: block; font-family: inherit; font-size: var(--font-size-sm); color: var(--text-tertiary); }
+
+.sp-metrics__table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+.sp-metrics__table th,
+.sp-metrics__table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--border-default); }
+.sp-metrics__badge {
+    padding: 1px 8px;
+    border: 1px solid var(--color-error);
+    border-radius: 999px;
+    color: var(--color-error);
+    font-size: var(--font-size-sm);
+}
+.sp-metrics__bad { color: var(--color-error); font-size: var(--font-size-sm); }
+
+.sp-row__chips { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin: var(--space-xs) 0; padding: 0; list-style: none; }
+.sp-row__chip {
+    padding: 1px 8px;
+    border: 1px solid var(--border-default);
+    border-radius: 999px;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+.sp-row__chip.is-pass { color: var(--color-success); border-color: var(--color-success); }
+.sp-row__chip.is-fail { color: var(--color-error); border-color: var(--color-error); }
+.sp-row__list { margin: 0 0 var(--space-xs); padding-left: var(--space-md); font-size: var(--font-size-sm); color: var(--text-secondary); }
+.sp-row__table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); margin-bottom: var(--space-xs); }
+.sp-row__table th,
+.sp-row__table td { padding: 2px 8px; text-align: left; border-bottom: 1px solid var(--border-default); font-family: var(--font-mono); }
+.sp-row__table td.is-fail { color: var(--color-error); }

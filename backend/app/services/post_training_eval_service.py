@@ -74,7 +74,7 @@ def eval_type_for_project(project: Project) -> str:
     scoring_mode = str(snapshot.get("scoring_mode") or "").strip()
     if scoring_mode in ("span_set", "finding_set"):
         return "f1"
-    # ``remediation`` scores a patch per row: its pass rate is also ``exact_match``.
+    # ``remediation`` / ``structured_plan`` score a whole row: the pass rate is also ``exact_match``.
     return "exact_match"
 
 
@@ -191,6 +191,13 @@ def _baseline_judge_matches(result: EvalResult, judge_label: str | None) -> bool
     if judge_label is None:
         return True
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
+    if metrics.get("scoring_mode") == "structured_plan":
+        # The rubric judge (if the project has a rubric) is stamped in the rubric block; the scoring
+        # fingerprint carries the rest.
+        rubric = metrics.get("rubric")
+        if not isinstance(rubric, dict) or rubric.get("status") != "judged":
+            return True
+        return str(rubric.get("judge") or "") == judge_label
     judge = metrics.get("judge")
     if not isinstance(judge, dict):
         return False
@@ -200,11 +207,11 @@ def _baseline_judge_matches(result: EvalResult, judge_label: str | None) -> bool
 
 
 def _baseline_scoring_matches(result: EvalResult, fingerprint: str | None) -> bool:
-    """A cached remediation result stands only if it was scored under the current scoring config."""
+    """A cached remediation / structured-plan result stands only if it was scored under the current scoring config."""
     if fingerprint is None:
         return True
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
-    return metrics.get("remediation_fingerprint") == fingerprint
+    return fingerprint in (metrics.get("remediation_fingerprint"), metrics.get("structured_plan_fingerprint"))
 
 
 def _baseline_decoding_matches(result: EvalResult, decoding: str = "neutral") -> bool:
@@ -342,6 +349,20 @@ async def _remediation_fingerprint_for(db: AsyncSession, project_id: int) -> str
         return "unavailable"
 
 
+async def _structured_plan_fingerprint_for(db: AsyncSession, project_id: int, judge_label: str | None) -> str | None:
+    """The scoring fingerprint a reusable structured-plan baseline must carry (None for any other project)."""
+    try:
+        from app.services.structured_plan_prompt import project_is_structured_plan
+        from app.services.structured_plan_scoring import structured_plan_scoring_fingerprint
+
+        project = await db.get(Project, project_id)
+        if project is None or not project_is_structured_plan(project):
+            return None
+        return structured_plan_scoring_fingerprint(getattr(project, "runtime_config", None), judge_label, project_id)
+    except Exception:  # noqa: BLE001 - cannot fingerprint: never reuse blindly
+        return "unavailable"
+
+
 async def _baseline_bar(
     db: AsyncSession,
     *,
@@ -367,7 +388,9 @@ async def _baseline_bar(
     from app.services.decoding_settings import MODEL_DECODING, model_decoding_differs
     from app.services.evaluation_service import PERPLEXITY_EVAL_TYPE, run_heldout_evaluation
 
-    scoring_fp = await _remediation_fingerprint_for(db, project_id)
+    scoring_fp = await _remediation_fingerprint_for(db, project_id) or await _structured_plan_fingerprint_for(
+        db, project_id, judge_label
+    )
     neutral = await _reusable_baseline_result(
         db, baseline_exp, project_id, judge_label=judge_label, scoring_fingerprint=scoring_fp
     )

@@ -39,9 +39,9 @@ from app.services.synth_playbooks import SynthMode, get_playbook, list_playbooks
 
 
 class CatalogAfterEpic2bTests(unittest.TestCase):
-    def test_registry_has_25_playbooks_with_expected_coverage(self):
+    def test_registry_has_26_playbooks_with_expected_coverage(self):
         playbooks = list_playbooks()
-        self.assertEqual(len(playbooks), 25)
+        self.assertEqual(len(playbooks), 26)
         # Coverage matrix sanity:
         # qa-sft + summarization: paraphrase + cluster (2 modes each)
         # classification: paraphrase + hard_neg + balance + cluster (4 modes)
@@ -59,6 +59,8 @@ class CatalogAfterEpic2bTests(unittest.TestCase):
         self.assertEqual(by_recipe["code-findings"], {"seeded_defect", "hard_negatives", "cluster_targeted"})
         # code-remediation: findings -> patch, and code examples from code documents
         self.assertEqual(by_recipe["code-remediation"], {"remediation_from_findings", "code_examples"})
+        # structured-plan: a matrix of scenario dimensions -> scenarios -> schema-valid plans
+        self.assertEqual(by_recipe["structured-plan"], {"scenario_grid"})
         for r in ("code-review", "generic-sft", "span-extraction"):
             self.assertEqual(
                 by_recipe[r],

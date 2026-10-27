@@ -454,3 +454,54 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - API: `api/remediation_config.py` (`/projects/{id}/remediation-config`; `api/remediation.py` is the older failure-plan API).
   Probe packs: `_RECIPES_WITHOUT_PROBE_PACK`. Not wired: `coach_service._PER_CLASS_RECIPE_IDS` (no `per_class` is emitted).
 - Tests: `tests/test_code_remediation_recipe.py`. Docs: `slm-docs/docs/workflows/code-remediation.md`.
+
+## `structured_plan` scoring + the structured-plan recipe (G6, lane B2)
+
+- Recipe `structured-plan` (`structured_extraction`, scoring mode `structured_plan`, columns `scenario` / `plan_json`). Prompt +
+  payload + settings helpers: `services/structured_plan_prompt.py` (`build_structured_plan_prompt(_from_row)`,
+  `canonical_plan_json`, `retrieve_passages_for_scenario`, `effective_structured_plan_config`, `bundle_for_config`,
+  `rubric_for_config`, `project_is_structured_plan`). Passages render through `code_remediation_prompt.render_passage`. One
+  builder serves the adapter (`data_adapter_service._map_structured_plan`), `StructuredExtractionHandler._build_structured_plan_prompt`
+  and the playbook; chat template for train AND eval (`wraps_own_prompt` false), `max_new_tokens_override` 1024.
+- Settings live in `runtime_config["structured_plan"]` (`api/structured_plan_config.py`: GET/PUT `structured-plan-config`,
+  POST `structured-plan/validate`; 422 `INVALID_STRUCTURED_PLAN_CONFIG` with `metadata.errors`, 409 `NOT_STRUCTURED_PLAN`).
+  A valid schema writes `runtime_config["guided_json"]` (`source: "structured_plan"`, the dereferenced schema); clearing it or
+  switching recipe drops it (`code_findings_prompt.sync_guided_json`); a code-findings hint is never overwritten.
+- The manifest stamp (`dataset_service._structured_plan_schema_stamp`) only records root / sha / pointers / retrieval. At
+  eval time `evaluation_service._apply_structured_plan_live_config` overlays the project's CURRENT schema files, pointers
+  and retrieval onto the manifest (in `run_evaluation` and `run_heldout_evaluation`), so prompt and scoring use live
+  settings; `combine_datasets` puts `adapter_config["structured_plan"]` (schema files, retrieval) on the adapter for prep.
+- Scoring: `structured_plan_scoring.score_structured_plan` (per-row `row_schema_valid`, `schema_errors`, `row_pointer_results`,
+  `row_structured_plan_pass`, `row_exact_match`; the row context rides on `prediction["plan_row"]`, copied across in
+  `_generate_heldout_predictions`). Pointer rule: `acceptable[ptr]` present -> at least one pred value and every pred value in
+  the list; else multiset equality under `value_match` with types from the gold value. Pass = valid JSON + schema valid + all
+  pointers (+ rubric not failed). `finalize_with_rubric` merges the rubric block and recomputes the pass metrics.
+- Rubric pass (`evaluation_service._judge_structured_plan_rubric`): after scoring, `rubric_service.judge_rows_with_rubric` runs in
+  `asyncio.to_thread` with `answer_judge` (lift evals pass one) or `resolve_answer_judge`; the regular single-verdict judge is
+  skipped for this mode. No judge -> `metrics["rubric"] = {"status": "no_judge", id, title, sha256}`; rubric but judge off ->
+  `status: "disabled"`. `structured_plan_scoring_fingerprint(runtime_config, judge_label, project_id)` is stamped as
+  `metrics["structured_plan_fingerprint"]`; `post_training_eval_service` reuses a cached base result only when it matches
+  (`_structured_plan_fingerprint_for`, and `_baseline_judge_matches` reads `metrics.rubric.judge` for this mode).
+- Lift: `structured_plan_pass_rate` is a headline metric (right after `remediation_pass_rate`; the modes are exclusive),
+  pairs on `row_scores.structured_plan_pass`. Recipe-keyed literals: eval pack scaffold + gate catalog entries,
+  `_RECIPES_WITHOUT_PROBE_PACK`, smoke-test prefix skip, preflight `row_kind`, `task_shape_service` detection
+  (`scenario` + `plan_json`). `predictions_preview` carries the new per-row keys and `grid_cell`.
+- Hardening (G6 fix lane): dialects are 2020-12 / 2019-09 only, one per bundle (`validate_bundle` errors otherwise; the
+  flattened document keeps the dialect). `_DATA_KEYS` (`default`/`enum`/`const`/`examples`) are data only in keyword
+  position; children of `properties`/`patternProperties`/`$defs`/`definitions`/`dependentSchemas` are always schemas.
+  `validate_bundle` builds the validator and the flattened schema before returning, so anchors across files (unsupported:
+  use a JSON-pointer fragment), recursion depth etc. are 422s, never later 500s. `pattern`/`patternProperties`/
+  `additionalProperties` use the `regex` module with a 0.5 s timeout (`PATTERN_TIMEOUT_S`) -> "pattern check timed out"
+  (`unevaluatedProperties` matches `patternProperties` through `jsonschema._utils.re.search`, which no keyword override
+  reaches; `_install_timed_re` swaps that module's `re` for a timed `regex` shim, and `validate` maps the
+  `TimeoutError` to the same error). Schema checks run in `asyncio.to_thread` (`structured_plan_scoring.precompute`
+  via `evaluation_service._prepare_structured_plan_predictions`; POST validate; the playbook answers validate); the scorer
+  reuses the stashed verdicts. `structured_plan_prompt.bundle_for_config` / `schema_text` are LRU-cached by (root, sha).
+  Rubric pass: `llm_budget_guard.refresh_if_stale()` on the main loop, then the worker thread runs under
+  `cached_ledger_only()` (no DB session from the foreign loop; caps still enforced from the ledger). The rubric cache key
+  includes a digest of the passages. `metrics.schema_changed_since_prep` + `prep_schema_sha256` when the live schema sha
+  differs from the manifest stamp. Typed pointer compare is lenient (`"1"` matches 1, strings case/whitespace-insensitive);
+  the rubric judge grades ALL rows, including ones that failed the checks. `per_pointer[ptr].both_missing` rows are excluded
+  from `missing_rate`. Tests: `tests/test_structured_plan_hardening.py`, `tests/test_json_schema_bundle.py`.
+- Tests: `tests/test_structured_plan_recipe.py`, `tests/test_structured_plan_acceptance.py`. Docs:
+  `slm-docs/docs/workflows/structured-plan.md`.

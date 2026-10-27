@@ -1,0 +1,87 @@
+{
+  "_note": "Written from the G6 pinned contract (structured_plan_scoring.score_structured_plan + finalize_with_rubric, evaluation_service predictions_preview whitelist). Reconcile with a captured backend payload.",
+  "metrics": {
+    "scoring_mode": "structured_plan",
+    "total": 3,
+    "correct": 1,
+    "exact_match": 0.3333,
+    "json_validity_rate": 1.0,
+    "schema_valid_rate": 0.6667,
+    "field_match_rate": 0.6667,
+    "structured_plan_pass_rate": 0.3333,
+    "schema_errors_top": [
+      {"message": "'deploy' is not one of ['create', 'update', 'delete']", "pointer": "/steps/*/action", "validator": "enum", "count": 1}
+    ],
+    "per_pointer": {
+      "/environment": {"match_rate": 0.6667, "support": 3, "missing_rate": 0.0},
+      "/steps/*/action": {"match_rate": 0.6667, "support": 3, "missing_rate": 0.0}
+    },
+    "pointers": ["/environment", "/steps/*/action"],
+    "schema": {"root": "plan.schema.json", "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"},
+    "rubric": {
+      "id": "plan-quality",
+      "title": "Plan quality",
+      "sha256": "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+      "judge": "ollama:llama3.3:70b",
+      "judged": 2,
+      "unjudged": 1,
+      "mean_weighted": 3.5,
+      "pass_rate": 0.5,
+      "critical_fail_count": 1,
+      "per_criterion": {
+        "safe_order": {"description": "Steps are ordered so nothing is deleted before it is replaced", "weight": 2.0, "critical": true, "mean": 3.0, "n": 2, "low_count": 1},
+        "clarity": {"description": "Step names are clear", "weight": 1.0, "critical": false, "mean": 4.5, "n": 2, "low_count": 0}
+      },
+      "criteria_order": ["safe_order", "clarity"]
+    },
+    "rubric_pass_rate": 0.5,
+    "rubric_mean_score": 3.5
+  },
+  "predictions_preview": [
+    {
+      "scoring_mode": "structured_plan",
+      "is_valid_json": true,
+      "row_schema_valid": true,
+      "schema_errors": [],
+      "row_pointer_results": {
+        "/environment": {"match": true, "pred": ["prod"], "gold": ["prod"], "source": "reference"},
+        "/steps/*/action": {"match": true, "pred": ["create", "update"], "gold": ["update", "create"], "source": "reference"}
+      },
+      "row_structured_plan_pass": true,
+      "row_rubric_status": "judged",
+      "row_rubric_scores": {"safe_order": {"score": 4, "reason": "ordered"}, "clarity": {"score": 5, "reason": "clear"}},
+      "row_rubric_weighted": 4.33,
+      "row_rubric_critical_failed": [],
+      "row_rubric_passed": true
+    },
+    {
+      "scoring_mode": "structured_plan",
+      "is_valid_json": true,
+      "row_schema_valid": false,
+      "schema_errors": [
+        {"pointer": "/steps/0/action", "message": "'deploy' is not one of ['create', 'update', 'delete']", "validator": "enum", "schema_path": "/properties/steps/items/properties/action/enum"}
+      ],
+      "row_pointer_results": {
+        "/environment": {"match": true, "pred": ["dev"], "gold": ["dev"], "source": "reference"},
+        "/steps/*/action": {"match": false, "pred": ["deploy"], "gold": ["create"], "source": "reference"}
+      },
+      "row_structured_plan_pass": false,
+      "row_rubric_status": "judged",
+      "row_rubric_scores": {"safe_order": {"score": 2, "reason": "delete first"}, "clarity": {"score": 4, "reason": "ok"}},
+      "row_rubric_weighted": 2.67,
+      "row_rubric_critical_failed": ["safe_order"],
+      "row_rubric_passed": false
+    },
+    {
+      "scoring_mode": "structured_plan",
+      "is_valid_json": true,
+      "row_schema_valid": true,
+      "schema_errors": [],
+      "row_pointer_results": {
+        "/environment": {"match": false, "pred": ["staging"], "gold": ["prod", "staging"], "source": "acceptable"}
+      },
+      "row_structured_plan_pass": false,
+      "row_rubric_status": "unjudged"
+    }
+  ]
+}

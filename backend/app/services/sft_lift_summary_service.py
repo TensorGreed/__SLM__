@@ -42,6 +42,9 @@ _PREFERRED_HEADLINE_METRICS: tuple[str, ...] = (
     # code-remediation: the share of patches that apply, still parse, resolve the
     # finding and cite only the passages they were given (exists only for that mode).
     "remediation_pass_rate",
+    # structured-plan: the share of plans that are valid JSON, validate against the schema, match
+    # every configured pointer and (when a rubric runs) pass it (exists only for that mode).
+    "structured_plan_pass_rate",
     # "Is the answer right" (LLM judge, long-answer tasks) outranks token
     # overlap when both evals have it — see answer_judge_service.
     "judge_correct",
@@ -233,6 +236,7 @@ _ROW_SCORE_FOR_METRIC: dict[str, str] = {
     "exact_match": "correct",
     "accuracy": "correct",
     "remediation_pass_rate": "remediation_pass",
+    "structured_plan_pass_rate": "structured_plan_pass",
 }
 
 

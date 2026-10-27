@@ -181,9 +181,35 @@ def _global_cap() -> float | None:
         return None
 
 
+# Set while code runs on a worker thread's private event loop: the shared single-connection engine
+# must not be used from a foreign loop, so a stale ledger is left as cached there (the caller
+# refreshes it on the main loop first, via ``refresh_if_stale``). Enforcement still uses the ledger.
+_CACHED_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar("llm_budget_cached_only", default=False)
+
+
+@contextlib.contextmanager
+def cached_ledger_only() -> Iterator[None]:
+    token = _CACHED_ONLY.set(True)
+    try:
+        yield
+    finally:
+        _CACHED_ONLY.reset(token)
+
+
+async def refresh_if_stale() -> None:
+    """Refresh the ledger from the DB when it is stale (call on the main loop before off-loop work)."""
+    with _LOCK:
+        _roll_month_locked()
+        stale = _stale_locked()
+    if stale:
+        await refresh()
+
+
 async def refresh() -> None:
     """Re-seed the ledger from the DB (month-to-date spend + project caps).
     Spend never goes down within the month. Best-effort."""
+    if _CACHED_ONLY.get():
+        return
     try:
         from app.database import async_session_factory
         from app.services import llm_spend_service

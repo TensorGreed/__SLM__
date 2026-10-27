@@ -23,6 +23,7 @@ from app.api.drift import router as drift_router
 from app.api.code_checks import router as code_checks_router
 from app.api.remediation import router as remediation_router
 from app.api.remediation_config import router as remediation_config_router
+from app.api.structured_plan_config import router as structured_plan_config_router
 from app.api.settings import router as settings_router
 from app.api.projects import router as projects_router
 from app.api.document_sources import router as document_sources_router
@@ -381,6 +382,7 @@ app.include_router(auth_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(admin_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(remediation_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(remediation_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(structured_plan_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(code_checks_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(drift_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(audit_router, prefix="/api", dependencies=API_DEPENDENCIES)

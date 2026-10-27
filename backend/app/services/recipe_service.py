@@ -76,7 +76,7 @@ class Recipe(BaseModel):
     # Pipeline-level defaults
     task_profile: str
     adapter_id: str
-    scoring_mode: str  # "field_match" | "span_set" | "finding_set" | "remediation"
+    scoring_mode: str  # "field_match" | "span_set" | "finding_set" | "remediation" | "structured_plan"
 
     # Data shape defaults
     default_input_column: str
@@ -965,6 +965,109 @@ def _code_remediation_recipe() -> Recipe:
     )
 
 
+def _structured_plan_recipe() -> Recipe:
+    return Recipe(
+        id="structured-plan",
+        name="Structured plan",
+        headline="Train a model to turn a scenario into a JSON plan that validates against your schema.",
+        description=(
+            "For datasets where each row is a scenario (and optionally reference passages) "
+            "and the plan to produce: one JSON document that must validate against a JSON "
+            "Schema bundle you upload (several files, with $ref between them). A plan is "
+            "scored on whether it is valid JSON, whether it validates against the schema, "
+            "and whether chosen fields (JSON pointers, wildcards allowed) match the "
+            "reference or one of several acceptable values. An optional rubric of "
+            "weighted criteria is graded by a judge model on top."
+        ),
+        icon="\U0001F4CB",
+        task_profile="structured_extraction",
+        adapter_id="structured-extraction",
+        scoring_mode="structured_plan",
+        default_input_column="scenario",
+        default_output_column="plan_json",
+        suggested_base_model="Qwen/Qwen2.5-7B-Instruct",
+        alt_base_models=[
+            "Qwen/Qwen2.5-3B-Instruct",
+            "Qwen/Qwen2.5-1.5B-Instruct",
+        ],
+        target_profile="vllm_server",
+        training_plan_profile="balanced",
+        eval_pack_id="evalpack.general.default",
+        gold_template=GoldTemplate(
+            shape_label="structured_plan",
+            min_rows_recommended=100,
+            fields=[
+                GoldFieldSpec(name="scenario", description="The situation the plan is for."),
+                GoldFieldSpec(
+                    name="plan_json",
+                    description="The plan: a JSON object that validates against the project's schema bundle.",
+                ),
+                GoldFieldSpec(
+                    name="passages",
+                    required=False,
+                    description="Reference passages [{id: P1, text, source}] the plan may rely on.",
+                ),
+                GoldFieldSpec(
+                    name="acceptable",
+                    required=False,
+                    description='Several acceptable values per JSON pointer: {"/pointer": [v1, v2]}.',
+                ),
+                GoldFieldSpec(
+                    name="grid_cell",
+                    required=False,
+                    description='The matrix cell the scenario was written for, e.g. {"region": "north"}.',
+                ),
+            ],
+            example_row={
+                "row_kind": "structured_plan",
+                "scenario": "Roll out the billing service to the north region, staging first, then production.",
+                "passages": [
+                    {
+                        "id": "P1",
+                        "text": "Staging is always updated before production.",
+                        "source": "rollout-guide",
+                    }
+                ],
+                "plan_json": {
+                    "name": "billing rollout",
+                    "environment": "staging",
+                    "steps": [
+                        {"action": "update", "target": "billing", "environment": "staging"},
+                        {"action": "update", "target": "billing", "environment": "prod"},
+                    ],
+                },
+                "acceptable": {"/environment": ["staging", "dev"]},
+                "grid_cell": {"region": "north", "tier": "gold"},
+            },
+        ),
+        sample_eval_prompts=[
+            "[ a scenario asking to retire an old service in the dev environment ]",
+            "[ a scenario with a staged rollout across two regions ]",
+            "[ a scenario with a reference passage that fixes the order of the steps ]",
+        ],
+        data_acquisition_hints=[
+            "Upload your JSON Schema files first (Train -> Structured plan), then generate scenarios from a matrix of dimensions (Data -> Generate: scenario grid).",
+            "Import scenario and plan pairs you already have; rows that do not validate against the schema are rejected with the reason.",
+            "Add the project's documentation as passages so plans can follow the guidance they cite.",
+        ],
+        shape_signatures=[
+            ShapeSignature(
+                columns=[
+                    ShapeColumn(
+                        name_patterns=["scenario", "situation", "request"],
+                        column_role="input",
+                    ),
+                    ShapeColumn(
+                        name_patterns=["plan_json", "plan"],
+                        column_role="output",
+                    ),
+                ],
+                base_confidence=0.96,
+            ),
+        ],
+    )
+
+
 _BUILTIN_RECIPE_FACTORIES = [
     _qa_sft_recipe,
     _classification_recipe,
@@ -974,6 +1077,7 @@ _BUILTIN_RECIPE_FACTORIES = [
     _code_review_recipe,
     _code_findings_recipe,
     _code_remediation_recipe,
+    _structured_plan_recipe,
     _generic_sft_recipe,
     _rag_protocol_recipe,
 ]

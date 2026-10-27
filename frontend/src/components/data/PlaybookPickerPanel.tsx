@@ -37,6 +37,7 @@ import type { Job } from '../../api/jobs';
 import type { PlaybookParams, RejectFields } from '../../api/synthPlaybook';
 import CodeFindingsParamsForm from './CodeFindingsParamsForm';
 import CodeRemediationParamsForm from './CodeRemediationParamsForm';
+import ScenarioGridParamsForm from './ScenarioGridParamsForm';
 import SynthRejectSummary from './SynthRejectSummary';
 import ErrorPanel from '../shared/ErrorPanel';
 import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
@@ -56,10 +57,11 @@ const VALID_SYNTH_MODES: ReadonlySet<SynthMode> = new Set([
     'seeded_defect',
     'remediation_from_findings',
     'code_examples',
+    'scenario_grid',
 ]);
 
 /** Modes that send a `params` dict from a mode-specific form. */
-const PARAM_MODES: ReadonlySet<SynthMode> = new Set(['seeded_defect', 'remediation_from_findings', 'code_examples']);
+const PARAM_MODES: ReadonlySet<SynthMode> = new Set(['seeded_defect', 'remediation_from_findings', 'code_examples', 'scenario_grid']);
 
 interface Props {
     projectId: number;
@@ -101,6 +103,10 @@ const MODE_LABELS: Record<SynthMode, { label: string; hint: string }> = {
     remediation_from_findings: {
         label: 'Remediate findings',
         hint: 'Take reported findings (or fix pairs) and have the teacher write a patch, rationale and citations; only patches that apply and still parse are kept.',
+    },
+    scenario_grid: {
+        label: 'Scenario grid',
+        hint: 'Upload a matrix of dimensions; the teacher writes a scenario for each combination and a plan for it, and only plans that validate against your schema are kept.',
     },
     code_examples: {
         label: 'Write code examples',
@@ -581,6 +587,10 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 />
             )}
 
+            {recipeId === 'structured-plan' && selectedMode === 'scenario_grid' && (
+                <ScenarioGridParamsForm key={selectedMode} onChange={setPlaybookParams} />
+            )}
+
             {recipeId === 'code-findings' && selectedMode === 'seeded_defect' && (
                 <CodeFindingsParamsForm projectId={projectId} onChange={setPlaybookParams} />
             )}
@@ -781,7 +791,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                     type="button"
                     className="btn btn-primary"
                     onClick={handleRun}
-                    disabled={!selectedMode || running || preflighting || (selectedMode === 'seeded_defect' && !playbookParams)}
+                    disabled={!selectedMode || running || preflighting || ((selectedMode === 'seeded_defect' || selectedMode === 'scenario_grid') && !playbookParams)}
                     data-testid="playbook-picker-run"
                 >
                     {preflighting

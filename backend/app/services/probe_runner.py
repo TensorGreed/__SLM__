@@ -36,6 +36,7 @@ from typing import Any, Awaitable, Callable, Sequence
 
 import regex
 
+from app.services.json_pointer import resolve_json_pointer, split_json_pointer  # noqa: F401 - re-exported
 from app.services.probe_pack_service import PROBE_PACK_VERSION
 
 PredictFn = Callable[[Sequence[str]], list[str]]
@@ -149,42 +150,6 @@ def _extract_json(text: str) -> tuple[bool, Any]:
     """First decodable JSON value in ``text`` (kept for callers that want one)."""
     values = _extract_json_values(text)
     return (True, values[0]) if values else (False, None)
-
-
-def split_json_pointer(pointer: str) -> list[str] | None:
-    """RFC 6901 tokens of ``pointer`` (``*`` is kept literally as a wildcard
-    token); ``None`` when it is not a valid pointer."""
-    if not isinstance(pointer, str) or not pointer.startswith("/"):
-        return None
-    tokens: list[str] = []
-    for raw in pointer[1:].split("/"):
-        if re.search(r"~(?![01])", raw):
-            return None
-        tokens.append(raw.replace("~1", "/").replace("~0", "~"))
-    return tokens
-
-
-def resolve_json_pointer(doc: Any, tokens: list[str]) -> list[Any]:
-    """Every value ``tokens`` resolves to; a ``*`` token fans out over all
-    array elements / object values. Missing paths contribute nothing."""
-    current = [doc]
-    for tok in tokens:
-        nxt: list[Any] = []
-        for node in current:
-            if tok == "*":
-                if isinstance(node, list):
-                    nxt.extend(node)
-                elif isinstance(node, dict):
-                    nxt.extend(node.values())
-            elif isinstance(node, dict):
-                if tok in node:
-                    nxt.append(node[tok])
-            elif isinstance(node, list) and tok.isascii() and tok.isdigit() and int(tok) < len(node):
-                nxt.append(node[int(tok)])
-        current = nxt
-        if not current:
-            break
-    return current
 
 
 def _scalar_in(value: Any, allowed: Sequence[Any]) -> bool:
