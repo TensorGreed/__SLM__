@@ -721,6 +721,38 @@ async def run_playbook(
     didn't answer directly; the result adds ``usage`` / ``cost_usd`` /
     ``tokens`` at the batch price and ``batch``. A dry run never batches.
     """
+    batch_spend: dict[str, Any] = {}
+    try:
+        return await _run_playbook(
+            db, project_id, mode, target_count=target_count, target_class=target_class,
+            failure_cluster=failure_cluster, backend=backend, backend_override=backend_override,
+            dry_run=dry_run, progress=progress, params=params, use_batch=use_batch, batch_spend=batch_spend,
+        )
+    except BaseException as exc:
+        # A batched run's calls are paid for even when it fails or is cancelled: hang them
+        # on the exception so the FAILED / CANCELLED Job still reports the spend.
+        if batch_spend.get("backend") is not None:
+            llm_usage.attach_result_usage(exc, batch_usage_fields(batch_spend["backend"]))
+        raise
+
+
+async def _run_playbook(
+    db: AsyncSession,
+    project_id: int,
+    mode: SynthMode,
+    *,
+    target_count: int = 30,
+    target_class: str | None = None,
+    failure_cluster: dict[str, Any] | None = None,
+    backend: str | None = None,
+    backend_override: SynthBackend | None = None,
+    dry_run: bool = False,
+    progress: Callable[[float, str], Awaitable[None]] | None = None,
+    params: dict[str, Any] | None = None,
+    use_batch: bool = False,
+    batch_spend: dict[str, Any] | None = None,
+) -> PlaybookResult:
+    """``run_playbook``'s body; a batched run records its backend in ``batch_spend``."""
     if target_count < 1 or target_count > 500:
         raise ValueError("target_count must be between 1 and 500")
 
@@ -791,6 +823,8 @@ async def run_playbook(
             f"{selected_backend.describe()} can't."
         )
     batching = use_batch and not dry_run
+    if batching and batch_spend is not None:
+        batch_spend["backend"] = selected_backend
     rows_per_call = getattr(selected_backend, "playbook_rows_per_call", None)
     if not (isinstance(rows_per_call, int) and not isinstance(rows_per_call, bool) and rows_per_call > 0):
         rows_per_call = target_count if batching else None

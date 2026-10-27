@@ -644,4 +644,4 @@ class PlaybookApiTests(unittest.TestCase):
         # gold dev/test rows are not loaded as seeds: ctx gold rows are emptied
         from app.services import synth_playbook_service as sps
 
-        self.assertIn("ctx[\"gold_rows\"] = []", __import__("inspect").getsource(sps.run_playbook))
+        self.assertIn("ctx[\"gold_rows\"] = []", __import__("inspect").getsource(sps._run_playbook))

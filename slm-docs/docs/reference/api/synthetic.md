@@ -422,7 +422,7 @@ Content type: `application/json` — `RunPlaybookRequest`
 | `target_count` | `integer` | no |  |
 | `target_class` | `string \\| null` | no |  |
 | `backend` | `string \\| null` | no | Optional backend pin, e.g. 'ollama:llama3.1:8b'. |
-| `use_batch` | `boolean` | no | Anthropic Message Batches: the run's calls go as one batch per stage at half the list price; results take minutes to hours, unanswered calls are retried directly. `cloud:anthropic:<model>` backends only (400 `invalid_playbook_param` otherwise). |
+| `use_batch` | `boolean` | no | Anthropic Message Batches: the run's calls go as one batch per stage at half the list price; results take minutes to hours, unanswered calls are retried directly. `cloud:anthropic:<model>` backends with `?async_job=true` only (400 `invalid_playbook_param` otherwise). A run that fails or is cancelled after its batch still reports the batch spend on the Job. |
 
 **Responses**
 

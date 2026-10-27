@@ -330,10 +330,10 @@ async def _run_runner(
     with llm_budget_guard.project_context(project_id, synth_command), llm_usage.metered(root=True) as meter:
         try:
             result_payload = await runner(handle)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
             # Honor task cancellation explicitly so we don't mis-record
             # it as a generic failure.
-            await _finish_job(job_id, status=JobStatus.CANCELLED, result=_extras(meter.block()))
+            await _finish_job(job_id, status=JobStatus.CANCELLED, result=_extras(llm_usage.failure_block(meter, exc)))
             raise
         except Exception as exc:  # noqa: BLE001 — boundary
             # The API budget stop reads as its own message (no class prefix).
@@ -345,7 +345,7 @@ async def _run_runner(
             # Tokens spent on a failed run are still spent.
             await _finish_job(
                 job_id, status=JobStatus.FAILED, error=error_text, progress_message=tb,
-                result=_extras(meter.block()),
+                result=_extras(llm_usage.failure_block(meter, exc)),
             )
             return
 

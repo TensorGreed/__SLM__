@@ -80,7 +80,12 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `batch_usage`); the temperature resubmit re-checks the cap. Batch surfaces: span relabels, the documents→Q&A
   flow, teacher passage answers, playbook synthesis (`run-playbook` `use_batch`, see `agent-notes/data.md`) —
   each returns its own `usage` list (`usage_block`: "<pin> (batch)" at the batch price + direct fallbacks), which
-  wins over the Job meter. A Job cancel during the wait cancels the batch (`complete_batch` on `CancelledError`). The playground (`check_chat_budget`, in the
+  wins over the Job meter. A batched playbook run that then FAILS or is CANCELLED (0 accepted rows, a budget
+  stop in a fallback, cancel) still reports that list: `run_playbook` hangs it on the exception
+  (`llm_usage.attach_result_usage`) and the Job runner writes `llm_usage.failure_block`, not the bare meter.
+  Not metered: requests a batch answered before it was cancelled, timed out or orphaned by a killed process
+  (results never fetched), and a temperature resubmit that errors after attempt 0 succeeded (the whole batch
+  is then redone directly). A Job cancel during the wait cancels the batch (`complete_batch` on `CancelledError`). The playground (`check_chat_budget`, in the
   chat / stream / RAG-compare routes) and the probe judge / plan refinement / teacher capture / synthetic
   batches re-raise `LlmBudgetExceeded`. `command:<model>` pins are validated (`validate_pin`, via
   `resolve_cloud_backend`) — a leading "-" would parse as a CLI flag.

@@ -518,7 +518,7 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   the attr keep the fixed 2048 / 4096 (a fixed 2048 returned 4 of 20 cloud rows; 4096 truncated
   every 5-plan reply). Tests `tests/test_cloud_playbook_sizing.py`.
   **Message Batches for playbooks**: `RunPlaybookRequest.use_batch` (400 `invalid_playbook_param` unless the pin
-  is `cloud:anthropic:`; the dry-run endpoint accepts and ignores it) sets `CloudLlmBackend.use_batch` and passes
+  is `cloud:anthropic:` and `?async_job=true` — a batch can take hours; the dry-run endpoint accepts and ignores it) sets `CloudLlmBackend.use_batch` and passes
   `run_playbook(use_batch=True)` — batching is never inferred from the backend alone (the command backend's
   `use_batch` is on by default for its packed calls; playbooks don't use them). `run_playbook` raises ValueError
   when the backend can't batch (`uses_message_batch`); a dry run never batches. A batched run always takes

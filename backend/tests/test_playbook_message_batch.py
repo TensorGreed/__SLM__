@@ -464,6 +464,72 @@ class RunPlaybookApiTests(ProjectBase):
         self.assertAlmostEqual(result["cost_usd"], round(sum(u["usd"] for u in result["usage"]), 4))
 
 
+class BatchSpendOnFailureTests(ProjectBase):
+    """A batch is paid for even when the run then fails: the FAILED Job still reports it."""
+
+    def test_use_batch_without_async_job_is_400(self):
+        resp = client.post(self.base, json={"mode": "seeded_defect", "target_count": 2,
+                                            "backend": "cloud:anthropic:claude-haiku-4-5",
+                                            "params": {"label_id": "injection.query"}, "use_batch": True})
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertEqual(resp.json()["metadata"], {"param": "use_batch", "async_job": False})
+
+    def test_a_batched_run_with_zero_accepted_rows_keeps_its_spend_on_the_failed_job(self):
+        saved = client.put(f"/api/projects/{self.pid}/secrets",
+                           json={"provider": "cloud_llm_anthropic", "key_name": "api_key", "value": "sk-test-key"})
+        self.assertIn(saved.status_code, (200, 201), saved.text)
+        junk = {"content": [{"type": "text", "text": "no rows here"}], "model": "claude-haiku-4-5",
+                "stop_reason": "end_turn", "usage": {"input_tokens": 1000, "output_tokens": 500}}
+        fake = FakeAnthropic()
+        fake.results_for = lambda requests: "\n".join(
+            json.dumps({"custom_id": r["custom_id"], "result": {"type": "succeeded", "message": junk}}) for r in requests
+        )
+
+        def handler(request):
+            if request.method == "POST" and request.url.path == "/v1/messages":
+                import httpx
+
+                fake.sync_calls.append(json.loads(request.content))
+                return httpx.Response(200, json=junk)
+            return fake(request)
+
+        with _patched(handler), patch.object(settings, "SYNTH_CLOUD_PLAYBOOK_ROWS_PER_CALL", 2):
+            resp = client.post(self.base + "?async_job=true", json={
+                "mode": "seeded_defect", "target_count": 4, "backend": "cloud:anthropic:claude-haiku-4-5",
+                "params": {"label_id": "injection.query"}, "use_batch": True})
+            self.assertEqual(resp.status_code, 202, resp.text)
+            job = resp.json()
+            wait_for_jobs_idle(client)
+        done = client.get(f"/api/jobs/{job['id']}").json()
+        self.assertEqual(done["status"], "failed", done)
+        self.assertIn("0 accepted rows", done["error"])
+        result = done["result"] or {}
+        self.assertIn("cloud:anthropic:claude-haiku-4-5 (batch)", {u["backend"] for u in result.get("usage") or []}, result)
+        self.assertGreater(result["cost_usd"], 0)
+        self.assertEqual(result["batch"]["requests"], 2)
+
+
+class FailureBlockTests(unittest.TestCase):
+    USAGE = [{"backend": "x (batch)", "total_tokens": 10, "usd": 0.5}]
+
+    def test_a_run_s_own_usage_supersedes_the_meter(self):
+        from app.services import llm_usage
+
+        exc = RuntimeError("boom")
+        llm_usage.attach_result_usage(exc, {"usage": self.USAGE, "cost_usd": 0.5, "tokens": 10, "rows": []})
+        with llm_usage.metered(root=True) as meter:
+            self.assertEqual(llm_usage.failure_block(meter, exc), {"usage": self.USAGE, "cost_usd": 0.5, "tokens": 10})
+
+    def test_without_one_the_meter_is_used_and_bad_results_are_ignored(self):
+        from app.services import llm_usage
+
+        exc = RuntimeError("boom")
+        llm_usage.attach_result_usage(exc, {"usage": []})
+        llm_usage.attach_result_usage(exc, None)
+        with llm_usage.metered(root=True) as meter:
+            self.assertEqual(llm_usage.failure_block(meter, exc), meter.block())
+
+
 # ── scenario_grid ───────────────────────────────────────────────────────────
 
 

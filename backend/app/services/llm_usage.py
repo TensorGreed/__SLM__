@@ -250,6 +250,29 @@ def merge_into_result(result: dict[str, Any], meter: UsageMeter) -> dict[str, An
         return result
 
 
+# A run that paid for calls the Job meter never sees (Message Batches) and then
+# fails hangs its own usage on the exception; the Job writes it on FAILED /
+# CANCELLED too, so spent money never drops out of the spend tally.
+RESULT_USAGE_ATTR = "llm_result_usage"
+_RESULT_USAGE_KEYS = ("usage", "cost_usd", "tokens", "batch")
+
+
+def attach_result_usage(exc: BaseException, result: Any) -> None:
+    """Hang ``result``'s own ``usage`` / ``cost_usd`` / ``tokens`` / ``batch`` on ``exc``."""
+    if isinstance(result, dict) and is_usage_list(result.get("usage")):
+        try:
+            setattr(exc, RESULT_USAGE_ATTR, {k: result[k] for k in _RESULT_USAGE_KEYS if k in result})
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
+
+
+def failure_block(meter: UsageMeter, exc: BaseException) -> dict[str, Any]:
+    """The usage a failed / cancelled Job reports: the run's own (it supersedes the
+    meter, as in ``merge_into_result``) when it attached one, else the meter's."""
+    own = getattr(exc, RESULT_USAGE_ATTR, None)
+    return dict(own) if isinstance(own, dict) else meter.block()
+
+
 def is_usage_list(value: Any) -> bool:
     return isinstance(value, list) and bool(value) and all(isinstance(u, dict) and "total_tokens" in u for u in value)
 

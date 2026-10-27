@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.services import llm_budget_guard
+from app.services import llm_budget_guard, llm_usage
 from app.services.cloud_backend_pins import (
     CLOUD_PROVIDER_SECRET_COORDS,
     CloudPinError,
@@ -774,8 +774,9 @@ class RunPlaybookRequest(BaseModel):
     )
 
 
-def _check_use_batch(req: "RunPlaybookRequest") -> None:
-    """``use_batch`` needs an Anthropic cloud pin (400 ``invalid_playbook_param``)."""
+def _check_use_batch(req: "RunPlaybookRequest", *, async_job: bool = True) -> None:
+    """``use_batch`` needs an Anthropic cloud pin and ``?async_job=true`` — a batch can take
+    hours, too long to hold an HTTP request open (400 ``invalid_playbook_param``)."""
     if req.use_batch and not (req.backend or "").startswith("cloud:anthropic:"):
         raise HTTPException(400, {
             "error_code": "invalid_playbook_param",
@@ -784,6 +785,12 @@ def _check_use_batch(req: "RunPlaybookRequest") -> None:
                 "or turn batch off."
             ),
             "metadata": {"param": "use_batch", "backend": req.backend},
+        })
+    if req.use_batch and not async_job:
+        raise HTTPException(400, {
+            "error_code": "invalid_playbook_param",
+            "message": "use_batch runs as a background Job — add ?async_job=true (a batch can take hours).",
+            "metadata": {"param": "use_batch", "async_job": False},
         })
 
 
@@ -1730,7 +1737,7 @@ async def run_synth_playbook(
     except ValueError:
         raise HTTPException(400, f"Unknown synth mode '{req.mode}'.")
     playbook_params = await _checked_playbook_params(db, project_id, mode, req.params)
-    _check_use_batch(req)
+    _check_use_batch(req, async_job=async_job)
 
     if async_job:
         import asyncio
@@ -1842,49 +1849,54 @@ async def run_synth_playbook(
             # used + prompt snippet in the error so a power user can
             # investigate without re-running.
             if row_count == 0:
-                raw_snippet = result.get("raw_llm_snippet") or ""
-                refused = bool(result.get("refusal_detected"))
-                failed_chunks = result.get("failed_chunks") or []
-                if failed_chunks:
-                    raise RuntimeError(
-                        f"Playbook {req.mode} produced 0 accepted rows via {backend_used}: "
-                        f"{len(failed_chunks)} of {result.get('chunks')} chunks failed. "
-                        f"First failure (chunk {failed_chunks[0]['chunk']}): {failed_chunks[0]['reason']}"
-                    )
-                if refused:
+                try:
+                    raw_snippet = result.get("raw_llm_snippet") or ""
+                    refused = bool(result.get("refusal_detected"))
+                    failed_chunks = result.get("failed_chunks") or []
+                    if failed_chunks:
+                        raise RuntimeError(
+                            f"Playbook {req.mode} produced 0 accepted rows via {backend_used}: "
+                            f"{len(failed_chunks)} of {result.get('chunks')} chunks failed. "
+                            f"First failure (chunk {failed_chunks[0]['chunk']}): {failed_chunks[0]['reason']}"
+                        )
+                    if refused:
+                        raise RuntimeError(
+                            f"Playbook {req.mode} produced 0 accepted rows via "
+                            f"{backend_used} in {elapsed_sec:.1f}s because the "
+                            f"LLM refused on guardrail grounds. The model "
+                            f"returned: {raw_snippet[:300]!r}. "
+                            f"Fix: switch to a less-restricted model (Qwen 2.5 "
+                            f"is preferred for security/abuse-detection use "
+                            f"cases), pin a specific model via the request's "
+                            f"``backend`` field (e.g. "
+                            f"``ollama:qwen2.5:14b-instruct-q4_K_M``), or "
+                            f"reframe the project's label vocabulary to be "
+                            f"less alarm-bell-y for the model."
+                        )
+                    import json
+
+                    reject_note = ""
+                    if result.get("rejected_count"):
+                        reject_note = (
+                            f"{result['rejected_count']} teacher rows were rejected: "
+                            f"{json.dumps(result.get('reject_summary') or {}, sort_keys=True)}. "
+                        )
                     raise RuntimeError(
                         f"Playbook {req.mode} produced 0 accepted rows via "
-                        f"{backend_used} in {elapsed_sec:.1f}s because the "
-                        f"LLM refused on guardrail grounds. The model "
-                        f"returned: {raw_snippet[:300]!r}. "
-                        f"Fix: switch to a less-restricted model (Qwen 2.5 "
-                        f"is preferred for security/abuse-detection use "
-                        f"cases), pin a specific model via the request's "
-                        f"``backend`` field (e.g. "
-                        f"``ollama:qwen2.5:14b-instruct-q4_K_M``), or "
-                        f"reframe the project's label vocabulary to be "
-                        f"less alarm-bell-y for the model."
+                        f"{backend_used} in {elapsed_sec:.1f}s. {reject_note}"
+                        f"Likely causes: (1) LLM backend returned text that "
+                        f"didn't match the playbook's expected JSON shape, "
+                        f"(2) every generated row failed validation (e.g. "
+                        f"label outside the target class for hard-negatives), "
+                        f"(3) backend timeout / network error swallowed by "
+                        f"the runner. LLM response (first 300 chars): "
+                        f"{raw_snippet[:300]!r}. Prompt sent (first 200 chars): "
+                        f"{prompt_snippet[:200]!r}"
                     )
-                import json
-
-                reject_note = ""
-                if result.get("rejected_count"):
-                    reject_note = (
-                        f"{result['rejected_count']} teacher rows were rejected: "
-                        f"{json.dumps(result.get('reject_summary') or {}, sort_keys=True)}. "
-                    )
-                raise RuntimeError(
-                    f"Playbook {req.mode} produced 0 accepted rows via "
-                    f"{backend_used} in {elapsed_sec:.1f}s. {reject_note}"
-                    f"Likely causes: (1) LLM backend returned text that "
-                    f"didn't match the playbook's expected JSON shape, "
-                    f"(2) every generated row failed validation (e.g. "
-                    f"label outside the target class for hard-negatives), "
-                    f"(3) backend timeout / network error swallowed by "
-                    f"the runner. LLM response (first 300 chars): "
-                    f"{raw_snippet[:300]!r}. Prompt sent (first 200 chars): "
-                    f"{prompt_snippet[:200]!r}"
-                )
+                except RuntimeError as exc:
+                    # A batched run paid for its calls: the FAILED Job still reports them.
+                    llm_usage.attach_result_usage(exc, result)
+                    raise
             await handle.set_progress(
                 fraction=1.0,
                 message=(
