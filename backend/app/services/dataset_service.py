@@ -1211,7 +1211,19 @@ async def combine_datasets(
                 "retrieve_passages": plan_cfg["retrieve_passages"],
                 "top_k": plan_cfg["top_k"],
                 "retrieval": retrieval_settings(project_row) if project_row else None,
+                # The tool catalog block the eval prompt embeds ("" without an active catalog).
+                "tool_block": spp.tool_block_for(project_row.runtime_config if project_row else None),
             }
+
+    # tool-call-json: the same tool block eval prepends, so train and eval prompts match.
+    if adapter_id == "tool-call-json" and not (adapter_config and "tool_block" in adapter_config):
+        from app.services import structured_plan_prompt as spp
+
+        project_row = await db.get(Project, project_id)
+        block = spp.tool_block_for(project_row.runtime_config if project_row else None)
+        if block:
+            adapter_config = dict(adapter_config or {})
+            adapter_config["tool_block"] = block
 
     result = await db.execute(
         select(Dataset).where(

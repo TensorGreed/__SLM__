@@ -31,6 +31,7 @@ vi.mock('../components/data/CleaningPanel', () => panel('panel-cleaning'));
 vi.mock('../components/data/GoldSetPanel', () => panel('panel-goldset'));
 vi.mock('../components/data/SyntheticPanel', () => panel('panel-synthetic'));
 vi.mock('../components/data/DatasetPrepPanel', () => panel('panel-dataprep'));
+vi.mock('../components/data/ToolCatalogCard', () => ({ default: () => <div data-testid="tool-catalog" /> }));
 vi.mock('../components/data/TaskShapeCard', () => ({ default: () => <div data-testid="task-shape" /> }));
 vi.mock('../components/data/LabellingConventionsCard', () => ({
     default: () => <div data-testid="conventions" />,

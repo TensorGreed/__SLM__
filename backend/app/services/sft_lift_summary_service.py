@@ -45,6 +45,9 @@ _PREFERRED_HEADLINE_METRICS: tuple[str, ...] = (
     # structured-plan: the share of plans that are valid JSON, validate against the schema, match
     # every configured pointer and (when a rubric runs) pass it (exists only for that mode).
     "structured_plan_pass_rate",
+    # tool-calling: the share of calls that select the right tool, are valid against the tool catalog
+    # (when there is one) and match the expected arguments (exists only for that profile).
+    "tool_call_pass_rate",
     # "Is the answer right" (LLM judge, long-answer tasks) outranks token
     # overlap when both evals have it — see answer_judge_service.
     "judge_correct",
@@ -237,6 +240,7 @@ _ROW_SCORE_FOR_METRIC: dict[str, str] = {
     "accuracy": "correct",
     "remediation_pass_rate": "remediation_pass",
     "structured_plan_pass_rate": "structured_plan_pass",
+    "tool_call_pass_rate": "tool_call_pass",
 }
 
 

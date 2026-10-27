@@ -91,6 +91,7 @@ const sidebars: SidebarsConfig = {
         'extensions/extension-studio',
         'extensions/cli',
         'extensions/code-checks',
+        'extensions/tool-catalog',
       ],
     },
     {

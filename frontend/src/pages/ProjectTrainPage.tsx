@@ -15,6 +15,7 @@ import AlignmentScaffoldPanel from '../components/training/AlignmentScaffoldPane
 import ArchetypeComparisonPanel from '../components/training/ArchetypeComparisonPanel';
 import RemediationConfigCard from '../components/training/RemediationConfigCard';
 import StructuredPlanConfigCard from '../components/training/StructuredPlanConfigCard';
+import ToolScoringConfigCard from '../components/training/ToolScoringConfigCard';
 import DocumentsQaFlowCard from '../components/training/DocumentsQaFlowCard';
 import PlanRefinementCard from '../components/training/PlanRefinementCard';
 import TokenizationPanel from '../components/training/TokenizationPanel';
@@ -54,7 +55,22 @@ export default function ProjectTrainPage() {
 
     const isStructuredPlan = (project.selected_recipe as { recipe_id?: string } | null | undefined)?.recipe_id === 'structured-plan';
 
+    const taskProfile = String(
+        (project.dataset_adapter_preset as { task_profile?: string } | null | undefined)?.task_profile
+        ?? (project.selected_recipe as { task_profile?: string } | null | undefined)?.task_profile
+        ?? '',
+    );
+    const isToolCalling = taskProfile === 'tool_calling';
+
     const extraSections: TrainFormSection[] = [
+        ...(isStructuredPlan || isToolCalling
+            ? [{
+                id: 'tool-scoring',
+                title: 'Tool-call scoring',
+                hint: 'which checks score tool calls against the tool catalog, and the optional read-only dry run',
+                render: () => <ToolScoringConfigCard projectId={projectId} isPlan={isStructuredPlan} />,
+            }]
+            : []),
         ...(isStructuredPlan
             ? [{
                 id: 'structured-plan',

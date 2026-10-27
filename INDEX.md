@@ -102,6 +102,8 @@ session-start guidance.
 - `backend/app/api/targets.py` — Hardware target catalog API — list deploy-target profiles and check base-model compatibility against them.
 - `backend/app/api/task_shape.py` — Task shape — detect what kind of task the project's data is, and confirm it.
 - `backend/app/api/tokenization.py` — Tokenization analysis API routes.
+- `backend/app/api/tool_catalog.py` — Tool catalog API: the tools a project's model may call (imported from an MCP server or an OpenAPI
+- `backend/app/api/tool_scoring_config.py` — Tool-scoring settings API: how predicted tool calls are scored against the project's tool catalog
 - `backend/app/api/training.py` — Training API routes.
 - `backend/app/api/training_config_gaps.py` — Training Config Gap API — Coach-stage-2 phases 1 + 2.
 
@@ -248,11 +250,13 @@ session-start guidance.
 - `backend/app/services/local_chat_service.py` — In-process chat with a trained run's checkpoint (Playground "experiment"
 - `backend/app/services/lora_target_policy.py` — Which layers LoRA adapts when the config says ``target_modules="auto"``.
 - `backend/app/services/manifest_apply_service.py` — Manifest validate / diff / apply services (priority.md P22).
+- `backend/app/services/mcp_client.py` — Minimal in-house MCP client (JSON-RPC 2.0) for the tool catalog.
 - `backend/app/services/model_benchmark_service.py` — Real sampled benchmark sweep for model-selection onboarding.
 - `backend/app/services/model_introspection_service.py` — Model introspection helpers for Hugging Face compatible model IDs.
 - `backend/app/services/model_selection_service.py` — Heuristic base-model recommendation service for the training wizard.
 - `backend/app/services/newbie_autopilot_service.py` — Newbie autopilot intent mapping for zero-knowledge training UX.
 - `backend/app/services/nl2pipeline_service.py` — Natural Language to Pipeline (Magic Create) service.
+- `backend/app/services/openapi_tools.py` — Convert an OpenAPI 3.0 / 3.1 document into tool-catalog tools (no OpenAPI library).
 - `backend/app/services/output_schema_service.py` — Declared output schema for typed JSON-record extraction + typed scalar compare.
 - `backend/app/services/pack_generation_service.py` — Auto-generate a starter evaluation pack from blueprint + dataset + adapter.
 - `backend/app/services/page_furniture.py` — Page furniture: repeated page headers / footers / page numbers.
@@ -369,6 +373,8 @@ session-start guidance.
 - `backend/app/services/teacher_passage_answers_service.py` — Teacher answers from the same passages (passage-prompt distillation).
 - `backend/app/services/timeline_service.py` — Unified timeline service (priority.md P32, Wave G).
 - `backend/app/services/tokenization_service.py` — Tokenization service — tokenizer management and dataset statistics.
+- `backend/app/services/tool_call_scoring.py` — Tool-call scoring: does a prediction call tools from the project's catalog, with valid arguments?
+- `backend/app/services/tool_catalog_service.py` — Tool catalog: the project's list of callable tools (imported from an MCP server or an OpenAPI
 - `backend/app/services/trainability_forecast_service.py` — Trainability forecast service — USER-SUCCESS Epic 1.
 - `backend/app/services/training_config_gap_service.py` — Training Config Gap scanner + patch engine — Coach-stage-2 phases 1 + 2 + 3.
 - `backend/app/services/training_data_gate.py` — Pre-training data-shape gate.
@@ -562,6 +568,8 @@ session-start guidance.
 - `frontend/src/api/studentTeacherComparison.ts` — Typed wrapper for the Track 1 Epic A slice 3 student-vs-teacher comparison.
 - `frontend/src/api/synthPlaybook.ts` — Typed API wrapper for the synth playbook framework
 - `frontend/src/api/taskShape.ts` — Typed wrapper for the unified task-shape detector (Wave 2b).
+- `frontend/src/api/toolCatalog.ts` — Typed wrapper for the project tool catalog API (imported MCP / OpenAPI tools).
+- `frontend/src/api/toolScoring.ts` — Typed wrapper for the tool-scoring settings API.
 - `frontend/src/api/trainabilityForecast.ts` — Typed API wrapper for the trainability forecast endpoint
 - `frontend/src/api/trainingConfigGaps.ts` — Training Config Gaps API client — Coach-stage-2 phases 1 + 2.
 
@@ -667,6 +675,7 @@ session-start guidance.
 - `frontend/src/components/data/SyntheticPanel.tsx` — Panel for generating synthetic training data with playbook selection, batch async support, and review queue.
 - `frontend/src/components/data/TaskShapeCard.tsx` — Labels step — the task shape (Epic U phase U4): what the rows look like
 - `frontend/src/components/data/TaskShapeConfirmCard.tsx` — "What kind of task is this?" — shows the unified detector's best guess
+- `frontend/src/components/data/ToolCatalogCard.tsx` — Data page — the project's tool catalog: the tools a model may call, imported
 - `frontend/src/components/deployment/DeployabilityScoreCard.tsx` — DeployabilityScoreCard — readiness report (priority.md P30, P28).
 - `frontend/src/components/deployment/DeployedVersionsList.tsx` — DeployedVersionsList — served-versions table for the deployment page
 - `frontend/src/components/deployment/DriftPanel.tsx` — DriftPanel — drift verdict + history for a deployment version
@@ -706,6 +715,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/SpanThresholdTuner.tsx` — Threshold tuning for a span-tagging run, with per-type recall floors.
 - `frontend/src/components/evaluation/StructuredPlanMetricsPanel.tsx` — StructuredPlanMetricsPanel — results of a structured-plan eval (the
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.tsx` — Student-vs-teacher distillation comparison panel (Track 1, Epic A, slice 3).
+- `frontend/src/components/evaluation/ToolCallMetricsPanel.tsx` — ToolCallMetricsPanel — results of tool-call scoring against the project's
 - `frontend/src/components/evaluation/UserProbeEditor.tsx` — Paste-YAML editor for the project's own checks: validate, save, delete.
 - `frontend/src/components/export/ExportPanel.tsx` — Model export orchestrator supporting format conversion and deployment-target provisioning.
 - `frontend/src/components/export/GuidedJsonCard.tsx` — GuidedJsonCard — read-only "Structured output hint" on Ship > Package.
@@ -773,6 +783,7 @@ session-start guidance.
 - `frontend/src/components/training/StructuredPlanConfigCard.tsx` — StructuredPlanConfigCard — how a structured-plan project's JSON plans are
 - `frontend/src/components/training/TokenLengthDistributionPanel.tsx` — TokenLengthDistributionPanel — V3 of the ML-native visualisations arc.
 - `frontend/src/components/training/TokenizationPanel.tsx` — Token distribution analyzer with histogram and sequence-length statistics.
+- `frontend/src/components/training/ToolScoringConfigCard.tsx` — ToolScoringConfigCard — how tool calls are judged against the project's tool
 - `frontend/src/components/training/TrainAnywayButton.tsx` — TrainAnywayButton — USER-SUCCESS Epic 1 supplement.
 - `frontend/src/components/training/TrainForm.tsx` — The Train form (Epic U, phase U2) — "an insurance form": page one asks
 - `frontend/src/components/training/TrainabilityForecastPanel.tsx` — TrainabilityForecastPanel — USER-SUCCESS Epic 1.
@@ -802,6 +813,7 @@ session-start guidance.
 
 - `backend/tests/_job_wait.py` — Shared test helper: let background Jobs finish before the next test.
 - `backend/tests/conftest.py` — Pytest session-scoped safety pin — force every test to write to /tmp.
+- `backend/tests/fake_mcp_server.py` — A tiny stdio MCP server for tests: a toy "deploy service" with four tools.
 - `backend/tests/test_active_learning_service.py` — Tests for the active-learning recommender (Theme 8 Epic 2).
 - `backend/tests/test_active_learning_slice2.py` — Quality-Lift phase 3 slice 2 — Active-learning snapshot read endpoint
 - `backend/tests/test_adapter_handler_prompt_sweep.py` — Permanent regression guard for β-shape prompt-format gaps
@@ -923,11 +935,13 @@ session-start guidance.
 - `backend/tests/test_labelling_cost.py` — Labelling cost: prompt caching, usage + cost per relabel, convention-aware
 - `backend/tests/test_llm_budget.py` — Playground cloud-chat metering + the monthly cloud-LLM budget.
 - `backend/tests/test_llm_spend.py` — Cloud-LLM cost beyond relabels: usage metering at every cloud call site,
+- `backend/tests/test_mcp_client.py` — MCP client: stdio via the fake server (allow-listed by absolute path), streamable HTTP via
 - `backend/tests/test_multi_seed_aggregation.py` — Tests for Quality-Lift phase 1, slice 2 — multi-seed dispatch + aggregation.
 - `backend/tests/test_multi_seed_gate_variance.py` — Tests for Quality-Lift phase 1, slice 3 — variance-aware gate evaluator.
 - `backend/tests/test_multi_seed_schema.py` — Tests for Quality-Lift phase 1, slice 1 — multi-seed schema foundation.
 - `backend/tests/test_multi_seed_variance_nudge.py` — Quality-Lift phase 7 slice 3 — Coach Mode multi-seed variance nudge.
 - `backend/tests/test_nl2pipeline.py` — Tests for natural language to pipeline recipe creation.
+- `backend/tests/test_openapi_tools.py` — OpenAPI 3.0 / 3.1 -> tool conversion.
 - `backend/tests/test_page_furniture.py` — Page furniture: repeated page headers / footers / page numbers are dropped
 - `backend/tests/test_paired_comparison_stats.py` — Paired before/after evidence: row counts + "is it more than noise?".
 - `backend/tests/test_pareto_frontier.py` — Unit tests for the model-sweep Pareto frontier annotation (Epic C).
@@ -1128,6 +1142,9 @@ session-start guidance.
 - `backend/tests/test_template_synth_backend.py` — The template backend — a deterministic stand-in for a generation / judge
 - `backend/tests/test_theme5_epic1_video_flow_cli.py` — Theme 5 Epic 1 — brewslm CLI gap-fill commands for the 11-video flow.
 - `backend/tests/test_tokenization_analyze_splits.py` — V3 of the ML-native visualisations arc — POST /tokenization/analyze-splits.
+- `backend/tests/test_tool_call_scoring.py` — Tool-call scoring unit tests: extraction variants, validity against a catalog, argument match,
+- `backend/tests/test_tool_catalog.py` — Tool catalog: store / version / flags / history / secrets / API / domain-pack hookup / dry-run safety.
+- `backend/tests/test_tool_scoring_acceptance.py` — Acceptance: tool-call scoring end to end. A tool catalog is imported from the fake MCP server over
 - `backend/tests/test_train_script_standalone.py` — ``scripts/train.py`` is launched as a standalone script by the training
 - `backend/tests/test_train_split_loading.py` — ``scripts/train.py`` loads the train and validation JSONL files in separate
 - `backend/tests/test_train_token_classification.py` — Token classification for span extraction — the pure parts:
@@ -1207,6 +1224,7 @@ session-start guidance.
 - `frontend/src/components/data/SynthReviewQueue.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SyntheticPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/TaskShapeConfirmCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/ToolCatalogCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/deployment/DeployabilityScoreCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/deployment/DeployedVersionsList.test.tsx` — _(no docstring)_
 - `frontend/src/components/deployment/DriftPanel.test.tsx` — _(no docstring)_
@@ -1234,6 +1252,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPanel.spanset.test.tsx` — Phase 5.3.4b — Sample Predictions card in span_set scoring mode.
 - `frontend/src/components/evaluation/EvalPanel.structuredPlan.test.tsx` — EvalPanel in structured_plan scoring mode: metrics block + per-row view, no confusion matrix.
 - `frontend/src/components/evaluation/EvalPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/EvalPanel.toolCall.test.tsx` — EvalPanel in tool_call scoring mode: standalone panel + row view, no confusion matrix.
 - `frontend/src/components/evaluation/EvalPanel.workflows.test.tsx` — Results workflows (Epic U phase U3): the one-page panel splits by
 - `frontend/src/components/evaluation/EvalSummaryCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ExternalBenchmarksPanel.test.tsx` — _(no docstring)_
@@ -1256,6 +1275,8 @@ session-start guidance.
 - `frontend/src/components/evaluation/StructuredPlanBackendShape.test.tsx` — Feeds the panel and the row view a payload shaped by the G6 contract: the metrics follow
 - `frontend/src/components/evaluation/StructuredPlanMetricsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/ToolCallBackendShape.test.tsx` — Feeds the tool-call components a payload shaped by the G7 contract: the `tools` block follows
+- `frontend/src/components/evaluation/ToolCallMetricsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalLabel.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalSplit.test.ts` — _(no docstring)_
 - `frontend/src/components/export/ExportPanel.stages.test.tsx` — Ship stages (Epic U phase U5): the export panel splits by ``stage`` —
@@ -1301,6 +1322,7 @@ session-start guidance.
 - `frontend/src/components/training/RemediationConfigCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/StructuredPlanConfigCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TokenLengthDistributionPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/ToolScoringConfigCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainAnywayButton.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainForm.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainabilityForecastPanel.test.tsx` — _(no docstring)_

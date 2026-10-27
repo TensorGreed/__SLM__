@@ -1,0 +1,5 @@
+.ts-config__group { margin: var(--space-sm) 0 0; padding: var(--space-sm); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+.ts-config__group legend { font-size: var(--font-size-sm); color: var(--text-secondary); padding: 0 var(--space-xs); }
+.ts-config__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); margin: var(--space-xs) 0; }
+.ts-config__sub { display: block; font-size: var(--font-size-sm); color: var(--text-tertiary); }
+.ts-config__errors { margin: var(--space-xs) 0; padding-left: var(--space-md); color: var(--color-error); font-size: var(--font-size-sm); }

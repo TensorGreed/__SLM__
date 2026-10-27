@@ -120,6 +120,8 @@ export function metricUnit(metricId: string | null | undefined): string {
     if (id === 'accuracy') return 'accuracy';
     if (id === 'remediation_pass_rate') return 'remediation pass rate';
     if (id === 'structured_plan_pass_rate') return 'plan pass rate';
+    if (id === 'tool_call_pass_rate') return 'tool-call pass rate';
+    if (id === 'tool_call_valid_rate') return 'valid tool-call rate';
     return id || 'score';
 }
 
@@ -130,6 +132,8 @@ export function metricDisplayName(metricId: string | null | undefined): string {
     if (id === 'judge_correct') return 'judge: answer correct';
     if (id === 'remediation_pass_rate') return 'remediation pass rate';
     if (id === 'structured_plan_pass_rate') return 'plan pass rate';
+    if (id === 'tool_call_pass_rate') return 'tool-call pass rate';
+    if (id === 'tool_call_valid_rate') return 'valid tool-call rate';
     return id;
 }
 

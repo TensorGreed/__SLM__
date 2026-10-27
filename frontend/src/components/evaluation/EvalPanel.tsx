@@ -16,6 +16,7 @@ import { Term } from '../shared/Term';
 import ClassificationChartsPanel from './ClassificationChartsPanel';
 import RemediationMetricsPanel, { RemediationRowView, isRemediationMetrics, isRemediationRow, type RemediationMetrics, type RemediationRow } from './RemediationMetricsPanel';
 import StructuredPlanMetricsPanel, { StructuredPlanRowView, isStructuredPlanMetrics, isStructuredPlanRow, type StructuredPlanMetrics, type StructuredPlanRow } from './StructuredPlanMetricsPanel';
+import ToolCallMetricsPanel, { ToolCallRowView, isToolCallMetrics, isToolCallRow, type ToolCallMetrics, type ToolCallRow } from './ToolCallMetricsPanel';
 import FindingSetMetricsPanel, { FindingSetRowView, isFindingSetMetrics, type FindingSetMetrics, type FindingSetRow } from './FindingSetMetricsPanel';
 import FieldMatchMetricsPanel, { hasFieldMatchBreakdown, type FieldMatchMetrics } from './FieldMatchMetricsPanel';
 import './ClassificationChartsPanel.css';
@@ -121,7 +122,7 @@ interface EvalMetrics {
     overall_em?: number | null;
 }
 
-interface PredictionPreviewRow extends FindingSetRow, RemediationRow, StructuredPlanRow {
+interface PredictionPreviewRow extends FindingSetRow, RemediationRow, StructuredPlanRow, ToolCallRow {
     prompt?: string;
     reference?: string;
     prediction?: string;
@@ -2049,7 +2050,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                             so projects with both gold-dev and gold-test results show two
                             distinct charts. */}
                         {evalResults
-                            .filter((r) => !isFindingSetMetrics(r.metrics) && !isRemediationMetrics(r.metrics) && !isStructuredPlanMetrics(r.metrics) && r.metrics?.per_class && Object.keys(r.metrics.per_class).length > 0)
+                            .filter((r) => !isFindingSetMetrics(r.metrics) && !isRemediationMetrics(r.metrics) && !isStructuredPlanMetrics(r.metrics) && !isToolCallMetrics(r.metrics) && r.metrics?.per_class && Object.keys(r.metrics.per_class).length > 0)
                             .map((r) => (
                                 <ClassificationChartsPanel
                                     key={`cls-charts-${r.id}`}
@@ -2093,6 +2094,17 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 <StructuredPlanMetricsPanel
                                     key={`sp-metrics-${r.id}`}
                                     metrics={r.metrics as unknown as StructuredPlanMetrics}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                />
+                            ))}
+
+                        {/* Tool-call evals (tool_call): pass rate, tool pick, validity against the catalog. */}
+                        {evalResults
+                            .filter((r) => isToolCallMetrics(r.metrics))
+                            .map((r) => (
+                                <ToolCallMetricsPanel
+                                    key={`tc-metrics-${r.id}`}
+                                    metrics={r.metrics as unknown as ToolCallMetrics}
                                     provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
                                 />
                             ))}
@@ -2336,6 +2348,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                         </div>
                                                     </details>
                                                 )}
+                                                {!hasStructured && isToolCallRow(row) && (
+                                                    <ToolCallRowView row={row} />
+                                                )}
                                                 {hasStructured && (
                                                     <div className="eval-sample-predictions-structured">
                                                         <span
@@ -2394,6 +2409,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                         )}
                                                         {isStructuredPlanRow(row) && (
                                                             <StructuredPlanRowView row={row} />
+                                                        )}
+                                                        {isToolCallRow(row) && (
+                                                            <ToolCallRowView row={row} />
                                                         )}
                                                         {isSpanSetMode &&
                                                             (matchedEntities.length > 0 ||

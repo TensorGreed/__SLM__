@@ -855,3 +855,12 @@ describe('NotificationBell synth rejects', () => {
         expect(jobOutcomeSummary(none as never)).not.toContain('rejected');
     });
 });
+
+describe('NotificationBell tool catalog import', () => {
+    it('summarises the imported tool count with the catalog version and source', () => {
+        const job = jobFixture({ id: 90, kind: 'tool_catalog_import', status: 'succeeded', project_id: 4, result: { catalog: { tools: [{ name: 'a' }, { name: 'b' }], version: 'a1b2c3d4e5f6', source: { kind: 'mcp_http' } } } });
+        expect(jobOutcomeSummary(job as never)).toBe('2 tools imported from mcp_http (catalog version a1b2c3d4e5f6)');
+        const bare = jobFixture({ id: 91, kind: 'tool_catalog_import', status: 'succeeded', project_id: 4, result: {} });
+        expect(jobOutcomeSummary(bare as never)).toBeNull();
+    });
+});

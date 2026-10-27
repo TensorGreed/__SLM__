@@ -1,0 +1,22 @@
+.tc-metrics { margin-top: var(--space-md); }
+.tc-metrics__title { margin: 0 0 var(--space-xs); font-size: 1rem; color: var(--text-primary); }
+.tc-metrics__h4 { margin: var(--space-md) 0 var(--space-xs); font-size: 0.9rem; color: var(--text-primary); }
+.tc-metrics__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--space-sm); margin: var(--space-sm) 0 0; }
+.tc-metrics__grid dt { font-size: var(--font-size-sm); color: var(--text-secondary); }
+.tc-metrics__grid dd { margin: 0; font-family: var(--font-mono); color: var(--text-primary); }
+.tc-metrics__sub { display: block; font-family: inherit; font-size: var(--font-size-sm); color: var(--text-tertiary); }
+.tc-metrics__table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+.tc-metrics__table th,
+.tc-metrics__table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--border-default); }
+.tc-metrics__list { margin: 0; padding-left: var(--space-md); font-size: var(--font-size-sm); color: var(--text-secondary); }
+
+.tcr__chips { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin: var(--space-xs) 0; padding: 0; list-style: none; }
+.tcr__chip { padding: 1px 8px; border: 1px solid var(--border-default); border-radius: 999px; font-size: var(--font-size-sm); color: var(--text-secondary); }
+.tcr__chip.is-pass { color: var(--color-success); border-color: var(--color-success); }
+.tcr__chip.is-fail { color: var(--color-error); border-color: var(--color-error); }
+.tcr__table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); margin-bottom: var(--space-xs); }
+.tcr__table th,
+.tcr__table td { padding: 2px 8px; text-align: left; border-bottom: 1px solid var(--border-default); font-family: var(--font-mono); }
+.tcr__table td.is-fail { color: var(--color-error); }
+.tcr__err { display: block; color: var(--color-error); }
+.tcr__list { margin: 0 0 var(--space-xs); padding-left: var(--space-md); font-size: var(--font-size-sm); color: var(--text-secondary); }

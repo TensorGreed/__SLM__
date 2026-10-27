@@ -585,10 +585,13 @@ def _validate_artifacts(ctx: _Ctx, raw: dict, manifest: dict, parsed: Parsed, su
                 if not isinstance(content, (dict, list)):
                     ctx.err("invalid_tool_catalog", got[0], "A tool catalog must be a mapping or a list.")
                 else:
-                    if isinstance(content, list):
-                        ids = [str(i["id"]) for i in content if isinstance(i, dict) and "id" in i]
-                        for dup in sorted({i for i in ids if ids.count(i) > 1}):
-                            ctx.err("duplicate_id", got[0], f"Duplicate tool id {dup!r}.")
+                    from app.services.tool_catalog_service import check_pack_tools
+
+                    tool_errors, tool_warnings = check_pack_tools(content)
+                    for e in tool_errors:
+                        ctx.err(e["code"], got[0], e["message"])
+                    for w in tool_warnings:
+                        ctx.warn(w["code"], got[0], w["message"])
                     parsed.tool_catalog = content
                     parsed.has_tool_catalog = True
                     summary["tool_catalog"] = True
@@ -1174,6 +1177,18 @@ async def instantiate_pack(
                 "rubrics": [dict(r) for r in parsed.rubrics],
                 "tool_catalog": parsed.tool_catalog if parsed.has_tool_catalog else None,
             })
+            if parsed.has_tool_catalog:
+                from app.services import tool_catalog_service as tcs
+
+                pack_tools = tcs.tools_from_pack(parsed.tool_catalog)
+                if pack_tools:
+                    try:
+                        tcs.set_catalog_tools(
+                            project, pack_tools,
+                            {"kind": "domain_pack", "pack_id": pack.pack_id, "version": version},
+                        )
+                    except tcs.ToolCatalogError as exc:
+                        warnings.append(_issue("tool_catalog_not_applied", "tool_catalog", f"The pack's tool catalog was kept as an artifact but not applied: {exc}"))
             flagged = next((s for s in parsed.schemas if s.get("apply_as_output_schema")), None)
             if flagged is not None:
                 from app.services.recipe_apply_service import OutputSchemaNotSupportedError, set_recipe_output_schema
@@ -1383,7 +1398,31 @@ async def export_project_pack_report(
             rel = f"schemas/{_file_slug(s['id'])}.json"
             files[rel] = json.dumps(s["schema"], indent=2, ensure_ascii=False).encode("utf-8")
             manifest["schemas"].append({"id": s["id"], "path": rel, "apply_as_output_schema": bool(s.get("apply_as_output_schema"))})
-    if artifacts.get("tool_catalog") is not None:
+    from app.services import tool_catalog_service as tcs
+
+    catalog_state = tcs.raw_state(runtime)
+    if catalog_state is not None and artifacts.get("tool_catalog") is not None:
+        # The catalog still equals what the pack shipped: export the pack's own text form unchanged.
+        try:
+            shipped, _ = tcs.normalize_tools(tcs.tools_from_pack(artifacts["tool_catalog"]), strict=False)
+            if tcs._sha12(shipped) == catalog_state.get("version"):
+                catalog_state = None
+        except tcs.ToolCatalogError:
+            pass
+    if catalog_state is not None:
+        exported = []
+        for t in catalog_state["tools"]:
+            item: dict[str, Any] = {"name": t["name"], "description": t.get("description") or "", "inputSchema": t["input_schema"]}
+            if t.get("annotations"):
+                item["annotations"] = t["annotations"]
+            else:  # a hand-entered tool: carry its top-level flags as MCP hints
+                derived = {k: t[f] for f, k in (("read_only", "readOnlyHint"), ("destructive", "destructiveHint")) if isinstance(t.get(f), bool)}
+                if derived:
+                    item["annotations"] = derived
+            exported.append(item)
+        files["tool_catalog.yaml"] = _dump_yaml({"tools": exported})
+        manifest["tool_catalog"] = {"path": "tool_catalog.yaml"}
+    elif artifacts.get("tool_catalog") is not None:
         files["tool_catalog.yaml"] = _dump_yaml(artifacts["tool_catalog"])
         manifest["tool_catalog"] = {"path": "tool_catalog.yaml"}
 

@@ -1,0 +1,30 @@
+/* Tool catalog card — layout classes (tokens only). */
+.tc-card { margin-top: var(--space-md); }
+.tc-header { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
+.tc-chip {
+    padding: 2px var(--space-sm);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--bg-subtle);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+.tc-group { margin: var(--space-sm) 0 0; padding: var(--space-sm); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+.tc-group legend { font-size: var(--font-size-sm); color: var(--text-secondary); padding: 0 var(--space-xs); }
+.tc-tabs { display: flex; gap: var(--space-xs); flex-wrap: wrap; margin-bottom: var(--space-sm); }
+.tc-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); margin: var(--space-xs) 0; }
+.tc-textarea { width: 100%; min-height: 5em; font-family: var(--font-mono); font-size: var(--font-size-sm); }
+.tc-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); margin-top: var(--space-sm); }
+.tc-table th,
+.tc-table td { padding: 4px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border-default); }
+.tc-sub { display: block; color: var(--text-tertiary); font-size: var(--font-size-sm); }
+.tc-sig { white-space: normal; word-break: break-word; }
+.tc-badge { padding: 1px 8px; border: 1px solid var(--border-default); border-radius: 999px; font-size: var(--font-size-sm); }
+.tc-badge--read-only { color: var(--color-success); border-color: var(--color-success); }
+.tc-badge--mutating { color: var(--color-warning); border-color: var(--color-warning); }
+.tc-badge--destructive { color: var(--color-error); border-color: var(--color-error); }
+.tc-error,
+.tc-bad { color: var(--color-error); font-size: var(--font-size-sm); }
+.tc-h4 { margin: var(--space-md) 0 var(--space-xs); font-size: 0.9rem; color: var(--text-primary); }
+.tc-history { list-style: none; margin: 0; padding: 0; }
+.tc-history li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); padding: var(--space-xs) 0; font-size: var(--font-size-sm); }

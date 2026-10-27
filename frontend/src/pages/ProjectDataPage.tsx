@@ -22,6 +22,7 @@ import DatasetPrepPanel from '../components/data/DatasetPrepPanel';
 import LabelTaxonomyCard from '../components/data/LabelTaxonomyCard';
 import LabellingConventionsCard, { isSpanProject } from '../components/data/LabellingConventionsCard';
 import TaskShapeCard from '../components/data/TaskShapeCard';
+import ToolCatalogCard from '../components/data/ToolCatalogCard';
 import CoachNotices from '../components/coach/CoachNotices';
 import StepHelp from '../components/coach/StepHelp';
 import type { CoachStage } from '../api/coach';
@@ -166,6 +167,7 @@ export default function ProjectDataPage() {
                     <div className="stage-page__stack">
                         <TaskShapeCard projectId={projectId} />
                         <LabelTaxonomyCard projectId={projectId} />
+                        <ToolCatalogCard projectId={projectId} />
                         {isSpanProject(project) && <LabellingConventionsCard projectId={projectId} />}
                         <GoldSetPanel projectId={projectId} onNextStep={goToNextTab} extraDetails={labelsDetails} openSection={openSection} />
                     </div>

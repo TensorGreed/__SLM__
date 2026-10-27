@@ -206,11 +206,16 @@ def _baseline_judge_matches(result: EvalResult, judge_label: str | None) -> bool
     return str(judge.get("judge") or "") == judge_label
 
 
-def _baseline_scoring_matches(result: EvalResult, fingerprint: str | None) -> bool:
-    """A cached remediation / structured-plan result stands only if it was scored under the current scoring config."""
+def _baseline_scoring_matches(result: EvalResult, fingerprint: str | None, tool_call_fingerprint: str | None = None) -> bool:
+    """A cached remediation / structured-plan result stands only if it was scored under the current scoring config;
+    a ``tool_call`` result only if its ``tool_call_fingerprint`` (handler version + catalog + flags + settings)
+    equals the current one (a result without one is never reused)."""
+    metrics = result.metrics if isinstance(result.metrics, dict) else {}
+    if metrics.get("scoring_mode") == "tool_call":
+        if tool_call_fingerprint is None or metrics.get("tool_call_fingerprint") != tool_call_fingerprint:
+            return False
     if fingerprint is None:
         return True
-    metrics = result.metrics if isinstance(result.metrics, dict) else {}
     return fingerprint in (metrics.get("remediation_fingerprint"), metrics.get("structured_plan_fingerprint"))
 
 
@@ -242,6 +247,7 @@ async def _reusable_baseline_result(
     judge_label: str | None = None,
     decoding: str = "neutral",
     scoring_fingerprint: str | None = None,
+    tool_call_fingerprint: str | None = None,
 ) -> EvalResult | None:
     """Newest baseline result on the test split decoded as ``decoding``, if
     newer than the split file (base models are deterministic under greedy
@@ -273,7 +279,7 @@ async def _reusable_baseline_result(
             continue
         if not _baseline_decoding_matches(candidate, decoding):
             continue
-        if scoring_fingerprint is not None and not _baseline_scoring_matches(candidate, scoring_fingerprint):
+        if not _baseline_scoring_matches(candidate, scoring_fingerprint, tool_call_fingerprint):
             continue
         return candidate
     return None
@@ -363,6 +369,17 @@ async def _structured_plan_fingerprint_for(db: AsyncSession, project_id: int, ju
         return "unavailable"
 
 
+async def _tool_call_fingerprint_for(db: AsyncSession, project_id: int) -> str | None:
+    """The current tool-call scoring fingerprint (a cached ``tool_call`` baseline must carry the same one)."""
+    try:
+        from app.services.tool_call_scoring import tool_call_fingerprint
+
+        project = await db.get(Project, project_id)
+        return tool_call_fingerprint(getattr(project, "runtime_config", None))
+    except Exception:  # noqa: BLE001 - cannot fingerprint: never reuse blindly
+        return None
+
+
 async def _baseline_bar(
     db: AsyncSession,
     *,
@@ -391,8 +408,10 @@ async def _baseline_bar(
     scoring_fp = await _remediation_fingerprint_for(db, project_id) or await _structured_plan_fingerprint_for(
         db, project_id, judge_label
     )
+    tool_fp = await _tool_call_fingerprint_for(db, project_id)
     neutral = await _reusable_baseline_result(
-        db, baseline_exp, project_id, judge_label=judge_label, scoring_fingerprint=scoring_fp
+        db, baseline_exp, project_id, judge_label=judge_label, scoring_fingerprint=scoring_fp,
+        tool_call_fingerprint=tool_fp,
     )
     reused = neutral is not None
     if neutral is None:
@@ -413,7 +432,7 @@ async def _baseline_bar(
     else:
         own_result = await _reusable_baseline_result(
             db, baseline_exp, project_id, judge_label=judge_label, decoding=MODEL_DECODING,
-            scoring_fingerprint=scoring_fp,
+            scoring_fingerprint=scoring_fp, tool_call_fingerprint=tool_fp,
         )
         if own_result is None:
             reused = False

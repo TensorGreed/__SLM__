@@ -88,5 +88,6 @@ This section is auto-generated from the FastAPI OpenAPI spec. For curated narrat
 | [Task Shape](task-shape.md) | 2 |
 | [Timeline](timeline.md) | 1 |
 | [Tokenization](tokenization.md) | 3 |
+| [Tool Scoring](tool-scoring.md) | 2 |
 | [Training](training.md) | 88 |
 | [Training Config Gaps](training-config-gaps.md) | 4 |

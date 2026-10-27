@@ -14,6 +14,7 @@
  */
 
 import './StructuredPlanMetricsPanel.css';
+import { ToolCallMetricsSection, hasToolsBlock, type ToolsBlock } from './ToolCallMetricsPanel';
 
 export interface StructuredPlanSchemaError {
     pointer?: string;
@@ -72,6 +73,8 @@ export interface StructuredPlanMetrics {
     rubric?: StructuredPlanRubricBlock | null;
     rubric_pass_rate?: number | null;
     rubric_mean_score?: number | null;
+    /** Present when the project has a tool catalog and tool scoring is on. */
+    tools?: ToolsBlock | null;
     total?: number;
     correct?: number;
 }
@@ -274,6 +277,12 @@ export default function StructuredPlanMetricsPanel({ metrics, provenance }: Pane
                             })}
                         </tbody>
                     </table>
+                </div>
+            )}
+            {hasToolsBlock(metrics) && metrics.tools && (
+                <div data-testid="sp-tools">
+                    <h4 className="sp-metrics__h4">Tool calls</h4>
+                    <ToolCallMetricsSection tools={metrics.tools} />
                 </div>
             )}
         </section>

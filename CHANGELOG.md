@@ -1,5 +1,14 @@
 # Changelog
 
+### Tool catalog (MCP / OpenAPI) and tool-call scoring (October 27, 2026)
+
+- **Hardening**: a stored secret is reused only for the same kind and endpoint; user env names that change how a binary loads code are refused; unknown destructiveness fails closed; `tool-call-json` now trains on the canonical call JSON (`{"tool": ..., "args": ...}`) instead of the tool result, matching what `tool_calling` scoring reads; cached `tool_calling` base results are reused only under the same tool-call scoring fingerprint.
+
+- **Tool catalog**: a project keeps a versioned list of the tools a model may call, imported from an MCP server (stdio or streamable HTTP), an OpenAPI document, entered by hand or shipped in a domain pack. Per-tool allowed / read-only flags (a destructive tool can never be made read-only), history with restore, secrets kept only in the project secret store. Stdio launches a configured process, so it is off until an administrator allow-lists the binary (`MCP_STDIO_ALLOWED_BINARIES`). See [Tool catalog](slm-docs/docs/extensions/tool-catalog.md).
+- **Tool-call scoring**: `tool_call_valid` (known, allowed tool, arguments valid against its schema), `tool_args_match` (against the answer key, typed) and `plan_order_valid` (unique ids, existing dependencies, no cycles). A `structured-plan` row's tool verdict folds into its pass (`metrics.tools`, `tool_call_valid_rate`, `plan_order_valid_rate`); the prompt lists the allowed tools, identical for training and eval, and the scoring fingerprint follows the catalog version and flags. Settings API `GET` / `PUT /api/projects/{id}/tool-scoring-config`.
+- **`tool_calling` profile**: a task handler scoring one call per row, headline `tool_call_pass_rate` (also `tool_selection_accuracy`), paired with the base model; the `tool-call-json` adapter prepends the same tool block when a catalog exists. Projects without a catalog keep their old prompts and scores.
+- **Dry run** (admin switch `MCP_DRY_RUN_ENABLED`, off by default): valid read-only calls can be executed once against the live MCP server after scoring (informational; at most 50 per eval). Mutating tools are never executed.
+
 ### Structured-plan recipe, JSON-Schema bundles and a rubric judge (October 27, 2026)
 
 - Added the **Structured plan** recipe (`structured-plan`, structured extraction, scoring mode `structured_plan`): a scenario (and optional reference passages) in, one JSON plan out that must validate against a JSON Schema bundle you upload (several files joined by `$ref`, resolved inside the bundle only, no network). Suggested base `Qwen/Qwen2.5-7B-Instruct`.

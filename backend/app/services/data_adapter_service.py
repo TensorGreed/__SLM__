@@ -1228,9 +1228,26 @@ def _map_tool_call_json(record: dict[str, Any], config: dict[str, Any]) -> dict[
     if not prompt or not tool_name:
         return None
 
-    answer = tool_result or f"Tool `{tool_name}` executed."
-    rendered = f"User: {prompt}\nTool Call: {tool_name}({tool_args_json or '{}'})\nAssistant: {answer}"
-    return {
+    # A tool-calling model is trained to emit the CALL: the target is the canonical call JSON (the same
+    # shape the eval gold uses), whatever the tool result was. The result stays its own field and the
+    # `text` transcript below keeps the full exchange.
+    from app.services.tool_call_scoring import _args_of
+
+    call_args = _args_of(tool_args_json)
+    call_args = call_args if isinstance(call_args, dict) else ({} if not call_args else call_args)
+    answer = json.dumps({"tool": tool_name, "args": call_args}, sort_keys=False, ensure_ascii=False)
+    transcript_answer = tool_result or f"Tool `{tool_name}` executed."
+    rendered = f"User: {prompt}\nTool Call: {tool_name}({tool_args_json or '{}'})\nAssistant: {transcript_answer}"
+    tool_block = config.get("tool_block")
+    if isinstance(tool_block, str) and tool_block.strip():
+        # A project with a tool catalog: the tool block leads the prompt (same text as the eval prompt).
+        from app.services.tool_call_scoring import tool_prompt
+
+        rendered = tool_prompt(tool_block.strip(), rendered)
+        user_prompt, prompt = prompt, tool_prompt(tool_block.strip(), prompt)
+    else:
+        user_prompt = None
+    mapped = {
         "text": rendered,
         "question": prompt,
         "answer": answer,
@@ -1240,6 +1257,9 @@ def _map_tool_call_json(record: dict[str, Any], config: dict[str, Any]) -> dict[
         "source_text": prompt,
         "target_text": answer,
     }
+    if user_prompt is not None:
+        mapped["user_prompt"] = user_prompt  # the prompt without the tool block (eval re-renders the live one)
+    return mapped
 
 
 def _validate_tool_call_json(mapped_records: list[dict[str, Any]], _config: dict[str, Any]) -> dict[str, Any]:
@@ -1396,7 +1416,7 @@ def _map_structured_plan(
             int(cfg["project_id"]), source, cfg.get("top_k") or spp.DEFAULT_TOP_K, retrieval_cfg=cfg.get("retrieval")
         )
         retrieved = True
-    prompt = spp.build_structured_plan_prompt(source, passages, bundle)
+    prompt = spp.build_structured_plan_prompt(source, passages, bundle, tool_block=cfg.get("tool_block"))
     out: dict[str, Any] = {
         "text": source,
         "answer": target,

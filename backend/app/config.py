@@ -127,6 +127,20 @@ class Settings(BaseSettings):
     SYNTH_COMMAND_ENV_PASSTHROUGH: str = ""
     SYNTH_COMMAND_PLAYBOOK_ROWS_PER_CALL: int = 25
 
+    # ── Tool catalog: MCP / OpenAPI import ──────────────────────────────
+    # Stdio MCP servers launch a user-configured process, so stdio is DISABLED
+    # until the admin lists the binary here (same match rules as
+    # SYNTH_COMMAND_ALLOWED_BINARIES: bare name vs bare argv[0], absolute path
+    # by realpath). Env passthrough names are forwarded on top of the minimal env.
+    MCP_STDIO_ALLOWED_BINARIES: str = ""
+    MCP_STDIO_ENV_PASSTHROUGH: str = ""
+    MCP_HTTP_TIMEOUT_S: float = 30.0
+    # Local lab servers are the main use, so private hosts are allowed by default;
+    # false refuses loopback / private / link-local resolved addresses.
+    MCP_HTTP_ALLOW_PRIVATE_HOSTS: bool = True
+    # Dry-run calls only ever reach effectively read-only tools of an MCP source.
+    MCP_DRY_RUN_ENABLED: bool = False
+
     # ── Hard API budget (metered cloud calls only) ──────────────────────
     # Account-wide cap in US dollars per calendar month (UTC) across all
     # projects; unset = no account-wide cap. Local models and subscription

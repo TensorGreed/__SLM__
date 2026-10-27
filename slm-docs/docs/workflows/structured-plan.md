@@ -44,6 +44,19 @@ Metrics: `structured_plan_pass_rate` (the headline; also `exact_match`), `json_v
 
 The rubric judge grades every row, including rows that already failed the schema or pointer checks (so the per-criterion table covers all of them); it only changes the pass for rows whose checks passed. When the schema was saved differently from the one the split was prepared with, the eval prompts and scores with the current schema and the metrics carry `schema_changed_since_prep`. The rubric judge is chosen the same way as the answer judge (a local model first, cloud only when configured). With no judge reachable the rubric block reports `no_judge` and the pass ignores the rubric.
 
+## Tool calls
+
+When the project has a [tool catalog](../extensions/tool-catalog.md), a plan can also be checked as a sequence of tool calls. The plan schema keeps its steps in an array (default `/steps`); each step names a tool (`tool`), its arguments (`args`), an id (`step`) and the ids it depends on (`depends_on`). Set the pointer and the field names under **Train > Tool scoring** (`GET` / `PUT /api/projects/{id}/tool-scoring-config`), or leave the defaults.
+
+- **Prompt**: the allowed tools are listed (one signature per line, read-only / mutating / destructive tags) after the passages and before the schema. Training and eval use the same builder, so the text is byte-identical; a project without a catalog gets exactly the old prompt.
+- **`tool_call_valid`**: every step names a tool that exists and is allowed in the catalog and its arguments validate against that tool's input schema. An empty plan is valid only when the answer key's plan is empty.
+- **`tool_args_match`**: against the answer key, step by step: same tool, and every argument key (all keys in the key's arguments, or the `arg_keys` you list) matches by type.
+- **`plan_order_valid`**: step ids are unique, every dependency names a step that exists, and there are no cycles.
+- A row passes when every enabled mode that applies is true; the tool verdict folds into the structured-plan pass (`structured_plan_pass_rate`, `correct`, `exact_match` are recomputed) and `metrics.tools` carries the rates, a per-tool table (`calls`, `valid`, `invalid_args`, `not_allowed`), unknown tool names, the top errors and the catalog version, flags version and source. `tool_call_valid_rate`, `tool_args_match_rate` and `plan_order_valid_rate` are top-level metrics for gates and lift. A cached base-model result is reused only when the catalog version, its flags and these settings are unchanged.
+- **Dry run** (off by default; needs the admin switch `MCP_DRY_RUN_ENABLED`): after scoring, the valid, read-only calls of an MCP-backed catalog are executed once against the server (at most 50 per eval, in order) and the outcome is shown on each call. Mutating tools are never executed ("mutating: never executed"). The dry run is informational: it never changes a verdict and a failure never fails the eval.
+
+The `tool_calling` task profile uses the same scorer for one call per row: the headline is `tool_call_pass_rate` (right tool, valid against the catalog when there is one, arguments match), with `tool_selection_accuracy` beside it. `{"tool": "none"}` is an explicit "no call". Without a catalog only selection and argument match are scored. The `tool-call-json` adapter puts the same tool block ahead of the prompt when the project has a catalog.
+
 ## Data
 
 **Data > Generate: scenario grid** writes rows from a matrix of dimensions (for example region by tier by team): see the [synthetic data workflow](./data-ingestion.md). Every answer is validated against the saved schema before it is accepted.

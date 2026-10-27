@@ -2553,6 +2553,8 @@ def _prediction_failed(prediction: dict[str, Any]) -> bool:
     if isinstance(prediction.get("row_structured_plan_pass"), bool):
         # A plan passes or fails on its schema / pointer / rubric checks.
         return not prediction["row_structured_plan_pass"]
+    if isinstance(prediction.get("row_tool_call_pass"), bool):
+        return not prediction["row_tool_call_pass"]
     judge_score = prediction.get("row_judge_score")
     if isinstance(judge_score, (int, float)) and not isinstance(judge_score, bool):
         # A judged long answer: wrong or partial is a failure; exact match
@@ -2594,6 +2596,7 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
     span_fn: list[int] = []
     rem_pass: list[float | None] = []
     plan_pass: list[float | None] = []
+    tool_pass: list[float | None] = []
     for p in predictions:
         if not isinstance(p, dict):
             continue
@@ -2615,6 +2618,9 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         plan_pass.append(
             float(p["row_structured_plan_pass"]) if isinstance(p.get("row_structured_plan_pass"), bool) else None
         )
+        tool_pass.append(
+            float(p["row_tool_call_pass"]) if isinstance(p.get("row_tool_call_pass"), bool) else None
+        )
         row_f1 = p.get("row_f1")
         f1.append(float(row_f1) if isinstance(row_f1, (int, float)) and not isinstance(row_f1, bool) else None)
         row_judge = p.get("row_judge_score")
@@ -2634,6 +2640,8 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         scores["remediation_pass"] = rem_pass
     if any(value is not None for value in plan_pass):
         scores["structured_plan_pass"] = plan_pass
+    if any(value is not None for value in tool_pass):
+        scores["tool_call_pass"] = tool_pass
     return scores
 
 
@@ -2667,8 +2675,57 @@ async def _apply_structured_plan_live_config(db: AsyncSession, project_id: int, 
         "retrieve_passages": cfg["retrieve_passages"],
         "top_k": cfg["top_k"],
         "retrieval": retrieval_settings(project) if project is not None else stamp.get("retrieval"),
+        "tool_block": spp.tool_block_for(getattr(project, "runtime_config", None)),
     })
     eval_ctx.manifest["output_schema"]["structured_plan"] = stamp
+
+
+async def _apply_tool_call_live_config(db: AsyncSession, project_id: int, eval_ctx: Any, task_handler: Any) -> None:
+    """A ``tool_calling`` eval prompts with the project's CURRENT tool block (empty without a catalog)."""
+    if getattr(task_handler, "profile_id", None) != "tool_calling":
+        return
+    from app.services import structured_plan_prompt as spp
+    from app.services import tool_call_scoring as tcs
+
+    project = await db.get(Project, project_id)
+    rc = getattr(project, "runtime_config", None)
+    eval_ctx.manifest["tool_block"] = spp.tool_block_for(rc)
+    eval_ctx.manifest["tool_scoring_cfg"] = tcs.normalize_config(tcs.stored_config(rc))
+
+
+async def _apply_tool_scoring(
+    db: AsyncSession,
+    project_id: int,
+    task_handler: Any,
+    predictions: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    heldout_scoring_mode: str | None,
+) -> None:
+    """Score the tool calls of a ``structured_plan`` or ``tool_calling`` eval against the project's tool
+    catalog (no-op without one, or with tool scoring disabled), optionally dry-run read-only calls, and
+    fold the verdicts into the metrics. Never fails the eval."""
+    is_call = getattr(task_handler, "profile_id", None) == "tool_calling"
+    if heldout_scoring_mode != "structured_plan" and not is_call:
+        return
+    from app.services import tool_call_scoring as tcs
+
+    try:
+        project = await db.get(Project, project_id)
+        rc = getattr(project, "runtime_config", None)
+        if is_call:  # stamped even without a catalog, so a cached base result is tied to this scoring
+            metrics["tool_call_fingerprint"] = tcs.tool_call_fingerprint(rc)
+        cfg = tcs.effective_tool_scoring_config(rc)
+        if cfg is None:
+            return
+        mode = "call" if is_call else "plan"
+        block = await asyncio.to_thread(tcs.score_tool_block, predictions, rc, cfg, mode=mode)
+        await tcs.run_dry_run(db, project, predictions, block, cfg)
+        if is_call:
+            tcs.finalize_tool_calls(predictions, metrics, block, cfg)
+        else:
+            tcs.finalize_with_tools(predictions, metrics, block)
+    except Exception as exc:  # noqa: BLE001 - tool scoring must not fail the eval
+        logging.getLogger(__name__).warning("tool-call scoring skipped: %s", exc)
 
 
 async def _prepare_structured_plan_predictions(
@@ -3031,6 +3088,7 @@ async def run_heldout_evaluation(
         experiment_task_type=experiment_task_type,
     )
     await _apply_structured_plan_live_config(db, project_id, eval_ctx)
+    await _apply_tool_call_live_config(db, project_id, eval_ctx, task_handler)
     # Off the event loop: a remediation row without passages is retrieved for (embedding + search).
     pairs = await asyncio.to_thread(
         _load_heldout_pairs,
@@ -3119,6 +3177,7 @@ async def run_heldout_evaluation(
     schema_mismatch = detect_schema_mismatch(predictions)
     if schema_mismatch is not None:
         metrics["schema_mismatch"] = schema_mismatch
+    await _apply_tool_scoring(db, project_id, task_handler, predictions, metrics, heldout_scoring_mode)
     if heldout_scoring_mode == "structured_plan":
         try:
             from app.services.structured_plan_scoring import structured_plan_scoring_fingerprint
@@ -3134,7 +3193,12 @@ async def run_heldout_evaluation(
             raise
         except Exception as exc:  # noqa: BLE001 - a rubric failure must not fail the eval
             logging.getLogger(__name__).warning("structured-plan rubric skipped: %s", exc)
-    if eval_type in ("exact_match", "f1") and answer_judge_enabled and heldout_scoring_mode != "structured_plan":
+    if (
+        eval_type in ("exact_match", "f1")
+        and answer_judge_enabled
+        and heldout_scoring_mode != "structured_plan"
+        and getattr(task_handler, "profile_id", None) != "tool_calling"  # scored deterministically
+    ):
         judge_snapshot = await _safe_judge_answers(
             db, project_id=project_id, task_profile=eval_ctx.task_profile,
             predictions=predictions, judge=answer_judge, scoring_mode=heldout_scoring_mode,
@@ -3246,6 +3310,13 @@ async def run_heldout_evaluation(
             "row_rubric_critical_failed": p.get("row_rubric_critical_failed"),
             "row_rubric_passed": p.get("row_rubric_passed"),
             "row_rubric_status": p.get("row_rubric_status"),
+            # tool-call scoring: per-call verdicts against the tool catalog (structured-plan and tool_calling).
+            "row_tool_results": p.get("row_tool_results"),
+            "row_tools_pass": p.get("row_tools_pass"),
+            "row_tool_call_pass": p.get("row_tool_call_pass"),
+            "row_tool_selection_correct": p.get("row_tool_selection_correct"),
+            "row_tool_args_match": p.get("row_tool_args_match"),
+            "row_tool_calls": p.get("row_tool_calls"),
             "grid_cell": (p.get("plan_row") or {}).get("grid_cell") if isinstance(p.get("plan_row"), dict) else None,
             # Phase 5.3.5: RAGHandler enrichments — the context the
             # model was given, the row's faithfulness score (token

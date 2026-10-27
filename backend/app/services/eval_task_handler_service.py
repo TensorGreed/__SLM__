@@ -1130,7 +1130,7 @@ class StructuredExtractionHandler:
                 int(schema["project_id"]), scenario, cfg.get("top_k") or spp.DEFAULT_TOP_K,
                 retrieval_cfg=cfg.get("retrieval"),
             )
-        prompt = spp.build_structured_plan_prompt(scenario, passages, bundle)
+        prompt = spp.build_structured_plan_prompt(scenario, passages, bundle, tool_block=cfg.get("tool_block"))
         extras: dict[str, Any] = {
             "structured_fields": ["plan_json"],
             "structured_input": scenario,
@@ -3208,6 +3208,100 @@ class Seq2SeqHandler:
         ]
 
 
+# ── ToolCallHandler (tool_calling profile) ────────────────────────────
+
+
+class ToolCallHandler:
+    """Task handler for tool / function calling (``tool_calling`` profile, scoring mode ``tool_call``).
+
+    The prompt is the user text, led by the project's tool block when it has a tool catalog (the
+    ``tool-call-json`` adapter renders the same text for training). Gold is the
+    row fields ``tool_name`` + ``tool_args_json`` when present, else the row ``reference`` parsed as a tool
+    call (``{"tool", "args"}``, a list of them, ``{"name", "arguments"}``). The model's output is read as JSON or as the
+    adapter's ``Tool Call: name({...})`` rendering.
+
+    Metrics: ``tool_selection_accuracy`` (the right tool was named), ``tool_args_match_rate``,
+    headline ``tool_call_pass_rate`` (selection AND args; with a catalog ``evaluation_service`` also
+    requires the call to be valid against it) and ``exact_match`` = ``tool_call_pass_rate``.
+    """
+
+    profile_id: str = "tool_calling"
+    SCORING_MODE: str = "tool_call"
+
+    def _gold(self, row: dict[str, Any], reference: str, cfg: dict[str, Any]) -> list[dict[str, Any]] | None:
+        from app.services import tool_call_scoring as tcs
+
+        # The row's own tool_name / tool_args_json fields win; `reference` (which may be a tool RESULT) is
+        # parsed as a call only when those fields are absent.
+        gold = tcs.gold_calls_from_fields(row.get("tool_name"), row.get("tool_args_json", row.get("tool_args")))
+        if gold is None and reference:
+            gold = tcs.extract_calls(tcs.parse_json_value(reference), cfg, mode="call")
+        return gold
+
+    def build_prompts(self, rows: list[dict[str, Any]], ctx: EvalContext) -> list[BuiltPrompt]:
+        from app.services import tool_call_scoring as tcs
+
+        cfg = tcs.normalize_config((ctx.manifest or {}).get("tool_scoring_cfg"))
+        block = str((ctx.manifest or {}).get("tool_block") or "").strip()
+        built: list[BuiltPrompt] = []
+        for row, bp in zip(rows, GenericHandler().build_prompts(rows, ctx)):
+            gold = self._gold(row, bp.reference, cfg)
+            if gold is None:
+                reference = bp.reference
+            elif not gold:
+                reference = json.dumps({"tool": "none"})
+            else:
+                reference = json.dumps({"tool": gold[0]["tool"], "args": gold[0]["args"]}, ensure_ascii=False) if len(gold) == 1 else json.dumps(
+                    [{"tool": g["tool"], "args": g["args"]} for g in gold], ensure_ascii=False
+                )
+            base = str(row.get("user_prompt") or bp.prompt)
+            extras = dict(bp.extras)
+            extras["tool_gold_calls"] = gold
+            built.append(BuiltPrompt(prompt=tcs.tool_prompt(block, base), reference=reference, extras=extras))
+        return built
+
+    def score(self, predictions: list[dict[str, Any]], ctx: EvalContext) -> dict[str, Any]:
+        from app.services import tool_call_scoring as tcs
+
+        cfg = tcs.normalize_config((ctx.manifest or {}).get("tool_scoring_cfg"))
+        total = len(predictions)
+        n_sel = n_args = n_pass = 0
+        for prediction in predictions:
+            parsed = tcs.parse_call_output(prediction.get("prediction"))
+            pred = tcs.extract_calls(parsed, cfg, mode="call")
+            gold = prediction.get("tool_gold_calls")
+            if not isinstance(gold, list):
+                gold = None
+            if gold is None:
+                sel = args = False
+            elif not gold:
+                sel = args = pred == []
+            else:
+                sel = bool(pred) and len(pred) == len(gold) and all(p["tool"] == g["tool"] for p, g in zip(pred, gold))
+                args = sel and all(tcs.args_match_pair(p, g, cfg["arg_keys"]) for p, g in zip(pred, gold))
+            ok = sel and args
+            n_sel += int(sel)
+            n_args += int(args)
+            n_pass += int(ok)
+            prediction["scoring_mode"] = self.SCORING_MODE
+            prediction["parsed_prediction"] = parsed
+            prediction["row_tool_calls"] = pred
+            prediction["row_tool_selection_correct"] = sel
+            prediction["row_tool_args_match"] = args
+            prediction["row_tool_call_pass"] = ok
+            prediction["row_exact_match"] = 1.0 if ok else 0.0
+        rate = lambda n: round(n / total, 4) if total else 0.0  # noqa: E731
+        return {
+            "scoring_mode": self.SCORING_MODE,
+            "total": total,
+            "correct": n_pass,
+            "exact_match": rate(n_pass),
+            "tool_selection_accuracy": rate(n_sel),
+            "tool_args_match_rate": rate(n_args),
+            "tool_call_pass_rate": rate(n_pass),
+        }
+
+
 # ── Registry + dispatcher ─────────────────────────────────────────────
 
 
@@ -3404,6 +3498,7 @@ register_handler("audio_transcript", AudioTranscriptHandler)
 register_handler("audio_transcription", AudioTranscriptHandler)
 register_handler("speech_to_text", AudioTranscriptHandler)
 # Safety — refusal-rate eval with per-test-type breakdown.
+register_handler("tool_calling", ToolCallHandler)
 register_handler("safety", SafetyHandler)
 register_handler("refusal", SafetyHandler)
 

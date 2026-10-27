@@ -168,7 +168,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   | `seq2seq-pair` | the source text (`question`, i.e. before the Summarize/Translate wrap). Adapter source aliases: source, input, question, prompt, instruction, text, content, article, document, body, passage, dialogue, transcript |
   | `structured-extraction` | `text` (the document; not `structured_output`, not the field-list prompt). Adapter document aliases: text, content, input, question, prompt, document, passage (or `field_mapping` text); a file with none of them (a `narrative` column) is `input_column_unrecognised`, never trained with the gold JSON in the prompt |
   | `classification-label` | `text` (not the label, not the candidate-list prompt). The adapter reads `text, content, input, question, prompt, instruction, sentence, comment, review` (in that order), else a pair joined as `Premise: ..\nHypothesis: ..` / `Sentence 1: ..\nSentence 2: ..` (premise+hypothesis, sentence1+sentence2) so the prompt's `Text:` block shows both sides. SST-2 (`sentence`) and NLI (`premise`+`hypothesis`) work under THIS adapter only; under default-canonical they are keyed by the default text-side aliases below. A row whose text would equal its label (no input column found: the canonical fallback sets text = answer) is rejected (`classification_input_is_label`), never trained. Same for `structured-extraction` when no document column is recognised and the canonical fallback would put the gold JSON in the prompt (`structured_input_contains_gold`). A random split reports such rows in the manifest `include_types_resolution.input_rejected` (the split card shows the count + reasons) and errors when nothing is left. These two rejections fire ONLY when no input column was mapped: an explicit `field_mapping` `text` (else `question`; dotted paths) is read DIRECTLY as the input (`data_adapter_service._mapped_input_text`, ahead of every alias / canonical fallback) for `classification-label` and `structured-extraction`, so `{utterance:"help", intent:"help"}` with a mapping is kept and a saved `{question: X}` preference trains `X`, never `Question: X\nAnswer: <label>`. The mapper sends `text` for these two adapters, `question` for the rest. |
-  | `tool-call-json` | `question` (the user prompt; not tool name / args / result) |
+  | `tool-call-json` | `question` (the user prompt; not tool name / args / result). Training target (`answer` = `target_text`) is the canonical CALL `{"tool": name, "args": {...}}` (json.dumps, key order kept, `ensure_ascii=False`) whenever the row has a tool name, whatever the tool result was; `tool_result` stays its own field and the `text` transcript keeps `Assistant: <result>` |
   | `preference-pair` | `prompt` (not chosen / rejected) |
   | `vision-language-pair` / `audio-transcript` | asset path + `question` (not caption / transcript) |
   | chat rows (`messages` / `conversations`, any adapter) | every non-assistant turn, in order |
@@ -714,3 +714,34 @@ API are in `slm-docs/docs/reference/api/domain-packs.md`; code is `domain_pack_c
   success raises. Accepted rows carry `grid_cell` and `passages`. Never seeded from the test set.
 - Detection: `task_shape_service.structured_recipe_for_rows` returns `structured-plan` for `row_kind: "structured_plan"` or a
   `scenario` beside a `plan_json` object.
+
+## Tool catalog (G7)
+
+The project's callable tools. `services/tool_catalog_service.py` is the single owner of
+`runtime_config["tool_catalog"]` (+ `tool_catalog_history`, newest 10 / 5 full, probe-pack pattern);
+`api/tool_catalog.py` mounts `/api/projects/{id}/tool-catalog`; `services/mcp_client.py` (in-house JSON-RPC,
+stdio + streamable HTTP, no `mcp` dependency) and `services/openapi_tools.py` (3.0/3.1 to tools) feed it.
+Docs: `slm-docs/docs/extensions/tool-catalog.md`.
+
+- Normalised tool `{name, description, input_schema, annotations, read_only, destructive[, schema_error]}`;
+  `version` hashes the tools only, flags have `flags_version`; `catalog_fingerprint` = both. A same-tools
+  re-import is a no-op (no history entry, flags kept).
+- **Security (non-negotiable):** stdio is off unless `MCP_STDIO_ALLOWED_BINARIES` allows argv[0] (command.py
+  match rules); minimal env + declared values; no shell; process group killed; stdio import also needs admin
+  when auth is on. User env names that are loader/interpreter/shell vectors (`mcp_client.env_name_denied`: `LD_*`,
+  `PATH`, `PYTHON*`, `GIT_*`, base-env keys ...) are refused in the service (422) and again in the client. Env/header values live ONLY in `secret_service` (provider
+  `mcp_stdio_<slug>` / `mcp_http_<slug>`, key = lower-cased name); sources keep names + `endpoint_binding`
+  (http: scheme+host+port+path; stdio: the command list). A null value reuses a stored secret ONLY when kind AND
+  binding equal the stored source's (else 422 `missing_secret`); no cross-label fallback; everything user-visible passes `mcp_client.redact`. Secrets are saved only after a
+  successful import.
+- **Read-only is fail-closed:** effectively read-only = `read_only` true (hint or override) AND NOT
+  `destructive_effective` (explicit destructive, or annotations `readOnlyHint: false` without `destructiveHint: false`); a destructive tool can never be overridden (422, and re-checked at call time). `tools/call` is
+  reachable ONLY from `tool_catalog_service.dry_run_call` (local import of `call_tool_*`), which raises
+  `MutatingToolRefused` (not allowed / not read-only / unknown / non-MCP source) before `DryRunDisabled`
+  (`MCP_DRY_RUN_ENABLED`). Don't add another caller.
+- Prompt block: `render_tool_block` (allowed tools, sorted, `compact_signature`, truncation line).
+- Domain packs: instantiate calls `set_catalog_tools(..., {"kind":"domain_pack"})` (failure = warning);
+  export prefers the live catalog unless it still equals what the pack shipped (round-trip stays byte-stable).
+- Tests: `test_mcp_client.py` (fake stdio server `tests/fake_mcp_server.py`, MockTransport), `test_openapi_tools.py`,
+  `test_tool_catalog.py`. HTTP tests patch `mcp_client.httpx.AsyncClient`; dry-run tests use `asyncio.run` with
+  `async_session_factory`.

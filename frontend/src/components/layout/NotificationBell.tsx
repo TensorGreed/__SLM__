@@ -68,6 +68,9 @@ function jobDeepLink(job: Job): string | null {
     if ((job.kind === 'document_source_web_crawl' || job.kind === 'document_source_git_repo') && job.project_id) {
         return stagePath(job.project_id, 'data') + '#document-sources';
     }
+    if (job.kind === 'tool_catalog_import' && job.project_id) {
+        return stagePath(job.project_id, 'goldset') + '#tool-catalog';
+    }
     if (job.kind === 'span_relabel' && job.project_id) {
         return stagePath(job.project_id, 'eval');
     }
@@ -174,6 +177,17 @@ function jobOutcomeSummaryCore(job: Job): string | null {
                 : `Created project #${newId}`;
         }
         return null;
+    }
+
+    if (job.kind === 'tool_catalog_import') {
+        // The runner returns the catalog status ({catalog: {tools, version, source}}); flat fields are accepted too.
+        const cat = (r.catalog && typeof r.catalog === 'object' ? r.catalog : r) as Record<string, unknown>;
+        const n = Array.isArray(cat.tools) ? cat.tools.length : typeof r.tool_count === 'number' ? r.tool_count : null;
+        if (n === null) return null;
+        const version = typeof cat.version === 'string' && cat.version ? ` (catalog version ${cat.version})` : '';
+        const srcKind = (cat.source as { kind?: unknown } | undefined)?.kind ?? r.source_kind;
+        const source = typeof srcKind === 'string' && srcKind ? ` from ${srcKind}` : '';
+        return `${n} tool${n === 1 ? '' : 's'} imported${source}${version}`;
     }
 
     if (job.kind === 'benchmark_eval') {

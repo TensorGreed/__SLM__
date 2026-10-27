@@ -505,3 +505,50 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   from `missing_rate`. Tests: `tests/test_structured_plan_hardening.py`, `tests/test_json_schema_bundle.py`.
 - Tests: `tests/test_structured_plan_recipe.py`, `tests/test_structured_plan_acceptance.py`. Docs:
   `slm-docs/docs/workflows/structured-plan.md`.
+
+## Tool-call scoring (G7)
+
+- `services/tool_call_scoring.py` is the scorer; the catalog it scores against is `tool_catalog_service` (see
+  `agent-notes/data.md` "Tool catalog"). Settings `runtime_config["tool_scoring"]` (`enabled`, `modes`, `steps_pointer`,
+  `tool_field` / `args_field` / `id_field` / `depends_field`, `arg_keys`, `dry_run`) via `api/tool_scoring_config.py`;
+  `effective_tool_scoring_config(rc)` is `None` without a catalog or when disabled, and then EVERY caller behaves exactly as
+  before (prompts, scores, fingerprint). `GET` returns `effective` always (defaults + `active` + `dry_run_available`);
+  `dry_run: true` is a 422 unless `MCP_DRY_RUN_ENABLED`.
+- `extract_calls(parsed, cfg, mode)`: `plan` resolves `steps_pointer`; `call` takes `{tool,args}`, `{tool_calls}`, a list,
+  `{name,arguments}` (string arguments are parsed) or `{"function": {...}}`; `[]` = explicit no-call / empty plan, `None` =
+  nothing extractable. `parse_call_output` also reads the adapter's `Tool Call: name({...})` rendering (it wins unless the
+  output starts with `{` / `[`).
+- `score_calls` -> `{calls[{tool, allowed, known, args_valid, args_errors<=3, args_match, dry_run}], tool_call_valid,
+  tool_args_match, plan_order_valid, pass, errors}`. Arguments validate with `tool_catalog_service.tool_bundle` (a tool with
+  `schema_error` is always invalid). Args match is positional, typed `value_match`, keys = `arg_keys` or the gold's keys; a
+  key absent from the gold must be absent (or null) in the prediction. Order checks: duplicate ids, unknown dependency,
+  cycle (iterative DFS, self-dependency included); `None` in call mode. `pass` = every ENABLED mode that is not `None`.
+- `score_tool_block` (blocking; run in `asyncio.to_thread`) sets `row_tool_results` / `row_tools_pass` / `row_tool_calls`
+  and returns the `metrics.tools` block (`catalog_version`, `flags_version`, `source_kind`, `modes`, rates, `pass_rate`,
+  `per_tool`, `unknown_tools`, `errors_top`, `dry_run`) plus top-level rates. `evaluation_service._apply_tool_scoring` runs it
+  for `structured_plan` and `tool_calling` evals BEFORE the rubric pass: `finalize_with_tools` folds the verdict into
+  `row_structured_plan_checks_pass` and recomputes the pass metrics; `finalize_tool_calls` does the same for `tool_calling`.
+  Failures are logged, never fail the eval.
+- Prompt: `structured_plan_prompt.build_structured_plan_prompt(..., tool_block=)` puts `render_tool_block` after the passages
+  and before the schema. Training gets it through `adapter_config["structured_plan"]["tool_block"]` (`dataset_service`),
+  eval through the live-config stamp (`_apply_structured_plan_live_config`). `tool_block_for(rc)` is `""` without an active
+  catalog. `structured_plan_scoring_fingerprint` adds `parts["tools"] = tools_fingerprint(rc)` ONLY with an active catalog
+  (so old fingerprints stay valid).
+- Dry run (`run_dry_run`, informational): for rows whose calls are all valid, read-only calls go through
+  `tool_catalog_service.dry_run_call` (the only path to `tools/call`), at most 50 per eval; mutating ones record
+  `{"skipped": "mutating: never executed"}`. The summary is `tools.dry_run = {enabled, calls, ok, errors, skipped}`; with the
+  admin switch off it is `{enabled: false, ...}` and nothing runs.
+- `tool_calling` profile: `ToolCallHandler` (scoring mode `tool_call`). Prompt = `tool_prompt(block, row.user_prompt or
+  question)` (the `tool-call-json` adapter writes `question` / `source_text` / `text` with the same block and keeps the bare
+  prompt in `user_prompt` only when a catalog exists, so eval never doubles the block). Gold = the row's `tool_name` + `tool_args_json`
+  when present, else the `reference` parsed as a call (`tool_gold_calls` on the prediction); the `tool-call-json` adapter's
+  target (`answer`) is the canonical call JSON `{"tool","args"}`, so a model trained on it emits what the scorer reads
+  (a JSON tool result with `name` keys can no longer become the gold). A `{"tool":"none"}` mixed with real calls is invalid
+  ("no-call mixed with calls"). Metrics carry `tool_call_fingerprint` (`tool_call/v1+tools_fingerprint`, stamped even
+  without a catalog); `post_training_eval_service._baseline_scoring_matches` reuses a cached `tool_call` base result only on equal fingerprints. Metrics: `tool_selection_accuracy`,
+  `tool_args_match_rate`, headline `tool_call_pass_rate` (= `exact_match`); with a catalog the pass also needs
+  `tool_call_valid` (modes respected) and `metrics.tools` is added. Lift: `tool_call_pass_rate` is a headline metric after
+  `structured_plan_pass_rate`, pairs on `row_scores.tool_call_pass`; the eval-pack `tool_success_rate` alias list includes it.
+  The single-verdict answer judge is skipped for this profile.
+- Tests: `tests/test_tool_call_scoring.py`, `tests/test_tool_scoring_acceptance.py` (fake MCP server over stdio).
+  Docs: `slm-docs/docs/workflows/structured-plan.md` (Tool calls), `slm-docs/docs/reference/api/tool-scoring.md`.

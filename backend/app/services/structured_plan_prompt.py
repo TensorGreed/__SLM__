@@ -147,10 +147,14 @@ def build_structured_plan_prompt(
     bundle: Any,
     *,
     max_schema_chars: int = DEFAULT_MAX_SCHEMA_CHARS,
+    tool_block: str | None = None,
 ) -> str:
     plist = normalize_passages(passages)
     parts = ["Scenario:", (scenario or "").strip(), ""]
     parts.extend(_crp._passages_block(plist))
+    if tool_block and tool_block.strip():
+        # The project's tool catalog (allowed tools only), after the passages and before the schema.
+        parts.extend([tool_block.strip(), ""])
     text = schema_text(bundle, max_schema_chars)
     if text:
         parts.extend(["JSON Schema the plan must validate against:", text, ""])
@@ -163,14 +167,28 @@ def build_structured_plan_prompt(
     return "\n".join(parts).strip()
 
 
+def tool_block_for(runtime_config: Any) -> str:
+    """The rendered tool block when the project has an active tool catalog + tool scoring, else ``""``
+    (the prompt is then byte-identical to a project without a catalog)."""
+    from app.services import tool_call_scoring as tcs
+
+    if tcs.effective_tool_scoring_config(runtime_config) is None:
+        return ""
+    from app.services import tool_catalog_service as tcat
+
+    return tcat.render_tool_block(runtime_config)
+
+
 def build_structured_plan_prompt_from_row(
-    row: dict[str, Any], bundle: Any, *, max_schema_chars: int = DEFAULT_MAX_SCHEMA_CHARS
+    row: dict[str, Any], bundle: Any, *, max_schema_chars: int = DEFAULT_MAX_SCHEMA_CHARS,
+    tool_block: str | None = None,
 ) -> str:
     return build_structured_plan_prompt(
         row_scenario(row),
         row.get("passages") if isinstance(row.get("passages"), list) else None,
         bundle,
         max_schema_chars=max_schema_chars,
+        tool_block=tool_block,
     )
 
 

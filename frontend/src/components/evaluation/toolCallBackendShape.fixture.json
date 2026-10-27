@@ -1,0 +1,56 @@
+{
+  "metrics": {
+    "scoring_mode": "structured_plan",
+    "structured_plan_pass_rate": 0.5,
+    "schema_valid_rate": 1,
+    "json_validity_rate": 1,
+    "total": 4,
+    "correct": 2,
+    "tool_call_valid_rate": 0.75,
+    "tool_args_match_rate": 0.5,
+    "plan_order_valid_rate": 1,
+    "tools": {
+      "catalog_version": "a1b2c3d4e5f6",
+      "flags_version": "0f1e2d3c4b5a",
+      "source_kind": "mcp_stdio",
+      "modes": ["tool_call_valid", "tool_args_match", "plan_order_valid"],
+      "tool_call_valid_rate": 0.75,
+      "tool_args_match_rate": 0.5,
+      "plan_order_valid_rate": 1,
+      "pass_rate": 0.5,
+      "per_tool": {
+        "get_service": {"calls": 3, "valid": 3, "invalid_args": 0, "not_allowed": 0},
+        "create_service": {"calls": 2, "valid": 1, "invalid_args": 1, "not_allowed": 0},
+        "delete_service": {"calls": 1, "valid": 0, "invalid_args": 0, "not_allowed": 1}
+      },
+      "unknown_tools": {"restart_service": 2},
+      "errors_top": [{"message": "/tier: 'gold' is not one of ['free', 'pro']", "count": 1}],
+      "dry_run": {"enabled": true, "calls": 3, "ok": 2, "errors": 1, "skipped": 2}
+    }
+  },
+  "predictions_preview": [
+    {
+      "scoring_mode": "structured_plan",
+      "row_tools_pass": true,
+      "row_tool_results": {
+        "calls": [
+          {"tool": "get_service", "allowed": true, "known": true, "args_valid": true, "args_errors": [], "args_match": true,
+           "dry_run": {"ok": true, "is_error": false, "error": null, "snippet": "{}"}}
+        ],
+        "tool_call_valid": true, "tool_args_match": true, "plan_order_valid": true, "pass": true, "errors": []
+      }
+    },
+    {
+      "scoring_mode": "structured_plan",
+      "row_tools_pass": false,
+      "row_tool_results": {
+        "calls": [
+          {"tool": "create_service", "allowed": true, "known": true, "args_valid": false, "args_errors": ["/tier: 'gold' is not one of ['free', 'pro']"], "args_match": false, "dry_run": null},
+          {"tool": "restart_service", "allowed": false, "known": false, "args_valid": false, "args_errors": [], "args_match": null, "dry_run": null}
+        ],
+        "tool_call_valid": false, "tool_args_match": false, "plan_order_valid": null, "pass": false,
+        "errors": ["unknown tool: restart_service"]
+      }
+    }
+  ]
+}

@@ -291,4 +291,9 @@ def structured_plan_scoring_fingerprint(
         "retrieve_passages": bool(cfg["retrieve_passages"]),
         "top_k": cfg["top_k"],
     }
+    from app.services import tool_call_scoring as tcs
+
+    if tcs.effective_tool_scoring_config(runtime_config) is not None:
+        # Only present with an active tool catalog, so projects without one keep their fingerprint.
+        parts["tools"] = tcs.tools_fingerprint(runtime_config)
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]

@@ -93,7 +93,7 @@ _BASE_METRIC_SCHEMA: dict[str, dict[str, Any]] = {
     "tool_success_rate": {
         "description": "Successful tool/function execution rate.",
         "expected_range": [0.0, 1.0],
-        "aliases": ["tool_success_rate", "tool_calling.pass_rate", "llm_judge_pass_rate"],
+        "aliases": ["tool_success_rate", "tool_call_pass_rate", "tool_calling.pass_rate", "llm_judge_pass_rate"],
     },
     "groundedness": {
         "description": "Groundedness / citation alignment score.",

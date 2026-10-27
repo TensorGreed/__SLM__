@@ -24,6 +24,7 @@ from app.api.code_checks import router as code_checks_router
 from app.api.remediation import router as remediation_router
 from app.api.remediation_config import router as remediation_config_router
 from app.api.structured_plan_config import router as structured_plan_config_router
+from app.api.tool_scoring_config import router as tool_scoring_config_router
 from app.api.settings import router as settings_router
 from app.api.projects import router as projects_router
 from app.api.document_sources import router as document_sources_router
@@ -33,6 +34,7 @@ from app.api.ingestion import router as ingestion_router
 from app.api.cleaning import router as cleaning_router
 from app.api.data_health import router as data_health_router
 from app.api.probe_packs import router as probe_pack_router
+from app.api.tool_catalog import router as tool_catalog_router
 from app.api.training_config_gaps import router as training_config_gaps_router
 from app.api.eval_gaps import router as eval_gaps_router
 from app.api.distillation import router as distillation_router
@@ -383,6 +385,7 @@ app.include_router(admin_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(remediation_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(remediation_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(structured_plan_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(tool_scoring_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(code_checks_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(drift_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(audit_router, prefix="/api", dependencies=API_DEPENDENCIES)
@@ -396,6 +399,7 @@ app.include_router(hardware_router, prefix="/api", dependencies=API_DEPENDENCIES
 app.include_router(cleaning_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(data_health_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(probe_pack_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(tool_catalog_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(training_config_gaps_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(eval_gaps_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(distillation_router, prefix="/api", dependencies=API_DEPENDENCIES)
