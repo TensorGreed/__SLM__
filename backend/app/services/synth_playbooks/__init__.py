@@ -66,6 +66,9 @@ from . import code_examples  # noqa: F401 — CODE_EXAMPLES
 # G6: structured-plan playbook (matrix of scenario dimensions -> scenarios -> schema-valid plans)
 from . import structured_plan_scenario_grid  # noqa: F401 — SCENARIO_GRID
 
+# G8: multi-turn dialogues from document passages (generic-sft / chat_sft)
+from . import generic_sft_documents_multi_turn  # noqa: F401 — DOCUMENTS_MULTI_TURN
+
 
 __all__ = [
     "Playbook",

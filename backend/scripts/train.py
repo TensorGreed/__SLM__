@@ -578,6 +578,24 @@ def _adapt_record_to_text(
             "target_text": wrapped_target,
         })
 
+    # Multi-turn chat rows (system message, >1 assistant turn or >2
+    # messages): the messages ride along as JSON and the causal-LM
+    # tokenizer renders them with the chat template, loss on assistant
+    # tokens only (``_encode_multi_turn_example``). ``text`` stays the
+    # row's display text (packing / length estimates read it).
+    if task_type == "causal_lm":
+        chat = _multi_turn_messages(row)
+        if chat is not None:
+            display = _pick_first_text(row, ["text", "content"]) or "".join(
+                f"{m['role']}: {m['content']}\n" for m in chat
+            ).strip()
+            return _attach_multimodal_fields(row, {
+                "text": display,
+                "source_text": "",
+                "target_text": "",
+                CHAT_MESSAGES_COLUMN: json.dumps(chat, ensure_ascii=False),
+            })
+
     pair = _extract_prompt_completion(row)
     if pair is not None:
         question, answer = pair
@@ -625,9 +643,9 @@ def _extract_prompt_completion(row: dict[str, Any]) -> tuple[str, str] | None:
 
     Precedence: the adapter-written ``source_text``/``target_text`` pair,
     then question/prompt/instruction (+ Alpaca-style ``input`` context)
-    against answer/completion/output/response. Multi-turn ``messages``
-    rows (more than one exchange) stay on the rendered-text path so
-    earlier turns aren't dropped.
+    against answer/completion/output/response. ``messages`` rows with
+    more than two messages are never a single pair (causal-LM rows of that
+    shape take the assistant-only path, ``_multi_turn_messages``).
     """
     messages = row.get("messages")
     if isinstance(messages, list) and len(messages) > 2:
@@ -756,6 +774,338 @@ def _rewrap_prompt_completion_row(row: dict[str, Any], tokenizer: Any) -> dict[s
         "source_text": wrapped,
         "target_text": answer,
     }
+
+
+# ── Multi-turn chat rows: assistant-only loss ───────────────────────
+# A row whose ``messages`` (or ``conversations``) has a system message, more
+# than one assistant turn, or more than two messages trains on the chat
+# template's full render with the loss on assistant tokens only. Exactly one
+# user→assistant exchange with no system stays on the prompt→completion path
+# above (byte-identical). Before 2026-10-27 these rows trained as plain
+# "role: content" text with loss on every token.
+
+_CHAT_ROLE_ALIASES = {"human": "user", "gpt": "assistant", "model": "assistant"}
+
+# Per-row stats column the causal-LM tokenizer emits next to input_ids when
+# the split carries chat messages; aggregated into ``multi_turn`` and removed
+# before training.
+MULTI_TURN_STATS_COLUMN = "multi_turn_stats"
+CHAT_MESSAGES_COLUMN = "chat_messages"
+
+
+def _normalize_chat_messages(row: dict[str, Any]) -> list[dict[str, str]]:
+    """Same normalisation as ``data_adapter_service._messages_from_record``
+    (copied: train.py runs standalone; ``tests/test_multi_turn_masking.py``
+    pins that both agree): ``messages`` else ``conversations``; role from
+    ``role``/``from`` (human → user, gpt/model → assistant); content from
+    ``content``/``value``/``text``; entries without role or content dropped."""
+    raw = row.get("messages")
+    if not isinstance(raw, list):
+        raw = row.get("conversations")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        role_raw = item.get("role") or item.get("from")
+        content_raw = item.get("content") or item.get("value") or item.get("text")
+        role = ("" if role_raw is None else str(role_raw).strip()).lower()
+        content = "" if content_raw is None else str(content_raw).strip()
+        if not role or not content:
+            continue
+        out.append({"role": _CHAT_ROLE_ALIASES.get(role, role), "content": content})
+    return out
+
+
+def _multi_turn_messages(row: dict[str, Any]) -> list[dict[str, str]] | None:
+    """The row's messages when it takes the assistant-only path, else None.
+    Messages after the last assistant turn carry no loss and are trimmed."""
+    messages = _normalize_chat_messages(row)
+    assistant_turns = sum(1 for m in messages if m["role"] == "assistant")
+    if assistant_turns == 0:
+        return None
+    has_system = any(m["role"] == "system" for m in messages)
+    if not (has_system or assistant_turns > 1 or len(messages) > 2):
+        return None
+    last = max(i for i, m in enumerate(messages) if m["role"] == "assistant")
+    return messages[: last + 1]
+
+
+def _render_chat(
+    tokenizer: Any,
+    messages: list[dict[str, str]],
+    *,
+    use_template: bool,
+    add_generation_prompt: bool = False,
+) -> str:
+    """The tokenizer's chat template, or "role: content" lines (one per
+    message, generation prompt ``assistant: ``) when there is none."""
+    if use_template:
+        rendered = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=add_generation_prompt,
+        )
+        if not isinstance(rendered, str):
+            raise TypeError("chat template did not render a string")
+        return rendered
+    text = "".join(f"{m['role']}: {m['content']}\n" for m in messages)
+    return text + ("assistant: " if add_generation_prompt else "")
+
+
+def _assistant_char_spans(
+    tokenizer: Any,
+    messages: list[dict[str, str]],
+    *,
+    use_template: bool,
+) -> tuple[str, list[tuple[int, int]], bool]:
+    """``(full_render, assistant_spans, fell_back)``.
+
+    Prefix rendering: for assistant message i, ``start`` = len(render(
+    messages[:i], add_generation_prompt=True)) and ``end`` = len(render(
+    messages[:i+1])) — so whatever the template emits right after the
+    assistant content (``<|im_end|>\\n``, ``<|eot_id|>``, ``</s>``) is inside
+    the span and trained. Every prefix must be a string prefix of the full
+    render; any failure (template raises, rewrites earlier turns, a generation
+    prompt that differs from the rendered assistant header) → one span from
+    the last occurrence of the final assistant content to the end of the
+    render (``fell_back`` True)."""
+    try:
+        full = _render_chat(tokenizer, messages, use_template=use_template)
+    except Exception:  # noqa: BLE001
+        full = _render_chat(tokenizer, messages, use_template=False)
+        return full, _final_turn_span(full, messages), True
+    spans: list[tuple[int, int]] = []
+    try:
+        for i, message in enumerate(messages):
+            if message["role"] != "assistant":
+                continue
+            prefix = (
+                _render_chat(tokenizer, messages[:i], use_template=use_template, add_generation_prompt=True)
+                if i > 0 else None
+            )
+            through = _render_chat(tokenizer, messages[: i + 1], use_template=use_template)
+            if prefix is None:
+                # Assistant speaks first: everything before its content is header.
+                at = through.find(message["content"])
+                if at < 0:
+                    raise ValueError("assistant content not in render")
+                start = at
+            else:
+                if not through.startswith(prefix):
+                    raise ValueError("generation prompt is not a prefix of the turn")
+                start = len(prefix)
+            end = len(through)
+            if not full.startswith(through):
+                # Templates that append the EOS token after the LAST message (Phi-3 style) render
+                # it only for the final turn: drop exactly that EOS and re-check — an
+                # exact-suffix rule, not a common-prefix guess, so a template that rewrites
+                # earlier turns still falls back.
+                eos = getattr(tokenizer, "eos_token", None)
+                if isinstance(eos, str) and eos and through.endswith(eos) and full.startswith(through[: -len(eos)]):
+                    end = len(through) - len(eos)
+                else:
+                    raise ValueError("turn render is not a prefix of the full render")
+            if end <= start:
+                raise ValueError("turn render is not a prefix of the full render")
+            if spans and start < spans[-1][1]:
+                raise ValueError("overlapping assistant spans")
+            spans.append((start, end))
+    except Exception:  # noqa: BLE001
+        return full, _final_turn_span(full, messages), True
+    return full, spans, False
+
+
+def _final_turn_span(text: str, messages: list[dict[str, str]]) -> list[tuple[int, int]]:
+    final = next((m["content"] for m in reversed(messages) if m["role"] == "assistant"), "")
+    idx = text.rfind(final) if final else -1
+    return [(idx, len(text))] if idx >= 0 else []
+
+
+def _call_tokenizer(tokenizer: Any, text: str, **kwargs: Any) -> Any:
+    """Tokenizer call that tolerates minimal callables without
+    ``add_special_tokens``."""
+    try:
+        return tokenizer(text, truncation=False, padding=False, **kwargs)
+    except TypeError:
+        return tokenizer(text, truncation=False, padding=False)
+
+
+def _tokenize_with_spans(
+    tokenizer: Any,
+    text: str,
+    spans: list[tuple[int, int]],
+    *,
+    add_special_tokens: bool,
+) -> tuple[list[int], list[int]]:
+    """``(input_ids, labels)``: a token is trainable when its character
+    span overlaps an assistant span (a BPE merge across the boundary keeps
+    the token trainable, like the single-turn path); everything else and
+    zero-width special tokens are -100. Slow tokenizers (no offsets)
+    tokenize segment by segment instead."""
+    try:
+        if not getattr(tokenizer, "is_fast", False):
+            raise TypeError("slow tokenizer")
+        encoded = tokenizer(
+            text, truncation=False, padding=False,
+            add_special_tokens=add_special_tokens, return_offsets_mapping=True,
+        )
+        ids = list(encoded["input_ids"])
+        offsets = list(encoded["offset_mapping"])
+        labels = []
+        for token_id, (s, e) in zip(ids, offsets):
+            inside = e > s and any(max(s, a) < min(e, b) for a, b in spans)
+            labels.append(int(token_id) if inside else -100)
+        return ids, labels
+    except (TypeError, NotImplementedError, KeyError, ValueError):
+        pass
+    points = sorted({0, len(text), *[p for span in spans for p in span]})
+    ids: list[int] = []
+    labels: list[int] = []
+    for a, b in zip(points, points[1:]):
+        if b <= a:
+            continue
+        seg_ids = list(_call_tokenizer(tokenizer, text[a:b], add_special_tokens=False)["input_ids"])
+        inside = any(a >= s and b <= e for s, e in spans)
+        ids.extend(seg_ids)
+        labels.extend(seg_ids if inside else [-100] * len(seg_ids))
+    return ids, labels
+
+
+def _exchange_groups(messages: list[dict[str, str]]) -> list[list[int]]:
+    """Indices of non-system messages grouped into exchanges: a user turn
+    and everything up to the next user turn (a leading non-user run is its
+    own oldest group)."""
+    groups: list[list[int]] = []
+    for i, m in enumerate(messages):
+        if m["role"] == "system":
+            continue
+        if m["role"] == "user" or not groups:
+            groups.append([i])
+        else:
+            groups[-1].append(i)
+    return groups
+
+
+def _encode_multi_turn_example(
+    tokenizer: Any,
+    messages: list[dict[str, str]],
+    max_seq_length: int,
+    *,
+    use_template: bool = True,
+) -> tuple[dict[str, list[int]], dict[str, Any]]:
+    """Tokenize one multi-turn row with assistant-only labels.
+
+    With a chat template no EOS is appended — the template's end-of-turn after each assistant
+    message is part of that turn's span. Without one, the final assistant turn gets a trained EOS
+    (as a single-turn row does). Too long for ``max_seq_length`` →
+    drop the oldest whole exchanges (system messages always kept, the final
+    exchange always kept); still too long → the row comes back with every
+    label masked (callers drop it) and ``dropped`` True. Never cuts mid-turn.
+    """
+    use_template = bool(use_template and _tokenizer_has_chat_template(tokenizer))
+    groups = _exchange_groups(messages)
+    dropped_messages = 0
+    current = list(messages)
+    while True:
+        text, spans, fell_back = _assistant_char_spans(tokenizer, current, use_template=use_template)
+        ids, labels = _tokenize_with_spans(tokenizer, text, spans, add_special_tokens=not use_template)
+        eos_id = getattr(tokenizer, "eos_token_id", None)
+        if not use_template and spans and eos_id is not None and (not ids or ids[-1] != eos_id):
+            # No chat template supplies an end-of-turn: the final assistant turn gets a trained EOS,
+            # like a single-turn row, so the model learns where its answer ends.
+            ids.append(int(eos_id))
+            labels.append(int(eos_id))
+        if len(ids) <= max_seq_length or len(groups) <= 1:
+            break
+        dropped_messages += len(groups.pop(0))
+        # Rebuild from the original list so indices in ``groups`` stay valid.
+        keep = {i for g in groups for i in g} | {
+            i for i, m in enumerate(messages) if m["role"] == "system"
+        }
+        current = [m for i, m in enumerate(messages) if i in keep]
+    # Too long even with only the final exchange, or nothing maskable
+    # (a fallback whose final assistant content isn't in the render).
+    dropped = len(ids) > max_seq_length or not spans
+    if dropped:
+        ids = ids[:max_seq_length]
+        labels = [-100] * len(ids)
+    trained = sum(1 for label in labels if label != -100)
+    info = {
+        "assistant_turns": 0 if dropped else (1 if fell_back else len(spans)),
+        "trained_tokens": 0 if dropped else trained,
+        "total_tokens": 0 if dropped else len(ids),
+        "truncated": bool(dropped_messages) and not dropped,
+        "dropped_turns": dropped_messages,
+        "dropped": dropped,
+        "fallback": bool(fell_back) and not dropped,
+    }
+    return {"input_ids": ids, "attention_mask": [1] * len(ids), "labels": labels}, info
+
+
+def _summarize_multi_turn(infos: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The ``multi_turn`` report block over per-row encode infos, or None
+    when no multi-turn rows were seen. ``assistant_token_share`` = trained
+    tokens / all (non-pad) tokens over the multi-turn rows that trained."""
+    if not infos:
+        return None
+    kept = [i for i in infos if not i.get("dropped")]
+    total = sum(int(i.get("total_tokens") or 0) for i in kept)
+    trained = sum(int(i.get("trained_tokens") or 0) for i in kept)
+    return {
+        "rows": len(kept),
+        "assistant_token_share": round(trained / total, 4) if total else None,
+        "assistant_turns": sum(int(i.get("assistant_turns") or 0) for i in kept),
+        "truncated_rows": sum(1 for i in kept if i.get("truncated")),
+        "dropped_turns": sum(int(i.get("dropped_turns") or 0) for i in infos),
+        "dropped_rows": len(infos) - len(kept),
+        "mask_fallback_rows": sum(1 for i in kept if i.get("fallback")),
+    }
+
+
+def _encode_text_row(
+    tokenizer: Any,
+    text: str,
+    target: str | None,
+    chat_messages: str | None,
+    max_seq_length: int,
+    *,
+    use_template: bool = True,
+) -> tuple[dict[str, list[int]], dict[str, Any] | None]:
+    """One causal-LM row → ``(example, multi_turn_info | None)``. Rows that
+    carry ``chat_messages`` (JSON, set by ``_adapt_record_to_text`` for
+    multi-turn rows) take the assistant-only path; every other row goes
+    through ``_encode_causal_lm_example`` unchanged."""
+    if chat_messages:
+        try:
+            messages = json.loads(chat_messages)
+        except (TypeError, ValueError):
+            messages = None
+        if isinstance(messages, list) and messages:
+            return _encode_multi_turn_example(
+                tokenizer, messages, max_seq_length, use_template=use_template,
+            )
+    return _encode_causal_lm_example(tokenizer, text, target, max_seq_length), None
+
+
+def _resolve_pairwise_trainer(trl_module: Any, training_mode: str) -> tuple[Any, Any]:
+    """``(TrainerClass, ConfigClass)`` for DPO / ORPO. trl ≥ 1.0 moved ORPO
+    out of the top level into ``trl.experimental.orpo``; the top-level name
+    wins when present. Either may be None when the install has neither."""
+    trainer_name = "DPOTrainer" if training_mode == "dpo" else "ORPOTrainer"
+    config_name = "DPOConfig" if training_mode == "dpo" else "ORPOConfig"
+    trainer_cls = getattr(trl_module, trainer_name, None)
+    config_cls = getattr(trl_module, config_name, None)
+    if training_mode == "orpo" and (trainer_cls is None or config_cls is None):
+        try:
+            import importlib
+
+            experimental = importlib.import_module("trl.experimental.orpo")
+        except Exception:  # noqa: BLE001
+            experimental = None
+        if experimental is not None:
+            trainer_cls = trainer_cls or getattr(experimental, trainer_name, None)
+            config_cls = config_cls or getattr(experimental, config_name, None)
+    return trainer_cls, config_cls
 
 
 def _longest_row_tokens(dataset: Any, tokenizer: Any, max_seq_length: int, *, sample: int = 2000) -> int | None:
@@ -1933,6 +2283,9 @@ def _run_training_attempt(
 
     train_text = None
     eval_text = None
+    # Assistant-only loss on multi-turn chat rows (set by the causal-LM tokenize step).
+    multi_turn_report: dict[str, Any] | None = None
+    single_turn_rows = 0
     train_preference = None
     eval_preference = None
     if training_mode in {"dpo", "orpo"}:
@@ -1967,13 +2320,25 @@ def _run_training_attempt(
         # added when the file has the column (other datasets keep their shape).
         carries_system_prompt = "system_prompt" in train_ds.column_names
 
-        def to_text_record(row: dict[str, Any]) -> dict[str, Any]:
-            mapped = _adapt_record_to_text(row, data_contract, chat_template)
-            if carries_system_prompt:
-                mapped["system_prompt"] = str(row.get("system_prompt") or "")
-            return mapped
+        def _text_record_mapper(dataset: Any) -> Any:
+            # Splits with chat messages get a ``chat_messages`` column on
+            # every row ("" for rows that aren't multi-turn) — Arrow needs
+            # one schema per split.
+            carries_messages = any(
+                key in dataset.column_names for key in ("messages", "conversations")
+            )
 
-        train_text = train_ds.map(to_text_record, remove_columns=train_ds.column_names)
+            def to_text_record(row: dict[str, Any]) -> dict[str, Any]:
+                mapped = _adapt_record_to_text(row, data_contract, chat_template)
+                if carries_system_prompt:
+                    mapped["system_prompt"] = str(row.get("system_prompt") or "")
+                if carries_messages:
+                    mapped.setdefault(CHAT_MESSAGES_COLUMN, "")
+                return mapped
+
+            return to_text_record
+
+        train_text = train_ds.map(_text_record_mapper(train_ds), remove_columns=train_ds.column_names)
         train_text = train_text.filter(lambda row: _is_valid_adapted_row(row, normalized_task_type))
 
         if len(train_text) == 0:
@@ -1985,7 +2350,7 @@ def _run_training_attempt(
             )
 
         if eval_ds is not None:
-            eval_text = eval_ds.map(to_text_record, remove_columns=eval_ds.column_names)
+            eval_text = eval_ds.map(_text_record_mapper(eval_ds), remove_columns=eval_ds.column_names)
             eval_text = eval_text.filter(lambda row: _is_valid_adapted_row(row, normalized_task_type))
             if len(eval_text) == 0:
                 eval_text = None
@@ -2771,8 +3136,7 @@ def _run_training_attempt(
 
         trainer_name = "DPOTrainer" if training_mode == "dpo" else "ORPOTrainer"
         config_name = "DPOConfig" if training_mode == "dpo" else "ORPOConfig"
-        pairwise_trainer_cls = getattr(trl, trainer_name, None)
-        pairwise_config_cls = getattr(trl, config_name, None)
+        pairwise_trainer_cls, pairwise_config_cls = _resolve_pairwise_trainer(trl, training_mode)
         if pairwise_trainer_cls is None:
             raise RuntimeError(
                 f"Installed trl does not provide {trainer_name}; upgrade trl to use {training_mode}."
@@ -3672,19 +4036,35 @@ def _run_training_attempt(
             # ``DataCollatorForLanguageModeling`` did neither: it trained
             # on the prompt too, and because ``pad_token == eos_token`` on
             # most small models it masked every EOS label as padding.
+            # Multi-turn chat rows (``chat_messages``) mask everything but
+            # the assistant turns; their per-row stats ride in a column
+            # (cache-safe, unlike a closure counter) and are summed into
+            # ``multi_turn`` below.
+            use_chat_template = _coerce_bool(config.get("use_tokenizer_chat_template"), True)
+
             def tokenize_rows(rows: dict[str, list[str]]) -> dict[str, Any]:
-                encoded: dict[str, list[list[int]]] = {
+                encoded: dict[str, list[Any]] = {
                     "input_ids": [],
                     "attention_mask": [],
                     "labels": [],
                 }
+                chats = rows.get(CHAT_MESSAGES_COLUMN)
+                if chats is not None:
+                    encoded[MULTI_TURN_STATS_COLUMN] = []
                 targets = rows.get("target_text") or [""] * len(rows["text"])
-                for text, target in zip(rows["text"], targets):
-                    example = _encode_causal_lm_example(
-                        processor_tokenizer, text, target, max_seq_length
+                for index, (text, target) in enumerate(zip(rows["text"], targets)):
+                    example, info = _encode_text_row(
+                        processor_tokenizer,
+                        text,
+                        target,
+                        chats[index] if chats is not None else None,
+                        max_seq_length,
+                        use_template=use_chat_template,
                     )
-                    for key in encoded:
+                    for key in ("input_ids", "attention_mask", "labels"):
                         encoded[key].append(example[key])
+                    if chats is not None:
+                        encoded[MULTI_TURN_STATS_COLUMN].append(json.dumps(info) if info else "")
                 return encoded
 
             def _has_trainable_labels(row: dict[str, Any]) -> bool:
@@ -3693,9 +4073,31 @@ def _run_training_attempt(
             tokenized_train = train_text.map(
                 tokenize_rows, batched=True, remove_columns=train_text.column_names
             )
+            if MULTI_TURN_STATS_COLUMN in tokenized_train.column_names:
+                row_stats = list(tokenized_train[MULTI_TURN_STATS_COLUMN])
+                multi_turn_report = _summarize_multi_turn(
+                    [json.loads(item) for item in row_stats if item]
+                )
+                single_turn_rows = sum(1 for item in row_stats if not item)
+                tokenized_train = tokenized_train.remove_columns([MULTI_TURN_STATS_COLUMN])
+                if multi_turn_report is not None:
+                    runtime_environment["multi_turn"] = multi_turn_report
+                    if multi_turn_report["dropped_rows"]:
+                        warnings.append(
+                            f"Multi-turn: dropped {multi_turn_report['dropped_rows']} row(s) whose final "
+                            f"exchange alone exceeds max_seq_length={max_seq_length}."
+                        )
+                    if multi_turn_report["mask_fallback_rows"]:
+                        warnings.append(
+                            f"Multi-turn: {multi_turn_report['mask_fallback_rows']} row(s) masked to the final "
+                            "assistant turn only (the chat template's per-turn prefixes didn't line up)."
+                        )
             kept_train = tokenized_train.filter(_has_trainable_labels)
-            dropped_rows = len(tokenized_train) - len(kept_train)
-            if dropped_rows:
+            # Multi-turn rows dropped for length already have their own warning above.
+            dropped_rows = len(tokenized_train) - len(kept_train) - (
+                multi_turn_report["dropped_rows"] if multi_turn_report is not None else 0
+            )
+            if dropped_rows > 0:
                 warnings.append(
                     f"Dropped {dropped_rows} training row(s) whose answer was cut off "
                     f"by max_seq_length={max_seq_length}."
@@ -3710,10 +4112,18 @@ def _run_training_attempt(
             if eval_text is not None:
                 tokenized_eval = eval_text.map(
                     tokenize_rows, batched=True, remove_columns=eval_text.column_names
-                ).filter(_has_trainable_labels)
+                )
+                if MULTI_TURN_STATS_COLUMN in tokenized_eval.column_names:
+                    tokenized_eval = tokenized_eval.remove_columns([MULTI_TURN_STATS_COLUMN])
+                tokenized_eval = tokenized_eval.filter(_has_trainable_labels)
                 if len(tokenized_eval) == 0:
                     tokenized_eval = None
-            runtime_environment["loss_masking"] = "completion_only"
+            if multi_turn_report is not None and multi_turn_report["rows"] > 0:
+                runtime_environment["loss_masking"] = (
+                    "mixed:completion_only+assistant_only" if single_turn_rows else "assistant_only"
+                )
+            else:
+                runtime_environment["loss_masking"] = "completion_only"
             trainer_kwargs["train_dataset"] = tokenized_train
             trainer_kwargs["eval_dataset"] = (
                 tokenized_eval if has_eval_records and tokenized_eval is not None else None
@@ -3909,6 +4319,7 @@ def _run_training_attempt(
         "retry_history": list(retry_history),
         "resume_from_checkpoint": str(resume_checkpoint) if resume_checkpoint is not None else None,
         "runtime_environment": runtime_environment,
+        "multi_turn": multi_turn_report,
         "reproducibility": reproducibility_block(
             seed=seed, determinism=determinism, train_file=train_file, val_file=val_file, model_dir=model_dir,
         ),

@@ -43,7 +43,10 @@ _LOG = logging.getLogger(__name__)
 JUDGE_METRIC = "judge_correct"
 # Generative profiles where overlap metrics are weak rulers. Labels and
 # structured extraction have exact / field-level scoring already.
-JUDGE_PROFILES: frozenset[str] = frozenset({"qa", "rag_qa", "instruction_sft", "summarization"})
+# ``chat_sft``: a chat row is scored on its FINAL assistant turn — the question is the dialogue
+# so far (``role: content`` lines, system prompt included), the reference that turn's content —
+# with the same long-answer rule (median reference of MIN_REFERENCE_WORDS words) as the others.
+JUDGE_PROFILES: frozenset[str] = frozenset({"qa", "rag_qa", "instruction_sft", "summarization", "chat_sft"})
 # Short-answer Q&A (names, numbers, spans) is what exact match + F1 were
 # built for; the judge is for answers long enough that paraphrase matters.
 MIN_REFERENCE_WORDS = 8

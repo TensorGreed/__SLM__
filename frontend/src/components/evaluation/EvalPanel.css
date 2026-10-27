@@ -735,3 +735,9 @@
 }
 .eval-panel__box--ref { background: var(--color-success-bg); color: var(--color-success); }
 .eval-panel__box--pred { background: var(--color-warning-bg); border: 1px solid var(--color-warning-border); }
+
+.eval-panel__toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}

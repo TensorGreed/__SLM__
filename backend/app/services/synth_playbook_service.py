@@ -186,6 +186,38 @@ async def _prepare_code_context(
     ctx["context_column"] = column
 
 
+async def _prepare_document_passages(db: AsyncSession, project_id: int, ctx: PlaybookContext) -> None:
+    """Fill ``ctx["document_chunks"]`` with the project's cleaned document passages for playbooks
+    that write from documents (``uses_document_passages``): documents whose source is eval- or
+    rag-only in the licence ledger are dropped (the documents -> Q&A flow's gate). No passages is
+    an error, not an empty success."""
+    from app.services import provenance_service
+    from app.services.span_relabel_service import load_document_passages
+
+    excluded = await provenance_service.training_excluded_document_ids(db, project_id)
+    passages = provenance_service.drop_excluded_passages(load_document_passages(project_id), excluded)
+    if not passages:
+        raise ValueError(
+            "Project has no usable document passages. Add and clean documents first "
+            "(documents whose source is evaluation-only or retrieval-only are not used for training data)."
+        )
+    ctx["document_chunks"] = passages[:MAX_DOCUMENT_CHUNKS]
+    # The answer key's held-out rows: a dialogue that asks one of their questions would leak the test set.
+    ctx["test_rows"] = await _load_test_rows(db, project_id)
+
+
+async def _load_test_rows(db: AsyncSession, project_id: int) -> list[dict[str, Any]]:
+    result = await db.execute(
+        select(Dataset).where(Dataset.project_id == project_id, Dataset.dataset_type == DatasetType.GOLD_TEST)
+    )
+    rows: list[dict[str, Any]] = []
+    for dataset in result.scalars():
+        path = Path(dataset.file_path) if dataset.file_path else None
+        if path is not None and path.exists():
+            rows.extend(_load_records_from_file(path))
+    return rows
+
+
 async def _prepare_remediation_context(
     db: AsyncSession, project_id: int, ctx: PlaybookContext, params: dict[str, Any], *, target_count: int
 ) -> None:
@@ -554,8 +586,9 @@ async def run_playbook(
     # the dev split only: the held-out test split never becomes a training prompt.
     uses_code_seeds = bool(getattr(playbook, "uses_code_seeds", False))
     uses_grid = bool(getattr(playbook, "uses_scenario_grid", False))
-    gold_rows = await _load_gold_rows(db, project_id, dev_only=uses_code_seeds or uses_grid)
-    if not gold_rows and not uses_code_seeds and not uses_grid:
+    uses_documents = bool(getattr(playbook, "uses_document_passages", False))
+    gold_rows = [] if uses_documents else await _load_gold_rows(db, project_id, dev_only=uses_code_seeds or uses_grid)
+    if not gold_rows and not uses_code_seeds and not uses_grid and not uses_documents:
         raise ValueError(
             "Project has no answer-key rows. Import an answer key or instantiate "
             "from a project template first."
@@ -577,6 +610,10 @@ async def run_playbook(
         if getattr(playbook, "uses_remediation_seeds", False):
             await _prepare_remediation_context(db, project_id, ctx, ctx["params"], target_count=target_count)
         # Varies the seed window from run to run (stable within a run, so a resumed run agrees).
+        ctx["seed_nonce"] = _peek_next_id(settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl")
+
+    if uses_documents:
+        await _prepare_document_passages(db, project_id, ctx)
         ctx["seed_nonce"] = _peek_next_id(settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl")
 
     if uses_grid:
@@ -630,6 +667,11 @@ async def run_playbook(
 
         parsed_rows = playbook.parse_output(raw_llm_output, ctx)
         accepted_rows = playbook.validate(parsed_rows, ctx)
+
+    if uses_documents and not accepted_rows and not dry_run:
+        summary = reject_report(ctx.get("rejects"))["reject_summary"]
+        detail = ", ".join(f"{k}: {v}" for k, v in sorted(summary.items())) or "the teacher returned no usable output"
+        raise ValueError(f"{mode.value} produced 0 accepted dialogues ({detail}).")
 
     # Persist into the project's synthetic dataset. We ensure the
     # Dataset row exists (legacy helper) and then append to the

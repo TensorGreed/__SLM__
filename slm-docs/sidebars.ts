@@ -53,6 +53,7 @@ const sidebars: SidebarsConfig = {
         'workflows/structured-plan',
         'workflows/newbie-autopilot',
         'workflows/training',
+        'workflows/multi-turn-chat',
         'workflows/distillation',
         'workflows/evaluation-and-remediation',
         'workflows/external-benchmarks',

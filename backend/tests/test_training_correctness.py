@@ -108,7 +108,10 @@ class PromptCompletionAdapterTests(unittest.TestCase):
         out = _adapt_record_to_text(row, CAUSAL, "llama3")
         self.assertEqual(out["text"], prompt + " billing")
 
-    def test_multi_turn_messages_keep_full_rendering(self):
+    def test_multi_turn_messages_take_assistant_only_path(self):
+        # Before 2026-10-27 this row trained as plain "role: content" text
+        # with loss on every token; it now carries its messages to the
+        # assistant-only encoder (tests/test_multi_turn_masking.py).
         row = {
             "text": "user: a\nassistant: b\nuser: c\nassistant: d",
             "messages": [
@@ -122,6 +125,8 @@ class PromptCompletionAdapterTests(unittest.TestCase):
         }
         out = _adapt_record_to_text(row, CAUSAL, "llama3")
         self.assertEqual(out["text"], row["text"])
+        self.assertEqual(out["target_text"], "")
+        self.assertEqual(json.loads(out["chat_messages"]), row["messages"])
 
 
 class ChatTemplateDefaultTests(unittest.TestCase):

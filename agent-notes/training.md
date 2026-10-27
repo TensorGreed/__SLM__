@@ -87,6 +87,47 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   validator). Regression net: `tests/test_training_correctness.py`
   (real SmolLM2 fine-tune must beat base on a held-out split; skips
   without torch / cached model).
+  **Multi-turn chat rows: assistant-only loss (G8, 2026-10-27)** — a row whose
+  `messages`/`conversations` (normalised like the chat adapter:
+  `train._normalize_chat_messages` mirrors `data_adapter_service._messages_from_record`,
+  a test pins both) has a system message, > 1 assistant turn or > 2 messages
+  (`_multi_turn_messages`; trailing non-assistant turns trimmed) leaves
+  `_adapt_record_to_text` with its messages as JSON in `chat_messages` (causal_lm only;
+  every row of a split that has a messages column gets the column, "" when single-turn).
+  Before, these trained as "role: content" plain text with loss on every token.
+  `_encode_multi_turn_example` renders `apply_chat_template(messages)` and finds each
+  assistant span by **prefix rendering** (start = len(render(messages[:i],
+  add_generation_prompt=True)), end = len(render(messages[:i+1]))), so text the template
+  emits after the content (Qwen/ChatML `<|im_end|>\n`, `<|eot_id|>`, `</s>`) is inside the
+  span and trained; with a template no extra EOS is appended. Templates that append the EOS token only after the LAST message
+  (Phi-3 style) are handled by an exact-suffix rule: when the prefix check fails, `through` ends with `eos_token` and
+  `full.startswith(through[:-len(eos)])`, the span ends before that EOS and every assistant turn stays trained (no fallback; a
+  template that rewrites earlier turns still falls back). Known final-turn-only families (counted in `mask_fallback_rows`): Qwen3
+  think-block templates (earlier assistant turns are re-rendered without their `<think>` block) and gpt-oss channel templates. Tokens (fast-tokenizer offsets; slow →
+  segment-by-segment) overlapping a span keep their label, all else -100 (system / user /
+  tool / headers). A prefix that doesn't line up (template raises, rewrites history, a
+  generation prompt unlike the rendered header) → mask only the final assistant turn
+  (rfind) and count `mask_fallback_rows`. No template, or `use_tokenizer_chat_template:
+  false` → "role: content\n" lines, span = assistant content + newline, and the FINAL assistant turn gets a trained EOS (as a
+  single-turn row does; there is no template end-of-turn). Over
+  max_seq_length → drop the oldest whole exchanges (user turn → next user turn), system
+  kept, final exchange kept; still too long → row dropped. Exactly one user→assistant
+  exchange with no system stays on the prompt→completion path, byte-identical (golden
+  fixture `tests/fixtures/train_single_turn_golden.json`). Report: `loss_masking`
+  `assistant_only` / `mixed:completion_only+assistant_only`, and `multi_turn` {rows,
+  assistant_token_share, assistant_turns, truncated_rows, dropped_turns (messages),
+  dropped_rows, mask_fallback_rows} at `training_report.multi_turn` +
+  `runtime_environment.multi_turn`; `_monitor_external_training` copies it to
+  **`experiment.config._runtime.multi_turn`** (what the UI reads). Simulate runs write the
+  same key from `prepared/train.jsonl` with chars/4 ≈ tokens and `approximate: true`
+  (`training_service._simulate_multi_turn_block`). Packed CPT, seq2seq, classification and
+  multimodal paths don't use it, and neither does the `trl_sft` backend: it trains multi-turn rows on EVERY token (not changed).
+  Dropped multi-turn rows get one warning (the generic "answer was cut off" warning counts only the other drops). The simulate
+  block is computed for SFT `training_mode` only. Pairs files from an eval (`source`, `source_split`, `messages` columns) feed the
+  DPO/ORPO loader through `_adapt_record_to_preference` (only prompt / chosen / rejected are read; the loader strips the prompt). ORPO: `_resolve_pairwise_trainer` falls back to
+  `trl.experimental.orpo` (trl ≥ 1.0 dropped the top-level `ORPOTrainer`, so ORPO mode
+  raised). Tests: `tests/test_multi_turn_masking.py` (tiny in-process tokenizer
+  `tests/_tiny_chat_tokenizer.py`; real SmolLM2 run skips without GPU/BREWSLM_REAL_TRAINING).
   **Same config → same weights** (2026-10-18): `train.py`
   `enable_deterministic_training` (config `deterministic`, schema default
   **True**) = strict `torch.use_deterministic_algorithms(True)` +

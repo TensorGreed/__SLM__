@@ -16,7 +16,8 @@ export type SynthMode =
     | 'seeded_defect'
     | 'remediation_from_findings'
     | 'code_examples'
-    | 'scenario_grid';
+    | 'scenario_grid'
+    | 'documents_multi_turn';
 
 export interface PlaybookCatalogEntry {
     recipe_id: string;

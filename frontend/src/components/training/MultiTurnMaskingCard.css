@@ -1,0 +1,29 @@
+.multi-turn-card {
+    margin: var(--space-md) 0;
+}
+
+.multi-turn-card__title {
+    margin: 0 0 var(--space-sm);
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.multi-turn-card__grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    margin: 0;
+}
+
+.multi-turn-card__grid dt {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+}
+
+.multi-turn-card__grid dd {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-variant-numeric: tabular-nums;
+}

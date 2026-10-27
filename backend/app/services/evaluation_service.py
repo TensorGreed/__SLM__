@@ -61,8 +61,18 @@ async def _get_experiment_for_project(
 # ── Prompt template handling ───────────────────────────────────────────
 
 
+def _history_fallback(history: list[dict[str, str]] | None, prompt: str) -> tuple[str, bool]:
+    """No usable chat template: a history renders as the trainer's no-template lines, a bare
+    prompt stays as is."""
+    if history:
+        from app.services.dialogue_eval_service import render_history_fallback
+
+        return render_history_fallback(history), False
+    return prompt, False
+
+
 def _apply_chat_template_if_present(
-    tokenizer: Any, prompt: str
+    tokenizer: Any, prompt: str, history: list[dict[str, str]] | None = None
 ) -> tuple[str, bool]:
     """Wrap a bare user prompt with the tokenizer's chat template if it has one.
 
@@ -78,21 +88,26 @@ def _apply_chat_template_if_present(
     the universal contract: it works for Llama 2/3, Mistral, Qwen,
     Phi, and anything that saves a ``chat_template`` field on the
     tokenizer (which virtually every modern HF checkpoint does).
+
+    ``history`` (a multi-turn row: the system prompt and every message before the final
+    assistant turn) replaces the single user message, so the model sees the dialogue the
+    way it was trained on it. Without a chat template a history falls back to
+    ``role: content`` lines plus ``assistant: `` (the trainer's no-template rendering).
     """
 
     template = getattr(tokenizer, "chat_template", None)
     if not template or not hasattr(tokenizer, "apply_chat_template"):
-        return prompt, False
+        return _history_fallback(history, prompt)
     try:
         formatted = tokenizer.apply_chat_template(
-            [{"role": "user", "content": prompt}],
+            list(history) if history else [{"role": "user", "content": prompt}],
             tokenize=False,
             add_generation_prompt=True,
         )
     except Exception:
-        return prompt, False
+        return _history_fallback(history, prompt)
     if not isinstance(formatted, str) or not formatted.strip():
-        return prompt, False
+        return _history_fallback(history, prompt)
     return formatted, True
 
 
@@ -1119,6 +1134,16 @@ def _extract_prompt_and_reference(row: dict) -> tuple[str, str]:
     image_path = str(row.get("image_path") or row.get("image") or row.get("image_url") or "").strip()
     audio_path = str(row.get("audio_path") or row.get("audio") or row.get("audio_url") or "").strip()
 
+    if (not prompt or not reference) and (row.get("messages") or row.get("conversations")):
+        # A chat row: the final assistant turn is the reference, the last user turn before it
+        # the prompt string (the whole history rides in ``pair["history"]``, see _load_heldout_pairs).
+        from app.services.dialogue_eval_service import last_user_content, row_history
+
+        hist = row_history(row)
+        if hist is not None:
+            prompt = prompt or last_user_content(hist[0]).strip()
+            reference = reference or hist[1].strip()
+
     if not prompt or not reference:
         canonical = canonicalize_record(row)
         if canonical:
@@ -1221,6 +1246,17 @@ def _load_heldout_pairs(
         for key, value in bp.extras.items():
             if key not in pair:
                 pair[key] = value
+        # A chat row (``messages``) is scored on its FINAL assistant turn, given the whole
+        # history before it (system prompt included) — rendered with the chat template
+        # like training. A bare [user] history stays on the plain prompt path.
+        from app.services.dialogue_eval_service import history_for_pair, normalized_messages, row_history
+
+        hist = row_history(row)
+        if hist is not None:
+            history_msgs = history_for_pair(hist[0], bp.prompt)
+            if history_msgs is not None:
+                pair["history"] = history_msgs
+            pair["dialogue_messages"] = normalized_messages(row)
         pairs.append(pair)
         if len(pairs) >= sample_cap:
             break
@@ -1343,10 +1379,12 @@ def _run_transformers_inference(
     latencies_s: list[float] = []
     generated_tokens_total = 0
     chat_template_applied_count = 0
+    replay = {"generations": 0, "seconds": 0.0, "tokens": 0}  # dialogue-judge replay turns, kept out of the stats
     generation_started = perf_counter()
     for row in pairs:
         prompt = row["prompt"]
         reference = row["reference"]
+        is_replay = "_replay" in row
 
         # Wrap with the model's own chat template when present so the model
         # sees the same prompt shape it was trained against. Handlers
@@ -1355,9 +1393,9 @@ def _run_transformers_inference(
         # task-specific format.
         if apply_chat_template:
             formatted_prompt, template_applied = _apply_chat_template_if_present(
-                tokenizer, prompt
+                tokenizer, prompt, row.get("history")
             )
-            if template_applied:
+            if template_applied and not is_replay:
                 chat_template_applied_count += 1
         else:
             formatted_prompt, template_applied = prompt, False
@@ -1391,11 +1429,16 @@ def _run_transformers_inference(
                 gen_kwargs["stopping_criteria"] = active_stopping
             output_ids = model.generate(**inputs, **gen_kwargs)
         elapsed = perf_counter() - started
-        latencies_s.append(elapsed)
 
         generated = output_ids[0][prompt_tokens:]
         generated_tokens = int(generated.shape[-1])
-        generated_tokens_total += generated_tokens
+        if is_replay:
+            replay["generations"] += 1
+            replay["seconds"] += elapsed
+            replay["tokens"] += generated_tokens
+        else:
+            latencies_s.append(elapsed)
+            generated_tokens_total += generated_tokens
         prediction = tokenizer.decode(generated, skip_special_tokens=True).strip()
         # Trim anything after the first stop sequence so the eval
         # downstream sees only the "real" output, not the trailing
@@ -1420,7 +1463,7 @@ def _run_transformers_inference(
             }
         )
 
-    total_generation_seconds = perf_counter() - generation_started
+    total_generation_seconds = max(0.0, perf_counter() - generation_started - replay["seconds"])
     latency_ms = [v * 1000 for v in latencies_s]
     avg_latency_ms = (sum(latency_ms) / len(latency_ms)) if latency_ms else 0.0
     token_tps = generated_tokens_total / total_generation_seconds if total_generation_seconds > 0 else 0.0
@@ -1440,8 +1483,21 @@ def _run_transformers_inference(
         "chat_template_applied_count": chat_template_applied_count,
         "chat_template_applied": chat_template_applied_count > 0,
         "total_generated_tokens": generated_tokens_total,
+        **_replay_runtime(replay),
     }
     return predictions, runtime
+
+
+def _replay_runtime(replay: dict[str, Any]) -> dict[str, Any]:
+    """Replayed dialogue-judge generations are counted apart from the held-out rows' latency /
+    throughput / chat-template stats; present only when a replay ran."""
+    if not replay.get("generations"):
+        return {}
+    return {
+        "replay_generations": int(replay["generations"]),
+        "replay_generation_seconds": round(float(replay["seconds"]), 3),
+        "replay_generated_tokens": int(replay["tokens"]),
+    }
 
 
 def _run_llama_cpp_inference(
@@ -1450,6 +1506,8 @@ def _run_llama_cpp_inference(
     max_new_tokens: int,
     temperature: float,
     stop_sequences: list[str] | None = None,
+    *,
+    apply_chat_template: bool = True,
 ) -> tuple[list[dict], dict]:
     from llama_cpp import Llama
 
@@ -1469,10 +1527,15 @@ def _run_llama_cpp_inference(
     latencies_s: list[float] = []
     generated_tokens_total = 0
     chat_template_applied_count = 0
+    replay = {"generations": 0, "seconds": 0.0, "tokens": 0}  # dialogue-judge replay turns, kept out of the stats
     generation_started = perf_counter()
     for row in pairs:
         prompt = row["prompt"]
         reference = row["reference"]
+        is_replay = "_replay" in row
+        # A handler that wraps its own prompt (apply_chat_template=False) ignores the dialogue
+        # history here too - same as the transformers path.
+        history = row.get("history") if apply_chat_template else None
         started = perf_counter()
         formatted_prompt = ""
         prediction_text = ""
@@ -1480,7 +1543,7 @@ def _run_llama_cpp_inference(
         if chat_handler_available:
             try:
                 chat_kwargs: dict[str, Any] = {
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": list(history or [{"role": "user", "content": prompt}]),
                     "max_tokens": max_new_tokens,
                     "temperature": temperature,
                     **LLAMA_CPP_NEUTRAL,
@@ -1492,7 +1555,8 @@ def _run_llama_cpp_inference(
                 message = choice.get("message") or {}
                 prediction_text = str(message.get("content", "")).strip()
                 used_chat_path = True
-                chat_template_applied_count += 1
+                if not is_replay:
+                    chat_template_applied_count += 1
             except Exception:
                 # GGUF without a parseable chat template falls through.
                 used_chat_path = False
@@ -1518,11 +1582,16 @@ def _run_llama_cpp_inference(
                     earliest_cut = idx
             prediction_text = prediction_text[:earliest_cut].rstrip()
         elapsed = perf_counter() - started
-        latencies_s.append(elapsed)
 
         usage = output.get("usage", {}) if isinstance(output, dict) else {}
         generated_tokens = int(usage.get("completion_tokens", 0))
-        generated_tokens_total += generated_tokens
+        if is_replay:
+            replay["generations"] += 1
+            replay["seconds"] += elapsed
+            replay["tokens"] += generated_tokens
+        else:
+            latencies_s.append(elapsed)
+            generated_tokens_total += generated_tokens
         predictions.append(
             {
                 "prompt": prompt,
@@ -1534,7 +1603,7 @@ def _run_llama_cpp_inference(
             }
         )
 
-    total_generation_seconds = perf_counter() - generation_started
+    total_generation_seconds = max(0.0, perf_counter() - generation_started - replay["seconds"])
     latency_ms = [v * 1000 for v in latencies_s]
     avg_latency_ms = (sum(latency_ms) / len(latency_ms)) if latency_ms else 0.0
     token_tps = generated_tokens_total / total_generation_seconds if total_generation_seconds > 0 else 0.0
@@ -1550,6 +1619,7 @@ def _run_llama_cpp_inference(
         "chat_template_applied_count": chat_template_applied_count,
         "chat_template_applied": chat_template_applied_count > 0,
         "total_generated_tokens": generated_tokens_total,
+        **_replay_runtime(replay),
     }
     return predictions, runtime
 
@@ -2362,6 +2432,7 @@ def _run_local_inference(
     if model_path.exists() and model_path.suffix.lower() == ".gguf":
         return _run_llama_cpp_inference(
             model_ref, pairs, max_new_tokens, temperature, stop_sequences,
+            apply_chat_template=apply_chat_template,
         )
     # δ — when the checkpoint was trained with a classification
     # head, route through the head-aware path so we use the
@@ -2539,6 +2610,90 @@ async def _run_perplexity_evaluation(
 
 
 FAILURES_PREVIEW_LIMIT = 20
+
+
+ROW_PREDICTIONS_LIMIT = 1000
+ROW_HISTORY_MESSAGE_CAP = 40
+_ROW_PREDICTION_TEXT_CAP = 8000
+
+
+def _project_dir_for_evals(project_id: int) -> Path:
+    return settings.DATA_DIR / "projects" / str(project_id)
+
+
+def row_prediction_records(predictions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """``(records, not_stored)``: a compact record for every row a judge scored (the answer
+    judge's verdict and/or the dialogue judge) — the rows preference pairs are built from.
+    At most ``ROW_PREDICTIONS_LIMIT`` records (``not_stored`` counts the judged rows past it);
+    texts are capped; a chat row keeps its ``history`` (last ``ROW_HISTORY_MESSAGE_CAP``
+    messages, ``history_truncated`` when cut) instead of a duplicate ``prompt``. ``row_index``
+    is the row's position in the held-out file."""
+    cap = _ROW_PREDICTION_TEXT_CAP
+    records: list[dict[str, Any]] = []
+    not_stored = 0
+    for position, p in enumerate(predictions):
+        if not isinstance(p, dict):
+            continue
+        if p.get("row_judge_verdict") is None and p.get("dialogue_judge") is None:
+            continue
+        if len(records) >= ROW_PREDICTIONS_LIMIT:
+            not_stored += 1
+            continue
+        record: dict[str, Any] = {
+            "row_index": p.get("row_index", position),
+            "reference": str(p.get("reference") or "")[:cap],
+            "prediction": str(p.get("prediction") or "")[:cap],
+        }
+        history = [m for m in (p.get("history") or []) if isinstance(m, dict)]
+        if history:
+            if len(history) > ROW_HISTORY_MESSAGE_CAP:
+                record["history_truncated"] = True
+                history = history[-ROW_HISTORY_MESSAGE_CAP:]
+            record["history"] = [
+                {"role": str(m.get("role") or ""), "content": str(m.get("content") or "")[:cap]} for m in history
+            ]
+        else:
+            record["prompt"] = str(p.get("prompt") or "")[:cap]
+        for key in ("row_judge_verdict", "row_judge_score", "dialogue_judge"):
+            if p.get(key) is not None:
+                record[key] = p[key]
+        records.append(record)
+    return records, not_stored
+
+
+def write_row_predictions_file(
+    project_id: int, experiment_id: int, result_id: int, predictions: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Write the judged rows to ``experiments/<exp>/evals/result_<id>_rows.jsonl`` under the project
+    directory and return the ``details["row_predictions_file"]`` pointer
+    (``{path, count, truncated}``, path relative to the project dir); None when no row was judged."""
+    records, not_stored = row_prediction_records(predictions)
+    if not records:
+        return None
+    rel = f"experiments/{experiment_id}/evals/result_{result_id}_rows.jsonl"
+    path = _project_dir_for_evals(project_id) / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
+    return {"path": rel, "count": len(records), "truncated": not_stored}
+
+
+def read_row_predictions_file(project_id: int, pointer: Any) -> list[dict[str, Any]] | None:
+    """The records ``write_row_predictions_file`` stored, or None when the pointer / file is missing."""
+    if not isinstance(pointer, dict) or not pointer.get("path"):
+        return None
+    root = _project_dir_for_evals(project_id).resolve()
+    path = (root / str(pointer["path"])).resolve()
+    if root not in path.parents or not path.is_file():
+        return None
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return records
 
 
 def _prediction_failed(prediction: dict[str, Any]) -> bool:
@@ -2896,8 +3051,19 @@ async def _safe_judge_answers(
                 except Exception as exc:  # noqa: BLE001 - best-effort
                     logging.getLogger(__name__).warning("retrieval judge skipped: %s", exc)
             return snapshot
+        view = None
+        if any(isinstance(p, dict) and p.get("history") for p in predictions):
+            # A chat row's question is the whole dialogue so far (system prompt included), not
+            # just its last user turn — the same text the per-turn dialogue judge sends.
+            from app.services.dialogue_eval_service import history_text
+
+            def view(p: dict[str, Any]) -> tuple[str, str, str]:
+                history = p.get("history")
+                question = history_text(history) if history else str(p.get("prompt") or "")
+                return question, str(p.get("reference") or ""), str(p.get("prediction") or "")
+
         return await judge_predictions(
-            predictions, resolved.judge, label=resolved.label, cache=project_cache(project_id),
+            predictions, resolved.judge, label=resolved.label, cache=project_cache(project_id), view=view,
         )
     except Exception as exc:  # noqa: BLE001
         logging.getLogger(__name__).warning("answer judge skipped: %s", exc)
@@ -2986,6 +3152,10 @@ async def _generate_heldout_predictions(
         modality_counts[modality] = modality_counts.get(modality, 0) + 1
         if idx < len(predictions) and isinstance(predictions[idx], dict):
             predictions[idx]["input_modality"] = modality
+            if pair.get("history"):
+                predictions[idx]["history"] = pair["history"]
+            if pair.get("_row_index") is not None:
+                predictions[idx]["row_index"] = pair["_row_index"]
             if pair.get("image_path"):
                 predictions[idx]["image_path"] = pair.get("image_path")
             if pair.get("audio_path"):
@@ -3042,8 +3212,15 @@ async def run_heldout_evaluation(
     answer_judge: "ResolvedJudge | None" = None,
     answer_judge_enabled: bool = True,
     decoding: str = NEUTRAL_DECODING,
+    dialogue_judge: bool = False,
 ) -> EvalResult:
     """Run end-to-end evaluation by generating predictions on held-out data.
+
+    A chat row (``messages``) is scored on its final assistant turn given the whole history
+    before it. ``dialogue_judge=True`` additionally replays EVERY assistant turn of rows
+    with 2+ of them from the gold history and judges each against its reference
+    (``metrics["dialogue_judge"]`` — ``dialogue_eval_service``); off by default, since it
+    costs one generation plus one judge call per extra turn.
 
     ``decoding="model"`` scores a base model under its own
     ``generation_config`` (``decoding_settings`` — the lift check's
@@ -3112,11 +3289,38 @@ async def run_heldout_evaluation(
             "Rows must include prompt/question and reference/answer fields."
         )
 
+    # Per-turn replay judge: resolve the judge BEFORE generating so a missing judge costs
+    # nothing; the replayed turns ride in the same inference call as the held-out rows.
+    dialogue_skip: str | None = None
+    dialogue_resolved = None
+    replay_pairs: list[dict] = []
+    if dialogue_judge:
+        from app.services import dialogue_eval_service
+        from app.services.answer_judge_service import project_cache, resolve_answer_judge
+        from app.services.eval_task_handler_service import handler_wraps_own_prompt
+
+        if not answer_judge_enabled:
+            dialogue_skip = "judge_disabled"
+        elif handler_wraps_own_prompt(task_handler, getattr(eval_ctx, "manifest", None)):
+            dialogue_skip = "handler_builds_own_prompt"
+        else:
+            replay_pairs = dialogue_eval_service.build_replay_pairs(pairs)
+            if not any(
+                len(dialogue_eval_service.assistant_turns(p.get("dialogue_messages") or [])) >= 2 for p in pairs
+            ):
+                dialogue_skip = "no_multi_turn_rows"
+            else:
+                dialogue_resolved = answer_judge or await resolve_answer_judge(db, project_id)
+                if dialogue_resolved is None:
+                    dialogue_skip = "no_judge_available"
+        if dialogue_skip:
+            replay_pairs = []
+    held_pair_count = len(pairs)
     predictions, runtime, modality_counts, gen_settings = await _generate_heldout_predictions(
         db,
         exp=exp,
         project_id=project_id,
-        pairs=pairs,
+        pairs=pairs + replay_pairs,
         task_handler=task_handler,
         eval_ctx=eval_ctx,
         model_path=model_path,
@@ -3124,6 +3328,12 @@ async def run_heldout_evaluation(
         temperature=temperature,
         decoding=decoding,
     )
+    replay_predictions = predictions[held_pair_count:]
+    predictions = predictions[:held_pair_count]
+    if replay_pairs:
+        modality_counts["text"] = max(0, modality_counts.get("text", 0) - len(replay_pairs))
+        if modality_counts.get("text") == 0:
+            modality_counts.pop("text", None)
     model_ref = gen_settings["model_ref"]
     effective_max_new_tokens = gen_settings["max_new_tokens"]
     handler_stop_sequences = gen_settings["stop_sequences"]
@@ -3210,6 +3420,21 @@ async def run_heldout_evaluation(
             retrieval_snapshot = judge_snapshot.get("retrieval")
             if isinstance(retrieval_snapshot, dict) and retrieval_snapshot.get("found_rate") is not None:
                 metrics["retrieval_found_rate"] = retrieval_snapshot["found_rate"]
+    if dialogue_judge:
+        if dialogue_skip:
+            metrics["dialogue_judge"] = {"skipped": dialogue_skip}
+        else:
+            try:
+                metrics["dialogue_judge"] = await dialogue_eval_service.judge_dialogues(
+                    pairs, predictions, replay_predictions, replay_pairs, dialogue_resolved,
+                    cache=project_cache(project_id),
+                )
+                metrics["dialogue_judge"]["replay_generations"] = len(replay_pairs)
+            except LlmBudgetExceeded:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the dialogue judge adds a metric, it never fails the eval
+                logging.getLogger(__name__).warning("dialogue judge skipped: %s", exc)
+                metrics["dialogue_judge"] = {"skipped": f"error: {exc}"[:200]}
     result.metrics = metrics
 
     details = dict(result.details or {})
@@ -3343,6 +3568,7 @@ async def run_heldout_evaluation(
             "alignment_preference_correct": p.get("alignment_preference_correct"),
             "latency_ms": p.get("latency_ms"),
             "input_modality": p.get("input_modality"),
+            "dialogue_judge": p.get("dialogue_judge"),
         }
         for p in predictions[:5]
     ]
@@ -3368,6 +3594,18 @@ async def run_heldout_evaluation(
     result.details = details
     await db.flush()
     await db.refresh(result)
+    # Judged rows go to a side file (not into the results row, which the list endpoint returns
+    # whole): what the model saw, the reference, its answer and the verdict — enough to build
+    # preference pairs from the wrong / partial answers without re-running the model.
+    try:
+        pointer = write_row_predictions_file(project_id, experiment_id, result.id, predictions)
+    except OSError as exc:
+        logging.getLogger(__name__).warning("row predictions file not written: %s", exc)
+        pointer = None
+    if pointer is not None:
+        result.details = {**(result.details or {}), "row_predictions_file": pointer}
+        await db.flush()
+        await db.refresh(result)
     return result
 
 

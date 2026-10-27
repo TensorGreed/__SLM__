@@ -319,3 +319,20 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   - `ToolCallRowView` shows each call with known / allowed / args-valid / args-match / dry-run badges (or the skip reason) and arg errors.
   - `liftEvidence` labels `tool_call_pass_rate` "tool-call pass rate" and `tool_call_valid_rate` "valid tool-call rate".
 - NotificationBell: `tool_catalog_import` jobs deep-link to the catalog card. The outcome is "N tools imported from <kind> (catalog version X)".
+
+## Multi-turn chat surfaces (G8)
+
+- `MultiTurnMaskingCard` (training run view, `TrainingRunView`): assistant token share, assistant turns, truncated /
+  dropped, mask fallbacks; "approximate" tag for simulate. Reads the first of `config._runtime.multi_turn`,
+  `training_report.multi_turn`, `runtime_environment.multi_turn`; hidden when none.
+- `EvalPanel` run form: "Judge every assistant turn (multi-turn rows)" toggle sends `dialogue_judge: true` (omitted
+  when off). `DialogueJudgePanel` renders `metrics.dialogue_judge` (mean, worst-turn mean, by-turn table).
+- `PreferencePairsFromEvalCard` (shown for a result with judged rows: `metrics.judge.judged > 0` or `metrics.dialogue_judge.rows > 0`,
+  `hasJudgedRows`; labelled Run # / dataset / result id) posts `/alignment/preference-pairs/from-eval {eval_result_id, include,
+  allow_test_split?}`; the "Allow test split (measures memorisation)" checkbox shows only when the eval's split (`dataset_name`) is
+  `test` / `gold_test`, and the reply's `warning` is shown. Shows created + name, `dataset_path` (`dataset_id` is null) with "To train
+  DPO/ORPO on these pairs, set it as the alignment dataset path in Train.", the skip breakdown by reason, and the 400 breakdown (read
+  from `skipped`, `metadata.skipped` or `detail.skipped`).
+- `DialogueJudgePanel`: `{skipped: reason}` renders "Per-turn judge skipped: <reason>"; `replay_cap_hit` shows how many rows were not replayed.
+- `MultiTurnParamsForm` for synth mode `documents_multi_turn` (turns_min/max (2-8), passages_per_dialogue,
+  dialogues_per_passage_group); mode added to `SynthMode`, `PARAM_MODES`, `MODE_LABELS`.

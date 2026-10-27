@@ -715,6 +715,11 @@ async def _monitor_external_training(
                 try:
                     report = json.loads(report_path.read_text(encoding="utf-8"))
                     runtime["report_path"] = str(report_path)
+                    # Assistant-only masking stats for multi-turn chat rows
+                    # (train.py ``multi_turn``) — the experiment API carries
+                    # ``config._runtime``, not the report.
+                    if isinstance(report.get("multi_turn"), dict):
+                        runtime["multi_turn"] = report["multi_turn"]
                     exp.final_train_loss = _coerce_float(report.get("final_train_loss"))
                     exp.final_eval_loss = _coerce_float(report.get("final_eval_loss"))
 
@@ -876,6 +881,76 @@ async def _monitor_external_training(
             },
         )
         return "cancelled" if final_status == "cancelled" else "failed"
+
+
+# Simulate runs estimate tokens from characters (~4 chars per token).
+SIMULATE_CHARS_PER_TOKEN = 4
+
+
+def _simulate_multi_turn_block(train_file: Path, max_seq_length: int) -> dict | None:
+    """Approximate ``multi_turn`` block for a simulate run: the same row rule
+    and oldest-exchange truncation as ``scripts/train.py``, counted on a
+    "role: content" render in characters (tokens ≈ chars / 4) instead of a
+    tokenizer — ``approximate: true``. None when the file has no multi-turn
+    rows or can't be read."""
+    from scripts.train import _exchange_groups, _multi_turn_messages, _summarize_multi_turn
+
+    budget = max(1, int(max_seq_length)) * SIMULATE_CHARS_PER_TOKEN
+    infos: list[dict] = []
+    try:
+        handle = train_file.open(encoding="utf-8")
+    except OSError:
+        return None
+    with handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            messages = _multi_turn_messages(row)
+            if messages is None:
+                continue
+            groups = _exchange_groups(messages)
+            dropped_turns = 0
+
+            def _chars(keep: set[int]) -> tuple[int, int, int]:
+                total = trained = turns = 0
+                for i, m in enumerate(messages):
+                    if i not in keep:
+                        continue
+                    total += len(m["role"]) + len(m["content"]) + 3
+                    if m["role"] == "assistant":
+                        trained += len(m["content"]) + 1
+                        turns += 1
+                return total, trained, turns
+
+            system = {i for i, m in enumerate(messages) if m["role"] == "system"}
+            keep = system | {i for g in groups for i in g}
+            total, trained, turns = _chars(keep)
+            while total > budget and len(groups) > 1:
+                dropped_turns += len(groups.pop(0))
+                keep = system | {i for g in groups for i in g}
+                total, trained, turns = _chars(keep)
+            dropped = total > budget
+            infos.append({
+                "assistant_turns": 0 if dropped else turns,
+                "trained_tokens": 0 if dropped else trained,
+                "total_tokens": 0 if dropped else total,
+                "truncated": bool(dropped_turns) and not dropped,
+                "dropped_turns": dropped_turns,
+                "dropped": dropped,
+                "fallback": False,
+            })
+    block = _summarize_multi_turn(infos)
+    if block is None:
+        return None
+    block["approximate"] = True
+    return block
 
 
 async def _simulate_training_loop(experiment_id: int, config: dict):
@@ -1121,6 +1196,21 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
                 # runtime_config for the UI to surface.
                 cfg = dict(exp.config or {})
                 runtime = dict(cfg.get("_runtime") or {})
+                # Same ``multi_turn`` block a real run copies from its report,
+                # estimated from the prepared train split (approximate).
+                # SFT only: preference / other modes don't train a chat row's assistant tokens.
+                multi_turn = None
+                sim_mode = str(config.get("training_mode") or getattr(exp.training_mode, "value", exp.training_mode) or "sft")
+                if sim_mode.strip().lower() == "sft":
+                    try:
+                        multi_turn = _simulate_multi_turn_block(
+                            settings.DATA_DIR / "projects" / str(exp.project_id) / "prepared" / "train.jsonl",
+                            int(config.get("max_seq_length") or 2048),
+                        )
+                    except Exception:  # noqa: BLE001 — never fail a simulate run on stats
+                        multi_turn = None
+                if multi_turn is not None:
+                    runtime["multi_turn"] = multi_turn
                 runtime["auto_rag_build"] = await _safe_build_auto_rag_index(
                     db, project_id=int(exp.project_id)
                 )

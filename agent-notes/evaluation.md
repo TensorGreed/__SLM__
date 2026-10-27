@@ -552,3 +552,52 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   The single-verdict answer judge is skipped for this profile.
 - Tests: `tests/test_tool_call_scoring.py`, `tests/test_tool_scoring_acceptance.py` (fake MCP server over stdio).
   Docs: `slm-docs/docs/workflows/structured-plan.md` (Tool calls), `slm-docs/docs/reference/api/tool-scoring.md`.
+
+## Multi-turn chat eval + pairs from eval (G8)
+
+- `dialogue_eval_service` (generic, any chat dataset): `_extract_prompt_and_reference` fills a chat row's prompt (last user
+  turn) / reference (final assistant turn); `_load_heldout_pairs` attaches `pair["history"]` (messages before the final
+  assistant turn, system included; the handler's rewritten prompt replaces the last user turn) only when it is more than a
+  bare `[user]` (so single-turn rows are byte-identical) and `pair["dialogue_messages"]` (the full list).
+  `_apply_chat_template_if_present(tokenizer, prompt, history)` renders it with the chat template (no template: `role: content\n` lines + `assistant: `, as the trainer renders); the llama.cpp path passes it as `messages`. Handlers that wrap their own prompt (`wraps_own_prompt`, `apply_chat_template=False`) ignore history on BOTH the transformers and the llama.cpp path. If `apply_chat_template` raises or returns nothing, a history falls back to the same no-template `role: content` render (`_history_fallback`), matching training. `history_for_pair` replaces the last USER turn only when the handler actually rewrote the prompt (compared stripped against that turn).
+- Per-turn replay judge: `dialogue_judge: bool` on `HeldoutEvalRunRequest` -> `run_heldout_evaluation(dialogue_judge=)`.
+  Replay pairs (one per NON-final assistant turn of rows with 2+, capped `MAX_REPLAY_GENERATIONS`=500) ride in the same
+  inference call as the held-out rows and are split off before scoring; the judge is resolved BEFORE generating
+  (`metrics.dialogue_judge = {"skipped": reason}` for `judge_disabled` / `handler_builds_own_prompt` / `no_multi_turn_rows` /
+  `no_judge_available`). Summary `metrics.dialogue_judge` = `{judge, rows, mean, worst_turn_mean, by_turn_index[{turn, mean, n}],
+  turns_judged, unjudged, judge_calls, judge_cached, judge_tokens, replay_generations, usage...}`; per row
+  `details.row_predictions[i].dialogue_judge = {turns[{turn, score, verdict}], mean, worst_turn}`. Turns are 1-based assistant
+  turn ordinals; cache keys use the flat history as the question.
+- **Judged rows live in a side file, not in the result row** (`evaluation_service.write_row_predictions_file`):
+  `<project>/experiments/<exp_id>/evals/result_<eval_result_id>_rows.jsonl`, written after the `EvalResult` row exists (flush gives
+  the id); `details.row_predictions_file = {path (relative to the project dir), count, truncated}` is all the result keeps, and
+  `GET /evaluation/results/{exp}` also strips any legacy inline `row_predictions` array. Only rows a judge scored are stored (the
+  answer judge's `row_judge_verdict` and/or the dialogue judge): `row_index` (position in the held-out file), `reference`,
+  `prediction`, `history` (last `ROW_HISTORY_MESSAGE_CAP`=40 messages, `history_truncated` when cut; chat rows carry NO duplicate
+  `prompt`), `row_judge_verdict` / `row_judge_score`, `dialogue_judge`. At most `ROW_PREDICTIONS_LIMIT`=1000 records; `truncated` =
+  judged rows past it. Evals without a pointer report `no_prediction_stored` for pairs.
+- **Judge profiles**: `chat_sft` is in `answer_judge_service.JUDGE_PROFILES` (final-turn scoring, same median >= 8 reference words rule);
+  a chat row's judge QUESTION is the whole dialogue (`history_text`: `role: content` lines, system included), the same text the
+  dialogue judge sends, so cache keys are shared.
+- **Replay cap**: `build_replay_pairs` replays whole rows up to `MAX_REPLAY_GENERATIONS`=500; rows past it are NOT judged on their final
+  turn alone - `judge_dialogues` skips them and reports `rows_not_replayed` / `replay_cap_hit` in `metrics.dialogue_judge`
+  (`DialogueJudgePanel` shows them). Replayed generations are excluded from `average_latency_ms`, `token_throughput_tps`,
+  `total_generated_tokens` and `chat_template_applied_count`; `runtime` carries `replay_generations` / `replay_generation_seconds` /
+  `replay_generated_tokens` instead.
+- `preference_pairs_from_eval_service` + `POST /api/projects/{id}/alignment/preference-pairs/from-eval` (`api/alignment_pairs.py`;
+  the older alignment routes live under `/training/alignment/...`): wrong / partial rows from the side file -> `{prompt, chosen: reference,
+  rejected: prediction, source: "eval", source_split, eval_result_id, experiment_id, row_index, verdict}` (+ `messages` for chat rows)
+  in `prepared/alignment/eval_<id>_pairs.jsonl` (no Dataset row: every existing `DatasetType` is looked up as a singleton, so the reply's
+  `dataset_id` is null; the UI shows `dataset_path` and says to set it as the alignment dataset path in Train). A row's verdict is the
+  answer judge's, else the dialogue judge's verdict on the row's FINAL turn (highest turn number). A chat row's `prompt` is the same
+  no-template render eval uses (`role: content` lines + `assistant: `); `messages` stay on the pair. Skips: `not_judged`, `correct`,
+  `not_included`, `prediction_equals_reference`, `empty_prediction`, `empty_reference`, `no_prediction_stored`, `not_stored` (judged rows past
+  the side file's caps or whose history was cut). 0 pairs -> 400 `no_pairs_built`, `metadata.skipped`.
+- **Test split is refused**: an eval whose split (`EvalResult.dataset_name`: `test` / `gold_test`; an empty/unknown name counts as test)
+  was the held-out test set -> 400 `test_split_refused` (memorisation). `allow_test_split: true` builds them anyway, adds `warning`
+  to the reply; every pair carries `source_split` either way. UI: the "Allow test split (measures memorisation)" checkbox shows only for
+  test splits.
+- Known gaps (follow-ups, not done): eval double-BOS on Mistral / Llama / Gemma (the chat template adds BOS and the tokenizer adds another
+  - pre-existing, single-turn rows too); length estimates run on display text; replay prompts skip handler rewriting.
+- Tests: `tests/test_dialogue_eval.py`, `tests/test_documents_multi_turn_and_pairs.py`. Docs: `slm-docs/docs/workflows/multi-turn-chat.md`.
+

@@ -24,6 +24,7 @@ from app.api.audit import router as audit_router
 from app.api.drift import router as drift_router
 from app.api.code_checks import router as code_checks_router
 from app.api.remediation import router as remediation_router
+from app.api.alignment_pairs import router as alignment_pairs_router
 from app.api.remediation_config import router as remediation_config_router
 from app.api.structured_plan_config import router as structured_plan_config_router
 from app.api.tool_scoring_config import router as tool_scoring_config_router
@@ -392,6 +393,7 @@ API_DEPENDENCIES = [Depends(authorize_request)]
 app.include_router(auth_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(admin_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(remediation_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(alignment_pairs_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(remediation_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(structured_plan_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(tool_scoring_config_router, prefix="/api", dependencies=API_DEPENDENCIES)

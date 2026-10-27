@@ -67,6 +67,9 @@ class HeldoutEvalRunRequest(BaseModel):
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     model_path: str | None = None
     judge_model: str = Field(default="meta-llama/Meta-Llama-3-70B-Instruct", min_length=1, max_length=255)
+    # Multi-turn rows: replay every assistant turn from the gold history and judge each one
+    # (result: metrics.dialogue_judge). Off by default — one generation + judge call per turn.
+    dialogue_judge: bool = False
 
 
 class EvaluationPackPreferenceUpdateRequest(BaseModel):
@@ -192,6 +195,7 @@ async def run_eval_on_heldout(
                 "temperature": req.temperature,
                 "model_path": req.model_path,
                 "judge_model": req.judge_model,
+                "dialogue_judge": req.dialogue_judge,
             },
         )
         return JSONResponse(status_code=202, content=serialize_job(job))
@@ -208,6 +212,7 @@ async def run_eval_on_heldout(
             temperature=req.temperature,
             model_path=req.model_path,
             judge_model=req.judge_model,
+            dialogue_judge=req.dialogue_judge,
         )
         return EvalResultResponse.model_validate(result)
     except ValueError as e:
@@ -653,7 +658,15 @@ async def get_results(
     """Get evaluation results for an experiment."""
     try:
         results = await get_eval_results(db, project_id, experiment_id)
-        return [EvalResultResponse.model_validate(r) for r in results]
+        out = []
+        for r in results:
+            item = EvalResultResponse.model_validate(r)
+            if isinstance(item.details, dict) and "row_predictions" in item.details:
+                # Row-level arrays live in the per-result side file, never in the list response
+                # (older results stored them inline).
+                item.details = {k: v for k, v in item.details.items() if k != "row_predictions"}
+            out.append(item)
+        return out
     except ValueError as e:
         raise HTTPException(404, str(e))
 

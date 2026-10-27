@@ -1,0 +1,40 @@
+.dialogue-judge {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin: var(--space-md) 0;
+}
+
+.dialogue-judge__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+}
+
+.dialogue-judge__summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    margin: 0;
+}
+
+.dialogue-judge__summary dt {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+}
+
+.dialogue-judge__summary dd {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-variant-numeric: tabular-nums;
+}
+
+.dialogue-judge__table {
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+}
+
+.dialogue-judge__table th,
+.dialogue-judge__table td {
+    padding: var(--space-xs) var(--space-md);
+    text-align: left;
+}

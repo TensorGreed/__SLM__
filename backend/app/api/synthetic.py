@@ -758,7 +758,8 @@ class RunPlaybookRequest(BaseModel):
             "label_id (required, a project-taxonomy id), attrs, context_dataset_id + context_column, "
             "context_sample_size. code-remediation remediation_from_findings: findings_dataset_id "
             "(findings rows, fix pairs or remediation rows; not an answer key), top_k (1-10), "
-            "retrieve_passages; code_examples: per_chunk (1-5)."
+            "retrieve_passages; code_examples: per_chunk (1-5). generic-sft documents_multi_turn: turns_min / "
+            "turns_max (2-8), dialogues_per_passage_group (1-5), passages_per_dialogue (1-3)."
         ),
     )
 
@@ -872,6 +873,17 @@ async def _checked_playbook_params(db: AsyncSession, project_id: int, mode: Any,
         return out
     if mode_value == "scenario_grid":
         await _check_scenario_grid_params(db, project_id, out)
+        return out
+    if mode_value == "documents_multi_turn":
+        from app.services.synth_playbooks.generic_sft_documents_multi_turn import check_params
+
+        problem = check_params(out)
+        if problem is not None:
+            name, message = problem
+            raise HTTPException(400, {
+                "error_code": "invalid_playbook_param", "message": message,
+                "metadata": {"param": name, "value": out.get(name)},
+            })
         return out
     if mode_value not in ("seeded_defect", "cluster_targeted"):
         return out

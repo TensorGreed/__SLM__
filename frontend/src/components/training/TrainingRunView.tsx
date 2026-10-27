@@ -8,6 +8,7 @@ import type { ErrorEnvelope } from '../../api/errors';
 import CheckpointsPanel from './CheckpointsPanel';
 import ErrorPanel from '../shared/ErrorPanel';
 import LossCurvePanel from './LossCurvePanel';
+import MultiTurnMaskingCard from './MultiTurnMaskingCard';
 import WarmStartDeltaChart from './WarmStartDeltaChart';
 import WhyThisPlanPanel from './WhyThisPlanPanel';
 import { TerminalConsole } from '../shared/TerminalConsole';
@@ -210,6 +211,8 @@ export default function TrainingRunView({
             reason?: string;
           }}
         />
+
+        <MultiTurnMaskingCard experiment={activeExperiment} />
 
         {/* P20 — Why-this-plan + checkpoints (Wave D backend exposure). */}
         <WhyThisPlanPanel projectId={projectId} experiment={activeExperiment} />

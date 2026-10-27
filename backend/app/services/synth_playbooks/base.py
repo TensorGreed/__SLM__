@@ -41,6 +41,8 @@ class SynthMode(str, Enum):
     CODE_EXAMPLES = "code_examples"
     # structured-plan: a matrix of scenario dimensions -> scenarios -> schema-valid plans.
     SCENARIO_GRID = "scenario_grid"
+    # generic-sft: multi-turn, passage-grounded dialogues written from the project's document passages.
+    DOCUMENTS_MULTI_TURN = "documents_multi_turn"
 
 
 class PlaybookContext(TypedDict, total=False):
@@ -62,6 +64,8 @@ class PlaybookContext(TypedDict, total=False):
     # code chunks from the project's code documents, the project's label
     # taxonomy index, and sampled values of a data-carrying context column.
     document_chunks: list[dict[str, Any]]
+    # Answer-key TEST split rows (documents playbooks reject dialogues that ask a test question).
+    test_rows: list[dict[str, Any]]
     taxonomy: Any
     context_values: list[str]
     context_column: str | None

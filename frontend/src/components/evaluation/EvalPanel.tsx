@@ -18,6 +18,8 @@ import RemediationMetricsPanel, { RemediationRowView, isRemediationMetrics, isRe
 import StructuredPlanMetricsPanel, { StructuredPlanRowView, isStructuredPlanMetrics, isStructuredPlanRow, type StructuredPlanMetrics, type StructuredPlanRow } from './StructuredPlanMetricsPanel';
 import ToolCallMetricsPanel, { ToolCallRowView, isToolCallMetrics, isToolCallRow, type ToolCallMetrics, type ToolCallRow } from './ToolCallMetricsPanel';
 import FindingSetMetricsPanel, { FindingSetRowView, isFindingSetMetrics, type FindingSetMetrics, type FindingSetRow } from './FindingSetMetricsPanel';
+import DialogueJudgePanel, { findDialogueJudge, hasJudgedRows } from './DialogueJudgePanel';
+import PreferencePairsFromEvalCard from './PreferencePairsFromEvalCard';
 import FieldMatchMetricsPanel, { hasFieldMatchBreakdown, type FieldMatchMetrics } from './FieldMatchMetricsPanel';
 import './ClassificationChartsPanel.css';
 import ScorecardPanel from './ScorecardPanel';
@@ -235,6 +237,7 @@ interface HeldoutEvalRequest {
     temperature: number;
     model_path?: string;
     judge_model?: string;
+    dialogue_judge?: boolean;
 }
 
 interface LocalJudgeServeRun {
@@ -464,6 +467,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
     const [maxNewTokens, setMaxNewTokens] = useState(128);
     const [temperature, setTemperature] = useState(0);
     const [modelPath, setModelPath] = useState('');
+    const [dialogueJudge, setDialogueJudge] = useState(false);
 
     const [loadingExperiments, setLoadingExperiments] = useState(false);
     const [isEvaluating, setIsEvaluating] = useState(false);
@@ -822,6 +826,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
 
         if (modelPath.trim()) {
             payload.model_path = modelPath.trim();
+        }
+        if (dialogueJudge) {
+            payload.dialogue_judge = true;
         }
         if (evalType === 'llm_judge') {
             if (provider === 'local_serve') {
@@ -1644,6 +1651,22 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                         </div>
                     </div>
 
+                    <div className="form-group">
+                        <label className="eval-panel__toggle">
+                            <input
+                                type="checkbox"
+                                checked={dialogueJudge}
+                                onChange={(e) => setDialogueJudge(e.target.checked)}
+                                data-testid="eval-dialogue-judge-toggle"
+                            />
+                            Judge every assistant turn (multi-turn rows)
+                        </label>
+                        <p className="u-hint u-mt0">
+                            Replays each assistant turn from the gold history and judges it against that turn&apos;s
+                            reference. One generation per turn, so it takes longer and costs more with a cloud judge.
+                        </p>
+                    </div>
+
                     {evalType === 'llm_judge' && (
                         <div className="u-grid-2">
                             <div className="form-group">
@@ -2105,6 +2128,30 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 <ToolCallMetricsPanel
                                     key={`tc-metrics-${r.id}`}
                                     metrics={r.metrics as unknown as ToolCallMetrics}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                />
+                            ))}
+
+                        {/* Multi-turn evals: per-turn replay judge summary. */}
+                        {evalResults
+                            .filter((r) => findDialogueJudge(r.metrics))
+                            .map((r) => (
+                                <DialogueJudgePanel
+                                    key={`dj-metrics-${r.id}`}
+                                    summary={findDialogueJudge(r.metrics)!}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                />
+                            ))}
+
+                        {/* Judged results: build preference pairs from wrong / partial answers. */}
+                        {evalResults
+                            .filter((r) => hasJudgedRows(r.metrics))
+                            .map((r) => (
+                                <PreferencePairsFromEvalCard
+                                    key={`pairs-${r.id}`}
+                                    projectId={projectId}
+                                    evalResultId={r.id}
+                                    split={r.dataset_name}
                                     provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
                                 />
                             ))}

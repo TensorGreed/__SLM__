@@ -34,6 +34,7 @@ session-start guidance.
 - `backend/app/api/active_learning.py` — Quality-Lift phase 3 slice 2 — Active-learning snapshot read endpoint.
 - `backend/app/api/adapter_studio.py` — API routes for Dataset Structure Explorer + Adapter Studio.
 - `backend/app/api/admin.py` — Admin API surface (USER-SUCCESS Epic 1, T5).
+- `backend/app/api/alignment_pairs.py` — Preference pairs built from evaluation results.
 - `backend/app/api/annotation.py` — Annotation foundation API (Story 1.1).
 - `backend/app/api/archetypes.py` — Archetype API routes (USER-SUCCESS Epic 8 Phase 8a).
 - `backend/app/api/artifacts.py` — Typed artifact registry API routes.
@@ -194,6 +195,7 @@ session-start guidance.
 - `backend/app/services/deployment_score_service.py` — Deployability score (priority.md P28).
 - `backend/app/services/deployment_target_service.py` — Deployment Target SDK: artifact/runnable target validation + smoke checks.
 - `backend/app/services/deployment_version_service.py` — Deployment version + rollback service (priority.md P25).
+- `backend/app/services/dialogue_eval_service.py` — Multi-turn (chat) rows at eval time: last-turn history + per-turn replay judge.
 - `backend/app/services/distillation/kd_capture.py` — Read + align the slice-1 teacher-capture artifact for offline KD (slice 2).
 - `backend/app/services/distillation/kd_loss.py` — Knowledge-distillation loss math (Track 1, Epic A, slice 2).
 - `backend/app/services/distillation/kd_trainer.py` — Offline-KD HF Trainer + collator (Track 1, Epic A, slice 2).
@@ -279,6 +281,7 @@ session-start guidance.
 - `backend/app/services/post_eval_decision_engine_service.py` — Post-eval decision engine (USER-SUCCESS Epic 7 Phase 7a).
 - `backend/app/services/post_training_eval_service.py` — Automatic baseline-vs-fine-tuned lift eval after every real training run.
 - `backend/app/services/predefined_split_service.py` — Predefined-split import: the user already has train / val / test files.
+- `backend/app/services/preference_pairs_from_eval_service.py` — Preference pairs from a held-out eval: the judge's wrong / partial answers.
 - `backend/app/services/probe_pack_service.py` — Platform-authored held-out probe packs (Coach-stage-2 phase 8).
 - `backend/app/services/probe_runner.py` — Probe runner — Coach-stage-2 phase 9.
 - `backend/app/services/project_duplicate_service.py` — Duplicate a project: the same documents, rows, answer key and prepared
@@ -357,6 +360,7 @@ session-start guidance.
 - `backend/app/services/synth_playbooks/code_review_hard_negatives.py` — HARD_NEGATIVES playbook for the `code-review` recipe.
 - `backend/app/services/synth_playbooks/code_review_paraphrase.py` — POSITIVES_PARAPHRASE playbook for the `code-review` recipe.
 - `backend/app/services/synth_playbooks/generic_sft_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `generic-sft` recipe.
+- `backend/app/services/synth_playbooks/generic_sft_documents_multi_turn.py` — DOCUMENTS_MULTI_TURN playbook for the `generic-sft` recipe (the recipe the ``chat_sft`` task shape uses).
 - `backend/app/services/synth_playbooks/generic_sft_hard_negatives.py` — HARD_NEGATIVES playbook for the `generic-sft` recipe.
 - `backend/app/services/synth_playbooks/generic_sft_paraphrase.py` — POSITIVES_PARAPHRASE playbook for the `generic-sft` recipe.
 - `backend/app/services/synth_playbooks/qa_sft_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `qa-sft` recipe.
@@ -556,6 +560,7 @@ session-start guidance.
 - `frontend/src/api/llmSpend.ts` — _(no docstring)_
 - `frontend/src/api/planRefinement.ts` — _(no docstring)_
 - `frontend/src/api/predefinedSplit.ts` — Predefined-split import: the user's own train / val / test files with
+- `frontend/src/api/preferencePairs.ts` — _(no docstring)_
 - `frontend/src/api/probePack.ts` — Probe Pack API client — Coach-stage-2 phase 8.
 - `frontend/src/api/projectTemplates.ts` — Typed wrappers for the project-template catalog + instantiation API.
 - `frontend/src/api/promptCheck.ts` — Dry run of the benchmark-value gate: does a seed-documents or
@@ -667,6 +672,7 @@ session-start guidance.
 - `frontend/src/components/data/LabellingConventionsCard.tsx` — Labels step — the labelling conventions of a span project (Epic U phase
 - `frontend/src/components/data/LlmGoldGeneratePanel.tsx` — LlmGoldGeneratePanel — generate gold-set Q&A pairs using a flagship
 - `frontend/src/components/data/LlmSpendCard.tsx` — _(no docstring)_
+- `frontend/src/components/data/MultiTurnParamsForm.tsx` — MultiTurnParamsForm — the knobs of the `documents_multi_turn` synth
 - `frontend/src/components/data/OutputSchemaEditor.tsx` — Optional "Output schema (JSON)" for the json-extraction task type.
 - `frontend/src/components/data/PlaybookPickerPanel.tsx` — PlaybookPickerPanel — USER-SUCCESS Epic 2.
 - `frontend/src/components/data/PredefinedSplitCard.tsx` — "Use my own train / val / test files" — import files whose split
@@ -697,6 +703,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/BehavioralResultsTable.tsx` — Quality-Lift phase 8 slice 3 — BehavioralResultsTable.
 - `frontend/src/components/evaluation/BehavioralTestsSection.tsx` — Quality-Lift phase 7 slice 2 — Behavioral tests editor section.
 - `frontend/src/components/evaluation/ClassificationChartsPanel.tsx` — ClassificationChartsPanel — V1 of the ML-native visualisations arc.
+- `frontend/src/components/evaluation/DialogueJudgePanel.tsx` — DialogueJudgePanel — summary of the per-turn replay judge.
 - `frontend/src/components/evaluation/DriftReviewQueuePanel.tsx` — DriftReviewQueuePanel — UI for E4's drift-triggered hallucination
 - `frontend/src/components/evaluation/EvalGapPatchPreviewModal.tsx` — EvalGapPatchPreviewModal — Coach-stage-2 phase 5.
 - `frontend/src/components/evaluation/EvalGapsPanel.tsx` — EvalGapsPanel — Coach-stage-2 phase 3.
@@ -711,6 +718,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.
 - `frontend/src/components/evaluation/PackSectionEditor.tsx` — Quality-Lift phase 7 slice 1 — Generic pack section editor.
 - `frontend/src/components/evaluation/PerSliceMetricsTable.tsx` — Quality-Lift phase 8 slice 2 — PerSliceMetricsTable.
+- `frontend/src/components/evaluation/PreferencePairsFromEvalCard.tsx` — PreferencePairsFromEvalCard — turn one eval result's wrong / partial answers
 - `frontend/src/components/evaluation/ProbePackPanel.tsx` — ProbePackPanel — Coach-stage-2 phase 8.
 - `frontend/src/components/evaluation/RedactionTryBox.tsx` — "Try redaction" — paste a text, run it through a span-tagging run
 - `frontend/src/components/evaluation/RemediationMetricsPanel.tsx` — RemediationMetricsPanel — results of a code-remediation eval (the
@@ -785,6 +793,7 @@ session-start guidance.
 - `frontend/src/components/training/HyperparameterSweepPanel.tsx` — HyperparameterSweepPanel — Track 1, Epic C.
 - `frontend/src/components/training/LossCurvePanel.tsx` — LossCurvePanel — V2 of the ML-native visualisations arc.
 - `frontend/src/components/training/ModelRegistryPanel.tsx` — Checkpoint history browser with filtering and download links.
+- `frontend/src/components/training/MultiTurnMaskingCard.tsx` — MultiTurnMaskingCard — how a run's chat rows were masked for training.
 - `frontend/src/components/training/ParetoComparisonPanel.tsx` — ParetoComparisonPanel — Track 1, Epic C.
 - `frontend/src/components/training/PlanRefinementCard.tsx` — PlanRefinementCard — Phase 1 of the post-data plan-refinement pass.
 - `frontend/src/components/training/PreRunConfirmModal.tsx` — PreRunConfirmModal — P20 pre-run confirm with cost provenance badge.
@@ -822,6 +831,7 @@ session-start guidance.
 
 - `backend/tests/_gateway_helpers.py` — Seeding helpers shared by the gateway tests (no network, no real models).
 - `backend/tests/_job_wait.py` — Shared test helper: let background Jobs finish before the next test.
+- `backend/tests/_tiny_chat_tokenizer.py` — Tiny, download-free fast tokenizer for trainer masking tests.
 - `backend/tests/conftest.py` — Pytest session-scoped safety pin — force every test to write to /tmp.
 - `backend/tests/fake_mcp_server.py` — A tiny stdio MCP server for tests: a toy "deploy service" with four tools.
 - `backend/tests/test_active_learning_service.py` — Tests for the active-learning recommender (Theme 8 Epic 2).
@@ -897,6 +907,7 @@ session-start guidance.
 - `backend/tests/test_dedup_split.py` — Unit tests for ``_dedup_entries_for_split`` — the engine behind the
 - `backend/tests/test_demo_project_reset.py` — Epic G phase G2 — demo sample reset lifecycle.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
+- `backend/tests/test_dialogue_eval.py` — Multi-turn rows at eval time: last-turn history in the prompt + the per-turn replay judge.
 - `backend/tests/test_disjoint_split.py` — Unit tests for ``_disjoint_split_entries`` (Gap #4 slice 3).
 - `backend/tests/test_distillation_kd_handler_wrap.py` — Distillation β-fix tests — teacher capture wraps with the eval
 - `backend/tests/test_distillation_kd_math.py` — KD loss math + offline trainer compute_loss — Track 1, Epic A, slice 2.
@@ -904,6 +915,7 @@ session-start guidance.
 - `backend/tests/test_distillation_teacher_capture.py` — Teacher logit capture — Track 1, Epic A, slice 1.
 - `backend/tests/test_document_retrieval.py` — Document-level retrieval (Wave 2c-2).
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
+- `backend/tests/test_documents_multi_turn_and_pairs.py` — `documents_multi_turn` playbook (generic-sft) + preference pairs from an eval result.
 - `backend/tests/test_documents_qa_flow.py` — Documents → generated Q&A → answer key → split → train, as one Job.
 - `backend/tests/test_domain_hook_builtins.py` — Unit tests for the Gap-#1/#2 slice 1 built-in domain hooks.
 - `backend/tests/test_domain_pack_acceptance.py` — Acceptance: a toy domain pack goes zip -> import -> instantiate -> eval
@@ -955,6 +967,7 @@ session-start guidance.
 - `backend/tests/test_multi_seed_gate_variance.py` — Tests for Quality-Lift phase 1, slice 3 — variance-aware gate evaluator.
 - `backend/tests/test_multi_seed_schema.py` — Tests for Quality-Lift phase 1, slice 1 — multi-seed schema foundation.
 - `backend/tests/test_multi_seed_variance_nudge.py` — Quality-Lift phase 7 slice 3 — Coach Mode multi-seed variance nudge.
+- `backend/tests/test_multi_turn_masking.py` — Multi-turn chat SFT: assistant-only loss in ``scripts/train.py`` (G8 lane A).
 - `backend/tests/test_nl2pipeline.py` — Tests for natural language to pipeline recipe creation.
 - `backend/tests/test_openapi_tools.py` — OpenAPI 3.0 / 3.1 -> tool conversion.
 - `backend/tests/test_page_furniture.py` — Page furniture: repeated page headers / footers / page numbers are dropped
@@ -1226,6 +1239,7 @@ session-start guidance.
 - `frontend/src/components/data/LabelTaxonomyCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LlmGoldGeneratePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LlmSpendCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/MultiTurnParamsForm.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/OutputSchemaEditor.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/PlaybookPickerPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/PredefinedSplitCard.test.tsx` — _(no docstring)_
@@ -1260,6 +1274,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPanel.alignment.test.tsx` — Phase 5.3.6 — Sample Predictions card with AlignmentHandler enrichment.
 - `frontend/src/components/evaluation/EvalPanel.extraction.test.tsx` — Phase 5.3.4 — Sample Predictions card with structured-extraction enrichment.
 - `frontend/src/components/evaluation/EvalPanel.findingset.test.tsx` — EvalPanel in finding_set scoring mode: metrics block + per-row findings.
+- `frontend/src/components/evaluation/EvalPanel.multiTurn.test.tsx` — Multi-turn eval surfaces: the per-turn judge toggle, its summary, and the
 - `frontend/src/components/evaluation/EvalPanel.qa.test.tsx` — Phase 5.3.2 — Sample Predictions card with QA-style per-row enrichment.
 - `frontend/src/components/evaluation/EvalPanel.rag.test.tsx` — Phase 5.3.5 — Sample Predictions card with RAG (grounded QA) enrichment.
 - `frontend/src/components/evaluation/EvalPanel.remediation.test.tsx` — EvalPanel in remediation scoring mode: metrics block + per-row patch.
@@ -1277,6 +1292,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/PackSectionEditor.test.tsx` — Quality-Lift phase 7 slice 1 — Generic PackSectionEditor tests.
 - `frontend/src/components/evaluation/PerSliceMetricsTable.test.tsx` — Quality-Lift phase 8 slice 2 — PerSliceMetricsTable tests.
+- `frontend/src/components/evaluation/PreferencePairsFromEvalCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ProbePackPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/RedactionTryBox.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/RemediationBackendShape.test.tsx` — Feeds the panel and the row view a payload generated by the real backend: the metrics are the
@@ -1332,6 +1348,7 @@ session-start guidance.
 - `frontend/src/components/training/ExperimentLiveSignals.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/HyperparameterSweepPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/LossCurvePanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/MultiTurnMaskingCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ParetoComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/PlanRefinementCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/PreRunConfirmModal.test.tsx` — _(no docstring)_

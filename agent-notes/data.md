@@ -745,3 +745,24 @@ Docs: `slm-docs/docs/extensions/tool-catalog.md`.
 - Tests: `test_mcp_client.py` (fake stdio server `tests/fake_mcp_server.py`, MockTransport), `test_openapi_tools.py`,
   `test_tool_catalog.py`. HTTP tests patch `mcp_client.httpx.AsyncClient`; dry-run tests use `asyncio.run` with
   `async_session_factory`.
+
+## `documents_multi_turn` playbook (G8)
+
+- `(generic-sft, SynthMode.DOCUMENTS_MULTI_TURN = "documents_multi_turn")` in `synth_playbooks/generic_sft_documents_multi_turn.py`.
+  Flag `uses_document_passages`: the orchestrator skips the answer-key requirement and fills `ctx["document_chunks"]` with the
+  cleaned passages (`_prepare_document_passages`: ledger-excluded documents dropped, no passages = ValueError; 0 accepted dialogues
+  on a non-dry run = ValueError with the reject breakdown). Groups of 1-3 neighbouring chunks of one document are rotated by
+  `seed_nonce` + `chunk_index`; the prompt numbers each group's passages `[1]..[k]`.
+- Params `turns_min` / `turns_max` (2-8; defaults 2 / 5; exchanges), `dialogues_per_passage_group` (1-5), `passages_per_dialogue`
+  (1-3); `check_params` backs the API 400 `invalid_playbook_param`. Output `{group, messages}` JSONL; `response_schema` pins roles.
+- Validation rejects (`record_reject`): `unknown_group`, `bad_shape`, `bad_message`, `bad_roles`, `turn_count`, `no_citation`,
+  `bad_citation`, `unsupported` (< `SUPPORT_MIN` 0.6 of an assistant turn's content words, citations removed, in its cited
+  passages: `documents_qa_flow_service.answer_support`; `None` = no content words = supported, as in `eval_pair_rejection`),
+  `repeated_user_turn` (case/punctuation/space-normalised), `test_question_leak` (a user turn matches an answer-key TEST-split question,
+  exact or Jaccard >= `LEAKAGE_FUZZY_THRESHOLD`, via `dataset_service.question_leakage_filter`; the orchestrator fills `ctx["test_rows"]`
+  from the project's `gold_test` dataset, `_load_test_rows`). Rows store `messages` + `source_passages` (`source_document_id`,
+  `chunk_id`, `source_doc`). `messages[0]` is the SYSTEM message `auto_rag_service.document_preamble(hits)` renders for the dialogue's
+  passages in `[n]` order (the preamble passage-trained rows and serving use), so the `[n]` citations resolve at train time; the
+  trainer sees it as a system message (multi-turn assistant-only path). The template backend has no branch for it (tests use a stub
+  teacher). `pick_groups` classifies start positions in one O(n) pass.
+

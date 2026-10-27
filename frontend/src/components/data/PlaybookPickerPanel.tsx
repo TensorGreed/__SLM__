@@ -37,6 +37,7 @@ import type { Job } from '../../api/jobs';
 import type { PlaybookParams, RejectFields } from '../../api/synthPlaybook';
 import CodeFindingsParamsForm from './CodeFindingsParamsForm';
 import CodeRemediationParamsForm from './CodeRemediationParamsForm';
+import MultiTurnParamsForm from './MultiTurnParamsForm';
 import ScenarioGridParamsForm from './ScenarioGridParamsForm';
 import SynthRejectSummary from './SynthRejectSummary';
 import ErrorPanel from '../shared/ErrorPanel';
@@ -58,10 +59,11 @@ const VALID_SYNTH_MODES: ReadonlySet<SynthMode> = new Set([
     'remediation_from_findings',
     'code_examples',
     'scenario_grid',
+    'documents_multi_turn',
 ]);
 
 /** Modes that send a `params` dict from a mode-specific form. */
-const PARAM_MODES: ReadonlySet<SynthMode> = new Set(['seeded_defect', 'remediation_from_findings', 'code_examples', 'scenario_grid']);
+const PARAM_MODES: ReadonlySet<SynthMode> = new Set(['seeded_defect', 'remediation_from_findings', 'code_examples', 'scenario_grid', 'documents_multi_turn']);
 
 interface Props {
     projectId: number;
@@ -107,6 +109,10 @@ const MODE_LABELS: Record<SynthMode, { label: string; hint: string }> = {
     scenario_grid: {
         label: 'Scenario grid',
         hint: 'Upload a matrix of dimensions; the teacher writes a scenario for each combination and a plan for it, and only plans that validate against your schema are kept.',
+    },
+    documents_multi_turn: {
+        label: 'Multi-turn dialogues',
+        hint: 'Have the teacher write dialogues over your document passages, with follow-ups that depend on earlier turns and a cited passage in every answer.',
     },
     code_examples: {
         label: 'Write code examples',
@@ -585,6 +591,10 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                     mode={selectedMode}
                     onChange={setPlaybookParams}
                 />
+            )}
+
+            {selectedMode === 'documents_multi_turn' && (
+                <MultiTurnParamsForm key={selectedMode} onChange={setPlaybookParams} />
             )}
 
             {recipeId === 'structured-plan' && selectedMode === 'scenario_grid' && (
