@@ -807,6 +807,20 @@ describe('NotificationBell cloud spend line', () => {
         expect(jobOutcomeSummary(unknownKind as never)).toBe('800 tokens');
     });
 
+    it('a batched playbook run says it went through a Message Batch and how its cost was priced', () => {
+        const job = jobFixture({
+            kind: 'synth_playbook', status: 'succeeded',
+            result: {
+                rows_generated: 20, backend_used: 'cloud:anthropic:m', elapsed_sec: 600,
+                tokens: 5000, cost_usd: 0.02, batch: { requests: 2, succeeded: 1, fell_back: 1 },
+            },
+        });
+        const text = jobOutcomeSummary(job as never) ?? '';
+        expect(text).toContain('via batch (half price), 1 request redone directly');
+        expect(text).toContain('5k tokens (~$0.02 with Message Batch pricing)');
+        expect(text).not.toContain('at list price');
+    });
+
     it('says what a failed job spent and stays quiet without usage', () => {
         const failed = jobFixture({ kind: 'documents_qa_flow', status: 'failed', result: { tokens: 3000, cost_usd: 0.01 } });
         expect(jobOutcomeSummary(failed as never)).toBe('spent 3k tokens (~$0.01 at list price)');

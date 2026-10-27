@@ -77,7 +77,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   no price is counted at `llm_pricing.fallback_cost` (highest listed in/out rate; views still say "price
   unknown"). Message-Batch spend enters via `llm_budget_guard.note_usage(..., batch=True)` after
   `CloudLlmBackend.complete_batch` collects results (never via `record`: the meter already counts
-  `batch_usage`); the temperature resubmit re-checks the cap. The playground (`check_chat_budget`, in the
+  `batch_usage`); the temperature resubmit re-checks the cap. Batch surfaces: span relabels, the documents→Q&A
+  flow, teacher passage answers, playbook synthesis (`run-playbook` `use_batch`, see `agent-notes/data.md`) —
+  each returns its own `usage` list (`usage_block`: "<pin> (batch)" at the batch price + direct fallbacks), which
+  wins over the Job meter. A Job cancel during the wait cancels the batch (`complete_batch` on `CancelledError`). The playground (`check_chat_budget`, in the
   chat / stream / RAG-compare routes) and the probe judge / plan refinement / teacher capture / synthetic
   batches re-raise `LlmBudgetExceeded`. `command:<model>` pins are validated (`validate_pin`, via
   `resolve_cloud_backend`) — a leading "-" would parse as a CLI flag.

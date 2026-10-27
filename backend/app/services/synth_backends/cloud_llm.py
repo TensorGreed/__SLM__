@@ -24,6 +24,7 @@ verbatim; provider-specific routing is on the ``provider`` arg.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Awaitable, Callable, Literal
 
 from app.config import settings
@@ -177,6 +178,7 @@ class CloudLlmBackend:
                 }
                 for i in todo
             ]
+            batch_id = ""
             try:
                 batch = await cloud_llm_service.create_anthropic_batch(api_key=self._api_key, requests=batch_req)
                 batch_id = str(batch.get("id") or "")
@@ -199,6 +201,15 @@ class CloudLlmBackend:
                 )
             except CloudLlmError as e:
                 raise SynthBackendError(f"Cloud LLM batch ({self._provider}:{self._model}) failed: {e}") from e
+            except asyncio.CancelledError:
+                # The Job was cancelled (``progress`` may raise it after a
+                # poll): stop the batch so unfinished requests aren't billed.
+                if batch_id:
+                    try:
+                        await cloud_llm_service.cancel_anthropic_batch(api_key=self._api_key, batch_id=batch_id)
+                    except Exception:  # noqa: BLE001 — best-effort
+                        pass
+                raise
             failed: list[int] = []
             attempt_usage = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 0}
             temperature_rejected = False

@@ -328,6 +328,16 @@
 /* Cloud-provider picker — sits above the Ollama dropdown so users see
    the paid option first if they want it. */
 
+/* Message Batch toggle — shown only for an Anthropic cloud pick. */
+.playbook-picker__batch {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 6px;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
 .playbook-picker__cloud-no-key {
     margin: 6px 0 0;
     padding: 6px 10px;

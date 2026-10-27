@@ -129,11 +129,14 @@ export function jobOutcomeSummary(job: Job): string | null {
 }
 
 /** "12k tokens (~$0.04 at list price)" from a Job result that carries
- *  cloud-LLM usage, else null. */
+ *  cloud-LLM usage, else null. A result whose calls went through a Message
+ *  Batch (``batch`` set) is priced at the batch rate: "… with Message Batch
+ *  pricing" (any calls the batch didn't answer are still at list price). */
 export function cloudSpendText(r: Record<string, unknown>): string | null {
     if (typeof r.tokens !== 'number' || r.tokens <= 0) return null;
     const k = r.tokens >= 1000 ? `${Math.round(r.tokens / 1000)}k` : String(r.tokens);
-    return typeof r.cost_usd === 'number' ? `${k} tokens (~$${r.cost_usd.toFixed(2)} at list price)` : `${k} tokens`;
+    const priced = r.batch && typeof r.batch === 'object' ? 'with Message Batch pricing' : 'at list price';
+    return typeof r.cost_usd === 'number' ? `${k} tokens (~$${r.cost_usd.toFixed(2)} ${priced})` : `${k} tokens`;
 }
 
 function jobOutcomeSummaryCore(job: Job): string | null {
@@ -155,6 +158,11 @@ function jobOutcomeSummaryCore(job: Job): string | null {
         if (elapsed !== null) parts.push(`${elapsed.toFixed(1)}s`);
         const rejected = typeof r.rejected_count === 'number' ? r.rejected_count : 0;
         if (rejected > 0) parts.push(`${rejected} rejected`);
+        const batch = r.batch as { fell_back?: number } | null | undefined;
+        if (batch && typeof batch === 'object') {
+            const redone = typeof batch.fell_back === 'number' && batch.fell_back > 0 ? batch.fell_back : 0;
+            parts.push(`via batch (half price)${redone ? `, ${redone} request${redone === 1 ? '' : 's'} redone directly` : ''}`);
+        }
         return parts.length ? parts.join(' · ') : null;
     }
 

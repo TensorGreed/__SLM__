@@ -185,6 +185,9 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
     const [cloudProviders, setCloudProviders] = useState<CloudProviderEntry[]>([]);
     const [cloudProvider, setCloudProvider] = useState<string | null>(null);
     const [cloudModel, setCloudModel] = useState<string | null>(null);
+    // Anthropic Message Batch (half price, slower). Only offered — and only
+    // sent — while the effective backend is a cloud:anthropic pin.
+    const [useBatch, setUseBatch] = useState(false);
     // P1 — pre-flight + inline diagnostic state. ``preflight`` holds
     // the dry-run result (refusal_detected etc.) so the panel can
     // render an inline error + retry-with-Qwen affordance instead of
@@ -251,6 +254,8 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
         if (selectedOllamaModel) return `ollama:${selectedOllamaModel}`;
         return selectedBackend;
     }, [selectedBackend, selectedOllamaModel, cloudProvider, cloudModel]);
+
+    const batchOffered = cloudProvider === 'anthropic';
 
     // The active cloud provider's catalog row (models + key_saved).
     // Used by the model dropdown + the 'Save key first' affordance.
@@ -340,6 +345,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 targetCount,
                 backend,
                 params: PARAM_MODES.has(selectedMode) ? playbookParams : null,
+                useBatch: useBatch && (backend ?? '').startsWith('cloud:anthropic:'),
             });
             setJobRejects(null);
             setWatchedJobId(job.id);
@@ -361,7 +367,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
         } finally {
             setRunning(false);
         }
-    }, [projectId, selectedMode, targetCount, effectiveBackend, playbookParams]);
+    }, [projectId, selectedMode, targetCount, effectiveBackend, playbookParams, useBatch]);
 
     // P2 — pre-flight dry-run. Generates 1 row against the chosen
     // model + playbook, reports back in ~3-10s. If it succeeds, we
@@ -721,6 +727,23 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                             this panel.
                         </p>
                     )}
+                </div>
+            )}
+
+            {batchOffered && (
+                <div className="playbook-picker__batch" data-testid="playbook-picker-batch-row">
+                    <label>
+                        <input
+                            type="checkbox"
+                            checked={useBatch}
+                            onChange={(e) => setUseBatch(e.target.checked)}
+                            data-testid="playbook-picker-batch"
+                        />
+                        {' '}Half price (Message Batch)
+                    </label>
+                    <span className="u-hint">
+                        Results take longer: minutes to a few hours. The quick check before the run is still one direct call.
+                    </span>
                 </div>
             )}
 

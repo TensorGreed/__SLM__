@@ -762,6 +762,29 @@ class RunPlaybookRequest(BaseModel):
             "turns_max (2-8), dialogues_per_passage_group (1-5), passages_per_dialogue (1-3)."
         ),
     )
+    use_batch: bool = Field(
+        default=False,
+        description=(
+            "Anthropic Message Batches: the run's calls go as ONE batch per stage at half the list price "
+            "(chunks not yet checkpointed; scenario_grid's scenario and plan stages); results take minutes "
+            "to hours, and calls the batch doesn't answer are retried directly. cloud:anthropic:<model> "
+            "backends only (400 invalid_playbook_param otherwise). The dry run accepts and ignores it "
+            "(always one direct call)."
+        ),
+    )
+
+
+def _check_use_batch(req: "RunPlaybookRequest") -> None:
+    """``use_batch`` needs an Anthropic cloud pin (400 ``invalid_playbook_param``)."""
+    if req.use_batch and not (req.backend or "").startswith("cloud:anthropic:"):
+        raise HTTPException(400, {
+            "error_code": "invalid_playbook_param",
+            "message": (
+                "use_batch uses Anthropic's Message Batches API — pick a cloud:anthropic:<model> backend, "
+                "or turn batch off."
+            ),
+            "metadata": {"param": "use_batch", "backend": req.backend},
+        })
 
 
 def _check_remediation_params(params: dict, *, require_dataset_kind: bool) -> None:
@@ -1707,6 +1730,7 @@ async def run_synth_playbook(
     except ValueError:
         raise HTTPException(400, f"Unknown synth mode '{req.mode}'.")
     playbook_params = await _checked_playbook_params(db, project_id, mode, req.params)
+    _check_use_batch(req)
 
     if async_job:
         import asyncio
@@ -1727,7 +1751,7 @@ async def run_synth_playbook(
         )
         title = (
             f"Synth · {req.mode}{target_class_label} · {req.target_count} rows"
-        )
+        ) + (" · batch" if req.use_batch else "")
 
         async def _runner(handle: JobProgressHandle) -> dict:
             # Hardening Phase H2 — publish a live elapsed-time heartbeat
@@ -1781,6 +1805,8 @@ async def run_synth_playbook(
                     cloud_override = await _resolve_cloud_backend_override(
                         runner_db, project_id, req.backend,
                     )
+                    if req.use_batch and cloud_override is not None:
+                        cloud_override.use_batch = True
                     result = await run_playbook(
                         runner_db,
                         project_id,
@@ -1791,6 +1817,7 @@ async def run_synth_playbook(
                         backend_override=cloud_override,
                         progress=_chunk_progress,
                         params=playbook_params,
+                        use_batch=req.use_batch,
                     )
                     await runner_db.commit()
             finally:
@@ -1879,6 +1906,9 @@ async def run_synth_playbook(
                 # Chunked runs (command backend): chunks that failed after the
                 # backend's retries — the rest of the rows were kept.
                 **({"chunks": result["chunks"], "failed_chunks": result.get("failed_chunks") or []} if result.get("chunks") else {}),
+                # Message Batch runs report their own spend (batch calls priced at
+                # half the list price; the Job's meter doesn't see them).
+                **{k: result[k] for k in ("usage", "cost_usd", "tokens", "batch", "batch_requests", "batch_answered", "batch_error") if result.get(k) is not None},
             }
 
         job = await start_job(
@@ -1893,6 +1923,7 @@ async def run_synth_playbook(
                 "target_class": req.target_class,
                 "backend": req.backend,
                 **({"params": playbook_params} if playbook_params else {}),
+                **({"use_batch": True} if req.use_batch else {}),
             },
         )
         return JSONResponse(
@@ -1904,6 +1935,8 @@ async def run_synth_playbook(
         cloud_override = await _resolve_cloud_backend_override(
             db, project_id, req.backend,
         )
+        if req.use_batch and cloud_override is not None:
+            cloud_override.use_batch = True
         result = await run_playbook(
             db,
             project_id,
@@ -1913,6 +1946,7 @@ async def run_synth_playbook(
             backend=req.backend if cloud_override is None else None,
             backend_override=cloud_override,
             params=playbook_params,
+            use_batch=req.use_batch,
         )
     except SynthBackendError as e:
         raise HTTPException(503, str(e))
@@ -1981,7 +2015,8 @@ async def dry_run_synth_playbook(
             db, project_id, req.backend,
         )
         # Force target_count=1 — the user's chosen count is for the
-        # real run, not the pre-flight.
+        # real run, not the pre-flight. ``use_batch`` is ignored: the
+        # pre-flight is always one direct call (the override never batches).
         result = await run_playbook(
             db, project_id, mode,
             target_count=1,

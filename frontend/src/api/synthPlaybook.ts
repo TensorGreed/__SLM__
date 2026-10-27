@@ -118,6 +118,9 @@ export interface RunPlaybookArgs {
     backend?: string | null;
     /** Optional playbook params, sent as `params` (seeded_defect: label_id, ...). */
     params?: PlaybookParams | null;
+    /** Anthropic Message Batch (half price, results take longer); sent as `use_batch`.
+     *  cloud:anthropic pins only — the dry run ignores it. */
+    useBatch?: boolean;
 }
 
 function playbookBody(args: RunPlaybookArgs) {
@@ -127,6 +130,7 @@ function playbookBody(args: RunPlaybookArgs) {
         target_class: args.targetClass ?? null,
         backend: args.backend ?? null,
         ...(args.params && Object.keys(args.params).length > 0 ? { params: args.params } : {}),
+        ...(args.useBatch ? { use_batch: true } : {}),
     };
 }
 

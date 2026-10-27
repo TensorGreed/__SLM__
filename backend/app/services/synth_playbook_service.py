@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -57,6 +58,8 @@ from app.services.synth_playbooks import (
 from app.services.synth_playbooks.base import reject_report
 from app.config import settings
 from app.services.synthetic_service import get_or_create_synthetic_dataset
+
+_LOG = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -112,6 +115,122 @@ def _sized_max_tokens(backend: Any, units: int, per_unit: int, default: int) -> 
     if not isinstance(ceiling, int) or isinstance(ceiling, bool) or ceiling <= 0:
         return default
     return max(default, min(ceiling, max(1, units) * per_unit))
+
+
+# ── Anthropic Message Batches (``use_batch`` on a cloud:anthropic pin) ──────────
+
+
+def _batches(backend: Any) -> bool:
+    """The backend can take a Message Batch (``use_batch`` on + ``complete_batch``; the
+    predicate the relabel / documents flow share). Playbooks batch only when the run
+    asks (``run_playbook(use_batch=True)``)."""
+    from app.services.span_relabel_service import uses_message_batch
+
+    return uses_message_batch(backend)
+
+
+def _call(backend: Any, prompt: str, system_prompt: str, max_tokens: int) -> dict[str, Any]:
+    """One playbook call, as ``complete`` (direct) and ``complete_batch`` take it."""
+    return {"prompt": prompt, "system_prompt": system_prompt, "max_tokens": max_tokens, "temperature": 0.7}
+
+
+async def _complete_direct(backend: Any, call: dict[str, Any], response_schema: dict | None) -> str:
+    args = dict(call)
+    prompt = args.pop("prompt")
+    # The system prompt repeats across calls: a cloud backend marks it as a cached block (same text).
+    return await backend.complete(prompt, **args, response_schema=response_schema, **llm_usage.cache_kwargs(backend))
+
+
+def _batch_request(backend: Any, call: dict[str, Any]) -> dict[str, Any]:
+    if getattr(backend, "supports_prompt_cache", False) and call.get("system_prompt"):
+        # What ``complete(cache_system=True)`` sends: the system prompt as the cached block.
+        return {**call, "system_prompt": "", "cache_prefix": call["system_prompt"]}
+    return dict(call)
+
+
+async def _complete_as_batch(
+    backend: Any,
+    calls: list[dict[str, Any]],
+    progress: Callable[[float, str], Awaitable[None]] | None,
+    *,
+    start: float,
+    width: float,
+    what: str,
+) -> tuple[list[str | None], str | None]:
+    """Every call in ONE Message Batch: (reply per call, None where the batch didn't
+    answer it; the batch's error or None). A failed batch answers nothing (the caller
+    retries those calls directly); the hard monthly budget is checked by
+    ``complete_batch`` before it submits and ``LlmBudgetExceeded`` propagates. A Job
+    cancel noticed while waiting raises ``CancelledError`` (``complete_batch`` then
+    cancels the batch)."""
+    from app.services import jobs_service
+
+    if not calls:
+        return [], None
+    handle = jobs_service.current_job_handle.get()
+    if handle is not None and await handle.check_cancelled():
+        raise asyncio.CancelledError()
+
+    async def _on_status(_message: str, done: int, total: int) -> None:
+        if handle is not None and await handle.check_cancelled():
+            raise asyncio.CancelledError()
+        if progress is not None:
+            await progress(
+                start + width * done / max(1, total),
+                f"{what} · Batch: {done}/{total} requests done (half price; can take minutes to hours)",
+            )
+
+    try:
+        raws = await backend.complete_batch([_batch_request(backend, c) for c in calls], progress=_on_status)
+    except SynthBackendError as exc:
+        _LOG.warning("playbook message batch failed, calling directly: %s", exc)
+        return [None] * len(calls), str(exc)[:300]
+    out = [r if isinstance(r, str) else None for r in list(raws)[: len(calls)]]
+    return out + [None] * (len(calls) - len(out)), None
+
+
+async def _replies(
+    backend: Any,
+    calls: list[dict[str, Any]],
+    response_schema: dict | None,
+    *,
+    batch: bool,
+    progress: Callable[[float, str], Awaitable[None]] | None,
+    start: float,
+    width: float,
+    what: str,
+) -> tuple[list[str], str | None]:
+    """A reply per call: with ``batch``, ONE Message Batch first and the calls it didn't
+    answer directly; otherwise every call directly, in order. A direct call's
+    ``SynthBackendError`` propagates."""
+    raws: list[str | None] = [None] * len(calls)
+    error: str | None = None
+    base = start
+    if batch and calls:
+        raws, error = await _complete_as_batch(backend, calls, progress, start=start, width=width * 0.9, what=what)
+        base = start + width * 0.9
+    pending = [i for i, raw in enumerate(raws) if raw is None]
+    for n, i in enumerate(pending, start=1):
+        raws[i] = await _complete_direct(backend, calls[i], response_schema)
+        if progress is not None:
+            note = " not answered by the batch" if batch else ""
+            await progress(base + (start + width - base) * n / len(pending), f"{what}: {n}/{len(pending)} calls{note}")
+    return [r or "" for r in raws], error
+
+
+def batch_usage_fields(backend: Any) -> dict[str, Any]:
+    """``usage`` / ``cost_usd`` / ``tokens`` / ``batch`` of a batched run: batch calls are
+    priced at the Message Batch rate (half price) and are not seen by the Job's meter, so
+    the run reports its own usage list (batch + any direct fallback calls)."""
+    from app.services.span_relabel_service import batch_info, usage_block
+
+    out: dict[str, Any] = {"batch": batch_info(backend)}
+    usage = usage_block(backend)
+    if usage:
+        out["usage"] = usage
+        out["cost_usd"] = round(sum(u.get("usd") or 0 for u in usage), 4)
+        out["tokens"] = sum(int(u.get("total_tokens") or 0) for u in usage)
+    return out
 
 
 async def _prepare_code_context(
@@ -365,44 +484,42 @@ async def _prepare_grid_context(
 
 async def _run_scenario_grid(
     project: Project, playbook: Any, ctx: PlaybookContext, selected_backend: SynthBackend,
-    *, dry_run: bool, progress: Callable[[float, str], Awaitable[None]] | None,
+    *, dry_run: bool, progress: Callable[[float, str], Awaitable[None]] | None, batch: bool = False,
 ) -> tuple[str, str, list[SynthRow], float]:
     """The two teacher stages of ``scenario_grid`` (scenarios per batch of cells, retrieval-grounding,
-    then plans per batch of scenarios). Returns ``(first prompt, last raw reply, accepted rows, elapsed)``."""
+    then plans per batch of scenarios). Returns ``(first prompt, last raw reply, accepted rows, elapsed)``.
+    With ``batch`` each stage's calls go as ONE Message Batch (calls it didn't answer go direct)."""
     from app.services.synth_playbooks import _structured_plan_common as common
     from app.services.synth_playbooks.structured_plan_scenario_grid import answer_batches
 
     started = time.monotonic()
     cells = ctx["grid_cells"]
     batches = [cells[i : i + common.CELLS_PER_CALL] for i in range(0, len(cells), common.CELLS_PER_CALL)]
-    first_prompt = ""
-    raw = ""
-
-    async def _call(prompt: str, schema: dict | None, max_tokens: int) -> str:
-        return await selected_backend.complete(
-            prompt, system_prompt=_GRID_SYSTEM_PROMPT, max_tokens=max_tokens, temperature=0.7, response_schema=schema,
-            **llm_usage.cache_kwargs(selected_backend),
-        )
-
     per_cell = common.grid_params(ctx.get("params"))["scenarios_per_cell"]
 
     async def _report(fraction: float, message: str) -> None:
         if progress is not None:
             await progress(fraction, message)
 
-    # Stage 1: scenarios
+    # Stage 1: scenarios (every prompt depends on its cells alone, so all are built first)
     scenarios: list[dict[str, Any]] = []
     ctx["grid_stage"] = common.STAGE_SCENARIOS
-    for n, batch in enumerate(batches, start=1):
-        ctx["grid_batch"] = batch
-        prompt = playbook.build_prompt(ctx)
-        first_prompt = first_prompt or prompt
-        raw = await _call(
-            prompt, get_response_schema(playbook, ctx),
-            _sized_max_tokens(selected_backend, len(batch) * per_cell, GRID_TOKENS_PER_SCENARIO, 4096),
-        )
-        scenarios.extend(playbook.accept_scenarios(playbook.parse_output(raw, ctx), ctx))
-        await _report(0.4 * n / len(batches), f"Scenarios: {n}/{len(batches)} calls")
+    calls: list[dict[str, Any]] = []
+    for cell_batch in batches:
+        ctx["grid_batch"] = cell_batch
+        calls.append(_call(
+            selected_backend, playbook.build_prompt(ctx), _GRID_SYSTEM_PROMPT,
+            _sized_max_tokens(selected_backend, len(cell_batch) * per_cell, GRID_TOKENS_PER_SCENARIO, 4096),
+        ))
+    first_prompt = calls[0]["prompt"] if calls else ""
+    raws, _err = await _replies(
+        selected_backend, calls, get_response_schema(playbook, ctx), batch=batch, progress=_report,
+        start=0.0, width=0.4, what="Scenarios",
+    )
+    raw = raws[-1] if raws else ""
+    for cell_batch, reply in zip(batches, raws):
+        ctx["grid_batch"] = cell_batch
+        scenarios.extend(playbook.accept_scenarios(playbook.parse_output(reply, ctx), ctx))
     ctx.pop("grid_batch", None)
     if not scenarios:
         return first_prompt, raw, [], time.monotonic() - started
@@ -438,17 +555,23 @@ async def _run_scenario_grid(
         else common.MAX_TASKS_PER_ANSWER_CALL
     )
     groups = answer_batches(tasks, playbook, ctx, max_tasks)
-    for n, group in enumerate(groups, start=1):
-        ctx["grid_tasks"] = group
-        prompt = playbook.build_answers_prompt(group, ctx)
-        raw = await _call(
-            prompt, get_response_schema(playbook, ctx),
+    calls = [
+        _call(
+            selected_backend, playbook.build_answers_prompt(group, ctx), _GRID_SYSTEM_PROMPT,
             _sized_max_tokens(selected_backend, len(group), GRID_TOKENS_PER_PLAN, 4096),
         )
-        parsed = playbook.parse_output(raw, ctx)
+        for group in groups
+    ]
+    raws, _err = await _replies(
+        selected_backend, calls, get_response_schema(playbook, ctx), batch=batch, progress=_report,
+        start=0.5, width=0.5, what="Plans",
+    )
+    for group, reply in zip(groups, raws):
+        ctx["grid_tasks"] = group
+        parsed = playbook.parse_output(reply, ctx)
         # Schema validation is CPU-bound (user patterns, big plans): keep it off the event loop.
         accepted.extend(await asyncio.to_thread(playbook.validate, parsed, ctx))
-        await _report(0.5 + 0.5 * n / len(groups), f"Plans: {n}/{len(groups)} calls")
+        raw = reply
     return first_prompt, raw, accepted, time.monotonic() - started
 
 
@@ -574,6 +697,7 @@ async def run_playbook(
     dry_run: bool = False,
     progress: Callable[[float, str], Awaitable[None]] | None = None,
     params: dict[str, Any] | None = None,
+    use_batch: bool = False,
 ) -> PlaybookResult:
     """Run the playbook matching (project's recipe, mode) and persist
     accepted rows into the project's synthetic dataset.
@@ -590,6 +714,12 @@ async def run_playbook(
     runs as chunks, each checkpointed on disk so a re-run reuses finished
     chunks (see ``_run_chunked``). ``progress(fraction, message)`` is
     published per chunk. Other backends make ONE call for all rows.
+
+    ``use_batch`` with a backend that can batch (``uses_message_batch``:
+    Anthropic Message Batches, half price) sends every not-yet-checkpointed chunk — or both
+    scenario_grid stages — as ONE batch each, then calls what the batch
+    didn't answer directly; the result adds ``usage`` / ``cost_usd`` /
+    ``tokens`` at the batch price and ``batch``. A dry run never batches.
     """
     if target_count < 1 or target_count > 500:
         raise ValueError("target_count must be between 1 and 500")
@@ -653,16 +783,27 @@ async def run_playbook(
 
     selected_backend = backend_override or pick_backend(backend, registry=BACKEND_REGISTRY)
 
+    # Message Batch (half price): only when the caller asked (the command backend
+    # packs calls by default, which playbooks don't use), never for a dry run.
+    if use_batch and not dry_run and not _batches(selected_backend):
+        raise ValueError(
+            f"use_batch needs a backend that takes Message Batches (cloud:anthropic:<model>); "
+            f"{selected_backend.describe()} can't."
+        )
+    batching = use_batch and not dry_run
     rows_per_call = getattr(selected_backend, "playbook_rows_per_call", None)
+    if not (isinstance(rows_per_call, int) and not isinstance(rows_per_call, bool) and rows_per_call > 0):
+        rows_per_call = target_count if batching else None
+    # A batched run is always chunked (one batch request per chunk, checkpointed), even one chunk.
     chunked = (
-        isinstance(rows_per_call, int) and rows_per_call > 0 and target_count > rows_per_call and not dry_run
+        rows_per_call is not None and (target_count > rows_per_call or batching) and not dry_run
         and not uses_grid
     )
     chunk_meta: dict[str, Any] = {}
     checkpoint_path: Path | None = None
     if uses_grid:
         prompt, raw_llm_output, accepted_rows, elapsed = await _run_scenario_grid(
-            project, playbook, ctx, selected_backend, dry_run=dry_run, progress=progress,
+            project, playbook, ctx, selected_backend, dry_run=dry_run, progress=progress, batch=batching,
         )
         if not accepted_rows and not dry_run:
             summary = reject_report(ctx.get("rejects"))["reject_summary"]
@@ -674,7 +815,7 @@ async def run_playbook(
     elif chunked:
         prompt, raw_llm_output, accepted_rows, elapsed, chunk_meta, checkpoint_path = await _run_chunked(
             playbook, ctx, mode, selected_backend, int(rows_per_call), progress=progress,
-            recipe_id=recipe_id, target_class=target_class, failure_cluster=failure_cluster,
+            recipe_id=recipe_id, target_class=target_class, failure_cluster=failure_cluster, batch=batching,
         )
     else:
         prompt = playbook.build_prompt(ctx)
@@ -752,6 +893,8 @@ async def run_playbook(
     result.update(reject_report(ctx.get("rejects")))
     if chunk_meta:
         result.update(chunk_meta)
+    if batching:
+        result.update(batch_usage_fields(selected_backend))
     return result  # type: ignore[return-value]
 
 
@@ -848,6 +991,7 @@ async def _run_chunked(
     recipe_id: str,
     target_class: str | None,
     failure_cluster: dict[str, Any] | None,
+    batch: bool = False,
 ) -> tuple[str, str, list[SynthRow], float, dict[str, Any], Path]:
     """Generate ``ctx['target_count']`` rows as chunks of ≤ ``rows_per_call``.
 
@@ -859,7 +1003,13 @@ async def _run_chunked(
     or yields no rows is recorded in ``failed_chunks`` and the run goes on;
     zero rows overall is the caller's error to raise. Exact-duplicate rows
     across chunks are dropped. Returns (last prompt, last raw output,
-    rows, elapsed seconds, result metadata, checkpoint path)."""
+    rows, elapsed seconds, result metadata, checkpoint path).
+
+    With ``batch`` every chunk not in the checkpoint goes as ONE Message Batch
+    first (one request per chunk); each reply is parsed, validated and
+    checkpointed exactly as a direct reply, in chunk order, and the chunks the
+    batch didn't answer are then called directly. The checkpoint key ignores
+    ``batch``: a killed batched run resumes either way."""
     from app.services import jobs_service
 
     target_count = int(ctx["target_count"])
@@ -882,6 +1032,7 @@ async def _run_chunked(
     last_prompt = ""
     last_raw = ""
     started_at = time.monotonic()
+    rejects = ctx["rejects"] if isinstance(ctx.get("rejects"), list) else None
 
     def _take(chunk_rows: list[SynthRow]) -> None:
         for row in chunk_rows:
@@ -891,6 +1042,50 @@ async def _run_chunked(
             seen.add(key)
             rows.append(row)
 
+    def _build(k: int, size: int) -> tuple[PlaybookContext, dict[str, Any], list[dict[str, Any]]]:
+        """(chunk ctx, call, rejects the prompt build recorded)."""
+        chunk_ctx: PlaybookContext = {**ctx, "target_count": size, "chunk_index": k}  # type: ignore[typeddict-item]
+        mark = len(rejects) if rejects is not None else 0
+        prompt = playbook.build_prompt(chunk_ctx) + (
+            f"\n\nBatch {k + 1} of {n}: vary topics and wording; do not repeat earlier batches."
+        )
+        call = _call(backend, prompt, _system_prompt_for_mode(mode), _sized_max_tokens(backend, size, PLAYBOOK_TOKENS_PER_ROW, 2048))
+        return chunk_ctx, call, (list(rejects[mark:]) if rejects is not None else [])
+
+    def _accept(k: int, chunk_ctx: PlaybookContext, raw: str, build_rejects: list[dict[str, Any]]) -> None:
+        from .synth_playbooks.base import short_snippet
+
+        mark = len(rejects) if rejects is not None else 0
+        accepted = playbook.validate(playbook.parse_output(raw, chunk_ctx), chunk_ctx)
+        if accepted:
+            chunk_rejects = build_rejects + (list(rejects[mark:]) if rejects is not None else [])
+            _append_checkpoint(path, {
+                "chunk": k, "rows": accepted, "raw_snippet": short_snippet(raw), "rejects": chunk_rejects,
+            })
+            _take(list(accepted))
+        else:
+            failed.append({"chunk": k + 1, "reason": "no rows accepted from the reply"})
+
+    built: dict[int, tuple[PlaybookContext, dict[str, Any], list[dict[str, Any]]]] = {}
+    batch_raws: dict[int, str | None] = {}
+    batch_meta: dict[str, Any] = {}
+    if batch:
+        todo = [k for k in range(n) if k not in saved]
+        for k in todo:
+            built[k] = _build(k, sizes[k])
+        if todo:
+            if progress is not None and len(todo) < n:
+                await progress(0.0, f"Resuming: {n - len(todo)}/{n} chunks already written")
+            raws, error = await _complete_as_batch(
+                backend, [built[k][1] for k in todo], progress, start=0.0, width=0.9, what=f"{len(todo)} chunks",
+            )
+            batch_raws = dict(zip(todo, raws))
+            batch_meta = {
+                "batch_requests": len(todo),
+                "batch_answered": sum(1 for r in raws if r is not None),
+                **({"batch_error": error} if error else {}),
+            }
+
     for k, size in enumerate(sizes):
         handle = jobs_service.current_job_handle.get()
         if handle is not None and await handle.check_cancelled():
@@ -898,46 +1093,26 @@ async def _run_chunked(
         if k in saved:
             _take(list(saved[k]["rows"]))
             saved_rejects = saved[k].get("rejects")
-            if isinstance(saved_rejects, list) and isinstance(ctx.get("rejects"), list):
-                ctx["rejects"].extend(r for r in saved_rejects if isinstance(r, dict))
+            if isinstance(saved_rejects, list) and rejects is not None:
+                rejects.extend(r for r in saved_rejects if isinstance(r, dict))
             resumed += 1
             last_raw = str(saved[k].get("raw_snippet") or last_raw)
         else:
-            chunk_ctx: PlaybookContext = {**ctx, "target_count": size, "chunk_index": k}  # type: ignore[typeddict-item]
-            rejects_before = len(ctx["rejects"]) if isinstance(ctx.get("rejects"), list) else 0
-            prompt = playbook.build_prompt(chunk_ctx) + (
-                f"\n\nBatch {k + 1} of {n}: vary topics and wording; do not repeat earlier batches."
-            )
-            last_prompt = prompt
-            try:
-                raw = await backend.complete(
-                    prompt,
-                    system_prompt=_system_prompt_for_mode(mode),
-                    max_tokens=_sized_max_tokens(backend, size, PLAYBOOK_TOKENS_PER_ROW, 2048),
-                    temperature=0.7,
-                    response_schema=get_response_schema(playbook, chunk_ctx),
-                    **llm_usage.cache_kwargs(backend),
-                )
-            except SynthBackendError as exc:
-                failed.append({"chunk": k + 1, "reason": str(exc)[:300]})
-            else:
+            chunk_ctx, call, build_rejects = built.get(k) or _build(k, size)
+            last_prompt = call["prompt"]
+            raw = batch_raws.get(k)
+            if raw is None:
+                try:
+                    raw = await _complete_direct(backend, call, get_response_schema(playbook, chunk_ctx))
+                except SynthBackendError as exc:
+                    failed.append({"chunk": k + 1, "reason": str(exc)[:300]})
+            if raw is not None:
                 last_raw = raw
-                accepted = playbook.validate(playbook.parse_output(raw, chunk_ctx), chunk_ctx)
-                if accepted:
-                    from .synth_playbooks.base import short_snippet
-
-                    chunk_rejects = (
-                        list(ctx["rejects"][rejects_before:]) if isinstance(ctx.get("rejects"), list) else []
-                    )
-                    _append_checkpoint(path, {
-                        "chunk": k, "rows": accepted, "raw_snippet": short_snippet(raw), "rejects": chunk_rejects,
-                    })
-                    _take(list(accepted))
-                else:
-                    failed.append({"chunk": k + 1, "reason": "no rows accepted from the reply"})
+                _accept(k, chunk_ctx, raw, build_rejects)
         if progress is not None:
-            await progress((k + 1) / n, f"chunk {k + 1}/{n} · {len(rows)} rows so far")
-    meta: dict[str, Any] = {"chunks": n, "resumed_chunks": resumed, "failed_chunks": failed}
+            fraction = (0.9 + 0.1 * (k + 1) / n) if batch_meta else (k + 1) / n
+            await progress(fraction, f"chunk {k + 1}/{n} · {len(rows)} rows so far")
+    meta: dict[str, Any] = {"chunks": n, "resumed_chunks": resumed, "failed_chunks": failed, **batch_meta}
     return last_prompt, last_raw, rows, time.monotonic() - started_at, meta, path
 
 

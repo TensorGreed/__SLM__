@@ -1110,6 +1110,7 @@ session-start guidance.
 - `backend/tests/test_phase9_training_runtime_compat.py` — Compatibility tests for external training runtime adapters.
 - `backend/tests/test_pipeline_eval.py` — Multi-stage pipeline evaluation (G10): definitions, held-out upload, the
 - `backend/tests/test_pipeline_refinement.py` — Pipeline plan refinement — Phase 1 tests.
+- `backend/tests/test_playbook_message_batch.py` — Playbook synthesis through Anthropic Message Batches (``use_batch``).
 - `backend/tests/test_playground_trained_run.py` — Playground "experiment" provider — chat with a trained run in-process
 - `backend/tests/test_portable_paths.py` — portable_paths: what an export records carries no machine-specific path.
 - `backend/tests/test_post_eval_decision_engine.py` — Tests for the post-eval decision engine service

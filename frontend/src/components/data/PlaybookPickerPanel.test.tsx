@@ -932,6 +932,99 @@ describe('PlaybookPickerPanel', () => {
         expect(asyncCalls[0][1].backend).toBe('cloud:openai:gpt-4o-mini');
     });
 
+    it('offers the Message Batch toggle only for an anthropic pin and sends it as use_batch', async () => {
+        const dryRunCalls: any[] = [];
+        installRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+            cloudModelsResponse: {
+                project_id: 1,
+                providers: [
+                    { provider: 'openai', key_saved: true, models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini' }] },
+                    { provider: 'anthropic', key_saved: true, models: [{ id: 'claude-x', label: 'Claude X' }] },
+                ],
+            },
+        });
+        apiMock.post.mockImplementation(async (url: string, body: any) => {
+            if (url.endsWith('/run-playbook/dry-run')) {
+                dryRunCalls.push(body);
+                return {
+                    data: {
+                        ok: true, accepted_count: 1, refusal_detected: false,
+                        raw_llm_snippet: '{"x":1}', backend_used: 'cloud:anthropic:claude-x',
+                        elapsed_sec: 1.2, prompt_snippet: '',
+                        rows: [{ payload: { x: 1 }, synth_confidence: 1, synth_source: 's' }],
+                    },
+                };
+            }
+            return { data: { id: 99, status: 'queued', kind: 'synth_playbook' } };
+        });
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-cloud-provider')).toBeInTheDocument();
+        });
+        // No cloud pick, then an OpenAI pick: no toggle.
+        expect(screen.queryByTestId('playbook-picker-batch')).not.toBeInTheDocument();
+        await userEvent.selectOptions(screen.getByTestId('playbook-picker-cloud-provider'), 'openai');
+        expect(screen.queryByTestId('playbook-picker-batch')).not.toBeInTheDocument();
+        // Anthropic: the toggle and its one-line note appear.
+        await userEvent.selectOptions(screen.getByTestId('playbook-picker-cloud-provider'), 'anthropic');
+        await userEvent.selectOptions(screen.getByTestId('playbook-picker-cloud-model'), 'claude-x');
+        expect(screen.getByTestId('playbook-picker-batch-row').textContent).toMatch(/Half price \(Message Batch\)/);
+        expect(screen.getByTestId('playbook-picker-batch-row').textContent).toMatch(/take longer/);
+        await userEvent.click(screen.getByTestId('playbook-picker-batch'));
+        await userEvent.click(screen.getByTestId('playbook-picker-run'));
+        await waitFor(() => {
+            const asyncCalls = apiMock.post.mock.calls.filter((c) => String(c[0]).endsWith('?async_job=true'));
+            expect(asyncCalls.length).toBe(1);
+        });
+        const asyncCalls = apiMock.post.mock.calls.filter((c) => String(c[0]).endsWith('?async_job=true'));
+        expect(asyncCalls[0][1].backend).toBe('cloud:anthropic:claude-x');
+        expect(asyncCalls[0][1].use_batch).toBe(true);
+        // The pre-flight stays one direct call: no use_batch on the dry run.
+        expect(dryRunCalls[0].use_batch).toBeUndefined();
+    });
+
+    it('does not send use_batch when the batch toggle is off', async () => {
+        installRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+            cloudModelsResponse: {
+                project_id: 1,
+                providers: [{ provider: 'anthropic', key_saved: true, models: [{ id: 'claude-x', label: 'Claude X' }] }],
+            },
+        });
+        apiMock.post.mockImplementation(async (url: string) => {
+            if (url.endsWith('/run-playbook/dry-run')) {
+                return {
+                    data: {
+                        ok: true, accepted_count: 1, refusal_detected: false, raw_llm_snippet: '',
+                        backend_used: 'cloud:anthropic:claude-x', elapsed_sec: 1, prompt_snippet: '', rows: [],
+                    },
+                };
+            }
+            return { data: { id: 98, status: 'queued', kind: 'synth_playbook' } };
+        });
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-cloud-provider')).toBeInTheDocument();
+        });
+        await userEvent.selectOptions(screen.getByTestId('playbook-picker-cloud-provider'), 'anthropic');
+        await userEvent.selectOptions(screen.getByTestId('playbook-picker-cloud-model'), 'claude-x');
+        await userEvent.click(screen.getByTestId('playbook-picker-run'));
+        await waitFor(() => {
+            expect(apiMock.post.mock.calls.some((c) => String(c[0]).endsWith('?async_job=true'))).toBe(true);
+        });
+        const asyncCall = apiMock.post.mock.calls.find((c) => String(c[0]).endsWith('?async_job=true'))!;
+        expect(asyncCall[1].use_batch).toBeUndefined();
+    });
+
     it('shows an active-backend indicator that resolves cloud > ollama > auto', async () => {
         installRouter({
             playbooks: {

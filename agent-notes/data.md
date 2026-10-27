@@ -516,7 +516,26 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   `_sized_max_tokens` sizes each call to rows × 1024 / scenarios × 600 / plans × 6000 up to that
   ceiling, and `scenario_grid` packs only `ceiling // 6000` plans per answer call. Backends without
   the attr keep the fixed 2048 / 4096 (a fixed 2048 returned 4 of 20 cloud rows; 4096 truncated
-  every 5-plan reply). Tests `tests/test_cloud_playbook_sizing.py`. Judge picker API:
+  every 5-plan reply). Tests `tests/test_cloud_playbook_sizing.py`.
+  **Message Batches for playbooks**: `RunPlaybookRequest.use_batch` (400 `invalid_playbook_param` unless the pin
+  is `cloud:anthropic:`; the dry-run endpoint accepts and ignores it) sets `CloudLlmBackend.use_batch` and passes
+  `run_playbook(use_batch=True)` — batching is never inferred from the backend alone (the command backend's
+  `use_batch` is on by default for its packed calls; playbooks don't use them). `run_playbook` raises ValueError
+  when the backend can't batch (`uses_message_batch`); a dry run never batches. A batched run always takes
+  `_run_chunked` (even under `playbook_rows_per_call`: one request): every chunk not in the checkpoint is built
+  first (build-time rejects kept per chunk), sent as ONE batch (`_complete_as_batch`: system prompt as
+  `cache_prefix`, same sized max_tokens), then chunks are accepted in order — reply parsed / validated /
+  checkpointed exactly as a direct one — and a chunk the batch didn't answer (or every chunk, when the batch
+  fails: `batch_error`) is called directly. Checkpoint key ignores batching, so a killed run resumes and never
+  resubmits saved chunks. `scenario_grid` builds each stage's prompts first (`_replies`): stage 1 one batch,
+  retrieval, stage 2 one batch; unanswered calls direct. Progress "… · Batch: N/M requests done"; a Job cancel
+  seen in the poll callback raises `CancelledError` and `complete_batch` cancels the batch. Result adds
+  `batch_requests` / `batch_answered` (chunked), `batch` (`batch_info`) and its own `usage` / `cost_usd` / `tokens`
+  (`batch_usage_fields` → `usage_block`: batch at half price + direct fallbacks; the Job meter doesn't see batch
+  calls). Job title + " · batch"; params `use_batch`. UI: `PlaybookPickerPanel` "Half price (Message Batch)"
+  checkbox, only for the anthropic provider, sent only when the effective pin is `cloud:anthropic:`; bell
+  `cloudSpendText` says "with Message Batch pricing" when the result has `batch`. Tests
+  `tests/test_playbook_message_batch.py`. Judge picker API:
   `api/eval_judge.py`. Tests `tests/test_command_backend.py` (fake CLI = a shebang script in a tmp dir,
   allow-listed by absolute path).
 
