@@ -794,6 +794,16 @@ def retrieval_settings(project: Any) -> dict[str, Any]:
     return normalize_retrieval(cfg.get(RETRIEVAL_SETTINGS_KEY) if isinstance(cfg, dict) else None)
 
 
+def retrieval_source(project: Any) -> str:
+    """Where the project's retrieval setting came from: "pinned" / "retrieval_sweep" /
+    "manual" (whatever the setting's own ``source`` says) or "default" when unset."""
+    cfg = getattr(project, "runtime_config", None)
+    raw = cfg.get(RETRIEVAL_SETTINGS_KEY) if isinstance(cfg, dict) else None
+    if isinstance(raw, dict) and raw:
+        return str(raw.get("source") or "manual")
+    return "default"
+
+
 def retrieve_ranked(
     query: str,
     *,

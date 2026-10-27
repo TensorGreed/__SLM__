@@ -83,3 +83,29 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `current_prepared_manifest` (experiments record no prepared version) else null. Warnings
   (`unknown` / `non_commercial` licences of sources that fed the run) never block an export.
   `RELEASE_NOTES.md` gets a "Data sources & licences" section (`release_notes_section`).
+- **Serving gateway + MCP server (G11)**: `/v1` (`api/gateway.py` `v1_router`, mounted OUTSIDE the `/api` auth
+  deps; `GatewayError` handler gives the OpenAI envelope `{error:{message,type,code}}`). Auth is always on
+  (`gateway_api_keys`: sha256 hash, `bsk_` + 12-char prefix, `project_ids`, per-minute limit via an in-memory
+  sliding window; Bearer or `X-API-Key`, never `?token=`). Keys: `/api/gateway/keys` (EDITOR on every listed
+  project when auth is on). Model ids (`services/gateway_service.py`): computed slug (no column; oldest project
+  keeps it, a later collision gets `-<id>`), `p<id>`, `<slug>` = `runtime_config.gateway.default_run_id` else
+  latest servable run (`servable_run_service`, shared with the playground), `<slug>:run-N`, `<slug>:base`.
+  Runtime: `runtime_config["gateway"]` `{upstream: in_process|openai_compatible, base_url, upstream_kind:
+  vllm|ollama|openai, upstream_model_map, default_run_id, tools}`; in-process uses `local_chat_service.
+  generate_reply` (temperature 0), upstream names default to the canonical `<slug>:run-N` / `<slug>:base`.
+  Retrieval = ONE `auto_rag_service.retrieve_document_passages` call (to_thread; `AutoRagUnavailable` -> `applied:false, reason:no_index`) + `document_preamble` as ONE system message
+  (client system appended), default ON for passage-trained runs, never a 500 without an index; `citations[n]`
+  match the `[n]` numbering, `source_url` joined from `RawDocument`. Guided JSON from `runtime_config.
+  guided_json.schema`: `response_format` json_schema (strict) for EVERY upstream kind (Ollama `/v1` ignores `format`, new vLLM dropped
+  `guided_json`) and the reply is validated -> `{mode:enforced, via:response_format, valid, errors}`; client's own
+  wins (`mode:client`); in-process `validated_only`; 502 never echoes the upstream body. `upstream_kind` is a hint only.
+  Project delete -> `gateway_service.purge_project` (ids removed from keys, emptied keys revoked, logs deleted);
+  keys list/revoke: creator, admin or owner of every scoped project; Bearer + differing `X-API-Key` = 401. `/v1`
+  errors (404/405/422/500) use the OpenAI envelope (`main.py` handlers branch on `/v1`). MCP HTTP: Origin/Host/
+  Content-Type checks, `--allow-remote` for non-loopback. Telemetry: `gateway_request_logs` via `served_model_telemetry_service.
+  record_gateway_request` (timing/status/tokens only, NEVER prompt/reply text). Named tools
+  (`gateway_tools_service`): safe `{field}` substitution, `@recipe` = `build_code_findings_prompt` (labels from
+  the prepared manifest, else the taxonomy), name clash -> `<name>__<slug>` (lookup by exact exposed name, never suffix parsing; reserved: list_models/run_model/retrieve). Multi-LoRA:
+  `serve_service.build_multi_lora_serve_plan` (shared base, rank rounding) + `/serve/multi-lora-*`.
+  `app/mcp_server.py` is stdlib + httpx only and must import nothing from `app.models/database/services`
+  (asserted in `tests/test_mcp_server.py`). Docs: `slm-docs/docs/deployment/gateway-and-mcp.md`.

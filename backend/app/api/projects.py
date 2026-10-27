@@ -820,6 +820,11 @@ async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
         sa_update(RawDocument).where(RawDocument.dataset_id.in_(dataset_ids)).values(data_source_id=None)
     )
     await db.execute(sa_delete(DataSource).where(DataSource.project_id == project.id))
+    # Serving gateway: SQLite reuses ids, so a key scoped to this project must not
+    # silently cover a future project with the same id; its request log goes too.
+    from app.services.gateway_service import purge_project as purge_gateway_project
+
+    await purge_gateway_project(db, project.id)
     await db.delete(project)
 
 

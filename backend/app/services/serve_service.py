@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shlex
 from pathlib import Path
@@ -594,3 +595,149 @@ def select_serve_template(plan: dict[str, Any], template_id: str) -> dict[str, A
             f"Unknown serve template '{template_id}'. Available templates: {available}"
         )
     return selected
+
+
+# ---------------------------------------------------------------------------
+# Multi-LoRA plan (G11): one vLLM server, one base model, many adapters
+# ---------------------------------------------------------------------------
+
+_LORA_RANKS = (8, 16, 32, 64, 128, 256)
+
+
+def _round_lora_rank(rank: int) -> int:
+    for step in _LORA_RANKS:
+        if rank <= step:
+            return step
+    return _LORA_RANKS[-1]
+
+
+async def build_multi_lora_serve_plan(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    experiment_ids: list[int],
+    host: str = "127.0.0.1",
+    port: int = 8001,
+    max_model_len: int | None = None,
+) -> dict[str, Any]:
+    """A vLLM launch template serving several LoRA runs of ONE base model.
+
+    Every run must be COMPLETED, belong to the project and be a LoRA adapter;
+    all must share a base model (``ValueError`` listing each run's base
+    otherwise). Module names equal the gateway model ids
+    (``<slug>:run-<id>``), the base is served as ``<slug>:base``, so a gateway
+    ``openai_compatible`` upstream needs no model map.
+    """
+    from app.models.experiment import Experiment, ExperimentStatus
+    from app.models.project import Project
+    from app.services.adapter_merge_service import adapter_base_model
+    from app.services.gateway_service import project_slug
+    from app.services import servable_run_service as srs
+
+    ids = list(dict.fromkeys(int(i) for i in experiment_ids or []))
+    if not ids:
+        raise ValueError("experiment_ids must list at least one run.")
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found.")
+    slug = await project_slug(db, project)
+    host = _normalize_host(host)
+    port = _normalize_port(port or 8001)
+
+    adapters: list[dict[str, Any]] = []
+    bases: dict[int, str] = {}
+    for run_id in ids:
+        exp = await db.get(Experiment, run_id)
+        if exp is None or exp.project_id != project_id:
+            raise ValueError(f"Run #{run_id} not found in this project.")
+        if exp.status != ExperimentStatus.COMPLETED:
+            raise ValueError(f"Run #{run_id} is {exp.status.value}; only completed runs can be served.")
+        # Same "can it answer" check the gateway uses (not a baseline, weights on disk);
+        # the disk reads run off the event loop.
+        problem = await asyncio.to_thread(srs.run_problem, exp)
+        if problem:
+            raise ValueError(problem)
+        model_dir = srs.run_model_dir(exp)
+        cfg = await asyncio.to_thread(srs.run_adapter_config, exp)
+        if cfg is None:
+            raise ValueError(f"Run #{run_id} is not a LoRA adapter (no adapter_config.json); multi-LoRA serving needs adapters.")
+        bases[run_id] = adapter_base_model(model_dir, fallback=exp.base_model) or exp.base_model
+        try:
+            rank = int(cfg.get("r") or 8)
+        except (TypeError, ValueError):
+            rank = 8
+        if rank > _LORA_RANKS[-1]:
+            raise ValueError(
+                f"Run #{run_id} has LoRA rank {rank}; vLLM serves adapters up to rank {_LORA_RANKS[-1]}."
+            )
+        adapters.append(
+            {
+                "run_id": run_id, "name": exp.name, "module_name": f"{slug}:run-{run_id}",
+                "path": str(model_dir), "rank": rank,
+            }
+        )
+    if len(set(bases.values())) > 1:
+        listing = "; ".join(f"run #{rid} -> {base}" for rid, base in bases.items())
+        raise ValueError(f"Runs do not share a base model ({listing}); pick runs trained on the same base.")
+    base_model = next(iter(bases.values()))
+    max_rank = _round_lora_rank(max(a["rank"] for a in adapters))
+    first_exp = await db.get(Experiment, ids[0])
+    cwd = str(first_exp.output_dir)
+
+    argv = [
+        "python", "-m", "vllm.entrypoints.openai.api_server",
+        "--model", base_model, "--served-model-name", f"{slug}:base",
+        "--enable-lora", "--max-loras", str(len(adapters)), "--max-lora-rank", str(max_rank),
+        "--lora-modules", *[f"{a['module_name']}={a['path']}" for a in adapters],
+        "--host", host, "--port", str(port),
+    ]
+    if max_model_len:
+        argv += ["--max-model-len", str(int(max_model_len))]
+    client_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    base_url = f"http://{client_host}:{port}"
+    health_url = f"{base_url}/health"
+    chat_url = f"{base_url}/v1/chat/completions"
+    smoke_payload = {
+        "model": adapters[0]["module_name"],
+        "messages": [{"role": "user", "content": "Hello from SLM!"}],
+        "temperature": 0.0, "max_tokens": 32, "stream": False,
+    }
+    template = {
+        "template_id": "runner.vllm_multi_lora",
+        "display_name": "vLLM multi-LoRA server",
+        "kind": "runner",
+        "target_id": "runner.vllm",
+        "description": f"One vLLM server for {len(adapters)} LoRA run(s) on {base_model}.",
+        "command": _format_cmd(argv),
+        "healthcheck": {
+            "url": health_url, "method": "GET", "expected_status": 200,
+            "curl": f"curl -sS {shlex.quote(health_url)}",
+        },
+        "smoke_test": {
+            "prompt": smoke_payload["messages"][0]["content"], "url": chat_url, "method": "POST",
+            "json_body": smoke_payload, "expected_status": 200,
+            "curl": (
+                f"curl -sS -X POST {shlex.quote(chat_url)} -H 'Content-Type: application/json' "
+                f"-d '{_format_curl_json(smoke_payload)}'"
+            ),
+        },
+        "notes": [
+            "Install vLLM in the active environment before launching.",
+            "Each adapter is served under its gateway model id; the base model is served as "
+            f"'{slug}:base'.",
+            "Point the project's gateway upstream at this server (see gateway_settings_hint).",
+            "The plan binds whatever host you give it and vLLM has no authentication: keep the default "
+            "127.0.0.1 unless the server sits behind your own access control.",
+        ],
+        "launch_spec": {"cwd": cwd, "argv": argv, "env": {}},
+    }
+    return {
+        "project_id": project_id,
+        "slug": slug,
+        "base_model": base_model,
+        "adapters": adapters,
+        "template": template,
+        "gateway_settings_hint": {"upstream": "openai_compatible", "base_url": base_url, "upstream_kind": "vllm"},
+        "host": host,
+        "port": port,
+    }

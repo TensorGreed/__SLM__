@@ -1,5 +1,15 @@
 # Changelog
 
+### Serving gateway, multi-LoRA plan and MCP server (October 27, 2026)
+
+- **OpenAI-compatible gateway**: `/v1/models` and `/v1/chat/completions` (plus `stream: true`) answer with a project's trained runs, addressed as `<project-slug>`, `<slug>:run-<id>` or `<slug>:base`. Keys are scoped to projects with a per-minute rate limit (`/api/gateway/keys`; shown once, stored hashed); `/v1` requires a key even when `AUTH_ENABLED=false`. A project can run in process or forward to a vLLM / Ollama / OpenAI-style server.
+- **Retrieval with citations**: runs trained with passages retrieve by default (`brewslm: {retrieval, k}` overrides); the preamble is exactly the training one and answers carry `citations` with `source_url`. A missing index skips retrieval instead of failing.
+- **Guided JSON**: the project's JSON schema is sent as a strict `response_format` json_schema to every upstream kind (Ollama's `/v1` ignores `format`; recent vLLM dropped `guided_json`) and the reply is validated and reported (`valid`, `errors`); in process it is validated only. A client-sent `response_format` wins. Upstream failures are a `502` without the upstream body.
+- **Hardening**: deleting a project removes it from every gateway key's scope (emptied keys are revoked) and deletes its request log; keys are listable and revocable by their creator, an admin or the owner of every scoped project; `/v1` errors (404, 405, 422, 500) keep the OpenAI envelope; the MCP HTTP mode checks Origin, Host and Content-Type and refuses a non-loopback host without `--allow-remote`; multi-LoRA plans reject adapters above rank 256 or without weights.
+- **Named tools and MCP server**: saved prompt tools per project (`{field}` templates, input schema, `@recipe` for the code-findings prompt) and `python -m app.mcp_server` (stdio, optional HTTP) exposing `list_models`, `run_model`, `retrieve` and the named tools to Claude Code. See [Serving gateway and MCP server](slm-docs/docs/deployment/gateway-and-mcp.md).
+- **Multi-LoRA plan**: `POST /api/projects/{id}/serve/multi-lora-plan` builds one vLLM launch (`--enable-lora`, `--lora-modules`) for runs sharing a base model; `.../multi-lora-runs/start` launches it.
+- **Telemetry**: per-request latency, status and token counts per model (`GET /api/projects/{id}/gateway/telemetry`); prompt and reply text are never stored. Migration `20261027_0051`.
+
 ### Tool catalog (MCP / OpenAPI) and tool-call scoring (October 27, 2026)
 
 - **Hardening**: a stored secret is reused only for the same kind and endpoint; user env names that change how a binary loads code are refused; unknown destructiveness fails closed; `tool-call-json` now trains on the canonical call JSON (`{"tool": ..., "args": ...}`) instead of the tool result, matching what `tool_calling` scoring reads; cached `tool_calling` base results are reused only under the same tool-call scoring fingerprint.

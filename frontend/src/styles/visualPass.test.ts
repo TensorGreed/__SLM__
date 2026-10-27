@@ -57,6 +57,8 @@ export const CLEAN_FILES = [
     'components/domain/DomainPackImportPanel.tsx',
     'components/evaluation/UserProbeEditor.tsx',
     'components/export/ExportPanel.tsx',
+    'components/gateway/GatewayCard.tsx',
+    'components/gateway/MultiLoraCard.tsx',
     'components/guide/QuickstartCard.tsx',
     'components/layout/CommandPalette.tsx',
     'components/layout/TopBar.tsx',

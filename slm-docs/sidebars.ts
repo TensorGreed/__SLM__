@@ -67,6 +67,7 @@ const sidebars: SidebarsConfig = {
         'deployment/plan',
         'deployment/smoke-and-promote',
         'deployment/telemetry',
+        'deployment/gateway-and-mcp',
         'deployment/drift-checks',
         'deployment/rollback-and-score',
       ],

@@ -16,6 +16,8 @@ import CompressionPanel from '../components/compression/CompressionPanel';
 import SeedShipTable from '../components/evaluation/SeedShipTable';
 import ExportPanel from '../components/export/ExportPanel';
 import GuidedJsonCard from '../components/export/GuidedJsonCard';
+import GatewayCard from '../components/gateway/GatewayCard';
+import MultiLoraCard from '../components/gateway/MultiLoraCard';
 import DetailsDrawer from '../components/shared/DetailsDrawer';
 import CoachNotices from '../components/coach/CoachNotices';
 import StepHelp from '../components/coach/StepHelp';
@@ -142,6 +144,13 @@ export default function ProjectShipPage() {
                     <div data-testid="ship-deployments">
                         <ProjectDeploymentsPage embedded />
                     </div>
+                )}
+
+                {stage === 'deploy' && (
+                    <>
+                        <GatewayCard projectId={projectId} />
+                        <MultiLoraCard projectId={projectId} />
+                    </>
                 )}
 
                 {stage === 'monitor' && (

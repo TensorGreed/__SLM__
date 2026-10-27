@@ -436,3 +436,142 @@ async def list_recent_samples(
             for row in rows
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Serving gateway (``/v1``): per-request log, keyed by project (G11)
+# ---------------------------------------------------------------------------
+#
+# A gateway request has no DeploymentVersion (that needs an export), so it is
+# logged to ``gateway_request_logs``. Only timing / status / token counts are
+# stored -- never the prompt or the reply, which may be private code.
+
+
+async def record_gateway_request(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    key_id: int | None,
+    model_id: str,
+    run_id: int | None,
+    latency_ms: float,
+    status_code: int,
+    error_code: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    retrieval_applied: bool = False,
+    guided_json_mode: str | None = None,
+    upstream: str = "in_process",
+    request_id: str | None = None,
+) -> None:
+    """Insert one row. Never raises: a logging failure must not fail the request."""
+    from app.models.gateway import GatewayRequestLog
+
+    try:
+        db.add(
+            GatewayRequestLog(
+                project_id=int(project_id),
+                key_id=key_id,
+                model_id=str(model_id or "")[:160],
+                run_id=run_id,
+                ts=_utcnow(),
+                latency_ms=max(0.0, float(latency_ms or 0.0)),
+                success=int(status_code) < 400,
+                status_code=int(status_code),
+                error_code=(str(error_code)[:128] if error_code else None),
+                input_tokens=_coerce_int(input_tokens),
+                output_tokens=_coerce_int(output_tokens),
+                retrieval_applied=bool(retrieval_applied),
+                guided_json_mode=(str(guided_json_mode)[:32] if guided_json_mode else None),
+                upstream=str(upstream or "in_process")[:32],
+                request_id=(str(request_id)[:128] if request_id else None),
+            )
+        )
+        await db.commit()
+    except Exception:  # noqa: BLE001 - telemetry is best-effort
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def compute_gateway_telemetry(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    window_seconds: int | None = None,
+    since: datetime | str | None = None,
+    until: datetime | str | None = None,
+) -> dict[str, Any]:
+    """Latency / error / volume summary of a project's gateway requests: the
+    deployment-version ``_summarise`` over all rows, plus one entry per model id."""
+    from app.models.gateway import GatewayRequestLog
+
+    since_dt, until_dt = _resolve_window(window_seconds=window_seconds, since=since, until=until)
+    result = await db.execute(
+        select(GatewayRequestLog)
+        .where(
+            GatewayRequestLog.project_id == int(project_id),
+            GatewayRequestLog.ts >= since_dt,
+            GatewayRequestLog.ts <= until_dt,
+        )
+        .order_by(GatewayRequestLog.ts.asc())
+        .limit(_MAX_SAMPLES_PER_QUERY)
+    )
+    rows = list(result.scalars().all())
+    total = _summarise(deployment_version_id=0, rows=rows, since_dt=since_dt, until_dt=until_dt)
+    total.pop("deployment_version_id", None)
+    by_model: dict[str, list] = {}
+    for row in rows:
+        by_model.setdefault(row.model_id, []).append(row)
+    entries = []
+    for model_id, group in sorted(by_model.items()):
+        part = _summarise(deployment_version_id=0, rows=group, since_dt=since_dt, until_dt=until_dt)
+        entries.append(
+            {
+                "model_id": model_id,
+                "requests": part["sample_count"],
+                "error_rate": part["errors"]["rate"],
+                "p50_ms": part["latency_ms"]["p50"],
+                "p95_ms": part["latency_ms"]["p95"],
+            }
+        )
+    return {
+        "project_id": int(project_id),
+        "by_model": entries,
+        "total": total["sample_count"],
+        "overall": total,
+    }
+
+
+async def list_recent_gateway_requests(
+    db: AsyncSession, *, project_id: int, limit: int = 50
+) -> list[dict[str, Any]]:
+    from app.models.gateway import GatewayApiKey, GatewayRequestLog
+
+    bounded = max(1, min(int(limit), 500))
+    result = await db.execute(
+        select(GatewayRequestLog)
+        .where(GatewayRequestLog.project_id == int(project_id))
+        .order_by(GatewayRequestLog.ts.desc(), GatewayRequestLog.id.desc())
+        .limit(bounded)
+    )
+    rows = list(result.scalars().all())
+    key_ids = {r.key_id for r in rows if r.key_id is not None}
+    prefixes: dict[int, str] = {}
+    if key_ids:
+        keys = await db.execute(select(GatewayApiKey).where(GatewayApiKey.id.in_(key_ids)))
+        prefixes = {k.id: k.key_prefix for k in keys.scalars().all()}
+    return [
+        {
+            "ts": row.ts.isoformat() if row.ts else None,
+            "model_id": row.model_id,
+            "run_id": row.run_id,
+            "status_code": row.status_code,
+            "latency_ms": row.latency_ms,
+            "retrieval_applied": bool(row.retrieval_applied),
+            "guided_json_mode": row.guided_json_mode,
+            "key_prefix": prefixes.get(row.key_id) if row.key_id is not None else None,
+        }
+        for row in rows
+    ]

@@ -3468,13 +3468,9 @@ async def playground_provider_catalog(
 
 
 def _retrieval_source(project: Any) -> str:
-    from app.services.auto_rag_service import RETRIEVAL_SETTINGS_KEY
+    from app.services.auto_rag_service import retrieval_source
 
-    cfg = getattr(project, "runtime_config", None)
-    raw = cfg.get(RETRIEVAL_SETTINGS_KEY) if isinstance(cfg, dict) else None
-    if isinstance(raw, dict) and raw:
-        return str(raw.get("source") or "manual")
-    return "default"
+    return retrieval_source(project)
 
 
 async def _apply_playground_auto_rag(
@@ -3576,7 +3572,6 @@ async def _resolve_playground_run(
     """For ``provider="experiment"``: the run's checkpoint path, a display
     label and its base model. ``None`` for every other provider."""
     from app.services.playground_service import _normalize_provider
-    from app.services.post_training_eval_service import _model_dir_has_weights
 
     if _normalize_provider(req.provider) != "experiment":
         return None
@@ -3601,20 +3596,12 @@ async def _resolve_playground_run(
     ).scalar_one_or_none()
     if exp is None:
         raise HTTPException(404, f"Run #{req.experiment_id} not found in this project.")
-    if isinstance(exp.config, dict) and exp.config.get("is_baseline") is True:
-        raise HTTPException(400, "That's a baseline row, not a trained run.")
-    if exp.status != ExperimentStatus.COMPLETED:
-        raise HTTPException(
-            400, f"Run #{exp.id} is {exp.status.value}; only completed runs can chat."
-        )
-    if not _model_dir_has_weights(exp.output_dir):
-        raise HTTPException(
-            400,
-            f"Run #{exp.id} has no saved model weights (simulated or incomplete run).",
-        )
-    from app.services.evaluation_service import _resolve_model_reference
+    from app.services.servable_run_service import run_model_ref, run_problem
 
-    model_ref = str(_resolve_model_reference(exp, None))
+    problem = run_problem(exp)
+    if problem:
+        raise HTTPException(400, problem)
+    model_ref = run_model_ref(exp)
     return model_ref, f"run #{exp.id} · {exp.name}", exp.base_model
 
 

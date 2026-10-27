@@ -136,6 +136,13 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `STEPS_BY_DESTINATION.ship = ['export']`; ProjectStagePage is deleted (its
   CSS lives on as `pages/stagePage.css`, shared by Data and Ship). Tests:
   `ExportPanel.stages.test.tsx`, `ProjectShipPage.test.tsx`.
+  **Gateway cards (G11)** — Deploy also mounts `components/gateway/GatewayCard`
+  ("Use from Claude Code": model ids with project + run + base, `.mcp.json` /
+  curl / OpenAI snippets with `${BREWSLM_API_KEY}`, API keys shown once, gateway
+  settings, named-tools editor with the `@recipe` template checkbox, recent
+  requests) and `MultiLoraCard` (vLLM multi-LoRA plan, start, route the gateway).
+  Client `api/gateway.ts`; 400s read `detail` + `errors ?? metadata.errors`.
+  Tests: `GatewayCard.test.tsx`.
   **Guidance is inline (Epic U phase U6, 2026-10-17)** — the Coach bar,
   `CoachStrip`, `CoachToggle` and `coachLocationFor` are gone. The backend
   `coach_service` stages/rules are unchanged; the frontend renders them as

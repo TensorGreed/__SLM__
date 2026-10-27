@@ -25,6 +25,8 @@ vi.mock('../components/export/ExportPanel', () => ({
 vi.mock('../components/compression/CompressionPanel', () => ({ default: () => <div data-testid="compression" /> }));
 vi.mock('../components/evaluation/SeedShipTable', () => ({ default: ({ leaderId }: { leaderId: number }) => <div data-testid="seed-table">leader {leaderId}</div> }));
 vi.mock('./ProjectDeploymentsPage', () => ({ default: () => <div data-testid="deployments" /> }));
+vi.mock('../components/gateway/GatewayCard', () => ({ default: () => <div data-testid="gateway-card" /> }));
+vi.mock('../components/gateway/MultiLoraCard', () => ({ default: () => <div data-testid="multi-lora-card" /> }));
 vi.mock('./ProjectObservabilityPage', () => ({ default: () => <div data-testid="observability" /> }));
 vi.mock('./ProjectManifestPage', () => ({ default: () => <div data-testid="manifest" /> }));
 
@@ -81,6 +83,8 @@ describe('ProjectShipPage', () => {
         const user = userEvent.setup();
         renderAt('/project/31/ship?stage=deploy');
         expect(screen.getByTestId('deployments')).toBeInTheDocument();
+        expect(screen.getByTestId('gateway-card')).toBeInTheDocument();
+        expect(screen.getByTestId('multi-lora-card')).toBeInTheDocument();
         expect(screen.getByTestId('export-panel')).toHaveTextContent('deploy');
         expect(screen.queryByTestId('ship-seed-pick')).toBeNull();
         await user.click(screen.getByTestId('ship-stage-monitor'));

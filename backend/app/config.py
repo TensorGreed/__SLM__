@@ -141,6 +141,10 @@ class Settings(BaseSettings):
     # Dry-run calls only ever reach effectively read-only tools of an MCP source.
     MCP_DRY_RUN_ENABLED: bool = False
 
+    # ── Serving gateway (/v1) ───────────────────────────────────────────
+    # Public base URL printed in the Ship-tab snippets (curl / SDK / .mcp.json).
+    GATEWAY_PUBLIC_URL: str = "http://localhost:8000"
+
     # ── Hard API budget (metered cloud calls only) ──────────────────────
     # Account-wide cap in US dollars per calendar month (UTC) across all
     # projects; unset = no account-wide cap. Local models and subscription

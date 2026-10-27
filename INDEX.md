@@ -69,6 +69,7 @@ session-start guidance.
 - `backend/app/api/export.py` — Export API routes.
 - `backend/app/api/extensions.py` — Extensions API — plugin contract validators + scaffold generator
 - `backend/app/api/flows.py` — Guided flows — several pipeline steps chained as one background Job.
+- `backend/app/api/gateway.py` — Serving gateway routes (G11).
 - `backend/app/api/gold.py` — Gold evaluation dataset API routes.
 - `backend/app/api/gold_workbench.py` — Gold-set annotation workbench API routes (priority.md P10).
 - `backend/app/api/hardware.py` — Hardware Recommender API routes.
@@ -226,6 +227,8 @@ session-start guidance.
 - `backend/app/services/failure_cluster_service.py` — P12 — Failure-cluster service.
 - `backend/app/services/finding_set_scoring.py` — ``finding_set`` scoring: a model proposes ``{"findings": [{label, start_line,
 - `backend/app/services/frontier_comparison_service.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
+- `backend/app/services/gateway_service.py` — Serving gateway core: keys, model ids, retrieval injection, guided JSON,
+- `backend/app/services/gateway_tools_service.py` — Named tools of the serving gateway (``runtime_config["gateway"]["tools"]``).
 - `backend/app/services/goal_service.py` — Arc H — End-goal contract + progress ledger.
 - `backend/app/services/gold_llm_service.py` — LLM-assisted gold-set generation across all supported recipes.
 - `backend/app/services/gold_review_service.py` — Human review of the answer key (P6 Trust).
@@ -307,6 +310,7 @@ session-start guidance.
 - `backend/app/services/secret_service.py` — Project secret storage service with reversible at-rest encryption.
 - `backend/app/services/seed_documents_service.py` — Seed documents: write sample documents for a domain when the user has
 - `backend/app/services/seed_selection_service.py` — Ship the best seed of a multi-seed group.
+- `backend/app/services/servable_run_service.py` — Which training runs can be served, and which one a project serves by default.
 - `backend/app/services/serve_runtime_service.py` — Ephemeral local serve run manager (start/status/stop + live log tail).
 - `backend/app/services/serve_service.py` — Local serving plan generation for export and registry artifacts.
 - `backend/app/services/served_model_telemetry_service.py` — Post-deploy telemetry service (priority.md P26).
@@ -415,6 +419,7 @@ session-start guidance.
 - `backend/app/models/export.py` — Export ORM model for tracking model exports.
 - `backend/app/models/failure_cluster.py` — Persisted failure clusters (priority.md P33, Wave G).
 - `backend/app/models/forecast_calibration_observation.py` — Forecast vs reality calibration observations (USER-SUCCESS Epic 1, T5).
+- `backend/app/models/gateway.py` — Serving-gateway tables: scoped API keys and a per-request log.
 - `backend/app/models/gold_drift_review_queue.py` — Gold-drift review queue — fresh hallucination traps awaiting triage (E4).
 - `backend/app/models/gold_set_annotation.py` — Gold-set annotation workbench tables — versions, rows, and reviewer queue.
 - `backend/app/models/job.py` — Generic background job record (Hardening Phase H1).
@@ -515,6 +520,7 @@ session-start guidance.
 - `backend/alembic/versions/20260609_0048_label_noise_scans.py` — Quality-Lift phase 4 slice 1 — label_noise_scans table.
 - `backend/alembic/versions/20261015_0049_benchmark_dataset_type.py` — External benchmarks: 'benchmark' dataset type (Epic G-B1).
 - `backend/alembic/versions/20261026_0050_data_sources_provenance.py` — Licence & provenance ledger: data_sources + provenance columns (phase G2).
+- `backend/alembic/versions/20261027_0051_gateway_api_keys.py` — Serving gateway: scoped API keys + request log (phase G11).
 
 ## Frontend · API clients
 
@@ -541,6 +547,7 @@ session-start guidance.
 - `frontend/src/api/experimentCompare.ts` — Typed client for the eval-aware experiment comparison endpoint (E3).
 - `frontend/src/api/flows.ts` — Guided flows — several pipeline steps chained as one background Job.
 - `frontend/src/api/frontierComparison.ts` — Typed wrapper for the Track 1 Epic D SLM-vs-frontier benchmark report.
+- `frontend/src/api/gateway.ts` — Serving gateway client (G11): API keys, per-project gateway settings, the
 - `frontend/src/api/goal.ts` — Arc H — Project end-goal contract + progress ledger client.
 - `frontend/src/api/goldReview.ts` — Human review of the answer key (P6 Trust) —
 - `frontend/src/api/guidedJson.ts` — Structured-output hint for serving (code-findings recipe).
@@ -723,6 +730,8 @@ session-start guidance.
 - `frontend/src/components/extensions/ScaffoldForm.tsx` — ScaffoldForm — generate a contract-valid plugin scaffold from the
 - `frontend/src/components/extensions/ScaffoldPreview.tsx` — ScaffoldPreview — display the generated scaffold files inline with
 - `frontend/src/components/extensions/ValidatePanel.tsx` — ValidatePanel — run the P37 contract suite against a module path
+- `frontend/src/components/gateway/GatewayCard.tsx` — GatewayCard — Ship > Deploy "Use from Claude Code": the model ids this
+- `frontend/src/components/gateway/MultiLoraCard.tsx` — MultiLoraCard — Ship > Deploy: serve several LoRA runs that share a base
 - `frontend/src/components/guide/QuickstartCard.tsx` — Quickstart card (Theme 1 Epic 4).
 - `frontend/src/components/layout/BrandMark.tsx` — BrandMark — BrewSLM logo glyph.
 - `frontend/src/components/layout/CommandPalette.tsx` — CommandPalette — global Cmd-K / Ctrl-K palette for fast navigation.
@@ -811,6 +820,7 @@ session-start guidance.
 
 ## Backend · Tests
 
+- `backend/tests/_gateway_helpers.py` — Seeding helpers shared by the gateway tests (no network, no real models).
 - `backend/tests/_job_wait.py` — Shared test helper: let background Jobs finish before the next test.
 - `backend/tests/conftest.py` — Pytest session-scoped safety pin — force every test to write to /tmp.
 - `backend/tests/fake_mcp_server.py` — A tiny stdio MCP server for tests: a toy "deploy service" with four tools.
@@ -915,6 +925,9 @@ session-start guidance.
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_frontier_comparison.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
 - `backend/tests/test_g5_fixes.py` — Regression tests for the G5 review fixes (diff applier, scoring denominators, fingerprint,
+- `backend/tests/test_gateway.py` — Serving gateway ``/v1`` (G11): models, resolution, retrieval, guided JSON,
+- `backend/tests/test_gateway_keys.py` — Gateway keys, per-project settings and snippets (G11).
+- `backend/tests/test_gateway_tools.py` — Named gateway tools: settings validation, safe templates, argument
 - `backend/tests/test_generate_api_ref.py` — The API-reference generator escapes MDX-significant prose in docstrings.
 - `backend/tests/test_generic_intake.py` — Generic intake (Wave 2a): any file a newcomer brings lands correctly.
 - `backend/tests/test_git_repo_source.py` — Git repository document source: ref pinning, URL safety, globs, licence,
@@ -936,6 +949,8 @@ session-start guidance.
 - `backend/tests/test_llm_budget.py` — Playground cloud-chat metering + the monthly cloud-LLM budget.
 - `backend/tests/test_llm_spend.py` — Cloud-LLM cost beyond relabels: usage metering at every cloud call site,
 - `backend/tests/test_mcp_client.py` — MCP client: stdio via the fake server (allow-listed by absolute path), streamable HTTP via
+- `backend/tests/test_mcp_server.py` — BrewSLM MCP server (G11): protocol, tools, error mapping, import hygiene.
+- `backend/tests/test_multi_lora_plan.py` — vLLM multi-LoRA serve plan (G11).
 - `backend/tests/test_multi_seed_aggregation.py` — Tests for Quality-Lift phase 1, slice 2 — multi-seed dispatch + aggregation.
 - `backend/tests/test_multi_seed_gate_variance.py` — Tests for Quality-Lift phase 1, slice 3 — variance-aware gate evaluator.
 - `backend/tests/test_multi_seed_schema.py` — Tests for Quality-Lift phase 1, slice 1 — multi-seed schema foundation.
@@ -1283,6 +1298,7 @@ session-start guidance.
 - `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/export/GuidedJsonCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/export/exportModelCard.test.ts` — _(no docstring)_
+- `frontend/src/components/gateway/GatewayCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/guide/QuickstartCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/CommandPalette.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/NotificationBell.test.tsx` — NotificationBell tests (Hardening Phase H1).

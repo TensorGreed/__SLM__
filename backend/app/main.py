@@ -7,6 +7,8 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler as default_http_exception_handler
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +28,13 @@ from app.api.remediation_config import router as remediation_config_router
 from app.api.structured_plan_config import router as structured_plan_config_router
 from app.api.tool_scoring_config import router as tool_scoring_config_router
 from app.api.settings import router as settings_router
+from app.api.gateway import (
+    GatewayError,
+    gateway_exception_handler,
+    project_router as gateway_project_router,
+    router as gateway_router,
+    v1_router as gateway_v1_router,
+)
 from app.api.projects import router as projects_router
 from app.api.document_sources import router as document_sources_router
 from app.api.provenance import router as provenance_router
@@ -390,6 +399,11 @@ app.include_router(code_checks_router, prefix="/api", dependencies=API_DEPENDENC
 app.include_router(drift_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(audit_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(settings_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(gateway_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(gateway_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
+# OpenAI-compatible gateway: its own scoped keys (always required), OpenAI error envelope.
+app.include_router(gateway_v1_router)
+app.add_exception_handler(GatewayError, gateway_exception_handler)
 app.include_router(projects_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(document_sources_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(provenance_router, prefix="/api", dependencies=API_DEPENDENCIES)
@@ -573,8 +587,40 @@ async def llm_budget_exceeded_handler(request: Request, exc: LlmBudgetExceeded):
     )
 
 
+def _is_gateway_path(request: Request) -> bool:
+    path = request.url.path
+    return path == "/v1" or path.startswith("/v1/")
+
+
+def _openai_error(status_code: int, message: Any, *, type_: str | None = None, code: str | None = None) -> JSONResponse:
+    """The OpenAI error envelope the ``/v1`` gateway surface uses everywhere."""
+    if not isinstance(message, str):
+        message = str(message)
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "message": message,
+                "type": type_ or ("invalid_request_error" if status_code < 500 else "server_error"),
+                "code": code or {404: "not_found", 405: "method_not_allowed", 422: "invalid_request"}.get(status_code, "error"),
+            }
+        },
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Routing 404/405 are Starlette's exception, not FastAPI's: only ``/v1`` is
+    rewritten (OpenAI envelope); everything else keeps the framework default."""
+    if _is_gateway_path(request):
+        return _openai_error(exc.status_code, exc.detail)
+    return await default_http_exception_handler(request, exc)
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
+    if _is_gateway_path(request):
+        return _openai_error(exc.status_code, exc.detail)
     stage = _infer_structured_error_stage(request.url.path)
     if stage:
         return JSONResponse(
@@ -592,6 +638,11 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    if _is_gateway_path(request):
+        first = (exc.errors() or [{}])[0]
+        where = ".".join(str(p) for p in first.get("loc", ()) if p != "body")
+        message = (f"{where}: " if where else "") + str(first.get("msg") or "Request validation failed.")
+        return _openai_error(422, message, type_="invalid_request_error", code="invalid_request")
     stage = _infer_structured_error_stage(request.url.path)
     if stage:
         validation_errors = jsonable_encoder(exc.errors())
@@ -636,6 +687,11 @@ async def last_resort_exception_handler(request: Request, exc: Exception):
     stage = _infer_structured_error_stage(request.url.path) or "general"
     trace_id = _new_troubleshooting_id()
     exc_name = type(exc).__name__
+    if _is_gateway_path(request):
+        logging.getLogger("app.last_resort").exception(
+            "unhandled exception in %s [trace_id=%s] %s", request.url.path, trace_id, exc_name
+        )
+        return _openai_error(500, f"Internal error (reference {trace_id}).", type_="server_error", code="internal_error")
     # Log the full traceback under the trace_id so a developer can
     # grep the log for it after a user reports the id.
     logging.getLogger("app.last_resort").exception(
