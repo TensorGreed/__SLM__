@@ -44,6 +44,11 @@ Provider = Literal["openai", "anthropic", "deepseek"]
 # that finish inside the 300 s HTTP timeout. Playbooks size a call's max_tokens to
 # the rows it asks for (and a scenario grid its plans per call) up to this.
 _MAX_OUTPUT_TOKENS: dict[str, int] = {"anthropic": 16000, "openai": 16384, "deepseek": 8192}
+# A model that thinks by default spends thinking tokens from max_tokens: each call
+# gets this much on top of the answer budget, up to the direct ceiling above, or up
+# to _BATCH_MAX_OUTPUT_TOKENS in a Message Batch (no HTTP timeout there).
+THINKING_HEADROOM_TOKENS = 8000
+_BATCH_MAX_OUTPUT_TOKENS = 32000
 
 
 # Provider → base URL. Deepseek is OpenAI-compatible so it routes
@@ -118,6 +123,19 @@ class CloudLlmBackend:
         return _MAX_OUTPUT_TOKENS.get(self._provider, 4096)
 
     @property
+    def effort(self) -> str | None:
+        """``SYNTH_CLOUD_EFFORT`` when it's a valid level (sent only to models that take it)."""
+        value = str(getattr(settings, "SYNTH_CLOUD_EFFORT", "") or "").strip().lower()
+        return value if value in cloud_llm_service.EFFORT_LEVELS else None
+
+    def _reply_budget(self, max_tokens: int, *, batch: bool = False) -> int:
+        """``max_tokens`` plus thinking headroom for a model that thinks by default."""
+        if self._provider != "anthropic" or not cloud_llm_service.anthropic_thinks_by_default(self._model):
+            return max_tokens
+        ceiling = _BATCH_MAX_OUTPUT_TOKENS if batch else self.max_output_tokens
+        return max(max_tokens, min(ceiling, max_tokens + THINKING_HEADROOM_TOKENS))
+
+    @property
     def playbook_rows_per_call(self) -> int:
         """A playbook run over this many rows is chunked + checkpointed
         (``synth_playbook_service._run_chunked``), like the command backend."""
@@ -171,9 +189,10 @@ class CloudLlmBackend:
                         model=self._model,
                         system_prompt=str(requests[i].get("system_prompt") or ""),
                         user_prompt=str(requests[i]["prompt"]),
-                        max_tokens=int(requests[i].get("max_tokens") or 1024),
+                        max_tokens=self._reply_budget(int(requests[i].get("max_tokens") or 1024), batch=True),
                         temperature=float(requests[i].get("temperature", 0.7)),
                         cached_system=requests[i].get("cache_prefix"),
+                        effort=self.effort,
                     ),
                 }
                 for i in todo
@@ -211,6 +230,7 @@ class CloudLlmBackend:
                         pass
                 raise
             failed: list[int] = []
+            no_text = 0
             attempt_usage = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 0}
             temperature_rejected = False
             for i in todo:
@@ -224,6 +244,8 @@ class CloudLlmBackend:
                     continue
                 resp = cloud_llm_service.anthropic_response_from_message(result.get("message") or {}, self._model)
                 out[i] = resp.content or ""
+                if not resp.content and resp.stop_reason == "max_tokens":
+                    no_text += 1
                 self.batch_usage["calls"] += 1
                 self.batch_usage["input_tokens"] += resp.prompt_tokens
                 self.batch_usage["output_tokens"] += resp.completion_tokens
@@ -239,10 +261,14 @@ class CloudLlmBackend:
             # ``batch_usage`` (recording would double count it).
             if attempt_usage["calls"]:
                 llm_budget_guard.note_usage(self._provider, self._model, attempt_usage, batch=True)
-            self.batch_report.append({
+            report = {
                 "batch_id": batch_id, "requests": len(todo),
                 "succeeded": len(todo) - len(failed), "failed": len(failed),
-            })
+            }
+            if no_text:
+                # Answered, but the whole budget went to thinking: no text to parse.
+                report["budget_spent_thinking"] = no_text
+            self.batch_report.append(report)
             if temperature_rejected and attempt == 0 and self._model not in cloud_llm_service._NO_TEMPERATURE_MODELS:
                 cloud_llm_service._NO_TEMPERATURE_MODELS.add(self._model)
                 todo = failed
@@ -282,10 +308,17 @@ class CloudLlmBackend:
                     model=self._model,
                     system_prompt=system,
                     user_prompt=prompt,
-                    max_tokens=max_tokens,
+                    max_tokens=self._reply_budget(max_tokens),
                     temperature=temperature,
                     cached_system=cached,
+                    effort=self.effort,
                 )
+                if not resp.content and resp.stop_reason == "max_tokens":
+                    raise SynthBackendError(
+                        f"Cloud LLM ({self._provider}:{self._model}) spent its whole reply budget "
+                        f"({resp.completion_tokens} tokens) thinking and returned no answer. Lower "
+                        f"SYNTH_CLOUD_EFFORT (now {self.effort or 'the model default'}) or ask for fewer rows per call."
+                    )
             else:
                 # openai + deepseek both ride on call_openai_chat with
                 # different api_url. force_json=True puts the model

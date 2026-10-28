@@ -130,6 +130,11 @@ class Settings(BaseSettings):
     # the same way; each call's max_tokens is sized to its rows (up to the
     # provider's output ceiling, ``CloudLlmBackend.max_output_tokens``).
     SYNTH_CLOUD_PLAYBOOK_ROWS_PER_CALL: int = 10
+    # Effort (how much the model thinks before answering) for cloud calls to
+    # Anthropic models that take it: low / medium / high / xhigh / max, or ""
+    # for the model's default. Models that think by default spend thinking
+    # tokens from the same max_tokens budget as the answer.
+    SYNTH_CLOUD_EFFORT: str = "medium"
 
     # ── Tool catalog: MCP / OpenAPI import ──────────────────────────────
     # Stdio MCP servers launch a user-configured process, so stdio is DISABLED

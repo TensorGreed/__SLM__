@@ -43,6 +43,8 @@ You don't need to set anything for a first dev run — SQLite + simulated traini
 | `SYNTH_COMMAND_MAX_PAUSE_SECONDS` | `28800` | Total pause per Job before failing. |
 | `SYNTH_COMMAND_ENV_PASSTHROUGH` | empty | Extra env var names forwarded to the CLI. |
 | `SYNTH_COMMAND_PLAYBOOK_ROWS_PER_CALL` | `25` | Rows per CLI call in a synthetic playbook. |
+| `SYNTH_CLOUD_PLAYBOOK_ROWS_PER_CALL` | `10` | Rows per cloud call in a synthetic playbook (larger targets run as checkpointed chunks). |
+| `SYNTH_CLOUD_EFFORT` | `medium` | Effort (`low` / `medium` / `high` / `xhigh` / `max`, or empty for the model default) sent to Anthropic models that take it. |
 | `LLM_MONTHLY_BUDGET_USD` | unset | Account-wide hard cap on metered cloud-API spend per calendar month (UTC), all projects. |
 
 Details: [Synthetic-data backends](../extensions/synth-backends.md#command-local-cli-backend).

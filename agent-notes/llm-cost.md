@@ -45,6 +45,18 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `cloud_llm_service.call_anthropic_chat` retries once without it and records
   the model in `_NO_TEMPERATURE_MODELS` (later calls omit it). Tests:
   `tests/test_cloud_llm_temperature.py`.
+- **Anthropic thinking + effort**: newer models think by default (`anthropic_thinks_by_default`:
+  Fable 5.x / Mythos 5.x / Opus 5.x / Sonnet 5.x / Haiku 5.x) and thinking tokens come out of
+  `max_tokens` as non-text blocks — a big prompt at the default effort spent all 6000 tokens of a
+  structured-plan call thinking and returned NO text (2026-10-28). `anthropic_message_params(effort=)`
+  sends `output_config.effort` to models that take it (`anthropic_supports_effort`); `CloudLlmBackend`
+  sends `SYNTH_CLOUD_EFFORT` (default `medium`; "" = model default) and adds
+  `THINKING_HEADROOM_TOKENS` (8000) to a thinking model's budget, up to 16000 direct / 32000 in a
+  Message Batch. A direct reply with no text at `max_tokens` raises `SynthBackendError` naming the
+  cause; batch results count it as `budget_spent_thinking` in `batch_report`. `CloudLlmResponse`
+  carries `stop_reason`. Prices: `llm_pricing` keys are longest-match, so model generations
+  (`sonnet-5` $2/$10, `opus-5-5` $4/$20, `haiku-5-5` $0.10/$0.50, `fable-5`) override the family rate.
+  Tests `tests/test_cloud_playbook_sizing.py`.
 - **Ollama context**: `synth_backends/ollama.context_window_for` sets
   `num_ctx` per request (prompt chars / 3 + max_tokens + 256, buckets
   4096 / 8192 / 16384 / 32768) — without it Ollama runs at its server

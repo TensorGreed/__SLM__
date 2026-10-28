@@ -60,6 +60,8 @@ class CloudLlmResponse:
     # ``prompt_tokens`` (the uncached input).
     cache_write_tokens: int = 0
     cache_read_tokens: int = 0
+    # Anthropic: why the reply ended ("end_turn", "max_tokens", "refusal", ...).
+    stop_reason: str = ""
 
 
 class CloudLlmError(RuntimeError):
@@ -218,6 +220,27 @@ _ANTHROPIC_API_VERSION = "2023-06-01"
 _NO_TEMPERATURE_MODELS: set[str] = set()
 
 
+# Anthropic models that take ``output_config.effort`` (how much the model
+# thinks before answering), and the ones that think by default when no
+# ``thinking`` field is sent. Thinking tokens count against ``max_tokens``
+# and come back as non-text blocks: a big prompt at the default effort can
+# spend the whole budget thinking and return no text at all. Prefix match.
+_EFFORT_MODEL_PREFIXES = (
+    "claude-fable-5", "claude-mythos-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7",
+    "claude-opus-4-6", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-5",
+)
+_THINKS_BY_DEFAULT_PREFIXES = ("claude-fable-5", "claude-mythos-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-5")
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+
+def anthropic_supports_effort(model: str) -> bool:
+    return str(model or "").lower().startswith(_EFFORT_MODEL_PREFIXES)
+
+
+def anthropic_thinks_by_default(model: str) -> bool:
+    return str(model or "").lower().startswith(_THINKS_BY_DEFAULT_PREFIXES)
+
+
 def _rejects_temperature(status: int, body: str) -> bool:
     return status == 400 and "temperature" in body and ("deprecated" in body or "not supported" in body)
 
@@ -230,9 +253,11 @@ def anthropic_message_params(
     max_tokens: int = 4096,
     temperature: float = 0.4,
     cached_system: str | None = None,
+    effort: str | None = None,
 ) -> dict[str, Any]:
     """The ``/v1/messages`` body — shared by the synchronous call and a
-    Message Batches request's ``params`` so both send the same prompt."""
+    Message Batches request's ``params`` so both send the same prompt.
+    ``effort`` is sent only to models that take it (``anthropic_supports_effort``)."""
     system: Any = system_prompt
     if cached_system:
         system = [
@@ -249,6 +274,8 @@ def anthropic_message_params(
     }
     if model not in _NO_TEMPERATURE_MODELS:
         payload["temperature"] = temperature
+    if effort in EFFORT_LEVELS and anthropic_supports_effort(model):
+        payload["output_config"] = {"effort": effort}
     return payload
 
 
@@ -261,6 +288,7 @@ async def call_anthropic_chat(
     max_tokens: int = 4096,
     temperature: float = 0.4,
     cached_system: str | None = None,
+    effort: str | None = None,
 ) -> CloudLlmResponse:
     """Call Anthropic's messages endpoint. ``cached_system``: a stable
     block (the same across many calls) sent as a cached system block —
@@ -282,7 +310,7 @@ async def call_anthropic_chat(
     await llm_budget_guard.acheck_budget("anthropic", model)  # hard monthly API budget
     payload = anthropic_message_params(
         model=model, system_prompt=system_prompt, user_prompt=user_prompt,
-        max_tokens=max_tokens, temperature=temperature, cached_system=cached_system,
+        max_tokens=max_tokens, temperature=temperature, cached_system=cached_system, effort=effort,
     )
     started = time.monotonic()
     _LOG.info(
@@ -340,7 +368,13 @@ async def call_anthropic_chat(
         elapsed, out.model, out.prompt_tokens,
         out.completion_tokens, stop_reason, len(out.content),
     )
-    if stop_reason == "max_tokens":
+    if stop_reason == "max_tokens" and not out.content:
+        _LOG.warning(
+            "anthropic spent the whole max_tokens budget (%d) on model=%s thinking — "
+            "no answer text; lower the effort or raise the budget.",
+            max_tokens, out.model,
+        )
+    elif stop_reason == "max_tokens":
         _LOG.warning(
             "anthropic hit max_tokens (%d) on model=%s — response was "
             "truncated; downstream parse will likely fail.",
@@ -367,6 +401,7 @@ def anthropic_response_from_message(data: dict[str, Any], model: str) -> CloudLl
         completion_tokens=int(usage.get("output_tokens") or 0),
         cache_write_tokens=int(usage.get("cache_creation_input_tokens") or 0),
         cache_read_tokens=int(usage.get("cache_read_input_tokens") or 0),
+        stop_reason=str(data.get("stop_reason") or ""),
     )
 
 

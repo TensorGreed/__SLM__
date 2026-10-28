@@ -19,6 +19,11 @@ DEFAULT_PRICES: dict[str, tuple[float, float]] = {
     "haiku": (1.0, 5.0),
     "sonnet": (3.0, 15.0),
     "opus": (5.0, 25.0),
+    # Model generations priced off the family rate (longest match wins).
+    "haiku-5-5": (0.1, 0.5),
+    "sonnet-5": (2.0, 10.0),
+    "opus-5-5": (4.0, 20.0),
+    "fable-5": (10.0, 50.0),
     "gpt-4o-mini": (0.15, 0.6),
     "gpt-4o": (2.5, 10.0),
     "deepseek": (0.27, 1.1),

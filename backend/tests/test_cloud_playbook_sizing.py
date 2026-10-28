@@ -56,6 +56,120 @@ class CloudBackendTests(unittest.TestCase):
             self.assertEqual(b.playbook_rows_per_call, 100)
 
 
+class ThinkingBudgetTests(unittest.TestCase):
+    """A model that thinks by default spends thinking tokens from max_tokens: a big
+    prompt at the default effort could use the whole budget and return no text.
+    Cloud calls send SYNTH_CLOUD_EFFORT, get thinking headroom, and say so plainly
+    when the budget still ran out."""
+
+    def test_effort_is_sent_only_to_models_that_take_it(self):
+        from app.services.cloud_llm_service import anthropic_message_params
+
+        def params(model, effort="medium"):
+            return anthropic_message_params(model=model, system_prompt="s", user_prompt="u", effort=effort)
+
+        self.assertEqual(params("claude-sonnet-5-5")["output_config"], {"effort": "medium"})
+        self.assertEqual(params("claude-opus-4-8", "low")["output_config"], {"effort": "low"})
+        self.assertNotIn("output_config", params("claude-haiku-4-5-20251001"))
+        self.assertNotIn("output_config", params("claude-sonnet-5-5", "turbo"))
+        self.assertNotIn("output_config", params("claude-sonnet-5-5", None))
+
+    def test_effort_setting(self):
+        b = CloudLlmBackend(provider="anthropic", model="claude-sonnet-5-5", api_key="k")
+        self.assertEqual(b.effort, "medium")
+        with patch.object(settings, "SYNTH_CLOUD_EFFORT", " HIGH "):
+            self.assertEqual(b.effort, "high")
+        with patch.object(settings, "SYNTH_CLOUD_EFFORT", ""):
+            self.assertIsNone(b.effort)
+
+    def test_thinking_headroom_for_models_that_think_by_default(self):
+        from app.services.synth_backends.cloud_llm import THINKING_HEADROOM_TOKENS
+
+        thinker = CloudLlmBackend(provider="anthropic", model="claude-sonnet-5-5", api_key="k")
+        self.assertEqual(thinker._reply_budget(2048), 2048 + THINKING_HEADROOM_TOKENS)
+        self.assertEqual(thinker._reply_budget(12000), 16000, "direct calls stay under the HTTP-timeout ceiling")
+        self.assertEqual(thinker._reply_budget(12000, batch=True), 12000 + THINKING_HEADROOM_TOKENS)
+        self.assertEqual(thinker._reply_budget(30000, batch=True), 32000)
+        for other in (CloudLlmBackend(provider="anthropic", model="claude-opus-4-8", api_key="k"),
+                      CloudLlmBackend(provider="openai", model="gpt-4o", api_key="k")):
+            self.assertEqual(other._reply_budget(2048), 2048)
+
+    def _complete(self, response):
+        import asyncio
+
+        from app.services import llm_budget_guard
+        from app.services.synth_backends import cloud_llm
+
+        seen = {}
+
+        async def fake_call(**kw):
+            seen.update(kw)
+            return response
+
+        async def ok(*a, **kw):
+            return None
+
+        b = CloudLlmBackend(provider="anthropic", model="claude-sonnet-5-5", api_key="k")
+        with patch.object(cloud_llm, "call_anthropic_chat", fake_call), patch.object(llm_budget_guard, "acheck_budget", ok):
+            return seen, asyncio.run(b.complete("p", max_tokens=6000))
+
+    def test_direct_call_sends_effort_and_the_headroom_budget(self):
+        from app.services.cloud_llm_service import CloudLlmResponse
+
+        seen, text = self._complete(CloudLlmResponse("answer", "claude-sonnet-5-5", 10, 5, stop_reason="end_turn"))
+        self.assertEqual(text, "answer")
+        self.assertEqual((seen["effort"], seen["max_tokens"]), ("medium", 14000))
+
+    def test_a_reply_with_no_text_at_max_tokens_is_a_clear_error(self):
+        from app.services.cloud_llm_service import CloudLlmResponse
+        from app.services.synth_backends.base import SynthBackendError
+
+        with self.assertRaisesRegex(SynthBackendError, "spent its whole reply budget .* thinking"):
+            self._complete(CloudLlmResponse("", "claude-sonnet-5-5", 10, 14000, stop_reason="max_tokens"))
+
+    def test_batch_requests_get_effort_headroom_and_report_budget_spent_thinking(self):
+        import asyncio
+        import json
+
+        from app.services import llm_budget_guard
+        from test_relabel_batch import FakeAnthropic, _patched
+
+        fake = FakeAnthropic()
+        fake.results_for = lambda requests: "\n".join(json.dumps({"custom_id": r["custom_id"], "result": {
+            "type": "succeeded", "message": {
+                "content": [{"type": "thinking", "thinking": ""}] + (
+                    [] if r["custom_id"] == "r1" else [{"type": "text", "text": "ok"}]),
+                "model": "claude-sonnet-5-5", "stop_reason": "max_tokens" if r["custom_id"] == "r1" else "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 5}}}}) for r in requests)
+
+        async def ok(*a, **kw):
+            return None
+
+        b = CloudLlmBackend(provider="anthropic", model="claude-sonnet-5-5", api_key="k")
+        reqs = [{"prompt": "a", "max_tokens": 12000}, {"prompt": "b", "max_tokens": 12000}]
+        with _patched(fake), patch.dict(os.environ, {"ANTHROPIC_BATCH_POLL_SECONDS": "0"}), \
+                patch.object(llm_budget_guard, "acheck_budget", ok), patch.object(llm_budget_guard, "note_usage", lambda *a, **kw: None):
+            out = asyncio.run(b.complete_batch(reqs))
+        self.assertEqual(out, ["ok", ""])
+        sent = [r["params"] for r in fake.batches[0]]
+        self.assertEqual({p["max_tokens"] for p in sent}, {20000})
+        self.assertEqual({json.dumps(p["output_config"]) for p in sent}, {json.dumps({"effort": "medium"})})
+        self.assertEqual(b.batch_report[-1]["budget_spent_thinking"], 1)
+
+
+class PriceTests(unittest.TestCase):
+    def test_model_generations_are_priced_on_their_own_rate(self):
+        from app.services.llm_pricing import price_for
+
+        self.assertEqual(price_for("claude-sonnet-5-5"), (2.0, 10.0))
+        self.assertEqual(price_for("claude-sonnet-5"), (2.0, 10.0))
+        self.assertEqual(price_for("claude-sonnet-4-6"), (3.0, 15.0))
+        self.assertEqual(price_for("claude-opus-5-5"), (4.0, 20.0))
+        self.assertEqual(price_for("claude-opus-4-8"), (5.0, 25.0))
+        self.assertEqual(price_for("claude-haiku-5-5"), (0.1, 0.5))
+        self.assertEqual(price_for("claude-haiku-4-5-20251001"), (1.0, 5.0))
+
+
 class ChunkedCloudRunTests(unittest.TestCase):
     """A cloud-shaped backend goes through the chunked path with sized budgets."""
 
