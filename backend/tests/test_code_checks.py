@@ -279,6 +279,38 @@ class GoShellNodeTests(unittest.TestCase):
         self.assertIs(js["ok"], True)
         self.assertEqual(m.call_args.args[0][:2], ["node", "--check"])
 
+    def test_shellcheck_fails_only_on_errors_and_checks_snippets_as_bash(self):
+        with Allow("shellcheck"), mock.patch.object(shutil, "which", return_value="/x"), \
+                mock.patch.object(sandbox_exec, "run_sandboxed", return_value=sbx(0)) as m:
+            svc.run_code_checks('X="${X:-y}"\necho "$X"', language="bash", check_ids=["shellcheck"])
+            svc.run_code_checks('#!/bin/sh\necho hi', language="bash", check_ids=["shellcheck"])
+            svc.run_code_checks('# shellcheck shell=dash\necho hi', language="bash", check_ids=["shellcheck"])
+        argvs = [c.args[0] for c in m.call_args_list]
+        self.assertTrue(all("--severity=error" in a for a in argvs), argvs)
+        self.assertEqual(["--shell=bash" in a for a in argvs], [True, False, False])
+
+    @unittest.skipUnless(shutil.which("shellcheck"), "shellcheck not installed")
+    def test_real_shellcheck_snippets(self):
+        with Allow("shellcheck"):
+            fragment = svc.run_code_checks('IMG="${IMG:-$DEFAULT}"\n${ECHO} "Using image: ${IMG}"\nrm -rf $TMPDIR/x',
+                                           language="bash", check_ids=["shellcheck"])
+            broken = svc.run_code_checks("if [ -f x ]; then\necho y\n", language="bash", check_ids=["shellcheck"])
+        self.assertIs(fragment["ok"], True, fragment)  # no shebang, an unquoted var (a warning): still parses
+        self.assertIs(broken["ok"], False, broken)  # missing fi: a real error
+
+    def test_templated_yaml_parses_after_template_expressions_are_neutralised(self):
+        helm = ("apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n"
+                "  name: {{ .Values.rbac.name }}\n  labels:\n    {{- include \"chart.labels\" . | nindent 4 }}\n"
+                "{{- if .Values.extra }}\nroleRef:\n  name: \"{{ .Values.a }}:{{ .Values.b }}\"\n{{- end }}\n")
+        self.assertIs(svc.run_code_checks(helm, language="yaml")["ok"], True)
+        jinja = "items:\n{% for x in xs %}\n  - {{ x }}\n{% endfor %}\n"
+        self.assertIs(svc.run_code_checks(jinja, language="yaml")["ok"], True)
+        bad = svc.run_code_checks("a: {{ .Values.x }}\nb: [1, 2\n", language="yaml")
+        self.assertIs(bad["ok"], False)
+        self.assertIn("after replacing template expressions", bad["results"][0]["messages"][0])
+        plain_bad = svc.run_code_checks("a: [1, 2\n", language="yaml")
+        self.assertNotIn("template", plain_bad["results"][0]["messages"][0])
+
     @unittest.skipUnless(shutil.which("gofmt"), "gofmt not installed")
     def test_real_gofmt(self):
         with Allow("go_syntax"):

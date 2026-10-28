@@ -23,7 +23,7 @@ Language ids are lower-case; aliases are normalised (`py` → `python`, `js` →
 |---|---|---|
 | `python_ast` | python | `ast.parse`; an indented fragment is retried dedented |
 | `json_parse` | json | `json.loads` |
-| `yaml_parse` | yaml | safe YAML load, aliases refused |
+| `yaml_parse` | yaml | safe YAML load, aliases refused; template expressions (`{{ … }}`, `{% … %}`, Helm / Jinja) are replaced by a placeholder first, so templated YAML is checked as YAML |
 | `json_schema` | json | validates the JSON against `context.json_schema`; skipped (`no_schema`) without one |
 
 ## External checks (sandboxed, opt-in)
@@ -37,7 +37,7 @@ An external check runs only when its id is in `CODE_CHECK_ALLOWED` **and** its b
 | `go_vet` | `go vet` | whole files with a package clause only |
 | `terraform_fmt` | `terraform fmt -check` | |
 | `terraform_validate` | `terraform validate` | needs a module directory in the server-side context; otherwise skipped |
-| `shellcheck` | `shellcheck -f gcc` | |
+| `shellcheck` | `shellcheck -f gcc --severity=error` | Fails on errors only (warnings and style are not failures); a snippet without a shebang or `# shellcheck shell=` directive is checked as bash |
 | `node_check` | `node --check` | |
 | `csharp_syntax` | `csc` / `mcs` | best effort |
 

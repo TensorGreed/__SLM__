@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import textwrap
 from typing import Any
 
@@ -44,6 +45,26 @@ class JsonParse(BaseCheck):
             return make_result(self.id, False, [str(exc)])
 
 
+# Template expressions in templated YAML (Helm / Go templates, Jinja): not YAML
+# until rendered. A line holding only template tags (``{{- if ... }}``,
+# ``{% for %}``) is blanked; an inline expression becomes a placeholder scalar.
+_TEMPLATE_EXPR = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}")
+TEMPLATE_PLACEHOLDER = "TEMPLATE_VALUE"
+
+
+def strip_yaml_templates(code: str) -> str:
+    """``code`` with template expressions neutralised (line numbers kept)."""
+    if "{{" not in code and "{%" not in code and "{#" not in code:
+        return code
+    lines = []
+    for line in code.split("\n"):
+        if line.strip() and not _TEMPLATE_EXPR.sub("", line).strip():
+            lines.append("")
+        else:
+            lines.append(_TEMPLATE_EXPR.sub(TEMPLATE_PLACEHOLDER, line))
+    return "\n".join(lines)
+
+
 class YamlParse(BaseCheck):
     id = "yaml_parse"
     languages = frozenset({"yaml"})
@@ -53,13 +74,15 @@ class YamlParse(BaseCheck):
 
         from app.services.label_taxonomy_service import _NoAliasLoader
 
+        text = strip_yaml_templates(code)
         try:
-            list(yaml.load_all(code, Loader=_NoAliasLoader))  # noqa: S506 - SafeLoader subclass
+            list(yaml.load_all(text, Loader=_NoAliasLoader))  # noqa: S506 - SafeLoader subclass
             return make_result(self.id, True)
         except yaml.YAMLError as exc:
             mark = getattr(exc, "problem_mark", None)
             where = f"line {mark.line + 1}: " if mark is not None else ""
-            return make_result(self.id, False, [where + (getattr(exc, "problem", None) or str(exc))])
+            note = " (after replacing template expressions)" if text != code else ""
+            return make_result(self.id, False, [where + (getattr(exc, "problem", None) or str(exc)) + note])
 
 
 class JsonSchemaCheck(BaseCheck):

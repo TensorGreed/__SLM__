@@ -344,7 +344,15 @@ class Shellcheck(ExternalCheck):
     binary = "shellcheck"
 
     def _run(self, code, language, context):
-        res = self._sandbox(["shellcheck", "-f", "gcc", "-"], {}, stdin=code)
+        # The check answers "does it parse": only error-severity findings fail
+        # (warnings / style on a snippet are not failures). A snippet without a
+        # shebang or a shell directive is checked as bash instead of failing
+        # SC2148 ("which shell?") before anything is checked.
+        argv = ["shellcheck", "-f", "gcc", "--severity=error"]
+        head = code.lstrip().splitlines()[:1]
+        if not (head and head[0].startswith("#!")) and "shellcheck shell=" not in code:
+            argv.append("--shell=bash")
+        res = self._sandbox([*argv, "-"], {}, stdin=code)
         if res.timed_out:
             return self._timeout()
         if res.returncode == 0:
