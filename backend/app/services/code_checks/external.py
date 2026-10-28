@@ -402,7 +402,8 @@ class CsharpSyntax(ExternalCheck):
         return make_result(self.id, False, syntax)
 
 
-_RUST_ERR_RE = re.compile(r"^error: (.*)$")
+_RUST_ERR_RE = re.compile(r"^error(?:\[(?!internal\b)[A-Za-z0-9]+\])?: (.*)$")
+_RUST_TOOLCHAIN_RE = re.compile(r"rustup|toolchain|no such file or directory|command not found|cannot execute", re.I)
 _RUST_LOC_RE = re.compile(r"^\s*--> <stdin>:(\d+):(\d+)")
 _RUST_WRAP = "fn __snippet() { "
 
@@ -432,7 +433,12 @@ def _rustup_env() -> dict[str, str]:
         value = os.environ.get(var) or str(Path.home() / default)
         if Path(value).is_dir():
             env[var] = value
+    if os.environ.get("RUSTUP_TOOLCHAIN"):
+        env["RUSTUP_TOOLCHAIN"] = os.environ["RUSTUP_TOOLCHAIN"]
     return env
+
+
+_RUSTFMT_PROBE: dict[str, bool] = {}
 
 
 class RustSyntax(ExternalCheck):
@@ -443,6 +449,22 @@ class RustSyntax(ExternalCheck):
     id = "rust_syntax"
     languages = frozenset({"rust"})
     binary = "rustfmt"
+
+    def available(self) -> bool:
+        """rustfmt is on PATH AND runs with the env the sandbox will give it (a rustup shim with no
+        toolchain configured prints an error instead of formatting). Probed once per binary + env."""
+        exe = shutil.which("rustfmt")
+        if not exe:
+            return False
+        env = _rustup_env()
+        key = f"{exe}|{sorted(env.items())}"
+        if key not in _RUSTFMT_PROBE:
+            try:
+                res = self._sandbox(["rustfmt", "--version"], {}, env=env, timeout_s=10.0)
+                _RUSTFMT_PROBE[key] = res.returncode == 0 and not res.timed_out
+            except sandbox_exec.SandboxError:
+                _RUSTFMT_PROBE[key] = False
+        return _RUSTFMT_PROBE[key]
 
     def _run(self, code, language, context):
         from app.services.code_chunker import _mask_rust
@@ -462,9 +484,14 @@ class RustSyntax(ExternalCheck):
             res = self._sandbox(argv, {}, stdin=src, env=_rustup_env())
             if res.timed_out:
                 return self._timeout()
-            msgs = _rust_messages(res.stderr)
-            if res.returncode == 0 or not msgs:
+            if res.returncode == 0:
                 return make_result(self.id, True)
+            msgs = _rust_messages(res.stderr)
+            tail = [ln.strip() for ln in res.stderr.splitlines() if ln.strip()][-3:]
+            if _RUST_TOOLCHAIN_RE.search(res.stderr) and not _RUST_LOC_RE.search(res.stderr):
+                return make_result(self.id, None, tail or ["rustfmt could not run"], skipped="unavailable")
+            if not msgs:
+                msgs = tail or ["rustfmt failed without a diagnostic"]
             failure = failure or msgs
         if neg is not None:
             return make_result(self.id, False, [f"line {neg}: unbalanced '}}' (closes more than the fragment opens)"])

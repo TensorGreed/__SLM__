@@ -290,7 +290,79 @@ def test_rust_syntax_uses_sandbox_parse_only_invocation():
             mock.patch.object(sandbox_exec, "run_sandboxed", side_effect=fake):
         out = _check("fn a() {}")
     assert out["ok"] is True
-    argv, stdin = seen[0]
+    argv, stdin = seen[-1]  # [0] may be the availability probe
     assert argv[0] == "rustfmt" and "--emit" in argv and "stdout" in argv
     assert not {"rustc", "cargo"} & set(argv)
     assert stdin == "fn a() {}"
+
+
+# -- review fixes -------------------------------------------------------------
+
+
+@pytest.mark.skipif(not HAVE_RUSTFMT, reason="rustfmt not installed")
+@pytest.mark.parametrize(
+    "code",
+    [
+        'let s = "abc;',  # E0765 unterminated double quote string
+        "fn f() { /* never closed }",  # E0758 unterminated block comment
+        'fn f() { let s = r#"abc"; }',  # E0748 unterminated raw string
+        "fn f() { let c = ''; }",  # empty char literal
+        'fn f() { let s = "a\\qb"; }',  # unknown escape
+        "fn f() { let c = 'ab'; }",  # char literal with two characters
+    ],
+)
+def test_lexer_errors_with_error_codes_fail(code):
+    out = _check(code)
+    assert out["ok"] is False, out
+    assert out["results"][0]["messages"]
+
+
+def test_error_codes_are_parsed_from_stderr():
+    from app.services.code_checks.external import _rust_messages
+
+    msgs = _rust_messages("error[E0765]: unterminated double quote string\n --> <stdin>:1:9\n\nerror[internal]: x\n")
+    assert msgs == ["line 1: unterminated double quote string"]
+
+
+def test_nonzero_exit_without_diagnostics_is_a_failure_not_a_pass():
+    def fake(argv, **kw):
+        return sandbox_exec.SandboxResult(1, "", "something odd\n", False, False, False, 0.01)
+
+    with mock.patch.object(shutil, "which", return_value="/usr/bin/rustfmt"), \
+            mock.patch.object(sandbox_exec, "run_sandboxed", side_effect=fake):
+        out = _check("fn a() {}")
+    assert out["ok"] is False
+    assert "something odd" in out["results"][0]["messages"][0]
+
+
+def test_toolchain_error_is_unavailable_not_a_syntax_failure():
+    from app.services.code_checks import external
+
+    shim = "error: rustup could not choose a version of rustfmt to run, because one wasn't specified explicitly\n"
+
+    def fake(argv, **kw):
+        return sandbox_exec.SandboxResult(1, "", shim, False, False, False, 0.01)
+
+    external._RUSTFMT_PROBE.clear()
+    with mock.patch.object(shutil, "which", return_value="/usr/bin/rustfmt"), \
+            mock.patch.object(external, "_rustup_env", return_value={}), \
+            mock.patch.object(sandbox_exec, "run_sandboxed", side_effect=fake):
+        assert external.RustSyntax().available() is False
+        out = external.RustSyntax().run("fn a() {}", language="rust", context={})
+    external._RUSTFMT_PROBE.clear()
+    assert out["ok"] is None and out["skipped"] == "unavailable"
+
+
+@pytest.mark.parametrize(
+    "src, expected",
+    [
+        ("pub fn f(\n    a: i32,\n) -> Result<\n    Vec<u8>,\n    Error,\n> {\n    todo!()\n}\n", [("f", 1, 8)]),
+        ("impl<T> From<Vec<T>>\n    for MyVec<T>\n{\n    fn from(v: Vec<T>) -> Self {\n        MyVec(v)\n    }\n}\n",
+         [("MyVec", 1, 3), ("MyVec.from", 4, 7)]),
+        ("impl<T, U> Convert<U>\n    for Wrapper<T>\nwhere\n    T: Into<U>,\n    U: Clone,\n{\n    fn go(&self) {}\n}\n",
+         [("Wrapper", 1, 6), ("Wrapper.go", 7, 8)]),
+    ],
+)
+def test_rustfmt_style_multiline_headers(src, expected):
+    chunks = chunk_code(src, "rust", max_chars=4000)
+    assert [(c.symbol, c.start_line, c.end_line) for c in chunks] == expected

@@ -34,7 +34,7 @@ An external check runs only when its id is in `CODE_CHECK_ALLOWED` **and** its b
 |---|---|---|
 | `java_syntax` | `javac` | `-proc:none -Xlint:none`; a fragment without a top-level type is wrapped in a class, then in a method. Only syntax diagnostics (expected, illegal start, not a statement, reached end of file, unclosed, orphaned, class/interface/enum/record expected, ...) fail |
 | `go_syntax` | `gofmt -e` | a fragment is prefixed with a package clause, then wrapped in a function |
-| `rust_syntax` | `rustfmt --edition 2021 --emit stdout` | parse only (nothing is compiled or run, formatting differences never fail); a fragment that is not a list of items (statements) is retried wrapped in a function body; unbalanced braces fail |
+| `rust_syntax` | `rustfmt --edition 2021 --emit stdout` | parse only (nothing is compiled or run, formatting differences never fail); a fragment that is not a list of items (statements) is retried wrapped in a function body; unbalanced braces fail; lexer errors with codes (`error[E0765]` unterminated string, ...) fail; ready only when `rustfmt --version` runs with the sandbox env (a rustup shim without a toolchain reports the check unavailable, never a syntax failure) |
 | `go_vet` | `go vet` | whole files with a package clause only |
 | `terraform_fmt` | `terraform fmt -check` | |
 | `terraform_validate` | `terraform validate` | needs a module directory in the server-side context; otherwise skipped |

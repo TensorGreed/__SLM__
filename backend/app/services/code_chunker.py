@@ -600,7 +600,9 @@ class _BraceScanner:
             return True
         if nxt.startswith(_CONT_STARTS):
             return True
-        if self.lang == "rust" and (nxt == "where" or stripped == "where"):
+        if self.lang == "rust" and (
+            nxt == "where" or stripped == "where" or stripped.endswith("<") or nxt.startswith((">", "for "))
+        ):
             return True
         if nxt.startswith(":") and not nxt.startswith("::"):
             return True
