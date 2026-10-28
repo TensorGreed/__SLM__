@@ -19,8 +19,12 @@ answer in a programming language that uses it). Rule (``resolve_language``): a m
 same-as-seed declaration checks under the seed's language (the original behaviour); a different known
 language is checked under THAT language only when it has a runnable check (the reply is then accepted
 or rejected on that language's parse); a declared language with no runnable check falls back to the
-seed's language, so a declaration can never turn a failing reply into an unchecked one. The row carries
-the final ``language`` and, when it differs from the seed's, ``seed_language``.
+seed's language when the seed has a check, so a declaration can never turn a failing reply into an
+unchecked one (a seed that is itself unchecked stays unchecked and the row is labelled with the declared
+language). Lenient checkers (``LENIENT_LANGUAGES``: YAML reads bare prose as a scalar) are honoured as a
+switch AWAY from the seed only when the seed is a data format (``DATA_FORMATS``) and the reply parses
+to a mapping or sequence; a programming-language seed can never switch to YAML. The row carries the
+final ``language`` and, when it differs from a (non-empty) seed language, ``seed_language``.
 """
 
 from __future__ import annotations
@@ -79,20 +83,64 @@ def known_languages() -> list[str]:
     return sorted(n for n in names if n)
 
 
-def resolve_language(code: str, declared: Any, seed_language: str | None) -> tuple[str | None, dict[str, Any] | None]:
+DATA_FORMATS = frozenset({"json", "yaml", "toml", "xml", "ini", "properties"})
+LENIENT_LANGUAGES = frozenset({"yaml"})  # parsers that accept nearly any text
+
+
+def _structured_yaml(code: str) -> bool:
+    """True when ``code`` is a YAML mapping or sequence (not a bare scalar / empty) whose mapping keys
+    all look like keys (word characters, ``.-/$@`` and spaces: ``def f(`` is a key YAML accepts but
+    nothing a config file has)."""
+    import re
+
+    try:
+        import yaml
+
+        data = yaml.safe_load(code)
+    except Exception:  # noqa: BLE001 - any parse error means not structured
+        return False
+    if not isinstance(data, (dict, list)):
+        return False
+    key_ok = re.compile(r"^[\w.\-/$@ ]+$")
+    stack: list[Any] = [data]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if not all(isinstance(k, (str, int, float, bool)) and key_ok.match(str(k)) for k in node):
+                return False
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return True
+
+
+def resolve_language(
+    code: str, declared: Any, seed_language: str | None, known: set[str] | None = None
+) -> tuple[str | None, dict[str, Any] | None]:
     """Return ``(language, check_result)`` for a reply. ``check_result`` is ``run_code_checks``'s dict
-    (``ok`` None when nothing ran; None itself when there is no language). See the module docstring."""
+    (``ok`` None when nothing ran; None itself when there is no language). See the module docstring.
+    ``known`` is ``set(known_languages())``, computed once per validate call."""
     from app.services.code_check_service import run_code_checks
 
+    known = set(known_languages()) if known is None else known
     seed_c = canonical_language(seed_language)
     decl_c = canonical_language(declared)
-    if decl_c and decl_c != seed_c and decl_c in set(known_languages()):
-        result = run_code_checks(code, language=decl_c)
-        if result.get("ok") is not None:
-            return decl_c, result
-    if seed_language:
-        return seed_language, run_code_checks(code, language=seed_language)
-    return seed_language, None
+    if decl_c and decl_c != seed_c and decl_c in known:
+        lenient_ok = (
+            decl_c not in LENIENT_LANGUAGES
+            or (seed_c in DATA_FORMATS and _structured_yaml(code))
+        )
+        if lenient_ok:
+            result = run_code_checks(code, language=decl_c)
+            if result.get("ok") is not None:
+                return decl_c, result
+    seed_result = run_code_checks(code, language=seed_language) if seed_language else None
+    if (
+        decl_c and decl_c != seed_c and decl_c in known
+        and (seed_result is None or seed_result.get("ok") is None)
+    ):
+        return decl_c, seed_result  # unchecked seed, declared language has no runnable check
+    return seed_language, seed_result
 
 _PROMPT = """\
 {marker}
@@ -246,6 +294,7 @@ class CodeExamplesPlaybook:
 
     def validate(self, parsed_rows: list[dict[str, Any]], ctx: PlaybookContext) -> list[SynthRow]:
         seeds = seeds_for(ctx)
+        known = set(known_languages())
         accepted: list[SynthRow] = []
         for row in parsed_rows:
             index = task_index(row, len(seeds), key="seed")
@@ -277,7 +326,7 @@ class CodeExamplesPlaybook:
             if self._copied(code, citations, seed["passages"]):
                 record_reject(ctx, "copied_chunk", f"the code is at least {int(COPY_RATIO * 100)}% identical to a cited chunk", {"code": code[:200]})
                 continue
-            language, result = resolve_language(code, row.get("language"), seed["language"])
+            language, result = resolve_language(code, row.get("language"), seed["language"], known)
             if result is not None and result.get("ok") is False:
                 failed = next((r for r in result.get("results", []) if r.get("ok") is False), {})
                 messages = failed.get("messages") or []
@@ -292,7 +341,7 @@ class CodeExamplesPlaybook:
                     "row_kind": "code_example",
                     "task": row["task"].strip(),
                     "language": language,
-                    **({"seed_language": seed["language"]} if language != seed["language"] else {}),
+                    **({"seed_language": seed["language"]} if seed["language"] and language != seed["language"] else {}),
                     "passages": seed["passages"],
                     "code_example_json": {"code": code, "rationale": row["rationale"].strip(), "citations": citations},
                 },

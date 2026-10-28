@@ -2,7 +2,7 @@
 
 ### Code examples: declared answer language (October 28, 2026)
 
-- The `code_examples` playbook asks the teacher to state the language of each answer and parse-checks the code under it, so a Python answer to a JSON / YAML / config chunk is no longer rejected as `code_does_not_parse` (the check used the chunk's language). A declaration for a language with no runnable check, or an unknown one, falls back to the chunk's language, so it cannot skip a check. Rows keep the final `language` and, when different, `seed_language`.
+- The `code_examples` playbook asks the teacher to state the language of each answer and parse-checks the code under it, so a Python answer to a JSON / YAML / config chunk is no longer rejected as `code_does_not_parse` (the check used the chunk's language). A declaration for a language with no runnable check, or an unknown one, falls back to the chunk's language, so it cannot skip a check; a code chunk can never be re-labelled YAML (that switch needs a data / config chunk and a YAML mapping or list reply). Rows keep the final `language` and, when different, `seed_language`.
 
 ### Pipeline evaluation (October 27, 2026)
 

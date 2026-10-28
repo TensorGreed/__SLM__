@@ -105,6 +105,36 @@ class DeclaredLanguageTests(unittest.TestCase):
         self.assertEqual((len(out), ctx["rejects"]), (1, []))
         self.assertEqual(out[0]["payload"]["language"], "cobol")
 
+    def test_yaml_declaration_cannot_dodge_a_seed_check(self):
+        bad = ["def f(:\n    return 1", "import yaml\nprint(yaml.safe_load(open('a.yml'))",
+               "This is not code, just an apology."]
+        for seed, seed_text in (("python", "def g(x):\n    return x + 1\n"), ("json", JSON_SEED)):
+            for code in bad:
+                out, ctx = self.run_one(seed, reply(code=code, language="yaml"), seed_text)
+                self.assertEqual(out, [], (seed, code))
+                self.assertEqual(ctx["rejects"][0]["reason"], "code_does_not_parse", (seed, code))
+                self.assertTrue(ctx["rejects"][0]["detail"].startswith(("json_parse", "python")), ctx["rejects"][0])
+
+    def test_data_seed_may_switch_to_a_yaml_mapping(self):
+        code = "version: 2\ndefaults:\n  deny: true\nrules:\n  - method: POST\n    path: /orders\n"
+        out, ctx = self.run_one("json", reply(code=code, language="yaml"))
+        self.assertEqual(ctx["rejects"], [])
+        self.assertEqual((out[0]["payload"]["language"], out[0]["payload"]["seed_language"]), ("yaml", "json"))
+
+    def test_data_seed_yaml_scalar_falls_back_to_the_seed(self):
+        out, ctx = self.run_one("json", reply(code="just some prose here", language="yaml"))
+        self.assertEqual(out, [])
+        self.assertTrue(ctx["rejects"][0]["detail"].startswith("json_parse"))
+
+    def test_unchecked_seed_with_unchecked_declared_language_is_labelled(self):
+        out, ctx = self.run_one("cobol", reply(code="x", language="xml"))
+        p = out[0]["payload"]
+        self.assertEqual((p["language"], p["seed_language"], ctx["rejects"]), ("xml", "cobol", []))
+
+    def test_no_seed_language_adds_no_seed_language_key(self):
+        out, _ = self.run_one(None, reply(code="plain text answer here", language="cobol"))
+        self.assertNotIn("seed_language", out[0]["payload"])
+
     def test_prompt_asks_for_language(self):
         prompt = self.pb.build_prompt(ctx_for("json"))
         self.assertIn('"language": "<language of `code`>"', prompt)

@@ -683,7 +683,12 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   The reply declares its `language` (prompt lists `known_languages()`; data/config seeds may be answered with the
   data itself or code using it). `resolve_language`: missing / unknown / same-as-seed -> check under the seed's
   language (old behaviour); a different known language -> checked under THAT language only if it has a runnable
-  check, else fall back to the seed's language (a declaration can never turn a failing reply into an unchecked one).
+  check, else fall back to the seed's language (a declaration can never turn a failing reply into an unchecked one;
+  an already-unchecked seed stays unchecked and the row is labelled with the declared language). Lenient checkers
+  (`LENIENT_LANGUAGES` = yaml: bare prose parses as a scalar) are honoured as a switch away from the seed only when the
+  seed is in `DATA_FORMATS` (json/yaml/toml/xml/ini/properties) AND the reply is a YAML mapping/list with ordinary keys
+  (`_structured_yaml`; `def f(:` is a mapping YAML accepts, so keys must be word-like). Programming-language seeds never
+  switch to yaml. `seed_language` only when the seed language is non-empty.
   Row `language` = the one checked; `seed_language` added when different. Fixes 2026-10-28 `json_parse`/`yaml_parse`
   rejects on Python answers to JSON/YAML seeds. Tests: `tests/test_code_examples_declared_language.py`.
   Rejects: `parse_error`, `empty_code`, `code_too_long`, `bad_citation` (also no citation at all),
