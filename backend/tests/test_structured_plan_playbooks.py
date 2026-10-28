@@ -638,6 +638,24 @@ class PlaybookApiTests(unittest.TestCase):
         job = client.get(f"/api/jobs/{resp.json()['id']}").json()
         self.assertEqual(job["status"], "succeeded", job)
 
+    def test_async_job_reports_repaired_replies(self):
+        from app.services.synth_backends import template
+
+        real = template.structured_plan_rows
+
+        def one_brace_too_many(prompt, stage):
+            out = real(prompt, stage)
+            return out[:-2] + "}" + out[-2:] if stage == "answers" else out   # [{...}}]} — a stray closer
+
+        with patch.object(template, "structured_plan_rows", one_brace_too_many):
+            resp = self.async_run({"matrix_text": MD20, "max_cells": 3})
+            self.assertEqual(resp.status_code, 202, resp.text)
+            wait_for_jobs_idle(client)
+        job = client.get(f"/api/jobs/{resp.json()['id']}").json()
+        self.assertEqual(job["status"], "succeeded", job)
+        self.assertGreaterEqual(job["result"].get("repaired_json") or 0, 1, job["result"])
+        self.assertGreaterEqual(job["result"]["rows_generated"], 1)
+
     def async_run(self, params):
         return client.post(self.base + "?async_job=true", json={"mode": "scenario_grid", "target_count": 3, "params": params})
 

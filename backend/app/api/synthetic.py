@@ -1921,6 +1921,8 @@ async def run_synth_playbook(
                 # Message Batch runs report their own spend (batch calls priced at
                 # half the list price; the Job's meter doesn't see them).
                 **{k: result[k] for k in ("usage", "cost_usd", "tokens", "batch", "batch_requests", "batch_answered", "batch_error") if result.get(k) is not None},
+                # Replies a miscounted bracket was repaired in (structured-plan playbooks).
+                **({"repaired_json": result["repaired_json"]} if result.get("repaired_json") else {}),
             }
 
         job = await start_job(
@@ -2082,4 +2084,5 @@ async def dry_run_synth_playbook(
         "rejected_count": result.get("rejected_count", 0),
         "reject_summary": result.get("reject_summary") or {},
         "rejected_examples": result.get("rejected_examples") or [],
+        **({"repaired_json": result["repaired_json"]} if result.get("repaired_json") else {}),
     }
