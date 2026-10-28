@@ -79,6 +79,16 @@ class SelectSeedChunksTests(unittest.TestCase):
         self.assertEqual(c, d)
         self.assertNotEqual(a, c)
 
+    def test_run_nonce_rotates_the_sample_unless_seed_given(self):
+        # No params.seed: each run's seed_nonce picks a different sample (a resumed run, same nonce, agrees).
+        self.assertEqual(sps._sample_seed({}, {"seed_nonce": 41}), 41)
+        self.assertEqual(sps._sample_seed({"seed": 7}, {"seed_nonce": 41}), 7)
+        self.assertEqual(sps._sample_seed({"seed": True}, {"seed_nonce": 41}), 41)
+        runs = {tuple(c["chunk_id"] for c in sps.select_seed_chunks(self.chunks, self.docs, cap=12,
+                                                                     seed=sps._sample_seed({}, {"seed_nonce": n}))[0])
+                for n in (1, 2, 3)}
+        self.assertEqual(len(runs), 3)
+
     def test_source_filter(self):
         out, pool = sps.select_seed_chunks(self.chunks, self.docs, cap=100, source_ids=[20])
         self.assertEqual(len(out), 10)

@@ -112,6 +112,15 @@ def _chunk_doc_id(chunk: dict[str, Any]) -> int | None:
         return None
 
 
+def _sample_seed(params: dict[str, Any], ctx: dict[str, Any]) -> Any:
+    """``params.seed`` when an int, else the run's ``seed_nonce``: an over-cap pool is sampled
+    differently on each run (so every passage can be reached) but the same on a resumed run."""
+    seed = params.get("seed")
+    if isinstance(seed, int) and not isinstance(seed, bool):
+        return seed
+    return ctx.get("seed_nonce")
+
+
 def select_seed_chunks(
     chunks: list[dict[str, Any]],
     doc_source: dict[int, int | None],
@@ -373,7 +382,7 @@ async def _prepare_code_context(
     wanted_sources = _seed_source_ids(params)
     selected, pool = select_seed_chunks(
         chunks, await _document_source_map(db, project_id),
-        seed=params.get("seed"), source_ids=wanted_sources,
+        seed=_sample_seed(params, ctx), source_ids=wanted_sources,
     )
     if wanted_sources and not selected:
         raise ValueError(
@@ -455,7 +464,7 @@ async def _prepare_document_passages(
     wanted_sources = _seed_source_ids(params)
     selected, pool = select_seed_chunks(
         passages, await _document_source_map(db, project_id),
-        seed=params.get("seed"), source_ids=wanted_sources,
+        seed=_sample_seed(params, ctx), source_ids=wanted_sources,
     )
     if wanted_sources and not selected:
         raise ValueError(
@@ -927,16 +936,17 @@ async def _run_playbook(
         # Shared across the shallow per-chunk ctx copies, like ``rejects``.
         "parse_notes": {},
     }
+    if uses_code_seeds or uses_documents:
+        # Varies the seed sample and window from run to run (stable within a run, so a resumed run agrees).
+        ctx["seed_nonce"] = _peek_next_id(settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl")
+
     if uses_code_seeds:
         await _prepare_code_context(db, project_id, ctx, ctx["params"])
         if getattr(playbook, "uses_remediation_seeds", False):
             await _prepare_remediation_context(db, project_id, ctx, ctx["params"], target_count=target_count)
-        # Varies the seed window from run to run (stable within a run, so a resumed run agrees).
-        ctx["seed_nonce"] = _peek_next_id(settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl")
 
     if uses_documents:
         await _prepare_document_passages(db, project_id, ctx, ctx["params"])
-        ctx["seed_nonce"] = _peek_next_id(settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl")
 
     if uses_grid:
         # The grid is built from params.matrix_text alone: the answer key is never a seed.

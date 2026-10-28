@@ -63,10 +63,10 @@ const VALID_SYNTH_MODES: ReadonlySet<SynthMode> = new Set([
     'documents_multi_turn',
 ]);
 
-/** Modes that send a `params` dict from a mode-specific form. */
 /** Modes whose seeds are document passages / code chunks: they take `source_ids`. */
 const SEED_SOURCE_MODES: ReadonlySet<SynthMode> = new Set(['seeded_defect', 'hard_negatives', 'cluster_targeted', 'remediation_from_findings', 'code_examples', 'documents_multi_turn']);
 
+/** Modes that send a `params` dict from a mode-specific form. */
 const PARAM_MODES: ReadonlySet<SynthMode> = new Set(['seeded_defect', 'remediation_from_findings', 'code_examples', 'scenario_grid', 'documents_multi_turn']);
 
 interface Props {

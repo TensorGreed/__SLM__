@@ -612,7 +612,7 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   truncation sites, `_prepare_code_context` and `_prepare_document_passages`): pool <= `MAX_DOCUMENT_CHUNKS`
   (2000) is used whole in passage order (byte-identical to the old `[:2000]`); above it, strata =
   (data source id via `raw_documents.data_source_id`, language), each shuffled by `random.Random(params.seed
-  if int else 20261028)`, drawn round-robin until the cap, kept in passage order. `params.source_ids`
+  if int else the run's seed_nonce)` (`_sample_seed`; nonce set BEFORE the prepare calls, so each run samples anew and a resumed run agrees), drawn round-robin until the cap, kept in passage order. `params.source_ids`
   (1-100 ids of THIS project, else 400 `invalid_playbook_param` metadata.param=`source_ids`, validated in
   `api/synthetic._check_source_ids` for every mode) restricts the pool BEFORE sampling; zero chunks left ->
   ValueError naming the sources. The licence gate (`training_excluded_document_ids`) runs first. `ctx["seed_pool"]`

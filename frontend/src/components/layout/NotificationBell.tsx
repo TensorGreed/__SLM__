@@ -148,7 +148,7 @@ export function seedPoolText(raw: unknown): string | null {
     if (typeof p.chunks_used !== 'number' || typeof p.chunks_eligible !== 'number') return null;
     const counts = (m: unknown, prefix: string) =>
         m && typeof m === 'object'
-            ? Object.entries(m as Record<string, number>).map(([k, n]) => `${prefix}${k} ${n}`).join(', ')
+            ? Object.entries(m as Record<string, number>).map(([k, n]) => (k === 'unknown' ? `${k} ${n}` : `${prefix}${k} ${n}`)).join(', ')
             : '';
     const parts = [`${p.chunks_used} of ${p.chunks_eligible} chunks${p.sampled ? ' (sampled)' : ''}`];
     const bySource = counts(p.by_source, '#');
