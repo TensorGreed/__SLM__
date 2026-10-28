@@ -31,6 +31,12 @@ function stub() {
             ] } };
         }
         if (url.endsWith('/label-taxonomy')) return { data: TAXONOMY };
+        if (url.endsWith('/projects/1/provenance/sources')) {
+            return { data: { sources: [
+                { id: 3, title: 'samples-repo', source_kind: 'git_repo', locator: '', usage: 'any', document_count: 120 },
+                { id: 5, title: 'helm-charts', source_kind: 'git_repo', locator: '', usage: 'any', document_count: 4 },
+            ], totals: {} } };
+        }
         if (url.endsWith('/projects/1/datasets')) {
             return { data: { datasets: [
                 { id: 7, name: 'schemas', dataset_type: 'raw', record_count: 10 },
@@ -90,6 +96,22 @@ describe('code-findings seeded defect', () => {
         const summary = await screen.findByTestId('synth-reject-summary');
         expect(summary).toHaveTextContent('3 candidates rejected');
         expect(screen.getByTestId('synth-reject-unchanged_code')).toHaveTextContent('2');
+    });
+});
+
+describe('seed sources on the picker', () => {
+    beforeEach(() => { apiMock.get.mockReset(); apiMock.post.mockReset(); stub(); });
+
+    it('sends the chosen sources as params.source_ids', async () => {
+        const user = userEvent.setup();
+        render(<MemoryRouter><PlaybookPickerPanel projectId={1} /></MemoryRouter>);
+        await user.click(await screen.findByTestId('playbook-picker-mode-hard_negatives'));
+        await user.click(await screen.findByTestId('seed-source-5'));
+        await user.click(await screen.findByTestId('playbook-picker-run'));
+        await waitFor(() => {
+            const call = apiMock.post.mock.calls.find(([u]) => String(u).includes('async_job=true'));
+            expect(call?.[1]).toMatchObject({ mode: 'hard_negatives', params: { source_ids: [5] } });
+        });
     });
 });
 

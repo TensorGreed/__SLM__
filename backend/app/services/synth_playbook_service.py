@@ -100,6 +100,109 @@ def _row_source_blocked(record: Any, usage: dict, provenance_service: Any) -> bo
 
 DEFAULT_CONTEXT_SAMPLE_SIZE = 20
 MAX_DOCUMENT_CHUNKS = 2000
+DEFAULT_SEED_SAMPLE_SEED = 20261028
+MAX_SOURCE_IDS = 100
+
+
+def _chunk_doc_id(chunk: dict[str, Any]) -> int | None:
+    try:
+        value = chunk.get("source_document_id")
+        return None if value is None or isinstance(value, bool) else int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def select_seed_chunks(
+    chunks: list[dict[str, Any]],
+    doc_source: dict[int, int | None],
+    *,
+    cap: int | None = None,
+    seed: Any = None,
+    source_ids: list[int] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Pick the seed passages a playbook draws from, and describe the pool.
+
+    ``source_ids`` restricts the pool to passages whose document belongs to those data sources
+    (``doc_source`` maps document id -> data source id). When the pool is within ``cap`` it is
+    returned unchanged, in passage order. Over the cap it is a deterministic sample spread
+    across (data source, language) strata: each stratum is shuffled by a seeded RNG
+    (``seed`` when an int, else a fixed constant) and the strata are drawn round-robin until
+    ``cap`` passages are taken; the sample keeps passage order. Returns ``(selected, seed_pool)``.
+    """
+    import random
+
+    cap = MAX_DOCUMENT_CHUNKS if cap is None else cap
+
+    def source_of(chunk: dict[str, Any]) -> int | None:
+        doc_id = _chunk_doc_id(chunk)
+        return doc_source.get(doc_id) if doc_id is not None else None
+
+    wanted = {int(s) for s in source_ids} if source_ids else None
+    eligible = [c for c in chunks if wanted is None or source_of(c) in wanted]
+    sampled = len(eligible) > cap
+    if not sampled:
+        selected = eligible
+    else:
+        strata: dict[tuple[int, str], list[int]] = {}
+        for index, chunk in enumerate(eligible):
+            sid = source_of(chunk)
+            lang = chunk.get("language") if isinstance(chunk.get("language"), str) and chunk.get("language") else ""
+            strata.setdefault((-1 if sid is None else int(sid), lang), []).append(index)
+        rng_seed = seed if isinstance(seed, int) and not isinstance(seed, bool) else DEFAULT_SEED_SAMPLE_SEED
+        rng = random.Random(rng_seed)
+        queues = []
+        for key in sorted(strata):
+            order = list(strata[key])
+            rng.shuffle(order)
+            queues.append(order)
+        taken: list[int] = []
+        depth = 0
+        while len(taken) < cap:
+            progressed = False
+            for queue in queues:
+                if depth < len(queue):
+                    taken.append(queue[depth])
+                    progressed = True
+                    if len(taken) >= cap:
+                        break
+            if not progressed:
+                break
+            depth += 1
+        selected = [eligible[i] for i in sorted(taken)]
+    by_source: dict[str, int] = {}
+    by_language: dict[str, int] = {}
+    for chunk in selected:
+        sid = source_of(chunk)
+        key = "unknown" if sid is None else str(sid)
+        by_source[key] = by_source.get(key, 0) + 1
+        lang = chunk.get("language") if isinstance(chunk.get("language"), str) and chunk.get("language") else "unknown"
+        by_language[lang] = by_language.get(lang, 0) + 1
+    pool: dict[str, Any] = {
+        "chunks_eligible": len(eligible),
+        "chunks_used": len(selected),
+        "sampled": sampled,
+        "by_source": by_source,
+        "by_language": by_language,
+    }
+    if source_ids:
+        pool["source_ids"] = sorted(wanted or ())
+    return selected, pool
+
+
+async def _document_source_map(db: AsyncSession, project_id: int) -> dict[int, int | None]:
+    from app.services import provenance_service
+
+    return {
+        int(d.id): (int(d.data_source_id) if d.data_source_id is not None else None)
+        for d in await provenance_service._project_documents(db, project_id)
+    }
+
+
+def _seed_source_ids(params: dict[str, Any]) -> list[int] | None:
+    raw = params.get("source_ids")
+    if not isinstance(raw, list) or not raw:
+        return None
+    return [int(x) for x in raw]
 
 # Reply budget per playbook row / per scenario / per structured plan. A backend that
 # states ``max_output_tokens`` (cloud) gets max_tokens sized to what the call asks
@@ -267,7 +370,18 @@ async def _prepare_code_context(
         if isinstance(p.get("path"), str) and p.get("path")
         and isinstance(p.get("start_line"), int) and not isinstance(p.get("start_line"), bool)
     ]
-    ctx["document_chunks"] = chunks[:MAX_DOCUMENT_CHUNKS]
+    wanted_sources = _seed_source_ids(params)
+    selected, pool = select_seed_chunks(
+        chunks, await _document_source_map(db, project_id),
+        seed=params.get("seed"), source_ids=wanted_sources,
+    )
+    if wanted_sources and not selected:
+        raise ValueError(
+            f"No code chunks in data source(s) {', '.join(str(i) for i in wanted_sources)} to write from. "
+            "Pick sources that hold code documents (sources marked evaluation-only or retrieval-only are skipped)."
+        )
+    ctx["document_chunks"] = selected
+    ctx["seed_pool"] = pool
 
     dataset_id = params.get("context_dataset_id")
     column = params.get("context_column")
@@ -320,7 +434,9 @@ async def _prepare_code_context(
     ctx["context_column"] = column
 
 
-async def _prepare_document_passages(db: AsyncSession, project_id: int, ctx: PlaybookContext) -> None:
+async def _prepare_document_passages(
+    db: AsyncSession, project_id: int, ctx: PlaybookContext, params: dict[str, Any] | None = None
+) -> None:
     """Fill ``ctx["document_chunks"]`` with the project's cleaned document passages for playbooks
     that write from documents (``uses_document_passages``): documents whose source is eval- or
     rag-only in the licence ledger are dropped (the documents -> Q&A flow's gate). No passages is
@@ -335,7 +451,19 @@ async def _prepare_document_passages(db: AsyncSession, project_id: int, ctx: Pla
             "Project has no usable document passages. Add and clean documents first "
             "(documents whose source is evaluation-only or retrieval-only are not used for training data)."
         )
-    ctx["document_chunks"] = passages[:MAX_DOCUMENT_CHUNKS]
+    params = params or {}
+    wanted_sources = _seed_source_ids(params)
+    selected, pool = select_seed_chunks(
+        passages, await _document_source_map(db, project_id),
+        seed=params.get("seed"), source_ids=wanted_sources,
+    )
+    if wanted_sources and not selected:
+        raise ValueError(
+            f"No usable document passages in data source(s) {', '.join(str(i) for i in wanted_sources)}. "
+            "Pick sources that hold cleaned documents (evaluation-only or retrieval-only sources are not used)."
+        )
+    ctx["document_chunks"] = selected
+    ctx["seed_pool"] = pool
     # The answer key's held-out rows: a dialogue that asks one of their questions would leak the test set.
     ctx["test_rows"] = await _load_test_rows(db, project_id)
 
@@ -807,7 +935,7 @@ async def _run_playbook(
         ctx["seed_nonce"] = _peek_next_id(settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl")
 
     if uses_documents:
-        await _prepare_document_passages(db, project_id, ctx)
+        await _prepare_document_passages(db, project_id, ctx, ctx["params"])
         ctx["seed_nonce"] = _peek_next_id(settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl")
 
     if uses_grid:
@@ -929,6 +1057,8 @@ async def _run_playbook(
     result.update(reject_report(ctx.get("rejects")))
     if (ctx.get("parse_notes") or {}).get("repaired_json"):
         result["repaired_json"] = ctx["parse_notes"]["repaired_json"]
+    if ctx.get("seed_pool"):
+        result["seed_pool"] = ctx["seed_pool"]
     if chunk_meta:
         result.update(chunk_meta)
     if batching:

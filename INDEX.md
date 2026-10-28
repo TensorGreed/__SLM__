@@ -687,6 +687,7 @@ session-start guidance.
 - `frontend/src/components/data/SavedMappingsPanel.tsx` — Saved dataset-import mappings panel (Phase G of DATASET_IMPORT_PLAN).
 - `frontend/src/components/data/ScenarioGridParamsForm.tsx` — ScenarioGridParamsForm — the knobs of the `structured-plan` `scenario_grid`
 - `frontend/src/components/data/SeedDocumentsCard.tsx` — _(no docstring)_
+- `frontend/src/components/data/SeedSourcesSelect.tsx` — SeedSourcesSelect — multi-select of the project's data sources for the
 - `frontend/src/components/data/SpanAddTypeForm.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanTypeDefinitionsEditor.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthRejectSummary.tsx` — SynthRejectSummary — what a playbook run turned away, grouped by reason,
@@ -1146,6 +1147,7 @@ session-start guidance.
 - `backend/tests/test_sandbox_exec.py` — Sandbox runner: real tiny commands only (/bin/echo, /bin/sleep, env, sh-free).
 - `backend/tests/test_seed_documents.py` — Seed documents: a generation model writes sample documents for a domain
 - `backend/tests/test_seed_group_drilldown_endpoint.py` — Quality-Lift phase 8 slice 1 — seed-group drill-down endpoint.
+- `backend/tests/test_seed_pool_sampling.py` — Seed pool sampling + ``source_ids`` for the code / document seeded playbooks.
 - `backend/tests/test_seed_selection.py` — Ship the best seed of a multi-seed group (``seed_selection_service``).
 - `backend/tests/test_seq2seq_adapter_prompt_wrap.py` — θ-fix tests — seq2seq-pair adapter writes the production
 - `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).
@@ -1263,6 +1265,7 @@ session-start guidance.
 - `frontend/src/components/data/SavedMappingsPanel.test.tsx` — Saved-mappings panel contract.
 - `frontend/src/components/data/ScenarioGridParamsForm.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SeedDocumentsCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/SeedSourcesSelect.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanAddTypeForm.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanTypeDefinitionsEditor.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.test.tsx` — _(no docstring)_

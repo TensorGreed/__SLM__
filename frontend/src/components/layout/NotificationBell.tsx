@@ -139,6 +139,25 @@ export function cloudSpendText(r: Record<string, unknown>): string | null {
     return typeof r.cost_usd === 'number' ? `${k} tokens (~$${r.cost_usd.toFixed(2)} ${priced})` : `${k} tokens`;
 }
 
+/** "2000 of 17798 chunks (sampled) · sources #3 1200, #5 800 · python 900, go 1100" from a
+ *  playbook Job result's `seed_pool`, else null. Source ids (not titles) are what the result
+ *  carries; they match the ledger's "source #id". */
+export function seedPoolText(raw: unknown): string | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const p = raw as Record<string, unknown>;
+    if (typeof p.chunks_used !== 'number' || typeof p.chunks_eligible !== 'number') return null;
+    const counts = (m: unknown, prefix: string) =>
+        m && typeof m === 'object'
+            ? Object.entries(m as Record<string, number>).map(([k, n]) => `${prefix}${k} ${n}`).join(', ')
+            : '';
+    const parts = [`${p.chunks_used} of ${p.chunks_eligible} chunks${p.sampled ? ' (sampled)' : ''}`];
+    const bySource = counts(p.by_source, '#');
+    if (bySource) parts.push(`sources ${bySource}`);
+    const byLang = counts(p.by_language, '');
+    if (byLang) parts.push(byLang);
+    return parts.join(' \u00b7 ');
+}
+
 function jobOutcomeSummaryCore(job: Job): string | null {
     if (job.status !== 'succeeded') return null;
     const r = (job.result || {}) as Record<string, unknown>;
@@ -158,6 +177,8 @@ function jobOutcomeSummaryCore(job: Job): string | null {
         if (elapsed !== null) parts.push(`${elapsed.toFixed(1)}s`);
         const rejected = typeof r.rejected_count === 'number' ? r.rejected_count : 0;
         if (rejected > 0) parts.push(`${rejected} rejected`);
+        const pool = seedPoolText(r.seed_pool);
+        if (pool) parts.push(`seeds: ${pool}`);
         const batch = r.batch as { fell_back?: number } | null | undefined;
         if (batch && typeof batch === 'object') {
             const redone = typeof batch.fell_back === 'number' && batch.fell_back > 0 ? batch.fell_back : 0;

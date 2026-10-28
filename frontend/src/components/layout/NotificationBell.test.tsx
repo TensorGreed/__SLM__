@@ -796,6 +796,29 @@ describe('NotificationBell', () => {
 });
 
 
+describe('NotificationBell seed pool line', () => {
+    it('shows how the seed passages were drawn, by source and language', () => {
+        const job = jobFixture({
+            kind: 'synth_playbook', status: 'succeeded',
+            result: {
+                rows_generated: 6,
+                seed_pool: {
+                    chunks_eligible: 17798, chunks_used: 2000, sampled: true,
+                    by_source: { '3': 1200, '5': 800 }, by_language: { java: 1200, yaml: 800 },
+                },
+            },
+        });
+        const text = jobOutcomeSummary(job as never) ?? '';
+        expect(text).toContain('seeds: 2000 of 17798 chunks (sampled) \u00b7 sources #3 1200, #5 800 \u00b7 java 1200, yaml 800');
+        const small = jobFixture({
+            kind: 'synth_playbook', status: 'succeeded',
+            result: { rows_generated: 1, seed_pool: { chunks_eligible: 5, chunks_used: 5, sampled: false, by_source: {}, by_language: {} } },
+        });
+        expect(jobOutcomeSummary(small as never)).toContain('seeds: 5 of 5 chunks');
+        expect(jobOutcomeSummary(small as never)).not.toContain('(sampled)');
+    });
+});
+
 describe('NotificationBell cloud spend line', () => {
     it('appends tokens and the list-price estimate to any kind', () => {
         const seed = jobFixture({

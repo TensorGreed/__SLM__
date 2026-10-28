@@ -395,3 +395,10 @@
     gap: var(--space-xs);
     margin-bottom: var(--space-xs);
 }
+
+.seed-sources__option {
+    display: flex;
+    gap: var(--space-xs);
+    align-items: flex-start;
+    margin-bottom: var(--space-xs);
+}

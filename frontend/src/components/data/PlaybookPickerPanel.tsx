@@ -38,6 +38,7 @@ import type { PlaybookParams, RejectFields } from '../../api/synthPlaybook';
 import CodeFindingsParamsForm from './CodeFindingsParamsForm';
 import CodeRemediationParamsForm from './CodeRemediationParamsForm';
 import MultiTurnParamsForm from './MultiTurnParamsForm';
+import SeedSourcesSelect from './SeedSourcesSelect';
 import ScenarioGridParamsForm from './ScenarioGridParamsForm';
 import SynthRejectSummary from './SynthRejectSummary';
 import ErrorPanel from '../shared/ErrorPanel';
@@ -63,6 +64,9 @@ const VALID_SYNTH_MODES: ReadonlySet<SynthMode> = new Set([
 ]);
 
 /** Modes that send a `params` dict from a mode-specific form. */
+/** Modes whose seeds are document passages / code chunks: they take `source_ids`. */
+const SEED_SOURCE_MODES: ReadonlySet<SynthMode> = new Set(['seeded_defect', 'hard_negatives', 'cluster_targeted', 'remediation_from_findings', 'code_examples', 'documents_multi_turn']);
+
 const PARAM_MODES: ReadonlySet<SynthMode> = new Set(['seeded_defect', 'remediation_from_findings', 'code_examples', 'scenario_grid', 'documents_multi_turn']);
 
 interface Props {
@@ -162,6 +166,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
     // code-findings seeded-defect params (null until a label is picked) and
     // the queued job whose result carries the reject summary.
     const [playbookParams, setPlaybookParams] = useState<PlaybookParams | null>(null);
+    const [seedSourceIds, setSeedSourceIds] = useState<number[] | null>(null);
     const [watchedJobId, setWatchedJobId] = useState<number | null>(null);
     const [jobRejects, setJobRejects] = useState<RejectFields | null>(null);
     // ── Backend picker (Epic 5 Phase 5a) ──────────────────────────
@@ -334,6 +339,13 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
     // for the retry path where ``effectiveBackend`` would be stale
     // (the useMemo hasn't recomputed against the just-set
     // ``selectedOllamaModel`` because React batches state updates).
+    // `source_ids` joins the mode's params when the seeds come from documents.
+    const withSeedSources = useCallback((mode: SynthMode, base: PlaybookParams | null): PlaybookParams | null => {
+        const documentSeeded = mode === 'documents_multi_turn' || recipeId === 'code-findings' || recipeId === 'code-remediation';
+        if (!seedSourceIds?.length || !SEED_SOURCE_MODES.has(mode) || !documentSeeded) return base;
+        return { ...(base ?? {}), source_ids: seedSourceIds };
+    }, [seedSourceIds, recipeId]);
+
     const submitJob = useCallback(async (backendOverride?: string | null) => {
         if (!selectedMode) return;
         setRunning(true);
@@ -344,7 +356,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 mode: selectedMode,
                 targetCount,
                 backend,
-                params: PARAM_MODES.has(selectedMode) ? playbookParams : null,
+                params: withSeedSources(selectedMode, PARAM_MODES.has(selectedMode) ? playbookParams : null),
                 useBatch: useBatch && (backend ?? '').startsWith('cloud:anthropic:'),
             });
             setJobRejects(null);
@@ -367,7 +379,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
         } finally {
             setRunning(false);
         }
-    }, [projectId, selectedMode, targetCount, effectiveBackend, playbookParams, useBatch]);
+    }, [projectId, selectedMode, targetCount, effectiveBackend, playbookParams, withSeedSources, useBatch]);
 
     // P2 — pre-flight dry-run. Generates 1 row against the chosen
     // model + playbook, reports back in ~3-10s. If it succeeds, we
@@ -385,7 +397,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 mode: selectedMode,
                 targetCount: 1,
                 backend: effectiveBackend,
-                params: PARAM_MODES.has(selectedMode) ? playbookParams : null,
+                params: withSeedSources(selectedMode, PARAM_MODES.has(selectedMode) ? playbookParams : null),
             });
             setPreflight(result);
             if (!result.ok) {
@@ -400,7 +412,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
         } finally {
             setPreflighting(false);
         }
-    }, [projectId, selectedMode, effectiveBackend, submitJob, playbookParams]);
+    }, [projectId, selectedMode, effectiveBackend, submitJob, playbookParams, withSeedSources]);
 
     // P1 — "Retry with Qwen 2.5". Pick the largest qwen2.5 we know
     // about, swap the model picker to it, re-run the dry-run. We
@@ -609,6 +621,11 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
 
             {recipeId === 'code-findings' && selectedMode === 'seeded_defect' && (
                 <CodeFindingsParamsForm projectId={projectId} onChange={setPlaybookParams} />
+            )}
+
+            {selectedMode && SEED_SOURCE_MODES.has(selectedMode)
+                && (selectedMode === 'documents_multi_turn' || recipeId === 'code-findings' || recipeId === 'code-remediation') && (
+                <SeedSourcesSelect key={`${projectId}-seed-sources`} projectId={projectId} onChange={setSeedSourceIds} />
             )}
 
             <div className="playbook-picker__count">

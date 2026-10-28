@@ -758,7 +758,7 @@ class RunPlaybookRequest(BaseModel):
             "label_id (required, a project-taxonomy id), attrs, context_dataset_id + context_column, "
             "context_sample_size. code-remediation remediation_from_findings: findings_dataset_id "
             "(findings rows, fix pairs or remediation rows; not an answer key), top_k (1-10), "
-            "retrieve_passages; code_examples: per_chunk (1-5). generic-sft documents_multi_turn: turns_min / "
+            "retrieve_passages; code_examples: per_chunk (1-5). Code and document playbooks: source_ids (1-100 data-source ids of this project; seeds only from those sources). generic-sft documents_multi_turn: turns_min / "
             "turns_max (2-8), dialogues_per_passage_group (1-5), passages_per_dialogue (1-3)."
         ),
     )
@@ -845,6 +845,37 @@ async def _check_scenario_grid_params(db: AsyncSession, project_id: int, params:
         })
 
 
+async def _check_source_ids(db: AsyncSession, project_id: int, raw: Any) -> list[int]:
+    """``params.source_ids``: 1-100 data-source ids, all of THIS project (400 ``invalid_playbook_param``)."""
+    from sqlalchemy import select
+
+    from app.models.data_source import DataSource
+
+    def bad(message: str) -> HTTPException:
+        return HTTPException(400, {
+            "error_code": "invalid_playbook_param", "message": message,
+            "metadata": {"param": "source_ids", "value": raw},
+        })
+
+    if not isinstance(raw, list) or not raw:
+        raise bad("params.source_ids must be a non-empty list of data-source ids.")
+    if len(raw) > 100:
+        raise bad("params.source_ids takes at most 100 data-source ids.")
+    ids: list[int] = []
+    for item in raw:
+        if isinstance(item, bool) or not isinstance(item, (int, str)) or not str(item).strip().lstrip("-").isdigit():
+            raise bad("params.source_ids must be a list of whole-number data-source ids.")
+        ids.append(int(item))
+    ids = list(dict.fromkeys(ids))
+    found = set((await db.execute(
+        select(DataSource.id).where(DataSource.project_id == project_id, DataSource.id.in_(ids))
+    )).scalars().all())
+    missing = [i for i in ids if i not in found]
+    if missing:
+        raise bad(f"params.source_ids has ids that are not data sources of this project: {missing}.")
+    return ids
+
+
 async def _checked_playbook_params(db: AsyncSession, project_id: int, mode: Any, params: dict | None) -> dict:
     """Validate ``params`` before any work starts.
 
@@ -856,6 +887,8 @@ async def _checked_playbook_params(db: AsyncSession, project_id: int, mode: Any,
       label is accepted as a free label (trimmed).
     """
     out = dict(params or {})
+    if "source_ids" in out:
+        out["source_ids"] = await _check_source_ids(db, project_id, out["source_ids"])
     raw_dataset = out.get("context_dataset_id")
     if raw_dataset is not None:
         from app.models.dataset import Dataset, DatasetType
@@ -1923,6 +1956,8 @@ async def run_synth_playbook(
                 **{k: result[k] for k in ("usage", "cost_usd", "tokens", "batch", "batch_requests", "batch_answered", "batch_error") if result.get(k) is not None},
                 # Replies a miscounted bracket was repaired in (structured-plan playbooks).
                 **({"repaired_json": result["repaired_json"]} if result.get("repaired_json") else {}),
+                # Which sources / languages the seed passages came from (code / document playbooks).
+                **({"seed_pool": result["seed_pool"]} if result.get("seed_pool") else {}),
             }
 
         job = await start_job(
@@ -2085,4 +2120,5 @@ async def dry_run_synth_playbook(
         "reject_summary": result.get("reject_summary") or {},
         "rejected_examples": result.get("rejected_examples") or [],
         **({"repaired_json": result["repaired_json"]} if result.get("repaired_json") else {}),
+        **({"seed_pool": result["seed_pool"]} if result.get("seed_pool") else {}),
     }

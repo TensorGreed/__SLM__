@@ -608,6 +608,18 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   skipped (`training_excluded_document_ids`). Hard negatives need answer-key rows WITH findings. A project
   with no answer key still runs when it has code documents (`uses_code_seeds` on the playbook). No seed
   -> a diagnostic `ValueError` (400 sync, FAILED Job), never a silent 0-row success.
+- **Seed pool sampling + `source_ids`** (`synth_playbook_service.select_seed_chunks`, one helper for BOTH
+  truncation sites, `_prepare_code_context` and `_prepare_document_passages`): pool <= `MAX_DOCUMENT_CHUNKS`
+  (2000) is used whole in passage order (byte-identical to the old `[:2000]`); above it, strata =
+  (data source id via `raw_documents.data_source_id`, language), each shuffled by `random.Random(params.seed
+  if int else 20261028)`, drawn round-robin until the cap, kept in passage order. `params.source_ids`
+  (1-100 ids of THIS project, else 400 `invalid_playbook_param` metadata.param=`source_ids`, validated in
+  `api/synthetic._check_source_ids` for every mode) restricts the pool BEFORE sampling; zero chunks left ->
+  ValueError naming the sources. The licence gate (`training_excluded_document_ids`) runs first. `ctx["seed_pool"]`
+  -> result `seed_pool` {chunks_eligible, chunks_used, sampled, by_source, by_language, source_ids?};
+  `api/synthetic.py` copies a FIXED key list from the result into the Job result (add new keys there) and
+  the dry run. UI: `SeedSourcesSelect` in `PlaybookPickerPanel` (merged into params by `withSeedSources`),
+  `NotificationBell.seedPoolText` for the outcome. Tests: `test_seed_pool_sampling.py`.
 - `POST .../synthetic/run-playbook` (+ `/dry-run`) takes `params`, handed to the playbook as
   `ctx["params"]`. `seeded_defect`: `label_id` (required; resolved through the project taxonomy, else
   400 `unknown_label` / `missing_label_id` in the structured envelope; the canonical id replaces the

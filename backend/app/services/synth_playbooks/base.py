@@ -64,6 +64,7 @@ class PlaybookContext(TypedDict, total=False):
     # code chunks from the project's code documents, the project's label
     # taxonomy index, and sampled values of a data-carrying context column.
     document_chunks: list[dict[str, Any]]
+    seed_pool: dict[str, Any]
     # Answer-key TEST split rows (documents playbooks reject dialogues that ask a test question).
     test_rows: list[dict[str, Any]]
     taxonomy: Any
