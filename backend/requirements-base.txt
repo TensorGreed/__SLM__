@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-sqlalchemy[asyncio]
+sqlalchemy[asyncio]>=2.0.48,<2.1  # 2.1's per-connection asyncio.Lock breaks the shared StaticPool connection across loops (agent-notes/testing.md)
 alembic
 aiosqlite
 asyncpg

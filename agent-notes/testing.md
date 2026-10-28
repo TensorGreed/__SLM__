@@ -31,6 +31,14 @@ Split out of CLAUDE.md (which keeps the commands and the hard rules).
   wait_for_jobs_idle` (raises naming the in-flight Jobs) — because a Job
   alive at TestClient shutdown hangs the process.
 
+- **SQLAlchemy is pinned `<2.1`** (`requirements-base.txt`). 2.1 gives the aiosqlite adapter a
+  per-connection `asyncio.Lock` (`_execute_mutex`); StaticPool shares one connection across every
+  loop (uvicorn, `asyncio.run` in executor threads, Celery per-task loops, tests seeding beside a
+  TestClient), and the lock binds to the first loop that contends on it — afterwards contention on any
+  other loop raises "bound to a different event loop" or hangs. CI picked up 2.1.6 unpinned on
+  2026-10-28 (`test_provenance_api` stuck Jobs / 600 s timeouts) while the dev venv had 2.0.48. Moving
+  to 2.1 needs a per-loop mutex on the shared connection (prototype: branch
+  `worktree-agent-abb9c491cf02cd691`, commit 937e531) and a full test pass on 2.1.
 - **Real-runtime gate** (`tests/test_real_training_path.py`, CI job
   `real-training`): drives a LIVE stack over HTTP (backend on
   `TRAINING_BACKEND=external` + Redis + a Celery worker) — project → support-faq
