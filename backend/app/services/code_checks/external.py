@@ -338,6 +338,10 @@ class TerraformValidate(ExternalCheck):
         return make_result(self.id, False, [ln for ln in (res.stdout + "\n" + res.stderr).splitlines() if ln.strip()])
 
 
+# A ``# shellcheck shell=<name>`` directive on its own comment line.
+_SHELL_DIRECTIVE = re.compile(r"^\s*#\s*shellcheck\s+shell=", re.MULTILINE)
+
+
 class Shellcheck(ExternalCheck):
     id = "shellcheck"
     languages = frozenset({"shell"})
@@ -349,8 +353,7 @@ class Shellcheck(ExternalCheck):
         # shebang or a shell directive is checked as bash instead of failing
         # SC2148 ("which shell?") before anything is checked.
         argv = ["shellcheck", "-f", "gcc", "--severity=error"]
-        head = code.lstrip().splitlines()[:1]
-        if not (head and head[0].startswith("#!")) and "shellcheck shell=" not in code:
+        if not code.startswith("#!") and not _SHELL_DIRECTIVE.search(code):
             argv.append("--shell=bash")
         res = self._sandbox([*argv, "-"], {}, stdin=code)
         if res.timed_out:

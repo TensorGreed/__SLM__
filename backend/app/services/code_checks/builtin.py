@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import json
-import re
 import textwrap
 from typing import Any
 
@@ -48,20 +47,38 @@ class JsonParse(BaseCheck):
 # Template expressions in templated YAML (Helm / Go templates, Jinja): not YAML
 # until rendered. A line holding only template tags (``{{- if ... }}``,
 # ``{% for %}``) is blanked; an inline expression becomes a placeholder scalar.
-_TEMPLATE_EXPR = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}")
+# One linear scan (an unclosed tag ends it), so a huge line can't make it slow;
+# an expression may span lines (its newlines are kept, so line numbers hold).
+_TEMPLATE_TAGS = (("{{", "}}"), ("{%", "%}"), ("{#", "#}"))
 TEMPLATE_PLACEHOLDER = "TEMPLATE_VALUE"
+_MARK = "\x00"
 
 
 def strip_yaml_templates(code: str) -> str:
     """``code`` with template expressions neutralised (line numbers kept)."""
-    if "{{" not in code and "{%" not in code and "{#" not in code:
+    if not any(open_ in code for open_, _ in _TEMPLATE_TAGS):
         return code
+    out: list[str] = []
+    i = 0
+    while True:
+        starts = [(code.find(open_, i), close) for open_, close in _TEMPLATE_TAGS]
+        starts = [(at, close) for at, close in starts if at >= 0]
+        if not starts:
+            break
+        at, close = min(starts)
+        end = code.find(close, at + 2)
+        if end < 0:
+            break
+        out.append(code[i:at])
+        out.append(_MARK + "\n" * code.count("\n", at, end))
+        i = end + len(close)
+    out.append(code[i:])
     lines = []
-    for line in code.split("\n"):
-        if line.strip() and not _TEMPLATE_EXPR.sub("", line).strip():
+    for line in "".join(out).split("\n"):
+        if _MARK in line and not line.replace(_MARK, "").strip():
             lines.append("")
         else:
-            lines.append(_TEMPLATE_EXPR.sub(TEMPLATE_PLACEHOLDER, line))
+            lines.append(line.replace(_MARK, TEMPLATE_PLACEHOLDER))
     return "\n".join(lines)
 
 

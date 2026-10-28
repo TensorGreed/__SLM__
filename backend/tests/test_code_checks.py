@@ -311,6 +311,26 @@ class GoShellNodeTests(unittest.TestCase):
         plain_bad = svc.run_code_checks("a: [1, 2\n", language="yaml")
         self.assertNotIn("template", plain_bad["results"][0]["messages"][0])
 
+    def test_template_scan_handles_multiline_expressions_and_is_linear(self):
+        import time as _time
+
+        from app.services.code_checks.builtin import strip_yaml_templates
+
+        multi = "a: {{ .x |\n   default 1 }}\nb: 2\n"
+        self.assertIs(svc.run_code_checks(multi, language="yaml")["ok"], True)
+        self.assertEqual(strip_yaml_templates(multi).count("\n"), multi.count("\n"), "line numbers kept")
+        started = _time.monotonic()
+        strip_yaml_templates("a: " + "{{ " * 20000 + "\n")
+        strip_yaml_templates("a: " + "{% " * 20000 + " " * 50000 + "\n")
+        self.assertLess(_time.monotonic() - started, 1.0)
+
+    def test_shell_directive_must_be_a_comment_line(self):
+        with Allow("shellcheck"), mock.patch.object(shutil, "which", return_value="/x"), \
+                mock.patch.object(sandbox_exec, "run_sandboxed", return_value=sbx(0)) as m:
+            svc.run_code_checks('echo "# shellcheck shell=x"', language="bash", check_ids=["shellcheck"])
+            svc.run_code_checks('echo hi\n  # shellcheck shell=sh\n', language="bash", check_ids=["shellcheck"])
+        self.assertEqual(["--shell=bash" in c.args[0] for c in m.call_args_list], [True, False])
+
     @unittest.skipUnless(shutil.which("gofmt"), "gofmt not installed")
     def test_real_gofmt(self):
         with Allow("go_syntax"):
