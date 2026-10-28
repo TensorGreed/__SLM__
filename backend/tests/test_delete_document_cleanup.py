@@ -64,6 +64,7 @@ class DeleteDocumentCleanupTests(unittest.TestCase):
         before = self._rows()
         self.assertEqual({a["id"], b["id"], c["id"]}, {r["source_document_id"] for r in before})
         self.assertTrue((self.raw / "b.cleaned.txt").exists())
+        (self.raw / "b.chunks.jsonl").write_text("{}\n")
 
         self.assertEqual(client.delete(f"{self.base}/ingestion/documents/{b['id']}").status_code, 204)
 
@@ -75,6 +76,7 @@ class DeleteDocumentCleanupTests(unittest.TestCase):
         self.assertEqual([r["id"] for r in after], list(range(1, len(after) + 1)))
         self.assertFalse((self.raw / "b.cleaned.txt").exists())
         self.assertFalse((self.raw / "b.extracted.txt").exists())
+        self.assertFalse((self.raw / "b.chunks.jsonl").exists())
         self.assertTrue((self.raw / "a.cleaned.txt").exists())
         self.assertEqual(load_document_passages(self.pid, b["id"]), [])
         self.assertNotIn(

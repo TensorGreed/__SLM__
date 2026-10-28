@@ -815,7 +815,7 @@ Docs: `slm-docs/docs/extensions/tool-catalog.md`.
 
 ## Deleting a document (2026-10-28)
 
-`ingestion_service.delete_documents` (`delete_document` wraps it) removes the file, `.extracted.txt` + `.cleaned.txt`
+`ingestion_service.delete_documents` (`delete_document` wraps it) removes the file, `.extracted.txt` + `.cleaned.txt` + `.chunks.jsonl`
 sidecars, the document's rows in `cleaned/cleaned.jsonl` (`cleaning_service.remove_documents_from_cleaned`: one temp-file +
 `os.replace` rewrite for the whole batch, other rows keep order, ids renumbered, CLEANED dataset `record_count` synced; no
 write when the docs have no rows) and the DB rows. The three data-health autofixes that delete documents

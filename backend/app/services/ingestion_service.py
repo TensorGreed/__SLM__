@@ -340,7 +340,7 @@ async def delete_documents(
     project_id: int,
     document_ids: list[int],
 ) -> None:
-    """Delete documents: file, ``.extracted.txt`` / ``.cleaned.txt`` sidecars,
+    """Delete documents: file, ``.extracted.txt`` / ``.cleaned.txt`` / ``.chunks.jsonl`` sidecars,
     their rows in the project's cleaned.jsonl (one rewrite for the batch, which
     also marks the passages indexes stale) and the DB rows. Raises ValueError
     (before touching anything) when a document isn't in the project."""
@@ -357,7 +357,7 @@ async def delete_documents(
         file_path = Path(doc.file_path)
         if file_path.exists():
             file_path.unlink()
-        for suffix in (".extracted.txt", ".cleaned.txt"):
+        for suffix in (".extracted.txt", ".cleaned.txt", ".chunks.jsonl"):
             file_path.with_suffix(suffix).unlink(missing_ok=True)
 
     await cleaning_service.remove_documents_from_cleaned(db, project_id, [int(d.id) for d in docs])
