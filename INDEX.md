@@ -892,6 +892,7 @@ session-start guidance.
 - `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
 - `backend/tests/test_code_checks.py` — Code-check registry, built-ins, external checks (sandbox stubbed), plugins, API.
 - `backend/tests/test_code_chunker.py` — Code chunker: declaration-level chunks with exact line ranges.
+- `backend/tests/test_code_examples_declared_language.py` — `code_examples` playbook: the reply declares its language; validation checks the code under it.
 - `backend/tests/test_code_finding_mappers.py` — Findings-row mappers (code_label_to_findings, fix_pair, contrast_functions)
 - `backend/tests/test_code_findings_e2e.py` — code-findings end to end on the simulate runtime: create a project, apply
 - `backend/tests/test_code_findings_g4_fixes.py` — Regression tests for the G4 review fixes of the `code-findings` playbooks and plumbing:

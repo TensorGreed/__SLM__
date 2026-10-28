@@ -1,5 +1,9 @@
 # Changelog
 
+### Code examples: declared answer language (October 28, 2026)
+
+- The `code_examples` playbook asks the teacher to state the language of each answer and parse-checks the code under it, so a Python answer to a JSON / YAML / config chunk is no longer rejected as `code_does_not_parse` (the check used the chunk's language). A declaration for a language with no runnable check, or an unknown one, falls back to the chunk's language, so it cannot skip a check. Rows keep the final `language` and, when different, `seed_language`.
+
 ### Pipeline evaluation (October 27, 2026)
 
 - **Pipelines**: chain trained projects into stages (extract → rewrite, classify → answer, detect → fix) on a new **Pipelines** page. Each stage picks a project and model (served, base or a run), a recipe prompt or a `{field}` template, inputs from the held-out row, the previous stage's output or the current fan-out item (JSON pointers), optional fan-out over a list with item-key matching, retrieval, max tokens and JSON / text output. Saving reports every invalid field at once. Stored as files under `DATA_DIR/pipelines/` (no migration).

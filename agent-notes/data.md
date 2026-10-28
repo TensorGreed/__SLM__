@@ -679,7 +679,13 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
 - `code_examples`: seeds are code-document chunks (`ctx["document_chunks"]`, ledger-gated). Per chunk the teacher
   writes `params.per_chunk` (default 2, max 5; 400 `invalid_playbook_param` outside 1-5) tasks answered with code that
   uses the API, citing `P1` = the chunk plus up to two neighbour chunks of the same document (`P2`/`P3`). Rows:
-  `{row_kind: "code_example", task, language, passages, code_example_json: {code, rationale, citations}}`.
+  `{row_kind: "code_example", task, language, [seed_language,] passages, code_example_json: {code, rationale, citations}}`.
+  The reply declares its `language` (prompt lists `known_languages()`; data/config seeds may be answered with the
+  data itself or code using it). `resolve_language`: missing / unknown / same-as-seed -> check under the seed's
+  language (old behaviour); a different known language -> checked under THAT language only if it has a runnable
+  check, else fall back to the seed's language (a declaration can never turn a failing reply into an unchecked one).
+  Row `language` = the one checked; `seed_language` added when different. Fixes 2026-10-28 `json_parse`/`yaml_parse`
+  rejects on Python answers to JSON/YAML seeds. Tests: `tests/test_code_examples_declared_language.py`.
   Rejects: `parse_error`, `empty_code`, `code_too_long`, `bad_citation` (also no citation at all),
   `copied_chunk` (>= 90% difflib ratio to a cited chunk), `code_does_not_parse` (skipped when no check applies to
   the language). Training-only rows: the remediation scorer skips rows without a `finding`.
