@@ -336,7 +336,7 @@ No migration: provenance lives in `RawDocument.metadata_` (+ `source`,
   temp dir, commit pinned, licence → SPDX by keyword, file classes `doc` /
   `code`). Rejections carry stable reason codes — web: `http_error` `robots_disallowed` `robots_unreachable`
   `outside_prefix` `not_html` `too_large` `excluded_by_pattern` `duplicate_content`
-  `fetch_error`; repo: `excluded_by_glob` `too_large` `binary` `unsupported_type`;
+  `fetch_error`; repo: `excluded_by_glob` `too_large` `binary` `unsupported_type` `empty_file` (supported file with no text — an empty `__init__.py` is skipped, not `parse_error`);
   importer: `parse_error`. Over-limit pages/files are only *counted*
   (`limit_reached`). Off-site links are simply not followed (not rejected).
 - **Git safety**: URL starting `-` refused; only `https://` `http://` `ssh://`
@@ -391,7 +391,7 @@ No migration: provenance lives in `RawDocument.metadata_` (+ `source`,
   tree-sitter) over comment/string-masked text. Java / C#: one chunk per method
   (`Class.method`), class header + fields = `class` chunk, nested classes qualified,
   anonymous classes stay in their method. Python by indentation (decorators,
-  docstring belong to the unit); go / js / ts / c / cpp by brace balance; sh functions;
+  docstring belong to the unit); go / rust / js / ts / c / cpp by brace balance (Rust: `_mask_rust` blanks nested block comments, strings, raw strings `r#"…"#` / `br#"…"#`, char literals; `'a` lifetimes are NOT chars; `fn` incl. qualifiers, `impl` (symbol = the implemented type, methods `Type.name`), `struct/enum/trait/mod/macro_rules!`; `#[..]` / `#![..]` attributes and `///` `//!` comments attach to the next item; `mod x { }` members are top-level units prefixed `x.`; `.rs` is a code extension, `Cargo.toml` stays unsupported); sh functions;
   tf / hcl blocks (`resource.t.n`); yaml top-level keys; json top-level keys; xml
   depth-1 children; sql statements; ini sections; properties groups; Dockerfile stages.
   Python lines that start inside an open triple-quoted string or bracket are body of the

@@ -11,7 +11,7 @@ MAX_MESSAGE_CHARS = 300
 _ALIASES = {
     "py": "python", "python3": "python", "js": "javascript", "node": "javascript", "mjs": "javascript",
     "sh": "shell", "bash": "shell", "zsh": "shell", "tf": "terraform", "hcl": "terraform",
-    "cs": "csharp", "c#": "csharp", "golang": "go", "yml": "yaml",
+    "cs": "csharp", "c#": "csharp", "golang": "go", "rs": "rust", "yml": "yaml",
 }
 
 

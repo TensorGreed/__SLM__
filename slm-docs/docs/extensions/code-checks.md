@@ -15,7 +15,7 @@ Every result has the same shape:
 
 `ok: null` means the check did not run; `skipped` says why: `unavailable` (binary missing, or the sandbox refused), `not_allowed`, `language_mismatch`, `timeout`, `no_schema`, `no_module_dir`, `unknown_check`. Messages are capped at 20, 300 characters each. A run's overall `ok` is true when every check that ran passed, and `null` when none ran.
 
-Language ids are lower-case; aliases are normalised (`py` → `python`, `js` → `javascript`, `sh`/`bash` → `shell`, `tf`/`hcl` → `terraform`, `cs` → `csharp`, `golang` → `go`, `yml` → `yaml`).
+Language ids are lower-case; aliases are normalised (`py` → `python`, `js` → `javascript`, `sh`/`bash` → `shell`, `tf`/`hcl` → `terraform`, `cs` → `csharp`, `golang` → `go`, `rs` → `rust`, `yml` → `yaml`).
 
 ## Built-in checks (always on, in-process)
 
@@ -34,6 +34,7 @@ An external check runs only when its id is in `CODE_CHECK_ALLOWED` **and** its b
 |---|---|---|
 | `java_syntax` | `javac` | `-proc:none -Xlint:none`; a fragment without a top-level type is wrapped in a class, then in a method. Only syntax diagnostics (expected, illegal start, not a statement, reached end of file, unclosed, orphaned, class/interface/enum/record expected, ...) fail |
 | `go_syntax` | `gofmt -e` | a fragment is prefixed with a package clause, then wrapped in a function |
+| `rust_syntax` | `rustfmt --edition 2021 --emit stdout` | parse only (nothing is compiled or run, formatting differences never fail); a fragment that is not a list of items (statements) is retried wrapped in a function body; unbalanced braces fail |
 | `go_vet` | `go vet` | whole files with a package clause only |
 | `terraform_fmt` | `terraform fmt -check` | |
 | `terraform_validate` | `terraform validate` | needs a module directory in the server-side context; otherwise skipped |

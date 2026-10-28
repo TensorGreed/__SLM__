@@ -1142,6 +1142,7 @@ session-start guidance.
 - `backend/tests/test_retrieval_decisions.py` — Pin decisions (retrieval_decisions_service): append-only record of what
 - `backend/tests/test_retrieval_reranker.py` — Cross-encoder reranking + per-project retrieval settings.
 - `backend/tests/test_rubric_service.py` — Rubric parsing, prompt/response handling, scoring rules and the row judge.
+- `backend/tests/test_rust_support.py` — Rust as a supported code language: ingest (.rs -> code document, language
 - `backend/tests/test_sandbox_exec.py` — Sandbox runner: real tiny commands only (/bin/echo, /bin/sleep, env, sh-free).
 - `backend/tests/test_seed_documents.py` — Seed documents: a generation model writes sample documents for a domain
 - `backend/tests/test_seed_group_drilldown_endpoint.py` — Quality-Lift phase 8 slice 1 — seed-group drill-down endpoint.

@@ -402,6 +402,75 @@ class CsharpSyntax(ExternalCheck):
         return make_result(self.id, False, syntax)
 
 
+_RUST_ERR_RE = re.compile(r"^error: (.*)$")
+_RUST_LOC_RE = re.compile(r"^\s*--> <stdin>:(\d+):(\d+)")
+_RUST_WRAP = "fn __snippet() { "
+
+
+def _rust_messages(stderr: str) -> list[str]:
+    """rustfmt stderr -> ``line L: msg`` for each parse error (``error[...]`` internal / formatting
+    diagnostics and warnings are not parse errors and are dropped)."""
+    out: list[str] = []
+    lines = stderr.splitlines()
+    for idx, ln in enumerate(lines):
+        found = _RUST_ERR_RE.match(ln)
+        if not found:
+            continue
+        loc = next((_RUST_LOC_RE.match(x) for x in lines[idx + 1 : idx + 3] if _RUST_LOC_RE.match(x)), None)
+        out.append(f"line {loc.group(1)}: {found.group(1)}" if loc else found.group(1))
+    return out
+
+
+def _rustup_env() -> dict[str, str]:
+    """``rustfmt`` is usually a rustup shim, and the sandbox points ``HOME`` at its temp dir, so the
+    shim would lose the toolchain settings; hand it the real rustup / cargo homes (paths only)."""
+    import os
+    from pathlib import Path
+
+    env: dict[str, str] = {}
+    for var, default in (("RUSTUP_HOME", ".rustup"), ("CARGO_HOME", ".cargo")):
+        value = os.environ.get(var) or str(Path.home() / default)
+        if Path(value).is_dir():
+            env[var] = value
+    return env
+
+
+class RustSyntax(ExternalCheck):
+    """Parse check only: ``rustfmt --emit stdout`` reads (and prints) the code, nothing is compiled
+    or run, and formatting differences are not failures. A fragment that is not a valid item list
+    (statements, a ``let``) is retried wrapped in a function body."""
+
+    id = "rust_syntax"
+    languages = frozenset({"rust"})
+    binary = "rustfmt"
+
+    def _run(self, code, language, context):
+        from app.services.code_chunker import _mask_rust
+
+        masked = _mask_rust(code)
+        depth, neg = 0, None
+        for lineno, text in enumerate(masked.split("\n"), start=1):
+            for ch in text:
+                depth += (ch == "{") - (ch == "}")
+                if depth < 0 and neg is None:
+                    neg = lineno
+        argv = ["rustfmt", "--edition", "2021", "--emit", "stdout"]
+        failure: list[str] = []
+        for wrapped, src in ((False, code), (True, _RUST_WRAP + code + "\n}")):
+            if wrapped and (neg is not None or depth != 0):
+                break  # the wrapper must not close / hide an unbalanced brace
+            res = self._sandbox(argv, {}, stdin=src, env=_rustup_env())
+            if res.timed_out:
+                return self._timeout()
+            msgs = _rust_messages(res.stderr)
+            if res.returncode == 0 or not msgs:
+                return make_result(self.id, True)
+            failure = failure or msgs
+        if neg is not None:
+            return make_result(self.id, False, [f"line {neg}: unbalanced '}}' (closes more than the fragment opens)"])
+        return make_result(self.id, False, failure or ["syntax error"])
+
+
 EXTERNALS: list[Any] = [
-    JavaSyntax(), GoSyntax(), GoVet(), TerraformFmt(), TerraformValidate(), Shellcheck(), NodeCheck(), CsharpSyntax(),
+    JavaSyntax(), GoSyntax(), GoVet(), TerraformFmt(), TerraformValidate(), Shellcheck(), NodeCheck(), CsharpSyntax(), RustSyntax(),
 ]

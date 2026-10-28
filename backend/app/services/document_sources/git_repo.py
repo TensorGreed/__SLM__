@@ -3,7 +3,8 @@
 Shallow-fetches one ref into a temp directory, pins the exact commit, finds
 the repo's licence, and classifies every file: prose (``doc``), source / config
 (``code``) or rejected with a stable reason code (``excluded_by_glob``,
-``too_large``, ``binary``, ``unsupported_type``; files past ``max_files`` are
+``too_large``, ``binary``, ``unsupported_type``, ``empty_file`` (a supported
+file with no text, e.g. an empty ``__init__.py``); files past ``max_files`` are
 only counted as ``limit_reached``).
 
 Safety: a URL starting with ``-`` is refused (it would be read as a ``git``
@@ -456,6 +457,9 @@ def _classify_files(
                 kind = "code"
         if kind is None:
             reject(rel, "unsupported_type", ext or "no extension")
+            continue
+        if len(head) == size and not head.strip():
+            reject(rel, "empty_file", "no content" if size == 0 else "whitespace only")
             continue
         if len(snapshot.files) >= config.max_files:
             snapshot.limit_reached += 1

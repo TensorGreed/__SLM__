@@ -44,6 +44,7 @@ LANGUAGE_BY_EXTENSION: dict[str, str] = {
     ".java": "java",
     ".cs": "csharp",
     ".go": "go",
+    ".rs": "rust",
     ".js": "javascript",
     ".jsx": "javascript",
     ".mjs": "javascript",
@@ -95,7 +96,7 @@ CODE_LANGUAGES = frozenset(LANGUAGE_BY_EXTENSION.values()) | {"dockerfile"}
 
 _ALIASES = {
     "py": "python", "cs": "csharp", "c#": "csharp", "js": "javascript", "ts": "typescript",
-    "sh": "shell", "bash": "shell", "yml": "yaml", "tf": "hcl", "c++": "cpp", "golang": "go",
+    "sh": "shell", "bash": "shell", "yml": "yaml", "tf": "hcl", "c++": "cpp", "golang": "go", "rs": "rust",
     "docker": "dockerfile",
 }
 
@@ -330,6 +331,83 @@ def _mask_hcl_heredocs(text: str) -> str:
             i += 1
     return "\n".join(lines)
 
+_RUST_RAW_OPEN = re.compile(r'(#*)"')
+
+
+def _mask_rust(text: str) -> str:
+    """Rust: comments (``//``, nested ``/* /* */ */``), strings, raw strings
+    (``r"…"``, ``r#"…"#``, ``br#"…"#``, ``cr"…"``) and char literals blanked.
+    A ``'`` starts a char literal only as ``'x'`` or ``'\\…'``; otherwise it is a
+    lifetime (``'a``, ``'static``) and is left alone."""
+    chars = list(text)
+    n = len(text)
+    i = 0
+    while i < n:
+        ch = text[i]
+        if ch == "/" and text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            _blank_span(chars, i, j)
+            i = j
+        elif ch == "/" and text.startswith("/*", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text.startswith("/*", j):
+                    depth += 1
+                    j += 2
+                elif text.startswith("*/", j):
+                    depth -= 1
+                    j += 2
+                else:
+                    j += 1
+            _blank_span(chars, i, j)
+            i = j
+        elif ch.isalpha() or ch == "_":
+            j = i + 1
+            while j < n and (text[j].isalnum() or text[j] == "_"):
+                j += 1
+            word = text[i:j]
+            nxt = text[j] if j < n else ""
+            if word in ("r", "br", "cr") and nxt in ('"', "#"):
+                opened = _RUST_RAW_OPEN.match(text, j)
+                if opened:
+                    hashes = opened.group(1)
+                    body = opened.end()
+                    close = text.find('"' + hashes, body)
+                    end = n if close < 0 else close + 1 + len(hashes)
+                    _blank_span(chars, i, end)
+                    chars[i] = " "
+                    i = end
+                    continue
+            if word in ("b", "c") and nxt == '"':
+                i = j  # the quote is handled next round
+            elif word == "b" and nxt == "'":
+                i = j
+            else:
+                i = j
+        elif ch == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            _blank_span(chars, i + 1, j)
+            i = j + 1
+        elif ch == "'":
+            if text.startswith("\\", i + 1):
+                j = i + 3
+                while j < n and text[j] != "'" and text[j] != "\n":
+                    j += 1
+                end = j + 1 if j < n and text[j] == "'" else j
+                _blank_span(chars, i + 1, end - 1 if end > j else end)
+                i = end
+            elif i + 2 < n and text[i + 2] == "'" and text[i + 1] != "\n":
+                chars[i + 1] = " "
+                i += 3
+            else:
+                i += 1  # lifetime / label
+        else:
+            i += 1
+    return "".join(chars)
+
 
 def _mask(text: str, language: str | None) -> str:
     """``text`` with comments blanked and string contents blanked (quote
@@ -337,6 +415,8 @@ def _mask(text: str, language: str | None) -> str:
     columns still match the original."""
     if language in ("javascript", "typescript"):
         return _mask_js(text)
+    if language == "rust":
+        return _mask_rust(text)
     if language == "hcl":
         text = _mask_hcl_heredocs(text)
     pattern = _MASK_PATTERNS.get(language or "")
@@ -463,6 +543,36 @@ _JS_ARROW = re.compile(
 _JS_FUNC_EXPR = re.compile(r"^(?:export\s+)?(?:(?:const|let|var)\s+)?([\w$]+)\s*=\s*(?:async\s+)?function\b")
 _C_TYPE = re.compile(r"^(?:typedef\s+)?(?:template\s*<.*?>\s*)?(struct|union|enum|class|namespace)\b(.*)$", re.S)
 
+_RUST_VIS = r"(?:pub(?:\s*\([^)]*\))?\s+)?"
+_RUST_FN = re.compile(
+    rf'^{_RUST_VIS}(?:(?:default|const|async|unsafe|safe)\s+)*(?:extern(?:\s*"[^"]*")?\s+)?fn\s+(?:r#)?(\w+)'
+)
+_RUST_IMPL = re.compile(r"^(?:unsafe\s+)?impl\b\s*(.*)$", re.S)
+_RUST_ITEM = re.compile(rf"^{_RUST_VIS}(?:unsafe\s+)?(?:auto\s+)?(struct|enum|union|trait|mod)\s+(?:r#)?(\w+)")
+_RUST_MACRO = re.compile(r"^macro_rules\s*!\s*(\w+)")
+_RUST_ATTR_ONLY = re.compile(r"^\s*(?:#!?\[.*\]\s*)+$", re.S)
+_RUST_LEADING_ATTRS = re.compile(r"^\s*(?:#!?\[(?:[^\[\]]|\[[^\]]*\])*\]\s*)+", re.S)
+
+
+def _rust_impl_name(rest: str) -> str | None:
+    """Type an ``impl`` block is for: ``impl<T> Tr<T> for Foo<T> where …`` → ``Foo``."""
+    rest = rest.strip()
+    if rest.startswith("<"):
+        depth = 0
+        for k, ch in enumerate(rest):
+            depth += (ch == "<") - (ch == ">" and rest[k - 1] != "-")
+            if depth == 0:
+                rest = rest[k + 1 :].strip()
+                break
+    rest = re.split(r"\bwhere\b", rest, maxsplit=1)[0]
+    found = re.search(r"\bfor\b\s+(.*)$", rest, re.S)
+    if found:
+        rest = found.group(1)
+    rest = re.sub(r"^[\s!&*]*(?:(?:mut|const|dyn)\s+)*", "", rest)
+    path = re.match(r"[\w:]+", rest)
+    return path.group(0).split("::")[-1] if path else None
+
+
 _Decl = tuple  # (kind, symbol, mode)  mode: "leaf" | "recurse" | "transparent"
 
 
@@ -489,6 +599,8 @@ class _BraceScanner:
         if stripped.endswith(_CONT_ENDS) and not stripped.endswith(("++", "--", "*/")):
             return True
         if nxt.startswith(_CONT_STARTS):
+            return True
+        if self.lang == "rust" and (nxt == "where" or stripped == "where"):
             return True
         if nxt.startswith(":") and not nxt.startswith("::"):
             return True
@@ -545,7 +657,7 @@ class _BraceScanner:
 
     def _classify(self, stmt: dict, scope: str, in_cls: str | None) -> tuple | None:
         """``(kind, symbol, mode)`` for a declaration, None for anything else."""
-        header = _LEADING_ANNOTATIONS.sub("", stmt["header"])
+        header = (_RUST_LEADING_ATTRS if self.lang == "rust" else _LEADING_ANNOTATIONS).sub("", stmt["header"])
         header = " ".join(header.split())
         term = stmt["term"]
         lang = self.lang
@@ -567,6 +679,24 @@ class _BraceScanner:
                 has_body = term == "{" or (term == ";" and "=>" in header)
                 if name and name not in _CONTROL_WORDS and has_body:
                     return ("method", name, "leaf")
+            return None
+
+        if lang == "rust":
+            func = _RUST_FN.match(header)
+            if func and term in ("{", ";"):
+                return ("method" if scope == "class" else "function", func.group(1), "leaf")
+            impl = _RUST_IMPL.match(header)
+            if impl and term == "{":
+                return ("class", _rust_impl_name(impl.group(1)), "recurse")
+            item = _RUST_ITEM.match(header)
+            if item:
+                keyword, name = item.group(1), item.group(2)
+                if keyword == "mod":
+                    return ("module", name, "recurse_mod" if term == "{" else "leaf")
+                return ("class", name, "recurse" if keyword == "trait" and term == "{" else "leaf")
+            macro = _RUST_MACRO.match(header)
+            if macro:
+                return ("function", macro.group(1), "leaf")
             return None
 
         if lang == "go":
@@ -638,6 +768,8 @@ class _BraceScanner:
             return True  # comment-only line
         if original.startswith("@") and self.lang in ("java", "csharp", "typescript", "javascript"):
             return True
+        if self.lang == "rust":
+            return original.startswith(("#[", "#!["))
         return self.lang == "csharp" and bool(re.match(r"^\[[\w.]+.*\]$", original))
 
     def scan(self, lo: int, hi: int, scope: str, prefix: str) -> list[_Unit]:
@@ -665,7 +797,8 @@ class _BraceScanner:
             stmt = self._statement(i, hi)
             decl = self._classify(stmt, scope, prefix or None)
             if decl is None:
-                if _ANNOTATION_ONLY.match(stmt["header"]) and stmt["term"] is None:
+                annotation = _RUST_ATTR_ONLY if self.lang == "rust" else _ANNOTATION_ONLY
+                if annotation.match(stmt["header"]) and stmt["term"] is None:
                     lead = (lead[0] if lead and lead[1] == i - 1 else i, stmt["last"])
                 else:
                     lead = None
@@ -693,8 +826,9 @@ class _BraceScanner:
             symbol = f"{prefix}{name}" if name else (prefix.rstrip(".") or None)
             if mode == "transparent":
                 units.extend(self.scan(stmt["line"] + 1, end, scope, prefix))
-            elif mode == "recurse":
-                claimed = self.scan(stmt["line"] + 1, end, "class", f"{symbol}." if symbol else prefix) if end > stmt["line"] else []
+            elif mode in ("recurse", "recurse_mod"):
+                inner = "class" if mode == "recurse" else "top"
+                claimed = self.scan(stmt["line"] + 1, end, inner, f"{symbol}." if symbol else prefix) if end > stmt["line"] else []
                 units.extend(_container_units(self.o, self.m, start, end, claimed, symbol, self.lang))
             else:
                 units.append(_Unit(start, end, symbol, kind))
@@ -1117,7 +1251,7 @@ def _scan_xml(o: list[str]) -> list[_Unit]:
 
 
 def _scan_units(lines: list[str], masked: list[str], language: str | None) -> list[_Unit]:
-    if language in ("java", "csharp", "go", "javascript", "typescript", "c", "cpp"):
+    if language in ("java", "csharp", "go", "rust", "javascript", "typescript", "c", "cpp"):
         return _BraceScanner(lines, masked, language).scan(0, len(lines), "top", "")
     if language == "python":
         return _scan_python(lines, masked, 0, len(lines), "", False)
@@ -1194,7 +1328,7 @@ def chunk_code(
         return []
     n = len(lines)
     language = normalize_language(language)
-    masked = _split_lines(_mask(text, language)) if language in _MASK_PATTERNS else list(lines)
+    masked = _split_lines(_mask(text, language)) if language in _MASK_PATTERNS or language == "rust" else list(lines)
     if len(masked) != n:  # defensive: masking must preserve line count
         masked = list(lines)
     try:

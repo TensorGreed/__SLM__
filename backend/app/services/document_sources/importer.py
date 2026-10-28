@@ -43,7 +43,7 @@ RESULT_LIST_CAP = 500
 _PROGRESS_INTERVAL_SECONDS = 0.5
 _PREFERRED_EXTENSION = {
     "python": ".py", "shell": ".sh", "javascript": ".js", "typescript": ".ts", "dockerfile": ".dockerfile",
-    "java": ".java", "csharp": ".cs", "go": ".go", "c": ".c", "cpp": ".cpp", "hcl": ".tf", "yaml": ".yaml",
+    "java": ".java", "csharp": ".cs", "go": ".go", "rust": ".rs", "c": ".c", "cpp": ".cpp", "hcl": ".tf", "yaml": ".yaml",
     "json": ".json", "sql": ".sql", "xml": ".xml", "properties": ".properties", "ini": ".ini",
 }
 
