@@ -403,9 +403,13 @@ No migration: provenance lives in `RawDocument.metadata_` (+ `source`,
   previous chunk, so `end_line` can include them. Oversize units split at line
   boundaries (blank preferred), later pieces get symbol `#2`, `#3`. Unknown language →
   blank-line blocks packed to `max_chars`. Tests: `tests/test_code_chunker.py`.
-- **BM25 identifiers**: `_tokenize` splits `getUserName` / `HTTPServer` / `user_id` into
-  parts and keeps the whole lowercased identifier; prose tokenizes as before.
-  `BM25_TOKENIZER_VERSION = 3` is stamped in every index; a missing / different
+- **BM25 identifiers**: `_tokenize(text, identifiers=True)` splits `getUserName` / `HTTPServer` /
+  `user_id` into parts and keeps the whole lowercased identifier — ONLY for code passages
+  (`_is_code_row`: `path` + int `start_line`) and for queries against an index whose payload
+  has `code_rows: true`. Prose (default) is `[a-z0-9]+` on the lowercased text, exactly v1:
+  v3 split prose too and moved Pub 17 retrieval (146 / 1776 passages; top-3 changed for 5 / 157
+  test questions — PDF artefacts `SepaRately`, `REDACTED_PHONE`), fixed in v4 (2026-10-28).
+  `BM25_TOKENIZER_VERSION = 4` is stamped in every index; a missing / different
   version is stale (`document_index_status`, `qa_index_is_current`) and rebuilt, `retrieve()` raises
   `AutoRagUnavailable` on one, and `scripts/auto_rag_ab.py` fails loudly on an `index_dir_override`
   built by another version. An all-caps plural (`IDs`) is one token and a digit→capital step

@@ -1,8 +1,9 @@
-"""BM25 tokenizer (identifier-aware) and the index tokenizer-version stamp.
+"""BM25 tokenizer (identifier-aware for code) and the index tokenizer-version stamp.
 
-Prose must tokenize exactly as it did before identifier splitting; camelCase /
-snake_case identifiers emit their parts AND the whole identifier; an index
-built by another tokenizer version is stale and gets rebuilt.
+Prose must tokenize exactly as it did before identifier splitting — PDF
+artefacts and placeholders included; in code passages camelCase / snake_case
+identifiers emit their parts AND the whole identifier; an index built by
+another tokenizer version is stale and gets rebuilt.
 """
 
 from __future__ import annotations
@@ -36,35 +37,38 @@ class TokenizerGoldenTests(unittest.TestCase):
             "Section 12(b) applies; see R.S., 1985, c. 5.",
             "Mixed1 and a1b2 tokens 3rd 42",
             "Caf\u00e9 na\u00efve text with accents",
+            # PDF artefacts, placeholders and identifiers in prose stay as they were
+            "Married filing SepaRately or HeadOf household; call REDACTED_PHONE.",
+            "The getUserName() call and user_id field in a manual",
         ]
         for text in samples:
             with self.subTest(text=text):
                 self.assertEqual(svc._tokenize(text), _old_tokenize(text))
 
     def test_identifiers_emit_parts_and_the_whole(self):
-        self.assertEqual(svc._tokenize("getUserName"), ["get", "user", "name", "getusername"])
-        self.assertEqual(svc._tokenize("HTTPServer"), ["http", "server", "httpserver"])
-        self.assertEqual(svc._tokenize("user_id"), ["user", "id", "user_id"])
-        self.assertEqual(svc._tokenize("MAX_RETRY_COUNT"), ["max", "retry", "count", "max_retry_count"])
-        self.assertEqual(svc._tokenize("parseXMLDoc2"), ["parse", "xml", "doc", "2", "parsexmldoc2"])
-        self.assertEqual(svc._tokenize("_private"), ["private", "_private"])
-        self.assertEqual(svc._tokenize("call getUserName() then user_id"), [
+        self.assertEqual(svc._tokenize("getUserName", identifiers=True), ["get", "user", "name", "getusername"])
+        self.assertEqual(svc._tokenize("HTTPServer", identifiers=True), ["http", "server", "httpserver"])
+        self.assertEqual(svc._tokenize("user_id", identifiers=True), ["user", "id", "user_id"])
+        self.assertEqual(svc._tokenize("MAX_RETRY_COUNT", identifiers=True), ["max", "retry", "count", "max_retry_count"])
+        self.assertEqual(svc._tokenize("parseXMLDoc2", identifiers=True), ["parse", "xml", "doc", "2", "parsexmldoc2"])
+        self.assertEqual(svc._tokenize("_private", identifiers=True), ["private", "_private"])
+        self.assertEqual(svc._tokenize("call getUserName() then user_id", identifiers=True), [
             "call", "get", "user", "name", "getusername", "then", "user", "id", "user_id",
         ])
 
     def test_all_caps_plurals_and_digit_capital_steps_stay_whole(self):
-        self.assertEqual(svc._tokenize("IDs APIs URLs"), ["ids", "apis", "urls"])
-        self.assertEqual(svc._tokenize("5G"), ["5g"])
-        self.assertEqual(svc._tokenize("running 5G and v2API"), ["running", "5g", "and", "v2api"])
+        self.assertEqual(svc._tokenize("IDs APIs URLs", identifiers=True), ["ids", "apis", "urls"])
+        self.assertEqual(svc._tokenize("5G", identifiers=True), ["5g"])
+        self.assertEqual(svc._tokenize("running 5G and v2API", identifiers=True), ["running", "5g", "and", "v2api"])
         # the camel split still applies around them
-        self.assertEqual(svc._tokenize("getIDs"), ["get", "ids", "getids"])
-        self.assertEqual(svc._tokenize("user_IDs"), ["user", "ids", "user_ids"])
-        self.assertEqual(svc._tokenize("net_5G"), ["net", "5g", "net_5g"])
+        self.assertEqual(svc._tokenize("getIDs", identifiers=True), ["get", "ids", "getids"])
+        self.assertEqual(svc._tokenize("user_IDs", identifiers=True), ["user", "ids", "user_ids"])
+        self.assertEqual(svc._tokenize("net_5G", identifiers=True), ["net", "5g", "net_5g"])
 
     def test_a_query_in_words_matches_an_identifier(self):
-        doc = set(svc._tokenize("def getUserName(user_id):"))
+        doc = set(svc._tokenize("def getUserName(user_id):", identifiers=True))
         self.assertTrue({"user", "name"} <= doc)
-        self.assertTrue(set(svc._tokenize("get user name")) <= doc)
+        self.assertTrue(set(svc._tokenize("get user name", identifiers=True)) <= doc)
 
 
 class IndexVersionTests(unittest.TestCase):
@@ -76,7 +80,8 @@ class IndexVersionTests(unittest.TestCase):
         cleaned = settings.DATA_DIR / "projects" / "7" / "cleaned"
         cleaned.mkdir(parents=True)
         rows = [
-            {"source_document_id": 1, "source_doc": "a.txt", "chunk_id": 0, "text": "alpha passage about getUserName"},
+            {"source_document_id": 1, "source_doc": "a.py", "chunk_id": 0, "text": "def alpha(): return getUserName()",
+             "path": "src/a.py", "language": "python", "start_line": 1, "end_line": 1},
             {"source_document_id": 1, "source_doc": "a.txt", "chunk_id": 1, "text": "beta passage about something else"},
         ]
         (cleaned / "cleaned.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
@@ -147,6 +152,32 @@ class IndexVersionTests(unittest.TestCase):
             "which passage mentions user name", index_dir=svc.document_index_dir(self.project_id), k=1
         )
         self.assertEqual(hits[0]["payload"]["chunk_id"], 0)
+
+
+class ProseIndexTests(unittest.TestCase):
+    """An index of prose only tokenizes passages AND queries as before identifier splitting."""
+
+    def test_prose_index_matches_the_v1_tokens_and_marks_no_code(self):
+        rows = [{"id": 1, "text": "Married filing SepaRately status"}, {"id": 2, "text": "Call REDACTED_PHONE for help"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            svc.build_bm25_index(rows, recipe_id=svc.DOCUMENTS_CORPUS, output_dir=Path(tmp))
+            payload = json.loads((Path(tmp) / "bm25_index.json").read_text())
+            self.assertIs(payload["code_rows"], False)
+            terms = set(payload["doc_freq"])
+            self.assertEqual(terms, set(_old_tokenize(rows[0]["text"])) | set(_old_tokenize(rows[1]["text"])))
+            hits = svc.retrieve("filing SepaRately", index_dir=Path(tmp), k=1)
+            self.assertEqual(hits[0]["payload"]["id"], 1)
+
+    def test_code_rows_are_split_and_flag_the_index(self):
+        rows = [{"id": 1, "text": "def getUserName(): pass", "path": "a.py", "start_line": 1},
+                {"id": 2, "text": "plain prose about SepaRately"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            svc.build_bm25_index(rows, recipe_id=svc.DOCUMENTS_CORPUS, output_dir=Path(tmp))
+            payload = json.loads((Path(tmp) / "bm25_index.json").read_text())
+            self.assertIs(payload["code_rows"], True)
+            self.assertIn("getusername", payload["doc_freq"])
+            self.assertNotIn("sepa", payload["doc_freq"])   # prose rows stay v1 even in a mixed index
+            self.assertEqual(svc.retrieve("user name", index_dir=Path(tmp), k=1)[0]["payload"]["id"], 1)
 
 
 if __name__ == "__main__":  # pragma: no cover

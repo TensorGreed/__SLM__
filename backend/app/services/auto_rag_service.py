@@ -122,12 +122,14 @@ class AutoRagUnavailable(RuntimeError):
 # ─────────────────────────────────────────────────────────────────────
 
 
-# Word-ish tokens: letters/digits/underscore + apostrophe-joined parts
-# ("don't" → one token, "user's" → one token). Matched on the original
-# case so camelCase / snake_case identifiers can be split. Stays out of
-# punctuation/whitespace; doesn't strip stopwords (BM25's idf handles
-# common-word de-weighting naturally — explicit stopword lists tend
-# to hurt retrieval quality on short query phrases).
+# Prose tokens: lowercase letters/digits + apostrophe-joined parts ("don't" →
+# one token). Stays out of punctuation/whitespace (an underscore splits);
+# doesn't strip stopwords (BM25's idf handles common-word de-weighting
+# naturally — explicit stopword lists tend to hurt retrieval quality on short
+# query phrases).
+_PROSE_TOKEN_RE = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
+# Code tokens: the same, plus underscores, matched on the original case so
+# camelCase / snake_case identifiers can be split.
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+(?:'[A-Za-z]+)?")
 # A lower→Upper step (``getUser``) or an acronym followed by a word (``HTTPServer``) is a
 # boundary; a digit→Upper step is not (``5G``, ``v2API`` stay whole), and an all-caps
@@ -136,20 +138,33 @@ _CASE_BOUNDARY_RE = re.compile(r"[a-z][A-Z]|[A-Z][A-Z][a-z]")
 _IDENT_PART_RE = re.compile(r"[0-9]*[A-Z]+s(?![a-z])|[0-9]*[A-Z]+(?![a-z])|[0-9]*[A-Z]?[a-z]+|[0-9]+")
 _CAPS_PLURAL_RE = re.compile(r"[A-Z]+s")
 
-# Stamped into every index. v2: identifiers are split into their parts as
-# well as kept whole (``getUserName`` → get user name + getusername), which
-# is what lets a question about "user name" find code. An index built with
+# Stamped into every index. v2/v3: identifiers are split into their parts as
+# well as kept whole (``getUserName`` → get user name + getusername), which is
+# what lets a question about "user name" find code. v4: only CODE passages
+# (``_is_code_row``) and queries against an index holding them are split; prose
+# tokenizes exactly as in v1 (v3 also split PDF artefacts like ``SepaRately``
+# and ``REDACTED_PHONE`` in prose, moving prose retrieval). An index built with
 # another version is stale (``document_index_status`` / ``qa_index_is_current``).
-BM25_TOKENIZER_VERSION = 3
+BM25_TOKENIZER_VERSION = 4
 
 
-def _tokenize(text: str) -> list[str]:
-    """Lowercase word tokens. A token with an underscore or a case boundary
-    (``getUserName``, ``HTTPServer``, ``user_id``) emits its lowercase parts
-    (``get user name``) AND the whole lowercased identifier (``getusername``);
-    plain lowercase / Capitalised / ALLCAPS words tokenize as before."""
+def _is_code_row(row: dict[str, Any]) -> bool:
+    """A source-code passage (``load_document_passages`` code chunks carry ``path`` + ``start_line``)."""
+    start = row.get("start_line")
+    return bool(isinstance(row.get("path"), str) and row.get("path")) and isinstance(start, int) and not isinstance(start, bool)
+
+
+def _tokenize(text: str, *, identifiers: bool = False) -> list[str]:
+    """Lowercase word tokens. Prose (the default): ``[a-z0-9]+`` on the
+    lowercased text. ``identifiers=True`` (code): a token with an underscore
+    or a case boundary (``getUserName``, ``HTTPServer``, ``user_id``) emits its
+    lowercase parts (``get user name``) AND the whole lowercased identifier
+    (``getusername``); plain lowercase / Capitalised / ALLCAPS words tokenize
+    as in prose."""
     if not text:
         return []
+    if not identifiers:
+        return _PROSE_TOKEN_RE.findall(text.lower())
     tokens: list[str] = []
     for raw in _TOKEN_RE.findall(text):
         if "'" in raw or ("_" not in raw and (_CAPS_PLURAL_RE.fullmatch(raw) or not _CASE_BOUNDARY_RE.search(raw))):
@@ -285,7 +300,7 @@ def build_bm25_index(
         rid = row.get("id") if isinstance(row.get("id"), (int, str)) else idx
         row_ids.append(rid)
         text = _extract_corpus_text(row, text_keys)
-        doc_tokens_per_row.append(_tokenize(text))
+        doc_tokens_per_row.append(_tokenize(text, identifiers=_is_code_row(row)))
 
     # Drop rows whose corpus text tokenized to nothing — they can't
     # be retrieved and would just inflate the average-doc-length
@@ -317,6 +332,8 @@ def build_bm25_index(
         "recipe_id": recipe_id,
         "text_keys": list(text_keys),
         "tokenizer_version": BM25_TOKENIZER_VERSION,
+        # Queries are split into identifier parts only when the index holds code.
+        "code_rows": any(_is_code_row(rows[i]) for i in kept_indices),
         "corpus_source": corpus_source,
         "bm25_k1": _BM25_K1,
         "bm25_b": _BM25_B,
@@ -972,7 +989,7 @@ def retrieve(
             f"{payload.get('tokenizer_version') if isinstance(payload, dict) else None}, "
             f"not {BM25_TOKENIZER_VERSION}; rebuild it."
         )
-    query_tokens = _tokenize(query)
+    query_tokens = _tokenize(query, identifiers=bool(payload.get("code_rows")))
     if not query_tokens:
         return []
 
