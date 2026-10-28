@@ -26,6 +26,7 @@ from app.services.json_schema_bundle import validate_bundle
 from app.services.synth_backends import TemplateBackend
 from app.services.synth_backends.template import structured_plan_rows
 from app.services.synth_playbooks import SynthMode, get_playbook, list_playbooks
+from app.services.synth_playbooks import _structured_plan_common as common
 from app.services.synth_playbooks._structured_plan_common import (
     MatrixError,
     build_grid,
@@ -645,3 +646,50 @@ class PlaybookApiTests(unittest.TestCase):
         from app.services import synth_playbook_service as sps
 
         self.assertIn("ctx[\"gold_rows\"] = []", __import__("inspect").getsource(sps._run_playbook))
+
+
+class BracketRepairTests(unittest.TestCase):
+    """A long nested reply that miscounts one closing bracket is repaired, not lost."""
+
+    GOOD = '{"items":[{"index":1,"plan_json":{"steps":[{"step":1,"args":{"body":{"name":"k"}},"purpose":"p"}]}}]}'
+
+    def test_stray_closer_is_dropped_and_counted(self):
+        bad = self.GOOD.replace('"k"}}', '"k"}}}')
+        notes: dict = {}
+        items = common.parse_json_items(bad, notes)
+        self.assertEqual(items, json.loads(self.GOOD)["items"])
+        self.assertEqual(notes, {"repaired_json": 1})
+
+    def test_missing_closer_is_inserted(self):
+        bad = self.GOOD.replace('"purpose":"p"}]', '"purpose":"p"]')
+        self.assertEqual(common.parse_json_items(bad), json.loads(self.GOOD)["items"])
+
+    def test_clean_reply_is_not_counted_and_brackets_in_strings_are_ignored(self):
+        notes: dict = {}
+        text = '{"items":[{"plan_json":{"note":"a } and ] in text"}}]}'
+        self.assertEqual(common.parse_json_items(text, notes)[0]["plan_json"]["note"], "a } and ] in text")
+        self.assertEqual(notes, {})
+        bad = text.replace('text"}}', 'text"}}}')
+        self.assertEqual(common.parse_json_items(bad, notes)[0]["plan_json"]["note"], "a } and ] in text")
+
+    def test_unrepairable_reply_stays_unparseable_and_is_bounded(self):
+        self.assertIsNone(common.parse_json_items('{"items":[{"a":1,,"b"::2}]}'))
+        self.assertIsNone(common.repair_json_brackets("{" + '"a":' * 20000 + "}"))
+
+    def test_grid_parse_output_counts_repairs_on_ctx(self):
+        from app.services.synth_playbooks.structured_plan_scenario_grid import StructuredPlanScenarioGridPlaybook
+
+        ctx: dict = {"rejects": []}
+        StructuredPlanScenarioGridPlaybook().parse_output(self.GOOD.replace('"k"}}', '"k"}}}'), ctx)
+        self.assertEqual(ctx["parse_notes"], {"repaired_json": 1})
+        self.assertEqual(ctx["rejects"], [])
+
+    def test_escaped_quotes_and_trailing_extra_closer(self):
+        text = '{"items":[{"plan_json":{"q":"a\\\\"}}]}'      # "a\\" then a real closing quote
+        good = common.parse_json_items(text)
+        self.assertEqual(common.parse_json_items(text.replace('"}}]}', '"}}}]}')), good)
+        self.assertEqual(common.parse_json_items(self.GOOD + "}"), json.loads(self.GOOD)["items"])
+
+    def test_a_repair_may_move_a_key_up_a_level(self):
+        # Documented limit: a valid repair can re-home a key; the schema check is the guard.
+        self.assertEqual(common.parse_json_items('{"items":[{"a":{"b":1}},"c":2}]}'), [{"a": {"b": 1}, "c": 2}])

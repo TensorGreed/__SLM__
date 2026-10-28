@@ -735,7 +735,12 @@ API are in `slm-docs/docs/reference/api/domain-packs.md`; code is `domain_pack_c
   passages are retrieved per scenario when retrieval is effective (`asyncio.to_thread`), (3) the teacher writes
   `plan_json` per scenario (marker `...:answers`, schema = the dereferenced bundle). Every answer is validated with
   `SchemaBundle.validate`; rejects are grouped by reason: `schema_invalid` (top error as detail), `unparseable`,
-  `empty_scenario`, `duplicate_scenario`, `missing_answer`, `cell_out_of_range`. No saved schema fails up front; a 0-row
+  `empty_scenario`, `duplicate_scenario`, `missing_answer`, `cell_out_of_range`. `parse_json_items` repairs a reply whose
+  only fault is a miscounted closing bracket (`repair_json_brackets`: ≤3 drop-stray / insert-missing edits at the parse
+  error, ≤15 parses; Sonnet 5.5 lost a third of a 60-plan batch to one `}` too many, 2026-10-28) — the schema check still
+  applies (a valid repair can re-home a key one level up — the schema is the guard), and the Job result's
+  `repaired_json` counts the replies it saved (`ctx["parse_notes"]`, shared across chunk ctx copies; not reported on a
+  0-row raise). No saved schema fails up front; a 0-row
   success raises. Accepted rows carry `grid_cell` and `passages`. Never seeded from the test set.
 - Detection: `task_shape_service.structured_recipe_for_rows` returns `structured-plan` for `row_kind: "structured_plan"` or a
   `scenario` beside a `plan_json` object.

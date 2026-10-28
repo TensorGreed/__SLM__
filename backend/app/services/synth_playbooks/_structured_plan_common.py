@@ -271,9 +271,72 @@ def normalise_passages(passages: Any, *, limit: int = MAX_PASSAGES) -> list[dict
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
 
 
-def parse_json_items(raw: str) -> list[Any] | None:
+# A long, deeply nested reply sometimes miscounts its closing brackets (one ``}`` too many after a
+# request body, or one missing) — a third of a structured-plan batch was lost to it (2026-10-28).
+MAX_BRACKET_REPAIRS = 3
+_CLOSERS = {"{": "}", "[": "]"}
+
+
+def _open_brackets(text: str, end: int) -> list[str]:
+    """The brackets still open at ``text[:end]`` (outside strings), innermost last."""
+    stack: list[str] = []
+    in_str = esc = False
+    for ch in text[:end]:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch in _CLOSERS:
+            stack.append(ch)
+        elif ch in "}]" and stack:
+            stack.pop()
+    return stack
+
+
+def repair_json_brackets(text: str, max_edits: int = MAX_BRACKET_REPAIRS) -> Any | None:
+    """``text`` parsed after at most ``max_edits`` bracket fixes at the parse-error position: drop
+    the stray closer just before it, or insert the closer the innermost open bracket needs. None
+    when no such fix parses. Tries at most 2**max_edits parses, so it stays cheap."""
+    frontier = [text]
+    for _ in range(max_edits):
+        nxt: list[str] = []
+        for cand in frontier:
+            try:
+                return json.loads(cand)
+            except json.JSONDecodeError as exc:
+                pos = exc.pos
+            k = len(cand[:pos].rstrip())
+            k = max(cand.rfind("}", 0, k), cand.rfind("]", 0, k))
+            if k >= 0:
+                nxt.append(cand[:k] + cand[k + 1 :])
+            stack = _open_brackets(cand, pos)
+            if stack:
+                nxt.append(cand[:pos] + _CLOSERS[stack[-1]] + cand[pos:])
+        frontier = nxt
+    for cand in frontier:
+        try:
+            return json.loads(cand)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _items_of(obj: Any) -> list[Any] | None:
+    if isinstance(obj, dict) and isinstance(obj.get("items"), list):
+        return obj["items"]
+    return obj if isinstance(obj, list) else None
+
+
+def parse_json_items(raw: str, notes: dict[str, Any] | None = None) -> list[Any] | None:
     """The ``items`` list of a teacher reply: a JSON object ``{"items": [...]}`` (fenced or with prose
-    around it), a bare JSON list, or JSON lines. None when nothing parses."""
+    around it), a bare JSON list, or JSON lines. A reply whose only fault is a miscounted closing
+    bracket is repaired (``repair_json_brackets``; counted in ``notes["repaired_json"]``) — the
+    caller's schema check still applies to what comes out. None when nothing parses."""
     text = _FENCE_RE.sub("", (raw or "").strip()).strip()
     candidates = [text]
     first, last = text.find("{"), text.rfind("}")
@@ -284,10 +347,15 @@ def parse_json_items(raw: str) -> list[Any] | None:
             obj = json.loads(cand)
         except (ValueError, TypeError):
             continue
-        if isinstance(obj, dict) and isinstance(obj.get("items"), list):
-            return obj["items"]
-        if isinstance(obj, list):
-            return obj
+        items = _items_of(obj)
+        if items is not None:
+            return items
+    if 0 <= first < last:
+        items = _items_of(repair_json_brackets(text[first : last + 1]))
+        if items is not None:
+            if notes is not None:
+                notes["repaired_json"] = int(notes.get("repaired_json") or 0) + 1
+            return items
     lines = []
     for line in text.splitlines():
         line = line.strip().rstrip(",")

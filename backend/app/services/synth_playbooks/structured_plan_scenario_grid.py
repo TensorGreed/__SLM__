@@ -162,7 +162,7 @@ class StructuredPlanScenarioGridPlaybook:
         return ANSWER_RESPONSE_SCHEMA if ctx.get("grid_stage") == STAGE_ANSWERS else SCENARIO_RESPONSE_SCHEMA
 
     def parse_output(self, raw_llm_output: str, ctx: PlaybookContext) -> list[dict[str, Any]]:
-        items = parse_json_items(raw_llm_output)
+        items = parse_json_items(raw_llm_output, ctx.setdefault("parse_notes", {}))
         if items is None:
             if (raw_llm_output or "").strip():
                 record_reject(ctx, "unparseable", "no JSON {\"items\": [...]} in the reply", raw_llm_output[:300])

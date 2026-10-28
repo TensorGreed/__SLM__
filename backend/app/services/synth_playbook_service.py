@@ -796,6 +796,8 @@ async def _run_playbook(
         "target_count": target_count,
         "params": dict(params or {}),
         "rejects": [],
+        # Shared across the shallow per-chunk ctx copies, like ``rejects``.
+        "parse_notes": {},
     }
     if uses_code_seeds:
         await _prepare_code_context(db, project_id, ctx, ctx["params"])
@@ -925,6 +927,8 @@ async def _run_playbook(
         "refusal_detected": _looks_like_refusal(raw_llm_output),
     }
     result.update(reject_report(ctx.get("rejects")))
+    if (ctx.get("parse_notes") or {}).get("repaired_json"):
+        result["repaired_json"] = ctx["parse_notes"]["repaired_json"]
     if chunk_meta:
         result.update(chunk_meta)
     if batching:
