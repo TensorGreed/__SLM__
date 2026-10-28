@@ -812,3 +812,14 @@ Docs: `slm-docs/docs/extensions/tool-catalog.md`.
   trainer sees it as a system message (multi-turn assistant-only path). The template backend has no branch for it (tests use a stub
   teacher). `pick_groups` classifies start positions in one O(n) pass.
 
+
+## Deleting a document (2026-10-28)
+
+`ingestion_service.delete_documents` (`delete_document` wraps it) removes the file, `.extracted.txt` + `.cleaned.txt`
+sidecars, the document's rows in `cleaned/cleaned.jsonl` (`cleaning_service.remove_documents_from_cleaned`: one temp-file +
+`os.replace` rewrite for the whole batch, other rows keep order, ids renumbered, CLEANED dataset `record_count` synced; no
+write when the docs have no rows) and the DB rows. The three data-health autofixes that delete documents
+(`drop_failed_docs`, duplicate / near-duplicate dedup) call the same remover once per fix. Passages index staleness is
+mtime-based (`auto_rag_service.document_index_status`: cleaned.jsonl newer than `bm25_index.json`), so the rewrite alone marks
+it stale. Not touched: `.chunks.jsonl` sidecars (only autofix unlinks them), derived synthetic / prepared datasets already
+generated from the document (they keep their rows), `predefined_split_service._discard_registered` (documents never cleaned).

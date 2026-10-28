@@ -918,6 +918,7 @@ session-start guidance.
 - `backend/tests/test_decoding_settings.py` — Decoding settings are explicit, never inherited from the model:
 - `backend/tests/test_dedup_resplit_inherits_config.py` — The dedup re-split ("Re-split with dedup" leakage remediation) must
 - `backend/tests/test_dedup_split.py` — Unit tests for ``_dedup_entries_for_split`` — the engine behind the
+- `backend/tests/test_delete_document_cleanup.py` — Deleting a document also drops its rows from cleaned.jsonl, its
 - `backend/tests/test_demo_project_reset.py` — Epic G phase G2 — demo sample reset lifecycle.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
 - `backend/tests/test_dialogue_eval.py` — Multi-turn rows at eval time: last-turn history in the prompt + the per-turn replay judge.

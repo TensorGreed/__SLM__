@@ -161,6 +161,14 @@ def _remove_doc_artifacts(doc: RawDocument) -> None:
                     pass
 
 
+async def _drop_cleaned_rows(db: AsyncSession, project_id: int, docs: list[RawDocument]) -> None:
+    """Drop the deleted documents' rows from cleaned.jsonl (one rewrite)."""
+    from app.services import cleaning_service
+
+    if docs:
+        await cleaning_service.remove_documents_from_cleaned(db, project_id, [int(d.id) for d in docs])
+
+
 async def _load_raw_docs(
     db: AsyncSession, project_id: int
 ) -> list[RawDocument]:
@@ -504,6 +512,7 @@ async def _drop_failed_docs(
         dropped_filenames.append(doc.filename or "")
         _remove_doc_artifacts(doc)
         await db.delete(doc)
+    await _drop_cleaned_rows(db, project_id, failed)
     await _decrement_dataset_count(db, project_id, -len(failed))
     return {
         "fix_kind": "drop_failed_docs",
@@ -534,6 +543,7 @@ async def _dedupe_duplicate_docs(
         groups.setdefault(text_hash, []).append(doc)
 
     dropped: list[str] = []
+    dup_docs: list[RawDocument] = []
     group_count = 0
     for text_hash, group in groups.items():
         if len(group) <= 1:
@@ -545,7 +555,9 @@ async def _dedupe_duplicate_docs(
             dropped.append(dup.filename or "")
             _remove_doc_artifacts(dup)
             await db.delete(dup)
+            dup_docs.append(dup)
 
+    await _drop_cleaned_rows(db, project_id, dup_docs)
     await _decrement_dataset_count(db, project_id, -len(dropped))
     return {
         "fix_kind": "dedupe_duplicate_docs",
@@ -1231,6 +1243,7 @@ async def _near_duplicate_dedup(
     docs = await _load_raw_docs(db, project_id)
     by_id = {int(d.id): d for d in docs}
     dropped_filenames: list[str] = []
+    near_dup_docs: list[RawDocument] = []
     for doc_id in drop_ids:
         doc = by_id.get(doc_id)
         if doc is None:
@@ -1238,6 +1251,8 @@ async def _near_duplicate_dedup(
         dropped_filenames.append(doc.filename or "")
         _remove_doc_artifacts(doc)
         await db.delete(doc)
+        near_dup_docs.append(doc)
+    await _drop_cleaned_rows(db, project_id, near_dup_docs)
     await _decrement_dataset_count(db, project_id, -len(dropped_filenames))
     return {
         "fix_kind": "near_duplicate_dedup",

@@ -331,23 +331,42 @@ async def delete_document(
     project_id: int,
     document_id: int,
 ) -> None:
-    """Delete a document from disk and database."""
-    doc = await _get_document_for_project(db, project_id, document_id)
-    if not doc:
-        raise ValueError(f"Document {document_id} not found in project {project_id}")
+    """Delete a document from disk and database (see ``delete_documents``)."""
+    await delete_documents(db, project_id, [document_id])
 
-    # Remove file from disk
-    file_path = Path(doc.file_path)
-    if file_path.exists():
-        file_path.unlink()
-    extracted = file_path.with_suffix(".extracted.txt")
-    if extracted.exists():
-        extracted.unlink()
 
-    source_id = doc.data_source_id
-    await db.delete(doc)
+async def delete_documents(
+    db: AsyncSession,
+    project_id: int,
+    document_ids: list[int],
+) -> None:
+    """Delete documents: file, ``.extracted.txt`` / ``.cleaned.txt`` sidecars,
+    their rows in the project's cleaned.jsonl (one rewrite for the batch, which
+    also marks the passages indexes stale) and the DB rows. Raises ValueError
+    (before touching anything) when a document isn't in the project."""
+    from app.services import cleaning_service
+
+    docs = []
+    for document_id in dict.fromkeys(document_ids):
+        doc = await _get_document_for_project(db, project_id, document_id)
+        if not doc:
+            raise ValueError(f"Document {document_id} not found in project {project_id}")
+        docs.append(doc)
+
+    for doc in docs:
+        file_path = Path(doc.file_path)
+        if file_path.exists():
+            file_path.unlink()
+        for suffix in (".extracted.txt", ".cleaned.txt"):
+            file_path.with_suffix(suffix).unlink(missing_ok=True)
+
+    await cleaning_service.remove_documents_from_cleaned(db, project_id, [int(d.id) for d in docs])
+
+    source_ids = [d.data_source_id for d in docs]
+    for doc in docs:
+        await db.delete(doc)
     # A source left with no documents has nothing to list (the ledger).
-    await provenance_service.prune_empty_sources(db, project_id, [source_id])
+    await provenance_service.prune_empty_sources(db, project_id, source_ids)
 
 
 # ── Remote Dataset Connectors ─────────────────────────────────────────

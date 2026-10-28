@@ -166,7 +166,7 @@ Content type: `multipart/form-data` — `Body_upload_batch_api_projects__project
 
 **Remove Document**
 
-Delete a document.
+Delete a document: its file, `.extracted.txt` / `.cleaned.txt` sidecars, its rows in the project's `cleaned/cleaned.jsonl` (so it stops feeding synthetic seeds, retrieval and the passages index) and its database row.
 
 **Parameters**
 

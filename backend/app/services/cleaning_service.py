@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import os
 import re
 import threading
 from dataclasses import dataclass, field
@@ -386,6 +387,62 @@ async def _replace_document_entries(
     cleaned_ds.file_path = str(cleaned_file_path)
     cleaned_ds.record_count = len(merged_entries)
     return cleaned_file_path
+
+
+async def remove_documents_from_cleaned(
+    db: AsyncSession,
+    project_id: int,
+    document_ids: list[int],
+) -> int:
+    """Drop every row of the given documents from the project's cleaned.jsonl
+    (the rest keep their order; ids are renumbered) and sync the CLEANED
+    dataset's count. One rewrite for any number of documents, via a temp file +
+    atomic replace; no file touched when none of them has rows. Returns the
+    number of rows removed. The rewrite bumps the file's mtime, which is what
+    marks the passages / BM25 indexes stale."""
+    drop = {int(d) for d in document_ids}
+    cleaned_file_path = settings.DATA_DIR / "projects" / str(project_id) / "cleaned" / "cleaned.jsonl"
+    if not drop or not cleaned_file_path.exists():
+        return 0
+    kept: list[dict] = []
+    removed = 0
+    with open(cleaned_file_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            doc_id = entry.get("source_document_id") if isinstance(entry, dict) else None
+            try:
+                is_dropped = doc_id is not None and int(doc_id) in drop
+            except (TypeError, ValueError):
+                is_dropped = False
+            if is_dropped:
+                removed += 1
+            else:
+                kept.append(entry)
+    if not removed:
+        return 0
+    tmp = cleaned_file_path.with_suffix(".jsonl.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        for idx, entry in enumerate(kept, start=1):
+            if isinstance(entry, dict):
+                entry["id"] = idx
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    os.replace(tmp, cleaned_file_path)
+    result = await db.execute(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type == DatasetType.CLEANED,
+        )
+    )
+    cleaned_ds = result.scalar_one_or_none()
+    if cleaned_ds is not None:
+        cleaned_ds.record_count = len(kept)
+    return removed
 
 
 def _clean_value(
