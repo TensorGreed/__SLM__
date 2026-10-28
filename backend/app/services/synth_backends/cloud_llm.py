@@ -119,20 +119,30 @@ class CloudLlmBackend:
         return self._model
 
     @property
+    def _thinks_by_default(self) -> bool:
+        return self._provider == "anthropic" and cloud_llm_service.anthropic_thinks_by_default(self._model)
+
+    @property
     def max_output_tokens(self) -> int:
-        return _MAX_OUTPUT_TOKENS.get(self._provider, 4096)
+        """Answer tokens a call can ask for: the provider ceiling, less the thinking
+        headroom for a model that thinks by default (``_reply_budget`` adds it back)."""
+        ceiling = _MAX_OUTPUT_TOKENS.get(self._provider, 4096)
+        return ceiling - THINKING_HEADROOM_TOKENS if self._thinks_by_default else ceiling
 
     @property
     def effort(self) -> str | None:
-        """``SYNTH_CLOUD_EFFORT`` when it's a valid level (sent only to models that take it)."""
+        """``SYNTH_CLOUD_EFFORT`` when it's a valid level and the model thinks by default
+        (a model that only thinks when asked keeps its own default effort)."""
+        if not self._thinks_by_default:
+            return None
         value = str(getattr(settings, "SYNTH_CLOUD_EFFORT", "") or "").strip().lower()
         return value if value in cloud_llm_service.EFFORT_LEVELS else None
 
     def _reply_budget(self, max_tokens: int, *, batch: bool = False) -> int:
         """``max_tokens`` plus thinking headroom for a model that thinks by default."""
-        if self._provider != "anthropic" or not cloud_llm_service.anthropic_thinks_by_default(self._model):
+        if not self._thinks_by_default:
             return max_tokens
-        ceiling = _BATCH_MAX_OUTPUT_TOKENS if batch else self.max_output_tokens
+        ceiling = _BATCH_MAX_OUTPUT_TOKENS if batch else _MAX_OUTPUT_TOKENS["anthropic"]
         return max(max_tokens, min(ceiling, max_tokens + THINKING_HEADROOM_TOKENS))
 
     @property
@@ -245,6 +255,8 @@ class CloudLlmBackend:
                 resp = cloud_llm_service.anthropic_response_from_message(result.get("message") or {}, self._model)
                 out[i] = resp.content or ""
                 if not resp.content and resp.stop_reason == "max_tokens":
+                    # Paid for (counted below) but no answer: unanswered, so the caller retries it directly.
+                    out[i] = None
                     no_text += 1
                 self.batch_usage["calls"] += 1
                 self.batch_usage["input_tokens"] += resp.prompt_tokens
@@ -313,12 +325,6 @@ class CloudLlmBackend:
                     cached_system=cached,
                     effort=self.effort,
                 )
-                if not resp.content and resp.stop_reason == "max_tokens":
-                    raise SynthBackendError(
-                        f"Cloud LLM ({self._provider}:{self._model}) spent its whole reply budget "
-                        f"({resp.completion_tokens} tokens) thinking and returned no answer. Lower "
-                        f"SYNTH_CLOUD_EFFORT (now {self.effort or 'the model default'}) or ask for fewer rows per call."
-                    )
             else:
                 # openai + deepseek both ride on call_openai_chat with
                 # different api_url. force_json=True puts the model
@@ -350,4 +356,11 @@ class CloudLlmBackend:
         self.usage["output_tokens"] += int(getattr(resp, "completion_tokens", 0) or 0)
         self.usage["cache_write_tokens"] += int(getattr(resp, "cache_write_tokens", 0) or 0)
         self.usage["cache_read_tokens"] += int(getattr(resp, "cache_read_tokens", 0) or 0)
+        if not resp.content and getattr(resp, "stop_reason", "") == "max_tokens":
+            # Counted above (it was paid for); a clear error instead of an empty reply.
+            raise SynthBackendError(
+                f"Cloud LLM ({self._provider}:{self._model}) spent its whole reply budget "
+                f"({resp.completion_tokens} tokens) thinking and returned no answer. Lower "
+                f"SYNTH_CLOUD_EFFORT (now {self.effort or 'the model default'}) or ask for fewer rows per call."
+            )
         return resp.content or ""

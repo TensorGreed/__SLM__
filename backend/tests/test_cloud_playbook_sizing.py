@@ -81,11 +81,16 @@ class ThinkingBudgetTests(unittest.TestCase):
             self.assertEqual(b.effort, "high")
         with patch.object(settings, "SYNTH_CLOUD_EFFORT", ""):
             self.assertIsNone(b.effort)
+        # a model that only thinks when asked keeps its own default effort
+        self.assertIsNone(CloudLlmBackend(provider="anthropic", model="claude-opus-4-8", api_key="k").effort)
 
     def test_thinking_headroom_for_models_that_think_by_default(self):
         from app.services.synth_backends.cloud_llm import THINKING_HEADROOM_TOKENS
 
         thinker = CloudLlmBackend(provider="anthropic", model="claude-sonnet-5-5", api_key="k")
+        # callers size answers against the ceiling less the headroom, so a full-size call still gets it
+        self.assertEqual(thinker.max_output_tokens, 16000 - THINKING_HEADROOM_TOKENS)
+        self.assertEqual(thinker._reply_budget(thinker.max_output_tokens), 16000)
         self.assertEqual(thinker._reply_budget(2048), 2048 + THINKING_HEADROOM_TOKENS)
         self.assertEqual(thinker._reply_budget(12000), 16000, "direct calls stay under the HTTP-timeout ceiling")
         self.assertEqual(thinker._reply_budget(12000, batch=True), 12000 + THINKING_HEADROOM_TOKENS)
@@ -110,6 +115,7 @@ class ThinkingBudgetTests(unittest.TestCase):
             return None
 
         b = CloudLlmBackend(provider="anthropic", model="claude-sonnet-5-5", api_key="k")
+        self.backend = b
         with patch.object(cloud_llm, "call_anthropic_chat", fake_call), patch.object(llm_budget_guard, "acheck_budget", ok):
             return seen, asyncio.run(b.complete("p", max_tokens=6000))
 
@@ -126,6 +132,8 @@ class ThinkingBudgetTests(unittest.TestCase):
 
         with self.assertRaisesRegex(SynthBackendError, "spent its whole reply budget .* thinking"):
             self._complete(CloudLlmResponse("", "claude-sonnet-5-5", 10, 14000, stop_reason="max_tokens"))
+        self.assertEqual((self.backend.usage["calls"], self.backend.usage["output_tokens"]), (1, 14000),
+                         "the call was paid for: the backend's own usage still counts it")
 
     def test_batch_requests_get_effort_headroom_and_report_budget_spent_thinking(self):
         import asyncio
@@ -150,7 +158,7 @@ class ThinkingBudgetTests(unittest.TestCase):
         with _patched(fake), patch.dict(os.environ, {"ANTHROPIC_BATCH_POLL_SECONDS": "0"}), \
                 patch.object(llm_budget_guard, "acheck_budget", ok), patch.object(llm_budget_guard, "note_usage", lambda *a, **kw: None):
             out = asyncio.run(b.complete_batch(reqs))
-        self.assertEqual(out, ["ok", ""])
+        self.assertEqual(out, ["ok", None], "no text = unanswered, so the caller retries it directly")
         sent = [r["params"] for r in fake.batches[0]]
         self.assertEqual({p["max_tokens"] for p in sent}, {20000})
         self.assertEqual({json.dumps(p["output_config"]) for p in sent}, {json.dumps({"effort": "medium"})})
