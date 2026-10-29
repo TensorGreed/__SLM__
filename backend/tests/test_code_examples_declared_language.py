@@ -127,7 +127,7 @@ class DeclaredLanguageTests(unittest.TestCase):
         self.assertTrue(ctx["rejects"][0]["detail"].startswith("json_parse"))
 
     def test_unchecked_seed_with_unchecked_declared_language_is_labelled(self):
-        out, ctx = self.run_one("cobol", reply(code="x", language="xml"))
+        out, ctx = self.run_one("cobol", reply(code="<a><b/></a>", language="xml"))
         p = out[0]["payload"]
         self.assertEqual((p["language"], p["seed_language"], ctx["rejects"]), ("xml", "cobol", []))
 

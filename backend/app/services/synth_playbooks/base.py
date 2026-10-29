@@ -60,6 +60,8 @@ class PlaybookContext(TypedDict, total=False):
     # (rejected_count / reject_summary / rejected_examples). Optional: playbooks
     # that don't record rejects leave it empty.
     rejects: list[dict[str, Any]]
+    # Seeds the teacher skipped as not worth teaching ({seed, reason}); reported as ``skipped_seeds``, never rejects.
+    skips: list[dict[str, Any]]
     # code-findings seeds, filled by the orchestrator (see _prepare_code_context):
     # code chunks from the project's code documents, the project's label
     # taxonomy index, and sampled values of a data-carrying context column.

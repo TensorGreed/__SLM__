@@ -519,6 +519,21 @@ class PlaybookApiTests(unittest.TestCase):
         self.assertTrue(all(r["payload"]["row_kind"] == "code_example" for r in body["rows"]))
         self.assertIn("reject_summary", body)
 
+    def test_code_examples_every_seed_skipped_raises_the_diagnostic(self):
+        self._write_cleaned([{**c, "source_doc": c.get("source_doc", "x.py")} for c in CHUNKS])
+
+        async def skip_all(self_, prompt, **kw):
+            import re as _re
+
+            idx = _re.findall(r'<seed index="(\d+)"', prompt)
+            return "\n".join(json.dumps({"seed": int(i), "skip": True, "reason": "nothing to teach"}) for i in idx)
+
+        with patch.object(TemplateBackend, "complete", skip_all):
+            resp = self._run("code_examples", {"per_chunk": 1}, count=2)
+        self.assertGreaterEqual(resp.status_code, 400, resp.text)
+        self.assertIn("skipped", resp.text)
+        self.assertIn("nothing to teach", resp.text)
+
     def test_code_examples_skip_eval_only_documents(self):
         from app.services import provenance_service
 

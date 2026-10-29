@@ -25,11 +25,25 @@ language). Lenient checkers (``LENIENT_LANGUAGES``: YAML reads bare prose as a s
 switch AWAY from the seed only when the seed is a data format (``DATA_FORMATS``) and the reply parses
 to a mapping or sequence; a programming-language seed can never switch to YAML. The row carries the
 final ``language`` and, when it differs from a (non-empty) seed language, ``seed_language``.
+
+Format check: a row whose FINAL language is a data / markup format with a parser (json, yaml, toml, xml;
+``check_data_format``) must parse as that format, wherever the label came from (a reply that declared
+nothing inherits the seed's language, so a Python answer to an XML seed used to keep the label ``xml``).
+A failure rejects the row as ``language_mismatch``. The same function re-checks pending rows offline
+(``synth_review_queue_service.recheck_code_format``).
+
+Skips: the teacher may answer ``{"seed": n, "skip": true, "reason": "..."}`` for a chunk with nothing
+worth teaching. A skip is neither a row nor a reject: it lands on ``ctx['skips']`` and the run result
+reports ``skipped_seeds`` plus a few reasons; a run where every seed was skipped raises a diagnostic.
+
+``params.extra_instructions`` (max ``MAX_EXTRA_INSTRUCTIONS`` characters) is added to the prompt as
+style / content guidance, the same block the scenario-grid playbook uses.
 """
 
 from __future__ import annotations
 
 import difflib
+import re
 from typing import Any
 
 from ._code_remediation_common import (
@@ -114,6 +128,41 @@ def _structured_yaml(code: str) -> bool:
     return True
 
 
+def check_data_format(code: str, language: Any) -> str | None:
+    """Why ``code`` is not valid ``language``, or None (valid, or no format check for that language).
+    Covers json, yaml (a mapping or list, see ``_structured_yaml``), toml and xml (well-formed)."""
+    lang = canonical_language(language)
+    if not isinstance(code, str):
+        return None
+    if lang == "json":
+        import json
+
+        try:
+            json.loads(code)
+        except ValueError as exc:
+            return f"not valid JSON: {str(exc)[:120]}"
+    elif lang == "yaml":
+        if not _structured_yaml(code):
+            return "not a YAML mapping or list"
+    elif lang == "toml":
+        import tomllib
+
+        try:
+            tomllib.loads(code)
+        except (tomllib.TOMLDecodeError, ValueError) as exc:
+            return f"not valid TOML: {str(exc)[:120]}"
+    elif lang == "xml":
+        if "<!ENTITY" in code.upper():
+            return None  # entity expansion is never run here; such a document is left unchecked
+        from xml.etree import ElementTree
+
+        try:
+            ElementTree.fromstring(code.strip())
+        except ElementTree.ParseError as exc:
+            return f"not well-formed XML: {str(exc)[:120]}"
+    return None
+
+
 def resolve_language(
     code: str, declared: Any, seed_language: str | None, known: set[str] | None = None
 ) -> tuple[str | None, dict[str, Any] | None]:
@@ -161,8 +210,44 @@ may be either a corrected or extended version of that data/config itself (langua
 programming language that uses it (language = that language). Cite the passage ids you relied on (always P1 for
 code that uses the chunk's API). Keep the code short and self-contained.
 
+If a chunk has nothing worth teaching (a fragment, a license header, generated or empty content), answer for it
+with one line {{"seed": <index>, "skip": true, "reason": "<short why>"}} instead of tasks. Skipping is fine;
+inventing tasks the chunk cannot support is not.
+
 {instructions}
 """
+
+
+def extra_guidance(ctx: PlaybookContext) -> str:
+    """The caller's ``params.extra_instructions`` as a prompt block ('' when none). Same block and cap as
+    the scenario-grid playbook; prompt-structure tags are removed so the text cannot close a seed."""
+    from ._structured_plan_common import MAX_EXTRA_INSTRUCTIONS
+    from .structured_plan_scenario_grid import _extra
+
+    raw = (ctx.get("params") or {}).get("extra_instructions")
+    if raw is None:
+        return ""
+    if not isinstance(raw, str) or len(raw) > MAX_EXTRA_INSTRUCTIONS:
+        raise ValueError(f"params.extra_instructions must be text of at most {MAX_EXTRA_INSTRUCTIONS} characters.")
+    clean = re.sub(r"<\s*/?\s*(?:seed|task|schema)\b[^>]*>?", " ", raw, flags=re.IGNORECASE)
+    return _extra({"params": {"extra_instructions": clean}})  # type: ignore[typeddict-item]
+
+
+def record_skip(ctx: PlaybookContext, seed_index: int, reason: Any) -> None:
+    """Note a teacher skip of a seed (not a row, not a reject)."""
+    sink = ctx.get("skips")
+    if sink is None:
+        return
+    text = " ".join(str(reason or "").split())[:200] or "no reason given"
+    sink.append({"seed": seed_index, "reason": text})
+
+
+def skip_report(skips: list[dict[str, Any]] | None, *, cap: int = 5) -> dict[str, Any]:
+    """``skipped_seeds`` / ``skip_reasons`` for a run result ({} when nothing was skipped)."""
+    skips = skips or []
+    if not skips:
+        return {}
+    return {"skipped_seeds": len(skips), "skip_reasons": [s["reason"] for s in skips[:cap]]}
 
 
 def per_chunk_of(ctx: PlaybookContext) -> int:
@@ -267,8 +352,9 @@ class CodeExamplesPlaybook:
             marker=marker(self.mode.value), n_seeds=len(seeds), per_chunk=per_chunk,
             seeds="\n\n".join(render_seed(i, s, per_chunk) for i, s in enumerate(seeds, start=1)),
             instructions=(
-                f"Output exactly {total} JSON lines, one object per line, no preamble, no markdown code fences. "
-                f"Each line has the shape:\n{_SHAPE}"
+                f"Output exactly {total} JSON lines (one skip line replaces a skipped chunk's tasks), one object per line, "
+                f"no preamble, no markdown code fences. Each line has the shape:\n{_SHAPE}"
+                + extra_guidance(ctx)
             ),
         )
 
@@ -283,7 +369,7 @@ class CodeExamplesPlaybook:
                 "rationale": {"type": "string"},
                 "citations": {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["seed", "task", "code", "rationale", "citations"],
+            "required": ["seed"],  # a skip line carries only seed + skip + reason
         }
 
     def parse_output(self, raw_llm_output: str, ctx: PlaybookContext) -> list[dict[str, Any]]:
@@ -298,6 +384,9 @@ class CodeExamplesPlaybook:
         accepted: list[SynthRow] = []
         for row in parsed_rows:
             index = task_index(row, len(seeds), key="seed")
+            if index is not None and row.get("skip") is True:
+                record_skip(ctx, index, row.get("reason"))
+                continue
             if (
                 index is None or not isinstance(row.get("task"), str) or not row["task"].strip()
                 or not isinstance(row.get("code"), str) or not isinstance(row.get("rationale"), str)
@@ -333,6 +422,13 @@ class CodeExamplesPlaybook:
                 record_reject(
                     ctx, "code_does_not_parse",
                     f"{failed.get('check_id')}: {messages[0] if messages else 'failed'}",
+                    {"code": code[:200], "language": language},
+                )
+                continue
+            mismatch = check_data_format(code, language)
+            if mismatch:
+                record_reject(
+                    ctx, "language_mismatch", f"labelled {language}: {mismatch}",
                     {"code": code[:200], "language": language},
                 )
                 continue

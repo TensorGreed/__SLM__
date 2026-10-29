@@ -581,3 +581,23 @@ export async function startReviewAssist(projectId: number, args: ReviewAssistReq
     }, { params: { async_job: true } });
     return resp.data;
 }
+
+
+export interface RecheckCodeFormatResult {
+    dry_run: boolean;
+    /** Pending code examples looked at. */
+    checked: number;
+    /** Of those, rows whose code does not parse as the format they are labelled with. */
+    mismatches: number;
+    by_language: Record<string, number>;
+    examples: { id: number | null; language: string; detail: string; task: string }[];
+    /** Rows marked rejected (always 0 on a dry run). */
+    rejected: number;
+}
+
+/** Re-check pending code examples labelled json / yaml / toml / xml. `dryRun` counts only; otherwise the
+ *  mismatched rows are marked rejected as `language_mismatch` (reversible, never purged). */
+export async function recheckCodeFormat(projectId: number, dryRun: boolean): Promise<RecheckCodeFormatResult> {
+    const resp = await api.post(`/projects/${projectId}/synthetic/review-queue/recheck-code-format`, { dry_run: dryRun });
+    return resp.data as RecheckCodeFormatResult;
+}

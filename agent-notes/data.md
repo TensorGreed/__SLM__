@@ -770,6 +770,20 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   switch to yaml. `seed_language` only when the seed language is non-empty.
   Row `language` = the one checked; `seed_language` added when different. Fixes 2026-10-28 `json_parse`/`yaml_parse`
   rejects on Python answers to JSON/YAML seeds. Tests: `tests/test_code_examples_declared_language.py`.
+  **Format check** (`check_data_format(code, language)`): after the language is resolved, a row whose FINAL language is
+  json / yaml (mapping or list) / toml (`tomllib`) / xml (well-formed via `xml.etree`; a document with `<!ENTITY` is
+  left unchecked, never expanded; no `defusedxml` dependency) must parse as that format, whether the label came from
+  the reply or from the seed (the mislabel case: xml seed, Python reply, no declaration) -> reject `language_mismatch`.
+  ini / properties / programming languages have no format check. **Skips**: the teacher may answer
+  `{"seed": n, "skip": true, "reason": ...}`; it lands on `ctx["skips"]` (not rows, not rejects, not a failed chunk),
+  the result gets `skipped_seeds` + `skip_reasons` (first 5), and a run where nothing was accepted and seeds were
+  skipped raises a diagnostic naming the reasons (checkpoints carry skips of chunks that wrote rows). `params.extra_instructions`
+  (<= `MAX_EXTRA_INSTRUCTIONS`, same block as scenario_grid, `<seed>/<task>/<schema>` tags stripped) goes into the prompt.
+  **Pending-row re-check**: `synth_review_queue_service.recheck_code_format` /
+  `POST .../synthetic/review-queue/recheck-code-format {dry_run}` (default true) counts pending `code_example` rows
+  that fail `check_data_format` by language; apply marks them rejected `language_mismatch` (soft, accepted rows
+  untouched, never purged). UI: "Check code formats" in the review queue (dry-run count + confirm).
+  Tests: `tests/test_code_examples_format_skip.py`, `SynthReviewQueue.format.test.tsx`.
   Rejects: `parse_error`, `empty_code`, `code_too_long`, `bad_citation` (also no citation at all),
   `copied_chunk` (>= 90% difflib ratio to a cited chunk), `code_does_not_parse` (skipped when no check applies to
   the language). Training-only rows: the remediation scorer skips rows without a `finding`.

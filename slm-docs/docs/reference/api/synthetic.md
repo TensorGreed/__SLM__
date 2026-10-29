@@ -797,6 +797,36 @@ Content type: `application/json` — `MarkConventionsCurrentRequest`
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `POST /api/projects/{project_id}/synthetic/review-queue/recheck-code-format`
+
+**Recheck Code Format Endpoint**
+
+Re-check pending code examples labelled json / yaml / toml / xml: code that does not parse as its label
+is a mislabel. ``dry_run`` (default) counts by language; otherwise those rows are marked rejected with
+reason ``language_mismatch`` (reversible, never purged).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `RecheckCodeFormatRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `dry_run` | `boolean` | no | Count the mislabelled pending rows without changing anything. (default `true`) |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | `{dry_run, checked, mismatches, by_language, examples, rejected}` |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `POST /api/projects/{project_id}/synthetic/review-queue/purge`
 
 **Purge Rejected Synth Rows**

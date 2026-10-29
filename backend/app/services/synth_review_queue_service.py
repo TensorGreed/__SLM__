@@ -800,3 +800,64 @@ async def purge_rejected_rows(
         "retained": len(retained_rows),
         "total_rows": len(retained_rows),
     }
+
+
+LANGUAGE_MISMATCH = "language_mismatch"
+
+
+async def recheck_code_format(db: AsyncSession, project_id: int, *, dry_run: bool = True) -> dict[str, Any]:
+    """Re-check the declared format of PENDING ``code_example`` rows: a row labelled json / yaml / toml / xml
+    whose code does not parse as that format (``check_data_format``, the check generation applies) is a
+    mislabel. ``dry_run`` only counts (``mismatches`` by language plus a few examples); otherwise the rows
+    are marked rejected with reason ``language_mismatch`` (soft: they stay on disk, can be restored, and are
+    never purged here). Accepted and already-rejected rows are not touched."""
+    from app.services.synth_playbooks.code_examples import check_data_format
+
+    path = _synthetic_jsonl_path(project_id)
+    rows = _read_all_rows(path)
+    checked = 0
+    by_language: dict[str, int] = defaultdict(int)
+    examples: list[dict[str, Any]] = []
+    hit_ids: set[int] = set()
+    for row in rows:
+        if row.get("review_status") != "pending" or row.get("row_kind") != "code_example":
+            continue
+        payload = row.get("code_example_json")
+        code = payload.get("code") if isinstance(payload, dict) else None
+        if not isinstance(code, str):
+            continue
+        checked += 1
+        why = check_data_format(code, row.get("language"))
+        if why is None:
+            continue
+        lang = str(row.get("language") or "")
+        by_language[lang] += 1
+        hit_ids.add(0)
+        if len(examples) < 5:
+            examples.append({"id": row.get("id"), "language": lang, "detail": why, "task": str(row.get("task") or "")[:120]})
+    result: dict[str, Any] = {
+        "dry_run": dry_run,
+        "checked": checked,
+        "mismatches": sum(by_language.values()),
+        "by_language": dict(by_language),
+        "examples": examples,
+        "rejected": 0,
+    }
+    if dry_run or not hit_ids:
+        return result
+    rows = _ensure_row_ids(path, _read_all_rows(path))
+    rejected = 0
+    for row in rows:
+        payload = row.get("code_example_json")
+        code = payload.get("code") if isinstance(payload, dict) else None
+        if (
+            row.get("review_status") == "pending" and row.get("row_kind") == "code_example"
+            and isinstance(code, str) and check_data_format(code, row.get("language"))
+        ):
+            row["review_status"] = "rejected"
+            row["reject_reason"] = LANGUAGE_MISMATCH
+            rejected += 1
+    if rejected:
+        _atomic_write_rows(path, rows)
+    result["rejected"] = rejected
+    return result

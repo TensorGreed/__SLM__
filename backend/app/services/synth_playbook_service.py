@@ -1116,6 +1116,8 @@ async def _run_playbook(
         "target_count": target_count,
         "params": dict(params or {}),
         "rejects": [],
+        # Seeds the teacher skipped (code_examples); shared across chunk ctx copies like ``rejects``.
+        "skips": [],
         # Shared across the shallow per-chunk ctx copies, like ``rejects``.
         "parse_notes": {},
     }
@@ -1196,6 +1198,18 @@ async def _run_playbook(
         parsed_rows = playbook.parse_output(raw_llm_output, ctx)
         accepted_rows = playbook.validate(parsed_rows, ctx)
 
+    if ctx.get("skips") and not accepted_rows and not dry_run:
+        from .synth_playbooks.code_examples import skip_report
+
+        report = skip_report(ctx["skips"])
+        summary = reject_report(ctx.get("rejects"))["reject_summary"]
+        extra = f"; rejected: {', '.join(f'{k}: {v}' for k, v in sorted(summary.items()))}" if summary else ""
+        raise ValueError(
+            f"{mode.value} produced 0 rows: the teacher skipped {report['skipped_seeds']} seed(s) as not worth "
+            f"teaching ({'; '.join(report['skip_reasons'])}){extra}. Pick different sources or loosen the "
+            "seed filters or extra instructions."
+        )
+
     if uses_documents and not accepted_rows and not dry_run:
         summary = reject_report(ctx.get("rejects"))["reject_summary"]
         detail = ", ".join(f"{k}: {v}" for k, v in sorted(summary.items())) or "the teacher returned no usable output"
@@ -1254,6 +1268,10 @@ async def _run_playbook(
         "refusal_detected": _looks_like_refusal(raw_llm_output),
     }
     result.update(reject_report(ctx.get("rejects")))
+    if ctx.get("skips"):
+        from .synth_playbooks.code_examples import skip_report
+
+        result.update(skip_report(ctx["skips"]))
     if (ctx.get("parse_notes") or {}).get("repaired_json"):
         result["repaired_json"] = ctx["parse_notes"]["repaired_json"]
     if ctx.get("seed_pool"):
@@ -1400,6 +1418,7 @@ async def _run_chunked(
     last_raw = ""
     started_at = time.monotonic()
     rejects = ctx["rejects"] if isinstance(ctx.get("rejects"), list) else None
+    skips: list[dict[str, Any]] = ctx["skips"] if isinstance(ctx.get("skips"), list) else []
 
     def _take(chunk_rows: list[SynthRow]) -> None:
         for row in chunk_rows:
@@ -1423,13 +1442,17 @@ async def _run_chunked(
         from .synth_playbooks.base import short_snippet
 
         mark = len(rejects) if rejects is not None else 0
+        skip_mark = len(skips)
         accepted = playbook.validate(playbook.parse_output(raw, chunk_ctx), chunk_ctx)
         if accepted:
             chunk_rejects = build_rejects + (list(rejects[mark:]) if rejects is not None else [])
             _append_checkpoint(path, {
                 "chunk": k, "rows": accepted, "raw_snippet": short_snippet(raw), "rejects": chunk_rejects,
+                "skips": list(skips[skip_mark:]),
             })
             _take(list(accepted))
+        elif len(skips) > skip_mark:
+            pass  # the teacher skipped the chunk's seeds: nothing to write, and not a failed chunk
         else:
             failed.append({"chunk": k + 1, "reason": "no rows accepted from the reply"})
 
@@ -1462,6 +1485,9 @@ async def _run_chunked(
             saved_rejects = saved[k].get("rejects")
             if isinstance(saved_rejects, list) and rejects is not None:
                 rejects.extend(r for r in saved_rejects if isinstance(r, dict))
+            saved_skips = saved[k].get("skips")
+            if isinstance(saved_skips, list):
+                skips.extend(r for r in saved_skips if isinstance(r, dict))
             resumed += 1
             last_raw = str(saved[k].get("raw_snippet") or last_raw)
         else:

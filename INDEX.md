@@ -894,6 +894,7 @@ session-start guidance.
 - `backend/tests/test_code_checks.py` — Code-check registry, built-ins, external checks (sandbox stubbed), plugins, API.
 - `backend/tests/test_code_chunker.py` — Code chunker: declaration-level chunks with exact line ranges.
 - `backend/tests/test_code_examples_declared_language.py` — `code_examples` playbook: the reply declares its language; validation checks the code under it.
+- `backend/tests/test_code_examples_format_skip.py` — `code_examples`: format check (language_mismatch), seed skips, extra instructions, pending-row re-check.
 - `backend/tests/test_code_finding_mappers.py` — Findings-row mappers (code_label_to_findings, fix_pair, contrast_functions)
 - `backend/tests/test_code_findings_e2e.py` — code-findings end to end on the simulate runtime: create a project, apply
 - `backend/tests/test_code_findings_g4_fixes.py` — Regression tests for the G4 review fixes of the `code-findings` playbooks and plumbing:
@@ -1275,6 +1276,7 @@ session-start guidance.
 - `frontend/src/components/data/SpanAddTypeForm.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanTypeDefinitionsEditor.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.assist.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/SynthReviewQueue.format.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.judges.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.provenance.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.test.tsx` — _(no docstring)_

@@ -1,5 +1,10 @@
 # Changelog
 
+### Code examples: format check, skips, extra instructions (October 29, 2026)
+
+- A code example whose language is a data / markup format (JSON, YAML, TOML, XML) must now parse as that format, including when the label came from the source chunk (an XML chunk answered with Python and no declared language used to keep the label XML). Failures are rejected as `language_mismatch`. The teacher may also **skip** a chunk with nothing worth teaching: skips are reported (`skipped_seeds`, a few reasons), are not rejects, and a run where every chunk was skipped fails with a message naming the reasons. New `extra_instructions` parameter (up to 2,000 characters) adds your own guidance to the prompt.
+- **Check code formats** in the Generate step's review queue re-checks pending code examples: it shows how many do not parse as their label, and only after you confirm marks them rejected (`language_mismatch`; restorable, never deleted). API: `POST .../synthetic/review-queue/recheck-code-format` with `dry_run`.
+
 ### Seed filters for code and document playbooks (October 29, 2026)
 
 - Playbooks that seed from repositories or documents can now narrow the seed pool before anything is sampled. **Seed filters** in the playbook picker (and `seed_path_include`, `seed_path_exclude`, `seed_relevance_terms`, `seed_relevance_scope`, `relevance_exempt_source_ids` on `POST .../run-playbook`) keep passages by path glob and by whether a term appears in the passage's path or text (or, in file scope, anywhere in its file); chosen sources can be exempt from the term filter. Filters run before the 2,000-passage cap, so a big repository's off-topic files no longer crowd the sample.

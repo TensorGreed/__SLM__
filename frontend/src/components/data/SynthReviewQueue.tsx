@@ -31,6 +31,8 @@ import {
     bulkUpdateSynthReviewQueue,
     listSynthReviewQueue,
     purgeRejectedSynthRows,
+    recheckCodeFormat,
+    type RecheckCodeFormatResult,
     startReviewAssist,
 } from '../../api/synthPlaybook';
 import './SynthReviewQueue.css';
@@ -409,6 +411,10 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                     pending={data.total_pending}
                     synthJobId={filterJob}
                     onStarted={() => { setFlash('Pre-screen started — verdicts appear here as it runs (reload to refresh).'); }}
+                />
+                <FormatRecheckCard
+                    projectId={projectId}
+                    onApplied={(n) => { setFlash(`Marked ${n} mislabelled code example${n === 1 ? '' : 's'} as rejected (language_mismatch). Restore them from the Rejected section.`); void load(); }}
                 />
                 <p className="synth-review-queue__subtitle">
                     {data.total_pending} row{data.total_pending === 1 ? '' : 's'} awaiting review,
@@ -852,6 +858,73 @@ function ReviewAssistCard({ projectId, pending, synthJobId, onStarted }: ReviewA
                         data-testid="synth-review-queue-assist-start"
                     >
                         Pre-screen {synthJobId != null ? `job #${synthJobId}'s rows` : `${pending} pending row${pending === 1 ? '' : 's'}`}
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
+
+/** "Check code formats": pending code examples labelled json / yaml / toml / xml whose code does not parse as
+ *  that format are mislabels. A dry run counts them first; confirming marks them rejected as
+ *  `language_mismatch` (reversible: they stay in the Rejected section, nothing is purged). */
+function FormatRecheckCard({ projectId, onApplied }: { projectId: number; onApplied: (rejected: number) => void }) {
+    const [busy, setBusy] = useState(false);
+    const [preview, setPreview] = useState<RecheckCodeFormatResult | null>(null);
+
+    const check = async () => {
+        setBusy(true);
+        try {
+            setPreview(await recheckCodeFormat(projectId, true));
+        } catch (err: any) {
+            toast.error(err?.response?.data?.detail ?? err?.message ?? 'Could not check the code formats.', 6000);
+        } finally {
+            setBusy(false);
+        }
+    };
+    const apply = async () => {
+        setBusy(true);
+        try {
+            const res = await recheckCodeFormat(projectId, false);
+            setPreview(null);
+            onApplied(res.rejected);
+        } catch (err: any) {
+            toast.error(err?.response?.data?.detail ?? err?.message ?? 'Could not reject the mislabelled rows.', 6000);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <div className="synth-review-queue__assist-card" data-testid="synth-review-queue-format-card">
+            <button type="button" className="btn btn-secondary" onClick={check} disabled={busy} data-testid="synth-review-queue-format-check">
+                Check code formats
+            </button>
+            {preview && (
+                <div className="synth-review-queue__assist-form" data-testid="synth-review-queue-format-confirm">
+                    {preview.mismatches === 0 ? (
+                        <p className="synth-review-queue__subtitle">
+                            All {preview.checked} pending code example{preview.checked === 1 ? '' : 's'} parse as the format they are labelled with.
+                        </p>
+                    ) : (
+                        <>
+                            <p className="synth-review-queue__subtitle">
+                                {preview.mismatches} of {preview.checked} pending code example{preview.checked === 1 ? '' : 's'} do not parse as
+                                their label ({Object.entries(preview.by_language).map(([l, n]) => `${l}: ${n}`).join(', ')}). Mark them rejected
+                                as language_mismatch? They stay in the Rejected section and can be restored; nothing is deleted.
+                            </p>
+                            <ul>
+                                {preview.examples.map((ex, i) => (
+                                    <li key={ex.id ?? i}>{ex.language}: {ex.detail} ({ex.task})</li>
+                                ))}
+                            </ul>
+                            <button type="button" className="btn btn-primary" onClick={apply} disabled={busy} data-testid="synth-review-queue-format-apply">
+                                Reject {preview.mismatches} row{preview.mismatches === 1 ? '' : 's'}
+                            </button>
+                        </>
+                    )}
+                    <button type="button" className="btn btn-secondary" onClick={() => setPreview(null)} disabled={busy} data-testid="synth-review-queue-format-cancel">
+                        {preview.mismatches === 0 ? 'Close' : 'Cancel'}
                     </button>
                 </div>
             )}
