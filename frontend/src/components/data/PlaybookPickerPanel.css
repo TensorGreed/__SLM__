@@ -402,3 +402,15 @@
     align-items: flex-start;
     margin-bottom: var(--space-xs);
 }
+
+.seed-filters__field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-xs);
+}
+
+.seed-filters__field textarea {
+    width: 100%;
+    font-family: var(--font-mono, monospace);
+}

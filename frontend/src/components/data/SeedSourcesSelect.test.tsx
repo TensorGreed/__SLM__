@@ -43,4 +43,29 @@ describe('SeedSourcesSelect', () => {
         await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
         expect(screen.queryByTestId('seed-sources')).not.toBeInTheDocument();
     });
+
+    it('emits seed filters (globs per line, terms, file scope, exempt sources) and null when empty', async () => {
+        const onFilters = vi.fn();
+        const user = userEvent.setup();
+        render(<SeedSourcesSelect projectId={7} onChange={vi.fn()} onFiltersChange={onFilters} />);
+        await screen.findByTestId('seed-filters');
+        expect(onFilters).toHaveBeenLastCalledWith(null);
+        expect(screen.queryByTestId('seed-relevance-file-scope')).not.toBeInTheDocument();
+        await user.type(screen.getByTestId('seed-path-include'), 'src/**{Enter}lib/*.py');
+        await user.type(screen.getByTestId('seed-path-exclude'), '**/*.lock');
+        await waitFor(() => expect(onFilters).toHaveBeenLastCalledWith({
+            seed_path_include: ['src/**', 'lib/*.py'], seed_path_exclude: ['**/*.lock'],
+        }));
+        await user.type(screen.getByTestId('seed-relevance-terms'), 'widget, Gadget');
+        await user.click(screen.getByTestId('seed-relevance-file-scope'));
+        await user.click(screen.getByTestId('seed-exempt-5'));
+        await waitFor(() => expect(onFilters).toHaveBeenLastCalledWith({
+            seed_path_include: ['src/**', 'lib/*.py'], seed_path_exclude: ['**/*.lock'],
+            seed_relevance_terms: ['widget', 'Gadget'], seed_relevance_scope: 'file', relevance_exempt_source_ids: [5],
+        }));
+        await user.clear(screen.getByTestId('seed-path-include'));
+        await user.clear(screen.getByTestId('seed-path-exclude'));
+        await user.clear(screen.getByTestId('seed-relevance-terms'));
+        await waitFor(() => expect(onFilters).toHaveBeenLastCalledWith(null));
+    });
 });

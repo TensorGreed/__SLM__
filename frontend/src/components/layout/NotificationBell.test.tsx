@@ -851,6 +851,20 @@ describe('NotificationBell seed pool line', () => {
         });
         expect(jobOutcomeSummary(small as never)).toContain('seeds: 5 of 5 chunks');
         expect(jobOutcomeSummary(small as never)).not.toContain('(sampled)');
+        const filtered = jobFixture({
+            kind: 'synth_playbook', status: 'succeeded',
+            result: {
+                rows_generated: 1,
+                seed_pool: {
+                    chunks_eligible: 7, chunks_used: 7, sampled: false, by_source: { '3': 7 }, by_language: {},
+                    sources: {
+                        '3': { total: 20, kept: 7, dropped_glob: 9, dropped_relevance: 4, exempt: 0 },
+                        '5': { total: 3, kept: 0, dropped_glob: 3, dropped_relevance: 0, exempt: 0 },
+                    },
+                },
+            },
+        });
+        expect(jobOutcomeSummary(filtered as never)).toContain('filters dropped 12 by path, 4 by relevance');
     });
 });
 

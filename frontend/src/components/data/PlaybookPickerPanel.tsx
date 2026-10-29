@@ -38,7 +38,7 @@ import type { PlaybookParams, RejectFields } from '../../api/synthPlaybook';
 import CodeFindingsParamsForm from './CodeFindingsParamsForm';
 import CodeRemediationParamsForm from './CodeRemediationParamsForm';
 import MultiTurnParamsForm from './MultiTurnParamsForm';
-import SeedSourcesSelect from './SeedSourcesSelect';
+import SeedSourcesSelect, { type SeedFilterParams } from './SeedSourcesSelect';
 import ScenarioGridParamsForm from './ScenarioGridParamsForm';
 import SynthRejectSummary from './SynthRejectSummary';
 import ErrorPanel from '../shared/ErrorPanel';
@@ -167,6 +167,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
     // the queued job whose result carries the reject summary.
     const [playbookParams, setPlaybookParams] = useState<PlaybookParams | null>(null);
     const [seedSourceIds, setSeedSourceIds] = useState<number[] | null>(null);
+    const [seedFilters, setSeedFilters] = useState<SeedFilterParams | null>(null);
     const [watchedJobId, setWatchedJobId] = useState<number | null>(null);
     const [jobRejects, setJobRejects] = useState<RejectFields | null>(null);
     // ── Backend picker (Epic 5 Phase 5a) ──────────────────────────
@@ -342,9 +343,14 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
     // `source_ids` joins the mode's params when the seeds come from documents.
     const withSeedSources = useCallback((mode: SynthMode, base: PlaybookParams | null): PlaybookParams | null => {
         const documentSeeded = mode === 'documents_multi_turn' || recipeId === 'code-findings' || recipeId === 'code-remediation';
-        if (!seedSourceIds?.length || !SEED_SOURCE_MODES.has(mode) || !documentSeeded) return base;
-        return { ...(base ?? {}), source_ids: seedSourceIds };
-    }, [seedSourceIds, recipeId]);
+        if (!SEED_SOURCE_MODES.has(mode) || !documentSeeded) return base;
+        if (!seedSourceIds?.length && !seedFilters) return base;
+        return {
+            ...(base ?? {}),
+            ...(seedFilters ?? {}),
+            ...(seedSourceIds?.length ? { source_ids: seedSourceIds } : {}),
+        };
+    }, [seedSourceIds, seedFilters, recipeId]);
 
     const submitJob = useCallback(async (backendOverride?: string | null) => {
         if (!selectedMode) return;
@@ -625,7 +631,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
 
             {selectedMode && SEED_SOURCE_MODES.has(selectedMode)
                 && (selectedMode === 'documents_multi_turn' || recipeId === 'code-findings' || recipeId === 'code-remediation') && (
-                <SeedSourcesSelect key={`${projectId}-seed-sources`} projectId={projectId} onChange={setSeedSourceIds} />
+                <SeedSourcesSelect key={`${projectId}-seed-sources`} projectId={projectId} onChange={setSeedSourceIds} onFiltersChange={setSeedFilters} />
             )}
 
             <div className="playbook-picker__count">

@@ -1,5 +1,10 @@
 # Changelog
 
+### Seed filters for code and document playbooks (October 29, 2026)
+
+- Playbooks that seed from repositories or documents can now narrow the seed pool before anything is sampled. **Seed filters** in the playbook picker (and `seed_path_include`, `seed_path_exclude`, `seed_relevance_terms`, `seed_relevance_scope`, `relevance_exempt_source_ids` on `POST .../run-playbook`) keep passages by path glob and by whether a term appears in the passage's path or text (or, in file scope, anywhere in its file); chosen sources can be exempt from the term filter. Filters run before the 2,000-passage cap, so a big repository's off-topic files no longer crowd the sample.
+- The result's `seed_pool` (and the dry run) reports, per source, how many passages there were, how many were kept, and how many each filter dropped; the bell shows the totals. Filters that leave nothing fail the run with those counts instead of finishing empty. Invalid globs, over-long lists or a bad scope are rejected with `400 invalid_playbook_param`.
+
 ### Review assist: several judges per row (October 29, 2026)
 
 - Running the pre-screen with a second model no longer overwrites the first model's verdicts: each row keeps **one verdict per model**, and running the same model again replaces only that model's. The queue shows where the models stand (**agree pass**, **agree fail**, **disagree**, **single**, **none**), can filter and group by it (**Judges agree?**) and show one model's verdicts (**Judge** filter); every row card lists each model's verdict and note, and group labels name the models. **Accept group** is offered only where every model that ran says pass (two models agreeing, or the one model that ran); disagreements are never bulk-accepted, and a row another model disagrees on is skipped even in a plain Verdict group. A verdict only counts while the row is unchanged.

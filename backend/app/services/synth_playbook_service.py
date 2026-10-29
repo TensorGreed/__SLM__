@@ -121,6 +121,119 @@ def _sample_seed(params: dict[str, Any], ctx: dict[str, Any]) -> Any:
     return ctx.get("seed_nonce")
 
 
+MAX_SEED_GLOBS = 50
+MAX_SEED_GLOB_LEN = 200
+MAX_SEED_TERMS = 100
+MAX_SEED_TERM_LEN = 100
+SEED_RELEVANCE_SCOPES = ("chunk", "file")
+
+
+def seed_glob_matches(path: str, pattern: str) -> bool:
+    """Glob semantics for ``seed_path_include`` / ``seed_path_exclude``: ``fnmatch`` (case-sensitive)
+    on the chunk's repo-relative path. ``*`` also crosses ``/`` (so ``**`` works and ``src/*.py``
+    matches ``src/a/b.py``); a leading ``**/`` also matches at the top level (``**/x.ts`` matches ``x.ts``)."""
+    import fnmatch
+
+    if fnmatch.fnmatchcase(path, pattern):
+        return True
+    return pattern.startswith("**/") and fnmatch.fnmatchcase(path, pattern[3:])
+
+
+def seed_filters_from_params(params: dict[str, Any]) -> dict[str, Any] | None:
+    """The seed-filter settings in ``params`` (already validated by the API), or None when no filter is set."""
+    include = [g for g in params.get("seed_path_include") or [] if isinstance(g, str)]
+    exclude = [g for g in params.get("seed_path_exclude") or [] if isinstance(g, str)]
+    terms = [t for t in params.get("seed_relevance_terms") or [] if isinstance(t, str) and t.strip()]
+    if not (include or exclude or terms):
+        return None
+    scope = params.get("seed_relevance_scope")
+    return {
+        "include": include,
+        "exclude": exclude,
+        "terms": terms,
+        "scope": scope if scope in SEED_RELEVANCE_SCOPES else "chunk",
+        "exempt_source_ids": sorted({int(x) for x in params.get("relevance_exempt_source_ids") or []}),
+    }
+
+
+def _chunk_path(chunk: dict[str, Any]) -> str:
+    for key in ("path", "source_doc"):
+        value = chunk.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _apply_seed_filters(
+    chunks: list[dict[str, Any]], source_of: Callable[[dict[str, Any]], int | None], filters: dict[str, Any]
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, int]]]:
+    """Drop chunks by path glob, then by relevance term; returns the survivors (in order) and per-source counts
+    {total, kept, dropped_glob, dropped_relevance, exempt}. ``exempt`` counts chunks whose source is exempt from
+    the relevance filter (they skip it; the path globs still apply)."""
+    include, exclude = filters["include"], filters["exclude"]
+    terms = [t.lower() for t in filters["terms"]]
+    exempt_ids = set(filters["exempt_source_ids"])
+    per_file = filters["scope"] == "file"
+
+    def mentions(chunk: dict[str, Any]) -> bool:
+        text = chunk.get("text") if isinstance(chunk.get("text"), str) else ""
+        hay = f"{_chunk_path(chunk)}\n{text}".lower()
+        return any(t in hay for t in terms)
+
+    def file_key(chunk: dict[str, Any]) -> tuple[Any, str]:
+        return (_chunk_doc_id(chunk), _chunk_path(chunk))
+
+    after_glob: list[dict[str, Any]] = []
+    stats: dict[str, dict[str, int]] = {}
+
+    def row(chunk: dict[str, Any]) -> dict[str, int]:
+        sid = source_of(chunk)
+        return stats.setdefault(
+            "unknown" if sid is None else str(sid),
+            {"total": 0, "kept": 0, "dropped_glob": 0, "dropped_relevance": 0, "exempt": 0},
+        )
+
+    for chunk in chunks:
+        counts = row(chunk)
+        counts["total"] += 1
+        path = _chunk_path(chunk)
+        if (include and not any(seed_glob_matches(path, g) for g in include)) or any(
+            seed_glob_matches(path, g) for g in exclude
+        ):
+            counts["dropped_glob"] += 1
+            continue
+        after_glob.append(chunk)
+    matching_files = {file_key(c) for c in after_glob if mentions(c)} if terms and per_file else set()
+    kept: list[dict[str, Any]] = []
+    for chunk in after_glob:
+        counts = row(chunk)
+        if terms:
+            if source_of(chunk) in exempt_ids:
+                counts["exempt"] += 1
+            elif not (file_key(chunk) in matching_files if per_file else mentions(chunk)):
+                counts["dropped_relevance"] += 1
+                continue
+        counts["kept"] += 1
+        kept.append(chunk)
+    return kept, stats
+
+
+def seed_filter_empty_message(pool: dict[str, Any], what: str) -> str:
+    """The error text when the seed filters leave nothing (counts per source, so the caller can see which filter bit)."""
+    stats = pool.get("sources") or {}
+    totals = {k: sum(v[k] for v in stats.values()) for k in ("total", "dropped_glob", "dropped_relevance")}
+    per_source = "; ".join(
+        f"source {sid}: {v['total']} chunks, {v['dropped_glob']} dropped by path, {v['dropped_relevance']} dropped by relevance"
+        for sid, v in sorted(stats.items())
+    )
+    return (
+        f"The seed filters left 0 of {totals['total']} {what} "
+        f"({totals['dropped_glob']} dropped by seed_path_include / seed_path_exclude, "
+        f"{totals['dropped_relevance']} by seed_relevance_terms). {per_source}. "
+        "Loosen the path globs or relevance terms, or list the sources to exempt in relevance_exempt_source_ids."
+    )
+
+
 def select_seed_chunks(
     chunks: list[dict[str, Any]],
     doc_source: dict[int, int | None],
@@ -128,6 +241,7 @@ def select_seed_chunks(
     cap: int | None = None,
     seed: Any = None,
     source_ids: list[int] | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Pick the seed passages a playbook draws from, and describe the pool.
 
@@ -137,6 +251,10 @@ def select_seed_chunks(
     across (data source, language) strata: each stratum is shuffled by a seeded RNG
     (``seed`` when an int, else a fixed constant) and the strata are drawn round-robin until
     ``cap`` passages are taken; the sample keeps passage order. Returns ``(selected, seed_pool)``.
+
+    ``filters`` (``seed_filters_from_params``) narrow the pool after ``source_ids`` and BEFORE the cap
+    and the stratified sample: path include/exclude globs, then relevance terms (see ``_apply_seed_filters``);
+    ``seed_pool["sources"]`` then reports total / kept / dropped_glob / dropped_relevance / exempt per source.
     """
     import random
 
@@ -148,6 +266,9 @@ def select_seed_chunks(
 
     wanted = {int(s) for s in source_ids} if source_ids else None
     eligible = [c for c in chunks if wanted is None or source_of(c) in wanted]
+    filter_stats: dict[str, dict[str, int]] | None = None
+    if filters:
+        eligible, filter_stats = _apply_seed_filters(eligible, source_of, filters)
     sampled = len(eligible) > cap
     if not sampled:
         selected = eligible
@@ -195,6 +316,12 @@ def select_seed_chunks(
     }
     if source_ids:
         pool["source_ids"] = sorted(wanted or ())
+    if filters and filter_stats is not None:
+        pool["filters"] = {
+            "include": filters["include"], "exclude": filters["exclude"], "terms": filters["terms"],
+            "scope": filters["scope"], "exempt_source_ids": filters["exempt_source_ids"],
+        }
+        pool["sources"] = filter_stats
     return selected, pool
 
 
@@ -414,8 +541,10 @@ async def _prepare_code_context(
     wanted_sources = _seed_source_ids(params)
     selected, pool = select_seed_chunks(
         chunks, await _document_source_map(db, project_id),
-        seed=_sample_seed(params, ctx), source_ids=wanted_sources,
+        seed=_sample_seed(params, ctx), source_ids=wanted_sources, filters=seed_filters_from_params(params),
     )
+    if pool.get("filters") and not selected:
+        raise ValueError(seed_filter_empty_message(pool, "code chunks"))
     if wanted_sources and not selected:
         raise ValueError(
             f"No code chunks in data source(s) {', '.join(str(i) for i in wanted_sources)} to write from. "
@@ -496,8 +625,10 @@ async def _prepare_document_passages(
     wanted_sources = _seed_source_ids(params)
     selected, pool = select_seed_chunks(
         passages, await _document_source_map(db, project_id),
-        seed=_sample_seed(params, ctx), source_ids=wanted_sources,
+        seed=_sample_seed(params, ctx), source_ids=wanted_sources, filters=seed_filters_from_params(params),
     )
+    if pool.get("filters") and not selected:
+        raise ValueError(seed_filter_empty_message(pool, "document passages"))
     if wanted_sources and not selected:
         raise ValueError(
             f"No usable document passages in data source(s) {', '.join(str(i) for i in wanted_sources)}. "

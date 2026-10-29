@@ -684,6 +684,17 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   `api/synthetic.py` copies a FIXED key list from the result into the Job result (add new keys there) and
   the dry run. UI: `SeedSourcesSelect` in `PlaybookPickerPanel` (merged into params by `withSeedSources`),
   `NotificationBell.seedPoolText` for the outcome. Tests: `test_seed_pool_sampling.py`.
+- **Seed filters** (generic; callers supply the terms): `params.seed_path_include` / `seed_path_exclude` (<=50 globs of
+  <=200 chars; `seed_glob_matches` = case-sensitive `fnmatch` on the chunk's `path` (fallback `source_doc`), `*` crosses `/`,
+  leading `**/` also matches top level), `seed_relevance_terms` (<=100 terms of <=100 chars; kept when a term is in path or text,
+  case-insensitive), `seed_relevance_scope` (`chunk` default | `file` = any chunk of the same document+path matches),
+  `relevance_exempt_source_ids` (skip the term filter; globs still apply). Validated in `api/synthetic._check_seed_filter_params`
+  (400 `invalid_playbook_param`, `metadata.param`; empty lists = unset). Applied inside `select_seed_chunks(filters=)` AFTER
+  `source_ids` and BEFORE the cap/stratified sample (`_apply_seed_filters`: glob, then relevance). Zero left ->
+  `seed_filter_empty_message` ValueError with per-source counts (400 / FAILED Job). `seed_pool` gains `filters` + `sources`
+  {src: total, kept, dropped_glob, dropped_relevance, exempt} only when a filter is set (dry run too: same prepare path).
+  UI: "Seed filters" fieldset in `SeedSourcesSelect` (`onFiltersChange` -> `withSeedSources`). Tests:
+  `SeedFilterUnitTests` + API cases in `test_seed_pool_sampling.py`, `SeedSourcesSelect.test.tsx`.
 - `POST .../synthetic/run-playbook` (+ `/dry-run`) takes `params`, handed to the playbook as
   `ctx["params"]`. `seeded_defect`: `label_id` (required; resolved through the project taxonomy, else
   400 `unknown_label` / `missing_label_id` in the structured envelope; the canonical id replaces the

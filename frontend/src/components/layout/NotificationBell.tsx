@@ -158,6 +158,15 @@ export function seedPoolText(raw: unknown): string | null {
     if (bySource) parts.push(`sources ${bySource}`);
     const byLang = counts(p.by_language, '');
     if (byLang) parts.push(byLang);
+    if (p.sources && typeof p.sources === 'object') {
+        let glob = 0;
+        let rel = 0;
+        for (const v of Object.values(p.sources as Record<string, Record<string, unknown>>)) {
+            glob += typeof v?.dropped_glob === 'number' ? v.dropped_glob : 0;
+            rel += typeof v?.dropped_relevance === 'number' ? v.dropped_relevance : 0;
+        }
+        parts.push(`filters dropped ${glob} by path, ${rel} by relevance`);
+    }
     return parts.join(' \u00b7 ');
 }
 

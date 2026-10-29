@@ -98,6 +98,82 @@ class SelectSeedChunksTests(unittest.TestCase):
         self.assertEqual((out, pool["chunks_eligible"]), ([], 0))
 
 
+class SeedFilterUnitTests(unittest.TestCase):
+    def setUp(self):
+        def mk(doc, path, text):
+            return {"text": text, "path": path, "language": "python", "start_line": 1, "end_line": 2,
+                    "source_document_id": doc, "chunk_id": path}
+
+        self.chunks = [
+            mk(1, "src/app/main.py", "widget builder"),
+            mk(1, "src/app/util.py", "helper only"),
+            mk(1, "docs/guide.md", "widget notes"),
+            mk(1, "tests/test_main.py", "widget test"),
+            mk(2, "setup.cfg", "nothing"),
+            mk(2, "lib/core.py", "Widget core"),
+        ]
+        self.docs = {1: 10, 2: 20}
+
+    def paths(self, **kw):
+        out, pool = sps.select_seed_chunks(self.chunks, self.docs, filters=sps.seed_filters_from_params(kw), **{})
+        return [c["path"] for c in out], pool
+
+    def test_glob_semantics(self):
+        self.assertTrue(sps.seed_glob_matches("src/a/b.py", "src/*.py"))
+        self.assertTrue(sps.seed_glob_matches("src/a/b.py", "src/**/b.py"))
+        self.assertTrue(sps.seed_glob_matches("b.py", "**/b.py"))
+        self.assertFalse(sps.seed_glob_matches("B.py", "b.py"))
+        self.assertFalse(sps.seed_glob_matches("src/b.py", "lib/*"))
+
+    def test_no_filters_means_no_pool_extras(self):
+        self.assertIsNone(sps.seed_filters_from_params({}))
+        self.assertIsNone(sps.seed_filters_from_params({"seed_path_include": [], "seed_relevance_terms": [" "]}))
+        _, pool = sps.select_seed_chunks(self.chunks, self.docs)
+        self.assertNotIn("sources", pool)
+        self.assertNotIn("filters", pool)
+
+    def test_include_then_exclude(self):
+        paths, pool = self.paths(seed_path_include=["src/**", "lib/*"], seed_path_exclude=["**/util.py"])
+        self.assertEqual(paths, ["src/app/main.py", "lib/core.py"])
+        self.assertEqual(pool["sources"]["10"], {"total": 4, "kept": 1, "dropped_glob": 3, "dropped_relevance": 0, "exempt": 0})
+        self.assertEqual(pool["sources"]["20"]["dropped_glob"], 1)
+
+    def test_relevance_chunk_scope_matches_path_or_text_case_insensitively(self):
+        paths, pool = self.paths(seed_relevance_terms=["WIDGET", "setup"])
+        self.assertEqual(paths, ["src/app/main.py", "docs/guide.md", "tests/test_main.py", "setup.cfg", "lib/core.py"])
+        self.assertEqual(pool["sources"]["10"]["dropped_relevance"], 1)
+
+    def test_relevance_file_scope_keeps_every_chunk_of_a_matching_file(self):
+        self.chunks.append({"text": "no mention", "path": "src/app/main.py", "language": "python", "start_line": 9,
+                            "end_line": 10, "source_document_id": 1, "chunk_id": "main-2"})
+        chunk_only, _ = self.paths(seed_relevance_terms=["widget"])
+        self.assertNotIn("main-2", [c["chunk_id"] for c in sps.select_seed_chunks(
+            self.chunks, self.docs, filters=sps.seed_filters_from_params({"seed_relevance_terms": ["widget"]}))[0]])
+        self.assertEqual(len(chunk_only), 4)
+        out, pool = sps.select_seed_chunks(self.chunks, self.docs, filters=sps.seed_filters_from_params(
+            {"seed_relevance_terms": ["widget"], "seed_relevance_scope": "file"}))
+        self.assertIn("main-2", [c["chunk_id"] for c in out])
+        self.assertEqual(pool["filters"]["scope"], "file")
+
+    def test_exempt_source_skips_relevance_but_not_globs(self):
+        paths, pool = self.paths(seed_relevance_terms=["widget"], relevance_exempt_source_ids=[20])
+        self.assertIn("setup.cfg", paths)
+        self.assertEqual(pool["sources"]["20"]["exempt"], 2)
+        paths, _ = self.paths(seed_relevance_terms=["widget"], relevance_exempt_source_ids=[20],
+                              seed_path_exclude=["*.cfg"])
+        self.assertNotIn("setup.cfg", paths)
+
+    def test_filters_apply_before_the_cap(self):
+        many = [{"text": "keepme" if i % 10 == 0 else "x", "path": f"p/{i}.py", "language": "python",
+                 "start_line": 1, "end_line": 2, "source_document_id": 1, "chunk_id": i} for i in range(100)]
+        out, pool = sps.select_seed_chunks(many, {1: 10}, cap=10, filters=sps.seed_filters_from_params(
+            {"seed_relevance_terms": ["keepme"]}))
+        self.assertEqual(len(out), 10)
+        self.assertTrue(all(c["text"] == "keepme" for c in out))
+        self.assertEqual((pool["chunks_eligible"], pool["sampled"]), (10, False))
+        self.assertEqual(pool["sources"]["10"]["kept"], 10)
+
+
 class SeedPoolApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -246,6 +322,66 @@ class SeedPoolApiTests(unittest.TestCase):
         pool = job["result"]["seed_pool"]
         self.assertEqual(pool["source_ids"], sorted(self.sources[:2]))
         self.assertEqual(pool["chunks_used"], 12)
+
+    def test_seed_filters_through_the_api_and_the_pool_report(self):
+        a, b = self.sources[0], self.sources[1]
+        resp = self._run({"seed_path_include": ["d*/m[0-2].x"], "seed_path_exclude": ["d%d/*" % self.docs[1]]})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        pool = resp.json()["seed_pool"]
+        self.assertEqual(pool["chunks_used"], 3)
+        self.assertEqual(pool["sources"][str(a)], {"total": 6, "kept": 3, "dropped_glob": 3, "dropped_relevance": 0, "exempt": 0})
+        self.assertEqual(pool["sources"][str(b)]["kept"], 0)
+        self.assertEqual(pool["filters"]["include"], ["d*/m[0-2].x"])
+        dry = client.post(self.base + "/dry-run", json={"mode": "code_examples", "params": {"seed_relevance_terms": ["f_%d_1" % self.docs[0]]}})
+        self.assertEqual(dry.status_code, 200, dry.text)
+        self.assertEqual(dry.json()["seed_pool"]["chunks_used"], 1)
+        self.assertEqual(dry.json()["seed_pool"]["sources"][str(a)]["dropped_relevance"], 5)
+
+    def test_seed_filters_in_the_job_result(self):
+        resp = client.post(self.base + "?async_job=true", json={
+            "mode": "code_examples", "target_count": 2, "params": {"seed_path_exclude": ["**/m0.x"]}})
+        self.assertEqual(resp.status_code, 202, resp.text)
+        job_id = resp.json()["id"]
+        wait_for_jobs_idle(client)
+        job = client.get(f"/api/jobs/{job_id}").json()
+        self.assertEqual(job["status"], "succeeded", job)
+        self.assertEqual(job["result"]["seed_pool"]["chunks_used"], 10)
+        self.assertEqual(job["result"]["seed_pool"]["sources"][str(self.sources[0])]["dropped_glob"], 1)
+
+    def test_filter_leaving_nothing_is_an_error_with_counts(self):
+        resp = self._run({"seed_relevance_terms": ["no-such-term-anywhere"]})
+        self.assertEqual(resp.status_code, 400, resp.text)
+        detail = resp.json()["detail"]
+        self.assertIn("left 0 of 12", detail)
+        self.assertIn("by seed_relevance_terms", detail)
+        self.assertIn(f"source {self.sources[0]}: 6 chunks", detail)
+        resp = client.post(self.base + "?async_job=true", json={
+            "mode": "code_examples", "target_count": 2, "params": {"seed_path_include": ["nothing/**"]}})
+        job_id = resp.json()["id"]
+        wait_for_jobs_idle(client)
+        job = client.get(f"/api/jobs/{job_id}").json()
+        self.assertEqual(job["status"], "failed", job)
+        self.assertIn("left 0 of 12", job["error"])
+
+    def test_seed_filter_param_validation(self):
+        cases = {
+            "seed_path_include": ["x", [1], [""], ["a" * 201], ["a\x00b"], ["x"] * 51, "src/**"],
+            "seed_path_exclude": ["x", [None], ["  "]],
+            "seed_relevance_terms": ["x", [1], ["t" * 101], ["t"] * 101],
+            "seed_relevance_scope": ["files", 3],
+            "relevance_exempt_source_ids": ["x", [987654], [True]],
+        }
+        for param, bads in cases.items():
+            for bad in bads:
+                resp = self._run({param: bad})
+                self.assertEqual(resp.status_code, 400, (param, bad, resp.text))
+                body = resp.json()
+                self.assertEqual(body["error_code"], "invalid_playbook_param", body)
+                self.assertEqual(body["metadata"]["param"], param)
+        ok = self._run({"seed_path_include": [], "seed_relevance_terms": [], "relevance_exempt_source_ids": [],
+                        "seed_relevance_scope": "file"})
+        self.assertEqual(ok.status_code, 200, ok.text)
+        self.assertNotIn("sources", ok.json()["seed_pool"])
 
 
 if __name__ == "__main__":

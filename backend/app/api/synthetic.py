@@ -768,7 +768,7 @@ class RunPlaybookRequest(BaseModel):
             "label_id (required, a project-taxonomy id), attrs, context_dataset_id + context_column, "
             "context_sample_size. code-remediation remediation_from_findings: findings_dataset_id "
             "(findings rows, fix pairs or remediation rows; not an answer key), top_k (1-10), "
-            "retrieve_passages; code_examples: per_chunk (1-5). Code and document playbooks: source_ids (1-100 data-source ids of this project; seeds only from those sources). generic-sft documents_multi_turn: turns_min / "
+            "retrieve_passages; code_examples: per_chunk (1-5). Code and document playbooks: source_ids (1-100 data-source ids of this project; seeds only from those sources), seed_path_include / seed_path_exclude (glob lists on the chunk path), seed_relevance_terms (+ seed_relevance_scope chunk|file, relevance_exempt_source_ids). generic-sft documents_multi_turn: turns_min / "
             "turns_max (2-8), dialogues_per_passage_group (1-5), passages_per_dialogue (1-3)."
         ),
     )
@@ -855,7 +855,7 @@ async def _check_scenario_grid_params(db: AsyncSession, project_id: int, params:
         })
 
 
-async def _check_source_ids(db: AsyncSession, project_id: int, raw: Any) -> list[int]:
+async def _check_source_ids(db: AsyncSession, project_id: int, raw: Any, param: str = "source_ids") -> list[int]:
     """``params.source_ids``: 1-100 data-source ids, all of THIS project (400 ``invalid_playbook_param``)."""
     from sqlalchemy import select
 
@@ -864,17 +864,17 @@ async def _check_source_ids(db: AsyncSession, project_id: int, raw: Any) -> list
     def bad(message: str) -> HTTPException:
         return HTTPException(400, {
             "error_code": "invalid_playbook_param", "message": message,
-            "metadata": {"param": "source_ids", "value": raw},
+            "metadata": {"param": param, "value": raw},
         })
 
     if not isinstance(raw, list) or not raw:
-        raise bad("params.source_ids must be a non-empty list of data-source ids.")
+        raise bad(f"params.{param} must be a non-empty list of data-source ids.")
     if len(raw) > 100:
-        raise bad("params.source_ids takes at most 100 data-source ids.")
+        raise bad(f"params.{param} takes at most 100 data-source ids.")
     ids: list[int] = []
     for item in raw:
         if isinstance(item, bool) or not isinstance(item, (int, str)) or not str(item).strip().lstrip("-").isdigit():
-            raise bad("params.source_ids must be a list of whole-number data-source ids.")
+            raise bad(f"params.{param} must be a list of whole-number data-source ids.")
         ids.append(int(item))
     ids = list(dict.fromkeys(ids))
     found = set((await db.execute(
@@ -882,8 +882,59 @@ async def _check_source_ids(db: AsyncSession, project_id: int, raw: Any) -> list
     )).scalars().all())
     missing = [i for i in ids if i not in found]
     if missing:
-        raise bad(f"params.source_ids has ids that are not data sources of this project: {missing}.")
+        raise bad(f"params.{param} has ids that are not data sources of this project: {missing}.")
     return ids
+
+
+async def _check_seed_filter_params(db: AsyncSession, project_id: int, out: dict) -> None:
+    """``params.seed_path_include`` / ``seed_path_exclude`` (globs on the chunk's path), ``seed_relevance_terms``,
+    ``seed_relevance_scope`` (``chunk`` | ``file``) and ``relevance_exempt_source_ids``. Lists of strings with capped
+    sizes; a glob that does not compile is rejected: 400 ``invalid_playbook_param`` (``metadata.param`` names it)."""
+    import fnmatch
+    import re
+
+    from app.services import synth_playbook_service as sps
+
+    def bad(param: str, message: str) -> HTTPException:
+        return HTTPException(400, {
+            "error_code": "invalid_playbook_param", "message": message,
+            "metadata": {"param": param, "value": out.get(param)},
+        })
+
+    for param in ("seed_path_include", "seed_path_exclude"):
+        if param not in out:
+            continue
+        raw = out[param]
+        if not isinstance(raw, list) or not all(isinstance(g, str) for g in raw):
+            raise bad(param, f"params.{param} must be a list of glob strings.")
+        globs = [g.strip() for g in raw]
+        if len(globs) > sps.MAX_SEED_GLOBS:
+            raise bad(param, f"params.{param} takes at most {sps.MAX_SEED_GLOBS} globs.")
+        for g in globs:
+            if not g or len(g) > sps.MAX_SEED_GLOB_LEN or "\x00" in g:
+                raise bad(param, f"params.{param}: each glob must be 1-{sps.MAX_SEED_GLOB_LEN} characters with no NUL ({g[:40]!r}).")
+            try:
+                re.compile(fnmatch.translate(g))
+            except (re.error, RecursionError):
+                raise bad(param, f"params.{param}: {g!r} is not a valid glob.") from None
+        out[param] = list(dict.fromkeys(globs))
+    if "seed_relevance_terms" in out:
+        raw = out["seed_relevance_terms"]
+        if not isinstance(raw, list) or not all(isinstance(t, str) for t in raw):
+            raise bad("seed_relevance_terms", "params.seed_relevance_terms must be a list of strings.")
+        terms = [t.strip() for t in raw if t.strip()]
+        if len(terms) > sps.MAX_SEED_TERMS:
+            raise bad("seed_relevance_terms", f"params.seed_relevance_terms takes at most {sps.MAX_SEED_TERMS} terms.")
+        if any(len(t) > sps.MAX_SEED_TERM_LEN for t in terms):
+            raise bad("seed_relevance_terms", f"params.seed_relevance_terms: each term is at most {sps.MAX_SEED_TERM_LEN} characters.")
+        out["seed_relevance_terms"] = list(dict.fromkeys(terms))
+    if "seed_relevance_scope" in out and out["seed_relevance_scope"] not in sps.SEED_RELEVANCE_SCOPES:
+        raise bad("seed_relevance_scope", "params.seed_relevance_scope must be 'chunk' or 'file'.")
+    if "relevance_exempt_source_ids" in out and out["relevance_exempt_source_ids"] == []:
+        pass
+    elif "relevance_exempt_source_ids" in out:
+        out["relevance_exempt_source_ids"] = await _check_source_ids(
+            db, project_id, out["relevance_exempt_source_ids"], "relevance_exempt_source_ids")
 
 
 async def _checked_playbook_params(db: AsyncSession, project_id: int, mode: Any, params: dict | None) -> dict:
@@ -899,6 +950,7 @@ async def _checked_playbook_params(db: AsyncSession, project_id: int, mode: Any,
     out = dict(params or {})
     if "source_ids" in out:
         out["source_ids"] = await _check_source_ids(db, project_id, out["source_ids"])
+    await _check_seed_filter_params(db, project_id, out)
     raw_dataset = out.get("context_dataset_id")
     if raw_dataset is not None:
         from app.models.dataset import Dataset, DatasetType
