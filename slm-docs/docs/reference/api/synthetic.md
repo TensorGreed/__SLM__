@@ -366,7 +366,10 @@ Content type: `application/json` — `RelabelAnswerKeyRequest \| null`
 
 List pending synthetic rows for the project, grouped by
 `synth_source` (USER-SUCCESS Epic 2b) — or by class label with
-`?group_by=class` (Epic E).
+`?group_by=class` (Epic E), by originating failure cluster
+(`cluster`), by the Job that wrote the rows (`job`) or by the backend
+that wrote them (`backend`). `?synth_job_id=` / `?synth_backend=`
+narrow every list to one Job / backend.
 
 Pending rows are gated out of dataset prep — they don't enter
 training until the user accepts them via `/review-queue/bulk-update`
@@ -378,6 +381,8 @@ training until the user accepts them via `/review-queue/bulk-update`
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
 | `group_by` | `query` | `string` | no |  |
+| `synth_job_id` | `query` | `integer` | no |  |
+| `synth_backend` | `query` | `string` | no |  |
 
 **Responses**
 

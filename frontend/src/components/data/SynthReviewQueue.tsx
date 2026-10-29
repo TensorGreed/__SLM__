@@ -18,6 +18,7 @@ import { budgetExceededMessage, budgetWarningMessage } from '../../api/llmSpend'
 
 import type {
     ReviewQueueGroup,
+    ReviewQueueGroupBy,
     ReviewQueueResponse,
 } from '../../api/synthPlaybook';
 import {
@@ -61,13 +62,19 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
 
     // Epic E — group the queue by synth source (default), class label, or the
     // originating failure cluster.
-    const [groupBy, setGroupBy] = useState<'source' | 'class' | 'cluster'>('source');
+    const [groupBy, setGroupBy] = useState<ReviewQueueGroupBy>('source');
+    // Provenance filters: one Job / one backend (picked from the queue's facets).
+    const [filterJob, setFilterJob] = useState<number | null>(null);
+    const [filterBackend, setFilterBackend] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
-            const payload = await listSynthReviewQueue(projectId, groupBy);
+            const payload = await listSynthReviewQueue(projectId, groupBy, {
+                synthJobId: filterJob,
+                synthBackend: filterBackend,
+            });
             setData(payload);
             setSelected(new Set());
         } catch (err: any) {
@@ -75,7 +82,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
         } finally {
             setLoading(false);
         }
-    }, [projectId, groupBy]);
+    }, [projectId, groupBy, filterJob, filterBackend]);
 
     useEffect(() => {
         load();
@@ -294,32 +301,27 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                         aria-label="Group review queue by"
                     >
                         <span>Group by</span>
-                        <button
-                            type="button"
-                            className={`synth-review-queue__groupby-btn${groupBy === 'source' ? ' is-active' : ''}`}
-                            aria-pressed={groupBy === 'source' ? 'true' : 'false'}
-                            onClick={() => setGroupBy('source')}
-                        >
-                            Source
-                        </button>
-                        <button
-                            type="button"
-                            className={`synth-review-queue__groupby-btn${groupBy === 'class' ? ' is-active' : ''}`}
-                            aria-pressed={groupBy === 'class' ? 'true' : 'false'}
-                            onClick={() => setGroupBy('class')}
-                        >
-                            Class
-                        </button>
-                        <button
-                            type="button"
-                            className={`synth-review-queue__groupby-btn${groupBy === 'cluster' ? ' is-active' : ''}`}
-                            aria-pressed={groupBy === 'cluster' ? 'true' : 'false'}
-                            onClick={() => setGroupBy('cluster')}
-                        >
-                            Cluster
-                        </button>
+                        {GROUP_BY_OPTIONS.map((opt) => (
+                            <button
+                                key={opt.value}
+                                type="button"
+                                className={`synth-review-queue__groupby-btn${groupBy === opt.value ? ' is-active' : ''}`}
+                                aria-pressed={groupBy === opt.value ? 'true' : 'false'}
+                                onClick={() => setGroupBy(opt.value)}
+                                data-testid={`synth-review-queue-groupby-${opt.value}`}
+                            >
+                                {opt.label}
+                            </button>
+                        ))}
                     </div>
                 </div>
+                <ProvenanceFilters
+                    data={data}
+                    job={filterJob}
+                    backend={filterBackend}
+                    onJob={setFilterJob}
+                    onBackend={setFilterBackend}
+                />
                 <p className="synth-review-queue__subtitle">
                     {data.total_pending} row{data.total_pending === 1 ? '' : 's'} awaiting review,
                     grouped by {groupBy},{' '}
@@ -421,6 +423,11 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                                     aria-label={`Select all rows from ${group.synth_source}`}
                                 />
                                 <code>{group.synth_source}</code>
+                                {group.label && (
+                                    <span className="synth-review-queue__group-label" data-testid="synth-review-queue-group-label">
+                                        {group.label}
+                                    </span>
+                                )}
                                 <span className="synth-review-queue__group-count">{group.count}</span>
                             </label>
                         </div>
@@ -446,6 +453,13 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                                         </span>
                                         <code>{row.preview}</code>
                                     </label>
+                                    {(row.synth_job_id != null || row.synth_backend) && (
+                                        <span className="synth-review-queue__provenance" data-testid={`synth-review-queue-provenance-${row.id}`}>
+                                            {row.synth_job_id != null ? `job #${row.synth_job_id}` : 'no job'}
+                                            {row.synth_backend ? ` · ${row.synth_backend}` : ''}
+                                            {row.synth_batch ? ' · batch' : ''}
+                                        </span>
+                                    )}
                                 </li>
                             ))}
                         </ul>
@@ -487,6 +501,64 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                 />
             )}
         </section>
+    );
+}
+
+
+const GROUP_BY_OPTIONS: { value: ReviewQueueGroupBy; label: string }[] = [
+    { value: 'source', label: 'Source' },
+    { value: 'class', label: 'Class' },
+    { value: 'cluster', label: 'Cluster' },
+    { value: 'job', label: 'Job' },
+    { value: 'backend', label: 'Backend' },
+];
+
+interface ProvenanceFiltersProps {
+    data: ReviewQueueResponse;
+    job: number | null;
+    backend: string | null;
+    onJob: (job: number | null) => void;
+    onBackend: (backend: string | null) => void;
+}
+
+/** Narrow the queue to the rows one Job / one backend wrote, so lanes can be compared. */
+function ProvenanceFilters({ data, job, backend, onJob, onBackend }: ProvenanceFiltersProps) {
+    const jobs = data.facets?.jobs ?? [];
+    const backends = data.facets?.backends ?? [];
+    if (jobs.length < 2 && backends.length < 2 && job == null && !backend) return null;
+    return (
+        <div className="synth-review-queue__filters" data-testid="synth-review-queue-filters">
+            <label>
+                Job{' '}
+                <select
+                    value={job ?? ''}
+                    onChange={(e) => onJob(e.target.value ? Number(e.target.value) : null)}
+                    data-testid="synth-review-queue-filter-job"
+                >
+                    <option value="">All jobs</option>
+                    {jobs.map((j) => (
+                        <option key={j.synth_job_id} value={j.synth_job_id}>
+                            job #{j.synth_job_id} ({j.count})
+                        </option>
+                    ))}
+                </select>
+            </label>
+            <label>
+                Backend{' '}
+                <select
+                    value={backend ?? ''}
+                    onChange={(e) => onBackend(e.target.value || null)}
+                    data-testid="synth-review-queue-filter-backend"
+                >
+                    <option value="">All backends</option>
+                    {backends.map((b) => (
+                        <option key={b.synth_backend} value={b.synth_backend}>
+                            {b.synth_backend} ({b.count})
+                        </option>
+                    ))}
+                </select>
+            </label>
+        </div>
     );
 }
 

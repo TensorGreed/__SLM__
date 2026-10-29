@@ -408,6 +408,9 @@ async def _autosave_legacy_synth_rows(
                 except json.JSONDecodeError:
                     continue
 
+    from app.services import jobs_service
+
+    job_handle = jobs_service.current_job_handle.get()
     saved = 0
     with file_path.open("a", encoding="utf-8") as f:
         for row in rows:
@@ -423,7 +426,12 @@ async def _autosave_legacy_synth_rows(
                 "review_status": "pending",
                 # Legacy field kept so old readers don't choke.
                 "status": "accepted",
+                # Provenance: the shadow Job that saved the rows + the model that wrote them.
+                "synth_job_id": job_handle.job_id if job_handle is not None else None,
             }
+            legacy_model = row.get("model") if isinstance(row, dict) else None
+            if isinstance(legacy_model, str) and legacy_model.strip():
+                entry["synth_backend"] = f"legacy:{legacy_model.strip()}"
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             next_id += 1
             saved += 1
@@ -1611,11 +1619,16 @@ class PurgeRejectedRequest(BaseModel):
 async def list_synth_review_queue(
     project_id: int,
     group_by: str = "source",
+    synth_job_id: int | None = None,
+    synth_backend: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """List pending synthetic rows for the project, grouped by
     `synth_source` (USER-SUCCESS Epic 2b) — or by class label with
-    `?group_by=class` (Epic E).
+    `?group_by=class` (Epic E), by originating failure cluster
+    (`cluster`), by the Job that wrote the rows (`job`) or by the backend
+    that wrote them (`backend`). `?synth_job_id=` / `?synth_backend=`
+    narrow every list to one Job / backend.
 
     Pending rows are gated out of dataset prep — they don't enter
     training until the user accepts them via `/review-queue/bulk-update`
@@ -1623,7 +1636,9 @@ async def list_synth_review_queue(
     """
     from app.services.synth_review_queue_service import list_review_queue
 
-    return await list_review_queue(db, project_id, group_by=group_by)
+    return await list_review_queue(
+        db, project_id, group_by=group_by, synth_job_id=synth_job_id, synth_backend=synth_backend,
+    )
 
 
 @router.post("/review-queue/bulk-update")

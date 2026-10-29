@@ -1,5 +1,10 @@
 # Changelog
 
+### Synthetic row provenance (October 29, 2026)
+
+- Every row a playbook writes now records which Job and backend produced it: `synth_job_id` (null when run synchronously), `synth_backend` (the backend pin, e.g. `cloud:anthropic:<model>` or `command:<model>`) and `synth_batch: true` for a Message Batch run. Legacy synthetic tasks stamp the Job and model too.
+- The review queue returns these on each row, can group by **Job** or **Backend** (group labels read "job:12 · backend · mode · batch/direct" so you can match them to the bell) and filter to one Job or one backend (`?group_by=job|backend`, `?synth_job_id=`, `?synth_backend=`). Rows written before this change show as "(no job)" / "(unknown backend)".
+
 ### Code examples: declared answer language (October 28, 2026)
 
 - The `code_examples` playbook asks the teacher to state the language of each answer and parse-checks the code under it, so a Python answer to a JSON / YAML / config chunk is no longer rejected as `code_does_not_parse` (the check used the chunk's language). A declaration for a language with no runnable check, or an unknown one, falls back to the chunk's language, so it cannot skip a check; a code chunk can never be re-labelled YAML (that switch needs a data / config chunk and a YAML mapping or list reply). Rows keep the final `language` and, when different, `seed_language`.

@@ -81,10 +81,15 @@ def _atomic_write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
     shutil.move(str(tmp), str(path))
 
 
+# Where a row came from: the Job that wrote it, the backend pin, and whether it went through a
+# Message Batch (stamped by the playbook append; absent on rows written before that).
+PROVENANCE_KEYS = ("synth_job_id", "synth_backend", "synth_batch")
+
+
 def _row_preview(row: dict[str, Any], *, limit: int = 280) -> str:
     """Single-line preview string used by the queue list. Drops the
     provenance fields and serializes only the payload-shaped keys."""
-    skip = {"id", "synth_source", "synth_confidence", "review_status", "status", "generated_at", "source", "model"}
+    skip = {"id", "synth_source", "synth_confidence", "review_status", "status", "generated_at", "source", "model", *PROVENANCE_KEYS}
     payload = {k: v for k, v in row.items() if k not in skip}
     if not payload:
         payload = row
@@ -153,12 +158,67 @@ def _resolve_cluster_label(row: dict[str, Any]) -> str:
     return "(no cluster)"
 
 
+def _row_job_id(row: dict[str, Any]) -> int | None:
+    jid = row.get("synth_job_id")
+    return jid if isinstance(jid, int) and not isinstance(jid, bool) else None
+
+
+def _resolve_job_label(row: dict[str, Any]) -> str:
+    """Group key when grouping by Job — ``job:<id>`` (rows not written by a Job share one bucket)."""
+    jid = _row_job_id(row)
+    return f"job:{jid}" if jid is not None else "(no job)"
+
+
+def _resolve_backend_label(row: dict[str, Any]) -> str:
+    """Group key when grouping by backend — the pin that wrote the row."""
+    backend = row.get("synth_backend")
+    if isinstance(backend, str) and backend.strip():
+        return backend.strip()
+    return "(unknown backend)"
+
+
+def _mode_of(row: dict[str, Any]) -> str:
+    """The generation mode of a row, from its ``synth_source`` (``playbook:<recipe>:<mode>[:...]``)."""
+    source = _resolve_source_label(row)
+    parts = source.split(":")
+    if parts[0] == "playbook" and len(parts) >= 3:
+        return parts[2]
+    return parts[1] if parts[0] == "legacy" and len(parts) >= 2 else source
+
+
+def _most_common(values: list[str]) -> str | None:
+    counts: dict[str, int] = {}
+    for v in values:
+        counts[v] = counts.get(v, 0) + 1
+    return max(sorted(counts), key=lambda k: counts[k]) if counts else None
+
+
+def _group_label(grouping: str | None, entries: list[dict[str, Any]]) -> str | None:
+    """A human label for a job / backend group so the reviewer can correlate: Job id + backend +
+    mode + direct / batch (a group of mixed backends or modes lists the most common and says so)."""
+    if grouping not in ("job", "backend"):
+        return None
+    backend_keys = [_resolve_backend_label(r) for r in entries]
+    mode_keys = [_mode_of(r) for r in entries]
+    backends = sorted(set(backend_keys))
+    modes = sorted(set(mode_keys))
+    batch = {bool(r.get("synth_batch")) for r in entries}
+    jobs = sorted({_resolve_job_label(r) for r in entries})
+    backend_text = backends[0] if len(backends) == 1 else f"{_most_common(backend_keys)} +{len(backends) - 1} more"
+    mode_text = modes[0] if len(modes) == 1 else f"{_most_common(mode_keys)} +{len(modes) - 1} more"
+    delivery = "batch" if batch == {True} else "direct" if batch == {False} else "batch + direct"
+    if grouping == "job":
+        return f"{jobs[0] if len(jobs) == 1 else str(len(jobs)) + ' jobs'} · {backend_text} · {mode_text} · {delivery}"
+    return f"{backend_text} · {mode_text} · {delivery} · {len(jobs)} job{'s' if len(jobs) != 1 else ''}"
+
+
 def _bucket_rows_by_source(
     rows: list[dict[str, Any]],
     *,
     rows_per_group_cap: int | None = None,
     key_fn: Any = None,
     conventions_current: str | None = None,
+    grouping: str | None = None,
 ) -> list[dict[str, Any]]:
     """Group rows by a key (``synth_source`` by default, or the class label
     when ``key_fn`` is ``_resolve_class_label``), sort, project to the UI shape.
@@ -196,6 +256,8 @@ def _bucket_rows_by_source(
             truncated = False
         grouped.append({
             "synth_source": source,
+            # job / backend groupings: "job:12 · cloud:anthropic:<model> · <mode> · batch".
+            "label": _group_label(grouping, groups[source]),
             "count": total_in_group,
             "truncated": truncated,
             # Span rows labelled under older labelling conventions than the
@@ -205,10 +267,13 @@ def _bucket_rows_by_source(
                 {
                     "id": row.get("id"),
                     "synth_confidence": row.get("synth_confidence"),
+                    "synth_job_id": _row_job_id(row),
+                    "synth_backend": row.get("synth_backend") if isinstance(row.get("synth_backend"), str) else None,
+                    "synth_batch": bool(row.get("synth_batch")),
                     "preview": _row_preview(row),
                     "payload": {
                         k: v for k, v in row.items()
-                        if k not in {"id", "synth_source", "synth_confidence", "review_status", "status"}
+                        if k not in {"id", "synth_source", "synth_confidence", "review_status", "status", *PROVENANCE_KEYS}
                     },
                 }
                 for row in visible_entries
@@ -217,11 +282,29 @@ def _bucket_rows_by_source(
     return grouped
 
 
+def _provenance_facets(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Which Jobs / backends wrote ``rows`` (with counts), for the queue's filter pickers."""
+    jobs: dict[int, int] = {}
+    backends: dict[str, int] = {}
+    for row in rows:
+        jid = _row_job_id(row)
+        if jid is not None:
+            jobs[jid] = jobs.get(jid, 0) + 1
+        backend = _resolve_backend_label(row)
+        backends[backend] = backends.get(backend, 0) + 1
+    return {
+        "jobs": [{"synth_job_id": j, "count": jobs[j]} for j in sorted(jobs)],
+        "backends": [{"synth_backend": b, "count": backends[b]} for b in sorted(backends)],
+    }
+
+
 async def list_review_queue(
     db: AsyncSession,
     project_id: int,
     *,
     group_by: str = "source",
+    synth_job_id: int | None = None,
+    synth_backend: str | None = None,
 ) -> dict[str, Any]:
     """Return synth rows for a project, split into pending + accepted
     groups (keyed by ``synth_source``, or by class label when
@@ -243,6 +326,14 @@ async def list_review_queue(
     dataset = ds_result.scalar_one_or_none()
     path = _synthetic_jsonl_path(project_id)
     all_rows = _ensure_row_ids(path, _read_all_rows(path))
+    # Facets describe every pending row; the filters narrow the three lists below
+    # (the totals stay project-wide so the strip still adds up).
+    facets = _provenance_facets([r for r in all_rows if r.get("review_status") == "pending"])
+    total_rows_all = len(all_rows)
+    if synth_job_id is not None:
+        all_rows = [r for r in all_rows if _row_job_id(r) == synth_job_id]
+    if synth_backend:
+        all_rows = [r for r in all_rows if _resolve_backend_label(r) == synth_backend]
     pending = [r for r in all_rows if r.get("review_status") == "pending"]
     # "Accepted" = explicitly accepted, OR no review_status field
     # (legacy rows from the pre-Epic-2a flow). Both will enter
@@ -264,6 +355,8 @@ async def list_review_queue(
         "class": _resolve_class_label,
         "cluster": _resolve_cluster_label,
         "source": _resolve_source_label,
+        "job": _resolve_job_label,
+        "backend": _resolve_backend_label,
     }
     normalized_group_by = group_by if group_by in _GROUP_RESOLVERS else "source"
     key_fn = _GROUP_RESOLVERS[normalized_group_by]
@@ -284,19 +377,21 @@ async def list_review_queue(
         "project_id": project_id,
         "dataset_id": dataset.id if dataset else None,
         "group_by": normalized_group_by,
-        "total_rows": len(all_rows),
+        "total_rows": total_rows_all,
+        "filter": {"synth_job_id": synth_job_id, "synth_backend": synth_backend},
+        "facets": facets,
         "total_pending": len(pending),
         "total_accepted": len(accepted),
         "total_rejected": len(rejected),
         "conventions_version": current,
         "labeller_pins": labeller_pins,
-        "groups": _bucket_rows_by_source(pending, key_fn=key_fn, conventions_current=current),
+        "groups": _bucket_rows_by_source(pending, key_fn=key_fn, conventions_current=current, grouping=normalized_group_by),
         "accepted_groups": _bucket_rows_by_source(
             accepted, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP, key_fn=key_fn,
-            conventions_current=current,
+            conventions_current=current, grouping=normalized_group_by,
         ),
         "rejected_groups": _bucket_rows_by_source(
-            rejected, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP, key_fn=key_fn,
+            rejected, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP, key_fn=key_fn, grouping=normalized_group_by,
         ),
     }
 

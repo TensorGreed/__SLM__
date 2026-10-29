@@ -20,6 +20,17 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   key reached project 31's split on 2026-10-14); the review queue reads all
   (`include_pending_synth=True`) and gives rows missing an integer id the next
   free one (`_ensure_row_ids`).
+  **Row provenance**: the playbook append point (`_append_to_synthetic_jsonl`) stamps every row with
+  `synth_job_id` (the running Job from `jobs_service.current_job_handle`; `null` for a synchronous run),
+  `synth_backend` (the backend's `describe()` pin string: `cloud:anthropic:<model>`, `command:<model>`, …) and
+  `synth_batch: true` for a Message Batch run (absent otherwise). The legacy autosave (`_autosave_legacy_synth_rows`)
+  stamps `synth_job_id` + `synth_backend: legacy:<model>` when the rows carry a model. Rows written before this have none
+  of them (`(no job)` / `(unknown backend)` buckets; a one-off backfill is a script, not code). The queue returns them per
+  row (`synth_job_id`, `synth_backend`, `synth_batch`; kept out of `payload` / `preview`), accepts `?group_by=job|backend`
+  (groups carry a `label`: "job:12 · <backend> · <mode> · batch|direct") and `?synth_job_id=` / `?synth_backend=` filters
+  (they narrow the three lists, not the project-wide totals; `facets` lists the Jobs / backends of all pending rows for the
+  pickers). `SynthReviewQueue` has Job / Backend group-by buttons, two filter selects and a per-row stamp. Tests
+  `tests/test_synth_row_provenance.py`, `SynthReviewQueue.provenance.test.tsx`.
 - **Versioned prepared splits** (Epic E) — `split_dataset` writes the active
   `prepared/{train,val,test}.jsonl` + `manifest.json` (the single source the
   trainer/export/coverage read) AND snapshots each run to

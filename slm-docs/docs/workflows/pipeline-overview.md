@@ -98,6 +98,10 @@ Data Studio (`/data-studio`) and the Annotation list (`/annotate`) were retired 
 | **Generate** (`synthetic`) | Synthetic Data Generation form (modes, backend, count, Refine weak types, relabel / answer-key tools) | `playbooks` Playbooks, `review-queue` Review queue (synthetic), `spend` Spend and budget, `playbook-center` Playbook center, `recommendations` Recommendations, `quality` Synthetic quality |
 | **Split** (`dataprep`) | Train / Val / Test split form (ratios, keep the test examples, stratify, dedup) | `health` Data health and leakage, `preview` Preview, schema and semantics, `adapters` Adapter preview, `mapping` Schema mapping, `prepare` Prepare checklist, `versions` Dataset versions |
 
+#### Reviewing synthetic rows from different runs
+
+Every synthetic row a playbook writes records the **Job** and **backend** that produced it (and whether it came through a Message Batch). In the Generate step's *Review queue*, **Group by → Job** or **Backend** puts each run's rows in its own group, labelled "job:12 · cloud:anthropic:&lt;model&gt; · &lt;mode&gt; · batch" so you can match it to the notification bell; the **Job** and **Backend** filters narrow the queue to one run. Rows written before this was recorded appear under "(no job)" / "(unknown backend)".
+
 ## When to use which surface
 
 Stage execution can happen on any of three surfaces. They write to the same underlying tables.

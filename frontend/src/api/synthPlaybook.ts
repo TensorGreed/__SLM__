@@ -326,6 +326,12 @@ export async function augmentFromClusterAsync(
 export interface ReviewQueueEntry {
     id: number;
     synth_confidence: number;
+    /** The Job that wrote the row (null: not run as a Job / written before provenance was stamped). */
+    synth_job_id?: number | null;
+    /** The backend pin that wrote it (e.g. `cloud:anthropic:<model>`), when known. */
+    synth_backend?: string | null;
+    /** Written through a Message Batch. */
+    synth_batch?: boolean;
     preview: string;
     payload: Record<string, unknown>;
 }
@@ -346,7 +352,10 @@ export interface ReviewQueueConventions {
 }
 
 export interface ReviewQueueGroup {
+    /** The group key (a source, class, cluster, `job:<id>` or backend pin, per the grouping). */
     synth_source: string;
+    /** Job / backend groupings: "job:12 · <backend> · <mode> · batch" (correlate with the bell). */
+    label?: string | null;
     count: number;
     conventions?: ReviewQueueConventions | null;
     /** True when `rows` is a truncated sample of the group (legacy
@@ -370,6 +379,11 @@ export interface ReviewQueueResponse {
     conventions_version?: string | null;
     /** Every model that labelled span rows here, as relabel pins. */
     labeller_pins?: string[];
+    /** Which Jobs / backends wrote the pending rows (with counts), for the filter pickers. */
+    facets?: {
+        jobs: { synth_job_id: number; count: number }[];
+        backends: { synth_backend: string; count: number }[];
+    };
     groups: ReviewQueueGroup[];
     /** Accepted rows (passed review or pre-Epic-2a legacy rows).
      *  Surfaces what's queued for the next dataset prep. */
@@ -402,14 +416,24 @@ export interface BulkUpdateBySourceResult extends BulkUpdateResult {
     matched: number;
 }
 
-export type ReviewQueueGroupBy = 'source' | 'class' | 'cluster';
+export type ReviewQueueGroupBy = 'source' | 'class' | 'cluster' | 'job' | 'backend';
+
+export interface ReviewQueueFilter {
+    synthJobId?: number | null;
+    synthBackend?: string | null;
+}
 
 export async function listSynthReviewQueue(
     projectId: number,
     groupBy: ReviewQueueGroupBy = 'source',
+    filter: ReviewQueueFilter = {},
 ): Promise<ReviewQueueResponse> {
+    const params: Record<string, string | number> = {};
+    if (groupBy !== 'source') params.group_by = groupBy;
+    if (filter.synthJobId != null) params.synth_job_id = filter.synthJobId;
+    if (filter.synthBackend) params.synth_backend = filter.synthBackend;
     const resp = await api.get(`/projects/${projectId}/synthetic/review-queue`, {
-        params: groupBy !== 'source' ? { group_by: groupBy } : undefined,
+        params: Object.keys(params).length > 0 ? params : undefined,
     });
     return resp.data as ReviewQueueResponse;
 }

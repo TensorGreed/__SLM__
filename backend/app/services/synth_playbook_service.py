@@ -755,6 +755,9 @@ def _append_to_synthetic_jsonl(
     rows: list[SynthRow],
     *,
     cluster_id: str | None = None,
+    synth_job_id: int | None = None,
+    synth_backend: str | None = None,
+    synth_batch: bool = False,
 ) -> None:
     """Append accepted SynthRows to the project's synthetic.jsonl file.
 
@@ -765,6 +768,11 @@ def _append_to_synthetic_jsonl(
 
     ``cluster_id`` stamps the originating failure cluster (CLUSTER_TARGETED
     runs) onto each row so the review queue can group by cluster (Epic E).
+
+    Provenance (the single append point for playbook rows): ``synth_job_id`` (the Job
+    that ran the playbook; ``null`` for a synchronous run), ``synth_backend`` (the
+    backend pin string, e.g. ``cloud:anthropic:<model>``) and ``synth_batch: true``
+    when the rows came through a Message Batch — so lanes can be compared at review time.
     """
     file_path.parent.mkdir(parents=True, exist_ok=True)
     next_id = _peek_next_id(file_path)
@@ -780,6 +788,11 @@ def _append_to_synthetic_jsonl(
             }
             if cluster_id:
                 record["cluster_id"] = cluster_id
+            record["synth_job_id"] = synth_job_id
+            if synth_backend:
+                record["synth_backend"] = synth_backend
+            if synth_batch:
+                record["synth_batch"] = True
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
             next_id += 1
 
@@ -1036,8 +1049,14 @@ async def _run_playbook(
         file_path = synthetic_dir / "synthetic.jsonl"
         # Stamp the originating failure cluster so the review queue can group
         # cluster-targeted rows by cluster (Epic E).
+        from app.services import jobs_service
+
+        job_handle = jobs_service.current_job_handle.get()
         _append_to_synthetic_jsonl(
             file_path, accepted_rows, cluster_id=_cluster_id_from(failure_cluster),
+            synth_job_id=job_handle.job_id if job_handle is not None else None,
+            synth_backend=selected_backend.describe(),
+            synth_batch=batching,
         )
         # Bump the record_count + ensure file_path is stamped on the
         # Dataset row for downstream readers.
