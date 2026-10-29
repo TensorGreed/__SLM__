@@ -530,6 +530,19 @@ class CheckEndpointTests(unittest.TestCase):
         self.assertEqual(self.post_restore(reject_reason="", dry_run=False).json()["restored"], 1)
         self.assertEqual(self.stored()[6]["review_status"], "pending")
 
+    def test_language_mismatch_rows_restore_to_identical_pending_rows(self):
+        mislabelled = {"id": 8, "row_kind": "code_example", "language": "xml", "review_status": "pending", "task": "t",
+                       "code_example_json": {"code": "def f():\n    return 1\n"}}
+        with self.path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(mislabelled) + "\n")
+        before = self.stored()
+        url = f"{self.base}/review-queue/recheck-code-format"
+        self.assertEqual(client.post(url, json={"dry_run": False}).json()["rejected"], 1)
+        self.assertEqual(self.stored()[8]["reject_reason"], "language_mismatch")
+        done = self.post_restore(reject_reason="language_mismatch", dry_run=False).json()
+        self.assertEqual((done["matched"], done["restored"]), (1, 1))
+        self.assertEqual(self.stored(), before)
+
     def test_restore_needs_a_selector_and_caps_row_ids(self):
         resp = self.post_restore()
         self.assertEqual(resp.status_code, 400)

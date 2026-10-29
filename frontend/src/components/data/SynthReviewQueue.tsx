@@ -420,7 +420,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                 />
                 <FormatRecheckCard
                     projectId={projectId}
-                    onApplied={(n) => { setFlash(`Marked ${n} mislabelled code example${n === 1 ? '' : 's'} as rejected (language_mismatch). Once the rejected view offers Restore group, they can be restored from there.`); void load(); }}
+                    onApplied={(n) => { setFlash(`Marked ${n} mislabelled code example${n === 1 ? '' : 's'} as rejected (language_mismatch). Restore them from the Rejected section (Restore group).`); void load(); }}
                 />
 
 

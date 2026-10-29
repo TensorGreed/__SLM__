@@ -615,8 +615,7 @@ export async function recheckCodeFormat(
     if (rowIds) body.row_ids = rowIds;
     const resp = await api.post(`/projects/${projectId}/synthetic/review-queue/recheck-code-format`, body);
     return resp.data as RecheckCodeFormatResult;
-
-
+}
 
 export interface RestoreRejectedResult {
     dry_run: boolean;
