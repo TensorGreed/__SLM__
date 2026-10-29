@@ -689,8 +689,17 @@ async def import_predefined_split(
     source_rows = {role: pf.rows for role, pf in parsed.items()}
 
     union = [row for role in SPLIT_ROLES for row in source_rows.get(role, [])]
+    # The recipe's adapter config (code-findings label list, code-remediation extra fields and
+    # retrieval settings) the random split adds in ``combine_datasets``, so the imported rows get
+    # the same prompts. Keys the helper adds are derived from the project, not part of the
+    # wiring: they are left out of the persisted preference and the manifest's adapter_config
+    # (as in a random split), so a later split re-derives them from the live settings.
+    recipe_config = await ds._apply_recipe_adapter_config(
+        db, project_id, adapter_id, adapter_config, scoring_modes=ds.PREDEFINED_RECIPE_CONFIG_MODES,
+    )
+    recipe_keys = sorted(set(recipe_config or {}) - set(adapter_config or {}))
     resolved_adapter_id, _profile, enriched_config = _resolve_adapter_for_rows(
-        union, adapter_id=adapter_id, adapter_config=adapter_config,
+        union, adapter_id=adapter_id, adapter_config=recipe_config,
         field_mapping=mapping, task_profile=task_profile,
     )
     overlap_cols = _overlap_input_columns(union, resolved_adapter_id, mapping, enriched_config)
@@ -926,7 +935,8 @@ async def import_predefined_split(
 
         # 6. Persist the adapter wiring the rows were prepared with, then write
         # through the shared tail.
-        await _persist_adapter_preference(db, project_id, resolved_adapter_id, enriched_config, mapping, task_profile)
+        wiring_config = {k: v for k, v in (enriched_config or {}).items() if k not in recipe_keys}
+        await _persist_adapter_preference(db, project_id, resolved_adapter_id, wiring_config, mapping, task_profile)
         splits = {role: mapped.get(role, []) for role in SPLIT_ROLES}
         file_paths, file_hashes, dataset_versions, prepared_version = await _write_prepared_splits(
             db, project_id, splits, seed=seed, chat_template=chat_template, source_types=[DatasetType.RAW.value],
@@ -963,11 +973,12 @@ async def import_predefined_split(
             "included_types": [DatasetType.RAW.value],
             "include_types_resolution": {"predefined_split": True},
             "adapter_id": resolved_adapter_id,
-            "adapter_config": dict(enriched_config or {}),
+            "adapter_config": wiring_config,
             "field_mapping": dict(mapping),
             "task_profile": _majority_task_profile(splits) or ds._normalize_task_profile_value(task_profile),
             "task_profile_requested": ds._normalize_task_profile_value(task_profile),
-            "output_schema": await _recipe_output_schema(db, project_id),
+            # With the splits, like a random split (code-findings without a taxonomy stamps the labels seen).
+            "output_schema": await _recipe_output_schema(db, project_id, splits),
             "stratify_by": None,
             "stratify_auto": False,
             "stratification_report": None,

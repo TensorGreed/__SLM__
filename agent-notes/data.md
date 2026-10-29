@@ -200,7 +200,13 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `_normalize_rows_for_training(rejected=[...])`, then the shared tail
   `_write_prepared_splits` (files + Dataset + DatasetVersion rows, tagged
   `split_source`/`source_filename`) and `_finalize_prepared_manifest` (manifest +
-  snapshot). Exact membership: no ratio, shuffle or dedup. Adapter-rejected rows → 422
+  snapshot). Recipe adapter config: `dataset_service._apply_recipe_adapter_config` (shared with
+  `combine_datasets`) adds the code-findings `finding_set` / `finding_labels` and the code-remediation
+  `remediation` block (+ the declared `fields`) ONLY for scoring modes `PREDEFINED_RECIPE_CONFIG_MODES`
+  (`finding_set`, `remediation`); every other project imports exactly as before (golden hashes in
+  `test_predefined_split_recipe_config.py`). Keys it adds are left out of the persisted preference and the
+  manifest `adapter_config` (as in a random split); the manifest `output_schema` is computed with the splits
+  (code-findings without a taxonomy stamps the labels seen). Exact membership: no ratio, shuffle or dedup. Adapter-rejected rows → 422
   (`metadata.rejected.<split>.by_reason`, 20 sample rows). Reasons: `unparseable_line` (JSONL
   line / JSON-array item that isn't a JSON object), `malformed_row` (CSV/TSV wrong column
   count), `review_status_pending|rejected` (the random split's review gate, reported

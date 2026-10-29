@@ -1,5 +1,9 @@
 # Changelog
 
+### Own train / val / test files on code-findings and code-remediation projects (October 29, 2026)
+
+- **Use my own train / val / test files** now works on code-remediation projects: remediation and code-example rows used to be rejected on import ("could not tell which column is the input"). They are now prepared exactly as a random split prepares them, so held-out eval sends each test row the prompt it was trained with, and code examples are scored when that setting is on. Code-findings imports get the same allowed-label list in the prompt as a random split, and without a label taxonomy the manifest lists the labels seen in your files. Imports and random splits on every other kind of project are unchanged.
+
 ### Longer extra instructions for playbooks (October 29, 2026)
 
 - The playbook `extra_instructions` parameter (scenario grid and code examples) now accepts up to 8,000 characters, up from 2,000. Limit change only: instructions of 2,000 characters or fewer produce exactly the same prompt as before, tags are still stripped, and longer text is still rejected with the same error naming the new limit.

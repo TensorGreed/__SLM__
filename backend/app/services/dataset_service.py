@@ -1114,6 +1114,109 @@ def _stamp_source_document(
         entry["_source_document"] = filename
 
 
+# Scoring modes whose recipe adapter config the predefined-split import applies too (the
+# import's output for every other project is unchanged).
+PREDEFINED_RECIPE_CONFIG_MODES: frozenset[str] = frozenset({"finding_set", "remediation"})
+
+
+async def _apply_recipe_adapter_config(
+    db: AsyncSession,
+    project_id: int,
+    adapter_id: str,
+    adapter_config: dict[str, Any] | None,
+    *,
+    scoring_modes: frozenset[str] | None = None,
+) -> dict[str, Any] | None:
+    """The recipe-specific adapter config a split prepares rows with, so training prompts match
+    what the eval handler renders: the declared record schema's field list, the code-findings
+    allowed-label list, the code-remediation extra fields + passage-retrieval settings, the
+    structured-plan schema bundle and the tool-call tool block. A key the caller already set is
+    never overwritten. ``scoring_modes`` limits the recipe blocks to those scoring modes (the
+    tool-call block, which is not a recipe mode, then never applies); None applies every block
+    (``combine_datasets``). Returns ``adapter_config`` itself when nothing applies."""
+
+    def _mode_allowed(declared: dict[str, Any] | None) -> bool:
+        return scoring_modes is None or str((declared or {}).get("scoring_mode") or "") in scoring_modes
+
+    # A declared record schema fixes the field list the training prompt names,
+    # so it matches what the eval handler asks for (sorted property names).
+    if adapter_id == "structured-extraction" and not (adapter_config and "fields" in adapter_config):
+        declared = await _recipe_output_schema(db, project_id)
+        if not _mode_allowed(declared):
+            declared = None
+        declared_props = (declared or {}).get("properties")
+        if isinstance(declared_props, dict) and declared_props:
+            adapter_config = dict(adapter_config or {})
+            adapter_config["fields"] = sorted(declared_props)
+
+    # code-findings: the allowed-label list the prompt names comes from the
+    # project taxonomy, the same list the manifest stamps for the eval handler.
+    if adapter_id == "structured-extraction" and not (adapter_config and "finding_set" in adapter_config):
+        declared = await _recipe_output_schema(db, project_id)
+        if (declared or {}).get("scoring_mode") == "finding_set" and _mode_allowed(declared):
+            adapter_config = dict(adapter_config or {})
+            adapter_config["finding_set"] = True
+            if "finding_labels" not in adapter_config and declared.get("prompt_labels"):
+                adapter_config["finding_labels"] = list(declared["prompt_labels"])
+
+    # code-remediation: the declared extra fields the prompt names and the passage-retrieval
+    # settings (stamped into the manifest too), so training rows match what eval will render.
+    if adapter_id == "structured-extraction" and not (adapter_config and "remediation" in adapter_config):
+        declared = await _recipe_output_schema(db, project_id)
+        if (declared or {}).get("scoring_mode") == "remediation" and _mode_allowed(declared):
+            from app.services.auto_rag_service import retrieval_settings
+            from app.services.code_remediation_prompt import extra_fields_from_schema
+
+            project_row = await db.get(Project, project_id)
+            settings_cfg = declared.get("remediation") or {}
+            adapter_config = dict(adapter_config or {})
+            adapter_config["remediation"] = {
+                "extra_fields": extra_fields_from_schema(
+                    (project_row.selected_recipe or {}).get("output_schema") if project_row else None
+                ),
+                "project_id": project_id,
+                "retrieve_passages": bool(settings_cfg.get("retrieve_passages")),
+                "top_k": settings_cfg.get("top_k"),
+                "retrieval": retrieval_settings(project_row) if project_row else None,
+                "label_titles": declared.get("label_titles") or {},
+            }
+
+    # structured-plan: the schema bundle the prompt embeds and the passage-retrieval settings.
+    if adapter_id == "structured-extraction" and not (adapter_config and "structured_plan" in adapter_config):
+        declared = await _recipe_output_schema(db, project_id)
+        if (declared or {}).get("scoring_mode") == "structured_plan" and _mode_allowed(declared):
+            from app.services import structured_plan_prompt as spp
+            from app.services.auto_rag_service import retrieval_settings
+
+            project_row = await db.get(Project, project_id)
+            plan_cfg = spp.effective_structured_plan_config(project_row.runtime_config if project_row else None, project_id)
+            adapter_config = dict(adapter_config or {})
+            adapter_config["structured_plan"] = {
+                "schema_files": plan_cfg["schema_files"],
+                "root_schema": plan_cfg["root_schema"],
+                "project_id": project_id,
+                "retrieve_passages": plan_cfg["retrieve_passages"],
+                "top_k": plan_cfg["top_k"],
+                "retrieval": retrieval_settings(project_row) if project_row else None,
+                # The tool catalog block the eval prompt embeds ("" without an active catalog).
+                "tool_block": spp.tool_block_for(project_row.runtime_config if project_row else None),
+            }
+
+    # tool-call-json: the same tool block eval prepends, so train and eval prompts match.
+    if scoring_modes is None and adapter_id == "tool-call-json" and not (
+        adapter_config and "tool_block" in adapter_config
+    ):
+        from app.services import structured_plan_prompt as spp
+
+        project_row = await db.get(Project, project_id)
+        block = spp.tool_block_for(project_row.runtime_config if project_row else None)
+        if block:
+            adapter_config = dict(adapter_config or {})
+            adapter_config["tool_block"] = block
+
+    return adapter_config
+
+
 async def combine_datasets(
     db: AsyncSession,
     project_id: int,
@@ -1157,77 +1260,7 @@ async def combine_datasets(
 
     all_entries: list[dict[str, Any]] = []
 
-    # A declared record schema fixes the field list the training prompt names,
-    # so it matches what the eval handler asks for (sorted property names).
-    if adapter_id == "structured-extraction" and not (adapter_config and "fields" in adapter_config):
-        declared = await _recipe_output_schema(db, project_id)
-        declared_props = (declared or {}).get("properties")
-        if isinstance(declared_props, dict) and declared_props:
-            adapter_config = dict(adapter_config or {})
-            adapter_config["fields"] = sorted(declared_props)
-
-    # code-findings: the allowed-label list the prompt names comes from the
-    # project taxonomy, the same list the manifest stamps for the eval handler.
-    if adapter_id == "structured-extraction" and not (adapter_config and "finding_set" in adapter_config):
-        declared = await _recipe_output_schema(db, project_id)
-        if (declared or {}).get("scoring_mode") == "finding_set":
-            adapter_config = dict(adapter_config or {})
-            adapter_config["finding_set"] = True
-            if "finding_labels" not in adapter_config and declared.get("prompt_labels"):
-                adapter_config["finding_labels"] = list(declared["prompt_labels"])
-
-    # code-remediation: the declared extra fields the prompt names and the passage-retrieval
-    # settings (stamped into the manifest too), so training rows match what eval will render.
-    if adapter_id == "structured-extraction" and not (adapter_config and "remediation" in adapter_config):
-        declared = await _recipe_output_schema(db, project_id)
-        if (declared or {}).get("scoring_mode") == "remediation":
-            from app.services.auto_rag_service import retrieval_settings
-            from app.services.code_remediation_prompt import extra_fields_from_schema
-
-            project_row = await db.get(Project, project_id)
-            settings_cfg = declared.get("remediation") or {}
-            adapter_config = dict(adapter_config or {})
-            adapter_config["remediation"] = {
-                "extra_fields": extra_fields_from_schema(
-                    (project_row.selected_recipe or {}).get("output_schema") if project_row else None
-                ),
-                "project_id": project_id,
-                "retrieve_passages": bool(settings_cfg.get("retrieve_passages")),
-                "top_k": settings_cfg.get("top_k"),
-                "retrieval": retrieval_settings(project_row) if project_row else None,
-                "label_titles": declared.get("label_titles") or {},
-            }
-
-    # structured-plan: the schema bundle the prompt embeds and the passage-retrieval settings.
-    if adapter_id == "structured-extraction" and not (adapter_config and "structured_plan" in adapter_config):
-        declared = await _recipe_output_schema(db, project_id)
-        if (declared or {}).get("scoring_mode") == "structured_plan":
-            from app.services import structured_plan_prompt as spp
-            from app.services.auto_rag_service import retrieval_settings
-
-            project_row = await db.get(Project, project_id)
-            plan_cfg = spp.effective_structured_plan_config(project_row.runtime_config if project_row else None, project_id)
-            adapter_config = dict(adapter_config or {})
-            adapter_config["structured_plan"] = {
-                "schema_files": plan_cfg["schema_files"],
-                "root_schema": plan_cfg["root_schema"],
-                "project_id": project_id,
-                "retrieve_passages": plan_cfg["retrieve_passages"],
-                "top_k": plan_cfg["top_k"],
-                "retrieval": retrieval_settings(project_row) if project_row else None,
-                # The tool catalog block the eval prompt embeds ("" without an active catalog).
-                "tool_block": spp.tool_block_for(project_row.runtime_config if project_row else None),
-            }
-
-    # tool-call-json: the same tool block eval prepends, so train and eval prompts match.
-    if adapter_id == "tool-call-json" and not (adapter_config and "tool_block" in adapter_config):
-        from app.services import structured_plan_prompt as spp
-
-        project_row = await db.get(Project, project_id)
-        block = spp.tool_block_for(project_row.runtime_config if project_row else None)
-        if block:
-            adapter_config = dict(adapter_config or {})
-            adapter_config["tool_block"] = block
+    adapter_config = await _apply_recipe_adapter_config(db, project_id, adapter_id, adapter_config)
 
     result = await db.execute(
         select(Dataset).where(

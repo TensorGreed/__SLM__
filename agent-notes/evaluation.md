@@ -431,8 +431,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   (`wraps_own_prompt` false for `finding_set` and `remediation`).
 - Manifest stamp (`dataset_service._remediation_schema_stamp`): `required` = the three base fields + declared extras,
   `properties` = declared EXTRAS only (base names stripped; `description` is kept — `OutputProperty.description`),
-  `remediation {checks, retrieve_passages, top_k, retrieval}`, `label_parents`, `label_titles`. `combine_datasets` puts
-  `adapter_config["remediation"]` (extra fields, project id, retrieval settings) on the structured-extraction adapter.
+  `remediation {checks, retrieve_passages, top_k, retrieval}`, `label_parents`, `label_titles`. `combine_datasets` and the
+  predefined-split import (`dataset_service._apply_recipe_adapter_config`) put `adapter_config["remediation"]` (extra
+  fields, project id, retrieval settings) on the structured-extraction adapter, so imported remediation / code_example
+  rows get the training prompt held-out eval renders.
   Retrieved passages are stored on the prepared row (`passages_retrieved`), so eval re-renders the identical prompt and only
   retrieves for a row prepared another way (the handler's `schema["project_id"]` comes from `ctx.project_id`).
 - Scoring: `remediation_scoring.py`. `analyze_row` (apply patch via `unified_diff.apply_patch_to_chunk`, original/patched

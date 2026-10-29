@@ -509,8 +509,7 @@ class HeldoutIntegrationTests(unittest.TestCase):
 class SplitPreservationTests(unittest.TestCase):
     """Accepted synthetic code-example rows keep ``row_kind`` / ``passages`` / ``code_example_json`` through
     combine + split (incl. ``disjoint_by`` on a seed-document field), so held-out generation sends the prompt the
-    training row used. (The predefined-split import does not take code-remediation rows at all yet: it never adds
-    the recipe's adapter config, so it reports no recognised input column -- a pre-existing gap.)"""
+    training row used. (The predefined-split import is covered in ``test_predefined_split_recipe_config.py``.)"""
 
     def rows(self, n: int) -> list[dict]:
         out = []
