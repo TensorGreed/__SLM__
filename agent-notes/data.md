@@ -72,7 +72,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   judge's verdicts only; verdict / reason filters + group-bys read it), `group_by=assist_consensus` (keys `none`, `single:pass|fail|unsure`,
   `agree_pass`, `agree_fail`, `disagree`; labels name the judges), `facets.consensus` / `facets.judges`. UI: Accept group only on `agree_pass` and
   `single:pass` (Reject only on `agree_fail` / `single:fail`); a verdict-group accept also skips rows whose consensus is `disagree`; same
-  re-fetch-before-bulk rule. Job body adds `only_missing_judge` (skip rows THIS judge already has — the key is `judge_label(backend)`),
+  re-fetch-before-bulk rule. Job body adds `only_missing_judge` (skip rows THIS judge already has — the key is `judge_label(backend)`; a `judge_unparseable` verdict from a garbled reply or failed call counts as missing, so a resume retries it),
   `consensus` (list) and `prior_verdicts` (rows where ANOTHER judge said one of these), all applied at request and again at run time
   (`filter_rows_for_judge`); the result adds `consensus` counts (over the rows judged) and the bell summary appends "agree N · disagree N".
   Tests `tests/test_synth_review_assist_judges.py`, `SynthReviewQueue.judges.test.tsx`. The queue (`list_review_queue`) adds `review_assist` per row,
@@ -81,7 +81,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `POST /review-queue/bulk-update` with the group's row ids; the UI's reject sends `reject_reason: "assist:<reason_code>"` (no
   separate by-verdict endpoint). UI: `SynthReviewQueue` "Pre-screen with a model" card (`GenerationModelPicker`, extra rubric,
   rows per call 1-25, Half price for an Anthropic pin), per-row verdict badge + note, verdict / reason filters, Verdict /
-  Verdict + reason group-by with "Accept group" / "Reject group" (re-fetches the group's current pending ids + verdicts right before the bulk call; Accept is not offered on `unsure` or "(not pre-screened)" groups, Reject is); bell deep link to the queue, summary "pass N · fail N · unsure N"
+  Verdict + reason group-by with "Accept group" / "Reject group" (re-fetches the group's current pending ids + verdicts right before the bulk call; Accept is offered only on `pass` groups — never `fail`, `unsure` or "(not pre-screened)"; Reject is offered on all); bell deep link to the queue, summary "pass N · fail N · unsure N"
   (+ spend from the Job result). Tests `tests/test_synth_review_assist.py`, `SynthReviewQueue.assist.test.tsx`,
   `NotificationBell.test.tsx`.
 - **Versioned prepared splits** (Epic E) — `split_dataset` writes the active

@@ -336,6 +336,25 @@ class JudgeProject(unittest.TestCase):
         done = self.start("judgeb:m", only_missing_judge=True)
         self.assertEqual(done["result"]["rows_judged"], 6)
 
+    def test_only_missing_judge_retries_rows_whose_reply_was_unusable(self):
+        # A garbled reply / failed call leaves the rows unsure + judge_unparseable; a resume must retry them.
+        original = JudgeA.complete
+
+        async def garbled(self, prompt, **kw):
+            type(self).prompts.append(prompt)
+            return "not json"
+
+        JudgeA.complete = garbled
+        try:
+            self.start("judgea:m", row_ids=[1, 2])
+        finally:
+            JudgeA.complete = original
+        self.start("judgea:m", row_ids=[3])
+        JudgeA.prompts = []
+        done = self.start("judgea:m", only_missing_judge=True)
+        self.assertEqual(sorted(i for p in JudgeA.prompts for i in ids_in(p)), [1, 2, 4, 5, 6])
+        self.assertEqual(done["result"]["rows_judged"], 5)
+
     def test_only_missing_judge_with_nothing_left_is_a_400(self):
         self.start("judgea:m")
         resp = client.post(f"{self.base}/review-assist?async_job=true", json={"backend": "judgea:m", "only_missing_judge": True})

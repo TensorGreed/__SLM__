@@ -686,11 +686,10 @@ function assistVerdictOf(group: ReviewQueueGroup): ReviewAssistVerdict | null {
     return m ? (m[1] as ReviewAssistVerdict) : null;
 }
 
-/** Accept-group is offered only where the pre-screen has an opinion that supports it: never on the
- *  "(not pre-screened)" bucket or an `unsure` group (those can be rejected as a group, not accepted). */
+/** Accept-group is offered only on `pass` groups: never on `fail`, `unsure` or the "(not pre-screened)"
+ *  bucket (those can be rejected as a group, not accepted). */
 function canAcceptGroup(group: ReviewQueueGroup): boolean {
-    const verdict = assistVerdictOf(group);
-    return verdict === 'pass' || verdict === 'fail';
+    return assistVerdictOf(group) === 'pass';
 }
 
 function AssistBadge({ assist, rowId }: { assist: ReviewAssist; rowId: number }) {

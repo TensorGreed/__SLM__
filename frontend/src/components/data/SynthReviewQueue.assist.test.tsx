@@ -142,7 +142,7 @@ describe('SynthReviewQueue pre-screen', () => {
         expect(apiMock.post).not.toHaveBeenCalled();
     });
 
-    it('offers reject only (never accept) on unsure and not-pre-screened groups', async () => {
+    it('offers reject only (never accept) on fail, unsure and not-pre-screened groups', async () => {
         const groups = [
             { synth_source: 'unsure:judge_unparseable', count: 1,
               rows: [{ id: 4, synth_confidence: 0.5, review_assist: { verdict: 'unsure', reason_code: 'judge_unparseable', note: '' }, preview: '{}', payload: {} }] },
@@ -162,7 +162,8 @@ describe('SynthReviewQueue pre-screen', () => {
         expect(screen.queryByTestId('synth-review-queue-group-accept-unsure:judge_unparseable')).toBeNull();
         expect(screen.queryByTestId('synth-review-queue-group-accept-(not pre-screened)')).toBeNull();
         expect(screen.getByTestId('synth-review-queue-group-accept-pass:ok')).toBeTruthy();
-        expect(screen.getByTestId('synth-review-queue-group-accept-fail:unsafe_pattern')).toBeTruthy();
+        expect(screen.queryByTestId('synth-review-queue-group-accept-fail:unsafe_pattern')).toBeNull();
+        expect(screen.getByTestId('synth-review-queue-group-reject-fail:unsafe_pattern')).toBeTruthy();
     });
 
     it('starts a pre-screen with the picked backend, rubric text and rows per call', async () => {

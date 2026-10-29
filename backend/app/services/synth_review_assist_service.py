@@ -547,7 +547,8 @@ def filter_rows_for_judge(
     out = []
     for orig, row in zip(rows, probe):
         judges = row.get("review_assist_judges") or []
-        if only_missing_judge and any(e["judge"] == judge for e in judges):
+        # A judge_unparseable verdict (garbled reply or failed call) counts as missing, so a resume retries it.
+        if only_missing_judge and any(e["judge"] == judge and e.get("reason_code") != "judge_unparseable" for e in judges):
             continue
         if consensus and row.get("assist_consensus", "none") not in consensus:
             continue
