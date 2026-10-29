@@ -901,6 +901,10 @@ async def _check_seed_filter_params(db: AsyncSession, project_id: int, out: dict
             "metadata": {"param": param, "value": out.get(param)},
         })
 
+    for key in ("seed_path_include", "seed_path_exclude", "seed_relevance_terms",
+                "seed_relevance_scope", "relevance_exempt_source_ids"):
+        if key in out and out[key] is None:
+            del out[key]  # null = unset, like an empty list
     for param in ("seed_path_include", "seed_path_exclude"):
         if param not in out:
             continue

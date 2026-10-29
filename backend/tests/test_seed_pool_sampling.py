@@ -363,6 +363,33 @@ class SeedPoolApiTests(unittest.TestCase):
         self.assertEqual(job["status"], "failed", job)
         self.assertIn("left 0 of 12", job["error"])
 
+    def test_filters_with_sources_holding_no_chunks_keep_the_source_message(self):
+        from app.database import async_session_factory
+        from app.services import provenance_service as ps
+
+        async def mk():
+            async with async_session_factory() as db:
+                src = await ps.create_source(db, self.pid, kind=ps.KIND_UPLOAD, title="empty2")
+                await db.commit()
+                return src.id
+
+        empty = asyncio.run(mk())
+        resp = self._run({"source_ids": [empty], "seed_path_include": ["**/*.x"]})
+        self.assertEqual(resp.status_code, 400, resp.text)
+        detail = resp.json()["detail"]
+        self.assertIn("No code chunks in data source", detail)
+        self.assertNotIn("seed filters left", detail)
+        self.assertNotIn(". .", detail)
+        again = self._run({"seed_relevance_terms": ["no-such-term-anywhere"]}).json()["detail"]
+        self.assertNotIn(". .", again)
+
+    def test_null_filter_params_are_unset(self):
+        resp = self._run({"seed_path_include": None, "seed_path_exclude": None, "seed_relevance_terms": None,
+                          "seed_relevance_scope": None, "relevance_exempt_source_ids": None})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertNotIn("sources", resp.json()["seed_pool"])
+        self.assertEqual(resp.json()["seed_pool"]["chunks_used"], 12)
+
     def test_seed_filter_param_validation(self):
         cases = {
             "seed_path_include": ["x", [1], [""], ["a" * 201], ["a\x00b"], ["x"] * 51, "src/**"],

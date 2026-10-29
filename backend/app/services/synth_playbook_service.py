@@ -218,18 +218,25 @@ def _apply_seed_filters(
     return kept, stats
 
 
+def seed_filters_emptied_pool(pool: dict[str, Any]) -> bool:
+    """True when seed filters ran over a non-empty pool (passages were eligible BEFORE filtering). A pool that
+    was already empty (no passages in the chosen sources) keeps the source / no-chunks messages."""
+    stats = pool.get("sources")
+    return bool(pool.get("filters")) and isinstance(stats, dict) and sum(v["total"] for v in stats.values()) > 0
+
+
 def seed_filter_empty_message(pool: dict[str, Any], what: str) -> str:
     """The error text when the seed filters leave nothing (counts per source, so the caller can see which filter bit)."""
     stats = pool.get("sources") or {}
     totals = {k: sum(v[k] for v in stats.values()) for k in ("total", "dropped_glob", "dropped_relevance")}
-    per_source = "; ".join(
+    per_source = " " + "; ".join(
         f"source {sid}: {v['total']} chunks, {v['dropped_glob']} dropped by path, {v['dropped_relevance']} dropped by relevance"
         for sid, v in sorted(stats.items())
-    )
+    ) + "."
     return (
         f"The seed filters left 0 of {totals['total']} {what} "
         f"({totals['dropped_glob']} dropped by seed_path_include / seed_path_exclude, "
-        f"{totals['dropped_relevance']} by seed_relevance_terms). {per_source}. "
+        f"{totals['dropped_relevance']} by seed_relevance_terms).{per_source} "
         "Loosen the path globs or relevance terms, or list the sources to exempt in relevance_exempt_source_ids."
     )
 
@@ -543,7 +550,7 @@ async def _prepare_code_context(
         chunks, await _document_source_map(db, project_id),
         seed=_sample_seed(params, ctx), source_ids=wanted_sources, filters=seed_filters_from_params(params),
     )
-    if pool.get("filters") and not selected:
+    if seed_filters_emptied_pool(pool) and not selected:
         raise ValueError(seed_filter_empty_message(pool, "code chunks"))
     if wanted_sources and not selected:
         raise ValueError(
@@ -627,7 +634,7 @@ async def _prepare_document_passages(
         passages, await _document_source_map(db, project_id),
         seed=_sample_seed(params, ctx), source_ids=wanted_sources, filters=seed_filters_from_params(params),
     )
-    if pool.get("filters") and not selected:
+    if seed_filters_emptied_pool(pool) and not selected:
         raise ValueError(seed_filter_empty_message(pool, "document passages"))
     if wanted_sources and not selected:
         raise ValueError(

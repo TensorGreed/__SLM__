@@ -693,6 +693,10 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   `source_ids` and BEFORE the cap/stratified sample (`_apply_seed_filters`: glob, then relevance). Zero left ->
   `seed_filter_empty_message` ValueError with per-source counts (400 / FAILED Job). `seed_pool` gains `filters` + `sources`
   {src: total, kept, dropped_glob, dropped_relevance, exempt} only when a filter is set (dry run too: same prepare path).
+  `null` for any filter param = unset (like `[]`). Filters govern seed-chunk SELECTION only, not retrieval-based passage
+  lookup (`remediation_from_findings` uses `retrieve_passages_for_row`). Include globs match from the top of the path:
+  use `**/src/**`, not `src/**`, to match `src` at any depth. The "left 0" error fires only when passages were eligible
+  before filtering; an already-empty source keeps the source_ids / no-chunks message.
   UI: "Seed filters" fieldset in `SeedSourcesSelect` (`onFiltersChange` -> `withSeedSources`). Tests:
   `SeedFilterUnitTests` + API cases in `test_seed_pool_sampling.py`, `SeedSourcesSelect.test.tsx`.
 - `POST .../synthetic/run-playbook` (+ `/dry-run`) takes `params`, handed to the playbook as
