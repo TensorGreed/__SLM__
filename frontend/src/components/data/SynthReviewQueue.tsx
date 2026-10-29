@@ -26,9 +26,11 @@ import type {
     ReviewQueueGroup,
     ReviewQueueGroupBy,
     ReviewQueueResponse,
+    PlanRulesReport,
 } from '../../api/synthPlaybook';
 import {
     bulkUpdateSynthReviewQueue,
+    checkPlanRules,
     listSynthReviewQueue,
     purgeRejectedSynthRows,
     recheckCodeFormat,
@@ -416,6 +418,11 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                     projectId={projectId}
                     onApplied={(n) => { setFlash(`Marked ${n} mislabelled code example${n === 1 ? '' : 's'} as rejected (language_mismatch). Once the rejected view offers Restore group, they can be restored from there.`); void load(); }}
                 />
+
+
+                {hasPlanRows(data) && (
+                    <PlanRulesCard projectId={projectId} onApplied={(n) => { setFlash(`Plan rules rejected ${n} row${n === 1 ? '' : 's'} (grouped by rule in Rejected; restorable).`); void load(); }} />
+                )}
                 <p className="synth-review-queue__subtitle">
                     {data.total_pending} row{data.total_pending === 1 ? '' : 's'} awaiting review,
                     grouped by {groupBy},{' '}
@@ -709,6 +716,116 @@ function AssistBadge({ assist, rowId }: { assist: ReviewAssist; rowId: number })
             {assist.reason_code !== 'ok' ? ` · ${assist.reason_code}` : ''}
             {assist.note ? ` — ${assist.note}` : ''}
         </span>
+    );
+}
+
+/** Whether any pending row is a structured plan (the plan-rules check only applies to those). */
+function hasPlanRows(data: ReviewQueueResponse): boolean {
+    return data.groups.some((g) => g.rows.some((row) => {
+        const p = row.payload as Record<string, unknown> | undefined;
+        return p?.row_kind === 'structured_plan' || (p != null && 'plan_json' in p);
+    }));
+}
+
+/** "Check plan rules": paste / upload a rules document, see how many pending plans break each rule
+ *  (a dry run changes nothing), then confirm to reject them. Rejected rows are grouped by rule in the
+ *  Rejected section and can be restored; nothing is deleted. */
+function PlanRulesCard({ projectId, onApplied }: { projectId: number; onApplied: (rejected: number) => void }) {
+    const [open, setOpen] = useState(false);
+    const [text, setText] = useState('');
+    const [report, setReport] = useState<PlanRulesReport | null>(null);
+    const [busy, setBusy] = useState(false);
+
+    const run = async (dryRun: boolean) => {
+        setBusy(true);
+        try {
+            const result = await checkPlanRules(projectId, text, dryRun);
+            if (dryRun) {
+                setReport(result);
+            } else {
+                setReport(null);
+                onApplied(result.rejected);
+            }
+        } catch (err: any) {
+            const detail = err?.response?.data;
+            toast.error(
+                (typeof detail?.message === 'string' ? detail.message : typeof detail?.detail === 'string' ? detail.detail : err?.message)
+                ?? 'Could not check the plan rules.',
+                8000,
+            );
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const confirmApply = () => {
+        if (!report) return;
+        if (window.confirm(`Reject ${report.flagged} pending plan${report.flagged === 1 ? '' : 's'} that break a reject rule? They stay on disk under Rejected, grouped by rule, and can be restored.`)) {
+            void run(false);
+        }
+    };
+
+    const onFile = async (file: File | undefined) => {
+        if (!file) return;
+        setText(await file.text());
+        setReport(null);
+    };
+
+    return (
+        <div className="synth-review-queue__rules-card" data-testid="synth-review-queue-rules-card">
+            <button type="button" className="btn btn-secondary" onClick={() => setOpen((v) => !v)} data-testid="synth-review-queue-rules-toggle">
+                {open ? 'Hide plan rules' : 'Check plan rules'}
+            </button>
+            {open && (
+                <div className="synth-review-queue__rules-form">
+                    <p className="synth-review-queue__subtitle">
+                        Your own consistency rules, checked deterministically (no model) against every pending plan.
+                        A dry run only counts; you confirm before anything is rejected.
+                    </p>
+                    <textarea
+                        value={text}
+                        onChange={(e) => { setText(e.target.value); setReport(null); }}
+                        rows={8}
+                        placeholder='{"rules": [{"id": "...", "type": "step_requires", "match": {"operation": "create_widget"}, "require": {"path": "args.arguments.body.size", "op": "max", "value": 10}}]}'
+                        data-testid="synth-review-queue-rules-text"
+                    />
+                    <input type="file" accept=".json,application/json" onChange={(e) => void onFile(e.target.files?.[0])} data-testid="synth-review-queue-rules-file" />
+                    <div className="synth-review-queue__rules-actions">
+                        <button type="button" className="btn btn-primary" disabled={busy || !text.trim()} onClick={() => void run(true)} data-testid="synth-review-queue-rules-dry-run">
+                            Dry run
+                        </button>
+                        {report && report.flagged > 0 && (
+                            <button type="button" className="btn btn-danger" disabled={busy} onClick={confirmApply} data-testid="synth-review-queue-rules-apply">
+                                Reject {report.flagged} plan{report.flagged === 1 ? '' : 's'}
+                            </button>
+                        )}
+                    </div>
+                    {report && (
+                        <div data-testid="synth-review-queue-rules-report">
+                            <p className="synth-review-queue__subtitle">
+                                Checked {report.checked} plan{report.checked === 1 ? '' : 's'}: {report.flagged} would be rejected
+                                {report.warned_only > 0 ? `, ${report.warned_only} only warned` : ''}.
+                            </p>
+                            {Object.keys(report.by_rule).length > 0 && (
+                                <table className="synth-review-queue__rules-table">
+                                    <thead><tr><th>Rule</th><th>Severity</th><th>Plans</th><th>Example rows</th></tr></thead>
+                                    <tbody>
+                                        {Object.entries(report.by_rule).map(([id, r]) => (
+                                            <tr key={id} data-testid={`synth-review-queue-rules-row-${id}`}>
+                                                <td title={r.description}>{id}</td>
+                                                <td>{r.severity}</td>
+                                                <td>{r.count}</td>
+                                                <td>{r.sample_row_ids.map((n) => `#${n}`).join(', ')}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
     );
 }
 

@@ -640,3 +640,16 @@
 }
 .synth-review-queue__assist-field { display: flex; flex-direction: column; gap: 4px; font-size: var(--font-size-sm); }
 .synth-review-queue__assist-field textarea { width: 100%; }
+
+.synth-review-queue__rules-card { margin: var(--space-sm) 0; }
+.synth-review-queue__rules-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+}
+.synth-review-queue__rules-form textarea { width: 100%; font-family: var(--font-mono, monospace); }
+.synth-review-queue__rules-table { border-collapse: collapse; font-size: var(--font-size-sm); }
+.synth-review-queue__rules-table th,
+.synth-review-queue__rules-table td { text-align: left; padding: 2px var(--space-sm); }
+.synth-review-queue__rules-actions { display: flex; gap: var(--space-sm); align-items: center; }

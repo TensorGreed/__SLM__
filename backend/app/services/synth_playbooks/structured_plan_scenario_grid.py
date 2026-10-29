@@ -250,10 +250,26 @@ class StructuredPlanScenarioGridPlaybook:
                     {"scenario": task["scenario"], "plan_json": plan},
                 )
                 continue
+            warned: list[str] = []
+            rules = _plan_rules(ctx)
+            if rules is not None:
+                from app.services import plan_rules_service as engine
+
+                rejects, warns = engine.violations_by_severity(engine.check_plan(plan, rules))
+                if rejects:
+                    record_reject(
+                        ctx, "rule_violation", "rules: " + ", ".join(engine.rule_ids(rejects)) + " - " + rejects[0].message,
+                        {"scenario": task["scenario"], "plan_json": plan, "rule_ids": engine.rule_ids(rejects),
+                         "violations": [v.as_dict() for v in rejects]},
+                    )
+                    continue
+                warned = engine.rule_ids(warns)
             payload: dict[str, Any] = {"row_kind": "structured_plan", "scenario": task["scenario"]}
             if task.get("passages"):
                 payload["passages"] = task["passages"]
             payload["plan_json"] = plan
+            if warned:
+                payload["plan_rule_warnings"] = warned
             payload["grid_cell"] = dict(task["cell"]["values"])
             accepted.append({
                 "payload": payload,
@@ -264,6 +280,19 @@ class StructuredPlanScenarioGridPlaybook:
             if index not in answered:
                 record_reject(ctx, "missing_answer", "the teacher returned no plan for this scenario", {"scenario": task["scenario"]})
         return accepted
+
+
+def _plan_rules(ctx: PlaybookContext) -> Any:
+    """The compiled ``params.plan_rules`` (cached on the context), or None when the run has none."""
+    if "grid_plan_rules" not in ctx:
+        raw = (ctx.get("params") or {}).get("plan_rules")
+        if raw is None:
+            ctx["grid_plan_rules"] = None
+        else:
+            from app.services.plan_rules_service import load_rules
+
+            ctx["grid_plan_rules"] = load_rules(raw)
+    return ctx["grid_plan_rules"]
 
 
 def answer_batches(

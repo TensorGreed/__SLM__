@@ -615,4 +615,30 @@ export async function recheckCodeFormat(
     if (rowIds) body.row_ids = rowIds;
     const resp = await api.post(`/projects/${projectId}/synthetic/review-queue/recheck-code-format`, body);
     return resp.data as RecheckCodeFormatResult;
+
+
+export interface PlanRulesRuleCount {
+    severity: 'reject' | 'warn';
+    description: string;
+    count: number;
+    sample_row_ids: number[];
+}
+
+export interface PlanRulesReport {
+    dry_run: boolean;
+    rules: number;
+    checked: number;
+    /** Rows with a reject-severity violation. */
+    flagged: number;
+    /** Rows whose only violations are warn-severity. */
+    warned_only: number;
+    rejected: number;
+    by_rule: Record<string, PlanRulesRuleCount>;
+}
+
+/** Check the pending structured-plan rows against a plan-rules document. `dryRun` (default) only
+ *  counts; otherwise rows breaking a reject-severity rule are soft-rejected as `rule_violation:<rule id>`. */
+export async function checkPlanRules(projectId: number, rules: string, dryRun = true): Promise<PlanRulesReport> {
+    const resp = await api.post(`/projects/${projectId}/synthetic/check-plan-rules`, { rules, dry_run: dryRun });
+    return resp.data;
 }

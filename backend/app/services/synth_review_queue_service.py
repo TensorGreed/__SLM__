@@ -871,3 +871,51 @@ async def recheck_code_format(
         _atomic_write_rows(path, rows)
     result["rejected"] = rejected
     return result
+
+
+def check_plan_rules_for_project(
+    project_id: int,
+    rules_doc: Any,
+    *,
+    dry_run: bool = True,
+    row_ids: list[int] | None = None,
+    source: str | None = None,
+    synth_job_id: int | None = None,
+    max_rows: int | None = None,
+) -> dict[str, Any]:
+    """Run a plan-rules document over the project's PENDING structured-plan rows.
+
+    ``dry_run`` only counts (per rule: severity, count, sample row ids). Otherwise each row with a
+    ``reject``-severity violation is soft-rejected with ``reject_reason="rule_violation:<first rule id>"``
+    (the rejected view regroups by reason, so it groups by rule; rows keep ``plan_rule_ids`` and stay
+    on disk, so restore / un-reject works; nothing is purged). ``warn`` rules are counted, never
+    acted on. Raises ``plan_rules_service.PlanRulesError`` for bad rules.
+    """
+    from app.services import plan_rules_service as engine
+
+    rules = engine.load_rules(rules_doc)
+    path = _synthetic_jsonl_path(project_id)
+    rows = _ensure_row_ids(path, _read_all_rows(path))
+    selected = engine.select_pending_plan_rows(
+        rows, row_ids=row_ids, source=source, synth_job_id=synth_job_id, max_rows=max_rows,
+    )
+    report = engine.check_rows(selected, rules)
+    violations = report.pop("row_violations")
+    rejected = 0
+    if not dry_run:
+        by_id = {r["id"]: r for r in rows}
+        for row_id, found in violations.items():
+            ids = engine.rule_ids([
+                engine.Violation(v["rule_id"], v["severity"], tuple(v["steps"]), v["message"])
+                for v in found if v["severity"] == "reject"
+            ])
+            row = by_id.get(row_id)
+            if not ids or row is None or row.get("review_status") != "pending":
+                continue
+            row["review_status"] = "rejected"
+            row["reject_reason"] = engine.reject_reason_for(ids[0])
+            row["plan_rule_ids"] = ids
+            rejected += 1
+        if rejected:
+            _atomic_write_rows(path, rows)
+    return {"dry_run": dry_run, "rules": len(rules.rules), **report, "rejected": rejected}

@@ -240,6 +240,13 @@ def check_params(params: dict[str, Any]) -> tuple[str, str] | None:
     extra = params.get("extra_instructions")
     if extra is not None and (not isinstance(extra, str) or len(extra) > MAX_EXTRA_INSTRUCTIONS):
         return "extra_instructions", f"params.extra_instructions must be text of at most {MAX_EXTRA_INSTRUCTIONS} characters."
+    if params.get("plan_rules") is not None:
+        from app.services.plan_rules_service import PlanRulesError, load_rules
+
+        try:
+            load_rules(params["plan_rules"])
+        except PlanRulesError as exc:
+            return "plan_rules", exc.message
     try:
         parse_matrix(text, fmt or "auto")
     except MatrixError as exc:

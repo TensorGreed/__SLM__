@@ -360,6 +360,58 @@ Content type: `application/json` — `RelabelAnswerKeyRequest \| null`
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `POST /api/projects/{project_id}/synthetic/check-plan-rules`
+
+**Check Plan Rules**
+
+Check the pending structured-plan rows against a caller-supplied plan-rules document (deterministic, no model).
+``dry_run`` (default ``true``) answers with counts per rule and sample row ids and changes nothing. With
+``dry_run=false`` every pending row that breaks a ``reject``-severity rule is marked rejected as
+``rule_violation:<rule id>``; they stay on disk (grouped by rule in the review queue's Rejected section), can be
+restored, and are never purged. ``?async_job=true`` runs it as a ``plan_rules_check`` Job. A bad rules document is a
+`400` with ``error_code: invalid_plan_rules`` and the pointer of the problem.
+
+Body: ``rules`` (the document as an object, or its JSON text), ``dry_run``, optional ``row_ids``, ``source``,
+``synth_job_id``, ``max_rows``.
+
+The same document can be passed as ``params.plan_rules`` to the structured-plan ``scenario_grid`` playbook: after schema
+validation, a plan breaking a ``reject`` rule is dropped as ``rule_violation`` (the Job's reject summary lists the rule
+ids) and ``warn`` rules only annotate the accepted row (``plan_rule_warnings``).
+
+A rules document (up to 64 KB, 200 rules):
+
+```json
+{
+  "version": 1,
+  "rules": [
+    {"id": "widget-size-cap", "type": "step_requires", "severity": "reject",
+     "description": "a created widget stays small",
+     "match": {"tool": "invoke_operation", "operation": "create_widget"},
+     "require": {"path": "args.arguments.body.size", "op": "max", "value": 10}},
+    {"id": "gadget-binds-sturdy-widget", "type": "ref_requires",
+     "match": {"operation": "bind_gadget"},
+     "ref": {"path": "args.arguments.body.widget"},
+     "creator": {"match": {"operation": "create_widget"}, "name_path": "args.arguments.body.name"},
+     "require": {"path": "args.arguments.body.kind", "op": "equals", "value": "sturdy"},
+     "on_missing": "violate"},
+    {"id": "verify-after-create", "type": "requires_step", "severity": "warn",
+     "if": {"operation": "create_widget"}, "then": {"tool": "verify"}},
+    {"id": "no-create-and-retire", "type": "forbid_together",
+     "a": {"operation": "create_widget"}, "b": {"operation": "retire_widget"}}
+  ]
+}
+```
+
+Rule types: ``step_requires`` (every step matching ``match`` must satisfy ``require``), ``ref_requires`` (each value a
+matching step holds at ``ref.path`` names an object created by a step matching ``creator.match`` whose ``creator.name_path``
+equals it; that creating step must satisfy ``require``, ``before: true`` also demands it come earlier, and a reference no
+step creates is a violation unless ``on_missing`` is ``ignore``), ``requires_step`` (if a step matches ``if`` some step must
+match ``then``), ``forbid_together`` (steps matching both ``a`` and ``b`` must not coexist; ``same_step`` narrows to one
+step). A match is ``{tool, operation, operation_regex, where}``; a condition is ``{path, op, value, quantifier}`` (ops
+``equals not_equals in not_in exists not_exists regex contains max min``) or ``all`` / ``any`` / ``not`` of conditions.
+Optional top-level ``paths`` (``tool`` default ``tool``, ``operation`` default ``args.operation``) and ``steps_path`` (default
+``steps``).
+
 ### `POST /api/projects/{project_id}/synthetic/review-assist`
 
 **Review Assist**

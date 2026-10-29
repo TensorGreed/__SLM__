@@ -855,7 +855,7 @@ API are in `slm-docs/docs/reference/api/domain-packs.md`; code is `domain_pack_c
   passages are retrieved per scenario when retrieval is effective (`asyncio.to_thread`), (3) the teacher writes
   `plan_json` per scenario (marker `...:answers`, schema = the dereferenced bundle). Every answer is validated with
   `SchemaBundle.validate`; rejects are grouped by reason: `schema_invalid` (top error as detail), `unparseable`,
-  `empty_scenario`, `duplicate_scenario`, `missing_answer`, `cell_out_of_range`. `parse_json_items` repairs a reply whose
+  `empty_scenario`, `duplicate_scenario`, `missing_answer`, `cell_out_of_range`, `rule_violation` (see Plan rules). `parse_json_items` repairs a reply whose
   only fault is a miscounted closing bracket (`repair_json_brackets`: ≤3 drop-stray / insert-missing edits at the parse
   error, ≤15 parses; Sonnet 5.5 lost a third of a 60-plan batch to one `}` too many, 2026-10-28) — the schema check still
   applies (a valid repair can re-home a key one level up — the schema is the guard), and the Job result's
@@ -864,6 +864,55 @@ API are in `slm-docs/docs/reference/api/domain-packs.md`; code is `domain_pack_c
   success raises. Accepted rows carry `grid_cell` and `passages`. Never seeded from the test set.
 - Detection: `task_shape_service.structured_recipe_for_rows` returns `structured-plan` for `row_kind: "structured_plan"` or a
   `scenario` beside a `plan_json` object.
+
+### Plan rules (caller-supplied consistency rules for structured plans)
+
+`services/plan_rules_service.py` is a deterministic (no LLM) rule engine; the rules are DATA from the caller, nothing
+domain-specific lives in code. A rules document is validated against `RULES_SCHEMA` (64 KB cap, 200 rules, unique ids
+`[A-Za-z0-9_.-]{1,48}`, regexes compiled) and bad documents raise `PlanRulesError` (pointer + message) which the surfaces
+turn into 400 `invalid_plan_rules` (endpoint) or 400 `invalid_playbook_param` with `param: plan_rules` (run-playbook).
+Steps are `plan[steps_path]` (default `steps`); ops are matched by `paths.tool` / `paths.operation` inside the step
+(defaults `tool`, `args.operation`). Conditions are `{path, op, value, quantifier}` over dotted paths with `*` / `[*]` /
+integer segments (ops: equals not_equals in not_in exists not_exists regex contains max min; `any` default, `all`
+optional) plus `all` / `any` / `not`. Rule types: `step_requires`, `ref_requires` (ref value path + creator match +
+creator name path, `before`, `on_missing: violate|ignore` - a reference nothing creates is reportable),
+`requires_step` (`if` / `then` / `before`), `forbid_together` (`a` / `b` / `same_step`). Severity `reject` (default)
+or `warn`. Example:
+
+```json
+{
+  "version": 1,
+  "rules": [
+    {"id": "widget-size-cap", "type": "step_requires", "severity": "reject",
+     "description": "a created widget stays small",
+     "match": {"tool": "invoke_operation", "operation": "create_widget"},
+     "require": {"path": "args.arguments.body.size", "op": "max", "value": 10}},
+    {"id": "gadget-binds-sturdy-widget", "type": "ref_requires",
+     "match": {"operation": "bind_gadget"},
+     "ref": {"path": "args.arguments.body.widget"},
+     "creator": {"match": {"operation": "create_widget"}, "name_path": "args.arguments.body.name"},
+     "require": {"path": "args.arguments.body.kind", "op": "equals", "value": "sturdy"},
+     "on_missing": "violate"},
+    {"id": "verify-after-create", "type": "requires_step", "severity": "warn",
+     "if": {"operation": "create_widget"}, "then": {"tool": "verify"}},
+    {"id": "no-create-and-retire", "type": "forbid_together",
+     "a": {"operation": "create_widget"}, "b": {"operation": "retire_widget"}}
+  ]
+}
+```
+
+- Generation: `params.plan_rules` on `scenario_grid`, applied in `validate` AFTER schema validation. A `reject` violation
+  records reject reason `rule_violation` (detail = rule ids, payload `rule_ids` + `violations`); `warn` only stamps
+  `plan_rule_warnings` (rule ids) on the accepted row.
+- Pending rows: `POST /api/projects/{id}/synthetic/check-plan-rules` (`rules` object or JSON text, `dry_run` default true,
+  `row_ids` / `source` / `synth_job_id` / `max_rows` filters, `?async_job=true` -> `plan_rules_check` Job that raises when
+  nothing matched). Dry run = `{checked, flagged, warned_only, by_rule: {id: {severity, count, sample_row_ids}}}`;
+  apply (`dry_run=false`) soft-rejects pending rows with a reject violation as `reject_reason = rule_violation:<first rule
+  id>` (+ `plan_rule_ids`); restore works as for any rejected row, nothing is purged. The rejected view regroups by
+  `reject_reason`, so it groups by rule. Logic: `synth_review_queue_service.check_plan_rules_for_project`.
+- UI: `PlanRulesCard` in `SynthReviewQueue` (shown only when pending rows are structured plans): paste / upload rules,
+  dry-run table, confirm to apply. Bell deep link + outcome summary for `plan_rules_check`. Tests: `test_plan_rules.py`,
+  `SynthReviewQueuePlanRules.test.tsx`.
 
 ## Tool catalog (G7)
 

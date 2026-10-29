@@ -274,6 +274,7 @@ session-start guidance.
 - `backend/app/services/pipeline_recipe_service.py` — End-to-end pipeline recipe (blueprint) service.
 - `backend/app/services/pipeline_refinement_service.py` — Pipeline plan refinement — Phase 1 (deterministic, no cloud LLM).
 - `backend/app/services/pipeline_service.py` — Multi-stage pipelines (G10): on-disk definitions, validation, held-out set and run files.
+- `backend/app/services/plan_rules_service.py` — Plan-rule engine: caller-supplied, deterministic consistency rules over structured plans.
 - `backend/app/services/playbook_gap_service.py` — Gap-tied synthetic-playbook recommendations (Epic E).
 - `backend/app/services/playground_log_service.py` — Prompt/eval logging helpers for playground interactions.
 - `backend/app/services/playground_service.py` — Inference playground service for project-scoped chat experiments.
@@ -1115,6 +1116,7 @@ session-start guidance.
 - `backend/tests/test_phase9_training_runtime_compat.py` — Compatibility tests for external training runtime adapters.
 - `backend/tests/test_pipeline_eval.py` — Multi-stage pipeline evaluation (G10): definitions, held-out upload, the
 - `backend/tests/test_pipeline_refinement.py` — Pipeline plan refinement — Phase 1 tests.
+- `backend/tests/test_plan_rules.py` — Plan-rule engine: every rule type + condition operator, reference resolution (incl. missing
 - `backend/tests/test_playbook_message_batch.py` — Playbook synthesis through Anthropic Message Batches (``use_batch``).
 - `backend/tests/test_playground_trained_run.py` — Playground "experiment" provider — chat with a trained run in-process
 - `backend/tests/test_portable_paths.py` — portable_paths: what an export records carries no machine-specific path.
@@ -1280,6 +1282,7 @@ session-start guidance.
 - `frontend/src/components/data/SynthReviewQueue.judges.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.provenance.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/SynthReviewQueuePlanRules.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SyntheticPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/TaskShapeConfirmCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/ToolCatalogCard.test.tsx` — _(no docstring)_

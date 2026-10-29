@@ -2015,6 +2015,66 @@ async def mark_synth_group_conventions_current(
         raise HTTPException(400, str(exc)) from exc
 
 
+class CheckPlanRulesRequest(BaseModel):
+    rules: dict | str = Field(..., description="The plan-rules document (object, or its JSON text). See plan_rules_service.")
+    dry_run: bool = Field(default=True, description="True (default): count violations per rule, change nothing. False: soft-reject rows with a reject-severity violation.")
+    row_ids: list[int] | None = Field(default=None, description="Only these pending rows.")
+    source: str | None = Field(default=None, max_length=256, description="Only pending rows of this synth_source group.")
+    synth_job_id: int | None = Field(default=None, description="Only pending rows written by this Job.")
+    max_rows: int | None = Field(default=None, ge=1)
+
+
+@router.post("/check-plan-rules")
+async def check_plan_rules(
+    project_id: int,
+    req: CheckPlanRulesRequest,
+    async_job: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """Check the pending structured-plan rows against a caller-supplied plan-rules document.
+
+    ``dry_run`` (default) answers inline with counts per rule + sample row ids. With
+    ``dry_run=false`` rows with a ``reject``-severity violation are marked rejected as
+    ``rule_violation:<rule id>`` (reversible: they stay on disk, restore as usual; never purged).
+    ``?async_job=true`` runs the check as a ``plan_rules_check`` Job (for big projects); bad rules
+    are always a 400 ``invalid_plan_rules`` before any Job starts.
+    """
+    from fastapi.responses import JSONResponse
+
+    from app.services import jobs_service, plan_rules_service as engine
+    from app.services.synth_review_queue_service import check_plan_rules_for_project
+
+    try:
+        engine.load_rules(req.rules)
+    except engine.PlanRulesError as exc:
+        raise HTTPException(400, {
+            "error_code": "invalid_plan_rules", "message": exc.message, "metadata": {"pointer": exc.pointer},
+        }) from exc
+    kwargs = dict(row_ids=req.row_ids, source=req.source, synth_job_id=req.synth_job_id, max_rows=req.max_rows)
+    if not async_job:
+        return check_plan_rules_for_project(project_id, req.rules, dry_run=req.dry_run, **kwargs)
+
+    async def _runner(handle: "jobs_service.JobProgressHandle") -> dict:
+        await handle.set_progress(fraction=0.1, message="Checking pending plans against the rules…")
+        result = check_plan_rules_for_project(project_id, req.rules, dry_run=req.dry_run, **kwargs)
+        if result["checked"] == 0:
+            raise RuntimeError("No pending structured-plan rows to check (none match the filters, or they were already reviewed).")
+        verb = "would reject" if req.dry_run else "rejected"
+        await handle.set_progress(
+            fraction=1.0,
+            message=f"Checked {result['checked']} plans · {verb} {result['flagged'] if req.dry_run else result['rejected']} · {len(result['by_rule'])} rules hit",
+        )
+        return result
+
+    job = await jobs_service.start_job(
+        db, kind="plan_rules_check",
+        title=("Check plan rules (dry run)" if req.dry_run else "Apply plan rules"),
+        runner=_runner, project_id=project_id,
+        params={"dry_run": req.dry_run, "rules": len((req.rules if isinstance(req.rules, dict) else {}).get("rules") or []), **{k: v for k, v in kwargs.items() if v is not None}},
+    )
+    return JSONResponse(status_code=202, content=jobs_service.serialize_job(job))
+
+
 @router.post("/review-queue/purge")
 async def purge_rejected_synth_rows(
     project_id: int,
