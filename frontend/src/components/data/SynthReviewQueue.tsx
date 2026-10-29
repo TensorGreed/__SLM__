@@ -16,7 +16,10 @@ import api from '../../api/client';
 import { toast } from '../../stores/toastStore';
 import { budgetExceededMessage, budgetWarningMessage } from '../../api/llmSpend';
 
+import GenerationModelPicker from '../shared/GenerationModelPicker';
 import type {
+    ReviewAssist,
+    ReviewAssistVerdict,
     ReviewQueueGroup,
     ReviewQueueGroupBy,
     ReviewQueueResponse,
@@ -25,6 +28,7 @@ import {
     bulkUpdateSynthReviewQueue,
     listSynthReviewQueue,
     purgeRejectedSynthRows,
+    startReviewAssist,
 } from '../../api/synthPlaybook';
 import './SynthReviewQueue.css';
 
@@ -66,6 +70,9 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
     // Provenance filters: one Job / one backend (picked from the queue's facets).
     const [filterJob, setFilterJob] = useState<number | null>(null);
     const [filterBackend, setFilterBackend] = useState<string | null>(null);
+    // Pre-screen (review assist) filters: verdict and reason code.
+    const [filterVerdict, setFilterVerdict] = useState<ReviewAssistVerdict | null>(null);
+    const [filterReason, setFilterReason] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -74,6 +81,8 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
             const payload = await listSynthReviewQueue(projectId, groupBy, {
                 synthJobId: filterJob,
                 synthBackend: filterBackend,
+                verdict: filterVerdict,
+                reasonCode: filterReason,
             });
             setData(payload);
             setSelected(new Set());
@@ -82,7 +91,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
         } finally {
             setLoading(false);
         }
-    }, [projectId, groupBy, filterJob, filterBackend]);
+    }, [projectId, groupBy, filterJob, filterBackend, filterVerdict, filterReason]);
 
     useEffect(() => {
         load();
@@ -174,6 +183,33 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
             setBusy(false);
         }
     }, [focusedRowIds, focusSource, projectId, load]);
+
+    // Bulk accept / reject a whole group by its row ids (rejects carry `assist:<reason_code>` so the
+    // Rejected section groups them by why the pre-screen failed them).
+    const handleGroupUpdate = async (group: ReviewQueueGroup, action: 'accept' | 'reject') => {
+        const ids = group.rows.map((r) => r.id);
+        if (ids.length === 0) return;
+        const code = assistReasonOf(group);
+        setBusy(true);
+        setFlash(null);
+        try {
+            const result = await bulkUpdateSynthReviewQueue(projectId, {
+                rowIds: ids,
+                action,
+                rejectReason: action === 'reject' && code ? `assist:${code}` : null,
+            });
+            setFlash(
+                action === 'accept'
+                    ? `Accepted ${result.accepted} row${result.accepted === 1 ? '' : 's'} from ${group.synth_source}. ${result.total_remaining_pending} still pending.`
+                    : `Rejected ${result.rejected} row${result.rejected === 1 ? '' : 's'} from ${group.synth_source}${code ? ` (assist:${code})` : ''}. ${result.total_remaining_pending} still pending.`,
+            );
+            await load();
+        } catch (err: any) {
+            setError(err?.response?.data?.detail || err?.message || 'Bulk update failed');
+        } finally {
+            setBusy(false);
+        }
+    };
 
     const toggleRow = (id: number) => {
         setSelected((prev) => {
@@ -319,8 +355,18 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                     data={data}
                     job={filterJob}
                     backend={filterBackend}
+                    verdict={filterVerdict}
+                    reason={filterReason}
                     onJob={setFilterJob}
                     onBackend={setFilterBackend}
+                    onVerdict={setFilterVerdict}
+                    onReason={setFilterReason}
+                />
+                <ReviewAssistCard
+                    projectId={projectId}
+                    pending={data.total_pending}
+                    synthJobId={filterJob}
+                    onStarted={() => { setFlash('Pre-screen started — verdicts appear here as it runs (reload to refresh).'); }}
                 />
                 <p className="synth-review-queue__subtitle">
                     {data.total_pending} row{data.total_pending === 1 ? '' : 's'} awaiting review,
@@ -430,6 +476,28 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                                 )}
                                 <span className="synth-review-queue__group-count">{group.count}</span>
                             </label>
+                            {(groupBy === 'assist_reason' || groupBy === 'verdict') && group.rows.length > 0 && (
+                                <span className="synth-review-queue__group-actions">
+                                    <button
+                                        type="button"
+                                        className="btn btn-primary"
+                                        onClick={() => handleGroupUpdate(group, 'accept')}
+                                        disabled={busy}
+                                        data-testid={`synth-review-queue-group-accept-${group.synth_source}`}
+                                    >
+                                        Accept group ({group.count})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary synth-review-queue__reject-btn"
+                                        onClick={() => handleGroupUpdate(group, 'reject')}
+                                        disabled={busy}
+                                        data-testid={`synth-review-queue-group-reject-${group.synth_source}`}
+                                    >
+                                        Reject group ({group.count})
+                                    </button>
+                                </span>
+                            )}
                         </div>
                         <ul className="synth-review-queue__rows">
                             {group.rows.map((row) => (
@@ -453,6 +521,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                                         </span>
                                         <code>{row.preview}</code>
                                     </label>
+                                    {row.review_assist && <AssistBadge assist={row.review_assist} rowId={row.id} />}
                                     {(row.synth_job_id != null || row.synth_backend) && (
                                         <span className="synth-review-queue__provenance" data-testid={`synth-review-queue-provenance-${row.id}`}>
                                             {row.synth_job_id != null ? `job #${row.synth_job_id}` : 'no job'}
@@ -511,21 +580,175 @@ const GROUP_BY_OPTIONS: { value: ReviewQueueGroupBy; label: string }[] = [
     { value: 'cluster', label: 'Cluster' },
     { value: 'job', label: 'Job' },
     { value: 'backend', label: 'Backend' },
+    { value: 'verdict', label: 'Verdict' },
+    { value: 'assist_reason', label: 'Verdict + reason' },
 ];
+
+/** The reason code of an `assist_reason` group (key `<verdict>:<reason_code>`); null for other groupings. */
+function assistReasonOf(group: ReviewQueueGroup): string | null {
+    const m = /^(pass|fail|unsure):(.+)$/.exec(group.synth_source);
+    return m ? m[2] : null;
+}
+
+function AssistBadge({ assist, rowId }: { assist: ReviewAssist; rowId: number }) {
+    return (
+        <span
+            className={`synth-review-queue__assist synth-review-queue__assist--${assist.verdict}`}
+            data-testid={`synth-review-queue-assist-${rowId}`}
+            title={assist.backend ? `Pre-screened by ${assist.backend}${assist.job_id != null ? ` (job #${assist.job_id})` : ''}` : undefined}
+        >
+            <strong>{assist.verdict}</strong>
+            {assist.reason_code !== 'ok' ? ` · ${assist.reason_code}` : ''}
+            {assist.note ? ` — ${assist.note}` : ''}
+        </span>
+    );
+}
+
+interface ReviewAssistCardProps {
+    projectId: number;
+    pending: number;
+    /** Narrow the pre-screen to the Job picked in the filter, if any. */
+    synthJobId: number | null;
+    onStarted: () => void;
+}
+
+/** "Pre-screen": an LLM reads the pending rows and gives each a verdict + reason + note, so the
+ *  reviewer can bulk-accept the clean group and look first at the failures. Never accepts or
+ *  rejects by itself. Runs as the `synth_review_assist` Job (the bell reports the outcome). */
+function ReviewAssistCard({ projectId, pending, synthJobId, onStarted }: ReviewAssistCardProps) {
+    const [open, setOpen] = useState(false);
+    const [pin, setPin] = useState<string | null>(null);
+    const [rubric, setRubric] = useState('');
+    const [rowsPerCall, setRowsPerCall] = useState('10');
+    const [useBatch, setUseBatch] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const batchable = Boolean(pin && pin.startsWith('cloud:anthropic:'));
+    const perCall = Math.min(25, Math.max(1, Math.floor(Number(rowsPerCall) || 10)));
+
+    const start = async () => {
+        setBusy(true);
+        try {
+            const job = await startReviewAssist(projectId, {
+                backend: pin,
+                useBatch: useBatch && batchable,
+                rubricText: rubric,
+                rowsPerCall: perCall,
+                synthJobId,
+            });
+            const budgetMsg = budgetWarningMessage(job);
+            if (budgetMsg) toast.warning(budgetMsg, 8000);
+            toast.info(
+                `Pre-screening ${synthJobId != null ? `job #${synthJobId}'s ` : 'the pending '}rows with ${pin ?? 'a local model'} (job #${job.id})`
+                + (useBatch && batchable ? ' as one Anthropic batch — half price, results in minutes to hours' : '')
+                + '. Open the bell for progress.',
+                6000,
+            );
+            onStarted();
+        } catch (err: any) {
+            const detail = err?.response?.data;
+            toast.error(
+                budgetExceededMessage(err)
+                ?? (typeof detail?.message === 'string' ? detail.message : typeof detail?.detail === 'string' ? detail.detail : err?.message)
+                ?? 'Could not start the pre-screen.',
+                8000,
+            );
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <div className="synth-review-queue__assist-card" data-testid="synth-review-queue-assist-card">
+            <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setOpen((v) => !v)}
+                data-testid="synth-review-queue-assist-toggle"
+            >
+                {open ? 'Hide pre-screen' : 'Pre-screen with a model'}
+            </button>
+            {open && (
+                <div className="synth-review-queue__assist-form">
+                    <p className="synth-review-queue__subtitle">
+                        A model reads each pending row and says pass / fail / unsure with a reason. It never accepts or rejects
+                        anything: group by verdict, then accept or reject a group yourself.
+                    </p>
+                    <GenerationModelPicker
+                        projectId={projectId}
+                        value={pin}
+                        onChange={setPin}
+                        disabled={busy}
+                        testIdPrefix="synth-review-queue-assist"
+                        label="Pre-screen model"
+                    />
+                    <label className="synth-review-queue__assist-field">
+                        Extra rubric (optional){' '}
+                        <textarea
+                            value={rubric}
+                            onChange={(e) => setRubric(e.target.value)}
+                            rows={3}
+                            maxLength={4000}
+                            placeholder="Appended to the built-in rubric for each row type, e.g. the operations a plan may use."
+                            data-testid="synth-review-queue-assist-rubric"
+                        />
+                    </label>
+                    <label className="synth-review-queue__assist-field">
+                        Rows per call{' '}
+                        <input
+                            type="number"
+                            min={1}
+                            max={25}
+                            value={rowsPerCall}
+                            onChange={(e) => setRowsPerCall(e.target.value)}
+                            data-testid="synth-review-queue-assist-rows-per-call"
+                        />
+                    </label>
+                    {batchable && (
+                        <label className="synth-review-queue__assist-field">
+                            <input
+                                type="checkbox"
+                                checked={useBatch}
+                                onChange={(e) => setUseBatch(e.target.checked)}
+                                data-testid="synth-review-queue-assist-batch"
+                            />
+                            {' '}Half price (Message Batch)
+                        </label>
+                    )}
+                    <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={start}
+                        disabled={busy || pending === 0}
+                        data-testid="synth-review-queue-assist-start"
+                    >
+                        Pre-screen {synthJobId != null ? `job #${synthJobId}'s rows` : `${pending} pending row${pending === 1 ? '' : 's'}`}
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
 
 interface ProvenanceFiltersProps {
     data: ReviewQueueResponse;
     job: number | null;
     backend: string | null;
+    verdict: ReviewAssistVerdict | null;
+    reason: string | null;
     onJob: (job: number | null) => void;
     onBackend: (backend: string | null) => void;
+    onVerdict: (verdict: ReviewAssistVerdict | null) => void;
+    onReason: (reason: string | null) => void;
 }
 
 /** Narrow the queue to the rows one Job / one backend wrote, so lanes can be compared. */
-function ProvenanceFilters({ data, job, backend, onJob, onBackend }: ProvenanceFiltersProps) {
+function ProvenanceFilters({ data, job, backend, verdict, reason, onJob, onBackend, onVerdict, onReason }: ProvenanceFiltersProps) {
     const jobs = data.facets?.jobs ?? [];
     const backends = data.facets?.backends ?? [];
-    if (jobs.length < 2 && backends.length < 2 && job == null && !backend) return null;
+    const verdicts = data.facets?.verdicts ?? [];
+    const reasons = data.facets?.reason_codes ?? [];
+    const filtered = job != null || Boolean(backend) || Boolean(verdict) || Boolean(reason);
+    if (jobs.length < 2 && backends.length < 2 && verdicts.length === 0 && !filtered) return null;
     return (
         <div className="synth-review-queue__filters" data-testid="synth-review-queue-filters">
             <label>
@@ -558,6 +781,36 @@ function ProvenanceFilters({ data, job, backend, onJob, onBackend }: ProvenanceF
                     ))}
                 </select>
             </label>
+            {(verdicts.length > 0 || verdict) && (
+                <>
+                    <label>
+                        Pre-screen verdict{' '}
+                        <select
+                            value={verdict ?? ''}
+                            onChange={(e) => onVerdict((e.target.value || null) as ReviewAssistVerdict | null)}
+                            data-testid="synth-review-queue-filter-verdict"
+                        >
+                            <option value="">Any</option>
+                            {verdicts.map((v) => (
+                                <option key={v.verdict} value={v.verdict}>{v.verdict} ({v.count})</option>
+                            ))}
+                        </select>
+                    </label>
+                    <label>
+                        Reason{' '}
+                        <select
+                            value={reason ?? ''}
+                            onChange={(e) => onReason(e.target.value || null)}
+                            data-testid="synth-review-queue-filter-reason"
+                        >
+                            <option value="">Any</option>
+                            {reasons.map((r) => (
+                                <option key={r.reason_code} value={r.reason_code}>{r.reason_code} ({r.count})</option>
+                            ))}
+                        </select>
+                    </label>
+                </>
+            )}
         </div>
     );
 }

@@ -48,6 +48,9 @@ function jobDeepLink(job: Job): string | null {
     if (job.kind === 'synth_augment_from_cluster' && job.project_id) {
         return dataStepPath(job.project_id, 'synthetic', 'review-queue') + '#synth-review-queue';
     }
+    if (job.kind === 'synth_review_assist' && job.project_id) {
+        return dataStepPath(job.project_id, 'synthetic', 'review-queue') + '#synth-review-queue';
+    }
     // Legacy synth (QA / spans / conversations) all land on the
     // Synthetic tab where the inline review UI lives — the user
     // reviews the generated rows + saves from there.
@@ -185,6 +188,20 @@ function jobOutcomeSummaryCore(job: Job): string | null {
             parts.push(`via batch (half price)${redone ? `, ${redone} request${redone === 1 ? '' : 's'} redone directly` : ''}`);
         }
         return parts.length ? parts.join(' · ') : null;
+    }
+
+    if (job.kind === 'synth_review_assist') {
+        const v = (r.verdicts || {}) as Record<string, unknown>;
+        const n = (k: string) => (typeof v[k] === 'number' ? (v[k] as number) : 0);
+        const parts = [`pass ${n('pass')}`, `fail ${n('fail')}`, `unsure ${n('unsure')}`];
+        const unparseable = typeof r.rows_unparseable === 'number' ? r.rows_unparseable : 0;
+        if (unparseable > 0) parts.push(`${unparseable} unreadable`);
+        const batch = r.batch as { fell_back?: number } | null | undefined;
+        if (batch && typeof batch === 'object') {
+            const redone = typeof batch.fell_back === 'number' && batch.fell_back > 0 ? batch.fell_back : 0;
+            parts.push(`via batch (half price)${redone ? `, ${redone} request${redone === 1 ? '' : 's'} redone directly` : ''}`);
+        }
+        return parts.join(' · ');
     }
 
     if (job.kind.startsWith('synth_legacy')) {

@@ -105,6 +105,11 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   chat / stream / RAG-compare routes) and the probe judge / plan refinement / teacher capture / synthetic
   batches re-raise `LlmBudgetExceeded`. `command:<model>` pins are validated (`validate_pin`, via
   `resolve_cloud_backend`) — a leading "-" would parse as a CLI flag.
+- **Review assist metering** — the `synth_review_assist` Job (`agent-notes/data.md`) follows the playbook pattern:
+  direct calls (any backend) reach `usage` / `cost_usd` / `tokens` through the Job meter; with `use_batch` the run reports
+  `batch_usage_fields` (batch at half price + direct fallbacks), which wins over the meter, and a budget stop or cancel hangs
+  that spend on the exception (`attach_result_usage`). It re-raises `LlmBudgetExceeded` after keeping the verdicts saved so far;
+  a start at the cap is refused with 402 before any Job (`assert_can_start` via `_resolve_cloud_backend_override`).
 - **Subscription CLI (`command` backend)** — usage recorded as `subscription:<binary>`;
   `llm_pricing.estimate_cost` prices that prefix at $0 BEFORE substring matching; `llm_spend_service.tally`
   adds `billing` per by_model row and `subscription_calls` / `subscription_tokens` totals. Never counted

@@ -1,5 +1,10 @@
 # Changelog
 
+### Review assist: pre-screen pending synthetic rows with a model (October 29, 2026)
+
+- A new **Pre-screen with a model** action in the Generate step's review queue sends the pending synthetic rows to a model of your choice (a local model, the local CLI, or a cloud model; Anthropic cloud models can run as a half-price Message Batch). Each row gets a verdict (**pass**, **fail** or **unsure**), a reason code and a one-sentence note. Built-in rubrics cover code examples (correctness, use of the cited passages, unsafe patterns such as hard-coded secrets, disabled TLS verification, logged sensitive values and string-built SQL), structured plans (steps consistent with the scenario and any allowed operations you type in, meaningful verification and rollback, no invented fields) and question-and-answer rows (supported by the passages); other rows get a generic rubric, and your own text is appended to it. Rows are treated as data: the model is told to ignore instructions inside them, and an answer it did not give or that cannot be read is `unsure`, never a pass.
+- The pre-screen never accepts or rejects anything. Filter or group the queue by verdict or by verdict and reason, then **Accept group** or **Reject group** (rejects are tagged `assist:<reason>` so the Rejected section groups them by why they failed). The bell shows "pass N · fail N · unsure N" and the spend; an API budget stop keeps the verdicts already written. Verdicts are kept in a side file next to `synthetic.jsonl` so the pre-screen never rewrites your rows; running it again replaces the earlier verdicts. API: `POST /api/projects/{id}/synthetic/review-assist?async_job=true`.
+
 ### Synthetic row provenance (October 29, 2026)
 
 - Every row a playbook writes now records which Job and backend produced it: `synth_job_id` (null when run synchronously), `synth_backend` (the backend pin, e.g. `cloud:anthropic:<model>` or `command:<model>`) and `synth_batch: true` for a Message Batch run. Legacy synthetic tasks stamp the Job and model too.

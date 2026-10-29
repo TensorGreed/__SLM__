@@ -7,7 +7,7 @@ title: Synthetic
 
 # Synthetic
 
-Auto-generated reference for the **Synthetic** API. 31 endpoint(s).
+Auto-generated reference for the **Synthetic** API. 32 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -256,7 +256,7 @@ Content type: `application/json` — `GenerateSpanAsyncRequest`
 | `api_url` | `string` | no |  |
 | `api_key` | `string` | no |  |
 | `model_name` | `string` | no |  |
-| `backend` | `string \\| null` | no |  |
+| `backend` | `string \| null` | no |  |
 | `focus_types` | `string[]` | no |  |
 | `ignore_benchmark_values` | `boolean` | no |  |
 | `use_all_chunks` | `boolean` | no | When true, source text for each batch is a fresh random sample (~4–8k tokens) of the project's cleaned chunks. When false, ``source_text`` is reused verbatim for every batch. |
@@ -360,6 +360,46 @@ Content type: `application/json` — `RelabelAnswerKeyRequest \| null`
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `POST /api/projects/{project_id}/synthetic/review-assist`
+
+**Review Assist**
+
+Pre-screen pending synthetic rows with an LLM: each gets a verdict (pass / fail / unsure),
+a reason code and a one-sentence note, shown in the review queue (filter / group by them,
+then bulk accept or reject). Runs as the ``synth_review_assist`` Job (``?async_job=true``;
+a dry run answers inline). Verdicts live in a sidecar, never in ``synthetic.jsonl``.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `async_job` | `query` | `boolean` | no |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `ReviewAssistRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `backend` | `string \| null` | no | Any synth backend pin (ollama:&lt;model&gt;, command:&lt;model&gt;, cloud:&lt;provider&gt;:&lt;model&gt;, ...); omitted = the first reachable local backend. |
+| `use_batch` | `boolean` | no | Anthropic Message Batch (half price; cloud:anthropic:&lt;model&gt; only). |
+| `row_ids` | `integer[] \| null` | no | Pending row ids to judge (default: every pending row). |
+| `source` | `string \| null` | no | Only pending rows of this synth_source group. |
+| `synth_job_id` | `integer \| null` | no | Only pending rows written by this Job. |
+| `rubric_text` | `string \| null` | no | Free text appended to the built-in rubric (e.g. the allowed operations). |
+| `rows_per_call` | `integer` | no |  |
+| `max_rows` | `integer \| null` | no |  |
+| `dry_run` | `boolean` | no | Report how many rows / calls the run would take; call no model. |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `GET /api/projects/{project_id}/synthetic/review-queue`
 
 **List Synth Review Queue**
@@ -368,8 +408,9 @@ List pending synthetic rows for the project, grouped by
 `synth_source` (USER-SUCCESS Epic 2b) — or by class label with
 `?group_by=class` (Epic E), by originating failure cluster
 (`cluster`), by the Job that wrote the rows (`job`) or by the backend
-that wrote them (`backend`). `?synth_job_id=` / `?synth_backend=`
-narrow every list to one Job / backend.
+that wrote them (`backend`), by review-assist verdict (`verdict`) or by
+verdict + reason code (`assist_reason`). `?synth_job_id=` /
+`?synth_backend=` / `?verdict=` / `?reason_code=` narrow every list.
 
 Pending rows are gated out of dataset prep — they don't enter
 training until the user accepts them via `/review-queue/bulk-update`
@@ -383,6 +424,8 @@ training until the user accepts them via `/review-queue/bulk-update`
 | `group_by` | `query` | `string` | no |  |
 | `synth_job_id` | `query` | `integer` | no |  |
 | `synth_backend` | `query` | `string` | no |  |
+| `verdict` | `query` | `string` | no |  |
+| `reason_code` | `query` | `string` | no |  |
 
 **Responses**
 
@@ -425,8 +468,8 @@ Content type: `application/json` — `RunPlaybookRequest`
 |---|---|---|---|
 | `mode` | `string` | yes | Synth mode, e.g. 'positives_paraphrase'. |
 | `target_count` | `integer` | no |  |
-| `target_class` | `string \\| null` | no |  |
-| `backend` | `string \\| null` | no | Optional backend pin, e.g. 'ollama:llama3.1:8b'. |
+| `target_class` | `string \| null` | no |  |
+| `backend` | `string \| null` | no | Optional backend pin, e.g. 'ollama:llama3.1:8b'. |
 | `use_batch` | `boolean` | no | Anthropic Message Batches: the run's calls go as one batch per stage at half the list price; results take minutes to hours, unanswered calls are retried directly. `cloud:anthropic:<model>` backends with `?async_job=true` only (400 `invalid_playbook_param` otherwise). A run that fails or is cancelled after its batch still reports the batch spend on the Job. |
 
 **Responses**
@@ -563,8 +606,8 @@ Content type: `application/json` — `TypeDefinitionsRequest`
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `definitions` | `object \\| null` | no |  |
-| `scan_tolerant` | `boolean \\| null` | no |  |
+| `definitions` | `object \| null` | no |  |
+| `scan_tolerant` | `boolean \| null` | no |  |
 
 **Responses**
 
@@ -675,7 +718,7 @@ Content type: `application/json` — `BulkReviewQueueRequest`
 |---|---|---|---|
 | `row_ids` | `integer[]` | yes | IDs of pending synth rows to update. |
 | `action` | `string` | yes | 'accept' or 'reject'. |
-| `reject_reason` | `string \\| null` | no | Optional label for a bulk reject (e.g. 'duplicate', 'schema_invalid'). Stamped on each rejected row so the Rejected section can group + purge by reason. |
+| `reject_reason` | `string \| null` | no | Optional label for a bulk reject (e.g. 'duplicate', 'schema_invalid'). Stamped on each rejected row so the Rejected section can group + purge by reason. |
 
 **Responses**
 
@@ -708,7 +751,7 @@ Content type: `application/json` — `BulkReviewQueueBySourceRequest`
 |---|---|---|---|
 | `source` | `string` | yes | The ``synth_source`` group key whose pending rows to update (e.g. 'playbook:classification:hard_negatives'). Every pending row in the group is affected — no row-id enumeration needed. |
 | `action` | `string` | yes | 'accept' or 'reject'. |
-| `reject_reason` | `string \\| null` | no | Optional label stamped on each rejected row (reject only). |
+| `reject_reason` | `string \| null` | no | Optional label stamped on each rejected row (reject only). |
 
 **Responses**
 
@@ -771,7 +814,7 @@ Content type: `application/json` — `PurgeRejectedRequest`
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `reasons` | `string[] \\| null` | no | When set, only rejected rows whose ``reject_reason`` is in this list get physically removed. When omitted (or empty), all rejected rows are purged. |
+| `reasons` | `string[] \| null` | no | When set, only rejected rows whose ``reject_reason`` is in this list get physically removed. When omitted (or empty), all rejected rows are purged. |
 
 **Responses**
 
@@ -852,8 +895,8 @@ Content type: `application/json` — `RunPlaybookRequest`
 |---|---|---|---|
 | `mode` | `string` | yes | Synth mode, e.g. 'positives_paraphrase'. |
 | `target_count` | `integer` | no |  |
-| `target_class` | `string \\| null` | no |  |
-| `backend` | `string \\| null` | no | Optional backend pin, e.g. 'ollama:llama3.1:8b'. |
+| `target_class` | `string \| null` | no |  |
+| `backend` | `string \| null` | no | Optional backend pin, e.g. 'ollama:llama3.1:8b'. |
 | `use_batch` | `boolean` | no | Accepted and ignored: the dry run is always one direct call. |
 
 **Responses**

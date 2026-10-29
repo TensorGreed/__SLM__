@@ -84,12 +84,15 @@ def _atomic_write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
 # Where a row came from: the Job that wrote it, the backend pin, and whether it went through a
 # Message Batch (stamped by the playbook append; absent on rows written before that).
 PROVENANCE_KEYS = ("synth_job_id", "synth_backend", "synth_batch")
+# ``review_assist`` (the LLM pre-screen verdict) is merged onto rows at read time from the
+# sidecar (``synth_review_assist_service``); a legacy / hand-written row may carry it inline.
+NO_ASSIST_LABEL = "(not pre-screened)"
 
 
 def _row_preview(row: dict[str, Any], *, limit: int = 280) -> str:
     """Single-line preview string used by the queue list. Drops the
     provenance fields and serializes only the payload-shaped keys."""
-    skip = {"id", "synth_source", "synth_confidence", "review_status", "status", "generated_at", "source", "model", *PROVENANCE_KEYS}
+    skip = {"id", "synth_source", "synth_confidence", "review_status", "status", "generated_at", "source", "model", "review_assist", *PROVENANCE_KEYS}
     payload = {k: v for k, v in row.items() if k not in skip}
     if not payload:
         payload = row
@@ -167,6 +170,23 @@ def _resolve_job_label(row: dict[str, Any]) -> str:
     """Group key when grouping by Job — ``job:<id>`` (rows not written by a Job share one bucket)."""
     jid = _row_job_id(row)
     return f"job:{jid}" if jid is not None else "(no job)"
+
+
+def _assist(row: dict[str, Any]) -> dict[str, Any] | None:
+    a = row.get("review_assist")
+    return a if isinstance(a, dict) and a.get("verdict") else None
+
+
+def _resolve_verdict_label(row: dict[str, Any]) -> str:
+    """Group key when grouping by pre-screen verdict (pass / fail / unsure)."""
+    a = _assist(row)
+    return str(a["verdict"]) if a else NO_ASSIST_LABEL
+
+
+def _resolve_assist_reason_label(row: dict[str, Any]) -> str:
+    """Group key when grouping by pre-screen reason: ``<verdict>:<reason_code>``."""
+    a = _assist(row)
+    return f"{a['verdict']}:{a.get('reason_code') or 'other'}" if a else NO_ASSIST_LABEL
 
 
 def _resolve_backend_label(row: dict[str, Any]) -> str:
@@ -270,10 +290,11 @@ def _bucket_rows_by_source(
                     "synth_job_id": _row_job_id(row),
                     "synth_backend": row.get("synth_backend") if isinstance(row.get("synth_backend"), str) else None,
                     "synth_batch": bool(row.get("synth_batch")),
+                    "review_assist": _assist(row),
                     "preview": _row_preview(row),
                     "payload": {
                         k: v for k, v in row.items()
-                        if k not in {"id", "synth_source", "synth_confidence", "review_status", "status", *PROVENANCE_KEYS}
+                        if k not in {"id", "synth_source", "synth_confidence", "review_status", "status", "review_assist", *PROVENANCE_KEYS}
                     },
                 }
                 for row in visible_entries
@@ -292,9 +313,18 @@ def _provenance_facets(rows: list[dict[str, Any]]) -> dict[str, Any]:
             jobs[jid] = jobs.get(jid, 0) + 1
         backend = _resolve_backend_label(row)
         backends[backend] = backends.get(backend, 0) + 1
+    verdicts: dict[str, int] = {}
+    reasons: dict[str, int] = {}
+    for row in rows:
+        a = _assist(row)
+        if a:
+            verdicts[str(a["verdict"])] = verdicts.get(str(a["verdict"]), 0) + 1
+            reasons[str(a.get("reason_code") or "other")] = reasons.get(str(a.get("reason_code") or "other"), 0) + 1
     return {
         "jobs": [{"synth_job_id": j, "count": jobs[j]} for j in sorted(jobs)],
         "backends": [{"synth_backend": b, "count": backends[b]} for b in sorted(backends)],
+        "verdicts": [{"verdict": v, "count": verdicts[v]} for v in sorted(verdicts)],
+        "reason_codes": [{"reason_code": r, "count": reasons[r]} for r in sorted(reasons)],
     }
 
 
@@ -305,6 +335,8 @@ async def list_review_queue(
     group_by: str = "source",
     synth_job_id: int | None = None,
     synth_backend: str | None = None,
+    verdict: str | None = None,
+    reason_code: str | None = None,
 ) -> dict[str, Any]:
     """Return synth rows for a project, split into pending + accepted
     groups (keyed by ``synth_source``, or by class label when
@@ -326,6 +358,10 @@ async def list_review_queue(
     dataset = ds_result.scalar_one_or_none()
     path = _synthetic_jsonl_path(project_id)
     all_rows = _ensure_row_ids(path, _read_all_rows(path))
+    # Pre-screen verdicts live in a sidecar (never in the jsonl): merge them on for display.
+    from app.services.synth_review_assist_service import attach_verdicts
+
+    attach_verdicts(project_id, all_rows)
     # Facets describe every pending row; the filters narrow the three lists below
     # (the totals stay project-wide so the strip still adds up).
     facets = _provenance_facets([r for r in all_rows if r.get("review_status") == "pending"])
@@ -334,6 +370,10 @@ async def list_review_queue(
         all_rows = [r for r in all_rows if _row_job_id(r) == synth_job_id]
     if synth_backend:
         all_rows = [r for r in all_rows if _resolve_backend_label(r) == synth_backend]
+    if verdict:
+        all_rows = [r for r in all_rows if _resolve_verdict_label(r) == verdict]
+    if reason_code:
+        all_rows = [r for r in all_rows if (_assist(r) or {}).get("reason_code") == reason_code]
     pending = [r for r in all_rows if r.get("review_status") == "pending"]
     # "Accepted" = explicitly accepted, OR no review_status field
     # (legacy rows from the pre-Epic-2a flow). Both will enter
@@ -357,6 +397,8 @@ async def list_review_queue(
         "source": _resolve_source_label,
         "job": _resolve_job_label,
         "backend": _resolve_backend_label,
+        "verdict": _resolve_verdict_label,
+        "assist_reason": _resolve_assist_reason_label,
     }
     normalized_group_by = group_by if group_by in _GROUP_RESOLVERS else "source"
     key_fn = _GROUP_RESOLVERS[normalized_group_by]
@@ -378,7 +420,10 @@ async def list_review_queue(
         "dataset_id": dataset.id if dataset else None,
         "group_by": normalized_group_by,
         "total_rows": total_rows_all,
-        "filter": {"synth_job_id": synth_job_id, "synth_backend": synth_backend},
+        "filter": {
+            "synth_job_id": synth_job_id, "synth_backend": synth_backend,
+            "verdict": verdict, "reason_code": reason_code,
+        },
         "facets": facets,
         "total_pending": len(pending),
         "total_accepted": len(accepted),

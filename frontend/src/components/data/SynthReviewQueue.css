@@ -603,3 +603,28 @@
     font-size: var(--font-size-xs);
     color: var(--text-secondary);
 }
+
+/* Review assist (pre-screen): verdict badge, group actions, the start card. */
+.synth-review-queue__assist {
+    display: block;
+    margin-left: 28px;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+.synth-review-queue__assist--pass strong { color: var(--color-success); }
+.synth-review-queue__assist--fail strong { color: var(--color-danger); }
+.synth-review-queue__assist--unsure strong { color: var(--color-warning); }
+.synth-review-queue__group-actions {
+    display: inline-flex;
+    gap: var(--space-sm);
+    margin-left: auto;
+}
+.synth-review-queue__assist-card { margin: var(--space-sm) 0; }
+.synth-review-queue__assist-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+}
+.synth-review-queue__assist-field { display: flex; flex-direction: column; gap: 4px; font-size: var(--font-size-sm); }
+.synth-review-queue__assist-field textarea { width: 100%; }

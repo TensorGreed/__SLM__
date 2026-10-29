@@ -323,8 +323,23 @@ export async function augmentFromClusterAsync(
 }
 
 
+/** The LLM pre-screen's opinion of one row (never an accept / reject by itself). */
+export type ReviewAssistVerdict = 'pass' | 'fail' | 'unsure';
+
+export interface ReviewAssist {
+    verdict: ReviewAssistVerdict;
+    /** From the rubric's vocabulary (`ok`, `other`, `judge_unparseable`, ...). */
+    reason_code: string;
+    note: string;
+    backend?: string;
+    job_id?: number | null;
+    batch?: boolean;
+    at?: string;
+}
+
 export interface ReviewQueueEntry {
     id: number;
+    review_assist?: ReviewAssist | null;
     synth_confidence: number;
     /** The Job that wrote the row (null: not run as a Job / written before provenance was stamped). */
     synth_job_id?: number | null;
@@ -383,6 +398,9 @@ export interface ReviewQueueResponse {
     facets?: {
         jobs: { synth_job_id: number; count: number }[];
         backends: { synth_backend: string; count: number }[];
+        /** Pre-screen verdicts / reason codes present on the pending rows. */
+        verdicts?: { verdict: ReviewAssistVerdict; count: number }[];
+        reason_codes?: { reason_code: string; count: number }[];
     };
     groups: ReviewQueueGroup[];
     /** Accepted rows (passed review or pre-Epic-2a legacy rows).
@@ -416,11 +434,14 @@ export interface BulkUpdateBySourceResult extends BulkUpdateResult {
     matched: number;
 }
 
-export type ReviewQueueGroupBy = 'source' | 'class' | 'cluster' | 'job' | 'backend';
+export type ReviewQueueGroupBy =
+    | 'source' | 'class' | 'cluster' | 'job' | 'backend' | 'verdict' | 'assist_reason';
 
 export interface ReviewQueueFilter {
     synthJobId?: number | null;
     synthBackend?: string | null;
+    verdict?: ReviewAssistVerdict | null;
+    reasonCode?: string | null;
 }
 
 export async function listSynthReviewQueue(
@@ -432,6 +453,8 @@ export async function listSynthReviewQueue(
     if (groupBy !== 'source') params.group_by = groupBy;
     if (filter.synthJobId != null) params.synth_job_id = filter.synthJobId;
     if (filter.synthBackend) params.synth_backend = filter.synthBackend;
+    if (filter.verdict) params.verdict = filter.verdict;
+    if (filter.reasonCode) params.reason_code = filter.reasonCode;
     const resp = await api.get(`/projects/${projectId}/synthetic/review-queue`, {
         params: Object.keys(params).length > 0 ? params : undefined,
     });
@@ -498,4 +521,34 @@ export async function purgeRejectedSynthRows(
         { reasons: args.reasons ?? null },
     );
     return resp.data as PurgeRejectedResult;
+}
+
+
+export interface ReviewAssistRequest {
+    /** Any synth backend pin (`cloud:<provider>:<model>`, `command:<model>`, ...); null = first reachable local. */
+    backend: string | null;
+    useBatch?: boolean;
+    rubricText?: string;
+    rowsPerCall?: number;
+    maxRows?: number | null;
+    /** Only the pending rows written by this Job. */
+    synthJobId?: number | null;
+    /** Only the pending rows of this synth_source group. */
+    source?: string | null;
+    rowIds?: number[] | null;
+}
+
+/** Start the `synth_review_assist` Job (an LLM pre-screen of pending rows). Returns the Job. */
+export async function startReviewAssist(projectId: number, args: ReviewAssistRequest): Promise<Job & { budget_warning?: unknown }> {
+    const resp = await api.post(`/projects/${projectId}/synthetic/review-assist`, {
+        backend: args.backend,
+        use_batch: Boolean(args.useBatch),
+        ...(args.rubricText?.trim() ? { rubric_text: args.rubricText.trim() } : {}),
+        rows_per_call: args.rowsPerCall ?? 10,
+        ...(args.maxRows ? { max_rows: args.maxRows } : {}),
+        ...(args.synthJobId != null ? { synth_job_id: args.synthJobId } : {}),
+        ...(args.source ? { source: args.source } : {}),
+        ...(args.rowIds ? { row_ids: args.rowIds } : {}),
+    }, { params: { async_job: true } });
+    return resp.data;
 }

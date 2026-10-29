@@ -377,6 +377,7 @@ session-start guidance.
 - `backend/app/services/synth_playbooks/structured_plan_scenario_grid.py` — SCENARIO_GRID playbook for the `structured-plan` recipe.
 - `backend/app/services/synth_playbooks/summarization_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `summarization` recipe.
 - `backend/app/services/synth_playbooks/summarization_paraphrase.py` — POSITIVES_PARAPHRASE playbook for the `summarization` recipe.
+- `backend/app/services/synth_review_assist_service.py` — Review assist: an LLM pre-screen of pending synthetic rows.
 - `backend/app/services/synth_review_queue_service.py` — Synth review queue service (USER-SUCCESS Epic 2b).
 - `backend/app/services/synthetic_service.py` — Synthetic data generation service — teacher model integration.
 - `backend/app/services/target_profile_service.py` — Plugin-extensible registry of deployment target profiles with constraint validation and HF-introspection compatibility checks.
@@ -1181,6 +1182,7 @@ session-start guidance.
 - `backend/tests/test_synth_nemo_backend.py` — Tests for the NeMo Data Designer / NIM synth backend (USER-SUCCESS Epic 5 Phase 5a).
 - `backend/tests/test_synth_playbook_epic2b.py` — Tests for USER-SUCCESS Epic 2b — hard-negatives, class-balance,
 - `backend/tests/test_synth_playbook_service.py` — Tests for the synthetic-data playbook framework
+- `backend/tests/test_synth_review_assist.py` — Review assist: an LLM pre-screen of pending synthetic rows (``synth_review_assist`` Job).
 - `backend/tests/test_synth_row_provenance.py` — Synthetic row provenance: every playbook row records the Job and backend that wrote it.
 - `backend/tests/test_synth_schema_constrained.py` — Tests for USER-SUCCESS Epic 5 Phase 5b — schema-constrained synth generation.
 - `backend/tests/test_synth_vllm_backend.py` — Tests for the vLLM synth backend (USER-SUCCESS Epic 5 Phase 5c).
@@ -1271,6 +1273,7 @@ session-start guidance.
 - `frontend/src/components/data/SeedSourcesSelect.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanAddTypeForm.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanTypeDefinitionsEditor.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/SynthReviewQueue.assist.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.provenance.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SyntheticPanel.test.tsx` — _(no docstring)_

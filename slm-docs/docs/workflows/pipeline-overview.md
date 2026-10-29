@@ -102,6 +102,12 @@ Data Studio (`/data-studio`) and the Annotation list (`/annotate`) were retired 
 
 Every synthetic row a playbook writes records the **Job** and **backend** that produced it (and whether it came through a Message Batch). In the Generate step's *Review queue*, **Group by → Job** or **Backend** puts each run's rows in its own group, labelled "job:12 · cloud:anthropic:&lt;model&gt; · &lt;mode&gt; · batch" so you can match it to the notification bell; the **Job** and **Backend** filters narrow the queue to one run. Rows written before this was recorded appear under "(no job)" / "(unknown backend)".
 
+#### Pre-screening synthetic rows with a model
+
+A project can hold thousands of pending synthetic rows. In the Generate step's *Review queue*, **Pre-screen with a model** picks a model (local, the local CLI, or a cloud model; an Anthropic model can run as a half-price Message Batch), an optional extra rubric (for instance the operations a plan may use) and how many rows to send per call (1 to 25). A background job gives each pending row a **pass**, **fail** or **unsure** verdict, a reason code and a one-sentence note; the bell shows "pass N · fail N · unsure N" and what it cost, and a budget stop keeps the verdicts already written. Rows are sent as data and the model is told to ignore instructions inside them; an answer that cannot be read counts as *unsure*, never a pass.
+
+Nothing is accepted or rejected for you. Filter the queue by verdict or reason, or **Group by → Verdict + reason**, then use **Accept group** or **Reject group** (rejected groups are tagged `assist:<reason>`). Running the pre-screen again replaces a row's earlier verdict.
+
 ## When to use which surface
 
 Stage execution can happen on any of three surfaces. They write to the same underlying tables.

@@ -1621,14 +1621,17 @@ async def list_synth_review_queue(
     group_by: str = "source",
     synth_job_id: int | None = None,
     synth_backend: str | None = None,
+    verdict: str | None = None,
+    reason_code: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """List pending synthetic rows for the project, grouped by
     `synth_source` (USER-SUCCESS Epic 2b) — or by class label with
     `?group_by=class` (Epic E), by originating failure cluster
     (`cluster`), by the Job that wrote the rows (`job`) or by the backend
-    that wrote them (`backend`). `?synth_job_id=` / `?synth_backend=`
-    narrow every list to one Job / backend.
+    that wrote them (`backend`), by review-assist verdict (`verdict`) or by
+    verdict + reason code (`assist_reason`). `?synth_job_id=` /
+    `?synth_backend=` / `?verdict=` / `?reason_code=` narrow every list.
 
     Pending rows are gated out of dataset prep — they don't enter
     training until the user accepts them via `/review-queue/bulk-update`
@@ -1638,6 +1641,7 @@ async def list_synth_review_queue(
 
     return await list_review_queue(
         db, project_id, group_by=group_by, synth_job_id=synth_job_id, synth_backend=synth_backend,
+        verdict=verdict, reason_code=reason_code,
     )
 
 
@@ -1664,6 +1668,147 @@ async def bulk_update_synth_review_queue(
         row_ids=req.row_ids,
         action=req.action,  # type: ignore[arg-type]
         reject_reason=req.reject_reason,
+    )
+
+
+class ReviewAssistRequest(BaseModel):
+    """Body for the review-assist Job (an LLM pre-screen of pending synthetic rows)."""
+
+    backend: str | None = Field(default=None, max_length=256, description="Any synth backend pin (ollama:<model>, command:<model>, cloud:<provider>:<model>, ...); omitted = the first reachable local backend.")
+    use_batch: bool = Field(default=False, description="Anthropic Message Batch (half price; cloud:anthropic:<model> only).")
+    row_ids: list[int] | None = Field(default=None, description="Pending row ids to judge (default: every pending row).")
+    source: str | None = Field(default=None, max_length=256, description="Only pending rows of this synth_source group.")
+    synth_job_id: int | None = Field(default=None, description="Only pending rows written by this Job.")
+    rubric_text: str | None = Field(default=None, max_length=4000, description="Free text appended to the built-in rubric (e.g. the allowed operations).")
+    rows_per_call: int = Field(default=10, ge=1, le=25)
+    max_rows: int | None = Field(default=None, ge=1)
+    dry_run: bool = Field(default=False, description="Report how many rows / calls the run would take; call no model.")
+
+
+@router.post("/review-assist")
+async def review_assist(
+    project_id: int,
+    req: ReviewAssistRequest,
+    async_job: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """Pre-screen pending synthetic rows with an LLM: each gets a verdict (pass / fail / unsure),
+    a reason code and a one-sentence note, shown in the review queue (filter / group by them,
+    then bulk accept or reject). Runs as the ``synth_review_assist`` Job (``?async_job=true``;
+    a dry run answers inline). Verdicts live in a sidecar, never in ``synthetic.jsonl``."""
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import select
+
+    from app.models.job import Job, JobStatus
+    from app.services import jobs_service, synth_review_assist_service as assist
+    from app.services.synth_backends import SynthBackendError
+    from app.services.synth_playbook_service import BACKEND_REGISTRY, pick_backend
+    from app.services.synth_review_queue_service import _read_all_rows, _synthetic_jsonl_path
+
+    if req.use_batch and not (req.backend or "").startswith("cloud:anthropic:"):
+        raise HTTPException(400, {
+            "error_code": "invalid_review_assist_param",
+            "message": "use_batch uses Anthropic's Message Batches API — pick a cloud:anthropic:<model> backend, or turn batch off.",
+            "metadata": {"param": "use_batch", "backend": req.backend},
+        })
+    if not req.dry_run and not async_job:
+        raise HTTPException(400, {
+            "error_code": "invalid_review_assist_param",
+            "message": "Pre-screening runs as a background Job — add ?async_job=true (or dry_run to size it).",
+            "metadata": {"param": "async_job"},
+        })
+
+    rows = assist.select_rows(
+        _read_all_rows(_synthetic_jsonl_path(project_id)),
+        row_ids=req.row_ids, source=req.source, synth_job_id=req.synth_job_id, max_rows=req.max_rows,
+    )
+    if not rows:
+        raise HTTPException(400, {
+            "error_code": "no_pending_rows",
+            "message": "No pending synthetic rows match this pre-screen (only pending rows are judged).",
+            "metadata": {"source": req.source, "synth_job_id": req.synth_job_id},
+        })
+    calls = -(-len(rows) // req.rows_per_call)
+    if req.dry_run:
+        from app.services.cloud_backend_pins import CloudPinError, parse_cloud_pin
+
+        try:
+            parse_cloud_pin(req.backend)
+        except CloudPinError as exc:
+            raise HTTPException(exc.status_code, exc.message) from exc
+        kinds: dict[str, int] = {}
+        for row in rows:
+            kind = assist.row_kind_of(row)
+            kinds[kind] = kinds.get(kind, 0) + 1
+        return {"dry_run": True, "rows": len(rows), "calls": calls, "rows_per_call": req.rows_per_call,
+                "row_kinds": kinds, "backend": req.backend, "use_batch": req.use_batch}
+
+    # A cloud pin at the cap is refused up front (402); a missing key is 402, a bad pin 400.
+    cloud_override = await _resolve_cloud_backend_override(db, project_id, req.backend)
+    if cloud_override is None:
+        try:
+            pick_backend(req.backend, registry=BACKEND_REGISTRY)
+        except SynthBackendError as exc:
+            raise HTTPException(503, str(exc)) from exc
+    in_flight = (
+        await db.execute(
+            select(Job).where(Job.kind == "synth_review_assist", Job.project_id == project_id)
+            .where(Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING])).limit(1)
+        )
+    ).scalar_one_or_none()
+    if in_flight is not None:
+        raise HTTPException(409, {"error_code": "REVIEW_ASSIST_ALREADY_RUNNING", "message": "A pre-screen is already running for this project. Watch the bell.", "metadata": {"existing_job_id": in_flight.id}})
+
+    async def _runner(handle: "jobs_service.JobProgressHandle") -> dict:
+        from app.database import async_session_factory
+
+        async def _progress(fraction: float, message: str) -> None:
+            await handle.set_progress(fraction=fraction, message=message)
+
+        async with async_session_factory() as runner_db:
+            override = await _resolve_cloud_backend_override(runner_db, project_id, req.backend)
+        if override is not None:
+            backend_obj = override
+            if req.use_batch:
+                override.use_batch = True
+        else:
+            backend_obj = pick_backend(req.backend, registry=BACKEND_REGISTRY)
+        # Re-select at run time: rows may have been reviewed between the request and the start.
+        run_rows = assist.select_rows(
+            _read_all_rows(_synthetic_jsonl_path(project_id)),
+            row_ids=req.row_ids, source=req.source, synth_job_id=req.synth_job_id, max_rows=req.max_rows,
+        )
+        if not run_rows:
+            raise RuntimeError("Pre-screen found no pending rows to judge (they were reviewed before it started).")
+        await handle.set_progress(message=f"Pre-screening {len(run_rows)} rows…")
+        result = await assist.run_review_assist(
+            project_id, run_rows, backend_obj, rubric_text=req.rubric_text, rows_per_call=req.rows_per_call,
+            use_batch=req.use_batch, job_id=handle.job_id, progress=_progress,
+        )
+        v = result["verdicts"]
+        await handle.set_progress(
+            fraction=1.0,
+            message=f"Pre-screened {result['rows_judged']} rows · pass {v['pass']} · fail {v['fail']} · unsure {v['unsure']}",
+        )
+        return result
+
+    job = await jobs_service.start_job(
+        db,
+        kind="synth_review_assist",
+        title=f"Pre-screen · {len(rows)} rows · {req.backend or 'local model'}" + (" · batch" if req.use_batch else ""),
+        runner=_runner,
+        project_id=project_id,
+        params={
+            "backend": req.backend, "rows": len(rows), "rows_per_call": req.rows_per_call,
+            **({"use_batch": True} if req.use_batch else {}),
+            **({"source": req.source} if req.source else {}),
+            **({"synth_job_id": req.synth_job_id} if req.synth_job_id is not None else {}),
+            **({"rubric_text": req.rubric_text} if req.rubric_text else {}),
+        },
+    )
+    return JSONResponse(
+        status_code=202,
+        content=await _with_budget_warning(db, project_id, jobs_service.serialize_job(job)),
     )
 
 

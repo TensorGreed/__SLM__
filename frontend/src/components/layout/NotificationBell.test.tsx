@@ -243,6 +243,7 @@ describe('NotificationBell', () => {
 
     it.each([
         ['synth_playbook', '/project/3/data?open=review-queue&step=synthetic#synth-review-queue'],
+        ['synth_review_assist', '/project/3/data?open=review-queue&step=synthetic#synth-review-queue'],
         ['training_start', '/project/3/train?open=plan'],
         ['post_training_lift_eval', '/project/3/results'],
         ['documents_qa_flow', '/project/3/train#documents-qa-flow'],
@@ -347,6 +348,24 @@ describe('NotificationBell', () => {
             expect.stringContaining('Cancelled'),
             3000,
         );
+    });
+
+    it('summarises a pre-screen job as verdict counts plus spend', () => {
+        const job = jobFixture({
+            kind: 'synth_review_assist', status: 'succeeded',
+            result: {
+                rows_judged: 40, rows_unparseable: 2, verdicts: { pass: 30, fail: 8, unsure: 2 },
+                tokens: 12000, cost_usd: 0.04,
+            },
+        });
+        expect(jobOutcomeSummary(job as never)).toBe(
+            'pass 30 \u00b7 fail 8 \u00b7 unsure 2 \u00b7 2 unreadable \u00b7 12k tokens (~$0.04 at list price)',
+        );
+        const batched = jobFixture({
+            kind: 'synth_review_assist', status: 'succeeded',
+            result: { verdicts: { pass: 3, fail: 0, unsure: 0 }, batch: { fell_back: 1 } },
+        });
+        expect(jobOutcomeSummary(batched as never)).toBe('pass 3 \u00b7 fail 0 \u00b7 unsure 0 \u00b7 via batch (half price), 1 request redone directly');
     });
 
     it('renders a per-kind outcome summary for completed synth_playbook jobs', async () => {
