@@ -56,7 +56,48 @@ def copy_data_tree(src_id: int, dst_id: int, subdirs: tuple[str, ...] = COPIED_S
             shutil.rmtree(dst_sub)
         shutil.copytree(src_sub, dst_sub)
         copied.append(subdir)
+    if "synthetic" in copied:
+        _drop_copied_job_ids(dst_id)
     return copied
+
+
+def _drop_copied_job_ids(project_id: int) -> None:
+    """A copied project's synthetic rows (and review-assist verdicts) name Jobs of the SOURCE project:
+    drop ``synth_job_id`` / null the verdict's ``job_id`` so the copy's review queue doesn't group or
+    filter by a Job that isn't its own. ``synth_backend`` / ``synth_batch`` (how it was written) stay."""
+    import json
+
+    from app.config import settings
+
+    root = settings.DATA_DIR / "projects" / str(project_id) / "synthetic"
+    rows_path = root / "synthetic.jsonl"
+    if rows_path.exists():
+        out: list[str] = []
+        changed = False
+        for line in rows_path.read_text(encoding="utf-8").splitlines():
+            if '"synth_job_id"' in line:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    row = None
+                if isinstance(row, dict) and "synth_job_id" in row:
+                    row.pop("synth_job_id")
+                    line = json.dumps(row, ensure_ascii=False)
+                    changed = True
+            out.append(line)
+        if changed:
+            rows_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    sidecar = root / "review_assist.json"
+    if sidecar.exists():
+        try:
+            data = json.loads(sidecar.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                for entry in data.values():
+                    if isinstance(entry, dict) and entry.get("job_id") is not None:
+                        entry["job_id"] = None
+                sidecar.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except (OSError, ValueError):
+            pass
 
 
 def _remap_copied_source_ids(project_id: int, source_map: dict[int, int]) -> None:

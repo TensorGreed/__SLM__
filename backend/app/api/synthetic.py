@@ -431,7 +431,9 @@ async def _autosave_legacy_synth_rows(
             }
             legacy_model = row.get("model") if isinstance(row, dict) else None
             if isinstance(legacy_model, str) and legacy_model.strip():
-                entry["synth_backend"] = f"legacy:{legacy_model.strip()}"
+                from app.services.synth_playbook_service import safe_backend_label
+
+                entry["synth_backend"] = safe_backend_label(f"legacy:{legacy_model.strip()}")
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             next_id += 1
             saved += 1
@@ -1728,7 +1730,10 @@ async def review_assist(
             "message": "No pending synthetic rows match this pre-screen (only pending rows are judged).",
             "metadata": {"source": req.source, "synth_job_id": req.synth_job_id},
         })
-    calls = -(-len(rows) // req.rows_per_call)
+    renders = {int(r["id"]): assist.render_row_ex(r) for r in rows}
+    judgeable = [r for r in rows if not renders[int(r["id"])].too_long]
+    chunks = assist.pack_chunks(judgeable, renders, req.rows_per_call, req.rubric_text)
+    calls = len(chunks)
     if req.dry_run:
         from app.services.cloud_backend_pins import CloudPinError, parse_cloud_pin
 
@@ -1741,7 +1746,8 @@ async def review_assist(
             kind = assist.row_kind_of(row)
             kinds[kind] = kinds.get(kind, 0) + 1
         return {"dry_run": True, "rows": len(rows), "calls": calls, "rows_per_call": req.rows_per_call,
-                "row_kinds": kinds, "backend": req.backend, "use_batch": req.use_batch}
+                "effective_rows_per_call": max((len(c) for c in chunks), default=0),
+                "rows_too_long": len(rows) - len(judgeable), "row_kinds": kinds, "backend": req.backend, "use_batch": req.use_batch}
 
     # A cloud pin at the cap is refused up front (402); a missing key is 402, a bad pin 400.
     cloud_override = await _resolve_cloud_backend_override(db, project_id, req.backend)

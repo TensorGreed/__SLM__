@@ -237,5 +237,93 @@ class QueueProvenanceTests(ProjectBase):
                          {"cloud:anthropic:m": 2, "command:x": 1, "(unknown backend)": 1})
 
 
+class CredentialSafetyTests(unittest.TestCase):
+    def test_label_sanitiser(self):
+        from app.services.synth_playbook_service import safe_backend_label as f
+
+        self.assertEqual(f("cloud:anthropic:claude-x"), "cloud:anthropic:claude-x")
+        self.assertEqual(f("teacher:m@https://api.example.com/v1"), "teacher:m@https://api.example.com/v1")
+        self.assertEqual(f("teacher:m@https://user:s3cret@api.example.com/v1"), "teacher:m@https://api.example.com/v1")
+        self.assertEqual(f("teacher:m@https://tok123@api.example.com/v1?api_key=sk-abc&region=us"),
+                         "teacher:m@https://api.example.com/v1?region=us")
+        out = f("x@https://h.example/v1?foo=sk-ant-0123456789abcdef0123456789")
+        self.assertNotIn("sk-ant", out)
+        self.assertEqual(f(None), "")
+
+    def test_the_append_point_never_stamps_credentials(self):
+        import tempfile
+
+        from app.services.synth_playbook_service import _append_to_synthetic_jsonl
+
+        path = Path(tempfile.mkdtemp()) / "synthetic.jsonl"
+        _append_to_synthetic_jsonl(path, [{"payload": {"t": 1}, "synth_confidence": 0.9, "synth_source": "s"}],
+                                   synth_backend="teacher:m@https://u:pw@h.example/v1?token=abc")
+        row = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+        self.assertEqual(row["synth_backend"], "teacher:m@https://h.example/v1")
+        self.assertNotIn("pw", path.read_text(encoding="utf-8"))
+
+    def test_the_teacher_backends_label_is_sanitised_before_stamping(self):
+        from app.services.synth_backends.teacher import TeacherModelBackend
+        from app.services.synth_playbook_service import safe_backend_label
+
+        label = TeacherModelBackend(model="m", api_url="https://u:hunter2@teach.example/v1?api_key=zzz").describe()
+        self.assertIn("hunter2", label)  # the raw label does leak: that is why it is sanitised before stamping
+        self.assertNotIn("hunter2", safe_backend_label(label))
+        self.assertNotIn("zzz", safe_backend_label(label))
+
+
+class DocumentsFlowProvenanceTests(unittest.TestCase):
+    def test_flow_rows_carry_job_backend_and_batch(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        pid = 987622
+        root = Path(tempfile.mkdtemp())
+        ds = SimpleNamespace(record_count=0, file_path=None)
+        db = SimpleNamespace(flush=AsyncMock())
+
+        class LLM:
+            def describe(self):
+                return "teacher:m@https://u:pw@h.example/v1"
+
+        from app.services import documents_qa_flow_service as flow
+
+        with patch.object(settings, "DATA_DIR", root), \
+                patch("app.services.synthetic_service.get_or_create_synthetic_dataset", AsyncMock(return_value=ds)):
+            asyncio.run(flow._save_training_pairs(db, pid, [{"question": "q", "answer": "a"}], backend=LLM(), batch=True))
+        row = json.loads((root / "projects" / str(pid) / "synthetic" / "synthetic.jsonl").read_text(encoding="utf-8").splitlines()[0])
+        self.assertEqual(row["synth_backend"], "teacher:m@https://h.example/v1")
+        self.assertIs(row["synth_batch"], True)
+        self.assertIn("synth_job_id", row)
+        self.assertIsNone(row["synth_job_id"])
+        self.assertEqual(row["synth_source"], flow.FLOW_SOURCE)
+
+
+class DuplicateDropsJobIdsTests(unittest.TestCase):
+    def test_a_copied_project_keeps_the_backend_but_not_the_source_jobs_id(self):
+        import tempfile
+
+        from app.services.project_duplicate_service import copy_data_tree
+
+        root = Path(tempfile.mkdtemp())
+        with patch.object(settings, "DATA_DIR", root):
+            src = root / "projects" / "1" / "synthetic"
+            src.mkdir(parents=True)
+            (src / "synthetic.jsonl").write_text(
+                json.dumps({"id": 1, "synth_job_id": 41, "synth_backend": "cloud:anthropic:m", "synth_batch": True, "t": "x"}) + "\n"
+                + json.dumps({"id": 2, "t": "no job"}) + "\n", encoding="utf-8")
+            (src / "review_assist.json").write_text(json.dumps({"1": {"verdict": "pass", "job_id": 50, "sig": "s"}}), encoding="utf-8")
+            copy_data_tree(1, 2)
+            dst = root / "projects" / "2" / "synthetic"
+            rows = [json.loads(line) for line in (dst / "synthetic.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertNotIn("synth_job_id", rows[0])
+            self.assertEqual((rows[0]["synth_backend"], rows[0]["synth_batch"]), ("cloud:anthropic:m", True))
+            self.assertEqual(rows[1], {"id": 2, "t": "no job"})
+            self.assertIsNone(json.loads((dst / "review_assist.json").read_text(encoding="utf-8"))["1"]["job_id"])
+            # the source is untouched
+            self.assertIn("41", (src / "synthetic.jsonl").read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

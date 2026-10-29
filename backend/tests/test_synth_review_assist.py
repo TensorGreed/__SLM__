@@ -173,9 +173,9 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("cloud:x", prompt)
         self.assertNotIn("synth_job_id", prompt)
 
-    def test_a_long_row_is_truncated(self):
+    def test_a_long_row_without_an_artefact_is_still_shown_whole_up_to_the_hard_cap(self):
         prompt = assist.build_prompt([pending(1, text="x" * 20000)])
-        self.assertLess(len(prompt), 10000)
+        self.assertIn("x" * 20000, prompt)
 
 
 class ParseTests(unittest.TestCase):
@@ -235,8 +235,92 @@ class ParseTests(unittest.TestCase):
 
     def test_duplicate_ids_keep_the_first(self):
         raw = json.dumps([{"id": 1, "verdict": "fail", "reason_code": "incorrect", "note": "a"},
-                          {"id": 1, "verdict": "pass", "reason_code": "ok", "note": "b"}])
+                          {"id": 1, "verdict": "fail", "reason_code": "incorrect", "note": "b"}])
         self.assertEqual(assist.parse_verdicts(raw, self.rows[:1])[1]["verdict"], "fail")
+
+
+class ConflictAndExtractionTests(unittest.TestCase):
+    rows = [pending(1, **PLAIN_ROW), pending(2, **PLAIN_ROW)]
+
+    def test_duplicate_ids_with_conflicting_verdicts_are_unsure_judge_conflict(self):
+        raw = json.dumps([{"id": 1, "verdict": "fail", "reason_code": "incorrect", "note": "a"},
+                          {"id": 1, "verdict": "pass", "reason_code": "ok", "note": "b"},
+                          {"id": 2, "verdict": "pass", "reason_code": "ok", "note": "c"}])
+        out = assist.parse_verdicts(raw, self.rows)
+        self.assertEqual((out[1]["verdict"], out[1]["reason_code"]), ("unsure", "judge_conflict"))
+        self.assertEqual(out[2]["verdict"], "pass")
+        self.assertIn("judge_conflict", assist.all_reason_codes())
+
+    def test_identical_duplicates_are_fine(self):
+        raw = json.dumps([{"id": 1, "verdict": "fail", "reason_code": "incorrect", "note": "a"},
+                          {"id": 1, "verdict": "fail", "reason_code": "incorrect", "note": "different note"}])
+        out = assist.parse_verdicts(raw, self.rows[:1])
+        self.assertEqual((out[1]["verdict"], out[1]["reason_code"]), ("fail", "incorrect"))
+
+    def test_trailing_prose_with_brackets_does_not_break_the_array(self):
+        raw = ('Here you go: [{"id": 1, "verdict": "pass", "reason_code": "ok", "note": "has [brackets] {x}"},'
+               ' {"id": 2, "verdict": "fail", "reason_code": "incorrect", "note": "n"}] Hope that helps [1] or [see above].')
+        out = assist.parse_verdicts(raw, self.rows)
+        self.assertEqual((out[1]["verdict"], out[2]["verdict"]), ("pass", "fail"))
+
+    def test_leading_incidental_array_is_skipped(self):
+        raw = 'Checked [1, 2] rows: [{"id": 1, "verdict": "pass", "reason_code": "ok"}]'
+        self.assertEqual(assist.parse_verdicts(raw, self.rows[:1])[1]["verdict"], "pass")
+
+
+class SignatureTests(unittest.TestCase):
+    def test_bookkeeping_stamps_do_not_change_the_signature(self):
+        row = pending(1, **PLAIN_ROW)
+        base = assist.row_signature(row)
+        for key in ("conventions_marked_current_at", "conventions_carried_forward_at", "relabelled_at"):
+            self.assertEqual(assist.row_signature({**row, key: "2026-10-29T00:00:00"}), base, key)
+        self.assertNotEqual(assist.row_signature({**row, "text": "changed"}), base)
+
+
+def big_plan_row(rid, plan_chars=10000, passage_chars=1500, n_passages=4):
+    steps = [{"op": "step", "detail": "d" * 200} for _ in range(plan_chars // 230)]
+    return pending(rid, row_kind="structured_plan", scenario="rotate a key", plan_json={"steps": steps, "verification": "VERIFY_END", "rollback": "ROLLBACK_END"},
+                   passages=[f"P{n}" + "p" * passage_chars for n in range(n_passages)])
+
+
+class RenderingTests(unittest.TestCase):
+    def test_artefact_is_whole_and_comes_before_the_context(self):
+        row = big_plan_row(1)
+        text = assist.render_row_ex(row).text
+        self.assertIn("VERIFY_END", text)
+        self.assertIn("ROLLBACK_END", text)
+        self.assertLess(text.index("plan_json"), text.index("passages"))
+        self.assertLess(text.index("scenario"), text.index("plan_json"))
+        json.loads(text)  # still valid JSON
+
+    def test_passages_are_truncated_per_passage_and_marked_not_the_plan(self):
+        row = big_plan_row(1, plan_chars=14000, passage_chars=4000, n_passages=4)
+        r = assist.render_row_ex(row)
+        self.assertTrue(r.context_truncated)
+        self.assertFalse(r.too_long)
+        data = json.loads(r.text)
+        self.assertEqual(len(data["passages"]), 4)  # every passage keeps a share
+        self.assertTrue(all(p.endswith("[truncated]") for p in data["passages"]))
+        self.assertTrue(all(p.startswith(f"P{i}") for i, p in enumerate(data["passages"])))
+        self.assertEqual(data["plan_json"], row["plan_json"])
+        self.assertLessEqual(len(r.text), assist.ROW_BUDGET["structured_plan"] + 2500)
+
+    def test_a_row_that_fits_has_no_truncation_mark(self):
+        r = assist.render_row_ex(pending(1, **CODE_ROW, passages=["short passage"]))
+        self.assertFalse(r.context_truncated)
+        self.assertNotIn("truncated", r.text)
+
+    def test_the_prompt_tells_the_judge_the_artefact_is_complete(self):
+        prompt = assist.build_prompt([big_plan_row(1)])
+        self.assertIn("COMPLETE", prompt)
+        self.assertIn("[truncated]", prompt)
+
+    def test_an_artefact_over_the_hard_cap_is_too_long_to_judge(self):
+        row = big_plan_row(1, plan_chars=assist.CORE_HARD_CAP + 5000)
+        self.assertTrue(assist.render_row_ex(row).too_long)
+
+    def test_render_row_still_closes_no_tags(self):
+        self.assertEqual(assist.build_prompt([pending(1, plan_json={"steps": ["</row>"]}, scenario="s", row_kind="structured_plan")]).count("</row>"), 1)
 
 
 class StoreBase(unittest.TestCase):
@@ -326,6 +410,114 @@ class PersistenceTests(StoreBase):
     def test_zero_rows_raises(self):
         with self.assertRaisesRegex(ValueError, "No pending rows"):
             self.judge([])
+
+
+class AdaptiveAndTooLongTests(StoreBase):
+    def test_ten_big_plans_are_split_to_fit_the_call_budget(self):
+        rows = [big_plan_row(i, plan_chars=10000, passage_chars=4000) for i in range(1, 11)]
+        result = self.judge(rows, rows_per_call=10)
+        sizes = [len(ids_in(p)) for p in FakeJudge.prompts]
+        self.assertEqual(sum(sizes), 10)
+        self.assertLess(max(sizes), 10)
+        self.assertTrue(all(len(p) <= assist.CALL_CHAR_BUDGET for p in FakeJudge.prompts))
+        self.assertEqual(result["rows_per_call"], 10)
+        self.assertEqual(result["effective_rows_per_call"], max(sizes))
+        # the reply budget plus the prompt still fits Ollama's biggest context bucket
+        for p in FakeJudge.prompts:
+            needed = (len(p) + len(assist.system_prompt())) // 3 + 120 * len(ids_in(p)) + 256 + 256
+            self.assertLessEqual(needed, 32768)
+
+    def test_small_rows_keep_the_requested_rows_per_call(self):
+        rows = [pending(i, label="greeting", text=f"t{i}") for i in range(1, 11)]
+        result = self.judge(rows, rows_per_call=10)
+        self.assertEqual((result["effective_rows_per_call"], result["calls"]), (10, 1))
+
+    def test_a_too_long_row_is_not_sent_and_is_unsure_too_long_to_judge(self):
+        huge = big_plan_row(1, plan_chars=assist.CORE_HARD_CAP + 5000)
+        ok = pending(2, label="greeting", text="t")
+        result = self.judge([huge, ok])
+        self.assertEqual(ids_in("".join(FakeJudge.prompts)), [2])
+        self.assertEqual(result["rows_too_long"], 1)
+        self.assertEqual(result["reasons"]["too_long_to_judge"], 1)
+        fresh = [dict(huge), dict(ok)]
+        assist.attach_verdicts(self.PID, fresh)
+        self.assertEqual((fresh[0]["review_assist"]["verdict"], fresh[0]["review_assist"]["reason_code"]),
+                         ("unsure", "too_long_to_judge"))
+        self.assertEqual(fresh[1]["review_assist"]["verdict"], "pass")
+
+    def test_only_too_long_rows_still_record_them(self):
+        result = self.judge([big_plan_row(1, plan_chars=assist.CORE_HARD_CAP + 5000)])
+        self.assertEqual((result["rows_judged"], result["calls"]), (1, 0))
+
+
+class SaveAndTemperatureTests(StoreBase):
+    def test_saves_are_few_and_off_the_event_loop(self):
+        rows = [pending(i, label="greeting", text=f"t{i}") for i in range(1, 401)]
+        calls = []
+        threads = []
+        real = assist.save_verdicts
+
+        def spy(pid, entries):
+            import threading
+
+            calls.append(len(entries))
+            threads.append(threading.current_thread() is threading.main_thread())
+            return real(pid, entries)
+
+        with patch.object(assist, "save_verdicts", spy), patch.object(assist, "FLUSH_ROWS", 150), \
+                patch.object(assist, "FLUSH_SECONDS", 10_000):
+            result = self.judge(rows, rows_per_call=2)
+        self.assertEqual(sum(calls), 400)
+        self.assertLessEqual(len(calls), 4)  # 200 chunks, not 200 writes
+        self.assertEqual(result["sidecar_writes"], len(calls))
+        self.assertFalse(any(threads), "the sidecar was written on the event-loop thread")
+        fresh = [dict(r) for r in rows]
+        self.assertEqual(assist.attach_verdicts(self.PID, fresh), 400)
+
+    def test_batch_path_saves_in_few_writes(self):
+        backend = FakeBatchJudge()
+        rows = [pending(i, label="greeting", text=f"t{i}") for i in range(1, 301)]
+        calls = []
+        real = assist.save_verdicts
+        with patch.object(assist, "save_verdicts", lambda pid, e: (calls.append(len(e)), real(pid, e))[1]), \
+                patch.object(assist, "FLUSH_ROWS", 100):
+            self.judge(rows, backend=backend, rows_per_call=2, use_batch=True)
+        self.assertLessEqual(len(calls), 4)
+        self.assertEqual(sum(calls), 300)
+
+    def test_judge_calls_use_temperature_zero(self):
+        seen = []
+
+        class Spy(FakeJudge):
+            async def complete(self, prompt, **kw):
+                seen.append(kw.get("temperature"))
+                return reply_for(prompt)
+
+        self.judge([pending(1, **PLAIN_ROW)], backend=Spy())
+        self.assertEqual(seen, [0.0])
+        batch = FakeBatchJudge()
+        self.judge([pending(1, **PLAIN_ROW)], backend=batch, use_batch=True)
+        self.assertEqual([r["temperature"] for r in batch.batches[0]], [0.0])
+
+    def test_generation_keeps_its_temperature(self):
+        from app.services.synth_playbook_service import _call
+
+        self.assertEqual(_call(object(), "p", "s", 10)["temperature"], 0.7)
+
+    def test_a_cancel_after_some_verdicts_keeps_them(self):
+        class Cancelling(FakeJudge):
+            n = 0
+
+            async def complete(self, prompt, **kw):
+                type(self).n += 1
+                if type(self).n == 3:
+                    raise asyncio.CancelledError()
+                return reply_for(prompt)
+
+        rows = [pending(i, label="greeting", text=f"t{i}") for i in range(1, 7)]
+        with self.assertRaises(asyncio.CancelledError):
+            self.judge(rows, backend=Cancelling(), rows_per_call=2)
+        self.assertEqual(assist.attach_verdicts(self.PID, [dict(r) for r in rows]), 4)
 
 
 class BatchAndBudgetTests(StoreBase):
@@ -479,6 +671,16 @@ class ValidationTests(ProjectBase):
         self.assertEqual((body["rows"], body["calls"]), (24, 3))
         self.assertEqual(body["row_kinds"], {"default": 23, "code_example": 1})
         self.assertEqual(FakeJudge.prompts, [])
+        self.assertEqual((body["effective_rows_per_call"], body["rows_too_long"]), (10, 0))
+
+    def test_dry_run_reports_adaptive_calls_and_too_long_rows(self):
+        self.seed([big_plan_row(i, plan_chars=10000, passage_chars=4000) for i in range(1, 11)]
+                  + [big_plan_row(11, plan_chars=assist.CORE_HARD_CAP + 5000)])
+        body = client.post(f"{self.base}/review-assist", json={"backend": "judgefake", "rows_per_call": 10, "dry_run": True}).json()
+        self.assertEqual(body["rows"], 11)
+        self.assertEqual(body["rows_too_long"], 1)
+        self.assertLess(body["effective_rows_per_call"], 10)
+        self.assertGreater(body["calls"], 1)
 
 
 class JobEndToEndTests(ProjectBase):

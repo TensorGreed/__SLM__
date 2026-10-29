@@ -184,15 +184,35 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
         }
     }, [focusedRowIds, focusSource, projectId, load]);
 
-    // Bulk accept / reject a whole group by its row ids (rejects carry `assist:<reason_code>` so the
-    // Rejected section groups them by why the pre-screen failed them).
+    // Bulk accept / reject a whole group. The ids are NOT taken from what was rendered (a Job may have
+    // re-judged rows, or another tab accepted some, since): the queue is re-fetched right before the
+    // call and only the group's CURRENT pending rows whose verdict (and reason) still match go in.
     const handleGroupUpdate = async (group: ReviewQueueGroup, action: 'accept' | 'reject') => {
-        const ids = group.rows.map((r) => r.id);
-        if (ids.length === 0) return;
+        const verdict = assistVerdictOf(group);
+        if (action === 'accept' && !canAcceptGroup(group)) return;
         const code = assistReasonOf(group);
         setBusy(true);
         setFlash(null);
+        setError(null);
         try {
+            const fresh = await listSynthReviewQueue(projectId, groupBy, {
+                synthJobId: filterJob,
+                synthBackend: filterBackend,
+                verdict: filterVerdict,
+                reasonCode: filterReason,
+            });
+            const current = fresh.groups.find((g) => g.synth_source === group.synth_source);
+            const ids = (current?.rows ?? [])
+                .filter((r) => (verdict === null
+                    ? !r.review_assist
+                    : r.review_assist?.verdict === verdict && (code === null || r.review_assist?.reason_code === code)))
+                .map((r) => r.id);
+            if (ids.length === 0) {
+                setFlash(`${group.synth_source} has no pending rows left to ${action}; the queue changed since it was loaded.`);
+                setData(fresh);
+                setSelected(new Set());
+                return;
+            }
             const result = await bulkUpdateSynthReviewQueue(projectId, {
                 rowIds: ids,
                 action,
@@ -478,15 +498,17 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                             </label>
                             {(groupBy === 'assist_reason' || groupBy === 'verdict') && group.rows.length > 0 && (
                                 <span className="synth-review-queue__group-actions">
-                                    <button
-                                        type="button"
-                                        className="btn btn-primary"
-                                        onClick={() => handleGroupUpdate(group, 'accept')}
-                                        disabled={busy}
-                                        data-testid={`synth-review-queue-group-accept-${group.synth_source}`}
-                                    >
-                                        Accept group ({group.count})
-                                    </button>
+                                    {canAcceptGroup(group) && (
+                                        <button
+                                            type="button"
+                                            className="btn btn-primary"
+                                            onClick={() => handleGroupUpdate(group, 'accept')}
+                                            disabled={busy}
+                                            data-testid={`synth-review-queue-group-accept-${group.synth_source}`}
+                                        >
+                                            Accept group ({group.count})
+                                        </button>
+                                    )}
                                     <button
                                         type="button"
                                         className="btn btn-secondary synth-review-queue__reject-btn"
@@ -588,6 +610,20 @@ const GROUP_BY_OPTIONS: { value: ReviewQueueGroupBy; label: string }[] = [
 function assistReasonOf(group: ReviewQueueGroup): string | null {
     const m = /^(pass|fail|unsure):(.+)$/.exec(group.synth_source);
     return m ? m[2] : null;
+}
+
+/** The pre-screen verdict of a `verdict` / `assist_reason` group (key `pass`, `fail:<reason>` ...); null for the
+ *  "(not pre-screened)" bucket, which has no verdict. */
+function assistVerdictOf(group: ReviewQueueGroup): ReviewAssistVerdict | null {
+    const m = /^(pass|fail|unsure)(:.+)?$/.exec(group.synth_source);
+    return m ? (m[1] as ReviewAssistVerdict) : null;
+}
+
+/** Accept-group is offered only where the pre-screen has an opinion that supports it: never on the
+ *  "(not pre-screened)" bucket or an `unsure` group (those can be rejected as a group, not accepted). */
+function canAcceptGroup(group: ReviewQueueGroup): boolean {
+    const verdict = assistVerdictOf(group);
+    return verdict === 'pass' || verdict === 'fail';
 }
 
 function AssistBadge({ assist, rowId }: { assist: ReviewAssist; rowId: number }) {

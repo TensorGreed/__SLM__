@@ -241,9 +241,41 @@ def _batches(backend: Any) -> bool:
     return uses_message_batch(backend)
 
 
-def _call(backend: Any, prompt: str, system_prompt: str, max_tokens: int) -> dict[str, Any]:
+def _call(backend: Any, prompt: str, system_prompt: str, max_tokens: int, temperature: float = 0.7) -> dict[str, Any]:
     """One playbook call, as ``complete`` (direct) and ``complete_batch`` take it."""
-    return {"prompt": prompt, "system_prompt": system_prompt, "max_tokens": max_tokens, "temperature": 0.7}
+    return {"prompt": prompt, "system_prompt": system_prompt, "max_tokens": max_tokens, "temperature": temperature}
+
+
+_SECRETISH_QUERY = re.compile(r"(key|token|secret|pass|auth|sig|credential|bearer)", re.I)
+
+
+def safe_backend_label(label: str | None) -> str:
+    """A backend ``describe()`` string that is safe to store on rows / verdicts: URL userinfo
+    (``user:pass@``) is dropped and any query string whose name or value looks like a credential is removed
+    (a teacher backend's label embeds its API URL)."""
+    text = str(label or "")
+
+    def _clean(m: "re.Match[str]") -> str:
+        url = m.group(0)
+        trail = ""
+        while url and url[-1] in ".,;)":
+            trail = url[-1] + trail
+            url = url[:-1]
+        scheme, rest = url.split("://", 1)
+        rest = re.sub(r"^[^/?#@]*@", "", rest)  # userinfo
+        base, _, tail = rest.partition("?")
+        query, _, frag = tail.partition("#")
+        if query:
+            kept = []
+            for part in query.split("&"):
+                name, _, value = part.partition("=")
+                if _SECRETISH_QUERY.search(name) or len(value) >= 20 or "@" in value:
+                    continue
+                kept.append(part)
+            query = "&".join(kept)
+        return f"{scheme}://{base}" + (f"?{query}" if query else "") + trail
+
+    return re.sub(r"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s\"']+", _clean, text)
 
 
 async def _complete_direct(backend: Any, call: dict[str, Any], response_schema: dict | None) -> str:
@@ -790,7 +822,7 @@ def _append_to_synthetic_jsonl(
                 record["cluster_id"] = cluster_id
             record["synth_job_id"] = synth_job_id
             if synth_backend:
-                record["synth_backend"] = synth_backend
+                record["synth_backend"] = safe_backend_label(synth_backend)
             if synth_batch:
                 record["synth_batch"] = True
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -1055,7 +1087,7 @@ async def _run_playbook(
         _append_to_synthetic_jsonl(
             file_path, accepted_rows, cluster_id=_cluster_id_from(failure_cluster),
             synth_job_id=job_handle.job_id if job_handle is not None else None,
-            synth_backend=selected_backend.describe(),
+            synth_backend=safe_backend_label(selected_backend.describe()),
             synth_batch=batching,
         )
         # Bump the record_count + ensure file_path is stamped on the

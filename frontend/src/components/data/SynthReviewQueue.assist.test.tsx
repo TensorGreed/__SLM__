@@ -104,6 +104,67 @@ describe('SynthReviewQueue pre-screen', () => {
         ));
     });
 
+    it('re-fetches the group just before a bulk call and sends only its current ids', async () => {
+        apiMock.post.mockResolvedValue({ data: { accepted: 0, rejected: 1, not_found: 0, not_pending: 0, total_remaining_pending: 0 } });
+        const user = userEvent.setup();
+        render(<SynthReviewQueue projectId={5} />);
+        await user.click(await screen.findByTestId('synth-review-queue-groupby-assist_reason'));
+        const button = await screen.findByTestId('synth-review-queue-group-reject-fail:unsafe_pattern');
+        // Meanwhile row 2 was re-judged as a pass and row 1 stays a fail.
+        const changed = {
+            ...payload,
+            groups: [
+                { ...payload.groups[0], count: 1, rows: [payload.groups[0].rows[0]] },
+                { ...payload.groups[1], rows: [
+                    payload.groups[1].rows[0],
+                    { ...payload.groups[0].rows[1], review_assist: { verdict: 'pass', reason_code: 'ok', note: '' } },
+                ] },
+            ],
+        };
+        apiMock.get.mockImplementation(() => Promise.resolve({ data: changed }));
+        const before = apiMock.get.mock.calls.length;
+        await user.click(button);
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(
+            '/projects/5/synthetic/review-queue/bulk-update',
+            { row_ids: [1], action: 'reject', reject_reason: 'assist:unsafe_pattern' },
+        ));
+        expect(apiMock.get.mock.calls.length).toBeGreaterThan(before);
+    });
+
+    it('does not bulk-act on a group that emptied since it was rendered', async () => {
+        const user = userEvent.setup();
+        render(<SynthReviewQueue projectId={5} />);
+        await user.click(await screen.findByTestId('synth-review-queue-groupby-assist_reason'));
+        const button = await screen.findByTestId('synth-review-queue-group-reject-fail:unsafe_pattern');
+        apiMock.get.mockImplementation(() => Promise.resolve({ data: { ...payload, groups: [payload.groups[1]] } }));
+        await user.click(button);
+        await waitFor(() => expect(screen.getByText(/no pending rows left to reject/)).toBeTruthy());
+        expect(apiMock.post).not.toHaveBeenCalled();
+    });
+
+    it('offers reject only (never accept) on unsure and not-pre-screened groups', async () => {
+        const groups = [
+            { synth_source: 'unsure:judge_unparseable', count: 1,
+              rows: [{ id: 4, synth_confidence: 0.5, review_assist: { verdict: 'unsure', reason_code: 'judge_unparseable', note: '' }, preview: '{}', payload: {} }] },
+            { synth_source: '(not pre-screened)', count: 1, rows: [{ id: 5, synth_confidence: 0.5, preview: '{}', payload: {} }] },
+            payload.groups[0], payload.groups[1],
+        ];
+        apiMock.get.mockImplementation((url: string) => {
+            if (url.endsWith('/synthetic/backends/cloud/models')) return Promise.resolve({ data: { providers: [] } });
+            if (url.endsWith('/synthetic/backends')) return Promise.resolve({ data: { backends: [] } });
+            return Promise.resolve({ data: { ...payload, groups } });
+        });
+        const user = userEvent.setup();
+        render(<SynthReviewQueue projectId={5} />);
+        await user.click(await screen.findByTestId('synth-review-queue-groupby-assist_reason'));
+        await screen.findByTestId('synth-review-queue-group-reject-unsure:judge_unparseable');
+        expect(screen.getByTestId('synth-review-queue-group-reject-(not pre-screened)')).toBeTruthy();
+        expect(screen.queryByTestId('synth-review-queue-group-accept-unsure:judge_unparseable')).toBeNull();
+        expect(screen.queryByTestId('synth-review-queue-group-accept-(not pre-screened)')).toBeNull();
+        expect(screen.getByTestId('synth-review-queue-group-accept-pass:ok')).toBeTruthy();
+        expect(screen.getByTestId('synth-review-queue-group-accept-fail:unsafe_pattern')).toBeTruthy();
+    });
+
     it('starts a pre-screen with the picked backend, rubric text and rows per call', async () => {
         apiMock.post.mockResolvedValue({ data: { id: 77, kind: 'synth_review_assist', status: 'queued' } });
         const user = userEvent.setup();

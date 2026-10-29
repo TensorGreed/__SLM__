@@ -1153,7 +1153,7 @@ async def run_documents_qa_flow(
     else:
         await report(0.62, f"Saving {len(training_pairs)} training pairs and {len(answer_key)} answer-key rows")
     if training_pairs:
-        await _save_training_pairs(db, project_id, training_pairs)
+        await _save_training_pairs(db, project_id, training_pairs, backend=llm, batch=bool(getattr(llm, "use_batch", False)))
     if answer_key:
         from app.services.gold_service import import_qa_pairs
 
@@ -1520,7 +1520,9 @@ async def _run_teacher_step(
     )
 
 
-async def _save_training_pairs(db: AsyncSession, project_id: int, pairs: list[dict[str, Any]]) -> None:
+async def _save_training_pairs(
+    db: AsyncSession, project_id: int, pairs: list[dict[str, Any]], *, backend: Any = None, batch: bool = False,
+) -> None:
     """Append to the synthetic dataset as ACCEPTED rows tagged with the flow's
     ``synth_source`` — the user asked for a model, not a review queue, and
     the review queue can still show, reject or purge them by source."""
@@ -1533,6 +1535,18 @@ async def _save_training_pairs(db: AsyncSession, project_id: int, pairs: list[di
     file_path = synthetic_dir / "synthetic.jsonl"
     next_id = _peek_next_id(file_path)
     rows = pairs
+    # Provenance, as every other synthetic append: the Job running the flow + the (credential-free) backend label.
+    from app.services import jobs_service
+    from app.services.synth_playbook_service import safe_backend_label
+
+    handle_job = jobs_service.current_job_handle.get()
+    provenance: dict[str, Any] = {"synth_job_id": handle_job.job_id if handle_job is not None else None}
+    if backend is not None:
+        label = backend.describe() if hasattr(backend, "describe") else getattr(backend, "name", "")
+        if label:
+            provenance["synth_backend"] = safe_backend_label(label)
+    if batch:
+        provenance["synth_batch"] = True
     with file_path.open("a", encoding="utf-8") as handle:
         for offset, pair in enumerate(pairs):
             record = {
@@ -1542,6 +1556,7 @@ async def _save_training_pairs(db: AsyncSession, project_id: int, pairs: list[di
                 "synth_source": FLOW_SOURCE,
                 "review_status": "accepted",
                 "status": "accepted",
+                **provenance,
             }
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     dataset.record_count = (dataset.record_count or 0) + len(rows)
