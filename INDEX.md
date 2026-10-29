@@ -1183,6 +1183,7 @@ session-start guidance.
 - `backend/tests/test_synth_playbook_epic2b.py` — Tests for USER-SUCCESS Epic 2b — hard-negatives, class-balance,
 - `backend/tests/test_synth_playbook_service.py` — Tests for the synthetic-data playbook framework
 - `backend/tests/test_synth_review_assist.py` — Review assist: an LLM pre-screen of pending synthetic rows (``synth_review_assist`` Job).
+- `backend/tests/test_synth_review_assist_judges.py` — Review assist with several judges: the sidecar keeps one verdict per (row, judge), the queue shows
 - `backend/tests/test_synth_row_provenance.py` — Synthetic row provenance: every playbook row records the Job and backend that wrote it.
 - `backend/tests/test_synth_schema_constrained.py` — Tests for USER-SUCCESS Epic 5 Phase 5b — schema-constrained synth generation.
 - `backend/tests/test_synth_vllm_backend.py` — Tests for the vLLM synth backend (USER-SUCCESS Epic 5 Phase 5c).
@@ -1274,6 +1275,7 @@ session-start guidance.
 - `frontend/src/components/data/SpanAddTypeForm.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SpanTypeDefinitionsEditor.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.assist.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/SynthReviewQueue.judges.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.provenance.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SynthReviewQueue.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SyntheticPanel.test.tsx` — _(no docstring)_

@@ -614,6 +614,18 @@
 .synth-review-queue__assist--pass strong { color: var(--color-success); }
 .synth-review-queue__assist--fail strong { color: var(--color-danger); }
 .synth-review-queue__assist--unsure strong { color: var(--color-warning); }
+.synth-review-queue__judges { display: block; margin-top: var(--space-xs); }
+.synth-review-queue__judges .synth-review-queue__assist { margin-top: 2px; }
+.synth-review-queue__consensus {
+    display: inline-block;
+    margin-left: 28px;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.synth-review-queue__consensus--agree_pass { color: var(--color-success); }
+.synth-review-queue__consensus--agree_fail { color: var(--color-danger); }
+.synth-review-queue__consensus--disagree { color: var(--color-warning); }
 .synth-review-queue__group-actions {
     display: inline-flex;
     gap: var(--space-sm);

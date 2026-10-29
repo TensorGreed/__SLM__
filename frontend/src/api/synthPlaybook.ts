@@ -337,9 +337,21 @@ export interface ReviewAssist {
     at?: string;
 }
 
+/** One judge's verdict on a row (the sidecar keeps one per judge = the backend label). */
+export interface ReviewAssistJudge extends ReviewAssist {
+    judge: string;
+}
+
+/** Where a row's judges stand: none (no valid verdict), single (one judge), agree_pass / agree_fail
+ *  (every judge says the same), disagree (anything else across 2+ judges, `unsure` included). */
+export type AssistConsensus = 'none' | 'single' | 'agree_pass' | 'agree_fail' | 'disagree';
+
 export interface ReviewQueueEntry {
     id: number;
     review_assist?: ReviewAssist | null;
+    /** Every judge whose verdict still matches the row (oldest first); `review_assist` is the latest. */
+    review_assist_judges?: ReviewAssistJudge[];
+    assist_consensus?: AssistConsensus;
     synth_confidence: number;
     /** The Job that wrote the row (null: not run as a Job / written before provenance was stamped). */
     synth_job_id?: number | null;
@@ -401,6 +413,8 @@ export interface ReviewQueueResponse {
         /** Pre-screen verdicts / reason codes present on the pending rows. */
         verdicts?: { verdict: ReviewAssistVerdict; count: number }[];
         reason_codes?: { reason_code: string; count: number }[];
+        consensus?: { consensus: AssistConsensus; count: number }[];
+        judges?: { judge: string; count: number }[];
     };
     groups: ReviewQueueGroup[];
     /** Accepted rows (passed review or pre-Epic-2a legacy rows).
@@ -435,13 +449,17 @@ export interface BulkUpdateBySourceResult extends BulkUpdateResult {
 }
 
 export type ReviewQueueGroupBy =
-    | 'source' | 'class' | 'cluster' | 'job' | 'backend' | 'verdict' | 'assist_reason';
+    | 'source' | 'class' | 'cluster' | 'job' | 'backend' | 'verdict' | 'assist_reason' | 'assist_consensus';
 
 export interface ReviewQueueFilter {
     synthJobId?: number | null;
     synthBackend?: string | null;
     verdict?: ReviewAssistVerdict | null;
     reasonCode?: string | null;
+    /** `agree_pass` / `agree_fail` / `disagree` / `none` / `single` (or `single:<verdict>`). */
+    assistConsensus?: string | null;
+    /** Show one judge's verdicts only (verdict / reason filters and group-bys then read that judge). */
+    judge?: string | null;
 }
 
 export async function listSynthReviewQueue(
@@ -455,6 +473,8 @@ export async function listSynthReviewQueue(
     if (filter.synthBackend) params.synth_backend = filter.synthBackend;
     if (filter.verdict) params.verdict = filter.verdict;
     if (filter.reasonCode) params.reason_code = filter.reasonCode;
+    if (filter.assistConsensus) params.assist_consensus = filter.assistConsensus;
+    if (filter.judge) params.judge = filter.judge;
     const resp = await api.get(`/projects/${projectId}/synthetic/review-queue`, {
         params: Object.keys(params).length > 0 ? params : undefined,
     });
@@ -536,6 +556,12 @@ export interface ReviewAssistRequest {
     /** Only the pending rows of this synth_source group. */
     source?: string | null;
     rowIds?: number[] | null;
+    /** Skip rows this model already has a verdict for (resume). */
+    onlyMissingJudge?: boolean;
+    /** Only rows whose judges currently stand at one of these consensus states. */
+    consensus?: AssistConsensus[] | null;
+    /** Only rows where ANOTHER judge's verdict is one of these (e.g. a second opinion where the first said fail / unsure). */
+    priorVerdicts?: ReviewAssistVerdict[] | null;
 }
 
 /** Start the `synth_review_assist` Job (an LLM pre-screen of pending rows). Returns the Job. */
@@ -549,6 +575,9 @@ export async function startReviewAssist(projectId: number, args: ReviewAssistReq
         ...(args.synthJobId != null ? { synth_job_id: args.synthJobId } : {}),
         ...(args.source ? { source: args.source } : {}),
         ...(args.rowIds ? { row_ids: args.rowIds } : {}),
+        ...(args.onlyMissingJudge ? { only_missing_judge: true } : {}),
+        ...(args.consensus?.length ? { consensus: args.consensus } : {}),
+        ...(args.priorVerdicts?.length ? { prior_verdicts: args.priorVerdicts } : {}),
     }, { params: { async_job: true } });
     return resp.data;
 }

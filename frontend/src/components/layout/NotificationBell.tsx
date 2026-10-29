@@ -196,6 +196,11 @@ function jobOutcomeSummaryCore(job: Job): string | null {
         const parts = [`pass ${n('pass')}`, `fail ${n('fail')}`, `unsure ${n('unsure')}`];
         const unparseable = typeof r.rows_unparseable === 'number' ? r.rows_unparseable : 0;
         if (unparseable > 0) parts.push(`${unparseable} unreadable`);
+        // Two or more judges on the same rows: where they agree or disagree.
+        const c = (r.consensus || {}) as Record<string, unknown>;
+        const cn = (k: string) => (typeof c[k] === 'number' ? (c[k] as number) : 0);
+        const agree = cn('agree_pass') + cn('agree_fail');
+        if (agree + cn('disagree') > 0) parts.push(`agree ${agree} \u00b7 disagree ${cn('disagree')}`);
         const batch = r.batch as { fell_back?: number } | null | undefined;
         if (batch && typeof batch === 'object') {
             const redone = typeof batch.fell_back === 'number' && batch.fell_back > 0 ? batch.fell_back : 0;

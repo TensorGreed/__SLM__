@@ -1625,6 +1625,8 @@ async def list_synth_review_queue(
     synth_backend: str | None = None,
     verdict: str | None = None,
     reason_code: str | None = None,
+    assist_consensus: str | None = None,
+    judge: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """List pending synthetic rows for the project, grouped by
@@ -1632,8 +1634,9 @@ async def list_synth_review_queue(
     `?group_by=class` (Epic E), by originating failure cluster
     (`cluster`), by the Job that wrote the rows (`job`) or by the backend
     that wrote them (`backend`), by review-assist verdict (`verdict`) or by
-    verdict + reason code (`assist_reason`). `?synth_job_id=` /
-    `?synth_backend=` / `?verdict=` / `?reason_code=` narrow every list.
+    verdict + reason code (`assist_reason`) or by judge consensus (`assist_consensus`).
+    `?synth_job_id=` / `?synth_backend=` / `?verdict=` / `?reason_code=` / `?assist_consensus=` / `?judge=`
+    narrow every list (`judge` shows one judge's verdicts; verdict / reason then read that judge).
 
     Pending rows are gated out of dataset prep — they don't enter
     training until the user accepts them via `/review-queue/bulk-update`
@@ -1643,7 +1646,7 @@ async def list_synth_review_queue(
 
     return await list_review_queue(
         db, project_id, group_by=group_by, synth_job_id=synth_job_id, synth_backend=synth_backend,
-        verdict=verdict, reason_code=reason_code,
+        verdict=verdict, reason_code=reason_code, assist_consensus=assist_consensus, judge=judge,
     )
 
 
@@ -1685,6 +1688,9 @@ class ReviewAssistRequest(BaseModel):
     rows_per_call: int = Field(default=10, ge=1, le=25)
     max_rows: int | None = Field(default=None, ge=1)
     dry_run: bool = Field(default=False, description="Report how many rows / calls the run would take; call no model.")
+    only_missing_judge: bool = Field(default=False, description="Skip rows this judge (the backend) already has a valid verdict for (resume).")
+    consensus: list[str] | None = Field(default=None, description="Only rows whose current judge consensus is one of none / single / agree_pass / agree_fail / disagree.")
+    prior_verdicts: list[str] | None = Field(default=None, description="Only rows where another judge's valid verdict is one of pass / fail / unsure (e.g. a second opinion where the first said fail or unsure).")
 
 
 @router.post("/review-assist")
@@ -1730,6 +1736,40 @@ async def review_assist(
             "message": "No pending synthetic rows match this pre-screen (only pending rows are judged).",
             "metadata": {"source": req.source, "synth_job_id": req.synth_job_id},
         })
+    bad_consensus = [c for c in (req.consensus or []) if c not in assist.CONSENSUS_VALUES]
+    bad_prior = [v for v in (req.prior_verdicts or []) if v not in assist.VERDICTS]
+    if bad_consensus or bad_prior:
+        raise HTTPException(400, {
+            "error_code": "invalid_review_assist_param",
+            "message": "consensus must be among " + ", ".join(assist.CONSENSUS_VALUES) + "; prior_verdicts among " + ", ".join(assist.VERDICTS) + ".",
+            "metadata": {"param": "consensus" if bad_consensus else "prior_verdicts"},
+        })
+    uses_judge_filter = bool(req.only_missing_judge or req.consensus or req.prior_verdicts)
+
+    def _narrow(candidates: list[dict], judge: str) -> list[dict]:
+        return assist.filter_rows_for_judge(
+            project_id, candidates, judge, only_missing_judge=req.only_missing_judge,
+            consensus=req.consensus, prior_verdicts=req.prior_verdicts,
+        )
+
+    def _no_rows() -> HTTPException:
+        return HTTPException(400, {
+            "error_code": "no_pending_rows",
+            "message": "No pending synthetic rows match this pre-screen after the judge / consensus filters (only pending rows are judged).",
+            "metadata": {"only_missing_judge": req.only_missing_judge, "consensus": req.consensus, "prior_verdicts": req.prior_verdicts},
+        })
+
+    if req.dry_run and uses_judge_filter:
+        # Best effort: the judge key is the backend's label; an unreachable pin falls back to the pin text.
+        from app.services.synth_playbook_service import safe_backend_label as _safe
+
+        try:
+            dry_judge = assist.judge_label(pick_backend(req.backend, registry=BACKEND_REGISTRY))
+        except Exception:  # noqa: BLE001
+            dry_judge = _safe(req.backend)
+        rows = _narrow(rows, dry_judge)
+        if not rows:
+            raise _no_rows()
     renders = {int(r["id"]): assist.render_row_ex(r) for r in rows}
     judgeable = [r for r in rows if not renders[int(r["id"])].too_long]
     chunks = assist.pack_chunks(judgeable, renders, req.rows_per_call, req.rubric_text)
@@ -1756,6 +1796,11 @@ async def review_assist(
             pick_backend(req.backend, registry=BACKEND_REGISTRY)
         except SynthBackendError as exc:
             raise HTTPException(503, str(exc)) from exc
+    if uses_judge_filter:
+        judge_obj = cloud_override if cloud_override is not None else pick_backend(req.backend, registry=BACKEND_REGISTRY)
+        rows = _narrow(rows, assist.judge_label(judge_obj))
+        if not rows:
+            raise _no_rows()
     in_flight = (
         await db.execute(
             select(Job).where(Job.kind == "synth_review_assist", Job.project_id == project_id)
@@ -1784,6 +1829,8 @@ async def review_assist(
             _read_all_rows(_synthetic_jsonl_path(project_id)),
             row_ids=req.row_ids, source=req.source, synth_job_id=req.synth_job_id, max_rows=req.max_rows,
         )
+        if uses_judge_filter:
+            run_rows = _narrow(run_rows, assist.judge_label(backend_obj))
         if not run_rows:
             raise RuntimeError("Pre-screen found no pending rows to judge (they were reviewed before it started).")
         await handle.set_progress(message=f"Pre-screening {len(run_rows)} rows…")
@@ -1794,7 +1841,10 @@ async def review_assist(
         v = result["verdicts"]
         await handle.set_progress(
             fraction=1.0,
-            message=f"Pre-screened {result['rows_judged']} rows · pass {v['pass']} · fail {v['fail']} · unsure {v['unsure']}",
+            message=f"Pre-screened {result['rows_judged']} rows · pass {v['pass']} · fail {v['fail']} · unsure {v['unsure']}" + (
+                f" · agree {c['agree_pass'] + c['agree_fail']} · disagree {c['disagree']}"
+                if (c := result.get("consensus") or {}) and (c.get("agree_pass", 0) + c.get("agree_fail", 0) + c.get("disagree", 0)) else ""
+            ),
         )
         return result
 
@@ -1810,6 +1860,9 @@ async def review_assist(
             **({"source": req.source} if req.source else {}),
             **({"synth_job_id": req.synth_job_id} if req.synth_job_id is not None else {}),
             **({"rubric_text": req.rubric_text} if req.rubric_text else {}),
+            **({"only_missing_judge": True} if req.only_missing_judge else {}),
+            **({"consensus": req.consensus} if req.consensus else {}),
+            **({"prior_verdicts": req.prior_verdicts} if req.prior_verdicts else {}),
         },
     )
     return JSONResponse(

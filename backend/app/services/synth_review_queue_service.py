@@ -87,12 +87,13 @@ PROVENANCE_KEYS = ("synth_job_id", "synth_backend", "synth_batch")
 # ``review_assist`` (the LLM pre-screen verdict) is merged onto rows at read time from the
 # sidecar (``synth_review_assist_service``); a legacy / hand-written row may carry it inline.
 NO_ASSIST_LABEL = "(not pre-screened)"
+ASSIST_KEYS = ("review_assist", "review_assist_judges", "assist_consensus")
 
 
 def _row_preview(row: dict[str, Any], *, limit: int = 280) -> str:
     """Single-line preview string used by the queue list. Drops the
     provenance fields and serializes only the payload-shaped keys."""
-    skip = {"id", "synth_source", "synth_confidence", "review_status", "status", "generated_at", "source", "model", "review_assist", *PROVENANCE_KEYS}
+    skip = {"id", "synth_source", "synth_confidence", "review_status", "status", "generated_at", "source", "model", *ASSIST_KEYS, *PROVENANCE_KEYS}
     payload = {k: v for k, v in row.items() if k not in skip}
     if not payload:
         payload = row
@@ -189,6 +190,36 @@ def _resolve_assist_reason_label(row: dict[str, Any]) -> str:
     return f"{a['verdict']}:{a.get('reason_code') or 'other'}" if a else NO_ASSIST_LABEL
 
 
+def _judges(row: dict[str, Any]) -> list[dict[str, Any]]:
+    j = row.get("review_assist_judges")
+    return [e for e in j if isinstance(e, dict) and e.get("verdict")] if isinstance(j, list) else []
+
+
+def _consensus(row: dict[str, Any]) -> str:
+    c = row.get("assist_consensus")
+    return c if isinstance(c, str) and c else "none"
+
+
+def _resolve_consensus_label(row: dict[str, Any]) -> str:
+    """Group key when grouping by judge consensus: none / single:<verdict> / agree_pass / agree_fail /
+    disagree (a lone judge's pass is its own group so it can be bulk-accepted without mixing in fails)."""
+    c = _consensus(row)
+    if c == "single":
+        return f"single:{_judges(row)[0]['verdict']}"
+    return c
+
+
+def _consensus_group_label(entries: list[dict[str, Any]]) -> str:
+    key = _resolve_consensus_label(entries[0])
+    names: list[str] = []
+    for r in entries:
+        for e in _judges(r):
+            if e["judge"] not in names:
+                names.append(e["judge"])
+    head = key.replace("single:", "single · ").replace("_", " ")
+    return f"{head} · {' + '.join(names)}" if names else head
+
+
 def _resolve_backend_label(row: dict[str, Any]) -> str:
     """Group key when grouping by backend — the pin that wrote the row."""
     backend = row.get("synth_backend")
@@ -216,6 +247,8 @@ def _most_common(values: list[str]) -> str | None:
 def _group_label(grouping: str | None, entries: list[dict[str, Any]]) -> str | None:
     """A human label for a job / backend group so the reviewer can correlate: Job id + backend +
     mode + direct / batch (a group of mixed backends or modes lists the most common and says so)."""
+    if grouping == "assist_consensus" and entries:
+        return _consensus_group_label(entries)
     if grouping not in ("job", "backend"):
         return None
     backend_keys = [_resolve_backend_label(r) for r in entries]
@@ -291,10 +324,12 @@ def _bucket_rows_by_source(
                     "synth_backend": row.get("synth_backend") if isinstance(row.get("synth_backend"), str) else None,
                     "synth_batch": bool(row.get("synth_batch")),
                     "review_assist": _assist(row),
+                    "review_assist_judges": _judges(row),
+                    "assist_consensus": _consensus(row),
                     "preview": _row_preview(row),
                     "payload": {
                         k: v for k, v in row.items()
-                        if k not in {"id", "synth_source", "synth_confidence", "review_status", "status", "review_assist", *PROVENANCE_KEYS}
+                        if k not in {"id", "synth_source", "synth_confidence", "review_status", "status", *ASSIST_KEYS, *PROVENANCE_KEYS}
                     },
                 }
                 for row in visible_entries
@@ -320,7 +355,16 @@ def _provenance_facets(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if a:
             verdicts[str(a["verdict"])] = verdicts.get(str(a["verdict"]), 0) + 1
             reasons[str(a.get("reason_code") or "other")] = reasons.get(str(a.get("reason_code") or "other"), 0) + 1
+    consensus: dict[str, int] = {}
+    judge_counts: dict[str, int] = {}
+    for row in rows:
+        if _judges(row):
+            consensus[_consensus(row)] = consensus.get(_consensus(row), 0) + 1
+        for e in _judges(row):
+            judge_counts[e["judge"]] = judge_counts.get(e["judge"], 0) + 1
     return {
+        "consensus": [{"consensus": c, "count": consensus[c]} for c in sorted(consensus)],
+        "judges": [{"judge": j, "count": judge_counts[j]} for j in sorted(judge_counts)],
         "jobs": [{"synth_job_id": j, "count": jobs[j]} for j in sorted(jobs)],
         "backends": [{"synth_backend": b, "count": backends[b]} for b in sorted(backends)],
         "verdicts": [{"verdict": v, "count": verdicts[v]} for v in sorted(verdicts)],
@@ -337,6 +381,8 @@ async def list_review_queue(
     synth_backend: str | None = None,
     verdict: str | None = None,
     reason_code: str | None = None,
+    assist_consensus: str | None = None,
+    judge: str | None = None,
 ) -> dict[str, Any]:
     """Return synth rows for a project, split into pending + accepted
     groups (keyed by ``synth_source``, or by class label when
@@ -370,6 +416,18 @@ async def list_review_queue(
         all_rows = [r for r in all_rows if _row_job_id(r) == synth_job_id]
     if synth_backend:
         all_rows = [r for r in all_rows if _resolve_backend_label(r) == synth_backend]
+    if assist_consensus:
+        all_rows = [r for r in all_rows if _consensus(r) == assist_consensus or _resolve_consensus_label(r) == assist_consensus]
+    if judge:
+        # View one judge's verdicts: rows it has not judged drop out; the verdict / reason filters and
+        # group-bys below then read THAT judge's entry.
+        kept = []
+        for r in all_rows:
+            mine = next((e for e in _judges(r) if e["judge"] == judge), None)
+            if mine is not None:
+                r["review_assist"] = {**{k: v for k, v in mine.items() if k != "judge"}, "backend": judge}
+                kept.append(r)
+        all_rows = kept
     if verdict:
         all_rows = [r for r in all_rows if _resolve_verdict_label(r) == verdict]
     if reason_code:
@@ -399,6 +457,7 @@ async def list_review_queue(
         "backend": _resolve_backend_label,
         "verdict": _resolve_verdict_label,
         "assist_reason": _resolve_assist_reason_label,
+        "assist_consensus": _resolve_consensus_label,
     }
     normalized_group_by = group_by if group_by in _GROUP_RESOLVERS else "source"
     key_fn = _GROUP_RESOLVERS[normalized_group_by]
@@ -423,6 +482,7 @@ async def list_review_queue(
         "filter": {
             "synth_job_id": synth_job_id, "synth_backend": synth_backend,
             "verdict": verdict, "reason_code": reason_code,
+            "assist_consensus": assist_consensus, "judge": judge,
         },
         "facets": facets,
         "total_pending": len(pending),

@@ -55,13 +55,27 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `LlmBudgetExceeded` (or a cancel) stops the Job with the standard message and keeps what was written (the spend so far is
   attached to the exception). Result: `rows_judged, rows_unparseable, verdicts {pass, fail, unsure}, reasons {code: n}, calls,
   rows_per_call, backend_used`; 0 judged raises.
-  **Persistence = a sidecar, not the jsonl**: `synthetic/review_assist.json` (`{row id: {verdict, reason_code, note, backend,
-  job_id, batch?, at, sig}}`). `synthetic.jsonl` has several writers that append (playbooks, legacy autosave) or rewrite the whole
+  **Persistence = a sidecar, not the jsonl**: `synthetic/review_assist.json` (`{row id: {judge: {verdict, reason_code, note,
+  job_id, batch?, at, sig}}}` — the judge is the entry's `safe_backend_label`; `save_verdicts` still takes entries carrying
+  `backend` and files them under it, so a re-run by the SAME judge replaces only its entry and another judge's stays. The
+  old single-verdict shape `{row id: {verdict, ..., backend, ...}}` is migrated on every read (`_normalize_row_entry`: the
+  `backend` becomes the key, every other field is kept; no backend -> `(unknown judge)`) and the file is rewritten in the new shape
+  on the next write — tested on a 10k-entry fixture mirroring the real file). `synthetic.jsonl` has several writers that append (playbooks, legacy autosave) or rewrite the whole
   file (review queue bulk / purge / retire, relabels, autofix) and NONE take a lock, so a long Job rewriting verdicts into it would
   race them and could drop a concurrent append. The sidecar has one writer path (`save_verdicts`: process lock + temp file +
   `os.replace`; a re-run replaces a row's entry) and is merged onto rows when the queue is listed (`attach_verdicts`). `sig` hashes
   the row's content minus provenance / review fields, so an edited row or a reused id (after a purge) does not inherit a verdict,
-  while accept / reject keeps it (bookkeeping stamps — `conventions_marked_current_at`, `conventions_carried_forward_at`, `relabelled_at` — are ignored too). Orphans of purged rows are inert. The queue (`list_review_queue`) adds `review_assist` per row,
+  while accept / reject keeps it (bookkeeping stamps — `conventions_marked_current_at`, `conventions_carried_forward_at`, `relabelled_at` — are ignored too). Orphans of purged rows are inert. **Consensus** (`attach_verdicts`, read time, judges whose `sig` still matches the row): `review_assist_judges` (oldest first, each with
+  `judge`), `assist_consensus` ∈ none / single / agree_pass / agree_fail / disagree (`consensus_of`: all pass → agree_pass, all fail →
+  agree_fail, anything else across ≥2 judges → disagree, so an `unsure` next to a pass is a disagreement), and `review_assist` = the most
+  recent valid verdict (`backend` = its judge) for compatibility. Queue: `?assist_consensus=` (also `single:<verdict>`), `?judge=` (that
+  judge's verdicts only; verdict / reason filters + group-bys read it), `group_by=assist_consensus` (keys `none`, `single:pass|fail|unsure`,
+  `agree_pass`, `agree_fail`, `disagree`; labels name the judges), `facets.consensus` / `facets.judges`. UI: Accept group only on `agree_pass` and
+  `single:pass` (Reject only on `agree_fail` / `single:fail`); a verdict-group accept also skips rows whose consensus is `disagree`; same
+  re-fetch-before-bulk rule. Job body adds `only_missing_judge` (skip rows THIS judge already has — the key is `judge_label(backend)`),
+  `consensus` (list) and `prior_verdicts` (rows where ANOTHER judge said one of these), all applied at request and again at run time
+  (`filter_rows_for_judge`); the result adds `consensus` counts (over the rows judged) and the bell summary appends "agree N · disagree N".
+  Tests `tests/test_synth_review_assist_judges.py`, `SynthReviewQueue.judges.test.tsx`. The queue (`list_review_queue`) adds `review_assist` per row,
   `?verdict=` / `?reason_code=` filters, `?group_by=verdict|assist_reason` (key `<verdict>:<reason_code>`, un-screened rows in
   "(not pre-screened)") and `facets.verdicts` / `facets.reason_codes`. Bulk accept / reject of a group reuses
   `POST /review-queue/bulk-update` with the group's row ids; the UI's reject sends `reject_reason: "assist:<reason_code>"` (no

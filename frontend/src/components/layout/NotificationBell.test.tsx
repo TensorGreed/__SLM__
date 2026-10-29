@@ -368,6 +368,22 @@ describe('NotificationBell', () => {
         expect(jobOutcomeSummary(batched as never)).toBe('pass 3 \u00b7 fail 0 \u00b7 unsure 0 \u00b7 via batch (half price), 1 request redone directly');
     });
 
+    it('adds agree / disagree counts to a pre-screen summary once two judges have run', () => {
+        const job = jobFixture({
+            kind: 'synth_review_assist', status: 'succeeded',
+            result: {
+                verdicts: { pass: 3, fail: 1, unsure: 0 },
+                consensus: { none: 0, single: 0, agree_pass: 2, agree_fail: 1, disagree: 1 },
+            },
+        });
+        expect(jobOutcomeSummary(job as never)).toBe('pass 3 \u00b7 fail 1 \u00b7 unsure 0 \u00b7 agree 3 \u00b7 disagree 1');
+        const single = jobFixture({
+            kind: 'synth_review_assist', status: 'succeeded',
+            result: { verdicts: { pass: 4, fail: 0, unsure: 0 }, consensus: { none: 0, single: 4, agree_pass: 0, agree_fail: 0, disagree: 0 } },
+        });
+        expect(jobOutcomeSummary(single as never)).toBe('pass 4 \u00b7 fail 0 \u00b7 unsure 0');
+    });
+
     it('renders a per-kind outcome summary for completed synth_playbook jobs', async () => {
         apiMock.get.mockResolvedValueOnce({
             data: {

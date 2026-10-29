@@ -93,8 +93,10 @@ def _drop_copied_job_ids(project_id: int) -> None:
             data = json.loads(sidecar.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 for entry in data.values():
-                    if isinstance(entry, dict) and entry.get("job_id") is not None:
-                        entry["job_id"] = None
+                    # Old format: the verdict itself; new format: {judge: verdict}.
+                    for e in ([entry] if isinstance(entry, dict) and "verdict" in entry else list(entry.values()) if isinstance(entry, dict) else []):
+                        if isinstance(e, dict) and e.get("job_id") is not None:
+                            e["job_id"] = None
                 sidecar.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except (OSError, ValueError):
             pass

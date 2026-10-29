@@ -18,7 +18,10 @@ import { budgetExceededMessage, budgetWarningMessage } from '../../api/llmSpend'
 
 import GenerationModelPicker from '../shared/GenerationModelPicker';
 import type {
+    AssistConsensus,
     ReviewAssist,
+    ReviewAssistJudge,
+    ReviewQueueEntry,
     ReviewAssistVerdict,
     ReviewQueueGroup,
     ReviewQueueGroupBy,
@@ -73,6 +76,9 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
     // Pre-screen (review assist) filters: verdict and reason code.
     const [filterVerdict, setFilterVerdict] = useState<ReviewAssistVerdict | null>(null);
     const [filterReason, setFilterReason] = useState<string | null>(null);
+    // Several judges per row: filter by where they agree, or view one judge's verdicts.
+    const [filterConsensus, setFilterConsensus] = useState<string | null>(null);
+    const [filterJudge, setFilterJudge] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -83,6 +89,8 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                 synthBackend: filterBackend,
                 verdict: filterVerdict,
                 reasonCode: filterReason,
+                assistConsensus: filterConsensus,
+                judge: filterJudge,
             });
             setData(payload);
             setSelected(new Set());
@@ -91,7 +99,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
         } finally {
             setLoading(false);
         }
-    }, [projectId, groupBy, filterJob, filterBackend, filterVerdict, filterReason]);
+    }, [projectId, groupBy, filterJob, filterBackend, filterVerdict, filterReason, filterConsensus, filterJudge]);
 
     useEffect(() => {
         load();
@@ -188,9 +196,11 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
     // re-judged rows, or another tab accepted some, since): the queue is re-fetched right before the
     // call and only the group's CURRENT pending rows whose verdict (and reason) still match go in.
     const handleGroupUpdate = async (group: ReviewQueueGroup, action: 'accept' | 'reject') => {
-        const verdict = assistVerdictOf(group);
-        if (action === 'accept' && !canAcceptGroup(group)) return;
-        const code = assistReasonOf(group);
+        const byConsensus = groupBy === 'assist_consensus';
+        const verdict = byConsensus ? null : assistVerdictOf(group);
+        if (action === 'accept' && !(byConsensus ? canAcceptConsensusGroup(group) : canAcceptGroup(group))) return;
+        if (action === 'reject' && byConsensus && !canRejectConsensusGroup(group)) return;
+        const code = byConsensus ? null : assistReasonOf(group);
         setBusy(true);
         setFlash(null);
         setError(null);
@@ -200,12 +210,18 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                 synthBackend: filterBackend,
                 verdict: filterVerdict,
                 reasonCode: filterReason,
+                assistConsensus: filterConsensus,
+                judge: filterJudge,
             });
             const current = fresh.groups.find((g) => g.synth_source === group.synth_source);
-            const ids = (current?.rows ?? [])
-                .filter((r) => (verdict === null
+            const matching = (current?.rows ?? []).filter((r) => (byConsensus
+                ? consensusKeyOf(r) === group.synth_source
+                : verdict === null
                     ? !r.review_assist
-                    : r.review_assist?.verdict === verdict && (code === null || r.review_assist?.reason_code === code)))
+                    : r.review_assist?.verdict === verdict && (code === null || r.review_assist?.reason_code === code)));
+            // Where several judges ran, one judge's pass never accepts a row another judge disagrees on.
+            const ids = matching
+                .filter((r) => !(action === 'accept' && r.assist_consensus === 'disagree'))
                 .map((r) => r.id);
             if (ids.length === 0) {
                 setFlash(`${group.synth_source} has no pending rows left to ${action}; the queue changed since it was loaded.`);
@@ -216,7 +232,9 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
             const result = await bulkUpdateSynthReviewQueue(projectId, {
                 rowIds: ids,
                 action,
-                rejectReason: action === 'reject' && code ? `assist:${code}` : null,
+                rejectReason: action === 'reject'
+                    ? (byConsensus ? `assist:${group.synth_source.replace(':', '_')}` : code ? `assist:${code}` : null)
+                    : null,
             });
             setFlash(
                 action === 'accept'
@@ -381,6 +399,10 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                     onBackend={setFilterBackend}
                     onVerdict={setFilterVerdict}
                     onReason={setFilterReason}
+                    consensus={filterConsensus}
+                    judge={filterJudge}
+                    onConsensus={setFilterConsensus}
+                    onJudge={setFilterJudge}
                 />
                 <ReviewAssistCard
                     projectId={projectId}
@@ -496,9 +518,9 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                                 )}
                                 <span className="synth-review-queue__group-count">{group.count}</span>
                             </label>
-                            {(groupBy === 'assist_reason' || groupBy === 'verdict') && group.rows.length > 0 && (
+                            {(groupBy === 'assist_reason' || groupBy === 'verdict' || groupBy === 'assist_consensus') && group.rows.length > 0 && (
                                 <span className="synth-review-queue__group-actions">
-                                    {canAcceptGroup(group) && (
+                                    {(groupBy === 'assist_consensus' ? canAcceptConsensusGroup(group) : canAcceptGroup(group)) && (
                                         <button
                                             type="button"
                                             className="btn btn-primary"
@@ -509,15 +531,17 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                                             Accept group ({group.count})
                                         </button>
                                     )}
-                                    <button
-                                        type="button"
-                                        className="btn btn-secondary synth-review-queue__reject-btn"
-                                        onClick={() => handleGroupUpdate(group, 'reject')}
-                                        disabled={busy}
-                                        data-testid={`synth-review-queue-group-reject-${group.synth_source}`}
-                                    >
-                                        Reject group ({group.count})
-                                    </button>
+                                    {(groupBy !== 'assist_consensus' || canRejectConsensusGroup(group)) && (
+                                        <button
+                                            type="button"
+                                            className="btn btn-secondary synth-review-queue__reject-btn"
+                                            onClick={() => handleGroupUpdate(group, 'reject')}
+                                            disabled={busy}
+                                            data-testid={`synth-review-queue-group-reject-${group.synth_source}`}
+                                        >
+                                            Reject group ({group.count})
+                                        </button>
+                                    )}
                                 </span>
                             )}
                         </div>
@@ -543,7 +567,9 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                                         </span>
                                         <code>{row.preview}</code>
                                     </label>
-                                    {row.review_assist && <AssistBadge assist={row.review_assist} rowId={row.id} />}
+                                    {(row.review_assist_judges?.length ?? 0) >= 2
+                                        ? <AssistJudges judges={row.review_assist_judges ?? []} consensus={row.assist_consensus} rowId={row.id} />
+                                        : row.review_assist && <AssistBadge assist={row.review_assist} rowId={row.id} />}
                                     {(row.synth_job_id != null || row.synth_backend) && (
                                         <span className="synth-review-queue__provenance" data-testid={`synth-review-queue-provenance-${row.id}`}>
                                             {row.synth_job_id != null ? `job #${row.synth_job_id}` : 'no job'}
@@ -604,7 +630,48 @@ const GROUP_BY_OPTIONS: { value: ReviewQueueGroupBy; label: string }[] = [
     { value: 'backend', label: 'Backend' },
     { value: 'verdict', label: 'Verdict' },
     { value: 'assist_reason', label: 'Verdict + reason' },
+    { value: 'assist_consensus', label: 'Judges agree?' },
 ];
+
+/** A row's consensus group key as the queue builds it: `single` splits by the lone judge's verdict. */
+function consensusKeyOf(row: ReviewQueueEntry): string {
+    const c = row.assist_consensus ?? 'none';
+    return c === 'single' ? `single:${row.review_assist_judges?.[0]?.verdict ?? 'unsure'}` : c;
+}
+
+/** Accept-group on a consensus grouping: only where every judge that ran says pass (two judges agreeing,
+ *  or the one judge that ran). Never `disagree`, `none`, `unsure`, or a fail group. */
+function canAcceptConsensusGroup(group: ReviewQueueGroup): boolean {
+    return group.synth_source === 'agree_pass' || group.synth_source === 'single:pass';
+}
+
+function canRejectConsensusGroup(group: ReviewQueueGroup): boolean {
+    return group.synth_source === 'agree_fail' || group.synth_source === 'single:fail';
+}
+
+/** Every judge's verdict + note on a row judged by 2+ models, with where they stand. */
+function AssistJudges({ judges, consensus, rowId }: { judges: ReviewAssistJudge[]; consensus?: AssistConsensus; rowId: number }) {
+    return (
+        <span className="synth-review-queue__judges" data-testid={`synth-review-queue-judges-${rowId}`}>
+            <span className={`synth-review-queue__consensus synth-review-queue__consensus--${consensus ?? 'none'}`}>
+                {(consensus ?? 'none').replace('_', ' ')}
+            </span>
+            {judges.map((j) => (
+                <span
+                    key={j.judge}
+                    className={`synth-review-queue__assist synth-review-queue__assist--${j.verdict}`}
+                    data-testid={`synth-review-queue-judge-${rowId}-${j.judge}`}
+                    title={j.job_id != null ? `job #${j.job_id}` : undefined}
+                >
+                    <code>{j.judge}</code>{' '}
+                    <strong>{j.verdict}</strong>
+                    {j.reason_code !== 'ok' ? ` · ${j.reason_code}` : ''}
+                    {j.note ? ` — ${j.note}` : ''}
+                </span>
+            ))}
+        </span>
+    );
+}
 
 /** The reason code of an `assist_reason` group (key `<verdict>:<reason_code>`); null for other groupings. */
 function assistReasonOf(group: ReviewQueueGroup): string | null {
@@ -657,6 +724,10 @@ function ReviewAssistCard({ projectId, pending, synthJobId, onStarted }: ReviewA
     const [rubric, setRubric] = useState('');
     const [rowsPerCall, setRowsPerCall] = useState('10');
     const [useBatch, setUseBatch] = useState(false);
+    const [onlyMissing, setOnlyMissing] = useState(false);
+    // Which rows a second (third...) judge looks at: all, only where another judge said fail / unsure,
+    // or only where the judges already disagree.
+    const [target, setTarget] = useState<'all' | 'prior_doubt' | 'disagree'>('all');
     const [busy, setBusy] = useState(false);
     const batchable = Boolean(pin && pin.startsWith('cloud:anthropic:'));
     const perCall = Math.min(25, Math.max(1, Math.floor(Number(rowsPerCall) || 10)));
@@ -670,6 +741,9 @@ function ReviewAssistCard({ projectId, pending, synthJobId, onStarted }: ReviewA
                 rubricText: rubric,
                 rowsPerCall: perCall,
                 synthJobId,
+                onlyMissingJudge: onlyMissing,
+                priorVerdicts: target === 'prior_doubt' ? ['fail', 'unsure'] : null,
+                consensus: target === 'disagree' ? ['disagree'] : null,
             });
             const budgetMsg = budgetWarningMessage(job);
             if (budgetMsg) toast.warning(budgetMsg, 8000);
@@ -739,6 +813,27 @@ function ReviewAssistCard({ projectId, pending, synthJobId, onStarted }: ReviewA
                             data-testid="synth-review-queue-assist-rows-per-call"
                         />
                     </label>
+                    <label className="synth-review-queue__assist-field">
+                        <input
+                            type="checkbox"
+                            checked={onlyMissing}
+                            onChange={(e) => setOnlyMissing(e.target.checked)}
+                            data-testid="synth-review-queue-assist-only-missing"
+                        />
+                        {' '}Only rows this model has not judged yet (resume)
+                    </label>
+                    <label className="synth-review-queue__assist-field">
+                        Rows to judge{' '}
+                        <select
+                            value={target}
+                            onChange={(e) => setTarget(e.target.value as 'all' | 'prior_doubt' | 'disagree')}
+                            data-testid="synth-review-queue-assist-target"
+                        >
+                            <option value="all">All pending rows</option>
+                            <option value="prior_doubt">Where another model said fail or unsure</option>
+                            <option value="disagree">Where the judges disagree</option>
+                        </select>
+                    </label>
                     {batchable && (
                         <label className="synth-review-queue__assist-field">
                             <input
@@ -775,15 +870,21 @@ interface ProvenanceFiltersProps {
     onBackend: (backend: string | null) => void;
     onVerdict: (verdict: ReviewAssistVerdict | null) => void;
     onReason: (reason: string | null) => void;
+    consensus: string | null;
+    judge: string | null;
+    onConsensus: (consensus: string | null) => void;
+    onJudge: (judge: string | null) => void;
 }
 
 /** Narrow the queue to the rows one Job / one backend wrote, so lanes can be compared. */
-function ProvenanceFilters({ data, job, backend, verdict, reason, onJob, onBackend, onVerdict, onReason }: ProvenanceFiltersProps) {
+function ProvenanceFilters({ data, job, backend, verdict, reason, onJob, onBackend, onVerdict, onReason, consensus, judge, onConsensus, onJudge }: ProvenanceFiltersProps) {
     const jobs = data.facets?.jobs ?? [];
     const backends = data.facets?.backends ?? [];
     const verdicts = data.facets?.verdicts ?? [];
     const reasons = data.facets?.reason_codes ?? [];
-    const filtered = job != null || Boolean(backend) || Boolean(verdict) || Boolean(reason);
+    const judges = data.facets?.judges ?? [];
+    const consensuses = data.facets?.consensus ?? [];
+    const filtered = job != null || Boolean(backend) || Boolean(verdict) || Boolean(reason) || Boolean(consensus) || Boolean(judge);
     if (jobs.length < 2 && backends.length < 2 && verdicts.length === 0 && !filtered) return null;
     return (
         <div className="synth-review-queue__filters" data-testid="synth-review-queue-filters">
@@ -817,6 +918,36 @@ function ProvenanceFilters({ data, job, backend, verdict, reason, onJob, onBacke
                     ))}
                 </select>
             </label>
+            {(judges.length >= 2 || judge) && (
+                <>
+                    <label>
+                        Judges{' '}
+                        <select
+                            value={consensus ?? ''}
+                            onChange={(e) => onConsensus(e.target.value || null)}
+                            data-testid="synth-review-queue-filter-consensus"
+                        >
+                            <option value="">Any</option>
+                            {consensuses.map((c) => (
+                                <option key={c.consensus} value={c.consensus}>{c.consensus.replace('_', ' ')} ({c.count})</option>
+                            ))}
+                        </select>
+                    </label>
+                    <label>
+                        Judge{' '}
+                        <select
+                            value={judge ?? ''}
+                            onChange={(e) => onJudge(e.target.value || null)}
+                            data-testid="synth-review-queue-filter-judge"
+                        >
+                            <option value="">All judges</option>
+                            {judges.map((j) => (
+                                <option key={j.judge} value={j.judge}>{j.judge} ({j.count})</option>
+                            ))}
+                        </select>
+                    </label>
+                </>
+            )}
             {(verdicts.length > 0 || verdict) && (
                 <>
                     <label>

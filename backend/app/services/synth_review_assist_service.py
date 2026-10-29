@@ -417,17 +417,43 @@ def row_signature(row: dict[str, Any]) -> str:
     return hashlib.sha1(json.dumps(body, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()[:16]
 
 
-def _read_sidecar(path: Path) -> dict[str, dict[str, Any]]:
+UNKNOWN_JUDGE = "(unknown judge)"
+CONSENSUS_VALUES = ("none", "single", "agree_pass", "agree_fail", "disagree")
+
+
+def _normalize_row_entry(raw: Any) -> dict[str, dict[str, Any]]:
+    """One row's sidecar value as ``{judge: entry}``. The old single-verdict format (an entry with a
+    ``verdict`` string and a ``backend``) becomes that judge's entry (``backend`` is the key now; every
+    other field is kept); the new format passes through, dropping anything that is not a dict."""
+    if not isinstance(raw, dict):
+        return {}
+    if isinstance(raw.get("verdict"), str):
+        judge = str(raw.get("backend") or UNKNOWN_JUDGE)
+        return {judge: {k: v for k, v in raw.items() if k != "backend"}}
+    return {str(j): e for j, e in raw.items() if isinstance(e, dict) and isinstance(e.get("verdict"), str)}
+
+
+def _read_sidecar(path: Path) -> dict[str, dict[str, dict[str, Any]]]:
+    """``{row id: {judge: entry}}`` — migrates the single-verdict format on read."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    out = {}
+    for rid, raw in data.items():
+        judges = _normalize_row_entry(raw)
+        if judges:
+            out[str(rid)] = judges
+    return out
 
 
 def save_verdicts(project_id: int, entries: dict[int, dict[str, Any]]) -> None:
-    """Merge ``{row id: entry}`` into the sidecar (an entry replaces the row's previous one).
-    Atomic (temp + rename) under the process lock — the only writer of the file."""
+    """Merge ``{row id: entry}`` into the sidecar. An entry carries its judge as ``backend``; it
+    replaces only THAT judge's entry for the row (other judges' verdicts stay). The file is always
+    written in the ``{row id: {judge: entry}}`` format. Atomic (temp + rename) under the process
+    lock — the only writer of the file."""
     if not entries:
         return
     path = sidecar_path(project_id)
@@ -435,15 +461,41 @@ def save_verdicts(project_id: int, entries: dict[int, dict[str, Any]]) -> None:
     with _LOCK:
         data = _read_sidecar(path)
         for rid, entry in entries.items():
-            data[str(int(rid))] = entry
+            judge = str(entry.get("backend") or UNKNOWN_JUDGE)
+            data.setdefault(str(int(rid)), {})[judge] = {k: v for k, v in entry.items() if k != "backend"}
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, path)
 
 
+def consensus_of(verdicts: list[str]) -> str:
+    """none (no verdicts) / single (one judge) / agree_pass / agree_fail (every judge says the same
+    pass / fail) / disagree (anything else across 2+ judges — including unsure)."""
+    if not verdicts:
+        return "none"
+    if len(verdicts) == 1:
+        return "single"
+    if all(v == "pass" for v in verdicts):
+        return "agree_pass"
+    if all(v == "fail" for v in verdicts):
+        return "agree_fail"
+    return "disagree"
+
+
+def _valid_judges(judges: dict[str, dict[str, Any]], sig: str) -> list[dict[str, Any]]:
+    """The row's current-signature verdicts, oldest first, each as a public dict with ``judge``."""
+    out = [
+        {"judge": j, **{k: v for k, v in e.items() if k != "sig"}}
+        for j, e in judges.items() if e.get("sig") == sig
+    ]
+    out.sort(key=lambda e: (str(e.get("at") or ""), e["judge"]))
+    return out
+
+
 def attach_verdicts(project_id: int, rows: list[dict[str, Any]]) -> int:
-    """Set ``review_assist`` on each row that has a current sidecar entry; returns how many.
-    Mutates the (just-read) row dicts — it never writes ``synthetic.jsonl``."""
+    """Set ``review_assist_judges`` (every judge whose signature still matches), ``assist_consensus``
+    and ``review_assist`` (the most recent valid verdict, with its judge as ``backend``) on each row that
+    has one; returns how many. Mutates the (just-read) row dicts — it never writes ``synthetic.jsonl``."""
     path = sidecar_path(project_id)
     if not path.exists():
         return 0
@@ -454,14 +506,65 @@ def attach_verdicts(project_id: int, rows: list[dict[str, Any]]) -> int:
     n = 0
     for row in rows:
         rid = row.get("id")
-        entry = data.get(str(rid)) if isinstance(rid, int) else None
-        if not isinstance(entry, dict):
+        judges = data.get(str(rid)) if isinstance(rid, int) else None
+        if not judges:
             continue
-        if entry.get("sig") != row_signature(row):
+        valid = _valid_judges(judges, row_signature(row))
+        if not valid:
             continue
-        row["review_assist"] = {k: v for k, v in entry.items() if k != "sig"}
+        latest = valid[-1]
+        row["review_assist_judges"] = valid
+        row["assist_consensus"] = consensus_of([e["verdict"] for e in valid])
+        row["review_assist"] = {**{k: v for k, v in latest.items() if k != "judge"}, "backend": latest["judge"]}
         n += 1
     return n
+
+
+def judge_label(backend: Any) -> str:
+    """The key a backend's verdicts are stored under (its credential-safe ``describe()``)."""
+    from app.services.synth_playbook_service import safe_backend_label
+
+    return safe_backend_label(backend.describe() if hasattr(backend, "describe") else str(backend))
+
+
+def filter_rows_for_judge(
+    project_id: int,
+    rows: list[dict[str, Any]],
+    judge: str,
+    *,
+    only_missing_judge: bool = False,
+    consensus: list[str] | None = None,
+    prior_verdicts: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Narrow ``rows`` for a run by ``judge``: ``only_missing_judge`` drops rows ``judge`` already has a
+    valid verdict for (resume); ``consensus`` keeps rows whose current consensus is listed; ``prior_verdicts``
+    keeps rows where some OTHER judge's valid verdict is listed (e.g. a second opinion only where
+    the first said fail / unsure). Rows without any verdict have consensus ``none``."""
+    if not (only_missing_judge or consensus or prior_verdicts):
+        return rows
+    probe = [dict(r) for r in rows]
+    attach_verdicts(project_id, probe)
+    out = []
+    for orig, row in zip(rows, probe):
+        judges = row.get("review_assist_judges") or []
+        if only_missing_judge and any(e["judge"] == judge for e in judges):
+            continue
+        if consensus and row.get("assist_consensus", "none") not in consensus:
+            continue
+        if prior_verdicts and not any(e["judge"] != judge and e["verdict"] in prior_verdicts for e in judges):
+            continue
+        out.append(orig)
+    return out
+
+
+def consensus_counts(project_id: int, rows: list[dict[str, Any]]) -> dict[str, int]:
+    """How many of ``rows`` are in each consensus state (all five keys present)."""
+    probe = [dict(r) for r in rows]
+    attach_verdicts(project_id, probe)
+    counts = {c: 0 for c in CONSENSUS_VALUES}
+    for r in probe:
+        counts[r.get("assist_consensus", "none")] += 1
+    return counts
 
 
 # ── row selection ────────────────────────────────────────────────────────
@@ -695,6 +798,7 @@ async def run_review_assist(
         "effective_rows_per_call": effective,
         "rows_too_long": len(too_long),
         "sidecar_writes": stats["writes"],
+        "consensus": consensus_counts(project_id, rows),
         **spend,
     }
     if batch_used:

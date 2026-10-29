@@ -391,6 +391,9 @@ Content type: `application/json` — `ReviewAssistRequest`
 | `rows_per_call` | `integer` | no |  |
 | `max_rows` | `integer \| null` | no |  |
 | `dry_run` | `boolean` | no | Report how many rows / calls the run would take; call no model. |
+| `only_missing_judge` | `boolean` | no | Skip rows this judge (the backend) already has a valid verdict for (resume). |
+| `consensus` | `string[] \| null` | no | Only rows whose current judge consensus is one of none / single / agree_pass / agree_fail / disagree. |
+| `prior_verdicts` | `string[] \| null` | no | Only rows where another judge's valid verdict is one of pass / fail / unsure (e.g. a second opinion where the first said fail or unsure). |
 
 **Responses**
 
@@ -409,8 +412,9 @@ List pending synthetic rows for the project, grouped by
 `?group_by=class` (Epic E), by originating failure cluster
 (`cluster`), by the Job that wrote the rows (`job`) or by the backend
 that wrote them (`backend`), by review-assist verdict (`verdict`) or by
-verdict + reason code (`assist_reason`). `?synth_job_id=` /
-`?synth_backend=` / `?verdict=` / `?reason_code=` narrow every list.
+verdict + reason code (`assist_reason`) or by judge consensus (`assist_consensus`).
+`?synth_job_id=` / `?synth_backend=` / `?verdict=` / `?reason_code=` / `?assist_consensus=` / `?judge=`
+narrow every list (`judge` shows one judge's verdicts; verdict / reason then read that judge).
 
 Pending rows are gated out of dataset prep — they don't enter
 training until the user accepts them via `/review-queue/bulk-update`
@@ -426,6 +430,8 @@ training until the user accepts them via `/review-queue/bulk-update`
 | `synth_backend` | `query` | `string` | no |  |
 | `verdict` | `query` | `string` | no |  |
 | `reason_code` | `query` | `string` | no |  |
+| `assist_consensus` | `query` | `string` | no |  |
+| `judge` | `query` | `string` | no |  |
 
 **Responses**
 
