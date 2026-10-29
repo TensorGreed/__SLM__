@@ -35,6 +35,9 @@ import {
     purgeRejectedSynthRows,
     recheckCodeFormat,
     type RecheckCodeFormatResult,
+
+
+    restoreRejectedSynthRows,
     startReviewAssist,
 } from '../../api/synthPlaybook';
 import './SynthReviewQueue.css';
@@ -362,6 +365,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                         totalRejected={totalRejected}
                         onPurgeCompleted={handlePurgeCompleted}
                         onPurgeError={handlePurgeError}
+                        onRestored={(n) => { setFlash(`Restored ${n} row${n === 1 ? '' : 's'} to the pending queue.`); void load(); }}
                     />
                 )}
             </section>
@@ -628,6 +632,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                     totalRejected={data.total_rejected ?? 0}
                     onPurgeCompleted={handlePurgeCompleted}
                     onPurgeError={handlePurgeError}
+                    onRestored={(n) => { setFlash(`Restored ${n} row${n === 1 ? '' : 's'} to the pending queue.`); void load(); }}
                 />
             )}
         </section>
@@ -1661,6 +1666,8 @@ interface RejectedRowsSectionProps {
         result: import('../../api/synthPlaybook').PurgeRejectedResult,
     ) => Promise<void> | void;
     onPurgeError: (msg: string) => void;
+    /** Called after rows were restored to pending (reload the queue). */
+    onRestored?: (restored: number) => Promise<void> | void;
 }
 
 function RejectedRowsSection({
@@ -1669,8 +1676,28 @@ function RejectedRowsSection({
     totalRejected,
     onPurgeCompleted,
     onPurgeError,
+    onRestored,
 }: RejectedRowsSectionProps) {
     const [purging, setPurging] = useState<string | null>(null);
+
+    const handleRestore = useCallback(
+        async (reason: string, count: number) => {
+            const label = reason === NO_REASON_KEY ? 'rejected without a reason' : `rejected as "${reason}"`;
+            if (!window.confirm(`Restore ${count} row${count === 1 ? '' : 's'} ${label} to the pending queue?`)) return;
+            setPurging(reason);
+            try {
+                const result = await restoreRejectedSynthRows(
+                    projectId, { rejectReason: reason === NO_REASON_KEY ? '' : reason },
+                );
+                await onRestored?.(result.restored);
+            } catch (err: any) {
+                onPurgeError(err?.response?.data?.message || err?.response?.data?.detail || err?.message || 'Restore failed');
+            } finally {
+                setPurging(null);
+            }
+        },
+        [projectId, onRestored, onPurgeError],
+    );
 
     const rows = _flattenRejectedRows(groups);
     const byReason = _groupByReason(rows);
@@ -1728,6 +1755,7 @@ function RejectedRowsSection({
                         rows={byReason.get(reason) || []}
                         purging={purging === reason}
                         disablePurge={purging !== null}
+                        onRestore={() => handleRestore(reason, (byReason.get(reason) || []).length)}
                         onPurge={() =>
                             handlePurge(
                                 reason,
@@ -1748,6 +1776,7 @@ interface RejectedReasonCardProps {
     purging: boolean;
     disablePurge: boolean;
     onPurge: () => void;
+    onRestore: () => void;
 }
 
 function RejectedReasonCard({
@@ -1756,6 +1785,7 @@ function RejectedReasonCard({
     purging,
     disablePurge,
     onPurge,
+    onRestore,
 }: RejectedReasonCardProps) {
     const cardTestId = `synth-review-queue-rejected-reason-${reason}`;
     return (
@@ -1783,6 +1813,19 @@ function RejectedReasonCard({
                     data-testid={`synth-review-queue-purge-reason-${reason}`}
                 >
                     {purging ? 'Purging…' : 'Purge this reason'}
+                </button>
+                <button
+                    type="button"
+                    className="synth-review-queue__rejected-purge-reason"
+                    onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onRestore();
+                    }}
+                    disabled={disablePurge}
+                    data-testid={`synth-review-queue-restore-reason-${reason}`}
+                >
+                    Restore group
                 </button>
             </summary>
             <ul className="synth-review-queue__rejected-row-list">

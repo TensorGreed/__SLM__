@@ -2018,10 +2018,10 @@ async def mark_synth_group_conventions_current(
 class CheckPlanRulesRequest(BaseModel):
     rules: dict | str = Field(..., description="The plan-rules document (object, or its JSON text). See plan_rules_service.")
     dry_run: bool = Field(default=True, description="True (default): count violations per rule, change nothing. False: soft-reject rows with a reject-severity violation.")
-    row_ids: list[int] | None = Field(default=None, description="Only these pending rows.")
+    row_ids: list[int] | None = Field(default=None, max_length=5000, description="Only these pending rows.")
     source: str | None = Field(default=None, max_length=256, description="Only pending rows of this synth_source group.")
     synth_job_id: int | None = Field(default=None, description="Only pending rows written by this Job.")
-    max_rows: int | None = Field(default=None, ge=1)
+    max_rows: int | None = Field(default=None, ge=1, le=100_000)
 
 
 @router.post("/check-plan-rules")
@@ -2052,11 +2052,11 @@ async def check_plan_rules(
         }) from exc
     kwargs = dict(row_ids=req.row_ids, source=req.source, synth_job_id=req.synth_job_id, max_rows=req.max_rows)
     if not async_job:
-        return check_plan_rules_for_project(project_id, req.rules, dry_run=req.dry_run, **kwargs)
+        return await check_plan_rules_for_project(project_id, req.rules, dry_run=req.dry_run, **kwargs)
 
     async def _runner(handle: "jobs_service.JobProgressHandle") -> dict:
         await handle.set_progress(fraction=0.1, message="Checking pending plans against the rules…")
-        result = check_plan_rules_for_project(project_id, req.rules, dry_run=req.dry_run, **kwargs)
+        result = await check_plan_rules_for_project(project_id, req.rules, dry_run=req.dry_run, **kwargs)
         if result["checked"] == 0:
             raise RuntimeError("No pending structured-plan rows to check (none match the filters, or they were already reviewed).")
         verb = "would reject" if req.dry_run else "rejected"
@@ -2073,6 +2073,29 @@ async def check_plan_rules(
         params={"dry_run": req.dry_run, "rules": len((req.rules if isinstance(req.rules, dict) else {}).get("rules") or []), **{k: v for k, v in kwargs.items() if v is not None}},
     )
     return JSONResponse(status_code=202, content=jobs_service.serialize_job(job))
+
+
+class RestoreRejectedRequest(BaseModel):
+    reject_reason: str | None = Field(default=None, max_length=200, description="Exact reason (\"\" = rows rejected without one).")
+    reject_reason_prefix: str | None = Field(default=None, max_length=200, description="Reason prefix, e.g. 'rule_violation:'.")
+    row_ids: list[int] | None = Field(default=None, max_length=5000)
+    dry_run: bool = Field(default=True, description="True (default): count by reason only. False: put the rows back to pending.")
+
+
+@router.post("/review-queue/restore")
+async def restore_rejected_synth_rows(project_id: int, req: RestoreRejectedRequest):
+    """Undo a soft-reject: rejected rows matching the selectors (at least one of ``reject_reason``,
+    ``reject_reason_prefix``, ``row_ids``; all given must match) go back to ``pending`` with their
+    reject reason (and ``plan_rule_ids``) cleared. ``dry_run`` (default) returns counts by reason."""
+    from app.services.synth_review_queue_service import restore_rejected_rows
+
+    try:
+        return restore_rejected_rows(
+            project_id, reject_reason=req.reject_reason, reject_reason_prefix=req.reject_reason_prefix,
+            row_ids=req.row_ids, dry_run=req.dry_run,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, {"error_code": "invalid_restore_request", "message": str(exc), "metadata": {}}) from exc
 
 
 @router.post("/review-queue/purge")

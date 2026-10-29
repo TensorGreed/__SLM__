@@ -33,12 +33,20 @@ only at whether the path resolved. Combinators: ``{"all": [...]}``, ``{"any": [.
 
 Rule types:
 
+Every op except ``not_exists`` FAILS when the path resolves to nothing (``exists`` and ``not_exists``
+only look at presence); a leaf condition's optional ``missing: "pass"`` makes a value op pass instead
+(default ``"fail"``). ``regex`` applies to at most the first 10,000 characters of a value; patterns are
+capped at 200 characters and nested-quantifier patterns (``(a+)+``) are refused. A rule may carry its own
+``steps_path`` (default: the document's), so rules can target another list such as verification items.
+Steps are ordered by their position in the list; the model's ``step`` number only appears in messages.
+
 * ``step_requires``  ``{match, require}`` - every matching step must satisfy ``require``.
 * ``ref_requires``   ``{match, ref: {path}, creator: {match, name_path}, require, before?,
-  on_missing?}`` - each value a matching step holds at ``ref.path`` names an object created by
+  on_missing?}`` - each value a matching step holds at ``ref.path`` (a list value: each item is a reference) names an object created by
   a step matching ``creator.match`` (its ``name_path`` values); every such creating step must
   satisfy ``require``. A reference no step creates is a violation (``on_missing: "violate"``,
-  the default) or skipped (``"ignore"``). ``before: true`` also demands the creator come earlier.
+  the default) or skipped (``"ignore"``). ``before: true`` demands a creator earlier in the list (with several creators, only the
+  earlier ones must satisfy ``require``; it is a violation only when none precedes the reference).
 * ``requires_step``  ``{if: match, then: match, before?}`` - when some step matches ``if``, some
   step must match ``then`` (``before: true``: earlier than the first ``if`` step).
 * ``forbid_together`` ``{a: match, b: match, same_step?}`` - a plan having steps for both
@@ -77,6 +85,7 @@ _RULE_BASE = {
     "description": {"type": "string", "maxLength": 500},
     "message": {"type": "string", "maxLength": 500},
     "severity": {"enum": list(SEVERITIES)},
+    "steps_path": _PATH,
 }
 
 
@@ -129,6 +138,7 @@ RULES_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "path": _PATH, "op": {"enum": list(_OPS)}, "value": {},
                     "quantifier": {"enum": ["any", "all"]},
+                    "missing": {"enum": ["pass", "fail"]},
                 },
             },
             {"type": "object", "additionalProperties": False, "required": ["all"],
@@ -140,9 +150,6 @@ RULES_SCHEMA: dict[str, Any] = {
         ]},
     },
 }
-
-_VALIDATOR = Draft202012Validator(RULES_SCHEMA)
-
 
 class PlanRulesError(ValueError):
     """The rules document is not valid. ``pointer`` locates the problem inside it."""
@@ -178,6 +185,71 @@ class RuleSet:
 
 # ── loading + validation ────────────────────────────────────────────
 
+MAX_REGEX_CHARS = 200
+MAX_REGEX_INPUT = 10_000
+_NESTED_QUANTIFIER = re.compile(r"\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d*,\d*\})")
+
+_BASE_SCHEMA = {**RULES_SCHEMA, "properties": {**RULES_SCHEMA["properties"], "rules": {"type": "array", "minItems": 1, "maxItems": MAX_RULES, "items": {"type": "object"}}}}
+_BASE_VALIDATOR = Draft202012Validator(_BASE_SCHEMA)
+_RULE_VALIDATORS = {
+    branch["properties"]["type"]["const"]: Draft202012Validator({**branch, "$defs": RULES_SCHEMA["$defs"]})
+    for branch in RULES_SCHEMA["properties"]["rules"]["items"]["oneOf"]
+}
+
+
+def _first_error(validator: Draft202012Validator, instance: Any, prefix: str) -> PlanRulesError | None:
+    errors = sorted(validator.iter_errors(instance), key=lambda e: len(list(e.absolute_path)))
+    if not errors:
+        return None
+    top = errors[0]
+    parts = list(top.absolute_path)
+    detail = top.message
+    if top.validator == "oneOf" and top.context:  # a condition: report the deepest branch's complaint
+        deepest = max(top.context, key=lambda e: len(list(e.absolute_path)))
+        detail, parts = deepest.message, parts + list(deepest.absolute_path)
+    pointer = prefix + "".join(f"/{p}" for p in parts)
+    return PlanRulesError(f"{pointer or '(root)'}: {detail[:200]}", pointer)
+
+
+def _check_condition(cond: dict[str, Any], pointer: str) -> None:
+    """Per-op value types (the schema leaves ``value`` free)."""
+    for key in ("all", "any"):
+        for i, sub in enumerate(cond.get(key) or []):
+            _check_condition(sub, f"{pointer}/{key}/{i}")
+    if "not" in cond:
+        _check_condition(cond["not"], f"{pointer}/not")
+    op = cond.get("op")
+    if op is None:
+        return
+    value = cond.get("value")
+    problem = None
+    if op in ("equals", "not_equals", "contains") and "value" not in cond:
+        problem = f"`{op}` needs a `value`"
+    elif op in ("in", "not_in") and not isinstance(value, list):
+        problem = f"`{op}` needs a list `value`"
+    elif op in ("max", "min") and _num(value) is None:
+        problem = f"`{op}` needs a numeric `value`"
+    elif op == "regex":
+        if not isinstance(value, str):
+            problem = "`regex` needs a string `value`"
+        else:
+            problem = _regex_problem(value)
+    if problem:
+        raise PlanRulesError(f"{pointer}: {problem}.", pointer)
+
+
+def _regex_problem(pattern: str) -> str | None:
+    if len(pattern) > MAX_REGEX_CHARS:
+        return f"regular expression is longer than {MAX_REGEX_CHARS} characters"
+    if _NESTED_QUANTIFIER.search(pattern):
+        return f"regular expression {pattern!r} has a nested quantifier (it can take exponential time)"
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        return f"bad regular expression {pattern!r}: {exc}"
+    return None
+
+
 def load_rules(raw: Any) -> RuleSet:
     """Parse + validate a rules document (a dict or its JSON text). Raises ``PlanRulesError``."""
     if isinstance(raw, (str, bytes)):
@@ -195,42 +267,53 @@ def load_rules(raw: Any) -> RuleSet:
         raise PlanRulesError("The rules document is not JSON-serialisable.") from exc
     if size > MAX_RULES_CHARS:
         raise PlanRulesError(f"The rules document is {size} characters (max {MAX_RULES_CHARS}).")
-    errors = sorted(_VALIDATOR.iter_errors(raw), key=lambda e: len(list(e.absolute_path)))
-    if errors:
-        top = errors[0]
-        pointer = "/" + "/".join(str(p) for p in top.absolute_path)
-        detail = top.message if len(top.message) <= 200 else top.message[:200] + "…"
-        if top.validator == "oneOf" and top.context:
-            deepest = max(top.context, key=lambda e: len(list(e.absolute_path)))
-            detail = deepest.message[:200]
-            pointer = "/" + "/".join(str(p) for p in deepest.absolute_path)
-        raise PlanRulesError(f"{pointer or '(root)'}: {detail}", pointer)
+    err = _first_error(_BASE_VALIDATOR, raw, "")
+    if err:
+        raise err
     seen: set[str] = set()
     for i, rule in enumerate(raw["rules"]):
+        validator = _RULE_VALIDATORS.get(rule.get("type")) if isinstance(rule.get("type"), str) else None
+        if validator is None:
+            raise PlanRulesError(f"/rules/{i}/type: must be one of {', '.join(sorted(_RULE_VALIDATORS))}.", f"/rules/{i}/type")
+        err = _first_error(validator, rule, f"/rules/{i}")
+        if err:
+            raise err
         if rule["id"] in seen:
             raise PlanRulesError(f"/rules/{i}/id: duplicate rule id {rule['id']!r}.", f"/rules/{i}/id")
         seen.add(rule["id"])
-    for i, rule in enumerate(raw["rules"]):
-        for regex in _regexes_of(rule):
-            try:
-                re.compile(regex)
-            except re.error as exc:
-                raise PlanRulesError(f"/rules/{i}: bad regular expression {regex!r}: {exc}", f"/rules/{i}") from exc
+        for ptr, cond in _leaf_condition_nodes(rule, f"/rules/{i}"):
+            _check_condition(cond, ptr)
+        for ptr, pattern in _match_regexes(rule, f"/rules/{i}"):
+            problem = _regex_problem(pattern)
+            if problem:
+                raise PlanRulesError(f"{ptr}: {problem}.", ptr)
     paths = {**DEFAULT_PATHS, **(raw.get("paths") or {})}
     return RuleSet(raw, paths["tool"], paths["operation"], raw.get("steps_path") or "steps")
 
 
-def _regexes_of(node: Any) -> Iterable[str]:
+_CONDITION_KEYS = ("require", "where")
+
+
+def _leaf_condition_nodes(node: Any, pointer: str) -> Iterable[tuple[str, dict[str, Any]]]:
+    """Every top-level condition object (under ``require`` / ``where``) with its pointer."""
     if isinstance(node, dict):
-        if node.get("op") == "regex" and isinstance(node.get("value"), str):
-            yield node["value"]
-        if isinstance(node.get("operation_regex"), str):
-            yield node["operation_regex"]
-        for v in node.values():
-            yield from _regexes_of(v)
+        for k, v in node.items():
+            if k in _CONDITION_KEYS and isinstance(v, dict):
+                yield f"{pointer}/{k}", v
+            else:
+                yield from _leaf_condition_nodes(v, f"{pointer}/{k}")
+
+
+def _match_regexes(node: Any, pointer: str) -> Iterable[tuple[str, str]]:
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "operation_regex" and isinstance(v, str):
+                yield f"{pointer}/{k}", v
+            else:
+                yield from _match_regexes(v, f"{pointer}/{k}")
     elif isinstance(node, list):
-        for v in node:
-            yield from _regexes_of(v)
+        for i, v in enumerate(node):
+            yield from _match_regexes(v, f"{pointer}/{i}")
 
 
 # ── paths + conditions ──────────────────────────────────────────────
@@ -291,7 +374,7 @@ def _value_op(op: str, value: Any, expected: Any) -> bool:
     if op == "not_in":
         return not (isinstance(expected, list) and any(_same(value, e) for e in expected))
     if op == "regex":
-        return isinstance(value, str) and isinstance(expected, str) and re.search(expected, value) is not None
+        return isinstance(value, str) and isinstance(expected, str) and re.search(expected, value[:MAX_REGEX_INPUT]) is not None
     if op == "contains":
         if isinstance(value, str):
             return isinstance(expected, str) and expected in value
@@ -307,7 +390,8 @@ def _value_op(op: str, value: Any, expected: Any) -> bool:
 
 
 def holds(cond: dict[str, Any], node: Any) -> bool:
-    """Whether a condition holds on ``node`` (a step, or any JSON value)."""
+    """Whether a condition holds on ``node`` (a step, or any JSON value). A path that resolves to
+    nothing fails every op except ``not_exists`` (a leaf's ``missing: "pass"`` flips value ops)."""
     if "all" in cond:
         return all(holds(c, node) for c in cond["all"])
     if "any" in cond:
@@ -321,7 +405,7 @@ def holds(cond: dict[str, Any], node: Any) -> bool:
     if op == "not_exists":
         return not values
     if not values:
-        return False
+        return cond.get("missing") == "pass"
     check = (lambda v: _value_op(op, v, cond.get("value")))
     return all(map(check, values)) if cond.get("quantifier") == "all" else any(map(check, values))
 
@@ -343,22 +427,25 @@ def make_matcher(match: dict[str, Any], rs: RuleSet) -> Callable[[dict[str, Any]
             return False
         if ops is not None and not any(v in ops for v in resolve(step, rs.operation_path)):
             return False
-        if op_re is not None and not any(isinstance(v, str) and op_re.search(v) for v in resolve(step, rs.operation_path)):
+        if op_re is not None and not any(isinstance(v, str) and op_re.search(v[:MAX_REGEX_INPUT]) for v in resolve(step, rs.operation_path)):
             return False
         return where is None or holds(where, step)
 
     return matches
 
 
-def _steps_of(plan: Any, rs: RuleSet) -> list[tuple[int, dict[str, Any]]]:
-    found = resolve(plan, rs.steps_path)
+Step = tuple[int, int, dict[str, Any]]  # (position in the list, number shown in messages, the step)
+
+
+def _steps_of(plan: Any, steps_path: str) -> list[Step]:
+    found = resolve(plan, steps_path)
     steps = found[0] if found and isinstance(found[0], list) else []
-    out = []
-    for i, step in enumerate(steps):
+    out: list[Step] = []
+    for pos, step in enumerate(steps):
         if not isinstance(step, dict):
             continue
         number = step.get("step")
-        out.append((number if isinstance(number, int) and not isinstance(number, bool) else i + 1, step))
+        out.append((pos, number if isinstance(number, int) and not isinstance(number, bool) else pos + 1, step))
     return out
 
 
@@ -370,21 +457,33 @@ def _describe(rule: dict[str, Any], default: str) -> str:
 
 def check_plan(plan: Any, rules: RuleSet) -> list[Violation]:
     """Every violation of ``rules`` in one plan, in rule order. A plan with no step list has none."""
-    steps = _steps_of(plan, rules)
     out: list[Violation] = []
+    cache: dict[str, list[Step]] = {}
     for rule in rules.rules:
+        path = rule.get("steps_path") or rules.steps_path
+        if path not in cache:
+            cache[path] = _steps_of(plan, path)
         severity = rule.get("severity") or "reject"
-        handler = _HANDLERS[rule["type"]]
-        for numbers, message in handler(rule, steps, rules):
+        for numbers, message in _HANDLERS[rule["type"]](rule, cache[path], rules):
             out.append(Violation(rule["id"], severity, tuple(numbers), message))
     return out
 
 
 def _step_requires(rule, steps, rs):
     matches = make_matcher(rule["match"], rs)
-    for number, step in steps:
+    for _pos, number, step in steps:
         if matches(step) and not holds(rule["require"], step):
             yield [number], _describe(rule, f"step {number} does not meet {rule['id']}")
+
+
+def _references(step: dict[str, Any], path: str) -> list[Any]:
+    """Reference values at ``path``; a list value contributes each of its items (one level)."""
+    out: list[Any] = []
+    for value in resolve(step, path):
+        for item in (value if isinstance(value, list) else [value]):
+            if isinstance(item, (str, int)) and not isinstance(item, bool) and item != "":
+                out.append(item)
+    return out
 
 
 def _ref_requires(rule, steps, rs):
@@ -392,58 +491,59 @@ def _ref_requires(rule, steps, rs):
     creator_matches = make_matcher(rule["creator"]["match"], rs)
     name_path = rule["creator"]["name_path"]
     ignore_missing = rule.get("on_missing") == "ignore"
-    for number, step in steps:
+    for pos, number, step in steps:
         if not matches(step):
             continue
-        for ref in resolve(step, rule["ref"]["path"]):
-            if not isinstance(ref, (str, int)) or isinstance(ref, bool) or ref == "":
-                continue
+        for ref in _references(step, rule["ref"]["path"]):
             creators = [
-                (n, s) for n, s in steps
-                if creator_matches(s) and any(_same(v, ref) for v in resolve(s, name_path))
+                (c_pos, c_number, c_step) for c_pos, c_number, c_step in steps
+                if creator_matches(c_step) and any(_same(v, ref) for v in resolve(c_step, name_path))
             ]
             if not creators:
                 if not ignore_missing:
                     yield [number], _describe(rule, f"step {number} refers to {ref!r}, which no step creates")
                 continue
-            for c_number, c_step in creators:
-                if rule.get("before") and c_number >= number:
-                    yield [number, c_number], _describe(rule, f"step {number} refers to {ref!r} before step {c_number} creates it")
-                elif not holds(rule["require"], c_step):
+            if rule.get("before"):
+                creators = [c for c in creators if c[0] < pos]
+                if not creators:
+                    yield [number], _describe(rule, f"step {number} refers to {ref!r} before any step creates it")
+                    continue
+            for _c_pos, c_number, c_step in creators:
+                if not holds(rule["require"], c_step):
                     yield [number, c_number], _describe(rule, f"step {c_number} creates {ref!r} (used by step {number}) without meeting {rule['id']}")
 
 
 def _requires_step(rule, steps, rs):
     if_matches = make_matcher(rule["if"], rs)
     then_matches = make_matcher(rule["then"], rs)
-    triggers = [n for n, s in steps if if_matches(s)]
+    triggers = [(p, n) for p, n, s in steps if if_matches(s)]
     if not triggers:
         return
-    thens = [n for n, s in steps if then_matches(s)]
+    thens = [p for p, _n, s in steps if then_matches(s)]
     if rule.get("before"):
-        thens = [n for n in thens if n < triggers[0]]
+        thens = [p for p in thens if p < triggers[0][0]]
     if not thens:
-        yield triggers[:1], _describe(rule, f"step {triggers[0]} needs a matching step" + (" before it" if rule.get("before") else ""))
+        yield [triggers[0][1]], _describe(rule, f"step {triggers[0][1]} needs a matching step" + (" before it" if rule.get("before") else ""))
 
 
 def _forbid_together(rule, steps, rs):
     a_matches = make_matcher(rule["a"], rs)
     b_matches = make_matcher(rule["b"], rs)
-    a_steps = [n for n, s in steps if a_matches(s)]
-    b_steps = [n for n, s in steps if b_matches(s)]
+    a_steps = [(p, n) for p, n, s in steps if a_matches(s)]
+    b_steps = [(p, n) for p, n, s in steps if b_matches(s)]
     if rule.get("same_step"):
-        both = [n for n in a_steps if n in b_steps]
+        both = [n for p, n in a_steps if any(p == q for q, _ in b_steps)]
         if both:
             yield both[:1], _describe(rule, f"step {both[0]} matches both forbidden shapes")
     elif a_steps and b_steps:
-        yield sorted({a_steps[0], b_steps[0]}), _describe(rule, f"steps {a_steps[0]} and {b_steps[0]} must not appear in the same plan")
+        a, b = a_steps[0][1], b_steps[0][1]
+        yield sorted({a, b}), _describe(rule, f"steps {a} and {b} must not appear in the same plan")
 
 
 _HANDLERS = {
     "step_requires": _step_requires, "ref_requires": _ref_requires,
     "requires_step": _requires_step, "forbid_together": _forbid_together,
 }
-
 
 def violations_by_severity(violations: list[Violation]) -> tuple[list[Violation], list[Violation]]:
     return [v for v in violations if v.severity == "reject"], [v for v in violations if v.severity == "warn"]

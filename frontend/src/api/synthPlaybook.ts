@@ -617,6 +617,29 @@ export async function recheckCodeFormat(
     return resp.data as RecheckCodeFormatResult;
 
 
+
+export interface RestoreRejectedResult {
+    dry_run: boolean;
+    matched: number;
+    restored: number;
+    by_reason: Record<string, number>;
+}
+
+/** Put rejected rows back to pending (the undo of any soft-reject). `reject_reason` is exact ("" = no reason). */
+export async function restoreRejectedSynthRows(
+    projectId: number,
+    args: { rejectReason?: string; rejectReasonPrefix?: string; rowIds?: number[] },
+    dryRun = false,
+): Promise<RestoreRejectedResult> {
+    const resp = await api.post(`/projects/${projectId}/synthetic/review-queue/restore`, {
+        ...(args.rejectReason !== undefined ? { reject_reason: args.rejectReason } : {}),
+        ...(args.rejectReasonPrefix ? { reject_reason_prefix: args.rejectReasonPrefix } : {}),
+        ...(args.rowIds ? { row_ids: args.rowIds } : {}),
+        dry_run: dryRun,
+    });
+    return resp.data;
+}
+
 export interface PlanRulesRuleCount {
     severity: 'reject' | 'warn';
     description: string;

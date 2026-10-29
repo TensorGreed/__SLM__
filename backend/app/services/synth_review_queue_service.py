@@ -873,49 +873,131 @@ async def recheck_code_format(
     return result
 
 
-def check_plan_rules_for_project(
+
+
+RESTORE_MAX_ROW_IDS = 5000
+
+
+def compute_plan_rules_check(
     project_id: int,
     rules_doc: Any,
     *,
-    dry_run: bool = True,
     row_ids: list[int] | None = None,
     source: str | None = None,
     synth_job_id: int | None = None,
     max_rows: int | None = None,
 ) -> dict[str, Any]:
-    """Run a plan-rules document over the project's PENDING structured-plan rows.
-
-    ``dry_run`` only counts (per rule: severity, count, sample row ids). Otherwise each row with a
-    ``reject``-severity violation is soft-rejected with ``reject_reason="rule_violation:<first rule id>"``
-    (the rejected view regroups by reason, so it groups by rule; rows keep ``plan_rule_ids`` and stay
-    on disk, so restore / un-reject works; nothing is purged). ``warn`` rules are counted, never
-    acted on. Raises ``plan_rules_service.PlanRulesError`` for bad rules.
-    """
+    """The read-only half of the plan-rules check (CPU-bound; call it via ``asyncio.to_thread``).
+    Returns the report plus ``_flagged``: ``{row_id: (reject rule ids, checked plan)}``.
+    Raises ``plan_rules_service.PlanRulesError`` for bad rules."""
     from app.services import plan_rules_service as engine
 
     rules = engine.load_rules(rules_doc)
     path = _synthetic_jsonl_path(project_id)
-    rows = _ensure_row_ids(path, _read_all_rows(path))
+    rows = _read_all_rows(path)
     selected = engine.select_pending_plan_rows(
         rows, row_ids=row_ids, source=source, synth_job_id=synth_job_id, max_rows=max_rows,
     )
     report = engine.check_rows(selected, rules)
     violations = report.pop("row_violations")
+    by_id = {r.get("id"): r for r in selected}
+    flagged: dict[int, tuple[list[str], Any]] = {}
+    for row_id, found in violations.items():
+        ids = engine.rule_ids([
+            engine.Violation(v["rule_id"], v["severity"], tuple(v["steps"]), v["message"])
+            for v in found if v["severity"] == "reject"
+        ])
+        if ids:
+            flagged[row_id] = (ids, by_id[row_id].get("plan_json"))
+    return {"dry_run": True, "rules": len(rules.rules), **report, "rejected": 0, "_flagged": flagged}
+
+
+def apply_plan_rules_check(project_id: int, computed: dict[str, Any]) -> dict[str, Any]:
+    """Soft-reject the rows ``compute_plan_rules_check`` flagged. Synchronous and await-free (so it is
+    atomic against the other review-queue writers on the event loop); re-reads the file and only touches
+    rows that are still pending with the very plan that was checked."""
+    from app.services import plan_rules_service as engine
+
+    flagged = computed.pop("_flagged", {})
+    path = _synthetic_jsonl_path(project_id)
+    rows = _ensure_row_ids(path, _read_all_rows(path))
     rejected = 0
-    if not dry_run:
-        by_id = {r["id"]: r for r in rows}
-        for row_id, found in violations.items():
-            ids = engine.rule_ids([
-                engine.Violation(v["rule_id"], v["severity"], tuple(v["steps"]), v["message"])
-                for v in found if v["severity"] == "reject"
-            ])
-            row = by_id.get(row_id)
-            if not ids or row is None or row.get("review_status") != "pending":
-                continue
-            row["review_status"] = "rejected"
-            row["reject_reason"] = engine.reject_reason_for(ids[0])
-            row["plan_rule_ids"] = ids
-            rejected += 1
-        if rejected:
-            _atomic_write_rows(path, rows)
-    return {"dry_run": dry_run, "rules": len(rules.rules), **report, "rejected": rejected}
+    for row in rows:
+        entry = flagged.get(row.get("id"))
+        if entry is None or row.get("review_status") != "pending" or row.get("plan_json") != entry[1]:
+            continue
+        row["review_status"] = "rejected"
+        row["reject_reason"] = engine.reject_reason_for(entry[0][0])
+        row["plan_rule_ids"] = entry[0]
+        rejected += 1
+    if rejected:
+        _atomic_write_rows(path, rows)
+    return {**computed, "dry_run": False, "rejected": rejected}
+
+
+async def check_plan_rules_for_project(
+    project_id: int,
+    rules_doc: Any,
+    *,
+    dry_run: bool = True,
+    **filters: Any,
+) -> dict[str, Any]:
+    """Run a plan-rules document over the project's PENDING structured-plan rows.
+
+    ``dry_run`` only counts (per rule: severity, count, sample row ids). Otherwise each row with a
+    ``reject``-severity violation is soft-rejected as ``reject_reason="rule_violation:<first rule id>"``
+    (+ ``plan_rule_ids``); the rejected view regroups by reason, and ``restore_rejected_rows`` puts them back.
+    ``warn`` rules are counted, never acted on. The engine runs in a worker thread (regexes can be slow).
+    """
+    import asyncio
+
+    computed = await asyncio.to_thread(compute_plan_rules_check, project_id, rules_doc, **filters)
+    if dry_run:
+        computed.pop("_flagged", None)
+        return computed
+    return apply_plan_rules_check(project_id, computed)
+
+
+def restore_rejected_rows(
+    project_id: int,
+    *,
+    reject_reason: str | None = None,
+    reject_reason_prefix: str | None = None,
+    row_ids: list[int] | None = None,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Put rejected rows back to ``pending`` (the generic undo of any soft-reject).
+
+    Selectors (at least one; all given must match): exact ``reject_reason`` (``""`` = rows with no
+    reason), ``reject_reason_prefix`` (e.g. ``rule_violation:``), ``row_ids``. A restored row loses
+    ``reject_reason`` and the reason-specific fields (``plan_rule_ids``, ``retired_at``); everything
+    else is kept. ``dry_run`` (default) only counts, by reason. Synchronous (atomic on the event loop).
+    """
+    if reject_reason is None and not reject_reason_prefix and not row_ids:
+        raise ValueError("Give at least one of reject_reason, reject_reason_prefix, row_ids.")
+    if row_ids is not None and len(row_ids) > RESTORE_MAX_ROW_IDS:
+        raise ValueError(f"row_ids is capped at {RESTORE_MAX_ROW_IDS}.")
+    wanted = set(row_ids) if row_ids else None
+    path = _synthetic_jsonl_path(project_id)
+    rows = _ensure_row_ids(path, _read_all_rows(path))
+    by_reason: dict[str, int] = {}
+    restored = 0
+    for row in rows:
+        if row.get("review_status") != "rejected":
+            continue
+        reason = str(row.get("reject_reason") or "").strip()
+        if reject_reason is not None and reason != reject_reason.strip():
+            continue
+        if reject_reason_prefix and not reason.startswith(reject_reason_prefix):
+            continue
+        if wanted is not None and row.get("id") not in wanted:
+            continue
+        by_reason[reason or "(no reason)"] = by_reason.get(reason or "(no reason)", 0) + 1
+        restored += 1
+        if not dry_run:
+            row["review_status"] = "pending"
+            for key in ("reject_reason", "plan_rule_ids", "retired_at"):
+                row.pop(key, None)
+    if restored and not dry_run:
+        _atomic_write_rows(path, rows)
+    return {"dry_run": dry_run, "matched": restored, "restored": 0 if dry_run else restored, "by_reason": by_reason}

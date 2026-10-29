@@ -901,6 +901,14 @@ or `warn`. Example:
 }
 ```
 
+- Semantics worth knowing: every op except `not_exists` FAILS when its path resolves to nothing (`exists` / `not_exists`
+  only look at presence); a leaf condition's `missing: "pass"` makes a value op pass instead (default `"fail"`). Steps are
+  ordered by LIST POSITION (the model's `step` number is used only in messages, so duplicate or shuffled numbers cannot
+  fool `before`). A list-valued `ref.path` contributes each item as a reference. With `before: true` and several creators,
+  a reference violates only when NO creator precedes it, and `require` is checked on the preceding creators; without
+  `before`, every creator must satisfy `require`. A rule may carry its own `steps_path` (e.g. a verification list).
+  Regexes: patterns are capped at 200 characters, nested-quantifier patterns such as `(a+)+` are refused, and a regex only
+  sees the first 10,000 characters of a value; the check itself runs in a worker thread.
 - Generation: `params.plan_rules` on `scenario_grid`, applied in `validate` AFTER schema validation. A `reject` violation
   records reject reason `rule_violation` (detail = rule ids, payload `rule_ids` + `violations`); `warn` only stamps
   `plan_rule_warnings` (rule ids) on the accepted row.
@@ -908,10 +916,12 @@ or `warn`. Example:
   `row_ids` / `source` / `synth_job_id` / `max_rows` filters, `?async_job=true` -> `plan_rules_check` Job that raises when
   nothing matched). Dry run = `{checked, flagged, warned_only, by_rule: {id: {severity, count, sample_row_ids}}}`;
   apply (`dry_run=false`) soft-rejects pending rows with a reject violation as `reject_reason = rule_violation:<first rule
-  id>` (+ `plan_rule_ids`); restore works as for any rejected row, nothing is purged. The rejected view regroups by
+  id>` (+ `plan_rule_ids`); undo with the generic `POST /synthetic/review-queue/restore` (`reject_reason` exact / `reject_reason_prefix` / `row_ids`, at
+  least one, ANDed, `dry_run` default true -> counts by reason; clears `reject_reason`, `plan_rule_ids`, `retired_at`; rows go
+  back to `pending`; any reason works, e.g. `rule_violation:` or `language_mismatch`); nothing is purged. The rejected view regroups by
   `reject_reason`, so it groups by rule. Logic: `synth_review_queue_service.check_plan_rules_for_project`.
 - UI: `PlanRulesCard` in `SynthReviewQueue` (shown only when pending rows are structured plans): paste / upload rules,
-  dry-run table, confirm to apply. Bell deep link + outcome summary for `plan_rules_check`. Tests: `test_plan_rules.py`,
+  dry-run table, confirm to apply; every rejected-reason card has a **Restore group** button (confirm, then the generic restore). Bell deep link + outcome summary for `plan_rules_check`. Tests: `test_plan_rules.py`,
   `SynthReviewQueuePlanRules.test.tsx`.
 
 ## Tool catalog (G7)

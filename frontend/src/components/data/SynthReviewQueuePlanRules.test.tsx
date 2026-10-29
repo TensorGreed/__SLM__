@@ -70,4 +70,21 @@ describe('SynthReviewQueue plan rules', () => {
         await user.click(await screen.findByTestId('synth-review-queue-rules-apply'));
         expect(apiMock.post).toHaveBeenCalledTimes(1);
     });
+
+    it('restores a rejected-reason group after confirmation', async () => {
+        const rejected = { id: 9, synth_confidence: 0.9, preview: '{}', payload: { row_kind: 'structured_plan', reject_reason: 'rule_violation:widget-sized' } };
+        apiMock.get.mockResolvedValue({ data: { ...queue([planRow]), total_rejected: 1, rejected_groups: [{ synth_source: 'playbook:x', count: 1, truncated: false, rows: [rejected] }] } });
+        apiMock.post.mockResolvedValue({ data: { dry_run: false, matched: 1, restored: 1, by_reason: {} } });
+        const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+        const user = userEvent.setup();
+        render(<SynthReviewQueue projectId={1} />);
+        const button = await screen.findByTestId('synth-review-queue-restore-reason-rule_violation:widget-sized');
+        await user.click(button);
+        expect(apiMock.post).not.toHaveBeenCalled();
+        await user.click(button);
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(
+            '/projects/1/synthetic/review-queue/restore', { reject_reason: 'rule_violation:widget-sized', dry_run: false },
+        ));
+        expect(confirm).toHaveBeenCalledTimes(2);
+    });
 });

@@ -409,8 +409,27 @@ step creates is a violation unless ``on_missing`` is ``ignore``), ``requires_ste
 match ``then``), ``forbid_together`` (steps matching both ``a`` and ``b`` must not coexist; ``same_step`` narrows to one
 step). A match is ``{tool, operation, operation_regex, where}``; a condition is ``{path, op, value, quantifier}`` (ops
 ``equals not_equals in not_in exists not_exists regex contains max min``) or ``all`` / ``any`` / ``not`` of conditions.
+Semantics worth knowing: every op except ``not_exists`` FAILS when its path resolves to nothing (``exists`` / ``not_exists``
+only look at presence); a leaf condition's ``missing: "pass"`` makes a value op pass instead (default ``"fail"``). Steps are
+ordered by LIST POSITION (the model's ``step`` number is used only in messages, so duplicate or shuffled numbers cannot
+fool ``before``). A list-valued ``ref.path`` contributes each item as a reference. With ``before: true`` and several creators,
+a reference violates only when NO creator precedes it, and ``require`` is checked on the preceding creators; without
+``before``, every creator must satisfy ``require``. A rule may carry its own ``steps_path`` (e.g. a verification list).
+Regexes: patterns are capped at 200 characters, nested-quantifier patterns such as ``(a+)+`` are refused, and a regex only
+sees the first 10,000 characters of a value; the check itself runs in a worker thread.
+
 Optional top-level ``paths`` (``tool`` default ``tool``, ``operation`` default ``args.operation``) and ``steps_path`` (default
 ``steps``).
+
+### `POST /api/projects/{project_id}/synthetic/review-queue/restore`
+
+**Restore Rejected Synth Rows**
+
+Undo a soft-reject: rejected rows matching the selectors go back to ``pending`` with their reject reason (and
+``plan_rule_ids``) cleared. Selectors: ``reject_reason`` (exact; ``""`` = rows rejected without one),
+``reject_reason_prefix`` (e.g. ``rule_violation:``), ``row_ids`` (at most 5000); at least one is required and all given
+must match (`400` ``invalid_restore_request`` otherwise). ``dry_run`` (default ``true``) returns ``matched`` and
+``by_reason`` counts; ``dry_run=false`` restores them.
 
 ### `POST /api/projects/{project_id}/synthetic/review-assist`
 

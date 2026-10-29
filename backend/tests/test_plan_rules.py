@@ -176,10 +176,63 @@ class RefRequiresTests(unittest.TestCase):
                 "require": {"path": "args.arguments.body.name", "op": "exists"}}
         p = plan(step(1, "bind_gadget", {"widgets": ["a", "b"]}), step(2, "create_widget", {"name": "a"}), step(3, "create_widget", {"name": "b"}))
         found = engine.check_plan(p, rs(rule))
-        self.assertEqual([v.steps for v in found], [(1, 2), (1, 3)])
-        self.assertIn("before step 2", found[0].message)
+        self.assertEqual([v.steps for v in found], [(1,), (1,)])
+        self.assertIn("before any step creates it", found[0].message)
         ok = plan(step(1, "create_widget", {"name": "a"}), step(2, "create_widget", {"name": "b"}), step(3, "bind_gadget", {"widgets": ["a", "b"]}))
         self.assertEqual(engine.check_plan(ok, rs(rule)), [])
+
+
+class SemanticsTests(unittest.TestCase):
+    def test_missing_path_fails_every_op_but_not_exists_unless_missing_pass(self):
+        node = {"a": 1}
+        for op, value in (("equals", 1), ("not_equals", 1), ("in", [1]), ("not_in", [2]), ("regex", "x"), ("contains", "x"), ("max", 5), ("min", 0)):
+            self.assertFalse(engine.holds({"path": "nope", "op": op, "value": value}, node), op)
+            self.assertTrue(engine.holds({"path": "nope", "op": op, "value": value, "missing": "pass"}, node), op)
+            self.assertFalse(engine.holds({"path": "nope", "op": op, "value": value, "missing": "fail"}, node), op)
+        self.assertFalse(engine.holds({"path": "nope", "op": "exists", "missing": "pass"}, node), "exists only looks at presence")
+        self.assertTrue(engine.holds({"path": "nope", "op": "not_exists"}, node))
+        self.assertFalse(engine.holds({"path": "a", "op": "equals", "value": 2, "missing": "pass"}, node), "a present value is judged")
+
+    def test_missing_pass_in_a_rule(self):
+        rule = {"id": "r", "type": "step_requires", "match": MATCH_CREATE, "require": {"path": "args.arguments.body.size", "op": "max", "value": 10, "missing": "pass"}}
+        self.assertEqual(engine.check_plan(plan(step(1, "create_widget", {})), rs(rule)), [])
+        self.assertEqual(len(engine.check_plan(plan(step(1, "create_widget", {"size": 11})), rs(rule))), 1)
+
+    def test_before_with_several_creators_needs_only_one_preceding_that_meets_require(self):
+        rule = {**RefRequiresTests.RULE, "before": True}
+        ok = plan(step(1, "create_widget", {"name": "w", "kind": "sturdy"}), step(2, "bind_gadget", {"widget": "w"}), step(3, "create_widget", {"name": "w", "kind": "flimsy"}))
+        self.assertEqual(engine.check_plan(ok, rs(rule)), [], "the later creator is irrelevant")
+        bad = plan(step(1, "create_widget", {"name": "w", "kind": "flimsy"}), step(2, "bind_gadget", {"widget": "w"}), step(3, "create_widget", {"name": "w", "kind": "sturdy"}))
+        self.assertEqual([v.steps for v in engine.check_plan(bad, rs(rule))], [(2, 1)], "the preceding creator fails require")
+        late_only = plan(step(1, "bind_gadget", {"widget": "w"}), step(2, "create_widget", {"name": "w", "kind": "sturdy"}), step(3, "create_widget", {"name": "w", "kind": "sturdy"}))
+        self.assertEqual([v.steps for v in engine.check_plan(late_only, rs(rule))], [(1,)])
+
+    def test_order_is_list_position_not_the_step_number(self):
+        rule = {**RefRequiresTests.RULE, "before": True}
+        p = plan(step(7, "create_widget", {"name": "w", "kind": "sturdy"}), step(7, "bind_gadget", {"widget": "w"}))
+        self.assertEqual(engine.check_plan(p, rs(rule)), [])
+        p = plan(step(1, "bind_gadget", {"widget": "w"}), step(1, "create_widget", {"name": "w", "kind": "sturdy"}))
+        self.assertEqual([v.steps for v in engine.check_plan(p, rs(rule))], [(1,)])
+        req = rs({"id": "v", "type": "requires_step", "before": True, "if": MATCH_CREATE, "then": {"tool": "verify"}})
+        p = plan({"step": 9, "tool": "verify", "args": {}}, step(2, "create_widget"))
+        self.assertEqual(engine.check_plan(p, req), [], "verify is first in the list although its number is higher")
+
+    def test_list_valued_references_are_flattened_one_level(self):
+        p = plan(step(1, "create_widget", {"name": "a", "kind": "sturdy"}), step(2, "create_widget", {"name": "b", "kind": "flimsy"}),
+                 step(3, "bind_gadget", {"widget": ["a", "b", "ghost"]}))
+        found = engine.check_plan(p, rs(RefRequiresTests.RULE))
+        self.assertEqual(sorted(v.steps for v in found), [(3,), (3, 2)], "b fails require, ghost is missing, a is fine")
+
+    def test_per_rule_steps_path(self):
+        rules = rs({"id": "v", "type": "step_requires", "steps_path": "verification", "match": {"tool": "check"}, "require": {"path": "args.target", "op": "exists"}},
+                   {"id": "s", "type": "step_requires", "match": {"tool": "t"}, "require": {"path": "ok", "op": "exists"}})
+        p = {"steps": [{"tool": "t"}], "verification": [{"tool": "check", "args": {}}, {"tool": "check", "args": {"target": "x"}}]}
+        self.assertEqual([(v.rule_id, v.steps) for v in engine.check_plan(p, rules)], [("v", (1,)), ("s", (1,))])
+
+    def test_regex_input_is_capped(self):
+        long_value = "a" * engine.MAX_REGEX_INPUT + "TAIL"
+        self.assertFalse(engine.holds({"path": "x", "op": "regex", "value": "TAIL"}, {"x": long_value}))
+        self.assertTrue(engine.holds({"path": "x", "op": "regex", "value": "^a+$"}, {"x": long_value}))
 
 
 class RequiresStepTests(unittest.TestCase):
@@ -248,6 +301,32 @@ class SeverityAndDocumentTests(unittest.TestCase):
             with self.subTest(name), self.assertRaises(engine.PlanRulesError):
                 engine.load_rules(doc if name != "not json" else "{")
         self.assertEqual(engine.load_rules(json.dumps({"rules": [good]})).tool_path, "tool")
+
+    def test_per_op_value_types_and_regex_limits(self):
+        def doc(cond):
+            return {"rules": [{"id": "r", "type": "step_requires", "match": MATCH_CREATE, "require": cond}]}
+        bad = [
+            {"path": "a", "op": "in", "value": "x"}, {"path": "a", "op": "not_in"}, {"path": "a", "op": "max", "value": "abc"},
+            {"path": "a", "op": "min"}, {"path": "a", "op": "regex", "value": 5}, {"path": "a", "op": "equals"},
+            {"path": "a", "op": "regex", "value": "(a+)+$"}, {"path": "a", "op": "regex", "value": "a" * 201},
+            {"all": [{"path": "a", "op": "in", "value": 1}]},
+        ]
+        for cond in bad:
+            with self.subTest(cond), self.assertRaises(engine.PlanRulesError):
+                engine.load_rules(doc(cond))
+        for cond in ({"path": "a", "op": "in", "value": [1]}, {"path": "a", "op": "max", "value": "5"}, {"path": "a", "op": "equals", "value": None}):
+            engine.load_rules(doc(cond))
+        with self.assertRaises(engine.PlanRulesError):
+            engine.load_rules({"rules": [{"id": "r", "type": "step_requires", "match": {"operation_regex": "(a*)*"}, "require": {"path": "a", "op": "exists"}}]})
+
+    def test_schema_errors_are_chosen_by_rule_type(self):
+        with self.assertRaises(engine.PlanRulesError) as ctx:
+            engine.load_rules({"rules": [{"id": "r", "type": "ref_requires", "match": MATCH_CREATE}]})
+        self.assertIn("/rules/0", ctx.exception.pointer)
+        self.assertIn("required", ctx.exception.message)
+        with self.assertRaises(engine.PlanRulesError) as ctx:
+            engine.load_rules({"rules": [{"id": "r", "type": "nope"}]})
+        self.assertEqual(ctx.exception.pointer, "/rules/0/type")
 
     def test_a_pointer_names_the_bad_part(self):
         try:
@@ -418,6 +497,44 @@ class CheckEndpointTests(unittest.TestCase):
         done = client.get(f"/api/jobs/{resp.json()['id']}").json()
         self.assertEqual((done["status"], done["result"]["rejected"]), ("succeeded", 3))
         self.assertEqual(self.stored()[1]["review_status"], "rejected")
+
+    def post_restore(self, **body):
+        return client.post(f"{self.base}/review-queue/restore", json=body)
+
+    def test_apply_then_restore_round_trips_the_rows_exactly(self):
+        before = self.stored()
+        self.post(dry_run=False)
+        self.assertNotEqual(self.stored()[1], before[1])
+        dry = self.post_restore(reject_reason_prefix="rule_violation:").json()
+        self.assertEqual((dry["dry_run"], dry["matched"], dry["restored"], dry["by_reason"]), (True, 3, 0, {"rule_violation:gadget-needs-sturdy-widget": 3}))
+        self.assertEqual(self.stored()[1]["review_status"], "rejected", "a dry run changes nothing")
+        done = self.post_restore(reject_reason_prefix="rule_violation:", dry_run=False).json()
+        self.assertEqual((done["matched"], done["restored"]), (3, 3))
+        self.assertEqual(self.stored(), before, "identical row content")
+        self.assertEqual(self.post_restore(reject_reason_prefix="rule_violation:", dry_run=False).json()["restored"], 0)
+
+    def test_restore_selectors(self):
+        self.post(dry_run=False)
+        rid = "rule_violation:gadget-needs-sturdy-widget"
+        self.assertEqual(self.post_restore(reject_reason="rule_violation:other").json()["matched"], 0)
+        self.assertEqual(self.post_restore(reject_reason=rid, row_ids=[1, 3]).json()["matched"], 1, "selectors are ANDed; 3 is not rejected")
+        self.assertEqual(self.post_restore(row_ids=[2], dry_run=False).json()["restored"], 1)
+        stored = self.stored()
+        self.assertEqual((stored[2]["review_status"], "reject_reason" in stored[2], "plan_rule_ids" in stored[2]), ("pending", False, False))
+        self.assertEqual(stored[1]["review_status"], "rejected")
+        rows = [json.loads(line) for line in self.path.read_text(encoding="utf-8").splitlines()]
+        rows[3].update(review_status="rejected", reject_reason="language_mismatch")
+        rows[5].update(review_status="rejected")
+        self.path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+        self.assertEqual(self.post_restore(reject_reason="language_mismatch", dry_run=False).json()["restored"], 1)
+        self.assertEqual(self.post_restore(reject_reason="", dry_run=False).json()["restored"], 1)
+        self.assertEqual(self.stored()[6]["review_status"], "pending")
+
+    def test_restore_needs_a_selector_and_caps_row_ids(self):
+        resp = self.post_restore()
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error_code"], "invalid_restore_request")
+        self.assertEqual(self.post_restore(row_ids=list(range(5001))).status_code, 422)
 
     def test_job_with_nothing_to_check_fails_loudly(self):
         resp = client.post(f"{self.base}/check-plan-rules?async_job=true", json={"rules": RULES_DOC, "row_ids": [999]})
