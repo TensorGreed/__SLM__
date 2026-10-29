@@ -899,6 +899,7 @@ async def run_evaluation(
     # through nested dicts so multi-seed runs get per-slice
     # ``{mean, std, ...}`` for free.
     await _apply_structured_plan_live_config(db, project_id, eval_ctx)
+    await _apply_remediation_live_config(db, project_id, eval_ctx)
     project_row = await db.execute(select(Project).where(Project.id == project_id))
     project = project_row.scalar_one_or_none()
     slice_defs = None
@@ -2705,6 +2706,9 @@ def _prediction_failed(prediction: dict[str, Any]) -> bool:
     if isinstance(prediction.get("row_remediation_pass"), bool):
         # A patch passes or fails on its own checks; the judge score is reported beside it.
         return not prediction["row_remediation_pass"]
+    if "row_code_example_pass" in prediction:
+        # A scored code example (opt-in): fails when not code_example_pass; None = unscored (no judge verdict).
+        return prediction["row_code_example_pass"] is False
     if isinstance(prediction.get("row_structured_plan_pass"), bool):
         # A plan passes or fails on its schema / pointer / rubric checks.
         return not prediction["row_structured_plan_pass"]
@@ -2752,6 +2756,7 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
     rem_pass: list[float | None] = []
     plan_pass: list[float | None] = []
     tool_pass: list[float | None] = []
+    ce_pass: list[float | None] = []
     for p in predictions:
         if not isinstance(p, dict):
             continue
@@ -2776,6 +2781,9 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         tool_pass.append(
             float(p["row_tool_call_pass"]) if isinstance(p.get("row_tool_call_pass"), bool) else None
         )
+        ce_pass.append(
+            float(p["row_code_example_pass"]) if isinstance(p.get("row_code_example_pass"), bool) else None
+        )
         row_f1 = p.get("row_f1")
         f1.append(float(row_f1) if isinstance(row_f1, (int, float)) and not isinstance(row_f1, bool) else None)
         row_judge = p.get("row_judge_score")
@@ -2797,6 +2805,8 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         scores["structured_plan_pass"] = plan_pass
     if any(value is not None for value in tool_pass):
         scores["tool_call_pass"] = tool_pass
+    if any(value is not None for value in ce_pass):
+        scores["code_example_pass"] = ce_pass
     return scores
 
 
@@ -2826,11 +2836,27 @@ async def heldout_scoring_context(
         experiment_task_type=experiment_task_type,
     )
     await _apply_structured_plan_live_config(db, project_id, eval_ctx)
+    await _apply_remediation_live_config(db, project_id, eval_ctx)
     await _apply_tool_call_live_config(db, project_id, eval_ctx, task_handler)
     return eval_ctx, task_handler
 
 
-_ROW_PASS_FLAGS = ("row_remediation_pass", "row_structured_plan_pass", "row_tool_call_pass")
+# Per-row keys of a scored code example (``code_example_scoring``), added to the preview only for those rows.
+_CODE_EXAMPLE_PREVIEW_KEYS: tuple[str, ...] = (
+    "row_kind",
+    "row_code_example_output_parses",
+    "row_code_example_checkable",
+    "row_code_example_checks_pass",
+    "row_code_example_check_messages",
+    "row_code_example_citations_valid",
+    "row_code_example_judge_pass",
+    "row_code_example_judge_verdict",
+    "row_code_example_judge_reason",
+    "row_code_example_judge_unscored",
+    "row_code_example_pass",
+)
+
+_ROW_PASS_FLAGS = ("row_remediation_pass", "row_structured_plan_pass", "row_tool_call_pass", "row_code_example_pass")
 
 
 def judge_decides_row(prediction: dict[str, Any]) -> bool:
@@ -2906,7 +2932,9 @@ async def score_predictions_like_heldout(
     judge: dict[str, Any] | None = None
     if predictions:
         if mode == "remediation":
-            await _prepare_remediation_predictions(db, project_id, task_handler, eval_ctx, predictions)
+            await _prepare_remediation_predictions(
+                db, project_id, task_handler, eval_ctx, predictions, judge_enabled=run_judges,
+            )
         elif mode == "structured_plan":
             await _prepare_structured_plan_predictions(task_handler, eval_ctx, predictions)
         metrics = dict(task_handler.score(predictions, eval_ctx) or {})
@@ -2955,6 +2983,28 @@ async def _apply_structured_plan_live_config(db: AsyncSession, project_id: int, 
         "tool_block": spp.tool_block_for(getattr(project, "runtime_config", None)),
     })
     eval_ctx.manifest["output_schema"]["structured_plan"] = stamp
+
+
+async def _apply_remediation_live_config(db: AsyncSession, project_id: int, eval_ctx: Any) -> None:
+    """A remediation eval scores held-out ``code_example`` rows when the project's CURRENT settings say so
+    (``score_code_examples``; the manifest only stamps what the split was prepared with). With the setting
+    off and nothing stamped, the manifest is left untouched."""
+    if _manifest_scoring_mode(eval_ctx) != "remediation":
+        return
+    from app.services.code_remediation_prompt import effective_remediation_config
+
+    project = await db.get(Project, project_id)
+    live = effective_remediation_config(getattr(project, "runtime_config", None), project_id)["score_code_examples"]
+    schema = eval_ctx.manifest["output_schema"]
+    stamp = schema.get("remediation") if isinstance(schema.get("remediation"), dict) else {}
+    if bool(stamp.get("score_code_examples")) == live:
+        return
+    stamp = dict(stamp)
+    if live:
+        stamp["score_code_examples"] = True
+    else:
+        stamp.pop("score_code_examples", None)
+    schema["remediation"] = stamp
 
 
 async def _apply_tool_call_live_config(db: AsyncSession, project_id: int, eval_ctx: Any, task_handler: Any) -> None:
@@ -3087,18 +3137,27 @@ async def _prepare_remediation_predictions(
     task_handler: Any,
     eval_ctx: Any,
     predictions: list[dict[str, Any]],
-) -> None:
+    *,
+    judge: "ResolvedJudge | None" = None,
+    judge_enabled: bool = True,
+) -> dict[str, Any] | None:
     """Before scoring a ``remediation`` eval: apply every patch and run the code checks in a worker
     thread (external checks can be slow), then -- when the project configures a detector -- run it
     over the original and patched chunks (the remediation model is already done and freed). Best-effort:
-    anything that fails here is recomputed (or reported) by the scorer; it never blocks the eval."""
-    from app.services import remediation_detector, remediation_scoring
+    anything that fails here is recomputed (or reported) by the scorer; it never blocks the eval.
+
+    Held-out ``code_example`` rows (only present when the project opted in: ``score_code_examples``) get
+    their code checks and the answer judge's verdict here too (the judge decides their pass). Returns that
+    judge's snapshot, or None when there are no such rows."""
+    from app.services import code_example_scoring, remediation_detector, remediation_scoring
     from app.services.code_remediation_prompt import effective_remediation_config
 
     try:
         schema = task_handler._resolve_schema(predictions, eval_ctx)
         parse_json = task_handler._parse_json_safely
         await asyncio.to_thread(remediation_scoring.precompute, predictions, schema, parse_json)
+        if any(code_example_scoring.row_context(p) is not None for p in predictions):
+            await asyncio.to_thread(code_example_scoring.precompute, predictions, schema, parse_json)
         project = await db.get(Project, project_id)
         cfg = effective_remediation_config(getattr(project, "runtime_config", None), project_id)
         if cfg["detector"]:
@@ -3107,6 +3166,68 @@ async def _prepare_remediation_predictions(
             )
     except Exception as exc:  # noqa: BLE001
         logging.getLogger(__name__).warning("remediation preparation skipped: %s", exc)
+    return await _judge_code_example_predictions(
+        db, project_id, task_handler, predictions, judge=judge, judge_enabled=judge_enabled,
+    )
+
+
+async def _judge_code_example_predictions(
+    db: AsyncSession,
+    project_id: int,
+    task_handler: Any,
+    predictions: list[dict[str, Any]],
+    *,
+    judge: "ResolvedJudge | None" = None,
+    judge_enabled: bool = True,
+) -> dict[str, Any] | None:
+    """The answer judge's verdict on every held-out ``code_example`` row, annotated as
+    ``_code_example_judge`` = ``{verdict, reason, label}`` or ``{unscored: <reason>, label}`` (the scorer
+    never passes a row without a verdict). Uses the project's selected answer judge (whatever
+    ``resolve_answer_judge`` picks: a pinned or local synth backend, a ``command:`` backend, a cloud
+    model) with ``code_example_scoring.JUDGE_INSTRUCTION``. None when there are no such rows."""
+    from app.services import code_example_scoring as ces
+
+    rows = [p for p in predictions if ces.row_context(p) is not None]
+    if not rows:
+        return None
+
+    def mark(reason: str, label: str | None = None) -> dict[str, Any]:
+        for p in rows:
+            p["_code_example_judge"] = {"unscored": reason, "label": label}
+        return {"skipped": reason, "judge": label}
+
+    if not judge_enabled:
+        return mark("judge_disabled")
+    try:
+        from app.services.answer_judge_service import judge_predictions, project_cache, resolve_answer_judge
+        from app.services.code_remediation_prompt import effective_remediation_config
+
+        project = await db.get(Project, project_id)
+        if not effective_remediation_config(getattr(project, "runtime_config", None))["judge"]:
+            return mark("disabled_for_project")
+        resolved = judge or await resolve_answer_judge(db, project_id, project)
+        if resolved is None:
+            return mark("no_judge_available")
+        parse_json = task_handler._parse_json_safely
+        proxies = [{"_row": p} for p in rows]
+        snapshot = await judge_predictions(
+            proxies, resolved.judge, label=resolved.label, cache=project_cache(project_id),
+            instruction=ces.JUDGE_INSTRUCTION, view=lambda proxy: ces.judge_view(proxy["_row"], parse_json),
+        )
+        for proxy in proxies:
+            verdict = proxy.get("row_judge_verdict")
+            if isinstance(verdict, str):
+                proxy["_row"]["_code_example_judge"] = {
+                    "verdict": verdict, "reason": proxy.get("row_judge_reason"), "label": resolved.label,
+                }
+            else:
+                proxy["_row"]["_code_example_judge"] = {"unscored": "judge_no_verdict", "label": resolved.label}
+        return snapshot
+    except LlmBudgetExceeded:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the rows stay unscored for the judge; the eval goes on
+        logging.getLogger(__name__).warning("code-example judge skipped: %s", exc)
+        return mark("judge_error")
 
 
 async def _safe_judge_answers(
@@ -3213,6 +3334,8 @@ _ROW_EXTRA_KEYS: tuple[str, ...] = (
     "path",
     "language",
     "start_line",
+    # Code remediation, opt-in (``score_code_examples``): a held-out code example's task, language and passages.
+    "code_example_row",
     # Structured plan: the scenario, passages and acceptable values behind the plan.
     "plan_row",
     # tool_calling: the gold calls the scorer compares against (None = the row has no gold call).
@@ -3229,7 +3352,8 @@ def copy_row_extras(prediction: dict[str, Any], pair: dict[str, Any]) -> dict[st
         prediction["row_index"] = pair["_row_index"]
     for key in _ROW_EXTRA_KEYS:
         value = pair.get(key)
-        if key in ("rag_has_context", "alignment_has_pair", "path", "language", "start_line", "remediation_row", "plan_row"):
+        if key in ("rag_has_context", "alignment_has_pair", "path", "language", "start_line", "remediation_row", "plan_row",
+                   "code_example_row"):
             if value is not None:
                 prediction[key] = value
         elif key == "tool_gold_calls":
@@ -3399,6 +3523,7 @@ async def run_heldout_evaluation(
         experiment_task_type=experiment_task_type,
     )
     await _apply_structured_plan_live_config(db, project_id, eval_ctx)
+    await _apply_remediation_live_config(db, project_id, eval_ctx)
     await _apply_tool_call_live_config(db, project_id, eval_ctx, task_handler)
     # Off the event loop: a remediation row without passages is retrieved for (embedding + search).
     pairs = await asyncio.to_thread(
@@ -3473,8 +3598,12 @@ async def run_heldout_evaluation(
     handler_stop_sequences = gen_settings["stop_sequences"]
 
     heldout_scoring_mode = _manifest_scoring_mode(eval_ctx)
+    code_example_judge: dict[str, Any] | None = None
     if heldout_scoring_mode == "remediation":
-        await _prepare_remediation_predictions(db, project_id, task_handler, eval_ctx, predictions)
+        code_example_judge = await _prepare_remediation_predictions(
+            db, project_id, task_handler, eval_ctx, predictions,
+            judge=answer_judge, judge_enabled=answer_judge_enabled and eval_type in ("exact_match", "f1"),
+        )
     elif heldout_scoring_mode == "structured_plan":
         await _prepare_structured_plan_predictions(task_handler, eval_ctx, predictions)
 
@@ -3512,6 +3641,8 @@ async def run_heldout_evaluation(
             )
         except Exception as exc:  # noqa: BLE001 - a fingerprint failure must not fail the eval
             logging.getLogger(__name__).warning("remediation fingerprint skipped: %s", exc)
+        if code_example_judge is not None:
+            metrics["code_example_judge"] = code_example_judge
     metrics["modality_breakdown"] = modality_counts
     # Story 1.5 Gate 2 — surface "the model is emitting a different
     # JSON schema than gold" as a top-level metric so the UI banner
@@ -3659,6 +3790,7 @@ async def run_heldout_evaluation(
             "row_passage_headers": p.get("row_passage_headers"),
             "row_extra_fields": p.get("row_extra_fields"),
             "row_remediation_pass": p.get("row_remediation_pass"),
+            **({k: p.get(k) for k in _CODE_EXAMPLE_PREVIEW_KEYS} if "row_code_example_pass" in p else {}),
             # structured-plan: schema errors, pointer results and rubric scores per row.
             "row_schema_valid": p.get("row_schema_valid"),
             "schema_errors": p.get("schema_errors"),

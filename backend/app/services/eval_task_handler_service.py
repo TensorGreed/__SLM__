@@ -1078,16 +1078,27 @@ class StructuredExtractionHandler:
         """Code-remediation prompt from the shared builder -- byte-identical to the training
         row's ``source_text`` (``data_adapter_service._map_remediation``). A row without passages
         gets the retrieved ones when the manifest asks for it and the adapter did not already try.
-        Code-example rows (no finding) get their own prompt and are skipped by the scorer."""
+        Code-example rows (no finding) get their own prompt and are skipped by the scorer unless the
+        project opted in (``remediation.score_code_examples``: the row's context rides as ``code_example_row``)."""
         from app.services import code_remediation_prompt as crp
 
         extra = schema.get("extra_fields") or {}
         settings_cfg = schema.get("remediation") or {}
         if not crp.is_remediation_row(row) and crp.is_code_example_row(row):
-            prompt = crp.build_code_example_prompt_from_row({**row, "task": row.get("task") or row.get("text")})
+            task = row.get("task") or row.get("text")
+            prompt = crp.build_code_example_prompt_from_row({**row, "task": task})
             payload = crp.code_example_payload(row)
             reference = crp.canonical_code_example_json(payload)
-            return BuiltPrompt(prompt=prompt, reference=reference, extras={"structured_fields": ["code"]})
+            ce_extras: dict[str, Any] = {"structured_fields": ["code"]}
+            if settings_cfg.get("score_code_examples") is True:
+                # Opt-in: the scorer reads the row's context (``code_example_scoring``).
+                from app.services.code_example_scoring import build_row_context
+
+                ce_extras["code_example_row"] = build_row_context(
+                    row, task if isinstance(task, str) else "",
+                    crp.normalize_passages(row.get("passages") if isinstance(row.get("passages"), list) else None),
+                )
+            return BuiltPrompt(prompt=prompt, reference=reference, extras=ce_extras)
         payload = crp.remediation_payload(row)
         reference = crp.canonical_remediation_json(payload, extra) if payload is not None else self._reference_as_string(row)
         code = crp._row_code(row)

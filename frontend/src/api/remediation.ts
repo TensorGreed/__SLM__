@@ -75,6 +75,8 @@ export interface RemediationConfig {
     judge: boolean | null;
     retrieve_passages: boolean | null;
     top_k: number | null;
+    /** Score held-out task -> code (code_example) rows instead of skipping them. Default off. */
+    score_code_examples?: boolean | null;
 }
 
 export interface RemediationEffective {
@@ -83,6 +85,7 @@ export interface RemediationEffective {
     judge: boolean;
     retrieve_passages: boolean;
     top_k: number;
+    score_code_examples?: boolean;
 }
 
 export interface AvailableDetector {

@@ -25,7 +25,7 @@ The **Code remediation** recipe (`code-remediation`) trains a small coder model 
 
 `passages` is optional and its ids are `P1..Pk` in order. A row without `finding` or `remediation_json` is rejected (`remediation_finding_missing`, `remediation_json_missing`). The recipe suggests `Qwen/Qwen2.5-Coder-7B-Instruct` (3B and 1.5B as smaller options). Rows train and evaluate through the model's chat template with byte-identical prompts.
 
-**Code examples** (`row_kind: "code_example"`, `{task, language, [seed_language,] passages, code_example_json: {code, rationale, citations}}`) are training-only rows the [synthetic playbooks](./data-ingestion.md) can write from your code documents: the model learns to write idiomatic code using the API in the passages. In an evaluation split they are skipped by the remediation scorer and counted in `skipped_non_remediation_rows`. The teacher states the language of each answer: a data or config chunk (JSON, YAML, XML, ...) may be answered with a corrected data file or with code in a programming language that uses it, and the code is parse-checked under the language it declared (when that language has a runnable check; otherwise under the chunk's language, so a declaration never skips a check). A code chunk can never be re-labelled as YAML: switching to YAML is honoured only for a data or config chunk and a reply that is a YAML mapping or list with ordinary keys. The row keeps the final `language` and, when it differs, the chunk's as `seed_language`. A row whose final language is JSON, YAML, TOML or XML must also parse as that format (this applies when the label came from the chunk too, so an XML chunk answered with Python and no declared language is no longer kept as "xml"); failures are rejected as `language_mismatch`. The teacher may skip a chunk with nothing worth teaching: skips are reported as `skipped_seeds` with a few reasons and are not rejects, and a run where every chunk was skipped fails with a message naming the reasons. `params.extra_instructions` (up to 8,000 characters) adds your own guidance to the prompt. In the Generate step's review queue, **Check code formats** counts pending code examples that do not parse as their label and, grouped by label and kind of failure, lets you pick which groups to mark rejected as `language_mismatch` (never deleted; restore from the rejected view's Restore group). YAML template expressions, multi-document YAML and multi-root XML fragments are not treated as mismatches.
+**Code examples** (`row_kind: "code_example"`, `{task, language, [seed_language,] passages, code_example_json: {code, rationale, citations}}`) are training-only rows the [synthetic playbooks](./data-ingestion.md) can write from your code documents: the model learns to write idiomatic code using the API in the passages. In an evaluation split they are skipped by the remediation scorer and counted in `skipped_non_remediation_rows`, unless you turn on [scoring task-to-code rows](#scoring-task-to-code-rows-opt-in). The teacher states the language of each answer: a data or config chunk (JSON, YAML, XML, ...) may be answered with a corrected data file or with code in a programming language that uses it, and the code is parse-checked under the language it declared (when that language has a runnable check; otherwise under the chunk's language, so a declaration never skips a check). A code chunk can never be re-labelled as YAML: switching to YAML is honoured only for a data or config chunk and a reply that is a YAML mapping or list with ordinary keys. The row keeps the final `language` and, when it differs, the chunk's as `seed_language`. A row whose final language is JSON, YAML, TOML or XML must also parse as that format (this applies when the label came from the chunk too, so an XML chunk answered with Python and no declared language is no longer kept as "xml"); failures are rejected as `language_mismatch`. The teacher may skip a chunk with nothing worth teaching: skips are reported as `skipped_seeds` with a few reasons and are not rejects, and a run where every chunk was skipped fails with a message naming the reasons. `params.extra_instructions` (up to 8,000 characters) adds your own guidance to the prompt. In the Generate step's review queue, **Check code formats** counts pending code examples that do not parse as their label and, grouped by label and kind of failure, lets you pick which groups to mark rejected as `language_mismatch` (never deleted; restore from the rejected view's Restore group). YAML template expressions, multi-document YAML and multi-root XML fragments are not treated as mismatches.
 
 ### Passages without passages
 
@@ -55,6 +55,32 @@ The scaffolded pass/fail rules gate `remediation_pass_rate` (at least 0.40), `pa
 
 When a judge resolves (local model first, as for other long answers) every patch + rationale is graded against the reference fix with a remediation rubric: does the patch remove the finding without breaking the code, is the rationale right, are the citations relevant. The score lands in `judge_correct` beside the checks, for the base and the fine-tuned run alike. If the judge also reads retrieval verdicts, rows with passages are checked for whether the passages held the guidance (`retrieval_found_rate`). Turn it off per project with `judge: false`.
 
+### Scoring task-to-code rows (opt-in)
+
+Off by default. With `score_code_examples: true` (Train page, Remediation settings: **Score task→code rows**) held-out
+code-example rows are scored instead of skipped, so a model trained on them gets a held-out result and a lift headline.
+The setting is read when the evaluation runs (no re-split needed); it is also stamped into the manifest at split time.
+With it off, every metric, row and prompt is exactly what it was before the setting existed.
+
+| Check | Meaning |
+|---|---|
+| `output_parses` | the output is the code-example JSON (`{"code": ...}` with a code string) |
+| `code_checks_pass` | the code passes the [code checks](../extensions/code-checks.md) that run and pass on the **reference** code for the row's language (same check selection as patches). A row whose reference no check passes on is *not checkable*: left out of the rate, never failed |
+| `citations_valid` | only for rows with passages: at least one citation, and every cited id is one of the prompt's passages |
+| `judge_pass` | the project's answer judge (the same selection as for patches: a pinned or local model, a `command:` backend or a cloud model) compares the code with the reference example using a task-to-code rubric (does the task, uses the API the way the reference and passages do, secure, runs as written). `correct` passes; `partial` and `wrong` fail |
+
+A row **passes** (`code_example_pass`) when it parses, passes the checks (or is not checkable), cites validly (or has
+no passages) and the judge says `correct`. A row that fails a deterministic check fails whatever the judge says; a row
+that passes them all but gets no verdict (no judge available, judge turned off, unreadable reply) is **unscored**: left
+out of `code_example_pass_rate` and of the paired lift, never counted as a pass. Metrics: `code_example_pass_rate`,
+`code_example_output_parses_rate`, `code_example_code_checks_pass_rate` with `code_example_checkable_count` /
+`code_example_not_checkable_count`, `code_example_citations_valid_rate`, `code_example_judge_pass_rate` with
+`code_example_judged_count`, `code_example_judge_unscored_count` and `code_example_judge_unscored_reasons`,
+`code_example_by_language`, and the judge's run as `code_example_judge`. In a split of only code examples
+`code_example_pass_rate` is the headline (and `exact_match`); in a mixed split both families are reported and
+`remediation_pass_rate` stays the headline. The lift pairs rows on `code_example_pass`. A cached base-model result is
+reused only when it was scored with the same setting.
+
 ### Detector for `issue_resolved`
 
 Set `detector` to one of:
@@ -66,7 +92,7 @@ A finding the detector does not report on the *original* code cannot be shown re
 
 ## Settings API
 
-`GET /api/projects/{id}/remediation-config` returns `{config, effective, detector_label, available_detectors}`: what is stored, the defaults applied, the detector's name, and the code-findings projects you can use (completed weighted runs). `PUT` with `{detector, checks, judge, retrieve_passages, top_k}` replaces the settings; it answers 422 `INVALID_REMEDIATION_CONFIG` (nothing saved) for a detector project that is not a code-findings project with a completed weighted run, an unknown check id, or a `top_k` outside 1 to 10. `checks` limits which parse checks run (`null`: every runnable check for the language).
+`GET /api/projects/{id}/remediation-config` returns `{config, effective, detector_label, available_detectors}`: what is stored, the defaults applied, the detector's name, and the code-findings projects you can use (completed weighted runs). `PUT` with `{detector, checks, judge, retrieve_passages, top_k, score_code_examples}` replaces the settings (an omitted field goes back to its default; `score_code_examples` defaults to false); it answers 422 `INVALID_REMEDIATION_CONFIG` (nothing saved) for a detector project that is not a code-findings project with a completed weighted run, an unknown check id, or a `top_k` outside 1 to 10. `checks` limits which parse checks run (`null`: every runnable check for the language).
 
 ## Synthetic data
 

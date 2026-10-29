@@ -148,6 +148,7 @@ session-start guidance.
 - `backend/app/services/code_checks/builtin.py` — In-process code checks: no subprocess, always available.
 - `backend/app/services/code_checks/external.py` — External (sandboxed) syntax checks. Each is gated by CODE_CHECK_ALLOWED + PATH.
 - `backend/app/services/code_chunker.py` — Code-aware chunking — one retrievable unit per function / method / block.
+- `backend/app/services/code_example_scoring.py` — Opt-in scoring of held-out ``code_example`` rows in a ``remediation`` eval.
 - `backend/app/services/code_findings_prompt.py` — Shared prompt + schema helpers for the ``code-findings`` recipe.
 - `backend/app/services/code_remediation_prompt.py` — Shared prompt + payload helpers for the ``code-remediation`` recipe.
 - `backend/app/services/compliance_bundles_service.py` — Compliance bundles: named groups of entity types, each type tagged with
@@ -894,6 +895,7 @@ session-start guidance.
 - `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
 - `backend/tests/test_code_checks.py` — Code-check registry, built-ins, external checks (sandbox stubbed), plugins, API.
 - `backend/tests/test_code_chunker.py` — Code chunker: declaration-level chunks with exact line ranges.
+- `backend/tests/test_code_example_scoring.py` — Opt-in held-out scoring of ``code_example`` (task -> code) rows in a ``remediation`` eval
 - `backend/tests/test_code_examples_declared_language.py` — `code_examples` playbook: the reply declares its language; validation checks the code under it.
 - `backend/tests/test_code_examples_format_skip.py` — `code_examples`: format check (language_mismatch), seed skips, extra instructions, pending-row re-check.
 - `backend/tests/test_code_finding_mappers.py` — Findings-row mappers (code_label_to_findings, fix_pair, contrast_functions)

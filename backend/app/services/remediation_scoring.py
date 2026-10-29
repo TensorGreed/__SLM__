@@ -18,6 +18,8 @@ Per-row keys written onto each prediction: ``row_malformed``, ``row_patch_applie
 ``row_check_messages``, ``row_issue_resolved``, ``row_new_findings``, ``row_detector``,
 ``row_citations_valid``, ``row_cited``, ``row_extra_fields``, ``row_remediation_pass``,
 ``row_exact_match`` (= pass), ``row_skipped`` (a row without a finding: a code example).
+A code example carrying ``code_example_row`` (the project opted in: ``score_code_examples``) is not
+skipped: ``code_example_scoring`` scores it and adds the ``code_example_*`` metric family.
 """
 
 from __future__ import annotations
@@ -245,8 +247,15 @@ def score_remediation(
     reasons: dict[str, int] = {}
     extra_counts: dict[str, dict[str, int]] = {}
 
+    from app.services import code_example_scoring as ces
+
+    code_examples: list[dict[str, Any]] = []
     for prediction in predictions:
         row = row_context(prediction)
+        if row is None and ces.row_context(prediction) is not None:
+            # A held-out code example (only when the project opted in: ``score_code_examples``).
+            code_examples.append(prediction)
+            continue
         if row is None:
             skipped += 1
             prediction["scoring_mode"] = SCORING_MODE
@@ -358,6 +367,17 @@ def score_remediation(
         prediction["row_passage_headers"] = [_passage_header(p) for p in _passages(row)]
 
     metrics: dict[str, Any] = {**base, "skipped_non_remediation_rows": skipped}
+    ce_metrics = ces.score_code_examples(code_examples, schema, parse_json) if code_examples else {}
+    if scored == 0 and ce_metrics:
+        # Only code examples: their pass rate is the headline (no remediation_pass_rate to outrank it).
+        metrics.update(ce_metrics)
+        decided = int(ce_metrics["code_example_decided_count"])
+        metrics.update({
+            "total": decided, "correct": int(ce_metrics["code_example_correct"]),
+            "exact_match": ce_metrics["code_example_pass_rate"] if decided else 0.0,
+        })
+        return metrics
+    metrics.update(ce_metrics)
     if scored == 0:
         metrics.update({
             "remediation_pass_rate": 0.0, "patch_applies_rate": 0.0, "code_parses_rate": None,

@@ -976,7 +976,9 @@ class ManifestAndConfigApiTests(unittest.TestCase):
     def test_get_defaults(self):
         pid = self.new_project()
         body = client.get(f"/api/projects/{pid}/remediation-config").json()
-        self.assertEqual(body["config"], {"detector": None, "checks": None, "judge": None, "retrieve_passages": None, "top_k": None})
+        self.assertEqual(body["config"], {"detector": None, "checks": None, "judge": None, "retrieve_passages": None, "top_k": None,
+                                          "score_code_examples": None})
+        self.assertFalse(body["effective"]["score_code_examples"])
         self.assertEqual(body["effective"]["top_k"], 3)
         self.assertTrue(body["effective"]["judge"])
         self.assertIsNone(body["effective"]["detector"])

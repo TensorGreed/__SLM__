@@ -119,6 +119,7 @@ export function metricUnit(metricId: string | null | undefined): string {
     if (id === 'exact_match') return 'exact match';
     if (id === 'accuracy') return 'accuracy';
     if (id === 'remediation_pass_rate') return 'remediation pass rate';
+    if (id === 'code_example_pass_rate') return 'code-example pass rate';
     if (id === 'structured_plan_pass_rate') return 'plan pass rate';
     if (id === 'tool_call_pass_rate') return 'tool-call pass rate';
     if (id === 'tool_call_valid_rate') return 'valid tool-call rate';
@@ -131,6 +132,7 @@ export function metricDisplayName(metricId: string | null | undefined): string {
     const id = String(metricId || '');
     if (id === 'judge_correct') return 'judge: answer correct';
     if (id === 'remediation_pass_rate') return 'remediation pass rate';
+    if (id === 'code_example_pass_rate') return 'code-example pass rate';
     if (id === 'structured_plan_pass_rate') return 'plan pass rate';
     if (id === 'tool_call_pass_rate') return 'tool-call pass rate';
     if (id === 'tool_call_valid_rate') return 'valid tool-call rate';

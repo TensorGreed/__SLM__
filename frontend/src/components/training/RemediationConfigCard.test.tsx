@@ -124,6 +124,25 @@ describe('RemediationConfigCard', () => {
         });
     });
 
+    it('score task->code rows is off by default and saved only when turned on', async () => {
+        mockGets();
+        apiMock.put.mockResolvedValue({ data: CONFIG });
+        const user = userEvent.setup();
+        render(<RemediationConfigCard projectId={4} />);
+        const toggle = await screen.findByTestId('rem-score-code-examples');
+        expect(toggle).not.toBeChecked();
+        await user.click(toggle);
+        await user.click(screen.getByTestId('rem-save'));
+        await waitFor(() => expect(apiMock.put).toHaveBeenCalled());
+        expect(apiMock.put.mock.calls[0][1]).toMatchObject({ score_code_examples: true });
+    });
+
+    it('shows the stored score task->code setting', async () => {
+        mockGets({ ...CONFIG, config: { ...CONFIG.config, score_code_examples: true }, effective: { ...CONFIG.effective, score_code_examples: true } });
+        render(<RemediationConfigCard projectId={4} />);
+        expect(await screen.findByTestId('rem-score-code-examples')).toBeChecked();
+    });
+
     it('shows a validation error from the server', async () => {
         mockGets();
         apiMock.put.mockRejectedValue({ response: { data: { message: 'detector project has no completed run' } } });

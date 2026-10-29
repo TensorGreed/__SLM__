@@ -11,6 +11,11 @@
  *
  * Also exports RemediationRowView, the per-row patch (as a diff), status chips,
  * check messages and cited passages with their provenance.
+ *
+ * When the project opted in to scoring held-out task -> code rows
+ * (`score_code_examples`), the `code_example_*` metrics get their own
+ * "Task -> code rows" block and those rows their own row view
+ * (CodeExampleRowView). Without that setting nothing here changes.
  */
 
 import './RemediationMetricsPanel.css';
@@ -45,6 +50,23 @@ export interface RemediationMetrics {
     /** Extra declared output fields: field -> accuracy block (`metrics.extra_fields` from the backend). */
     extra_fields?: Record<string, { correct?: number; total?: number; accuracy?: number | null }>;
     extra_field_accuracy_mean?: number | null;
+    /** Opt-in (`score_code_examples`): held-out task -> code rows. Absent otherwise. */
+    code_example_count?: number;
+    code_example_decided_count?: number;
+    code_example_correct?: number;
+    code_example_pass_rate?: number | null;
+    code_example_output_parses_rate?: number | null;
+    code_example_checkable_count?: number;
+    code_example_not_checkable_count?: number;
+    code_example_code_checks_pass_rate?: number | null;
+    code_example_citations_valid_rate?: number | null;
+    code_example_rows_with_passages?: number;
+    code_example_judged_count?: number;
+    code_example_judge_pass_rate?: number | null;
+    code_example_judge_unscored_count?: number;
+    code_example_judge_unscored_reasons?: Record<string, number>;
+    code_example_judge_label?: string | null;
+    code_example_by_language?: Record<string, { scored?: number; decided?: number; passed?: number; not_checkable?: number; pass_rate?: number | null }>;
 }
 
 export interface RemediationPassage {
@@ -92,6 +114,18 @@ export interface RemediationRow {
     row_cited_ids?: string[] | null;
     row_detector_note?: string | null;
     parsed_prediction?: Record<string, unknown> | null;
+    /** Opt-in code-example rows (`score_code_examples`). */
+    row_kind?: string | null;
+    row_code_example_output_parses?: boolean | null;
+    row_code_example_checkable?: boolean | null;
+    row_code_example_checks_pass?: boolean | null;
+    row_code_example_check_messages?: string[] | null;
+    row_code_example_citations_valid?: boolean | null;
+    row_code_example_judge_pass?: boolean | null;
+    row_code_example_judge_verdict?: string | null;
+    row_code_example_judge_reason?: string | null;
+    row_code_example_judge_unscored?: string | null;
+    row_code_example_pass?: boolean | null;
     path?: string | null;
     language?: string | null;
     start_line?: number | null;
@@ -132,6 +166,102 @@ export function reasonText(reason: string): string {
     return REASON_TEXT[reason] ?? reason.replace(/_/g, ' ');
 }
 
+/** Why the judge left a code-example row unscored. */
+const UNSCORED_TEXT: Record<string, string> = {
+    judge_disabled: 'judge turned off for this eval',
+    disabled_for_project: 'judge turned off in the remediation settings',
+    no_judge_available: 'no judge model available',
+    judge_no_verdict: 'judge gave no readable verdict',
+    judge_error: 'judge failed',
+    judge_not_run: 'judge did not run',
+};
+
+export function unscoredText(reason: string): string {
+    return UNSCORED_TEXT[reason] ?? reason.replace(/_/g, ' ');
+}
+
+/** The "Task -> code rows" block (opt-in `score_code_examples`). */
+export function CodeExampleMetricsSection({ metrics }: { metrics: RemediationMetrics }) {
+    const scored = metrics.code_example_count ?? 0;
+    if (scored <= 0) return null;
+    const decided = metrics.code_example_decided_count ?? 0;
+    const checkable = metrics.code_example_checkable_count ?? 0;
+    const notCheckable = metrics.code_example_not_checkable_count ?? 0;
+    const unscored = metrics.code_example_judge_unscored_count ?? 0;
+    const reasons = Object.entries(metrics.code_example_judge_unscored_reasons ?? {}).sort((a, b) => b[1] - a[1]);
+    const languages = Object.entries(metrics.code_example_by_language ?? {});
+    const hasCitations = typeof metrics.code_example_citations_valid_rate === 'number';
+    return (
+        <div data-testid="ce-metrics">
+            <h4 className="remediation__h4">Task → code rows</h4>
+            <p className="u-hint u-mt0">
+                A row passes when its output parses, the code passes the checks that pass on the reference code (where
+                one applies), every citation is a given passage, and the judge
+                {metrics.code_example_judge_label ? ` (${metrics.code_example_judge_label})` : ''} calls it correct.
+                Rows the judge could not score are left out of the pass rate.
+            </p>
+            <dl className="remediation__grid">
+                <div>
+                    <dt>Pass rate</dt>
+                    <dd data-testid="ce-pass">
+                        {decided > 0 ? pct(metrics.code_example_pass_rate) : 'not evaluated'}
+                        <span className="remediation__sub">{metrics.code_example_correct ?? 0} of {decided} scored rows ({scored} total)</span>
+                    </dd>
+                </div>
+                <div>
+                    <dt>Output parses</dt>
+                    <dd data-testid="ce-parses">{pct(metrics.code_example_output_parses_rate)}</dd>
+                </div>
+                <div>
+                    <dt>Code checks pass</dt>
+                    <dd data-testid="ce-checks">
+                        {checkable > 0 ? pct(metrics.code_example_code_checks_pass_rate) : 'not evaluated'}
+                        <span className="remediation__sub">
+                            {checkable} checkable, {notCheckable} not checkable
+                        </span>
+                    </dd>
+                </div>
+                <div>
+                    <dt>Citations valid</dt>
+                    <dd data-testid="ce-citations">
+                        {hasCitations ? pct(metrics.code_example_citations_valid_rate) : 'not evaluated'}
+                        <span className="remediation__sub">
+                            {hasCitations ? `over ${metrics.code_example_rows_with_passages ?? 0} rows with passages` : 'no passages on these rows'}
+                        </span>
+                    </dd>
+                </div>
+                <div>
+                    <dt>Judge pass</dt>
+                    <dd data-testid="ce-judge">
+                        {(metrics.code_example_judged_count ?? 0) > 0 ? pct(metrics.code_example_judge_pass_rate) : 'not run'}
+                        <span className="remediation__sub">{metrics.code_example_judged_count ?? 0} judged, {unscored} unscored</span>
+                    </dd>
+                </div>
+            </dl>
+            {reasons.length > 0 && (
+                <ul className="remediation-row__messages" data-testid="ce-unscored">
+                    {reasons.map(([reason, n]) => (
+                        <li key={reason} data-testid={`ce-unscored-${reason}`}>{n} unscored: {unscoredText(reason)}</li>
+                    ))}
+                </ul>
+            )}
+            {languages.length > 0 && (
+                <table className="remediation__table" data-testid="ce-languages">
+                    <thead><tr><th>Language</th><th>Rows</th><th>Scored</th><th>Passed</th><th>Not checkable</th><th>Pass rate</th></tr></thead>
+                    <tbody>
+                        {languages.map(([lang, b]) => (
+                            <tr key={lang} data-testid={`ce-lang-${lang}`}>
+                                <td>{lang}</td><td>{b.scored ?? 0}</td><td>{b.decided ?? 0}</td><td>{b.passed ?? 0}</td>
+                                <td>{b.not_checkable ?? 0}</td><td>{pct(b.pass_rate)}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+        </div>
+    );
+}
+
 function judgeScore(m: RemediationMetrics): number | null {
     const v = m.judge_correct ?? m.judge?.judge_correct ?? m.judge?.score;
     return typeof v === 'number' ? v : null;
@@ -154,6 +284,8 @@ export default function RemediationMetricsPanel({ metrics, provenance }: PanelPr
     const fields = Object.entries(metrics.extra_fields ?? {});
     const judge = judgeScore(metrics);
     const skipped = metrics.skipped_non_remediation_rows ?? 0;
+    // Opt-in code-example scoring on a split without remediation rows: no remediation numbers to show.
+    const onlyCodeExamples = (metrics.code_example_count ?? 0) > 0 && typeof metrics.remediation_pass_rate !== 'number';
     return (
         <section className="card remediation" data-testid="remediation-metrics">
             <h3 className="remediation__title">Remediation</h3>
@@ -162,7 +294,7 @@ export default function RemediationMetricsPanel({ metrics, provenance }: PanelPr
                 check could run), the finding is gone (where a detector ran) and every cited passage exists.
             </p>
 
-            <dl className="remediation__grid">
+            {!onlyCodeExamples && <dl className="remediation__grid">
                 <div>
                     <dt>Pass rate</dt>
                     <dd data-testid="rem-pass">
@@ -232,7 +364,9 @@ export default function RemediationMetricsPanel({ metrics, provenance }: PanelPr
                         {judge != null && <span className="remediation__sub">correct 1 / partial 0.5 / wrong 0 per row</span>}
                     </dd>
                 </div>
-            </dl>
+            </dl>}
+
+            <CodeExampleMetricsSection metrics={metrics} />
 
             {metrics.detector_error && (
                 <p className="remediation-row__bad" data-testid="rem-detector-error">
@@ -314,7 +448,57 @@ function Chip({ ok, testId, children }: { ok: boolean | null | undefined; testId
     return <li className={`remediation-row__chip ${cls}`} data-testid={testId}>{children}</li>;
 }
 
+/** One scored task -> code row (opt-in `score_code_examples`). */
+export function CodeExampleRowView({ row }: { row: RemediationRow }) {
+    const pred = row.parsed_prediction ?? null;
+    const code = typeof pred?.code === 'string' ? pred.code : '';
+    const rationale = typeof pred?.rationale === 'string' ? pred.rationale : '';
+    const cited = row.row_cited_ids ?? [];
+    const messages = row.row_code_example_check_messages ?? [];
+    const checkable = row.row_code_example_checkable === true;
+    const verdict = row.row_code_example_judge_verdict;
+    const unscored = row.row_code_example_judge_unscored;
+    return (
+        <div className="remediation-row" data-testid="code-example-row">
+            {row.language && <p className="remediation-row__where" data-testid="code-example-row-where">task → code · {row.language}</p>}
+            <ul className="remediation-row__chips">
+                <Chip ok={row.row_code_example_pass} testId="ce-chip-pass">
+                    {row.row_code_example_pass == null ? 'unscored' : row.row_code_example_pass ? 'passes' : 'fails'}
+                </Chip>
+                <Chip ok={row.row_code_example_output_parses} testId="ce-chip-parses">
+                    {row.row_code_example_output_parses ? 'output parses' : 'output does not parse'}
+                </Chip>
+                <Chip ok={checkable ? row.row_code_example_checks_pass : null} testId="ce-chip-checks">
+                    {!checkable ? 'not checkable' : row.row_code_example_checks_pass ? 'code checks pass' : 'code checks fail'}
+                </Chip>
+                <Chip ok={row.row_code_example_citations_valid} testId="ce-chip-citations">
+                    {row.row_code_example_citations_valid == null
+                        ? 'no passages'
+                        : row.row_code_example_citations_valid ? 'citations valid' : 'no valid citation'}
+                </Chip>
+                <Chip ok={verdict ? row.row_code_example_judge_pass : null} testId="ce-chip-judge">
+                    {verdict ? `judge: ${verdict}` : `judge unscored${unscored ? `: ${unscoredText(unscored)}` : ''}`}
+                </Chip>
+            </ul>
+            {row.row_code_example_judge_reason && (
+                <p className="u-hint u-mt0" data-testid="ce-judge-reason">{row.row_code_example_judge_reason}</p>
+            )}
+            {code && <pre className="remediation-row__diff" data-testid="ce-code">{code}</pre>}
+            {rationale && <p className="u-hint" data-testid="ce-rationale">{rationale}</p>}
+            {messages.length > 0 && (
+                <ul className="remediation-row__messages" data-testid="ce-messages">
+                    {messages.map((m, i) => <li key={i}>{m}</li>)}
+                </ul>
+            )}
+            {cited.length > 0 && <p className="u-hint u-mt0" data-testid="ce-cited">Cited: {cited.join(', ')}</p>}
+        </div>
+    );
+}
+
 export function RemediationRowView({ row }: { row: RemediationRow }) {
+    if (row.row_kind === 'code_example' && row.row_code_example_pass !== undefined) {
+        return <CodeExampleRowView row={row} />;
+    }
     const pred = row.parsed_prediction ?? null;
     const patch = typeof pred?.patch === 'string' ? pred.patch : '';
     const rationale = typeof pred?.rationale === 'string' ? pred.rationale : '';

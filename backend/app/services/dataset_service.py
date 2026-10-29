@@ -1012,6 +1012,10 @@ def _remediation_schema_stamp(project: Any, schema: dict[str, Any]) -> dict[str,
         # The served retrieval (top-k / reranker / chunk size) the passages come from.
         "retrieval": retrieval_settings(project) if project is not None else None,
     }
+    if cfg["score_code_examples"]:
+        # Opt-in only (absent otherwise, so existing manifests are unchanged). Held-out eval re-reads the
+        # live setting (``evaluation_service._apply_remediation_live_config``).
+        stamp["remediation"]["score_code_examples"] = True
     tax = lts.project_taxonomy(project) if project is not None else None
     stamp["label_parents"] = taxonomy_label_parents(tax)
     stamp["label_titles"] = {

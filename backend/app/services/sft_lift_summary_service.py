@@ -42,6 +42,10 @@ _PREFERRED_HEADLINE_METRICS: tuple[str, ...] = (
     # code-remediation: the share of patches that apply, still parse, resolve the
     # finding and cite only the passages they were given (exists only for that mode).
     "remediation_pass_rate",
+    # code-remediation, opt-in (``score_code_examples``): held-out task->code rows whose code parses,
+    # passes the code checks, cites only given passages and the judge calls correct. Only heads the
+    # lift when the split has no remediation rows (remediation_pass_rate is absent then).
+    "code_example_pass_rate",
     # structured-plan: the share of plans that are valid JSON, validate against the schema, match
     # every configured pointer and (when a rubric runs) pass it (exists only for that mode).
     "structured_plan_pass_rate",
@@ -103,6 +107,14 @@ _HIDDEN_METRICS: frozenset[str] = frozenset({
     "rows_with_passages",
     "skipped_non_remediation_rows",
     "detector_blind_count",
+    "code_example_count",
+    "code_example_decided_count",
+    "code_example_correct",
+    "code_example_checkable_count",
+    "code_example_not_checkable_count",
+    "code_example_judged_count",
+    "code_example_judge_unscored_count",
+    "code_example_rows_with_passages",
     # prediction-dependent denominators (rows whose patch applied): informational, not lift;
     # ``issue_resolved_overall_rate`` (every scored row) is the lift metric.
     "issue_resolved_rate",
@@ -239,6 +251,7 @@ _ROW_SCORE_FOR_METRIC: dict[str, str] = {
     "exact_match": "correct",
     "accuracy": "correct",
     "remediation_pass_rate": "remediation_pass",
+    "code_example_pass_rate": "code_example_pass",
     "structured_plan_pass_rate": "structured_plan_pass",
     "tool_call_pass_rate": "tool_call_pass",
 }

@@ -69,6 +69,7 @@ export default function RemediationConfigCard({ projectId }: Props) {
     const [judge, setJudge] = useState(true);
     const [retrieve, setRetrieve] = useState(true);
     const [topK, setTopK] = useState(3);
+    const [scoreExamples, setScoreExamples] = useState(false);
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -80,6 +81,7 @@ export default function RemediationConfigCard({ projectId }: Props) {
         setJudge(res.config.judge ?? res.effective.judge);
         setRetrieve(res.config.retrieve_passages ?? res.effective.retrieve_passages);
         setTopK(res.config.top_k ?? res.effective.top_k);
+        setScoreExamples(res.config.score_code_examples ?? res.effective.score_code_examples ?? false);
     }, []);
 
     useEffect(() => {
@@ -106,6 +108,8 @@ export default function RemediationConfigCard({ projectId }: Props) {
             judge,
             retrieve_passages: retrieve,
             top_k: topK,
+            // PUT replaces the settings: leaving it out stores the default (off).
+            ...(scoreExamples ? { score_code_examples: true } : {}),
         };
         try {
             apply(await putRemediationConfig(projectId, body));
@@ -242,6 +246,18 @@ export default function RemediationConfigCard({ projectId }: Props) {
                         data-testid="rem-top-k"
                     />
                 </div>
+            </fieldset>
+
+            <fieldset className="remediation-config__group">
+                <legend>Held-out eval</legend>
+                <label className="remediation-config__row">
+                    <input type="checkbox" checked={scoreExamples} onChange={(e) => setScoreExamples(e.target.checked)} data-testid="rem-score-code-examples" />
+                    Score task→code rows
+                </label>
+                <p className="u-hint u-mt0">
+                    Off: held-out task→code rows are skipped. On: they pass when the code parses, passes the code checks,
+                    cites only given passages and the judge calls it correct.
+                </p>
             </fieldset>
 
             {saveError && <p className="remediation-config__error" data-testid="rem-save-error">{saveError}</p>}

@@ -130,6 +130,70 @@ describe('RemediationRowView', () => {
         expect(screen.queryByTestId('rem-diff')).not.toBeInTheDocument();
     });
 
+    it('shows no task->code block without the opt-in metrics', () => {
+        render(<RemediationMetricsPanel metrics={METRICS} provenance="p" />);
+        expect(screen.queryByTestId('ce-metrics')).not.toBeInTheDocument();
+    });
+
+    it('shows the task->code block beside the remediation numbers in a mixed split', () => {
+        render(
+            <RemediationMetricsPanel
+                metrics={{
+                    ...METRICS,
+                    code_example_count: 4, code_example_decided_count: 3, code_example_correct: 2,
+                    code_example_pass_rate: 0.6667, code_example_output_parses_rate: 1,
+                    code_example_checkable_count: 3, code_example_not_checkable_count: 1,
+                    code_example_code_checks_pass_rate: 1, code_example_citations_valid_rate: 0.75,
+                    code_example_rows_with_passages: 4, code_example_judged_count: 3, code_example_judge_pass_rate: 0.6667,
+                    code_example_judge_unscored_count: 1, code_example_judge_unscored_reasons: { judge_no_verdict: 1 },
+                    code_example_judge_label: 'stub:judge',
+                    code_example_by_language: { python: { scored: 4, decided: 3, passed: 2, not_checkable: 1, pass_rate: 0.6667 } },
+                }}
+                provenance="p"
+            />,
+        );
+        expect(screen.getByTestId('rem-pass')).toHaveTextContent('50.0%');
+        expect(screen.getByTestId('ce-pass')).toHaveTextContent('66.7%');
+        expect(screen.getByTestId('ce-pass')).toHaveTextContent('2 of 3 scored rows (4 total)');
+        expect(screen.getByTestId('ce-checks')).toHaveTextContent('3 checkable, 1 not checkable');
+        expect(screen.getByTestId('ce-unscored-judge_no_verdict')).toHaveTextContent('1 unscored: judge gave no readable verdict');
+        expect(screen.getByTestId('ce-lang-python')).toHaveTextContent('python');
+        expect(screen.getByTestId('ce-metrics')).toHaveTextContent('stub:judge');
+    });
+
+    it('hides the remediation grid when only task->code rows were scored', () => {
+        render(
+            <RemediationMetricsPanel
+                metrics={{ scoring_mode: 'remediation', total: 1, correct: 1, code_example_count: 1, code_example_decided_count: 1,
+                    code_example_correct: 1, code_example_pass_rate: 1 }}
+                provenance="p"
+            />,
+        );
+        expect(screen.queryByTestId('rem-pass')).not.toBeInTheDocument();
+        expect(screen.getByTestId('ce-pass')).toHaveTextContent('100.0%');
+        expect(metricDisplayName('code_example_pass_rate')).toBe('code-example pass rate');
+    });
+
+    it('renders a scored task->code row with its own chips', () => {
+        render(
+            <RemediationRowView
+                row={{
+                    scoring_mode: 'remediation', row_kind: 'code_example', language: 'python',
+                    parsed_prediction: { code: 'x = 1', rationale: 'set x', citations: ['P1'] },
+                    row_code_example_output_parses: true, row_code_example_checkable: false, row_code_example_checks_pass: null,
+                    row_code_example_citations_valid: true, row_code_example_judge_pass: null, row_code_example_judge_verdict: null,
+                    row_code_example_judge_unscored: 'no_judge_available', row_code_example_pass: null, row_cited_ids: ['P1'],
+                }}
+            />,
+        );
+        expect(screen.getByTestId('code-example-row')).toBeInTheDocument();
+        expect(screen.queryByTestId('remediation-row')).not.toBeInTheDocument();
+        expect(screen.getByTestId('ce-chip-pass')).toHaveTextContent('unscored');
+        expect(screen.getByTestId('ce-chip-checks')).toHaveTextContent('not checkable');
+        expect(screen.getByTestId('ce-chip-judge')).toHaveTextContent('judge unscored: no judge model available');
+        expect(screen.getByTestId('ce-code')).toHaveTextContent('x = 1');
+    });
+
     it('builds passage headers', () => {
         expect(passageHeader({ id: 'P1', path: 'a.py', start_line: 2, end_line: 2 })).toBe('a.py:2');
         expect(passageHeader({ id: 'P1', source: 'notes' })).toBe('notes');

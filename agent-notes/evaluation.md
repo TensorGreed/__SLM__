@@ -451,9 +451,22 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - Judge: `answer_judge_service.build_judge_prompt/build_retrieval_judge_prompt/cache_key` take `instruction` (None = the old
   prompt byte for byte); the 4th judge argument is only passed when an instruction is set, so 3-arg fakes still work.
   `_safe_judge_answers(scoring_mode="remediation")` uses `remediation_scoring.JUDGE_INSTRUCTION`/`judge_view`.
+- **Opt-in code-example scoring** (`runtime_config["remediation"]["score_code_examples"]`, default off; `effective_remediation_config`
+  key; stamped in the manifest `remediation` block ONLY when true; `evaluation_service._apply_remediation_live_config`
+  overlays the live value at every place `_apply_structured_plan_live_config` runs). When on, the handler's code-example
+  branch adds `code_example_row` {task, language, passages} (in `_ROW_EXTRA_KEYS`); `remediation_scoring` hands rows
+  carrying it to `code_example_scoring.score_code_examples` instead of skipping them. Off = no `code_example_row`, so every
+  metric / row / preview / row_scores is byte-identical (golden hash in `tests/test_code_example_scoring.py`). Checks: the
+  REFERENCE code decides checkability (like the original chunk). The judge runs in `_prepare_remediation_predictions`
+  (`_judge_code_example_predictions`, proxies so no `row_judge_*` keys) and annotates `_code_example_judge`; no verdict =
+  `row_code_example_pass` None (out of the rate/pairing; `_prediction_failed` False). Only-code-example split: the
+  remediation zero-metrics are omitted, `exact_match`/`total`/`correct` come from code examples, so
+  `code_example_pass_rate` (right after `remediation_pass_rate` in `_PREFERRED_HEADLINE_METRICS`, pairs on
+  `row_scores.code_example_pass`) heads the lift. The fingerprint gains `score_code_examples` only when on. Predefined-split
+  import does not accept code-remediation rows at all (it never adds the recipe adapter config): pre-existing gap.
 - API: `api/remediation_config.py` (`/projects/{id}/remediation-config`; `api/remediation.py` is the older failure-plan API).
   Probe packs: `_RECIPES_WITHOUT_PROBE_PACK`. Not wired: `coach_service._PER_CLASS_RECIPE_IDS` (no `per_class` is emitted).
-- Tests: `tests/test_code_remediation_recipe.py`. Docs: `slm-docs/docs/workflows/code-remediation.md`.
+- Tests: `tests/test_code_remediation_recipe.py`, `tests/test_code_example_scoring.py`. Docs: `slm-docs/docs/workflows/code-remediation.md`.
 
 ## `structured_plan` scoring + the structured-plan recipe (G6, lane B2)
 
