@@ -198,6 +198,11 @@ def _baseline_judge_matches(result: EvalResult, judge_label: str | None) -> bool
         if not isinstance(rubric, dict) or rubric.get("status") != "judged":
             return True
         return str(rubric.get("judge") or "") == judge_label
+    # Opt-in code-example scoring stamps the judge that scored those rows; a base result scored by
+    # another judge (or by none) can't pair. Absent block = flag off = unchanged behaviour.
+    code_example_judge = metrics.get("code_example_judge")
+    if isinstance(code_example_judge, dict) and str(code_example_judge.get("judge") or "") != judge_label:
+        return False
     judge = metrics.get("judge")
     if not isinstance(judge, dict):
         return False

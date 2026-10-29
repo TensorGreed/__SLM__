@@ -566,3 +566,25 @@ class SplitPreservationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BaselineCodeExampleJudgeReuseTests(unittest.TestCase):
+    """A cached base result pairs only with the same code-example judge; no block = unchanged."""
+
+    def _result(self, metrics):
+        from types import SimpleNamespace
+        return SimpleNamespace(metrics=metrics)
+
+    def test_same_judge_reused_other_judge_not(self):
+        from app.services.post_training_eval_service import _baseline_judge_matches
+        base = {"scoring_mode": "remediation", "judge": {"judge": "j1"}, "code_example_judge": {"judge": "j1"}}
+        self.assertTrue(_baseline_judge_matches(self._result(base), "j1"))
+        other = {**base, "code_example_judge": {"judge": "j0"}}
+        self.assertFalse(_baseline_judge_matches(self._result(other), "j1"))
+        skipped = {**base, "code_example_judge": {"skipped": "no_judge_available", "judge": None}}
+        self.assertFalse(_baseline_judge_matches(self._result(skipped), "j1"))
+
+    def test_no_block_keeps_old_behaviour(self):
+        from app.services.post_training_eval_service import _baseline_judge_matches
+        self.assertTrue(_baseline_judge_matches(self._result({"scoring_mode": "remediation", "judge": {"judge": "j1"}}), "j1"))
+        self.assertFalse(_baseline_judge_matches(self._result({"scoring_mode": "remediation", "judge": {"judge": "j0"}}), "j1"))

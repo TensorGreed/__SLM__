@@ -464,8 +464,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `row_code_example_pass` None (out of the rate/pairing; `_prediction_failed` False). Only-code-example split: the
   remediation zero-metrics are omitted, `exact_match`/`total`/`correct` come from code examples, so
   `code_example_pass_rate` (right after `remediation_pass_rate` in `_PREFERRED_HEADLINE_METRICS`, pairs on
-  `row_scores.code_example_pass`) heads the lift. The fingerprint gains `score_code_examples` only when on. Predefined-split
-  import does not accept code-remediation rows at all (it never adds the recipe adapter config): pre-existing gap.
+  `row_scores.code_example_pass`) heads the lift. The fingerprint gains `score_code_examples` only when on; a cached base result
+  whose `metrics.code_example_judge.judge` differs from the current judge is not reused (`_baseline_judge_matches`).
 - API: `api/remediation_config.py` (`/projects/{id}/remediation-config`; `api/remediation.py` is the older failure-plan API).
   Probe packs: `_RECIPES_WITHOUT_PROBE_PACK`. Not wired: `coach_service._PER_CLASS_RECIPE_IDS` (no `per_class` is emitted).
 - Tests: `tests/test_code_remediation_recipe.py`, `tests/test_code_example_scoring.py`. Docs: `slm-docs/docs/workflows/code-remediation.md`.
