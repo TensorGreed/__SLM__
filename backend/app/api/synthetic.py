@@ -768,7 +768,7 @@ class RunPlaybookRequest(BaseModel):
             "label_id (required, a project-taxonomy id), attrs, context_dataset_id + context_column, "
             "context_sample_size. code-remediation remediation_from_findings: findings_dataset_id "
             "(findings rows, fix pairs or remediation rows; not an answer key), top_k (1-10), "
-            "retrieve_passages; code_examples: per_chunk (1-5). Code and document playbooks: source_ids (1-100 data-source ids of this project; seeds only from those sources), seed_path_include / seed_path_exclude (glob lists on the chunk path), seed_relevance_terms (+ seed_relevance_scope chunk|file, relevance_exempt_source_ids). generic-sft documents_multi_turn: turns_min / "
+            "retrieve_passages; code_examples: per_chunk (1-5). Code and document playbooks: source_ids (1-100 data-source ids of this project; seeds only from those sources), seed_path_include / seed_path_exclude (glob lists on the chunk path), seed_relevance_terms (+ seed_relevance_scope chunk|file, seed_relevance_match path_or_text|text, relevance_exempt_source_ids). generic-sft documents_multi_turn: turns_min / "
             "turns_max (2-8), dialogues_per_passage_group (1-5), passages_per_dialogue (1-3)."
         ),
     )
@@ -888,7 +888,7 @@ async def _check_source_ids(db: AsyncSession, project_id: int, raw: Any, param: 
 
 async def _check_seed_filter_params(db: AsyncSession, project_id: int, out: dict) -> None:
     """``params.seed_path_include`` / ``seed_path_exclude`` (globs on the chunk's path), ``seed_relevance_terms``,
-    ``seed_relevance_scope`` (``chunk`` | ``file``) and ``relevance_exempt_source_ids``. Lists of strings with capped
+    ``seed_relevance_scope`` (``chunk`` | ``file``), ``seed_relevance_match`` (``path_or_text`` | ``text``) and ``relevance_exempt_source_ids``. Lists of strings with capped
     sizes; a glob that does not compile is rejected: 400 ``invalid_playbook_param`` (``metadata.param`` names it)."""
     import fnmatch
     import re
@@ -902,7 +902,7 @@ async def _check_seed_filter_params(db: AsyncSession, project_id: int, out: dict
         })
 
     for key in ("seed_path_include", "seed_path_exclude", "seed_relevance_terms",
-                "seed_relevance_scope", "relevance_exempt_source_ids"):
+                "seed_relevance_scope", "seed_relevance_match", "relevance_exempt_source_ids"):
         if key in out and out[key] is None:
             del out[key]  # null = unset, like an empty list
     for param in ("seed_path_include", "seed_path_exclude"):
@@ -934,6 +934,8 @@ async def _check_seed_filter_params(db: AsyncSession, project_id: int, out: dict
         out["seed_relevance_terms"] = list(dict.fromkeys(terms))
     if "seed_relevance_scope" in out and out["seed_relevance_scope"] not in sps.SEED_RELEVANCE_SCOPES:
         raise bad("seed_relevance_scope", "params.seed_relevance_scope must be 'chunk' or 'file'.")
+    if "seed_relevance_match" in out and out["seed_relevance_match"] not in sps.SEED_RELEVANCE_MATCHES:
+        raise bad("seed_relevance_match", "params.seed_relevance_match must be 'path_or_text' or 'text'.")
     if "relevance_exempt_source_ids" in out and out["relevance_exempt_source_ids"] == []:
         pass
     elif "relevance_exempt_source_ids" in out:

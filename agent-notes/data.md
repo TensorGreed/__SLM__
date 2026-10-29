@@ -688,6 +688,7 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   <=200 chars; `seed_glob_matches` = case-sensitive `fnmatch` on the chunk's `path` (fallback `source_doc`), `*` crosses `/`,
   leading `**/` also matches top level), `seed_relevance_terms` (<=100 terms of <=100 chars; kept when a term is in path or text,
   case-insensitive), `seed_relevance_scope` (`chunk` default | `file` = any chunk of the same document+path matches),
+  `seed_relevance_match` (`path_or_text` default | `text` = terms matched only in the chunk text, not its path; with file scope, any chunk text of the file; echoed in `seed_pool.filters.match`; repo paths often carry topic words that let generic files through),
   `relevance_exempt_source_ids` (skip the term filter; globs still apply). Validated in `api/synthetic._check_seed_filter_params`
   (400 `invalid_playbook_param`, `metadata.param`; empty lists = unset). Applied inside `select_seed_chunks(filters=)` AFTER
   `source_ids` and BEFORE the cap/stratified sample (`_apply_seed_filters`: glob, then relevance). Zero left ->

@@ -155,6 +155,33 @@ class SeedFilterUnitTests(unittest.TestCase):
         self.assertIn("main-2", [c["chunk_id"] for c in out])
         self.assertEqual(pool["filters"]["scope"], "file")
 
+    def test_relevance_match_text_ignores_path(self):
+        chunks = [
+            {"text": "plain body", "path": "gadget/readme.md", "source_document_id": 1, "chunk_id": "p"},
+            {"text": "about a gadget here", "path": "misc/notes.md", "source_document_id": 2, "chunk_id": "t"},
+            {"text": "other words", "path": "gadget/readme.md", "source_document_id": 1, "chunk_id": "p2"},
+        ]
+        docs = {1: 10, 2: 10}
+
+        def ids(**params):
+            f = sps.seed_filters_from_params({"seed_relevance_terms": ["gadget"], **params})
+            out, pool = sps.select_seed_chunks(chunks, docs, filters=f)
+            return [c["chunk_id"] for c in out], pool
+
+        self.assertEqual(ids()[0], ["p", "t", "p2"])
+        self.assertEqual(ids(seed_relevance_match="path_or_text")[0], ["p", "t", "p2"])
+        got, pool = ids(seed_relevance_match="text")
+        self.assertEqual(got, ["t"])
+        self.assertEqual(pool["filters"]["match"], "text")
+        self.assertEqual(ids()[1]["filters"]["match"], "path_or_text")
+        # file scope + text: any chunk TEXT of the file; path alone never counts
+        chunks.append({"text": "the gadget again", "path": "gadget/readme.md", "source_document_id": 1, "chunk_id": "p3"})
+        got, _ = ids(seed_relevance_match="text", seed_relevance_scope="file")
+        self.assertEqual(got, ["p", "t", "p2", "p3"])
+        chunks.pop()
+        got, _ = ids(seed_relevance_match="text", seed_relevance_scope="file")
+        self.assertEqual(got, ["t"])
+
     def test_exempt_source_skips_relevance_but_not_globs(self):
         paths, pool = self.paths(seed_relevance_terms=["widget"], relevance_exempt_source_ids=[20])
         self.assertIn("setup.cfg", paths)
@@ -385,7 +412,8 @@ class SeedPoolApiTests(unittest.TestCase):
 
     def test_null_filter_params_are_unset(self):
         resp = self._run({"seed_path_include": None, "seed_path_exclude": None, "seed_relevance_terms": None,
-                          "seed_relevance_scope": None, "relevance_exempt_source_ids": None})
+                          "seed_relevance_scope": None, "seed_relevance_match": None,
+                          "relevance_exempt_source_ids": None})
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertNotIn("sources", resp.json()["seed_pool"])
         self.assertEqual(resp.json()["seed_pool"]["chunks_used"], 12)
@@ -396,6 +424,7 @@ class SeedPoolApiTests(unittest.TestCase):
             "seed_path_exclude": ["x", [None], ["  "]],
             "seed_relevance_terms": ["x", [1], ["t" * 101], ["t"] * 101],
             "seed_relevance_scope": ["files", 3],
+            "seed_relevance_match": ["path", 3, "TEXT"],
             "relevance_exempt_source_ids": ["x", [987654], [True]],
         }
         for param, bads in cases.items():
@@ -406,7 +435,7 @@ class SeedPoolApiTests(unittest.TestCase):
                 self.assertEqual(body["error_code"], "invalid_playbook_param", body)
                 self.assertEqual(body["metadata"]["param"], param)
         ok = self._run({"seed_path_include": [], "seed_relevance_terms": [], "relevance_exempt_source_ids": [],
-                        "seed_relevance_scope": "file"})
+                        "seed_relevance_scope": "file", "seed_relevance_match": "text"})
         self.assertEqual(ok.status_code, 200, ok.text)
         self.assertNotIn("sources", ok.json()["seed_pool"])
 

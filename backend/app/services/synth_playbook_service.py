@@ -126,6 +126,7 @@ MAX_SEED_GLOB_LEN = 200
 MAX_SEED_TERMS = 100
 MAX_SEED_TERM_LEN = 100
 SEED_RELEVANCE_SCOPES = ("chunk", "file")
+SEED_RELEVANCE_MATCHES = ("path_or_text", "text")
 
 
 def seed_glob_matches(path: str, pattern: str) -> bool:
@@ -147,11 +148,13 @@ def seed_filters_from_params(params: dict[str, Any]) -> dict[str, Any] | None:
     if not (include or exclude or terms):
         return None
     scope = params.get("seed_relevance_scope")
+    match = params.get("seed_relevance_match")
     return {
         "include": include,
         "exclude": exclude,
         "terms": terms,
         "scope": scope if scope in SEED_RELEVANCE_SCOPES else "chunk",
+        "match": match if match in SEED_RELEVANCE_MATCHES else "path_or_text",
         "exempt_source_ids": sorted({int(x) for x in params.get("relevance_exempt_source_ids") or []}),
     }
 
@@ -174,10 +177,11 @@ def _apply_seed_filters(
     terms = [t.lower() for t in filters["terms"]]
     exempt_ids = set(filters["exempt_source_ids"])
     per_file = filters["scope"] == "file"
+    text_only = filters.get("match") == "text"
 
     def mentions(chunk: dict[str, Any]) -> bool:
         text = chunk.get("text") if isinstance(chunk.get("text"), str) else ""
-        hay = f"{_chunk_path(chunk)}\n{text}".lower()
+        hay = (text if text_only else f"{_chunk_path(chunk)}\n{text}").lower()
         return any(t in hay for t in terms)
 
     def file_key(chunk: dict[str, Any]) -> tuple[Any, str]:
@@ -326,7 +330,7 @@ def select_seed_chunks(
     if filters and filter_stats is not None:
         pool["filters"] = {
             "include": filters["include"], "exclude": filters["exclude"], "terms": filters["terms"],
-            "scope": filters["scope"], "exempt_source_ids": filters["exempt_source_ids"],
+            "scope": filters["scope"], "match": filters.get("match", "path_or_text"), "exempt_source_ids": filters["exempt_source_ids"],
         }
         pool["sources"] = filter_stats
     return selected, pool

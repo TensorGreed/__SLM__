@@ -21,6 +21,7 @@ export type SeedFilterParams = {
     seed_path_exclude?: string[];
     seed_relevance_terms?: string[];
     seed_relevance_scope?: 'chunk' | 'file';
+    seed_relevance_match?: 'path_or_text' | 'text';
     relevance_exempt_source_ids?: number[];
 };
 
@@ -43,6 +44,7 @@ export default function SeedSourcesSelect({ projectId, onChange, onFiltersChange
     const [exclude, setExclude] = useState('');
     const [terms, setTerms] = useState('');
     const [scope, setScope] = useState<'chunk' | 'file'>('chunk');
+    const [match, setMatch] = useState<'path_or_text' | 'text'>('path_or_text');
     const [exempt, setExempt] = useState<number[]>([]);
 
     useEffect(() => {
@@ -69,11 +71,12 @@ export default function SeedSourcesSelect({ projectId, onChange, onFiltersChange
         if (trm.length) {
             out.seed_relevance_terms = trm;
             if (scope === 'file') out.seed_relevance_scope = 'file';
+            if (match === 'text') out.seed_relevance_match = 'text';
             if (exempt.length) out.relevance_exempt_source_ids = exempt;
         }
         onFiltersChange(Object.keys(out).length ? out : null);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [include, exclude, terms, scope, exempt]);
+    }, [include, exclude, terms, scope, match, exempt]);
 
     if (!sources.length) return null;
 
@@ -155,6 +158,17 @@ export default function SeedSourcesSelect({ projectId, onChange, onFiltersChange
                                 data-testid="seed-relevance-file-scope"
                             />
                             <span>Keep every passage of a file when any passage of it mentions a term</span>
+                        </label>
+                        <label className="seed-sources__option">
+                            <span>Match terms in</span>
+                            <select
+                                value={match}
+                                onChange={(e) => setMatch(e.target.value === 'text' ? 'text' : 'path_or_text')}
+                                data-testid="seed-relevance-match"
+                            >
+                                <option value="path_or_text">Path or text</option>
+                                <option value="text">Text only</option>
+                            </select>
                         </label>
                         <p className="u-hint">Skip the term filter for these sources (path globs still apply):</p>
                         {sources.map((s) => (

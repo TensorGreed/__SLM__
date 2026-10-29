@@ -58,10 +58,11 @@ describe('SeedSourcesSelect', () => {
         }));
         await user.type(screen.getByTestId('seed-relevance-terms'), 'widget, Gadget');
         await user.click(screen.getByTestId('seed-relevance-file-scope'));
+        await user.selectOptions(screen.getByTestId('seed-relevance-match'), 'text');
         await user.click(screen.getByTestId('seed-exempt-5'));
         await waitFor(() => expect(onFilters).toHaveBeenLastCalledWith({
             seed_path_include: ['src/**', 'lib/*.py'], seed_path_exclude: ['**/*.lock'],
-            seed_relevance_terms: ['widget', 'Gadget'], seed_relevance_scope: 'file', relevance_exempt_source_ids: [5],
+            seed_relevance_terms: ['widget', 'Gadget'], seed_relevance_scope: 'file', seed_relevance_match: 'text', relevance_exempt_source_ids: [5],
         }));
         await user.clear(screen.getByTestId('seed-path-include'));
         await user.clear(screen.getByTestId('seed-path-exclude'));
