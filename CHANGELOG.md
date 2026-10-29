@@ -1,5 +1,9 @@
 # Changelog
 
+### Longer extra instructions for playbooks (October 29, 2026)
+
+- The playbook `extra_instructions` parameter (scenario grid and code examples) now accepts up to 8,000 characters, up from 2,000. Limit change only: instructions of 2,000 characters or fewer produce exactly the same prompt as before, tags are still stripped, and longer text is still rejected with the same error naming the new limit.
+
 ### Code examples: format check, skips, extra instructions (October 29, 2026)
 
 - A code example whose language is a data / markup format (JSON, YAML, TOML, XML) must now parse as that format, including when the label came from the source chunk (an XML chunk answered with Python and no declared language used to keep the label XML). Failures are rejected as `language_mismatch`. The teacher may also **skip** a chunk with nothing worth teaching: skips are reported (`skipped_seeds`, a few reasons), are not rejects, and a run where every chunk was skipped fails with a message naming the reasons. New `extra_instructions` parameter (up to 2,000 characters) adds your own guidance to the prompt.

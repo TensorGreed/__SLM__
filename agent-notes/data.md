@@ -779,7 +779,7 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   `{"seed": n, "skip": true, "reason": ...}`; it lands on `ctx["skips"]` (not rows, not rejects, not a failed chunk),
   the result gets `skipped_seeds` + `skip_reasons` (first 5), and a run where nothing was accepted and seeds were
   skipped raises a diagnostic naming the reasons (checkpoints carry skips of chunks that wrote rows). `params.extra_instructions`
-  (<= `MAX_EXTRA_INSTRUCTIONS`, same block as scenario_grid, `<seed>/<task>/<schema>` tags stripped) goes into the prompt.
+  (<= `MAX_EXTRA_INSTRUCTIONS` = 8000 (was 2000; limit-only, short prompts byte-identical), same block as scenario_grid, `<seed>/<task>/<schema>` tags stripped) goes into the prompt.
   **Pending-row re-check**: `synth_review_queue_service.recheck_code_format` /
   `POST .../synthetic/review-queue/recheck-code-format {dry_run}` (default true) counts pending `code_example` rows
   that fail `check_data_format` by language; apply marks them rejected `language_mismatch` (soft, accepted rows

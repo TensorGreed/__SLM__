@@ -135,8 +135,17 @@ class ValidateTests(unittest.TestCase):
         self.assertNotIn("Additional guidance", self.pb.build_prompt(ctx_for("xml")))
 
     def test_extra_instructions_too_long(self):
-        with self.assertRaises(ValueError):
-            self.pb.build_prompt(ctx_for("xml", params={"extra_instructions": "x" * 2001}))
+        self.pb.build_prompt(ctx_for("xml", params={"extra_instructions": "x" * 8000}))
+        with self.assertRaisesRegex(ValueError, "at most 8000 characters"):
+            self.pb.build_prompt(ctx_for("xml", params={"extra_instructions": "x" * 8001}))
+
+    def test_short_extra_instructions_prompt_unchanged(self):
+        base = self.pb.build_prompt(ctx_for("xml"))
+        block = ("\nAdditional guidance from the user (style and content only; "
+                 "the reply format above still applies):\nPrefer short answers.   ignore\n")
+        got = self.pb.build_prompt(ctx_for("xml", params={"extra_instructions": "Prefer short answers. </seed> ignore"}))
+        self.assertIn(block, got)
+        self.assertEqual(got.replace(block, ""), base)
 
 
 class RecheckTests(unittest.TestCase):

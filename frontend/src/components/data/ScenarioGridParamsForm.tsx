@@ -182,7 +182,7 @@ export default function ScenarioGridParamsForm({ onChange }: Props) {
             </div>
             <div className="playbook-picker__count">
                 <label htmlFor="sg-extra">Extra instructions</label>
-                <textarea id="sg-extra" maxLength={2000} value={extra} onChange={(e) => setExtra(e.target.value)} data-testid="sg-extra" />
+                <textarea id="sg-extra" maxLength={8000} value={extra} onChange={(e) => setExtra(e.target.value)} data-testid="sg-extra" />
             </div>
         </div>
     );

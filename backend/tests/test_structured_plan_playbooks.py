@@ -161,10 +161,23 @@ class GridTests(unittest.TestCase):
 
 
 class ParamCheckTests(unittest.TestCase):
+    def test_extra_instructions_cap_boundary_and_message(self):
+        self.assertIsNone(check_params({"matrix_text": MD, "extra_instructions": "x" * 8000}))
+        name, msg = check_params({"matrix_text": MD, "extra_instructions": "x" * 8001})
+        self.assertEqual(name, "extra_instructions")
+        self.assertEqual(msg, "params.extra_instructions must be text of at most 8000 characters.")
+
+    def test_short_extra_instructions_block_unchanged(self):
+        from app.services.synth_playbooks.structured_plan_scenario_grid import _extra
+        expected = ("\nAdditional guidance from the user (style and content only; "
+                    "the reply format above still applies):\nPrefer short scenarios.\n")
+        self.assertEqual(_extra({"params": {"extra_instructions": "  Prefer short scenarios. "}}), expected)
+        self.assertEqual(_extra({"params": {}}), "")
+
     def test_good_and_bad_params(self):
         self.assertIsNone(check_params({"matrix_text": MD}))
         self.assertIsNone(check_params({"matrix_text": MD, "max_cells": 200, "scenarios_per_cell": 5, "seed": -3,
-                                        "matrix_format": "markdown", "extra_instructions": "x" * 2000}))
+                                        "matrix_format": "markdown", "extra_instructions": "x" * 8000}))
         bad = [
             ({}, "matrix_text"),
             ({"matrix_text": ""}, "matrix_text"),
@@ -174,7 +187,7 @@ class ParamCheckTests(unittest.TestCase):
             ({"matrix_text": MD, "max_cells": 201}, "max_cells"),
             ({"matrix_text": MD, "scenarios_per_cell": 6}, "scenarios_per_cell"),
             ({"matrix_text": MD, "seed": "x"}, "seed"),
-            ({"matrix_text": MD, "extra_instructions": "x" * 2001}, "extra_instructions"),
+            ({"matrix_text": MD, "extra_instructions": "x" * 8001}, "extra_instructions"),
             ({"matrix_text": "a" * 200_001}, "matrix_text"),
         ]
         for params, name in bad:
@@ -610,7 +623,7 @@ class PlaybookApiTests(unittest.TestCase):
             ({"matrix_text": MD, "scenarios_per_cell": 9}, "scenarios_per_cell"),
             ({"matrix_text": MD, "matrix_format": "xml"}, "matrix_format"),
             ({"matrix_text": MD, "seed": "abc"}, "seed"),
-            ({"matrix_text": MD, "extra_instructions": "x" * 2001}, "extra_instructions"),
+            ({"matrix_text": MD, "extra_instructions": "x" * 8001}, "extra_instructions"),
         ]
         for params, name in bad:
             resp = self._run(params)
