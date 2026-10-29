@@ -23,8 +23,11 @@ const payload = {
 };
 
 const dry = {
-    dry_run: true, checked: 4, mismatches: 2, by_language: { xml: 2 }, rejected: 0,
-    examples: [{ id: 1, language: 'xml', detail: 'not well-formed XML: syntax error', task: 'Read the rules' }],
+    dry_run: true, checked: 4, mismatches: 3, by_language: { xml: 2, yaml: 1 }, rejected: 0, examples: [],
+    groups: [
+        { language: 'xml', detail: 'not well-formed XML', count: 2, row_ids: [1, 2], examples: [{ id: 1, detail: 'x', task: 'Read the rules' }] },
+        { language: 'yaml', detail: 'not a YAML mapping or list', count: 1, row_ids: [3], examples: [{ id: 3, detail: 'x', task: 'Patch it' }] },
+    ],
 };
 
 describe('SynthReviewQueue code format re-check', () => {
@@ -44,19 +47,20 @@ describe('SynthReviewQueue code format re-check', () => {
         render(<SynthReviewQueue projectId={5} />);
         await user.click(await screen.findByTestId('synth-review-queue-format-check'));
         const confirm = await screen.findByTestId('synth-review-queue-format-confirm');
-        expect(confirm.textContent).toContain('2 of 4 pending code examples');
-        expect(confirm.textContent).toContain('xml: 2');
+        expect(confirm.textContent).toContain('3 of 4 pending code examples');
+        expect(confirm.textContent).toContain('xml: not well-formed XML');
         expect(apiMock.post).toHaveBeenCalledTimes(1);
         expect(apiMock.post).toHaveBeenCalledWith('/projects/5/synthetic/review-queue/recheck-code-format', { dry_run: true });
+        await user.click(screen.getByTestId('synth-review-queue-format-pick-yaml|not a YAML mapping or list'));
         await user.click(screen.getByTestId('synth-review-queue-format-apply'));
         await waitFor(() => expect(apiMock.post).toHaveBeenLastCalledWith(
-            '/projects/5/synthetic/review-queue/recheck-code-format', { dry_run: false },
+            '/projects/5/synthetic/review-queue/recheck-code-format', { dry_run: false, row_ids: [1, 2] },
         ));
         await waitFor(() => expect(screen.queryByTestId('synth-review-queue-format-confirm')).toBeNull());
     });
 
     it('cancel leaves everything alone and a clean queue offers no reject', async () => {
-        apiMock.post.mockResolvedValueOnce({ data: { ...dry, mismatches: 0, by_language: {}, examples: [] } });
+        apiMock.post.mockResolvedValueOnce({ data: { ...dry, mismatches: 0, by_language: {}, groups: [] } });
         const user = userEvent.setup();
         render(<SynthReviewQueue projectId={5} />);
         await user.click(await screen.findByTestId('synth-review-queue-format-check'));

@@ -811,13 +811,14 @@ reason ``language_mismatch`` (reversible, never purged).
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
 
-**Request body** (required)
+**Request body** (optional)
 
 Content type: `application/json` — `RecheckCodeFormatRequest`
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `dry_run` | `boolean` | no | Count the mislabelled pending rows without changing anything. (default `true`) |
+| `dry_run` | `boolean` | no | Count the mislabelled pending rows (grouped by label and kind of failure) without changing anything. (default `true`; the whole body is optional) |
+| `row_ids` | `integer[] \| null` | no | Apply only to these rows; each is re-validated (still pending and still a mismatch). Omitted = every mismatch. |
 
 **Responses**
 

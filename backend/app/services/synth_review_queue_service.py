@@ -805,55 +805,65 @@ async def purge_rejected_rows(
 LANGUAGE_MISMATCH = "language_mismatch"
 
 
-async def recheck_code_format(db: AsyncSession, project_id: int, *, dry_run: bool = True) -> dict[str, Any]:
+async def recheck_code_format(
+    db: AsyncSession, project_id: int, *, dry_run: bool = True, row_ids: list[int] | None = None,
+) -> dict[str, Any]:
     """Re-check the declared format of PENDING ``code_example`` rows: a row labelled json / yaml / toml / xml
     whose code does not parse as that format (``check_data_format``, the check generation applies) is a
-    mislabel. ``dry_run`` only counts (``mismatches`` by language plus a few examples); otherwise the rows
-    are marked rejected with reason ``language_mismatch`` (soft: they stay on disk, can be restored, and are
-    never purged here). Accepted and already-rejected rows are not touched."""
+    mislabel. ``dry_run`` only counts: ``mismatches`` plus ``groups`` (language + kind of failure, each with
+    its count, row ids and a few examples). Otherwise the rows are marked rejected with reason
+    ``language_mismatch`` (soft: they stay on disk, can be restored, never purged here) - all mismatches, or
+    only ``row_ids`` (each id is re-validated: it must still be a pending row that fails the check).
+    Accepted and already-rejected rows are not touched."""
     from app.services.synth_playbooks.code_examples import check_data_format
 
     path = _synthetic_jsonl_path(project_id)
     rows = _read_all_rows(path)
-    checked = 0
-    by_language: dict[str, int] = defaultdict(int)
-    examples: list[dict[str, Any]] = []
-    hit_ids: set[int] = set()
-    for row in rows:
+    wanted = {int(r) for r in row_ids} if row_ids is not None else None
+
+    def problem(row: dict[str, Any]) -> str | None:
         if row.get("review_status") != "pending" or row.get("row_kind") != "code_example":
-            continue
+            return None
         payload = row.get("code_example_json")
         code = payload.get("code") if isinstance(payload, dict) else None
-        if not isinstance(code, str):
-            continue
-        checked += 1
-        why = check_data_format(code, row.get("language"))
+        return check_data_format(code, row.get("language")) if isinstance(code, str) else None
+
+    checked = 0
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        if row.get("review_status") == "pending" and row.get("row_kind") == "code_example" and isinstance(row.get("code_example_json"), dict):
+            checked += 1
+        why = problem(row)
         if why is None:
             continue
         lang = str(row.get("language") or "")
-        by_language[lang] += 1
-        hit_ids.add(0)
-        if len(examples) < 5:
-            examples.append({"id": row.get("id"), "language": lang, "detail": why, "task": str(row.get("task") or "")[:120]})
+        key = (lang, why.split(":")[0])
+        g = groups.setdefault(key, {"language": lang, "detail": key[1], "count": 0, "row_ids": [], "examples": []})
+        g["count"] += 1
+        if isinstance(row.get("id"), int):
+            g["row_ids"].append(row["id"])
+        if len(g["examples"]) < 3:
+            g["examples"].append({"id": row.get("id"), "detail": why, "task": str(row.get("task") or "")[:120]})
+    by_language: dict[str, int] = defaultdict(int)
+    for g in groups.values():
+        by_language[g["language"]] += g["count"]
     result: dict[str, Any] = {
         "dry_run": dry_run,
         "checked": checked,
         "mismatches": sum(by_language.values()),
         "by_language": dict(by_language),
-        "examples": examples,
+        "groups": sorted(groups.values(), key=lambda g: -g["count"]),
+        "examples": [e for g in groups.values() for e in g["examples"]][:5],
         "rejected": 0,
     }
-    if dry_run or not hit_ids:
+    if dry_run or not groups:
         return result
     rows = _ensure_row_ids(path, _read_all_rows(path))
     rejected = 0
     for row in rows:
-        payload = row.get("code_example_json")
-        code = payload.get("code") if isinstance(payload, dict) else None
-        if (
-            row.get("review_status") == "pending" and row.get("row_kind") == "code_example"
-            and isinstance(code, str) and check_data_format(code, row.get("language"))
-        ):
+        if wanted is not None and row.get("id") not in wanted:
+            continue
+        if problem(row) is not None:
             row["review_status"] = "rejected"
             row["reject_reason"] = LANGUAGE_MISMATCH
             rejected += 1

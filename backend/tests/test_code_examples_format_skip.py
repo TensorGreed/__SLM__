@@ -48,6 +48,43 @@ class FormatCheckTests(unittest.TestCase):
         self.assertIsNone(check_data_format(bomb, "xml"))  # left unchecked, never parsed
 
 
+class FalsePositiveTests(unittest.TestCase):
+    def test_multi_document_yaml(self):
+        self.assertIsNone(check_data_format("a: 1\n---\nb: 2\n", "yaml"))
+        self.assertIsNone(check_data_format("---\na: 1\n---\n- x\n- y\n", "yaml"))
+        self.assertIsNotNone(check_data_format("a: 1\n---\njust prose\n", "yaml"))
+
+    def test_templated_yaml(self):
+        helm = (
+            "{{- if .Values.enabled }}\napiVersion: v1\nkind: Service\nmetadata:\n"
+            "  name: {{ include \"x.fullname\" . }}\n  labels:\n    {{- include \"x.labels\" . | nindent 4 }}\n"
+            "spec:\n  replicas: {{ .Values.replicas }}\n{{- end }}\n"
+        )
+        self.assertIsNone(check_data_format(helm, "yaml"))
+        ansible = '- name: install\n  package:\n    name: "{{ pkg }}"\n  when: x\n{% if y %}\n- name: more\n  debug: {}\n{% endif %}\n'
+        self.assertIsNone(check_data_format(ansible, "yaml"))
+        self.assertIsNone(check_data_format('"{{ var }}": 1\nother: 2\n', "yaml"))
+
+    def test_xml_fragments(self):
+        frag = "<dependency><id>a</id></dependency>\n<dependency><id>b</id></dependency>"
+        self.assertIsNone(check_data_format(frag, "xml"))
+        self.assertIsNone(check_data_format('<?xml version="1.0"?>\n' + frag, "xml"))
+        self.assertIsNotNone(check_data_format("<a><b></a>\n<c/>", "xml"))
+
+    def test_still_rejected(self):
+        shell = "#!/bin/sh\nset -e\necho hello\n"
+        py = "import os\nprint(os.getcwd())\n"
+        for code in (shell, py, "def f(:\n  pass"):
+            for lang in ("yaml", "xml"):
+                self.assertIsNotNone(check_data_format(code, lang), (code, lang))
+        self.assertIsNotNone(check_data_format('{\n  // comment\n  "a": 1\n}', "json"))  # JSONC stays rejected
+
+    def test_entity_skip_only_for_documents(self):
+        self.assertIsNotNone(check_data_format("echo '<!ENTITY'\nls", "xml"))
+        doc = '<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "b">]><x>&a;</x>'
+        self.assertIsNone(check_data_format(doc, "xml"))
+
+
 class ValidateTests(unittest.TestCase):
     def setUp(self):
         self.pb = get_playbook("code-remediation", SynthMode.CODE_EXAMPLES)
@@ -142,6 +179,41 @@ class RecheckTests(unittest.TestCase):
         self.assertEqual((after[1]["review_status"], after[1]["reject_reason"]), ("rejected", "language_mismatch"))
         self.assertEqual([after[i]["review_status"] for i in (2, 3, 4)], ["pending", "accepted", "pending"])
         self.assertEqual(asyncio.run(go(False))["rejected"], 0)
+
+
+class RecheckHttpTests(unittest.TestCase):
+    def test_body_optional_and_row_ids_are_revalidated(self):
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+
+        pid = 987002
+        d = settings.DATA_DIR / "projects" / str(pid) / "synthetic"
+        d.mkdir(parents=True, exist_ok=True)
+
+        def row(i, lang, code, status="pending"):
+            return {"id": i, "row_kind": "code_example", "language": lang, "review_status": status, "task": "t",
+                    "code_example_json": {"code": code}}
+
+        rows = [row(1, "xml", PY_ANSWER), row(2, "yaml", "just prose"), row(3, "xml", "<a/>"), row(4, "yaml", "a: 1\n")]
+        path = d / "synthetic.jsonl"
+        path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+        url = f"/api/projects/{pid}/synthetic/review-queue/recheck-code-format"
+        with TestClient(app) as client:
+            res = client.post(url)  # no body: a dry run
+            self.assertEqual(res.status_code, 200, res.text)
+            body = res.json()
+            self.assertEqual((body["dry_run"], body["mismatches"], body["rejected"]), (True, 2, 0))
+            self.assertEqual({(g["language"], g["detail"]) for g in body["groups"]},
+                             {("xml", "not well-formed XML"), ("yaml", "not a YAML mapping or list")})
+            self.assertEqual(sorted(i for g in body["groups"] for i in g["row_ids"]), [1, 2])
+            # apply only row 1 (+ ids that are not mismatches, which must be ignored)
+            res = client.post(url, json={"dry_run": False, "row_ids": [1, 3, 4, 99]})
+            self.assertEqual(res.json()["rejected"], 1, res.text)
+        after = {json.loads(x)["id"]: json.loads(x) for x in path.read_text().splitlines()}
+        self.assertEqual(after[1]["review_status"], "rejected")
+        self.assertEqual(after[1]["reject_reason"], "language_mismatch")
+        self.assertEqual([after[i]["review_status"] for i in (2, 3, 4)], ["pending"] * 3)
 
 
 if __name__ == "__main__":

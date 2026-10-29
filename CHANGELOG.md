@@ -3,7 +3,7 @@
 ### Code examples: format check, skips, extra instructions (October 29, 2026)
 
 - A code example whose language is a data / markup format (JSON, YAML, TOML, XML) must now parse as that format, including when the label came from the source chunk (an XML chunk answered with Python and no declared language used to keep the label XML). Failures are rejected as `language_mismatch`. The teacher may also **skip** a chunk with nothing worth teaching: skips are reported (`skipped_seeds`, a few reasons), are not rejects, and a run where every chunk was skipped fails with a message naming the reasons. New `extra_instructions` parameter (up to 2,000 characters) adds your own guidance to the prompt.
-- **Check code formats** in the Generate step's review queue re-checks pending code examples: it shows how many do not parse as their label, and only after you confirm marks them rejected (`language_mismatch`; restorable, never deleted). API: `POST .../synthetic/review-queue/recheck-code-format` with `dry_run`.
+- **Check code formats** in the Generate step's review queue re-checks pending code examples: it shows how many do not parse as their label, grouped by label and kind of failure; you pick the groups, and only those rows are marked rejected (`language_mismatch`, never deleted; restore them from the rejected view's Restore group once it ships). Template expressions in YAML, multi-document YAML and XML fragments with several sibling elements are accepted. API: `POST .../synthetic/review-queue/recheck-code-format` with optional `dry_run` (default true) and `row_ids`.
 
 ### Seed filters for code and document playbooks (October 29, 2026)
 

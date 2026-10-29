@@ -583,6 +583,15 @@ export async function startReviewAssist(projectId: number, args: ReviewAssistReq
 }
 
 
+export interface RecheckCodeFormatGroup {
+    language: string;
+    /** Kind of failure, e.g. "not well-formed XML" or "not a YAML mapping or list". */
+    detail: string;
+    count: number;
+    row_ids: number[];
+    examples: { id: number | null; detail: string; task: string }[];
+}
+
 export interface RecheckCodeFormatResult {
     dry_run: boolean;
     /** Pending code examples looked at. */
@@ -590,14 +599,20 @@ export interface RecheckCodeFormatResult {
     /** Of those, rows whose code does not parse as the format they are labelled with. */
     mismatches: number;
     by_language: Record<string, number>;
+    groups: RecheckCodeFormatGroup[];
     examples: { id: number | null; language: string; detail: string; task: string }[];
     /** Rows marked rejected (always 0 on a dry run). */
     rejected: number;
 }
 
 /** Re-check pending code examples labelled json / yaml / toml / xml. `dryRun` counts only; otherwise the
- *  mismatched rows are marked rejected as `language_mismatch` (reversible, never purged). */
-export async function recheckCodeFormat(projectId: number, dryRun: boolean): Promise<RecheckCodeFormatResult> {
-    const resp = await api.post(`/projects/${projectId}/synthetic/review-queue/recheck-code-format`, { dry_run: dryRun });
+ *  mismatched rows (only `rowIds` when given; the server re-validates each) are marked rejected as
+ *  `language_mismatch`, never purged. */
+export async function recheckCodeFormat(
+    projectId: number, dryRun: boolean, rowIds?: number[],
+): Promise<RecheckCodeFormatResult> {
+    const body: Record<string, unknown> = { dry_run: dryRun };
+    if (rowIds) body.row_ids = rowIds;
+    const resp = await api.post(`/projects/${projectId}/synthetic/review-queue/recheck-code-format`, body);
     return resp.data as RecheckCodeFormatResult;
 }

@@ -1452,7 +1452,13 @@ async def _run_chunked(
             })
             _take(list(accepted))
         elif len(skips) > skip_mark:
-            pass  # the teacher skipped the chunk's seeds: nothing to write, and not a failed chunk
+            # The teacher skipped the chunk's seeds: nothing to write, not a failed chunk; checkpointed so a
+            # resume does not pay for it again.
+            _append_checkpoint(path, {
+                "chunk": k, "rows": [], "raw_snippet": short_snippet(raw),
+                "rejects": build_rejects + (list(rejects[mark:]) if rejects is not None else []),
+                "skips": list(skips[skip_mark:]),
+            })
         else:
             failed.append({"chunk": k + 1, "reason": "no rows accepted from the reply"})
 

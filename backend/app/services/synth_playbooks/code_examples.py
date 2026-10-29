@@ -105,14 +105,17 @@ def _structured_yaml(code: str) -> bool:
     """True when ``code`` is a YAML mapping or sequence (not a bare scalar / empty) whose mapping keys
     all look like keys (word characters, ``.-/$@`` and spaces: ``def f(`` is a key YAML accepts but
     nothing a config file has)."""
-    import re
-
     try:
         import yaml
 
         data = yaml.safe_load(code)
     except Exception:  # noqa: BLE001 - any parse error means not structured
         return False
+    return _structured_data(data)
+
+
+def _structured_data(data: Any) -> bool:
+    """A loaded YAML document that is a mapping or list whose mapping keys all look like keys."""
     if not isinstance(data, (dict, list)):
         return False
     key_ok = re.compile(r"^[\w.\-/$@ ]+$")
@@ -128,9 +131,59 @@ def _structured_yaml(code: str) -> bool:
     return True
 
 
+_TPL_EXPR = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}", re.DOTALL)
+_TPL_ONLY_LINE = re.compile(r"^\s*(?:(?:\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\})\s*)+$")
+_XML_PROLOG = re.compile(r"^\s*<\?xml[^>]*\?>", re.IGNORECASE)
+_XML_DOCTYPE = re.compile(r"<!DOCTYPE[^>\[]*>", re.IGNORECASE)
+
+
+def _yaml_template_free(code: str) -> str:
+    """YAML with Helm / Jinja / Ansible template expressions made parseable: lines that are only template
+    expressions (control lines, includes) are dropped; every other expression becomes a placeholder scalar."""
+    lines = [ln for ln in code.splitlines() if not _TPL_ONLY_LINE.match(ln)]
+    return _TPL_EXPR.sub("tplvalue", "\n".join(lines))
+
+
+def _yaml_problem(code: str) -> str | None:
+    import yaml
+
+    for text in dict.fromkeys((code, _yaml_template_free(code))):  # the code as is, then template-free
+        try:
+            docs = [d for d in yaml.safe_load_all(text) if d is not None]
+        except Exception:  # noqa: BLE001 - any parse error means not structured
+            continue
+        if docs and all(_structured_data(d) for d in docs):
+            return None
+    return "not a YAML mapping or list"
+
+
+def _xml_problem(code: str) -> str | None:
+    from xml.etree import ElementTree
+
+    text = code.strip()
+    if text[:9].upper().startswith(("<?XML", "<!DOCTYPE")) and "<!ENTITY" in text.upper():
+        return None  # a document with entity declarations is never parsed here (no expansion); left unchecked
+    try:
+        ElementTree.fromstring(text)
+        return None
+    except ElementTree.ParseError as exc:
+        error = f"not well-formed XML: {str(exc)[:120]}"
+    # A fragment with several roots (two sibling blocks): retry inside one synthetic root, markup only.
+    body = _XML_DOCTYPE.sub("", _XML_PROLOG.sub("", text, count=1), count=1).strip()
+    if body.startswith("<") and "<!ENTITY" not in body.upper():
+        try:
+            ElementTree.fromstring(f"<fragmentroot>{body}</fragmentroot>")
+            return None
+        except ElementTree.ParseError:
+            pass
+    return error
+
+
 def check_data_format(code: str, language: Any) -> str | None:
     """Why ``code`` is not valid ``language``, or None (valid, or no format check for that language).
-    Covers json, yaml (a mapping or list, see ``_structured_yaml``), toml and xml (well-formed)."""
+    Covers json (strict; JSON with comments is not JSON), yaml (every non-empty document a mapping or list,
+    see ``_structured_data``; template expressions are tolerated), toml and xml (well-formed; a fragment of
+    several sibling elements is accepted)."""
     lang = canonical_language(language)
     if not isinstance(code, str):
         return None
@@ -142,8 +195,7 @@ def check_data_format(code: str, language: Any) -> str | None:
         except ValueError as exc:
             return f"not valid JSON: {str(exc)[:120]}"
     elif lang == "yaml":
-        if not _structured_yaml(code):
-            return "not a YAML mapping or list"
+        return _yaml_problem(code)
     elif lang == "toml":
         import tomllib
 
@@ -152,14 +204,7 @@ def check_data_format(code: str, language: Any) -> str | None:
         except (tomllib.TOMLDecodeError, ValueError) as exc:
             return f"not valid TOML: {str(exc)[:120]}"
     elif lang == "xml":
-        if "<!ENTITY" in code.upper():
-            return None  # entity expansion is never run here; such a document is left unchecked
-        from xml.etree import ElementTree
-
-        try:
-            ElementTree.fromstring(code.strip())
-        except ElementTree.ParseError as exc:
-            return f"not well-formed XML: {str(exc)[:120]}"
+        return _xml_problem(code)
     return None
 
 

@@ -782,7 +782,7 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   **Pending-row re-check**: `synth_review_queue_service.recheck_code_format` /
   `POST .../synthetic/review-queue/recheck-code-format {dry_run}` (default true) counts pending `code_example` rows
   that fail `check_data_format` by language; apply marks them rejected `language_mismatch` (soft, accepted rows
-  untouched, never purged). UI: "Check code formats" in the review queue (dry-run count + confirm).
+  untouched, never purged). Dry run returns `groups` (label + failure kind, count, row_ids, examples); apply takes optional `row_ids`, each re-validated server-side; body optional (omitted = dry run). UI: "Check code formats" (`FormatRecheckCard`) in the review queue: pick groups, apply only those; restore via the rejected view's Restore group. Format check tolerances: multi-document YAML (`safe_load_all`, every non-empty doc structured), template expressions / control lines in YAML, multi-root XML fragments (retried in a synthetic root, must start with `<`); `<!ENTITY` skip only for text starting `<?xml`/`<!DOCTYPE`; JSONC stays rejected.
   Tests: `tests/test_code_examples_format_skip.py`, `SynthReviewQueue.format.test.tsx`.
   Rejects: `parse_error`, `empty_code`, `code_too_long`, `bad_citation` (also no citation at all),
   `copied_chunk` (>= 90% difflib ratio to a cited chunk), `code_does_not_parse` (skipped when no check applies to

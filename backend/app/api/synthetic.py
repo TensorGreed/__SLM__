@@ -1959,12 +1959,13 @@ class RetireGroupRequest(BaseModel):
 
 class RecheckCodeFormatRequest(BaseModel):
     dry_run: bool = Field(default=True, description="Count the mislabelled pending rows without changing anything.")
+    row_ids: list[int] | None = Field(default=None, description="Apply only to these rows (each is re-validated server-side); omitted = every mismatch.")
 
 
 @router.post("/review-queue/recheck-code-format")
 async def recheck_code_format_endpoint(
     project_id: int,
-    req: RecheckCodeFormatRequest,
+    req: RecheckCodeFormatRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Re-check pending code examples labelled json / yaml / toml / xml: code that does not parse as its label
@@ -1972,7 +1973,8 @@ async def recheck_code_format_endpoint(
     reason ``language_mismatch`` (reversible, never purged)."""
     from app.services.synth_review_queue_service import recheck_code_format
 
-    return await recheck_code_format(db, project_id, dry_run=req.dry_run)
+    req = req or RecheckCodeFormatRequest()
+    return await recheck_code_format(db, project_id, dry_run=req.dry_run, row_ids=req.row_ids)
 
 
 @router.post("/review-queue/retire-group")
