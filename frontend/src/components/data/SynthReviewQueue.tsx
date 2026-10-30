@@ -19,6 +19,7 @@ import { budgetExceededMessage, budgetWarningMessage } from '../../api/llmSpend'
 import GenerationModelPicker from '../shared/GenerationModelPicker';
 import type {
     AssistConsensus,
+    JudgeStats,
     ReviewAssist,
     ReviewAssistJudge,
     ReviewQueueEntry,
@@ -136,6 +137,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                 const result = await bulkUpdateSynthReviewQueue(projectId, {
                     rowIds: Array.from(selected),
                     action,
+                    decidedVia: 'manual',
                 });
                 if (action === 'accept') {
                     setFlash(
@@ -184,6 +186,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
             const result = await bulkUpdateSynthReviewQueue(projectId, {
                 rowIds: focusedRowIds,
                 action: 'accept',
+                decidedVia: `group:source:${focusSource}`,
             });
             setFlash(
                 `Accepted ${result.accepted} row${result.accepted === 1 ? '' : 's'} from ${focusSource}. ${result.total_remaining_pending} still pending.`,
@@ -242,6 +245,8 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                 rejectReason: action === 'reject'
                     ? (byConsensus ? `assist:${group.synth_source.replace(':', '_')}` : code ? `assist:${code}` : null)
                     : null,
+                // Record how it was decided: a group action, not a row-by-row look.
+                decidedVia: `group:${groupBy}:${group.synth_source}`,
             });
             setFlash(
                 action === 'accept'
@@ -412,6 +417,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                     onConsensus={setFilterConsensus}
                     onJudge={setFilterJudge}
                 />
+                <JudgeStatsStrip stats={data.facets?.judge_stats ?? []} />
                 <ReviewAssistCard
                     projectId={projectId}
                     pending={data.total_pending}
@@ -585,7 +591,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                                         <code>{row.preview}</code>
                                     </label>
                                     {(row.review_assist_judges?.length ?? 0) >= 2
-                                        ? <AssistJudges judges={row.review_assist_judges ?? []} consensus={row.assist_consensus} rowId={row.id} />
+                                        ? <AssistJudges judges={row.review_assist_judges ?? []} consensus={row.assist_consensus} rowId={row.id} stats={data.facets?.judge_stats} />
                                         : row.review_assist && <AssistBadge assist={row.review_assist} rowId={row.id} />}
                                     {(row.synth_job_id != null || row.synth_backend) && (
                                         <span className="synth-review-queue__provenance" data-testid={`synth-review-queue-provenance-${row.id}`}>
@@ -667,8 +673,51 @@ function canRejectConsensusGroup(group: ReviewQueueGroup): boolean {
     return group.synth_source === 'agree_fail' || group.synth_source === 'single:fail';
 }
 
+/** "passes 99% of 247 rows" — a judge's record over every row it has a current verdict on. */
+function passRateText(s: JudgeStats): string {
+    return `passes ${Math.round((s.pass_rate ?? 0) * 100)}% of ${s.judged} row${s.judged === 1 ? '' : 's'}`;
+}
+
+/** Each judge's pass rate, once per queue; a judge that passes nearly everything is flagged in plain text
+ *  (it may be rubber-stamping, not checking). */
+function JudgeStatsStrip({ stats }: { stats: JudgeStats[] }) {
+    const shown = stats.filter((s) => s.judged > 0);
+    if (shown.length === 0) return null;
+    return (
+        <div className="synth-review-queue__judge-stats" data-testid="synth-review-queue-judge-stats">
+            <span>Judges</span>
+            {shown.map((s) => (
+                <span
+                    key={s.judge}
+                    className={`synth-review-queue__judge-stat${s.rubber_stamp ? ' synth-review-queue__judge-stat--stamp' : ''}`}
+                    data-testid={`synth-review-queue-judge-stat-${s.judge}`}
+                >
+                    <code>{s.judge}</code> {passRateText(s)}
+                    {s.rubber_stamp ? '; may not be checking' : ''}
+                </span>
+            ))}
+        </div>
+    );
+}
+
+/** A judge's pass rate next to its verdict on a row ("(passes 99% of 247 rows; may not be checking)"). */
+function JudgeRate({ stat, testId }: { stat?: JudgeStats; testId: string }) {
+    if (!stat) return null;
+    return (
+        <span
+            className={`synth-review-queue__judge-rate${stat.rubber_stamp ? ' synth-review-queue__judge-stat--stamp' : ''}`}
+            data-testid={testId}
+        >
+            {` (${passRateText(stat)}${stat.rubber_stamp ? '; may not be checking' : ''})`}
+        </span>
+    );
+}
+
 /** Every judge's verdict + note on a row judged by 2+ models, with where they stand. */
-function AssistJudges({ judges, consensus, rowId }: { judges: ReviewAssistJudge[]; consensus?: AssistConsensus; rowId: number }) {
+function AssistJudges({ judges, consensus, rowId, stats }: {
+    judges: ReviewAssistJudge[]; consensus?: AssistConsensus; rowId: number; stats?: JudgeStats[];
+}) {
+    const statOf = (judge: string) => stats?.find((s) => s.judge === judge && s.judged > 0);
     return (
         <span className="synth-review-queue__judges" data-testid={`synth-review-queue-judges-${rowId}`}>
             <span className={`synth-review-queue__consensus synth-review-queue__consensus--${consensus ?? 'none'}`}>
@@ -685,6 +734,7 @@ function AssistJudges({ judges, consensus, rowId }: { judges: ReviewAssistJudge[
                     <strong>{j.verdict}</strong>
                     {j.reason_code !== 'ok' ? ` · ${j.reason_code}` : ''}
                     {j.note ? ` — ${j.note}` : ''}
+                    <JudgeRate stat={statOf(j.judge)} testId={`synth-review-queue-judge-rate-${rowId}-${j.judge}`} />
                 </span>
             ))}
         </span>

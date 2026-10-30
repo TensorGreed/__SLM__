@@ -3660,6 +3660,9 @@ _SYNTHETIC_QUALITY_METADATA_FIELDS = {
     "created_at",
     "updated_at",
     "metadata",
+    # Review-queue decision stamps (how / when a row was accepted or rejected).
+    "decided_via",
+    "decided_at",
 }
 
 

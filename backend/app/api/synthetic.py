@@ -3,7 +3,7 @@
 from typing import Any
 
 from fastapi import Query, APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -1644,6 +1644,22 @@ class BulkReviewQueueRequest(BaseModel):
         ),
         max_length=64,
     )
+    decided_via: str | None = Field(
+        default=None,
+        description=(
+            "How the decision was made, stamped on each accepted / rejected row with ``decided_at``: "
+            "'manual' (hand-picked rows) or 'group:<key>' (a group action, e.g. "
+            "'group:assist_consensus:agree_pass'). Omitted = 'api'. Cut to 128 characters."
+        ),
+        max_length=512,
+    )
+
+    @field_validator("decided_via")
+    @classmethod
+    def _check_decided_via(cls, value: str | None) -> str | None:
+        from app.services.synth_review_queue_service import normalize_decided_via
+
+        return None if value is None else normalize_decided_via(value)
 
 
 class BulkReviewQueueBySourceRequest(BaseModel):
@@ -1719,7 +1735,9 @@ async def bulk_update_synth_review_queue(
     training; rejected rows flip to ``review_status="rejected"``
     (Arc 5 soft-reject) and stay on disk for review + bulk-purge.
     Pass ``reject_reason`` to tag each rejected row with a label
-    the Rejected section's group-by-reason UI uses.
+    the Rejected section's group-by-reason UI uses. Each decided row
+    is stamped ``decided_via`` (``manual`` / ``group:<key>``; omitted =
+    ``api``) and ``decided_at``.
     """
     from app.services.synth_review_queue_service import bulk_update_review_queue
 
@@ -1731,6 +1749,7 @@ async def bulk_update_synth_review_queue(
         row_ids=req.row_ids,
         action=req.action,  # type: ignore[arg-type]
         reject_reason=req.reject_reason,
+        decided_via=req.decided_via,
     )
 
 
@@ -1939,6 +1958,7 @@ async def bulk_update_synth_review_queue_by_source(
     key. Powers the one-click "Accept all (N)" / "Reject all (N)" on the Data
     Studio review-queue panel's pending groups (Epic E — actionable workbench),
     reusing the same soft-reject + record-count sync as ``/bulk-update``.
+    Decided rows are stamped ``decided_via = source:<source>`` + ``decided_at``.
     """
     from app.services.synth_review_queue_service import bulk_update_by_source
 

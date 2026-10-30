@@ -95,12 +95,12 @@ describe('SynthReviewQueue pre-screen', () => {
         await user.click(await screen.findByTestId('synth-review-queue-group-reject-fail:unsafe_pattern'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/5/synthetic/review-queue/bulk-update',
-            { row_ids: [1, 2], action: 'reject', reject_reason: 'assist:unsafe_pattern' },
+            { row_ids: [1, 2], action: 'reject', reject_reason: 'assist:unsafe_pattern', decided_via: 'group:assist_reason:fail:unsafe_pattern' },
         ));
         await user.click(screen.getByTestId('synth-review-queue-group-accept-pass:ok'));
         await waitFor(() => expect(apiMock.post).toHaveBeenLastCalledWith(
             '/projects/5/synthetic/review-queue/bulk-update',
-            { row_ids: [3], action: 'accept', reject_reason: null },
+            { row_ids: [3], action: 'accept', reject_reason: null, decided_via: 'group:assist_reason:pass:ok' },
         ));
     });
 
@@ -126,7 +126,7 @@ describe('SynthReviewQueue pre-screen', () => {
         await user.click(button);
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/5/synthetic/review-queue/bulk-update',
-            { row_ids: [1], action: 'reject', reject_reason: 'assist:unsafe_pattern' },
+            { row_ids: [1], action: 'reject', reject_reason: 'assist:unsafe_pattern', decided_via: 'group:assist_reason:fail:unsafe_pattern' },
         ));
         expect(apiMock.get.mock.calls.length).toBeGreaterThan(before);
     });

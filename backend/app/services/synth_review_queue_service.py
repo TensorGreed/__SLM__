@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import shutil
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -88,12 +89,39 @@ PROVENANCE_KEYS = ("synth_job_id", "synth_backend", "synth_batch")
 # sidecar (``synth_review_assist_service``); a legacy / hand-written row may carry it inline.
 NO_ASSIST_LABEL = "(not pre-screened)"
 ASSIST_KEYS = ("review_assist", "review_assist_judges", "assist_consensus")
+# How and when a row's accept / reject was decided (stamped by ``bulk_update_review_queue``):
+# ``decided_via`` is ``manual`` (hand-ticked rows), ``group:<key>`` (a group action in the UI),
+# ``source:<synth_source>`` (by-source bulk) or ``api`` (a caller that did not say). Record keeping
+# only; rows decided before this carry neither key.
+DECISION_KEYS = ("decided_via", "decided_at")
+DECIDED_VIA_MAX = 128
+DECIDED_VIA_DEFAULT = "api"
+_DECIDED_VIA_PREFIXES = ("group:", "source:")
+
+
+def normalize_decided_via(value: Any) -> str:
+    """``decided_via`` checked loosely: ``manual`` / ``api`` / ``group:<key>`` / ``source:<key>`` with a
+    non-empty key, control characters dropped, cut to ``DECIDED_VIA_MAX`` chars; ``None`` / blank ->
+    ``api``. Anything else raises ``ValueError``."""
+    if value is None:
+        return DECIDED_VIA_DEFAULT
+    text = "".join(ch for ch in str(value) if ch.isprintable()).strip()[:DECIDED_VIA_MAX]
+    if not text:
+        return DECIDED_VIA_DEFAULT
+    if text in ("manual", "api"):
+        return text
+    if text.startswith(_DECIDED_VIA_PREFIXES) and text.split(":", 1)[1].strip():
+        return text
+    raise ValueError("decided_via must be 'manual', 'api', 'group:<key>' or 'source:<key>'")
 
 
 def _row_preview(row: dict[str, Any], *, limit: int = 280) -> str:
     """Single-line preview string used by the queue list. Drops the
     provenance fields and serializes only the payload-shaped keys."""
-    skip = {"id", "synth_source", "synth_confidence", "review_status", "status", "generated_at", "source", "model", *ASSIST_KEYS, *PROVENANCE_KEYS}
+    skip = {
+        "id", "synth_source", "synth_confidence", "review_status", "status", "generated_at", "source", "model",
+        *ASSIST_KEYS, *PROVENANCE_KEYS, *DECISION_KEYS,
+    }
     payload = {k: v for k, v in row.items() if k not in skip}
     if not payload:
         payload = row
@@ -326,6 +354,8 @@ def _bucket_rows_by_source(
                     "review_assist": _assist(row),
                     "review_assist_judges": _judges(row),
                     "assist_consensus": _consensus(row),
+                    "decided_via": row.get("decided_via") if isinstance(row.get("decided_via"), str) else None,
+                    "decided_at": row.get("decided_at") if isinstance(row.get("decided_at"), str) else None,
                     "preview": _row_preview(row),
                     "payload": {
                         k: v for k, v in row.items()
@@ -405,12 +435,15 @@ async def list_review_queue(
     path = _synthetic_jsonl_path(project_id)
     all_rows = _ensure_row_ids(path, _read_all_rows(path))
     # Pre-screen verdicts live in a sidecar (never in the jsonl): merge them on for display.
-    from app.services.synth_review_assist_service import attach_verdicts
+    from app.services.synth_review_assist_service import attach_verdicts, judge_stats
 
     attach_verdicts(project_id, all_rows)
     # Facets describe every pending row; the filters narrow the three lists below
     # (the totals stay project-wide so the strip still adds up).
     facets = _provenance_facets([r for r in all_rows if r.get("review_status") == "pending"])
+    # Per-judge pass rates (+ the rubber-stamp flag) over EVERY row a judge has a current verdict on —
+    # accepting rows must not shrink a judge's record.
+    facets["judge_stats"] = judge_stats(all_rows)
     total_rows_all = len(all_rows)
     if synth_job_id is not None:
         all_rows = [r for r in all_rows if _row_job_id(r) == synth_job_id]
@@ -508,8 +541,12 @@ async def bulk_update_review_queue(
     row_ids: list[int],
     action: ReviewAction,
     reject_reason: str | None = None,
+    decided_via: str | None = None,
 ) -> dict[str, Any]:
     """Bulk apply an accept / reject to a set of pending rows.
+
+    Every row accepted or rejected is stamped ``decided_via`` (see ``normalize_decided_via``;
+    omitted = ``api``) and ``decided_at`` (UTC ISO) — record keeping, nothing reads them to decide.
 
     - ``accept`` flips ``review_status`` from ``"pending"`` to
       ``"accepted"`` for matching rows. Accepted rows are picked up
@@ -532,6 +569,8 @@ async def bulk_update_review_queue(
         raise ValueError("action must be 'accept' or 'reject'")
     if reject_reason is not None:
         reject_reason = str(reject_reason).strip() or None
+    via = normalize_decided_via(decided_via)
+    decided_at = datetime.now(timezone.utc).isoformat()
     if not row_ids:
         return {
             "accepted": 0,
@@ -562,6 +601,8 @@ async def bulk_update_review_queue(
                 not_pending += 1
                 new_rows.append(row)
                 continue
+            row["decided_via"] = via
+            row["decided_at"] = decided_at
             if action == "accept":
                 row["review_status"] = "accepted"
                 accepted_count += 1
@@ -645,6 +686,7 @@ async def bulk_update_by_source(
         row_ids=matched_ids,
         action=action,
         reject_reason=reject_reason,
+        decided_via=f"source:{source}",
     )
     if not matched_ids:
         # bulk_update_review_queue early-returns a zero summary (with a
@@ -686,11 +728,15 @@ async def set_group_retired(db: AsyncSession, project_id: int, *, source: str, r
             row["review_status"] = "rejected"
             row["reject_reason"] = RETIRED_REASON
             row["retired_at"] = stamp
+            row["decided_via"] = f"retire:{source}"[:DECIDED_VIA_MAX]
+            row["decided_at"] = stamp
             changed += 1
         elif not retired and status == "rejected" and row.get("reject_reason") == RETIRED_REASON:
             row["review_status"] = "accepted"
             row.pop("reject_reason", None)
             row.pop("retired_at", None)
+            row["decided_via"] = f"unretire:{source}"[:DECIDED_VIA_MAX]
+            row["decided_at"] = stamp
             changed += 1
     if changed:
         _atomic_write_rows(path, rows)
@@ -866,6 +912,8 @@ async def recheck_code_format(
         if problem(row) is not None:
             row["review_status"] = "rejected"
             row["reject_reason"] = LANGUAGE_MISMATCH
+            row["decided_via"] = "rule:language_mismatch"
+            row["decided_at"] = datetime.now(timezone.utc).isoformat()
             rejected += 1
     if rejected:
         _atomic_write_rows(path, rows)
@@ -929,6 +977,8 @@ def apply_plan_rules_check(project_id: int, computed: dict[str, Any]) -> dict[st
         row["review_status"] = "rejected"
         row["reject_reason"] = engine.reject_reason_for(entry[0][0])
         row["plan_rule_ids"] = entry[0]
+        row["decided_via"] = "rule:plan_rules"
+        row["decided_at"] = datetime.now(timezone.utc).isoformat()
         rejected += 1
     if rejected:
         _atomic_write_rows(path, rows)
@@ -970,7 +1020,8 @@ def restore_rejected_rows(
 
     Selectors (at least one; all given must match): exact ``reject_reason`` (``""`` = rows with no
     reason), ``reject_reason_prefix`` (e.g. ``rule_violation:``), ``row_ids``. A restored row loses
-    ``reject_reason`` and the reason-specific fields (``plan_rule_ids``, ``retired_at``); everything
+    ``reject_reason``, the reason-specific fields (``plan_rule_ids``, ``retired_at``) and the decision
+    stamps (``decided_via`` / ``decided_at``); everything
     else is kept. ``dry_run`` (default) only counts, by reason. Synchronous (atomic on the event loop).
     """
     if reject_reason is None and not reject_reason_prefix and not row_ids:
@@ -996,7 +1047,8 @@ def restore_rejected_rows(
         restored += 1
         if not dry_run:
             row["review_status"] = "pending"
-            for key in ("reject_reason", "plan_rule_ids", "retired_at"):
+            # Back to pending: the reject (and how it was decided) is undone.
+            for key in ("reject_reason", "plan_rule_ids", "retired_at", *DECISION_KEYS):
                 row.pop(key, None)
     if restored and not dry_run:
         _atomic_write_rows(path, rows)

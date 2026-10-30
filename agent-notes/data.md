@@ -56,7 +56,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   attached to the exception). Result: `rows_judged, rows_unparseable, verdicts {pass, fail, unsure}, reasons {code: n}, calls,
   rows_per_call, backend_used`; 0 judged raises.
   **Persistence = a sidecar, not the jsonl**: `synthetic/review_assist.json` (`{row id: {judge: {verdict, reason_code, note,
-  job_id, batch?, at, sig}}}` — the judge is the entry's `safe_backend_label`; `save_verdicts` still takes entries carrying
+  job_id, batch?, at, sig, rubric_sha?, history?}}}` — the judge is the entry's `safe_backend_label`; `save_verdicts` still takes entries carrying
   `backend` and files them under it, so a re-run by the SAME judge replaces only its entry and another judge's stays. The
   old single-verdict shape `{row id: {verdict, ..., backend, ...}}` is migrated on every read (`_normalize_row_entry`: the
   `backend` becomes the key, every other field is kept; no backend -> `(unknown judge)`) and the file is rewritten in the new shape
@@ -65,7 +65,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   race them and could drop a concurrent append. The sidecar has one writer path (`save_verdicts`: process lock + temp file +
   `os.replace`; a re-run replaces a row's entry) and is merged onto rows when the queue is listed (`attach_verdicts`). `sig` hashes
   the row's content minus provenance / review fields, so an edited row or a reused id (after a purge) does not inherit a verdict,
-  while accept / reject keeps it (bookkeeping stamps — `conventions_marked_current_at`, `conventions_carried_forward_at`, `relabelled_at` — are ignored too). Orphans of purged rows are inert. **Consensus** (`attach_verdicts`, read time, judges whose `sig` still matches the row): `review_assist_judges` (oldest first, each with
+  while accept / reject keeps it (bookkeeping stamps — `conventions_marked_current_at`, `conventions_carried_forward_at`, `relabelled_at`, `decided_via`, `decided_at` — are ignored too). Orphans of purged rows are inert. **Consensus** (`attach_verdicts`, read time, judges whose `sig` still matches the row): `review_assist_judges` (oldest first, each with
   `judge`), `assist_consensus` ∈ none / single / agree_pass / agree_fail / disagree (`consensus_of`: all pass → agree_pass, all fail →
   agree_fail, anything else across ≥2 judges → disagree, so an `unsure` next to a pass is a disagreement), and `review_assist` = the most
   recent valid verdict (`backend` = its judge) for compatibility. Queue: `?assist_consensus=` (also `single:<verdict>`), `?judge=` (that
@@ -84,6 +84,28 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   Verdict + reason group-by with "Accept group" / "Reject group" (re-fetches the group's current pending ids + verdicts right before the bulk call; Accept is offered only on `pass` groups — never `fail`, `unsure` or "(not pre-screened)"; Reject is offered on all); bell deep link to the queue, summary "pass N · fail N · unsure N"
   (+ spend from the Job result). Tests `tests/test_synth_review_assist.py`, `SynthReviewQueue.assist.test.tsx`,
   `NotificationBell.test.tsx`.
+  **Judge calibration V1 (record keeping only, no behaviour change).** (1) Decision provenance: every row accepted /
+  rejected by `bulk_update_review_queue` is stamped `decided_via` + `decided_at` (UTC ISO). `BulkReviewQueueRequest.decided_via`
+  (optional) is `manual` / `group:<key>` (also `api` / `source:<key>`), checked loosely by `normalize_decided_via` (control chars
+  dropped, cut to 128, `group:` needs a key, anything else 422); omitted = `api`; `bulk_update_by_source` records
+  `source:<synth_source>` (no request field); automated rejects stamp `rule:language_mismatch` / `rule:plan_rules`, and
+  retire / un-retire stamp `retire:<source>` / `unretire:<source>`. The UI sends `manual` for hand-ticked rows, `group:<groupBy>:<group key>` for group
+  accept / reject and `group:source:<source>` for the focus banner. The queue returns `decided_via` / `decided_at` per row (kept
+  out of `preview`, still in `payload` like `reject_reason`); restore clears them. Both keys are in the assist service's
+  `_BOOKKEEPING_KEYS` (so the `sig` and the verdicts survive an accept, and the judge never sees them), in Data Studio's
+  `_SYNTHETIC_QUALITY_METADATA_FIELDS` and task-shape detection's bookkeeping set, and skipped by `trainability_forecast_service._row_to_text`'s
+  all-strings fallback (the split dedup key). Training reads named fields; a few generic all-string fallbacks
+  (`dataset_intelligence_service`, `evaluation_service._heldout_texts`, cleaning dedupe) can still see them, as they already
+  see `synth_source` / `review_status`. Rows decided earlier have neither key. (2) Judge identity: each new sidecar entry carries `rubric_sha` (12-hex
+  sha256 of `_rubric_block(kind) + _extra_rubric_block(rubric_text)`, the same strings `build_prompt` puts in the prompt);
+  `save_verdicts` keeps a same-judge entry it replaces in the new entry's `history` (newest first, `HISTORY_CAP`=5, items without
+  their own history; a duplicated project nulls their `job_id` too). History stays in the sidecar (not in the queue rows); old
+  entries without either field read and count as before. (3) Rubber-stamp flag: `facets.judge_stats` = per judge `{judge, judged,
+  pass, fail, unsure, unparseable, pass_rate, rubber_stamp}` over EVERY row with a current-signature verdict (pending, accepted
+  or rejected — unlike the other facets); `judge_unparseable` verdicts are `unparseable`, not `judged`; `rubber_stamp` = judged ≥
+  `RUBBER_STAMP_MIN_ROWS` (50) and pass rate ≥ `RUBBER_STAMP_PASS_RATE` (0.98). UI: `JudgeStatsStrip` above the pre-screen card
+  ("<judge> passes 99% of 247 rows; may not be checking") and the same rate next to each judge on a multi-judge row. Tests
+  `tests/test_synth_review_assist_judges.py` (JudgeIdentity / RubberStamp / DecisionProvenance), `SynthReviewQueue.judges.test.tsx`.
 - **Versioned prepared splits** (Epic E) — `split_dataset` writes the active
   `prepared/{train,val,test}.jsonl` + `manifest.json` (the single source the
   trainer/export/coverage read) AND snapshots each run to

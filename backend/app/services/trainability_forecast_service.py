@@ -292,8 +292,10 @@ def _row_to_text(row: dict[str, Any]) -> str:
         elif isinstance(value, str):
             parts.append(value)
     if not parts:
-        for value in row.values():
-            if isinstance(value, str):
+        for key, value in row.items():
+            # Review bookkeeping (who/when decided) is not row content: a per-decision timestamp
+            # would stop identical rows from deduplicating.
+            if isinstance(value, str) and key not in ("decided_via", "decided_at"):
                 parts.append(value)
     return " ".join(parts)
 

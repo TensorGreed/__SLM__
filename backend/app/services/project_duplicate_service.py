@@ -97,6 +97,10 @@ def _drop_copied_job_ids(project_id: int) -> None:
                     for e in ([entry] if isinstance(entry, dict) and "verdict" in entry else list(entry.values()) if isinstance(entry, dict) else []):
                         if isinstance(e, dict) and e.get("job_id") is not None:
                             e["job_id"] = None
+                        # Entries a re-run replaced (``history``) name the source's Jobs too.
+                        for h in (e.get("history") or []) if isinstance(e, dict) else []:
+                            if isinstance(h, dict) and h.get("job_id") is not None:
+                                h["job_id"] = None
                 sidecar.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except (OSError, ValueError):
             pass

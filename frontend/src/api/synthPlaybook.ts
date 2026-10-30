@@ -335,6 +335,9 @@ export interface ReviewAssist {
     job_id?: number | null;
     batch?: boolean;
     at?: string;
+    /** Short hash of the rubric text the judge saw (built-in for the row kind + the extra rubric);
+     *  absent on verdicts written before it was recorded. */
+    rubric_sha?: string;
 }
 
 /** One judge's verdict on a row (the sidecar keeps one per judge = the backend label). */
@@ -359,6 +362,11 @@ export interface ReviewQueueEntry {
     synth_backend?: string | null;
     /** Written through a Message Batch. */
     synth_batch?: boolean;
+    /** How the row's accept / reject was decided: `manual`, `group:<key>`, `source:<synth_source>` or
+     *  `api` (null: still pending, or decided before this was recorded). */
+    decided_via?: string | null;
+    /** When it was decided (UTC ISO). */
+    decided_at?: string | null;
     preview: string;
     payload: Record<string, unknown>;
 }
@@ -391,6 +399,19 @@ export interface ReviewQueueGroup {
     rows: ReviewQueueEntry[];
 }
 
+/** One judge's record in the review queue. `rubber_stamp`: it passed at least 98% of 50+ rows, so it
+ *  may not be checking anything. `unparseable` replies are left out of `judged`. */
+export interface JudgeStats {
+    judge: string;
+    judged: number;
+    pass: number;
+    fail: number;
+    unsure: number;
+    unparseable?: number;
+    pass_rate: number | null;
+    rubber_stamp: boolean;
+}
+
 export interface ReviewQueueResponse {
     project_id: number;
     dataset_id: number | null;
@@ -415,6 +436,8 @@ export interface ReviewQueueResponse {
         reason_codes?: { reason_code: string; count: number }[];
         consensus?: { consensus: AssistConsensus; count: number }[];
         judges?: { judge: string; count: number }[];
+        /** Per judge, over every row it has a current verdict on (pending, accepted or rejected). */
+        judge_stats?: JudgeStats[];
     };
     groups: ReviewQueueGroup[];
     /** Accepted rows (passed review or pre-Epic-2a legacy rows).
@@ -490,12 +513,16 @@ export async function bulkUpdateSynthReviewQueue(
         // row (e.g. 'duplicate', 'schema_invalid', 'low_confidence').
         // Ignored when action='accept'.
         rejectReason?: string | null;
+        /** How the decision was made: `manual` (hand-ticked rows) or `group:<groupBy>:<key>` (a group
+         *  action). Stamped on each row with `decided_at`; omitted = `api`. Cut to 128 characters. */
+        decidedVia?: string | null;
     },
 ): Promise<BulkUpdateResult> {
     const resp = await api.post(`/projects/${projectId}/synthetic/review-queue/bulk-update`, {
         row_ids: args.rowIds,
         action: args.action,
         reject_reason: args.rejectReason ?? null,
+        ...(args.decidedVia ? { decided_via: args.decidedVia.slice(0, 128) } : {}),
     });
     return resp.data as BulkUpdateResult;
 }

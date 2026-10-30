@@ -219,7 +219,7 @@ describe('SynthReviewQueue', () => {
 
         expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/1/synthetic/review-queue/bulk-update',
-            { row_ids: [1], action: 'accept', reject_reason: null },
+            { row_ids: [1], action: 'accept', reject_reason: null, decided_via: 'manual' },
         );
     });
 
@@ -265,7 +265,7 @@ describe('SynthReviewQueue', () => {
         });
         expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/1/synthetic/review-queue/bulk-update',
-            { row_ids: [1], action: 'reject', reject_reason: null },
+            { row_ids: [1], action: 'reject', reject_reason: null, decided_via: 'manual' },
         );
     });
 
@@ -361,7 +361,10 @@ describe('SynthReviewQueue', () => {
             // the sibling hard_negatives group.
             expect(apiMock.post).toHaveBeenCalledWith(
                 '/projects/1/synthetic/review-queue/bulk-update',
-                { row_ids: [1, 2], action: 'accept', reject_reason: null },
+                {
+                    row_ids: [1, 2], action: 'accept', reject_reason: null,
+                    decided_via: 'group:source:playbook:classification:positives_paraphrase',
+                },
             );
         });
         // Banner auto-dismisses once the source bucket is drained.

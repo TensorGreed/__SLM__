@@ -121,7 +121,7 @@ describe('SynthReviewQueue with several judges', () => {
         await user.click(button);
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/5/synthetic/review-queue/bulk-update',
-            { row_ids: [1], action: 'accept', reject_reason: null },
+            { row_ids: [1], action: 'accept', reject_reason: null, decided_via: 'group:assist_consensus:agree_pass' },
         ));
     });
 
@@ -135,7 +135,7 @@ describe('SynthReviewQueue with several judges', () => {
         await user.click(await screen.findByTestId('synth-review-queue-group-accept-pass'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/5/synthetic/review-queue/bulk-update',
-            { row_ids: [1], action: 'accept', reject_reason: null },
+            { row_ids: [1], action: 'accept', reject_reason: null, decided_via: 'group:verdict:pass' },
         ));
     });
 
@@ -165,5 +165,34 @@ describe('SynthReviewQueue with several judges', () => {
         expect(url).toBe('/projects/5/synthetic/review-assist');
         expect(body).toMatchObject({ only_missing_judge: true, prior_verdicts: ['fail', 'unsure'] });
         expect(body.consensus).toBeUndefined();
+    });
+    it('shows each judge pass rate and flags a rubber-stamp judge in plain text', async () => {
+        mockGets({
+            ...payload,
+            facets: {
+                ...payload.facets,
+                judge_stats: [
+                    { judge: A, judged: 40, pass: 30, fail: 8, unsure: 2, pass_rate: 0.75, rubber_stamp: false },
+                    { judge: B, judged: 247, pass: 245, fail: 1, unsure: 1, pass_rate: 0.9919, rubber_stamp: true },
+                ],
+            },
+        });
+        render(<SynthReviewQueue projectId={5} />);
+        const strip = await screen.findByTestId('synth-review-queue-judge-stats');
+        expect(screen.getByTestId(`synth-review-queue-judge-stat-${A}`).textContent).toBe(`${A} passes 75% of 40 rows`);
+        expect(screen.getByTestId(`synth-review-queue-judge-stat-${B}`).textContent)
+            .toBe(`${B} passes 99% of 247 rows; may not be checking`);
+        expect(strip.textContent).not.toContain(`${A} passes 75% of 40 rows; may not be checking`);
+        // next to a judge's verdict on a row too
+        expect(screen.getByTestId(`synth-review-queue-judge-rate-3-${B}`).textContent)
+            .toBe(' (passes 99% of 247 rows; may not be checking)');
+        expect(screen.getByTestId(`synth-review-queue-judge-rate-3-${A}`).textContent).toBe(' (passes 75% of 40 rows)');
+    });
+
+    it('renders no judge strip when the queue carries no judge stats', async () => {
+        render(<SynthReviewQueue projectId={5} />);
+        await screen.findByTestId('synth-review-queue-judges-3');
+        expect(screen.queryByTestId('synth-review-queue-judge-stats')).toBeNull();
+        expect(screen.queryByTestId(`synth-review-queue-judge-rate-3-${A}`)).toBeNull();
     });
 });

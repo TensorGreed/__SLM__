@@ -583,12 +583,16 @@ class RetireGroupTests(unittest.TestCase):
         self.assertEqual((out["rows_changed"], out["group_rows"]), (1, 2))
         texts = sorted(r["text"] for r in _load_records_from_file(path))
         self.assertEqual(texts, ["c"], "retired rows never train")
+        retired = {x["id"]: x for x in (json.loads(l) for l in path.read_text().splitlines() if l.strip())}
+        self.assertEqual(retired[1]["decided_via"], "retire:g1")
+        self.assertNotIn("decided_via", retired[2], "a row it did not change keeps its record")
         q = client.get(f"/api/projects/{pid}/synthetic/review-queue").json()
         self.assertEqual(q["labeller_pins"], ["cloud:anthropic:m"])
         out = client.post(url, json={"source": "g1", "retired": False}).json()
         self.assertEqual(out["rows_changed"], 1)
         saved = {x["id"]: x for x in (json.loads(l) for l in path.read_text().splitlines() if l.strip())}
         self.assertEqual(saved[1]["review_status"], "accepted")
+        self.assertEqual(saved[1]["decided_via"], "unretire:g1")
         self.assertEqual(saved[2]["reject_reason"], "bad", "a row rejected for another reason stays rejected")
         self.assertEqual(client.post(url, json={"source": "nope"}).status_code, 400)
 

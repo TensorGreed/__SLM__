@@ -527,7 +527,8 @@ async def sample_project_rows(db: AsyncSession, project_id: int, limit: int = 20
             rows.extend(_load_records_from_file(Path(doc.file_path), max_records=limit - len(rows)))
     # Drop bookkeeping so the detector sees the user's columns.
     bookkeeping = {"id", "source_document_id", "source_doc", "chunk_id", "row_index", "status",
-                   "source", "import_locator", "import_mapper", "row_key", "imported_at", "review_status"}
+                   "source", "import_locator", "import_mapper", "row_key", "imported_at", "review_status",
+                   "decided_via", "decided_at"}
     return [
         {k: v for k, v in row.items() if k not in bookkeeping and not str(k).startswith("_")}
         for row in rows
