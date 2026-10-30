@@ -5,7 +5,7 @@
 
 import type { EvalJudgeTrust } from './evalJudgeCalibration';
 import api from './client';
-import type { LiftEvidence, SeedEvidence } from '../components/evaluation/liftEvidence';
+import type { EvalSizing, LiftEvidence, SeedEvidence } from '../components/evaluation/liftEvidence';
 import type { RetrievalSplit } from '../components/evaluation/retrievalSplit';
 
 export type EvalVerdict =
@@ -231,6 +231,9 @@ export interface EvalSummary {
     /** Rows better / worse / same vs the base model + noise verdict for the
      *  headline lift; null for older results or non-row metrics. */
     evidence?: LiftEvidence | null;
+    /** Epic W2: the smallest difference this run's test rows reliably show
+     *  and the rows a 5-pt change needs (single eval; null without per-row scores). */
+    sizing?: EvalSizing | null;
     /** Multi-seed run: per-seed headlines + the spread across seeds. */
     seed_evidence?: SeedEvidence | null;
     seeds?: Array<{ experiment_id: number; seed_value: number | null; headline: EvalSummaryHeadline | null }> | null;

@@ -290,6 +290,7 @@ def _attach_row_evidence(
     rows better / worse / same vs the base model and whether the change is
     more than noise. None where it can't be computed — a bare delta on a
     handful of rows must not read as a result."""
+    from app.services.eval_sizing_service import metric_label, paired_sizing
     from app.services.paired_comparison_stats import paired_difference_evidence
 
     for row in metric_lifts:
@@ -300,6 +301,11 @@ def _attach_row_evidence(
             continue
         evidence = paired_difference_evidence(*paired)
         evidence["metric_id"] = metric_id
+        # Epic W2: the smallest change these paired rows reliably show and the
+        # rows a TARGET_GAP change needs (eval_sizing_service; additive).
+        evidence["sizing"] = paired_sizing(
+            *paired, metric_id=metric_id, row_noun="paired rows", metric_label=metric_label(metric_id)
+        )
         row["evidence"] = evidence
 
 

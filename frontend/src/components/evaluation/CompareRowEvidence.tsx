@@ -142,6 +142,8 @@ export default function CompareRowEvidence({
             ? `No row-by-row verdict: ${ev.message ?? ev.reason}`
             : evidenceHeadline(ev);
     const why = explanation(ev);
+    // Epic W2: when the rows can't call it, say how big a change they could show.
+    const showSizing = !ev.reason && (ev.verdict === 'within_noise' || ev.verdict === 'too_few_rows');
     const offer = ev.rescore;
 
     const rescore = async () => {
@@ -185,6 +187,11 @@ export default function CompareRowEvidence({
                 </p>
             )}
             {why && <p className="eval-compare__evidence-detail">{why}</p>}
+            {showSizing && ev.sizing && (
+                <p className="eval-compare__evidence-sizing" data-testid="eval-compare-evidence-sizing">
+                    {ev.sizing.line}
+                </p>
+            )}
             {ev.verdict === 'not_comparable' && ev.comparability && (
                 <ul className="eval-compare__evidence-diffs" data-testid="eval-compare-evidence-diffs">
                     {ev.comparability.differences.map((d) => (

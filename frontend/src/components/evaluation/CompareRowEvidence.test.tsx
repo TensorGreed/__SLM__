@@ -95,6 +95,21 @@ describe('CompareRowEvidence', () => {
         expect(screen.queryByTestId('eval-compare-rescore')).not.toBeInTheDocument();
     });
 
+    it('within noise: adds the detectable-difference line; a clear gain does not', () => {
+        // Backend: s_d² = 0.112721 → gap 0.1065 (~11 pts), rows(5 pts) 354 (~360).
+        const sizing = {
+            basis: 'paired' as const, metric_id: 'exact_match', n: 78, score_kind: 'binary' as const, sd: 0.3357,
+            detectable_gap: 0.1065, target_gap: 0.05, rows_needed: 354, enough: false, degenerate: null,
+            confidence: 0.95, power: 0.8,
+            line: '78 paired rows (exact match): gaps under ~11 pts may go unnoticed; ~360 rows to see a 5-pt change.',
+        };
+        const { unmount } = render(<CompareRowEvidence projectId={5} evidence={withinNoise({ sizing })} a={prov()} b={prov()} />);
+        expect(screen.getByTestId('eval-compare-evidence-sizing')).toHaveTextContent(sizing.line);
+        unmount();
+        render(<CompareRowEvidence projectId={5} evidence={withinNoise({ sizing, verdict: 'better', ci_low: 0.01 })} a={prov()} b={prov()} />);
+        expect(screen.queryByTestId('eval-compare-evidence-sizing')).not.toBeInTheDocument();
+    });
+
     it('not comparable: names the differences, gives no counts, re-scores the older run', async () => {
         apiMock.post.mockResolvedValue({ data: { started: true, job_id: 7 } });
         const ev = withinNoise({

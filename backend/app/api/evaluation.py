@@ -825,6 +825,11 @@ async def compare_two_experiments(
     offer (the lift check on the older run). Each side carries
     ``provenance`` (eval result id, split version, judge, scoring).
 
+    Epic W2 (additive): ``row_evidence.sizing`` (and each
+    ``metrics[].sizing``) gives the smallest change the paired rows
+    reliably show (95% confidence, 80% power) and the rows a 5-pt change
+    needs, with a plain ``line``.
+
     400 — same experiment passed for a + b (no comparison to make).
     404 — either experiment missing / not in the project.
     """
@@ -1275,7 +1280,12 @@ async def get_eval_summary(
 ):
     """The Eval tab's default card: better than the base model? by how
     much? five failing examples. ``experiment_id`` defaults to the latest
-    completed trained run."""
+    completed trained run.
+
+    Epic W2 (additive): ``sizing`` is a conservative (unpaired) bound for
+    comparing two runs on the run's test rows — the smallest gap reliably
+    detectable at 95% confidence / 80% power and the rows a 5-pt change
+    needs; ``evidence.sizing`` is the paired figure for the lift. Both carry a plain ``line``; null without per-row scores."""
     from app.services.eval_summary_service import build_eval_summary
 
     summary = await build_eval_summary(db, project_id, experiment_id=experiment_id)

@@ -5,6 +5,46 @@
  * lift check card so a lift on a few rows reads the same everywhere.
  */
 
+/** How big a difference these rows can reliably show (backend
+ *  ``eval_sizing_service``, Epic W2): 95% confidence / 80% power. ``basis``
+ *  ``paired`` uses the spread of per-row differences (lift, A-vs-B);
+ *  ``single`` the conservative unpaired bound for comparing two runs on
+ *  rows like this eval's (√2 × its own one-sample precision). ``line`` is the plain sentence, with
+ *  the row count and metric in it. */
+export interface EvalSizing {
+    basis: 'paired' | 'single';
+    metric_id: string | null;
+    n: number;
+    score_kind: 'binary' | 'continuous';
+    sd: number | null;
+    detectable_gap: number | null;
+    target_gap: number;
+    rows_needed: number;
+    enough: boolean;
+    degenerate: 'too_few_rows' | 'all_pass' | 'all_fail' | 'zero_variance' | 'identical_scores' | 'constant_shift' | null;
+    confidence: number;
+    power: number;
+    line: string;
+    /** Single basis only: this eval's own precision against a fixed value (not a comparison; API only). */
+    one_sample_gap?: number | null;
+    one_sample_rows_needed?: number;
+}
+
+/** The one sizing figure to show. With paired evidence: the paired figure,
+ *  only when the evidence can't call the change (within noise / too few rows)
+ *  — never next to a significant verdict. Without paired evidence: the
+ *  eval's own conservative (unpaired) comparison bound. */
+export function sizingToShow(
+    evidence: { verdict: string; sizing?: EvalSizing | null } | null | undefined,
+    single: EvalSizing | null | undefined,
+): EvalSizing | null {
+    if (evidence) {
+        const unproven = evidence.verdict === 'within_noise' || evidence.verdict === 'too_few_rows';
+        return unproven && evidence.sizing ? evidence.sizing : null;
+    }
+    return single ?? null;
+}
+
 export interface LiftEvidence {
     n: number;
     better: number;
@@ -15,6 +55,8 @@ export interface LiftEvidence {
     ci_high: number | null;
     verdict: 'better' | 'worse' | 'within_noise' | 'too_few_rows';
     metric_id?: string | null;
+    /** Epic W2: detectable difference on these paired rows (absent on older servers). */
+    sizing?: EvalSizing | null;
 }
 
 /** Run-to-run evidence: the same config trained with N seeds, each scored

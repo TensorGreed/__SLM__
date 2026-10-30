@@ -127,6 +127,19 @@ class EvalSummaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((ev["n"], ev["better"], ev["worse"], ev["same"]), (12, 3, 2, 7))
         self.assertEqual(ev["verdict"], "within_noise")
         self.assertEqual(ev["metric_id"], "exact_match")
+        # Epic W2, paired: d = three +1, two −1, seven 0; mean 1/12; Σd² = 5;
+        # s_d² = (5 − 12/144) / 11 = 0.446970; rows(5 pts) = 7.848880 · 0.446970 / 0.0025
+        # = 1403.27 → 1404; gap = 2.801585 · 0.668558 / 3.464102 = 0.5407 (ceil 55 pts).
+        sizing = ev["sizing"]
+        self.assertEqual((sizing["basis"], sizing["n"], sizing["rows_needed"]), ("paired", 12, 1404))
+        self.assertAlmostEqual(sizing["detectable_gap"], 0.5407, places=3)
+        self.assertTrue(sizing["line"].startswith("12 paired rows (exact match): gaps under ~55 pts"))
+        # Single eval (the run's own 5/12): s² = 0.243056, unpaired 0.486111; rows = 7.848880 ·
+        # 0.486111 / 0.0025 = 1526.2 → 1527; gap = 2.801585 · √(0.486111 / 12) = 0.5639.
+        single = out["sizing"]
+        self.assertEqual((single["basis"], single["n"], single["rows_needed"]), ("single", 12, 1527))
+        self.assertAlmostEqual(single["detectable_gap"], 0.5639, places=3)
+        self.assertTrue(single["line"].startswith("Comparing two runs on these 12 test rows (exact match):"))
 
     async def test_lift_evidence_confirms_a_consistent_gain(self):
         base = await self._exp(baseline=True)
@@ -212,6 +225,8 @@ class EvalSummaryTests(unittest.IsolatedAsyncioTestCase):
         await self._result(run, 0.8)
         out = await self._summary()
         self.assertEqual((out["n_seeds"], out["seed_evidence"], out["seeds"]), (1, None, None))
+        # No per-row scores recorded: no sizing either (additive, None).
+        self.assertIsNone(out["sizing"])
 
     async def test_no_evidence_for_results_without_row_scores(self):
         base = await self._exp(baseline=True)
@@ -221,6 +236,8 @@ class EvalSummaryTests(unittest.IsolatedAsyncioTestCase):
         out = await self._summary()
         self.assertEqual(out["verdict"], "better")
         self.assertIsNone(out["evidence"])
+        # The run's own rows still size (8 of 10 pass), even with no pairing.
+        self.assertEqual((out["sizing"]["basis"], out["sizing"]["n"]), ("single", 10))
 
     async def test_worse_and_no_baseline(self):
         run = await self._exp()

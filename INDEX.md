@@ -221,6 +221,7 @@ session-start guidance.
 - `backend/app/services/eval_judge_calibration_service.py` — Eval-judge calibration (Judge calibration V4): how far the EVAL judges can be trusted.
 - `backend/app/services/eval_pack_scaffold_service.py` — Recipe-aware evaluation-pack scaffolder (E5).
 - `backend/app/services/eval_predictions_service.py` — Full per-row eval predictions, one JSONL file per EvalResult (Judge calibration V4, item 1).
+- `backend/app/services/eval_sizing_service.py` — How big a difference between two runs can this many rows show? (Epic W2)
 - `backend/app/services/eval_summary_service.py` — The Eval tab's one default card (Wave 3b): is the fine-tuned model
 - `backend/app/services/eval_task_handler_service.py` — Task-aware evaluation dispatcher (Phase 5.3.0).
 - `backend/app/services/evaluation_gate_catalog.py` — Gate-options catalog for the eval-pack scaffold editor (Gap #5 slice 1).
@@ -957,6 +958,7 @@ session-start guidance.
 - `backend/tests/test_eval_gap_service.py` — Eval Gap scanner — Coach-stage-2 phase 3.
 - `backend/tests/test_eval_judge_calibration.py` — Judge calibration V4: persisted eval predictions, blind eval-judge labels keyed by content, the
 - `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).
+- `backend/tests/test_eval_sizing.py` — Detectable difference + rows needed for any per-row metric (Epic W2).
 - `backend/tests/test_eval_summary.py` — Eval tab summary card (Wave 3b): verdict vs the base model, headline
 - `backend/tests/test_evaluation_adopt_gate.py` — Tests for the adopt-gate-from-cluster action (Gap #5 slice 3).
 - `backend/tests/test_evaluation_gate_catalog.py` — Unit tests for the eval-pack gate-options catalog + validator

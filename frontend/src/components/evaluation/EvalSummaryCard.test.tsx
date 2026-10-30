@@ -394,6 +394,54 @@ describe('EvalSummaryCard', () => {
         expect(screen.getByTestId('eval-summary-headline')).toHaveTextContent('+0.350 (+175%)');
     });
 
+    it('sizing: merged into the within-noise sentence, none beside a significant verdict, own line without pairing', async () => {
+        const single = {
+            basis: 'single', metric_id: 'exact_match', n: 78, score_kind: 'binary', sd: 0.6449,
+            detectable_gap: 0.2046, target_gap: 0.05, rows_needed: 1306, enough: false, degenerate: null,
+            confidence: 0.95, power: 0.8, one_sample_gap: 0.1446, one_sample_rows_needed: 653,
+            line: 'Comparing two runs on these 78 test rows (exact match): gaps under ~21 pts may go unnoticed (conservative — same-row comparisons usually do better); ~1,350 rows to see a 5-pt change.',
+        };
+        const paired = {
+            ...single, basis: 'paired', sd: 0.4256, detectable_gap: 0.135, rows_needed: 569,
+            line: '78 paired rows (exact match): gaps under ~14 pts may go unnoticed; ~570 rows to see a 5-pt change.',
+        };
+        const evidence = {
+            n: 78, better: 6, worse: 8, same: 64, mean_diff: -2 / 78, ci_low: -0.12, ci_high: 0.07,
+            verdict: 'within_noise', metric_id: 'exact_match', sizing: paired,
+        };
+        apiMock.get.mockResolvedValue({ data: { ...BETTER, evidence, sizing: single } });
+        const first = render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        const line = await screen.findByTestId('eval-summary-sizing');
+        expect(line).toHaveAttribute('data-basis', 'paired');
+        expect(line).toHaveTextContent(paired.line);
+        // One sentence, inside the within-noise evidence — not a second line.
+        expect(screen.getByTestId('eval-summary-evidence')).toContainElement(line);
+        expect(screen.getAllByTestId('eval-summary-sizing')).toHaveLength(1);
+        first.unmount();
+
+        // A significant verdict: no sizing beside it (it could read as a contradiction).
+        apiMock.get.mockResolvedValue({ data: { ...BETTER, evidence: { ...evidence, verdict: 'better', ci_low: 0.01 }, sizing: single } });
+        const second = render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        await screen.findByTestId('eval-summary-evidence');
+        expect(screen.queryByTestId('eval-summary-sizing')).not.toBeInTheDocument();
+        second.unmount();
+
+        // No paired evidence: the conservative single-eval line on its own.
+        apiMock.get.mockResolvedValue({ data: { ...BETTER, evidence: null, sizing: single } });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        const own = await screen.findByTestId('eval-summary-sizing');
+        expect(own).toHaveAttribute('data-basis', 'single');
+        expect(own.className).toBe('eval-summary__sizing');
+        expect(own).toHaveTextContent(single.line);
+    });
+
+    it('older servers without sizing show no sizing line', async () => {
+        apiMock.get.mockResolvedValue({ data: BETTER });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        await screen.findByTestId('eval-summary');
+        expect(screen.queryByTestId('eval-summary-sizing')).not.toBeInTheDocument();
+    });
+
     it('keeps "better" for a gain beyond row noise, with the one-run caveat', async () => {
         apiMock.get.mockResolvedValue({
             data: {

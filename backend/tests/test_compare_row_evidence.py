@@ -287,6 +287,17 @@ class CompareRowEvidenceTests(unittest.TestCase):
         self.assertEqual((ev["only_in_a"], ev["only_in_b"]), (0, 0))
         self.assertIsNone(ev["rescore"])
         self.assertTrue(ev["comparability"]["comparable"])
+        # Epic W2 sizing from the same diffs: s_d² = 0.112721, s_d = 0.335739;
+        # gap = 2.801585 · 0.335739 / 8.831761 = 0.10650 → ceil 11 pts;
+        # rows(5 pts) = 7.848880 · 0.112721 / 0.0025 = 353.90 → 354 (line ~360).
+        sizing = ev["sizing"]
+        self.assertEqual((sizing["basis"], sizing["n"], sizing["rows_needed"]), ("paired", 78, 354))
+        self.assertAlmostEqual(sizing["detectable_gap"], 0.1065, places=3)
+        self.assertEqual(
+            sizing["line"],
+            "78 paired rows (exact match): gaps under ~11 pts may go unnoticed; ~360 rows to see a 5-pt change.",
+        )
+        self.assertEqual(ev["metrics"][0]["sizing"], sizing)
 
     def test_pairs_by_key_with_rows_in_another_order(self):
         rows_b = _rows_78(False)

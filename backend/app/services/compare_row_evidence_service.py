@@ -489,6 +489,7 @@ def _empty_evidence() -> dict[str, Any]:
         "metrics": [],
         "comparability": None,
         "rescore": None,
+        "sizing": None,
     }
 
 
@@ -509,6 +510,7 @@ async def build_row_evidence(
     has no eval, or no per-row scores) / not_comparable (different answer
     key, judge or scoring — see ``comparability.differences``; no counts then).
     """
+    from app.services.eval_sizing_service import metric_label, paired_sizing
     from app.services.paired_comparison_stats import pair_row_scores, paired_difference_evidence
 
     out = _empty_evidence()
@@ -545,6 +547,11 @@ async def build_row_evidence(
             continue
         evidence = paired_difference_evidence(paired["before"], paired["after"])
         evidence.update({
+            # Epic W2: smallest change these paired rows reliably show.
+            "sizing": paired_sizing(
+                paired["before"], paired["after"], metric_id=metric_id,
+                row_noun="paired rows", metric_label=metric_label(metric_id),
+            ),
             "metric_id": metric_id,
             "score_key": score_key,
             "only_in_a": paired["only_before"],
@@ -575,7 +582,7 @@ async def build_row_evidence(
 
     headline = metrics[0]
     for key in ("metric_id", "score_key", "n", "better", "worse", "same", "mean_diff", "ci_low", "ci_high",
-                "verdict", "only_in_a", "only_in_b", "unscored"):
+                "verdict", "only_in_a", "only_in_b", "unscored", "sizing"):
         out[key] = headline[key]
     return out
 

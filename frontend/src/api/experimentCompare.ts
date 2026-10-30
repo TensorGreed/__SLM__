@@ -7,6 +7,7 @@
  */
 
 import api from './client';
+import type { EvalSizing } from '../components/evaluation/liftEvidence';
 
 
 export type CompareDirection =
@@ -102,6 +103,8 @@ export interface RowMetricEvidence {
     only_in_a: number;
     only_in_b: number;
     unscored: number;
+    /** Epic W2: detectable difference on these paired rows (absent on older servers). */
+    sizing?: EvalSizing | null;
 }
 
 
@@ -148,6 +151,8 @@ export interface CompareRowEvidence {
         caveats?: string[];
     } | null;
     rescore: RescoreOffer | null;
+    /** Epic W2: the headline metric's detectable difference (absent on older servers). */
+    sizing?: EvalSizing | null;
 }
 
 

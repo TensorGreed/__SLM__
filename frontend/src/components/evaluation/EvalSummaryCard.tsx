@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
 import { answerKeyReviewText, checkLiftAcrossSeeds, fetchEvalSummary, type BaselineDecodingBar, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
-import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
+import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, sizingToShow, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import RedactionTryBox from './RedactionTryBox';
 import EvalJudgeTrustBadge from './EvalJudgeTrustBadge';
 import SeedShipTable from './SeedShipTable';
@@ -326,6 +326,9 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     const note = evidence ? evidenceNote(evidence, { trained: !seedEvidence && !isPassages, unit }) : null;
     const subject = isPassages ? 'Retrieval' : 'Fine-tuning';
     const seedNote = seedEvidence ? seedEvidenceNote(seedEvidence, unit) : null;
+    // Epic W2: how big a difference these rows can show — merged into the
+    // within-noise sentence when there is one, else one muted line.
+    const sizing = sizingToShow(evidence, summary.sizing);
     const head = summary.headline;
     const runId = summary.experiment_id;
     const isSeedGroup = (summary.n_seeds ?? 1) > 1;
@@ -504,6 +507,19 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     <span className="eval-summary__evidence-label">{note.label}</span>
                     <span data-testid="eval-summary-row-counts">{rowCountsText(evidence, subject)}</span>{' '}
                     <span>{note.text}</span>
+                    {sizing && (
+                        <>
+                            {' '}
+                            <span className="eval-summary__sizing-inline" data-testid="eval-summary-sizing" data-basis={sizing.basis}>
+                                {sizing.line}
+                            </span>
+                        </>
+                    )}
+                </p>
+            )}
+            {sizing && !(evidence && note) && (
+                <p className="eval-summary__sizing" data-testid="eval-summary-sizing" data-basis={sizing.basis}>
+                    {sizing.line}
                 </p>
             )}
             {reader && (

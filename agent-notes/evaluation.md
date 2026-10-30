@@ -782,3 +782,29 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   A: 2 better, 7 worse, 69 same of 78 rows; change −6.4 pts (95% CI −14 to +1)", labels as `liftEvidence`, other metrics,
   differences, re-score, provenance per side). The pass-rate winner / "Fix the gap" banner is unchanged (W4 gates it).
   Tests: `tests/test_compare_row_evidence.py`, `CompareRowEvidence.test.tsx`, `ProjectEvalComparePage.test.tsx`.
+
+## Detectable difference, every task shape (Epic W2)
+
+- `services/eval_sizing_service.py` (pure) generalises the span-F1 sizing (`span_eval_sizing_service`, unchanged —
+  its own 95%-CI-only `8·p(1−p)/Δ²` rule stays) to any per-row metric in `_ROW_SCORE_FOR_METRIC`, at 95% confidence
+  AND 80% power: `Z = 1.959964 + 0.841621 = 2.801585`. `detectable_gap` / `rows_needed` always mean a gap BETWEEN TWO
+  RUNS: `Z·s_d/√n`, `⌈(Z·s_d/Δ)²⌉`. **Paired** (`paired_sizing(before, after)`; lift, A-vs-B, Auto-RAG): `s_d` = SD
+  of per-row differences. **Single** (`sizing_from_values`, `eval_result_sizing(er, metric_id)`): conservative
+  unpaired bound `s_d² = 2·s²` (binary `s² = p(1−p)`, continuous = sample variance); the one-sample precision
+  (`Z·s/√n`) is API-only as `one_sample_gap` / `one_sample_rows_needed`. `TARGET_GAP = 0.05` (`gap=` overrides).
+  Degenerate: n < 5 → `too_few_rows` (no gap; worst case single `2·0.25` → 1570 rows, paired `d ∈ [−1,1]` → 3140);
+  constant single side → `all_pass` / `all_fail` / `zero_variance` via Agresti–Coull `p̃ = (Σx+2)/(n+4)` (a heuristic
+  for constant continuous scores); zero spread of differences → `identical_scores` or `constant_shift`, figure = the
+  labelled unpaired bound `s_before² + s_after²`. `line` rounds the gap UP to whole pts and rows UP (to 10 < 1,000,
+  else to 50); "enough" lines name only the target. 78 rows at 23/78 pass → single: gap 0.2046 (~21 pts), 1306 rows
+  (~1,350); paired 6 better / 8 worse → gap 0.1350 (~14 pts), 569 rows (~570).
+- Wired (all additive keys): `sft_lift_summary_service._attach_row_evidence` → `evidence.sizing` on every lift row;
+  `compare_row_evidence_service.build_row_evidence` → `metrics[].sizing` + top-level `sizing` (headline); `auto_rag.
+  _lift_evidence` → `sizing`; `eval_summary_service` → summary `sizing` (single, the headline metric of the latest eval;
+  seed group = the median seed's eval; head eval = accuracy; span eval / passages = none — span keeps `SpanSizingTable`).
+- UI (`liftEvidence.sizingToShow`): with paired evidence, the paired line ONLY when within_noise / too_few_rows (never
+  beside a significant verdict), merged into the evidence sentence on `EvalSummaryCard` (`eval-summary-sizing` span,
+  `.eval-summary__sizing-inline`); without paired evidence, the single line as its own muted `<p class=
+  "eval-summary__sizing">`. Compare (`CompareRowEvidence`) shows `ev.sizing.line` only when within_noise /
+  too_few_rows with no `reason` (`eval-compare-evidence-sizing`). Tests: `tests/test_eval_sizing.py` (hand-computed),
+  `test_eval_summary.py`, `test_compare_row_evidence.py`, `EvalSummaryCard.test.tsx`, `CompareRowEvidence.test.tsx`.

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.experiment import EvalResult, Experiment, ExperimentStatus
 from app.models.project import Project
+from app.services.eval_sizing_service import eval_result_sizing
 
 SUMMARY_FAILURES = 5
 
@@ -143,6 +144,7 @@ async def _seed_group_summary(
         "message": None,
         "headline": headline,
         "evidence": representative["headline"].get("evidence"),
+        "sizing": eval_result_sizing(representative["eval_result"], metric_id),
         "seed_evidence": seed_evidence,
         "seeds": [
             {
@@ -332,6 +334,10 @@ async def _build_eval_summary_core(
         # base model and whether the change is within noise. None for results
         # recorded before per-row scores were kept, or non-row metrics.
         "evidence": evidence,
+        # Epic W2: the smallest difference this run's test rows reliably show
+        # and the rows a 5-pt change needs (single eval; eval_sizing_service).
+        # The paired figure for the lift is ``evidence.sizing``.
+        "sizing": eval_result_sizing(latest, headline.get("metric_id") if headline else None),
         # Single run: no seed spread to report.
         "seed_evidence": None,
         "seeds": None,
@@ -430,6 +436,7 @@ async def head_eval_summary(db: AsyncSession, project_id: int, experiment: Exper
         "failed_count": failed_count,
         "dataset_name": result.dataset_name,
         "evidence": None,
+        "sizing": eval_result_sizing(result, "accuracy"),
         "seed_evidence": None,
         "seeds": None,
         "n_seeds": 1,

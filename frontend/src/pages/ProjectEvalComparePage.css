@@ -279,6 +279,13 @@
     color: var(--text-tertiary);
 }
 
+/* Epic W2: detectable-difference line — secondary, muted. */
+.eval-compare__evidence-sizing {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    color: var(--text-tertiary);
+}
+
 .eval-compare__evidence-caveat {
     margin: 0;
     font-size: var(--font-size-sm);

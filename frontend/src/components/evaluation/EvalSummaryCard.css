@@ -85,6 +85,18 @@
 .eval-summary__seed-runs { color: var(--text-tertiary); }
 .eval-summary__evidence--worse { border-left-color: var(--color-error); }
 
+/* Epic W2: the detectable-difference line — secondary, one muted sentence. */
+.eval-summary__sizing {
+    margin: var(--space-xs, 4px) 0 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-tertiary);
+}
+
+.eval-summary__sizing-inline {
+    color: var(--text-tertiary);
+}
+
 .eval-summary__judge {
     margin: 0.5rem 0 0;
     font-size: 0.9rem;

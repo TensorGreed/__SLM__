@@ -466,6 +466,7 @@ def _lift_evidence(rows: list[Any], *, score_key: str = "f1") -> dict[str, Any]:
     Computed from the cached per-row pairs, so older caches get it too.
     ``score_key="judge"`` pairs the answer judge's per-row scores instead
     (rows one arm couldn't judge drop out of the pairing)."""
+    from app.services.eval_sizing_service import metric_label, paired_sizing
     from app.services.paired_comparison_stats import paired_difference_evidence
 
     def _score(arm: Any) -> float | None:
@@ -490,6 +491,11 @@ def _lift_evidence(rows: list[Any], *, score_key: str = "f1") -> dict[str, Any]:
             with_rag.append(on)
     evidence = paired_difference_evidence(without, with_rag)
     evidence["metric_id"] = "judge_correct" if score_key == "judge" else score_key
+    # Epic W2: smallest change these paired rows reliably show (additive).
+    evidence["sizing"] = paired_sizing(
+        without, with_rag, metric_id=evidence["metric_id"], row_noun="paired rows",
+        metric_label=metric_label(evidence["metric_id"]),
+    )
     return evidence
 
 
