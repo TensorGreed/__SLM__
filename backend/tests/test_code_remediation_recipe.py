@@ -977,8 +977,9 @@ class ManifestAndConfigApiTests(unittest.TestCase):
         pid = self.new_project()
         body = client.get(f"/api/projects/{pid}/remediation-config").json()
         self.assertEqual(body["config"], {"detector": None, "checks": None, "judge": None, "retrieve_passages": None, "top_k": None,
-                                          "score_code_examples": None})
+                                          "score_code_examples": None, "format_before_check": None})
         self.assertFalse(body["effective"]["score_code_examples"])
+        self.assertFalse(body["effective"]["format_before_check"])
         self.assertEqual(body["effective"]["top_k"], 3)
         self.assertTrue(body["effective"]["judge"])
         self.assertIsNone(body["effective"]["detector"])

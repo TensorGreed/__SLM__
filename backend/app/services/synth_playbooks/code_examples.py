@@ -23,8 +23,14 @@ seed's language when the seed has a check, so a declaration can never turn a fai
 unchecked one (a seed that is itself unchecked stays unchecked and the row is labelled with the declared
 language). Lenient checkers (``LENIENT_LANGUAGES``: YAML reads bare prose as a scalar) are honoured as a
 switch AWAY from the seed only when the seed is a data format (``DATA_FORMATS``) and the reply parses
-to a mapping or sequence; a programming-language seed can never switch to YAML. The row carries the
-final ``language`` and, when it differs from a (non-empty) seed language, ``seed_language``.
+to a mapping or sequence, or -- from any seed, a programming-language one included -- when the reply is
+config-shaped YAML (``CONFIG_SWITCH_LANGUAGES`` + ``_config_shaped_yaml``: block mappings / lists with a nested
+collection, bare config keys and no code-like scalars, so ``if x:`` / ``def f(:`` / JSON / annotations never
+qualify) AND the seed embeds YAML (``_yaml_seed_evidence``: a config-shaped YAML block inside the seed's
+passages, e.g. a module's EXAMPLES string, sharing two keys with the reply or one non-generic key). A code file often
+documents config usage (a module whose docs show the YAML that calls it), and the YAML answer used to be
+checked as the seed's language and rejected. The row carries the final ``language`` and, when it differs
+from a (non-empty) seed language, ``seed_language``.
 
 Format check: a row whose FINAL language is a data / markup format with a parser (json, yaml, toml, xml;
 ``check_data_format``) must parse as that format, wherever the label came from (a reply that declared
@@ -99,6 +105,9 @@ def known_languages() -> list[str]:
 
 DATA_FORMATS = frozenset({"json", "yaml", "toml", "xml", "ini", "properties"})
 LENIENT_LANGUAGES = frozenset({"yaml"})  # parsers that accept nearly any text
+# Lenient languages a reply may switch to from ANY seed (a programming-language one included) when the
+# code is config-shaped (``_config_shaped_yaml``): code files often document config usage.
+CONFIG_SWITCH_LANGUAGES = frozenset({"yaml"})
 
 
 def _structured_yaml(code: str) -> bool:
@@ -114,11 +123,156 @@ def _structured_yaml(code: str) -> bool:
     return _structured_data(data)
 
 
+# A config key: no spaces, brackets or operators; "{param}" only right after "/" or "$" ("/users/{id}").
+_CONFIG_KEY = re.compile(r"^(?:[\w.\-/$@]|(?<=[/$])\{[\w.\-]+\})+$")
+_CODE_SCALAR = re.compile(r"^[A-Za-z_][\w.]*\s*[(\[].*[)\]]$", re.DOTALL)  # fetch(x), List[str]: code, not config
+# Keys every config / docs block shares (common parameter names included): never evidence on their own.
+_GENERIC_KEYS = frozenset({
+    "name", "names", "type", "types", "value", "values", "id", "ids", "key", "keys", "timeout", "retries", "retry",
+    "state", "status", "path", "paths", "file", "files", "enabled", "disabled", "enable", "description", "default",
+    "defaults", "required", "options", "option", "version", "kind", "spec", "metadata", "data", "items", "item",
+    "list", "config", "settings", "steps", "step", "result", "results", "message", "error", "errors", "output",
+    "input", "args", "params", "parameters", "url", "uri", "host", "port", "user", "username", "password", "mode",
+    "size", "count", "level", "debug", "verbose", "format", "source", "target", "label", "labels", "tags", "env",
+    "command", "run", "info", "warning", "notes", "note", "example", "examples", "returned", "sample", "elements",
+    "choices", "aliases", "author", "short_description", "module", "requirements", "return", "returns", "true", "false",
+})
+# Embedded blocks in a code passage: triple-quoted strings, backtick literals, fenced blocks.
+_EMBEDDED_BLOCKS = (  # each scanned over the whole passage (a fence inside a docstring is found too)
+    re.compile(r"(\'\'\'|\"\"\")(.*?)\1", re.DOTALL),
+    re.compile(r"`{3}[\w-]*\n(.*?)`{3}", re.DOTALL),
+    re.compile(r"(?<!`)`([^`]*\n[^`]*)`(?!`)"),
+)
+def _config_shaped_yaml(code: str) -> bool:
+    """Stricter than :func:`_structured_yaml`, for a reply that declares YAML against a PROGRAMMING-language
+    seed (a module whose docs show the YAML that calls it): block YAML (flow-only ``{...}`` / ``[...]`` is
+    JSON and should declare json), every non-empty document (template expressions tolerated) a mapping or
+    list, at least one holding a nested collection, every mapping key a bare config key (no spaces or
+    brackets; bool / int keys such as ``on:`` or ``200:`` are fine) and no scalar that reads as code
+    (``fetch(x)``, ``List[str]``). Shape alone is not enough: :func:`_yaml_seed_evidence` must also hold."""
+    import yaml
+
+    if code.strip()[:1] in ("{", "["):
+        return False
+    for text in dict.fromkeys((code, _yaml_template_free(code))):
+        try:
+            docs = [d for d in yaml.safe_load_all(text) if d is not None]
+        except Exception:  # noqa: BLE001 - any parse error means not structured
+            continue
+        if docs and all(_config_keys_only(d) for d in docs) and any(_has_nested(d) for d in docs):
+            return True
+    return False
+
+
+def _walk(data: Any):
+    stack: list[Any] = [data]
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, dict):
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+
+
+def _config_keys_only(data: Any) -> bool:
+    if not isinstance(data, (dict, list)):
+        return False
+    for node in _walk(data):
+        if isinstance(node, dict):
+            for k in node:
+                if isinstance(k, bool) or isinstance(k, int):
+                    continue
+                if not (isinstance(k, str) and _CONFIG_KEY.match(k)):
+                    return False
+        elif isinstance(node, str) and _CODE_SCALAR.match(node.strip()):
+            return False
+    return True
+
+
+def _has_nested(data: Any) -> bool:
+    children = data.values() if isinstance(data, dict) else data if isinstance(data, list) else []
+    return any(isinstance(c, (dict, list)) and c for c in children)
+
+
+def _string_keys(data: Any) -> set[str]:
+    return {k for node in _walk(data) if isinstance(node, dict) for k in node if isinstance(k, str)}
+
+
+def _yaml_keys(code: str) -> set[str]:
+    import yaml
+
+    for text in dict.fromkeys((code, _yaml_template_free(code))):
+        try:
+            return set().union(*(_string_keys(d) for d in yaml.safe_load_all(text) if d is not None))
+        except Exception:  # noqa: BLE001
+            continue
+    return set()
+
+
+_DOCSTRING_SECTIONS = frozenset({
+    "args", "arguments", "parameters", "params", "keyword args", "keyword arguments", "kwargs", "other parameters",
+    "returns", "return", "yields", "yield", "raises", "exceptions", "attributes", "examples", "example", "note",
+    "notes", "warning", "warnings", "see also", "todo", "references",
+})
+
+
+def _top_level_keys(body: str) -> set[str] | None:
+    import yaml
+
+    try:
+        docs = [d for d in yaml.safe_load_all(_yaml_template_free(body)) if d is not None]
+    except Exception:  # noqa: BLE001
+        return None
+    if not docs or not all(isinstance(d, dict) for d in docs):
+        return None
+    return {str(k) for d in docs for k in d}
+
+
+def _docstring_sections_only(body: str) -> bool:
+    """A summary-less docstring (``Args:`` / ``Returns:`` / ``Raises:`` sections only) parses as nested YAML;
+    it documents a function, it is not an embedded config block."""
+    keys = _top_level_keys(body)
+    return bool(keys) and all(k.strip().lower() in _DOCSTRING_SECTIONS for k in keys)
+
+
+def _seed_yaml_blocks(seed_text: str | None) -> list[set[str]]:
+    """Key sets of the config-shaped YAML blocks a code passage embeds (module docs / examples held in
+    triple-quoted strings, template literals or fenced blocks)."""
+    import textwrap
+
+    if not isinstance(seed_text, str) or not seed_text:
+        return []
+    blocks: list[set[str]] = []
+    bodies = [m.group(m.lastindex or 0) for rx in _EMBEDDED_BLOCKS for m in rx.finditer(seed_text)]
+    for raw in bodies:
+        body = textwrap.dedent(raw or "").strip("\n")
+        if body.strip() and _config_shaped_yaml(body) and not _docstring_sections_only(body):
+            keys = _yaml_keys(body)
+            if keys:
+                blocks.append(keys)
+    return blocks
+
+
+def _yaml_seed_evidence(code: str, seed_text: str | None) -> bool:
+    """The one reason YAML may answer a programming-language seed: the seed's passages EMBED a config-shaped
+    YAML block (a module's DOCUMENTATION / EXAMPLES string, a fenced example) and the answer shares at least
+    one key with such a block that is not a generic word (``_GENERIC_KEYS``; generic shared keys never count)."""
+    answer = _yaml_keys(code)
+    if not answer:
+        return False
+    for block in _seed_yaml_blocks(seed_text):
+        if any(k.lower() not in _GENERIC_KEYS for k in answer & block):
+            return True  # generic words never count, however many are shared
+    return False
+
+
 def _structured_data(data: Any) -> bool:
     """A loaded YAML document that is a mapping or list whose mapping keys all look like keys."""
     if not isinstance(data, (dict, list)):
         return False
-    key_ok = re.compile(r"^[\w.\-/$@ ]+$")
+    # "{id}" only right after "/" or "$" in a key without spaces (OpenAPI "/users/{id}", "${HOME}/bin").
+    key_ok = re.compile(r"^[\w.\-/$@ ]+$|^(?:[\w.\-/$@]|(?<=[/$])\{[\w.\-]+\})+$")
     stack: list[Any] = [data]
     while stack:
         node = stack.pop()
@@ -209,7 +363,8 @@ def check_data_format(code: str, language: Any) -> str | None:
 
 
 def resolve_language(
-    code: str, declared: Any, seed_language: str | None, known: set[str] | None = None
+    code: str, declared: Any, seed_language: str | None, known: set[str] | None = None,
+    *, seed_text: str | None = None,
 ) -> tuple[str | None, dict[str, Any] | None]:
     """Return ``(language, check_result)`` for a reply. ``check_result`` is ``run_code_checks``'s dict
     (``ok`` None when nothing ran; None itself when there is no language). See the module docstring.
@@ -223,6 +378,10 @@ def resolve_language(
         lenient_ok = (
             decl_c not in LENIENT_LANGUAGES
             or (seed_c in DATA_FORMATS and _structured_yaml(code))
+            or (
+                decl_c in CONFIG_SWITCH_LANGUAGES and _config_shaped_yaml(code)
+                and _yaml_seed_evidence(code, seed_text)
+            )
         )
         if lenient_ok:
             result = run_code_checks(code, language=decl_c)
@@ -460,7 +619,10 @@ class CodeExamplesPlaybook:
             if self._copied(code, citations, seed["passages"]):
                 record_reject(ctx, "copied_chunk", f"the code is at least {int(COPY_RATIO * 100)}% identical to a cited chunk", {"code": code[:200]})
                 continue
-            language, result = resolve_language(code, row.get("language"), seed["language"], known)
+            seed_text = "\n".join(str(p.get("text") or "") for p in seed["passages"] if isinstance(p, dict))
+            language, result = resolve_language(
+                code, row.get("language"), seed["language"], known, seed_text=seed_text,
+            )
             if result is not None and result.get("ok") is False:
                 failed = next((r for r in result.get("results", []) if r.get("ok") is False), {})
                 messages = failed.get("messages") or []

@@ -143,6 +143,29 @@ describe('RemediationConfigCard', () => {
         expect(await screen.findByTestId('rem-score-code-examples')).toBeChecked();
     });
 
+    it('format before check is off by default and saved only when turned on', async () => {
+        mockGets();
+        apiMock.put.mockResolvedValue({ data: CONFIG });
+        const user = userEvent.setup();
+        render(<RemediationConfigCard projectId={4} />);
+        const toggle = await screen.findByTestId('rem-format-before-check');
+        expect(toggle).not.toBeChecked();
+        await user.click(screen.getByTestId('rem-save'));
+        await waitFor(() => expect(apiMock.put).toHaveBeenCalledTimes(1));
+        expect(apiMock.put.mock.calls[0][1]).not.toHaveProperty('format_before_check');
+        await user.click(toggle);
+        await user.click(screen.getByTestId('rem-save'));
+        await waitFor(() => expect(apiMock.put).toHaveBeenCalledTimes(2));
+        expect(apiMock.put.mock.calls[1][1]).toMatchObject({ format_before_check: true });
+    });
+
+    it('shows the stored format before check setting', async () => {
+        mockGets({ ...CONFIG, config: { ...CONFIG.config, format_before_check: true }, effective: { ...CONFIG.effective, format_before_check: true } });
+        render(<RemediationConfigCard projectId={4} />);
+        expect(await screen.findByTestId('rem-format-before-check')).toBeChecked();
+        expect(screen.getByTestId('rem-format-before-check-hint')).toHaveTextContent('terraform fmt');
+    });
+
     it('shows a validation error from the server', async () => {
         mockGets();
         apiMock.put.mockRejectedValue({ response: { data: { message: 'detector project has no completed run' } } });

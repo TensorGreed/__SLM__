@@ -70,6 +70,7 @@ export default function RemediationConfigCard({ projectId }: Props) {
     const [retrieve, setRetrieve] = useState(true);
     const [topK, setTopK] = useState(3);
     const [scoreExamples, setScoreExamples] = useState(false);
+    const [formatFirst, setFormatFirst] = useState(false);
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -82,6 +83,7 @@ export default function RemediationConfigCard({ projectId }: Props) {
         setRetrieve(res.config.retrieve_passages ?? res.effective.retrieve_passages);
         setTopK(res.config.top_k ?? res.effective.top_k);
         setScoreExamples(res.config.score_code_examples ?? res.effective.score_code_examples ?? false);
+        setFormatFirst(res.config.format_before_check ?? res.effective.format_before_check ?? false);
     }, []);
 
     useEffect(() => {
@@ -110,6 +112,7 @@ export default function RemediationConfigCard({ projectId }: Props) {
             top_k: topK,
             // PUT replaces the settings: leaving it out stores the default (off).
             ...(scoreExamples ? { score_code_examples: true } : {}),
+            ...(formatFirst ? { format_before_check: true } : {}),
         };
         try {
             apply(await putRemediationConfig(projectId, body));
@@ -257,6 +260,16 @@ export default function RemediationConfigCard({ projectId }: Props) {
                 <p className="u-hint u-mt0">
                     Off: held-out task→code rows are skipped. On: they pass when the code parses, passes the code checks,
                     cites only given passages and the judge calls it correct.
+                </p>
+                <label className="remediation-config__row">
+                    <input type="checkbox" checked={formatFirst} onChange={(e) => setFormatFirst(e.target.checked)} data-testid="rem-format-before-check" />
+                    Format the model&apos;s code before the code checks
+                </label>
+                <p className="u-hint u-mt0" data-testid="rem-format-before-check-hint">
+                    For languages with a standard formatter (Go: gofmt, Terraform: terraform fmt, Rust: rustfmt), the model&apos;s
+                    code is formatted first, so spacing or alignment alone does not fail a row. Code the formatter rejects still
+                    fails; without the formatter installed and allowed, code is checked as written. Evals with and without
+                    this setting are scored differently and are not compared row by row.
                 </p>
             </fieldset>
 

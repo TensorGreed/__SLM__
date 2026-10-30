@@ -391,9 +391,11 @@ def _clamp_top_k(value: Any) -> int:
 
 
 def effective_remediation_config(runtime_config: Any, project_id: int | None = None) -> dict[str, Any]:
-    """``{detector, checks, judge, retrieve_passages, top_k, score_code_examples}`` with defaults applied.
-    ``retrieve_passages`` defaults to true iff the project has a document index; ``score_code_examples``
-    (held-out ``code_example`` rows are scored instead of skipped) defaults to false."""
+    """``{detector, checks, judge, retrieve_passages, top_k, score_code_examples, format_before_check}`` with
+    defaults applied. ``retrieve_passages`` defaults to true iff the project has a document index;
+    ``score_code_examples`` (held-out ``code_example`` rows are scored instead of skipped) and
+    ``format_before_check`` (the predicted code is run through the language's canonical formatter before
+    the code checks, ``code_example_scoring``) default to false."""
     raw = runtime_config.get(CONFIG_KEY) if isinstance(runtime_config, dict) else None
     raw = raw if isinstance(raw, dict) else {}
     if isinstance(raw.get("retrieve_passages"), bool):
@@ -408,6 +410,7 @@ def effective_remediation_config(runtime_config: Any, project_id: int | None = N
         "retrieve_passages": retrieve,
         "top_k": _clamp_top_k(raw.get("top_k", DEFAULT_TOP_K)),
         "score_code_examples": raw.get("score_code_examples") is True,
+        "format_before_check": raw.get("format_before_check") is True,
     }
 
 

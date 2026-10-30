@@ -861,8 +861,22 @@ sync with the source licence (PATCH writes it; the old `Imported from ...` place
   an already-unchecked seed stays unchecked and the row is labelled with the declared language). Lenient checkers
   (`LENIENT_LANGUAGES` = yaml: bare prose parses as a scalar) are honoured as a switch away from the seed only when the
   seed is in `DATA_FORMATS` (json/yaml/toml/xml/ini/properties) AND the reply is a YAML mapping/list with ordinary keys
-  (`_structured_yaml`; `def f(:` is a mapping YAML accepts, so keys must be word-like). Programming-language seeds never
-  switch to yaml. `seed_language` only when the seed language is non-empty.
+  (`_structured_yaml`; `def f(:` is a mapping YAML accepts, so keys must be word-like), OR -- from any seed, a
+  programming-language one included -- when the reply is config-shaped YAML (`CONFIG_SWITCH_LANGUAGES` = yaml,
+  `_config_shaped_yaml`: every document a mapping/list, at least one nested collection, every key a bare config key
+  matching `^[\w.\-/$@]+$` -- no spaces/brackets, so `if x:` / `class A:` / `def f(x):` / prose never qualify;
+  template expressions tolerated; flow-only `{...}`/`[...]` refused -- declare json; bool/int keys like `on:`/`200:` and
+  `{param}` keys right after `/` or `$` allowed, e.g. `/users/{id}`; scalars reading as code -- `fetch(x)`,
+  `List[str]` -- refused) AND **the seed embeds YAML** (`_yaml_seed_evidence`, the only evidence path: a
+  config-shaped YAML block inside the seed's passages -- triple-quoted string, fenced block or template literal, e.g. a
+  module's DOCUMENTATION / EXAMPLES -- sharing >= 2 keys with the answer, or 1 key not in `_GENERIC_KEYS` (name, type,
+  timeout, retries, state, path, enabled, ...)). The task text is never evidence (a 2026-10-30 review showed "checkout
+  workflow" / "bar chart" and shared parameter names letting prose, logs and pseudo-code switch). There is no
+  synth-time task-fit check. Evidence = >= 1 shared NON-generic key (generic words never count, however many); blocks whose top-level keys are all docstring section names (`Args:`/`Returns:`/`Raises:`/... `_DOCSTRING_SECTIONS`) are ignored. **Intended behaviour change (2026-10-30):** `_structured_data` keys also accept `{param}` right after `/` or `$` (no spaces), so `check_data_format` and the data-seed YAML switch now accept OpenAPI-style `/users/{id}:` keys for every yaml row, even when no programming-seed switch happens. Before this (2026-10-30), a code file documenting config usage (a module whose docs
+  show the YAML task list that calls it) had its YAML answers checked as the seed's Python and rejected
+  ("python_ast: illegal target for annotation"): the declaration was ignored because programming seeds could never
+  switch to yaml. The switched row still runs the yaml check + `check_data_format`. `seed_language` only when the seed
+  language is non-empty.
   Row `language` = the one checked; `seed_language` added when different. Fixes 2026-10-28 `json_parse`/`yaml_parse`
   rejects on Python answers to JSON/YAML seeds. Tests: `tests/test_code_examples_declared_language.py`.
   **Format check** (`check_data_format(code, language)`): after the language is resolved, a row whose FINAL language is

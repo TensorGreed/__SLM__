@@ -17,6 +17,14 @@ as ``prediction["code_example_row"]`` (``{task, language, passages}``) and these
   by ``evaluation_service._judge_code_example_predictions``) says ``correct``; ``partial`` / ``wrong``
   fail. A row the judge did not score keeps ``None`` with a reason (``row_code_example_judge_unscored``).
 
+Opt-in ``format_before_check`` (``runtime_config["remediation"]``, default off): before the checks run on
+the PREDICTED code, the language's canonical formatter (``code_check_service.format_code``: gofmt,
+terraform fmt, rustfmt; same allow-list, sandbox and timeouts as the checks) rewrites it, so a
+format-only failure (``terraform fmt -check`` on ``=`` alignment) no longer fails otherwise valid code.
+A formatter that rejects the code (syntax error) or cannot run leaves the code as it was; each row records
+``row_code_example_format`` {status, formatter, messages} and the metrics ``code_example_format_before_check``
+(both absent with the setting off). The reference code is not formatted (it decides checkability alone).
+
 ``row_code_example_pass`` = parses AND (checks pass or not checkable) AND citations valid (or no
 passages) AND judge pass. A row that fails a deterministic part fails whatever the judge says; a row
 that passes them all but has no judge verdict is unscored (``None``: out of the pass rate and of the
@@ -78,7 +86,7 @@ def analyze_row(prediction: dict[str, Any], schema: dict[str, Any], parse_json: 
     cached = prediction.get("_code_example_analysis")
     if isinstance(cached, dict):
         return cached
-    from app.services.code_check_service import run_code_checks
+    from app.services.code_check_service import format_code, run_code_checks
 
     row = row_context(prediction) or {}
     parsed = parse_json(prediction.get("prediction") or "")
@@ -93,6 +101,7 @@ def analyze_row(prediction: dict[str, Any], schema: dict[str, Any], parse_json: 
     }
     remediation = schema.get("remediation") if isinstance(schema.get("remediation"), dict) else {}
     check_ids = remediation.get("checks")
+    format_first = remediation.get("format_before_check") is True
     language = row.get("language") if isinstance(row.get("language"), str) else None
     if language and ref_code is not None:
         try:
@@ -103,6 +112,10 @@ def analyze_row(prediction: dict[str, Any], schema: dict[str, Any], parse_json: 
                 if code is None:
                     out["checks_pass"] = False
                 else:
+                    if format_first:
+                        fmt = format_code(code, language=language)
+                        out["format"] = {k: fmt[k] for k in ("status", "formatter", "messages")}
+                        code = fmt["code"]  # the original code unless the formatter succeeded
                     after = run_code_checks(code, language=language, check_ids=ran, context={"path": None})
                     out["checks_pass"] = bool(after.get("ok") is True)
                     msgs: list[str] = []
@@ -173,6 +186,9 @@ def score_code_examples(
     unscored: dict[str, int] = {}
     judge_label: str | None = None
     by_language: dict[str, dict[str, int]] = {}
+    remediation = schema.get("remediation") if isinstance(schema.get("remediation"), dict) else {}
+    format_first = remediation.get("format_before_check") is True
+    format_statuses: dict[str, int] = {}
 
     for prediction in predictions:
         row = row_context(prediction)
@@ -247,6 +263,14 @@ def score_code_examples(
         prediction["row_code_example_judge_reason"] = reason
         prediction["row_code_example_judge_unscored"] = None if verdict is not None else unscored_reason
         prediction["row_code_example_pass"] = passed
+        if format_first:
+            fmt = a.get("format")
+            # Only rows whose checks ran on the model's code were formatted; the others say why not.
+            status = fmt["status"] if isinstance(fmt, dict) else ("not_checkable" if not row_checkable else "no_code")
+            format_statuses[status] = format_statuses.get(status, 0) + 1
+            prediction["row_code_example_format"] = (
+                dict(fmt) if isinstance(fmt, dict) else {"status": status, "formatter": None, "messages": []}
+            )
         prediction["row_cited_ids"] = cited
         prediction["row_passage_ids"] = ids
         if passed is not None:
@@ -276,4 +300,8 @@ def score_code_examples(
         metrics["code_example_rows_with_passages"] = with_passages
     if judge_label:
         metrics["code_example_judge_label"] = judge_label
+    if format_first:
+        # Opt-in only (absent otherwise): how the formatter went per row. ``unavailable`` / ``not_allowed`` rows
+        # were checked unformatted, exactly as with the setting off.
+        metrics["code_example_format_before_check"] = {"enabled": True, "by_status": dict(sorted(format_statuses.items()))}
     return metrics

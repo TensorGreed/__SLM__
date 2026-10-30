@@ -23,7 +23,7 @@ Language ids are lower-case; aliases are normalised (`py` → `python`, `js` →
 |---|---|---|
 | `python_ast` | python | `ast.parse`; an indented fragment is retried dedented |
 | `json_parse` | json | `json.loads` |
-| `yaml_parse` | yaml | safe YAML load, aliases refused; template expressions (`{{ … }}`, `{% … %}`, Helm / Jinja) are replaced by a placeholder first, so templated YAML is checked as YAML |
+| `yaml_parse` | yaml | safe YAML load of every document, aliases refused, duplicate mapping keys at any depth refused (`line 10: found duplicate key 'envFrom' (first at line 8)`). Merges work only as a literal `<<: {…}` (or a list of literal mappings), since aliases such as `<<: *base` are refused; a key overriding a merged one is fine. Keys are compared as written (`1.0` and `1`, or `on` and `true`, are different keys). Templated YAML with control lines (`{{- if }}` / `{% else %}` / `{{- range }}`) skips the duplicate check, since the template's branches flatten into sibling keys (template comment lines such as `{{/* … */}}` or `{# … #}` don't count); template expressions (`{{ … }}`, `{% … %}`, Helm / Jinja) are replaced by a placeholder first, so templated YAML is checked as YAML |
 | `json_schema` | json | validates the JSON against `context.json_schema`; skipped (`no_schema`) without one |
 
 ## External checks (sandboxed, opt-in)
@@ -41,6 +41,10 @@ An external check runs only when its id is in `CODE_CHECK_ALLOWED` **and** its b
 | `shellcheck` | `shellcheck -f gcc --severity=error` | Fails on errors only (warnings and style are not failures); a snippet without a shebang or `# shellcheck shell=` directive is checked as bash |
 | `node_check` | `node --check` | |
 | `csharp_syntax` | `csc` / `mcs` | best effort |
+
+Check revisions: a check whose pass / fail rules changed carries a `revision` above 1 (`yaml_parse` is 2: duplicate keys fail). The remediation scoring fingerprint includes the revision of each such check it selects, so an evaluation scored with the older rules is not reused as a baseline or compared row by row (Compare says "built-in check revised (yaml_parse v2: duplicate keys now fail) — re-score the older run"); selections without a revised check keep their fingerprint.
+
+Formatters: `go_syntax` (`gofmt`), `terraform_fmt` (`terraform fmt -`) and `rust_syntax` (`rustfmt --emit stdout`) also format code, under the same allow-list, sandbox and timeouts as the check. Only the opt-in [format before check](../workflows/code-remediation.md#scoring-task-to-code-rows-opt-in) eval setting uses them.
 
 Settings (environment or `.env`):
 

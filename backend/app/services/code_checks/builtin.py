@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import json
 import textwrap
 from typing import Any
@@ -82,18 +83,89 @@ def strip_yaml_templates(code: str) -> str:
     return "\n".join(lines)
 
 
+_YAML_MERGE_TAG = "tag:yaml.org,2002:merge"
+
+
+def _strict_yaml_loader() -> type:
+    """A SafeLoader subclass (built on first use) that refuses aliases, like the taxonomy loader, AND
+    duplicate mapping keys at any depth: PyYAML silently keeps the last value, so a doubled key
+    (``envFrom`` twice in one container) parsed as valid. Keys are compared by their SOURCE text and
+    resolved tag (``1.0`` and ``1``, or ``on`` and ``true``, are different keys even though YAML 1.1
+    resolves them to equal values; ``a`` and ``"a"`` are the same key; ``1`` and ``"1"`` differ). Only
+    scalar keys are compared; ``<<`` merge keys are not counted, a key that overrides a merged one is not
+    a duplicate (merging happens after this check), and a key made from a template expression
+    (``TEMPLATE_PLACEHOLDER``) is never compared."""
+    global _STRICT_LOADER
+    if _STRICT_LOADER is not None:
+        return _STRICT_LOADER
+    import yaml
+
+    from app.services.label_taxonomy_service import _NoAliasLoader
+
+    class _StrictYamlLoader(_NoAliasLoader):
+        def construct_mapping(self, node, deep=False):  # type: ignore[override]
+            if isinstance(node, yaml.MappingNode):
+                seen: dict[Any, Any] = {}
+                for key_node, _value_node in node.value:
+                    if key_node.tag == _YAML_MERGE_TAG or not isinstance(key_node, yaml.ScalarNode):
+                        continue
+                    if TEMPLATE_PLACEHOLDER in key_node.value:
+                        continue  # two template-expression keys are not the same key once rendered
+                    key = (key_node.tag, key_node.value)
+                    first = seen.get(key)
+                    if first is not None:
+                        raise yaml.constructor.ConstructorError(
+                            "while constructing a mapping", node.start_mark,
+                            f"found duplicate key '{key_node.value}' (first at line {first.line + 1})",
+                            key_node.start_mark,
+                        )
+                    seen[key] = key_node.start_mark
+            return super().construct_mapping(node, deep=deep)
+
+    _STRICT_LOADER = _StrictYamlLoader
+    return _STRICT_LOADER
+
+
+_STRICT_LOADER: type | None = None
+
+
+def _had_control_lines(code: str, stripped: str) -> bool:
+    """True when ``strip_yaml_templates`` blanked a line that held only template tags (``{{- if }}``,
+    ``{% else %}``, ``{{- end }}``, ``{{- range }}``): the text is then several alternatives / repetitions
+    flattened together, so the same key may legitimately appear in two branches."""
+    if stripped == code:
+        return False
+    return any(
+        o.strip() and not s.strip() and not _TEMPLATE_COMMENT_LINE.match(o)
+        for o, s in zip(code.split("\n"), stripped.split("\n"))
+    )
+
+
+# A line holding only template comments (``{{/* … */}}``, ``{{- /* … */ -}}``, Jinja ``{# … #}``): no branch,
+# so it does not switch the duplicate check off.
+_TEMPLATE_COMMENT_LINE = re.compile(r"^\s*(?:(?:\{\{-?\s*/\*.*?\*/\s*-?\}\}|\{#.*?#\})\s*)+$")
+
+
 class YamlParse(BaseCheck):
+    """Parses every document (multi-document streams included) after ``strip_yaml_templates``. Fails on
+    a syntax error, an alias (``*x``) and a duplicate mapping key at any nesting level. The duplicate check
+    is skipped for templated YAML with control lines (if / else / range lines removed by the template
+    strip): the branches flatten into sibling keys, so duplicates there cannot be told from alternatives."""
+
     id = "yaml_parse"
     languages = frozenset({"yaml"})
+    revision = 2  # 2: duplicate mapping keys fail (2026-10-30)
+    revision_note = "duplicate keys now fail"
 
     def run(self, code, *, language, context):
         import yaml
 
-        from app.services.label_taxonomy_service import _NoAliasLoader
-
         text = strip_yaml_templates(code)
         try:
-            list(yaml.load_all(text, Loader=_NoAliasLoader))  # noqa: S506 - SafeLoader subclass
+            from app.services.label_taxonomy_service import _NoAliasLoader
+
+            loader = _NoAliasLoader if _had_control_lines(code, text) else _strict_yaml_loader()
+            list(yaml.load_all(text, Loader=loader))  # noqa: S506 - SafeLoader subclasses
             return make_result(self.id, True)
         except yaml.YAMLError as exc:
             mark = getattr(exc, "problem_mark", None)

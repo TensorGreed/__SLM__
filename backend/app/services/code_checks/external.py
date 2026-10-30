@@ -1,5 +1,10 @@
 """External (sandboxed) syntax checks. Each is gated by CODE_CHECK_ALLOWED + PATH.
 
+Checks for a language with a canonical formatter (``go_syntax`` -> gofmt, ``terraform_fmt`` ->
+terraform fmt, ``rust_syntax`` -> rustfmt) also expose ``format(code, language=, context=)``; it runs
+under the same gate, sandbox and timeouts (``code_check_service.format_code``, the opt-in
+"format before check" setting).
+
 Chunks are fragments, so only *syntax-class* diagnostics count as failures;
 resolution errors ("cannot find symbol", "package does not exist", ...) are ignored.
 The sandbox is called as ``sandbox_exec.run_sandboxed`` (module attribute) so tests
@@ -166,6 +171,26 @@ class ExternalCheck(BaseCheck):
     def _timeout(self):
         return make_result(self.id, None, [f"timed out after {self.timeout_s:g}s"], skipped="timeout")
 
+    def _format_with(self, argv: list[str], code: str, **kw: Any) -> dict[str, Any]:
+        """Run a canonical formatter (stdin -> stdout) in the same sandbox, with the same timeouts, as
+        the check. ``{"ok": True, "code": formatted}``; ``ok`` False with messages when the formatter
+        rejects the code (a syntax error); ``ok`` None + ``skipped`` when it could not run."""
+        try:
+            res = self._sandbox(argv, {}, stdin=code, **kw)
+        except sandbox_exec.SandboxError as exc:
+            return {"ok": None, "code": None, "messages": [str(exc)], "skipped": "unavailable"}
+        if res.timed_out:
+            return {"ok": None, "code": None, "messages": [f"timed out after {self.timeout_s:g}s"], "skipped": "timeout"}
+        if getattr(res, "truncated", False):
+            # Output cut at the sandbox's byte cap: never use partial code; check the original.
+            return {"ok": None, "code": None, "messages": ["formatter output was truncated"], "skipped": "truncated"}
+        if res.returncode != 0:
+            msgs = [ln.strip() for ln in (res.stderr or res.stdout or "").splitlines() if ln.strip()]
+            return {"ok": False, "code": None, "messages": msgs[:5] or ["the formatter rejected the code"], "skipped": None}
+        if not res.stdout.strip() and code.strip():
+            return {"ok": None, "code": None, "messages": ["the formatter printed nothing"], "skipped": "unavailable"}
+        return {"ok": True, "code": res.stdout, "messages": [], "skipped": None}
+
 
 class JavaSyntax(ExternalCheck):
     id = "java_syntax"
@@ -281,6 +306,12 @@ class GoSyntax(ExternalCheck):
         return make_result(self.id, False, (failures[-1] if failures else None) or ["syntax error"])
 
 
+    def format(self, code, *, language, context):
+        """``gofmt`` (stdin -> stdout; a fragment without a package clause is formatted as a
+        declaration or statement list)."""
+        return self._format_with(["gofmt"], code)
+
+
 class GoVet(ExternalCheck):
     id = "go_vet"
     languages = frozenset({"go"})
@@ -317,6 +348,11 @@ class TerraformFmt(ExternalCheck):
         if res.returncode == 0:
             return make_result(self.id, True)
         return make_result(self.id, False, [ln for ln in (res.stderr or res.stdout).splitlines() if ln.strip()] or ["not canonically formatted"])
+
+
+    def format(self, code, *, language, context):
+        """``terraform fmt -`` (stdin -> stdout): canonical alignment and indentation."""
+        return self._format_with(["terraform", "fmt", "-no-color", "-"], code)
 
 
 class TerraformValidate(ExternalCheck):
@@ -496,6 +532,21 @@ class RustSyntax(ExternalCheck):
         if neg is not None:
             return make_result(self.id, False, [f"line {neg}: unbalanced '}}' (closes more than the fragment opens)"])
         return make_result(self.id, False, failure or ["syntax error"])
+
+    def format(self, code, *, language, context):
+        """``rustfmt --emit stdout`` on the code as given. A statement fragment (``let x = 1;``) is not an
+        item list, so rustfmt rejects it; when the same fragment formats inside a function body the code is
+        fine and only unformattable as given: ``skipped="not_formattable"`` (checked unformatted), never a
+        syntax failure."""
+        argv = ["rustfmt", "--edition", "2021", "--emit", "stdout"]
+        res = self._format_with(argv, code, env=_rustup_env())
+        if res.get("ok") is not False:
+            return res
+        wrapped = self._format_with(argv, _RUST_WRAP + code + "\n}", env=_rustup_env())
+        if wrapped.get("ok") is True:
+            return {"ok": None, "code": None, "messages": ["a fragment rustfmt cannot format on its own"],
+                    "skipped": "not_formattable"}
+        return res
 
 
 EXTERNALS: list[Any] = [

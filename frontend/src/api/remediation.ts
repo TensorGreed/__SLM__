@@ -77,6 +77,9 @@ export interface RemediationConfig {
     top_k: number | null;
     /** Score held-out task -> code (code_example) rows instead of skipping them. Default off. */
     score_code_examples?: boolean | null;
+    /** Run the language's canonical formatter (gofmt, terraform fmt, rustfmt) on predicted code before the
+     *  code checks, so a format-only difference is not a failure. Default off. */
+    format_before_check?: boolean | null;
 }
 
 export interface RemediationEffective {
@@ -86,6 +89,7 @@ export interface RemediationEffective {
     retrieve_passages: boolean;
     top_k: number;
     score_code_examples?: boolean;
+    format_before_check?: boolean;
 }
 
 export interface AvailableDetector {

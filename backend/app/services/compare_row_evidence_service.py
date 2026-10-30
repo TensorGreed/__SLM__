@@ -183,7 +183,40 @@ def _scoring(er: EvalResult) -> dict[str, Any]:
         "fingerprints": {
             key: metrics[key] for key in _SCORING_FINGERPRINTS if isinstance(metrics.get(key), str)
         },
+        # Opt-in "format before check" (code examples; also folded into remediation_fingerprint).
+        "format_before_check": _format_before_check(metrics),
+        # Revised built-in checks the remediation scorer ran with (also folded into the fingerprint).
+        "check_revisions": dict(metrics["remediation_check_revisions"])
+        if isinstance(metrics.get("remediation_check_revisions"), dict) else {},
     }
+
+
+def _check_revision_note(rev_a: dict[str, Any], rev_b: dict[str, Any]) -> str | None:
+    """"built-in check revised (yaml_parse v2: duplicate keys now fail) — re-score the older run" when the two
+    results ran different revisions of a built-in check (a result without the stamp ran revision 1)."""
+    from app.services.code_check_service import get_code_check
+
+    parts: list[str] = []
+    for cid in sorted(set(rev_a) | set(rev_b)):
+        a, b = int(rev_a.get(cid, 1)), int(rev_b.get(cid, 1))
+        if a == b:
+            continue
+        newer = max(a, b)
+        note = getattr(get_code_check(cid), "revision_note", "") or ""
+        current = getattr(get_code_check(cid), "revision", None)
+        parts.append(f"{cid} v{newer}" + (f": {note}" if note and current == newer else ""))
+    if not parts:
+        return None
+    return f"built-in check revised ({'; '.join(parts)}) — re-score the older run"
+
+
+def _format_before_check(metrics: dict[str, Any]) -> bool:
+    """Stamped with the remediation fingerprint when the setting is on (``remediation_format_before_check``);
+    the code-example metric block is the fallback for results that only carry that."""
+    if metrics.get("remediation_format_before_check") is True:
+        return True
+    block = metrics.get("code_example_format_before_check")
+    return isinstance(block, dict) and block.get("enabled") is True
 
 
 async def eval_provenance(db: AsyncSession, exp: Experiment, er: EvalResult | None) -> dict[str, Any]:
@@ -362,7 +395,18 @@ def compare_provenance(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     fps_a, fps_b = scoring_a.get("fingerprints") or {}, scoring_b.get("fingerprints") or {}
     for name in _SCORING_FINGERPRINTS:
         if name in fps_a and name in fps_b and fps_a[name] != fps_b[name]:
-            _diff("scoring", f"different scoring settings ({name.replace('_', ' ')})", fps_a[name], fps_b[name])
+            what = name.replace("_", " ")
+            fmt_a, fmt_b = bool(scoring_a.get("format_before_check")), bool(scoring_b.get("format_before_check"))
+            revision_note = (
+                _check_revision_note(scoring_a.get("check_revisions") or {}, scoring_b.get("check_revisions") or {})
+                if name == "remediation_fingerprint" else None
+            )
+            if name == "remediation_fingerprint" and fmt_a != fmt_b:
+                what += f": format before check {'on' if fmt_a else 'off'} vs {'on' if fmt_b else 'off'}"
+            message = f"different scoring settings ({what})"
+            if revision_note:
+                message = revision_note if fmt_a == fmt_b else f"{revision_note}; {message}"
+            _diff("scoring", message, fps_a[name], fps_b[name])
 
     return {
         "comparable": not differences,

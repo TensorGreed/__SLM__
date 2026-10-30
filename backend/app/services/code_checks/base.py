@@ -53,6 +53,10 @@ class BaseCheck:
     kind = "builtin"
     binary: str | None = None
     requires_context: str | None = None  # a context key that must be present for default selection
+    # Bumped when a check's pass / fail semantics change (1 = original). A check above 1 is named in the
+    # remediation scoring fingerprint, so results scored by the older check are not reused or paired.
+    revision = 1
+    revision_note = ""  # what changed at the latest revision (shown by Compare)
 
     def available(self) -> bool:
         return True if not self.binary else shutil.which(self.binary) is not None

@@ -13,6 +13,10 @@ Built-ins are always available. Anything else runs only when its id is in
 ``settings.CODE_CHECK_ALLOWED`` (comma list; default empty) AND its binary
 resolves on PATH. Plugins (``settings.CODE_CHECK_PLUGIN_MODULES``, comma list)
 export ``register_code_checks(register)`` or a ``CODE_CHECKS`` list.
+
+Formatters: a check may also define ``format(code, *, language, context)`` (the language's canonical
+formatter: gofmt, terraform fmt, rustfmt). ``format_code`` runs it under the check's gate (allowed +
+available), sandbox and timeouts; used only by the opt-in "format before check" eval setting.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ from app.services.code_checks.base import CodeCheck, make_result, normalize_lang
 __all__ = [
     "CodeCheck", "normalize_language", "register_code_check", "list_code_checks", "checks_for_language",
     "run_code_checks", "load_code_check_plugins", "load_code_check_plugins_from_settings",
-    "get_plugin_diagnostics", "allowed_check_ids", "is_allowed", "get_code_check",
+    "get_plugin_diagnostics", "allowed_check_ids", "is_allowed", "get_code_check", "format_code", "formatter_for", "check_revisions",
 ]
 
 _REGISTRY: dict[str, Any] = {}
@@ -72,6 +76,17 @@ def register_code_check(check: Any) -> None:
 
 def get_code_check(check_id: str) -> Any | None:
     return _REGISTRY.get(check_id)
+
+
+def check_revisions(check_ids: list[str]) -> dict[str, int]:
+    """``{id: revision}`` for the given checks whose semantics changed since they shipped (revision > 1);
+    checks still at revision 1 are left out, so fingerprints that never included them stay as they were."""
+    out: dict[str, int] = {}
+    for cid in check_ids:
+        rev = getattr(_REGISTRY.get(cid), "revision", 1)
+        if isinstance(rev, int) and rev > 1:
+            out[cid] = rev
+    return out
 
 
 def list_code_checks() -> list[dict[str, Any]]:
@@ -135,6 +150,59 @@ def run_code_checks(
             results.append(make_result(cid, None, skipped="unknown_check") if c is None else _execute(c, code, lang, ctx))
     ran = [r for r in results if r["ok"] is not None]
     return {"ok": (all(r["ok"] for r in ran) if ran else None), "results": results}
+
+
+FORMAT_STATUSES = (
+    "formatted", "unchanged", "failed", "not_formattable", "truncated", "unavailable", "not_allowed", "timeout",
+    "no_formatter",
+)
+
+
+def formatter_for(language: str | None) -> Any | None:
+    """The registered check that formats ``language`` (first by id), or None."""
+    lang = normalize_language(language)
+    for _id, c in sorted(_REGISTRY.items()):
+        if lang in c.languages and callable(getattr(c, "format", None)):
+            return c
+    return None
+
+
+def format_code(code: str, *, language: str | None, context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Run the language's canonical formatter over ``code``.
+
+    Returns ``{"status", "formatter", "code", "messages"}``; ``code`` is what to check next: the
+    formatted text on ``formatted`` / ``unchanged``, the ORIGINAL code otherwise. ``failed`` = the
+    formatter rejected the code (a syntax error: the checks then fail it as before); ``unavailable`` /
+    ``not_allowed`` / ``timeout`` = it did not run (binary missing, not in ``CODE_CHECK_ALLOWED``, too
+    slow); ``not_formattable`` = a fragment the formatter cannot take on its own but that parses (rustfmt
+    on statements); ``truncated`` = the output hit the sandbox cap (never used); ``no_formatter`` = the
+    language has none. Never raises."""
+    lang = normalize_language(language)
+    check = formatter_for(lang)
+
+    def out(status: str, text: str, messages: list[str] | None = None) -> dict[str, Any]:
+        return {"status": status, "formatter": getattr(check, "id", None), "code": text,
+                "messages": list(messages or [])[:5]}
+
+    if check is None:
+        return out("no_formatter", code)
+    if not is_allowed(check):
+        return out("not_allowed", code)
+    if not check.available():
+        return out("unavailable", code)
+    try:
+        res = check.format(code, language=lang, context=dict(context or {}))
+    except Exception as exc:  # noqa: BLE001 - a broken formatter must not fail the caller
+        return out("unavailable", code, [f"{type(exc).__name__}: {exc}"])
+    ok = res.get("ok") if isinstance(res, dict) else None
+    if ok is True and isinstance(res.get("code"), str):
+        formatted = res["code"]
+        return out("unchanged" if formatted == code else "formatted", formatted)
+    if ok is False:
+        return out("failed", code, res.get("messages"))
+    skipped = (res or {}).get("skipped")
+    status = skipped if skipped in ("timeout", "not_formattable", "truncated") else "unavailable"
+    return out(status, code, (res or {}).get("messages"))
 
 
 # ── plugins ──

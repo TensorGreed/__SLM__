@@ -434,7 +434,7 @@ async def remediation_scoring_fingerprint(
 ) -> str:
     """Hash of everything that changes how a remediation prediction is scored: the detector (identity
     incl. experiment id), the effective code-check ids and the allow-list, passage retrieval settings
-    the extra-field schema and (when on) ``score_code_examples``. Stamped into the eval metrics as ``remediation_fingerprint``; a cached
+    the extra-field schema and (when on) ``score_code_examples`` / ``format_before_check``. Stamped into the eval metrics as ``remediation_fingerprint``; a cached
     base-model result is reused only when it matches (like ``_baseline_judge_matches``)."""
     from app.services import code_check_service as ccs
     from app.services.code_remediation_prompt import effective_remediation_config
@@ -456,7 +456,16 @@ async def remediation_scoring_fingerprint(
             json.dumps([props, sorted(schema.get("required") or [])], sort_keys=True, default=str).encode()
         ).hexdigest()[:10],
     }
+    revisions = ccs.check_revisions(check_ids)
+    if revisions:
+        # Only checks whose semantics changed (yaml_parse 2: duplicate keys fail); results scored by the
+        # older check get a different fingerprint, so they are neither reused as a baseline nor paired.
+        parts["check_revisions"] = revisions
     if cfg.get("score_code_examples"):
         # Only when on, so every fingerprint stamped before the setting existed still matches.
         parts["score_code_examples"] = True
+    if cfg.get("format_before_check") and cfg.get("score_code_examples"):
+        # Same rule: on = a different scorer (W1's Compare and the base-result reuse see different fingerprints).
+        # Only with code-example scoring on: it formats nothing otherwise.
+        parts["format_before_check"] = True
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]

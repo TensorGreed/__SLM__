@@ -907,6 +907,7 @@ session-start guidance.
 - `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
 - `backend/tests/test_code_checks.py` — Code-check registry, built-ins, external checks (sandbox stubbed), plugins, API.
 - `backend/tests/test_code_chunker.py` — Code chunker: declaration-level chunks with exact line ranges.
+- `backend/tests/test_code_example_format_before_check.py` — Opt-in "format before check" for held-out code-example scoring
 - `backend/tests/test_code_example_scoring.py` — Opt-in held-out scoring of ``code_example`` (task -> code) rows in a ``remediation`` eval
 - `backend/tests/test_code_examples_declared_language.py` — `code_examples` playbook: the reply declares its language; validation checks the code under it.
 - `backend/tests/test_code_examples_format_skip.py` — `code_examples`: format check (language_mismatch), seed skips, extra instructions, pending-row re-check.
@@ -1237,6 +1238,7 @@ session-start guidance.
 - `backend/tests/test_vision_language_adapter_prompt_wrap.py` — ι-fix tests — vision-language-pair adapter writes the
 - `backend/tests/test_warmstart_checkpoint.py` — Unit tests for the warm-start checkpoint trainer's non-GPU logic.
 - `backend/tests/test_web_crawl_source.py` — Website document source: crawler policy (robots, prefixes, rejects, cache),
+- `backend/tests/test_yaml_duplicate_keys.py` — The ``yaml_parse`` code check refuses duplicate mapping keys at any nesting level (PyYAML keeps the
 
 ## Frontend · Tests
 

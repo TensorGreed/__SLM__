@@ -2985,25 +2985,30 @@ async def _apply_structured_plan_live_config(db: AsyncSession, project_id: int, 
     eval_ctx.manifest["output_schema"]["structured_plan"] = stamp
 
 
+_REMEDIATION_LIVE_FLAGS = ("score_code_examples", "format_before_check")
+
+
 async def _apply_remediation_live_config(db: AsyncSession, project_id: int, eval_ctx: Any) -> None:
-    """A remediation eval scores held-out ``code_example`` rows when the project's CURRENT settings say so
-    (``score_code_examples``; the manifest only stamps what the split was prepared with). With the setting
-    off and nothing stamped, the manifest is left untouched."""
+    """A remediation eval scores held-out ``code_example`` rows (``score_code_examples``) and formats their
+    predicted code before the checks (``format_before_check``) when the project's CURRENT settings say so
+    (the manifest only stamps what the split was prepared with). A flag is stamped only when on; with every
+    flag off and nothing stamped, the manifest is left untouched."""
     if _manifest_scoring_mode(eval_ctx) != "remediation":
         return
     from app.services.code_remediation_prompt import effective_remediation_config
 
     project = await db.get(Project, project_id)
-    live = effective_remediation_config(getattr(project, "runtime_config", None), project_id)["score_code_examples"]
+    cfg = effective_remediation_config(getattr(project, "runtime_config", None), project_id)
     schema = eval_ctx.manifest["output_schema"]
     stamp = schema.get("remediation") if isinstance(schema.get("remediation"), dict) else {}
-    if bool(stamp.get("score_code_examples")) == live:
+    if all(bool(stamp.get(flag)) == bool(cfg.get(flag)) for flag in _REMEDIATION_LIVE_FLAGS):
         return
     stamp = dict(stamp)
-    if live:
-        stamp["score_code_examples"] = True
-    else:
-        stamp.pop("score_code_examples", None)
+    for flag in _REMEDIATION_LIVE_FLAGS:
+        if cfg.get(flag):
+            stamp[flag] = True
+        else:
+            stamp.pop(flag, None)
     schema["remediation"] = stamp
 
 
@@ -3644,6 +3649,23 @@ async def run_heldout_evaluation(
                 db, project_id, getattr(project_row, "runtime_config", None),
                 (getattr(eval_ctx, "manifest", None) or {}).get("output_schema"),
             )
+            from app.services import code_check_service as ccs
+            from app.services.code_remediation_prompt import effective_remediation_config
+
+            rem_cfg = effective_remediation_config(getattr(project_row, "runtime_config", None), project_id)
+            if rem_cfg["format_before_check"] and rem_cfg["score_code_examples"]:
+                # Readable twin of the fingerprint part (only when it can affect a row): Compare names the
+                # setting even when no code-example row was scored.
+                metrics["remediation_format_before_check"] = True
+            # Readable twin of the fingerprint's ``check_revisions`` (only when non-empty): Compare explains a
+            # difference that comes from a revised built-in check.
+            if rem_cfg["checks"] is not None:
+                rev_ids = list(rem_cfg["checks"])
+            else:
+                rev_ids = [c["id"] for c in ccs.list_code_checks() if c["available"] and c["allowed"] and c["kind"] != "detector"]
+            revisions = ccs.check_revisions(rev_ids)
+            if revisions:
+                metrics["remediation_check_revisions"] = revisions
         except Exception as exc:  # noqa: BLE001 - a fingerprint failure must not fail the eval
             logging.getLogger(__name__).warning("remediation fingerprint skipped: %s", exc)
         if code_example_judge is not None:
@@ -3800,6 +3822,8 @@ async def run_heldout_evaluation(
             "row_extra_fields": p.get("row_extra_fields"),
             "row_remediation_pass": p.get("row_remediation_pass"),
             **({k: p.get(k) for k in _CODE_EXAMPLE_PREVIEW_KEYS} if "row_code_example_pass" in p else {}),
+            # opt-in format_before_check only (absent otherwise, so previews are unchanged)
+            **({"row_code_example_format": p["row_code_example_format"]} if "row_code_example_format" in p else {}),
             # structured-plan: schema errors, pointer results and rubric scores per row.
             "row_schema_valid": p.get("row_schema_valid"),
             "schema_errors": p.get("schema_errors"),

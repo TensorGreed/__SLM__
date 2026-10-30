@@ -1,6 +1,7 @@
 """Code-remediation settings API: the detector behind ``issue_resolved``, the code checks that
 decide "the patched code still parses", the judge, passage retrieval and whether held-out
-``code_example`` rows are scored (``score_code_examples``, default off). Stored in
+``code_example`` rows are scored (``score_code_examples``, default off) and whether their predicted code is
+run through the language's canonical formatter before the checks (``format_before_check``, default off). Stored in
 ``Project.runtime_config["remediation"]``; see ``services/code_remediation_prompt.py``
 (defaults) and ``services/remediation_detector.py``.
 """
@@ -47,6 +48,11 @@ class RemediationConfigBody(BaseModel):
     score_code_examples: bool | None = Field(
         default=None, description="Score held-out code_example (task -> code) rows instead of skipping them. Default off."
     )
+    format_before_check: bool | None = Field(
+        default=None,
+        description="Run the language's canonical formatter (gofmt, terraform fmt, rustfmt) on predicted code before "
+        "the code checks, so a format-only difference is not a failure. Default off.",
+    )
 
 
 def _invalid(code: str, message: str) -> HTTPException:
@@ -80,6 +86,7 @@ async def _payload(db: AsyncSession, request: Request, project: Project) -> dict
         "retrieve_passages": stored.get("retrieve_passages") if isinstance(stored.get("retrieve_passages"), bool) else None,
         "top_k": stored.get("top_k") if isinstance(stored.get("top_k"), int) else None,
         "score_code_examples": stored.get("score_code_examples") if isinstance(stored.get("score_code_examples"), bool) else None,
+        "format_before_check": stored.get("format_before_check") if isinstance(stored.get("format_before_check"), bool) else None,
     }
     return {
         "config": config,
@@ -126,6 +133,8 @@ async def put_remediation_config(
         stored["retrieve_passages"] = body.retrieve_passages
     if body.score_code_examples is not None:
         stored["score_code_examples"] = body.score_code_examples
+    if body.format_before_check is not None:
+        stored["format_before_check"] = body.format_before_check
 
     if body.detector is not None:
         det = body.detector
