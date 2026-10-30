@@ -106,6 +106,48 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `RUBBER_STAMP_MIN_ROWS` (50) and pass rate ≥ `RUBBER_STAMP_PASS_RATE` (0.98). UI: `JudgeStatsStrip` above the pre-screen card
   ("<judge> passes 99% of 247 rows; may not be checking") and the same rate next to each judge on a multi-judge row. Tests
   `tests/test_synth_review_assist_judges.py` (JudgeIdentity / RubberStamp / DecisionProvenance), `SynthReviewQueue.judges.test.tsx`.
+  **Judge calibration V2 (blind labels, opt-in, nothing gated).** `services/judge_calibration_service.py`. Ground truth is
+  BLIND calibration labels only, in a sidecar `synthetic/calibration_labels.json` (`{row id: {tier: {label: pass|fail, reason?, at,
+  sig, stratum, labeller}}}`, or a SKIP marker `{skipped: true, reason, at, sig, labeller}` — not a label; one writer path, lock +
+  temp + `os.replace`); review-queue accept / reject never counts. Two tiers,
+  `human` and `reference_model`, stored apart and never pooled. `sig` = the assist `row_signature`: a label whose row changed is
+  stale and ignored (counted as `stale`). Population = synthetic rows (any review status) with ≥1 current-signature verdict;
+  stratum = `consensus_of` with `single` split by its verdict (`single_pass|single_fail|single_unsure`, `agree_pass`,
+  `agree_fail`, `disagree`). Sampler: N (default 20, max 100) rows not yet labelled in the tier, round-robin across non-empty
+  strata in that order, each shuffled by `random.Random(seed)` (default 0), then the picked list is shuffled again by the same
+  RNG so position never reveals the stratum. Rows already labelled OR skipped in the tier are not offered again. A sampled row is rendered BLIND with the assist
+  renderer (`render_blind` → `render_row_ex` on the row minus the read-time `review_assist*` / `assist_consensus` keys:
+  `{row_id, kind, content, fields, context_truncated}`) — no verdict, consensus, review status, reject reason, decided_via
+  or synth_backend; the stratum is recomputed server-side when the label is posted. Report (per judge, per tier): labelled
+  rows the judge judged (`judge_unparseable` verdicts left out, counted as `unparseable`), each weighted by stratum
+  population / labelled-in-stratum for that tier (post-stratification on the CURRENT strata; `coverage` = share of the
+  population in strata with ≥1 label); `fail` is the positive class: fail_recall = P(judge fail | label fail) with unsure
+  counted as not-fail, pass_precision = P(label pass | judge pass), `unsure_rate`, Cohen's kappa on the judge's pass/fail rows
+  (weighted cells), Wilson 95% CIs at the Kish effective n, raw `counts` (tp/fp/fn/tn + unsure_label_fail/pass), `n`, `n_eff`;
+  `insufficient` when labelled fails or passes < `MIN_CLASS_LABELS` (5) or n < `MIN_TOTAL_LABELS` (20); `rubric_shas` mix
+  (+ `rubric_mixed`; old verdicts are "(not recorded)"). A judge is never graded on labels it wrote: rows whose reference
+  `labeller` is the judge are left out of ITS metrics and the stratum weights recomputed over the remaining labelled rows
+  (`self_rows` counts them; `self` only when every labelled row it judged was its own → n 0, insufficient). Skips: per tier
+  `skipped` and per stratum `skipped` / `skip_share` (= skipped / (labelled + skipped)); strata at ≥ `SKIP_WARN_SHARE` (0.2) are
+  listed in `skip_warning_strata` with `skip_note` "estimates may be optimistic; skipped rows are often the hard ones". Setting
+  `runtime_config.judge_calibration.label_source` ∈ human | reference_model | both (default human) picks the report's tier(s).
+  API (under `/synthetic/calibration/`): `GET|PUT settings`, `GET sample?tier&n&seed`, `GET labels` (progress per tier +
+  stratum), `POST labels {row_id, tier: human, label, reason?}` (reference labels can't be posted; 400 for a row with no
+  current verdict, 404 unknown row), `POST skips {row_id, tier: human, reason?}` (the labeller's Skip; replaces a label in the tier),
+  `DELETE labels/{row_id}?tier=` (removes a label or a skip), `GET report?tier=` (omitted = the setting; `both` = one
+  report per tier), `POST reference-labelling?async_job=true {backend?, n (1-100), rubric_text?, rows_per_call?, seed?}` →
+  Job `judge_calibration_reference`: samples like the sampler (excluding rows already in the reference tier), asks the backend
+  with the review-assist prompt (`build_prompt` + same rubric + `rubric_text`, no other judge's verdict in it), writes ONLY the
+  `reference_model` tier with `labeller` = `judge_label(backend)` (never `review_assist.json`, never the jsonl); unsure /
+  unreadable / too-long rows get skip markers (a failed CALL records none — transient, a re-run retries it), so a re-run never
+  re-picks them (all-unsure run → Job fails, next POST is 400 `no_calibration_rows`); 0 labelled raises; direct calls metered
+  by the Job meter; 409 when one is running (the in-flight check + start sit under a per-event-loop asyncio lock).
+  UI: `JudgeCalibrationCard` ("Calibrate judges", collapsed, fetches nothing until opened) in `SynthReviewQueue` below the
+  pre-screen card, shown only when `facets.judge_stats` has a judged row: label-source radios, a blind labeller (one row's
+  fields, Pass / Fail / Skip (posts a skip) / Stop, optional reason), reference labelling (`GenerationModelPicker` + n), and per-judge cards
+  per tier ("vs your labels (human)" / "vs reference model (<labeller>)"), skip counts and the skip note per tier. Bell: deep link to the queue, summary "labelled N of
+  M · pass · fail · K skipped · by <labeller>". A duplicated project copies the labels sidecar with `synthetic/`. Tests
+  `tests/test_judge_calibration.py`, `JudgeCalibrationCard.test.tsx`, `SynthReviewQueue.judges.test.tsx`, `NotificationBell.test.tsx`.
 - **Versioned prepared splits** (Epic E) — `split_dataset` writes the active
   `prepared/{train,val,test}.jsonl` + `manifest.json` (the single source the
   trainer/export/coverage read) AND snapshots each run to

@@ -248,6 +248,7 @@ session-start guidance.
 - `backend/app/services/jobs_service.py` — Generic background-job framework (Hardening Phase H1).
 - `backend/app/services/json_pointer.py` — RFC 6901 JSON-pointer helpers shared by the probe runner, the schema bundle and structured-plan scoring.
 - `backend/app/services/json_schema_bundle.py` — Multi-file JSON-Schema bundles: validate offline, flatten for guided decoding, build minimal instances.
+- `backend/app/services/judge_calibration_service.py` — Judge calibration (V2): blind labels that say how far each review-assist judge can be trusted.
 - `backend/app/services/label_noise_scoring_service.py` — Quality-Lift phase 4 slice 1 — Label-noise scoring (Confident-Learning-lite).
 - `backend/app/services/label_taxonomy_service.py` — Label taxonomy: the project's controlled vocabulary of labels.
 - `backend/app/services/llm_budget_guard.py` — Hard API budget for metered cloud-LLM calls.
@@ -562,6 +563,7 @@ session-start guidance.
 - `frontend/src/api/goldReview.ts` — Human review of the answer key (P6 Trust) —
 - `frontend/src/api/guidedJson.ts` — Structured-output hint for serving (code-findings recipe).
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
+- `frontend/src/api/judgeCalibration.ts` — Judge calibration (V2): blind labels → per-judge trust numbers for the review-assist judges.
 - `frontend/src/api/labelTaxonomy.ts` — Typed client for the project label taxonomy (a hierarchical label set with
 - `frontend/src/api/llmSpend.ts` — _(no docstring)_
 - `frontend/src/api/pipelines.ts` — Pipeline evaluation client (G10): multi-stage pipelines that chain any
@@ -676,6 +678,7 @@ session-start guidance.
 - `frontend/src/components/data/GoldSetDiagnosticsPanel.tsx` — GoldSetDiagnosticsPanel — V4 of the ML-native visualisations arc.
 - `frontend/src/components/data/GoldSetPanel.tsx` — Panel for adding and managing trusted evaluation examples in gold dev and test datasets.
 - `frontend/src/components/data/IngestionPanel.tsx` — Panel for ingesting data from files, Hugging Face, Kaggle, and URLs with validation and EDA.
+- `frontend/src/components/data/JudgeCalibrationCard.tsx` — "Calibrate judges" (Judge calibration V2): blind labels, then how far each review-assist judge can be trusted.
 - `frontend/src/components/data/LabelNoiseReviewPanel.tsx` — Quality-Lift phase 4 slice 3 — Label-noise review surface.
 - `frontend/src/components/data/LabelTaxonomyCard.tsx` — Data page — the project's label taxonomy: a hierarchy of labels with
 - `frontend/src/components/data/LabellingConventionsCard.tsx` — Labels step — the labelling conventions of a span project (Epic U phase
@@ -975,6 +978,7 @@ session-start guidance.
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
 - `backend/tests/test_json_extraction_scoring.py` — json-extraction: typed field_match scoring, null metrics, enum/type
 - `backend/tests/test_json_schema_bundle.py` — Multi-file JSON-Schema bundles: refs across files, offline-only, flattening parity, minimal instances.
+- `backend/tests/test_judge_calibration.py` — Judge calibration V2: blind stratified labels, stratum-weighted per-judge metrics, the label-source
 - `backend/tests/test_label_noise_slice1.py` — Quality-Lift phase 4 slice 1 — Label-noise scan service + endpoints.
 - `backend/tests/test_label_taxonomy.py` — Label taxonomy: parsing layouts, crosswalk_from, validation codes,
 - `backend/tests/test_labelling_cost.py` — Labelling cost: prompt caching, usage + cost per relabel, convention-aware
@@ -1264,6 +1268,7 @@ session-start guidance.
 - `frontend/src/components/data/GoalLedgerCard.test.tsx` — Arc H — GoalLedgerCard tests.
 - `frontend/src/components/data/GoldSetDiagnosticsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/GoldSetPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/JudgeCalibrationCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LabelNoiseReviewPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LabelTaxonomyCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LlmGoldGeneratePanel.test.tsx` — _(no docstring)_

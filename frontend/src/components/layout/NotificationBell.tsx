@@ -48,7 +48,7 @@ function jobDeepLink(job: Job): string | null {
     if (job.kind === 'synth_augment_from_cluster' && job.project_id) {
         return dataStepPath(job.project_id, 'synthetic', 'review-queue') + '#synth-review-queue';
     }
-    if ((job.kind === 'synth_review_assist' || job.kind === 'plan_rules_check') && job.project_id) {
+    if ((job.kind === 'synth_review_assist' || job.kind === 'plan_rules_check' || job.kind === 'judge_calibration_reference') && job.project_id) {
         return dataStepPath(job.project_id, 'synthetic', 'review-queue') + '#synth-review-queue';
     }
     // Legacy synth (QA / spans / conversations) all land on the
@@ -216,6 +216,16 @@ function jobOutcomeSummaryCore(job: Job): string | null {
             parts.push(`via batch (half price)${redone ? `, ${redone} request${redone === 1 ? '' : 's'} redone directly` : ''}`);
         }
         return parts.join(' · ');
+    }
+
+    if (job.kind === 'judge_calibration_reference') {
+        const n = (v: unknown) => (typeof v === 'number' ? v : 0);
+        const labels = (r.labels || {}) as Record<string, unknown>;
+        const parts = [`labelled ${n(r.labelled)} of ${n(r.rows_sampled)}`, `pass ${n(labels.pass)}`, `fail ${n(labels.fail)}`];
+        const skipped = n(r.skipped_unsure) + n(r.skipped_unparseable) + n(r.skipped_too_long);
+        if (skipped > 0) parts.push(`${skipped} skipped (unsure or unreadable)`);
+        if (typeof r.labeller === 'string' && r.labeller) parts.push(`by ${r.labeller}`);
+        return parts.join(' \u00b7 ');
     }
 
     if (job.kind === 'plan_rules_check') {

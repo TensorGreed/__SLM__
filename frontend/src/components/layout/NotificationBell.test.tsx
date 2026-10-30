@@ -244,6 +244,7 @@ describe('NotificationBell', () => {
     it.each([
         ['synth_playbook', '/project/3/data?open=review-queue&step=synthetic#synth-review-queue'],
         ['synth_review_assist', '/project/3/data?open=review-queue&step=synthetic#synth-review-queue'],
+        ['judge_calibration_reference', '/project/3/data?open=review-queue&step=synthetic#synth-review-queue'],
         ['training_start', '/project/3/train?open=plan'],
         ['post_training_lift_eval', '/project/3/results'],
         ['documents_qa_flow', '/project/3/train#documents-qa-flow'],
@@ -366,6 +367,19 @@ describe('NotificationBell', () => {
             result: { verdicts: { pass: 3, fail: 0, unsure: 0 }, batch: { fell_back: 1 } },
         });
         expect(jobOutcomeSummary(batched as never)).toBe('pass 3 \u00b7 fail 0 \u00b7 unsure 0 \u00b7 via batch (half price), 1 request redone directly');
+    });
+
+    it('summarises a reference-labelling job as labels written and rows skipped', () => {
+        const job = jobFixture({
+            kind: 'judge_calibration_reference', status: 'succeeded',
+            result: {
+                rows_sampled: 20, labelled: 17, labels: { pass: 12, fail: 5 },
+                skipped_unsure: 2, skipped_unparseable: 1, skipped_too_long: 0, labeller: 'ollama:big',
+            },
+        });
+        expect(jobOutcomeSummary(job as never)).toBe(
+            'labelled 17 of 20 \u00b7 pass 12 \u00b7 fail 5 \u00b7 3 skipped (unsure or unreadable) \u00b7 by ollama:big',
+        );
     });
 
     it('adds agree / disagree counts to a pre-screen summary once two judges have run', () => {

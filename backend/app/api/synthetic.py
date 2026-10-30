@@ -1948,6 +1948,276 @@ async def review_assist(
     )
 
 
+# ── Judge calibration (V2): blind labels → per-judge trust numbers ─────────────
+
+
+class CalibrationSettingsRequest(BaseModel):
+    label_source: str = Field(..., description="Which label tier(s) the calibration report shows: human | reference_model | both.")
+
+
+class CalibrationLabelRequest(BaseModel):
+    row_id: int
+    tier: str = Field(default="human", description="Only `human` labels are posted by hand; reference labels come from the reference Job.")
+    label: str = Field(..., description="pass | fail")
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class CalibrationSkipRequest(BaseModel):
+    row_id: int
+    tier: str = Field(default="human", description="Only `human` skips are posted by hand; the reference Job records its own.")
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class CalibrationReferenceRequest(BaseModel):
+    backend: str | None = Field(default=None, max_length=256, description="Any synth backend pin; omitted = the first reachable local backend.")
+    n: int = Field(default=20, ge=1, le=100)
+    rubric_text: str | None = Field(default=None, max_length=4000)
+    rows_per_call: int = Field(default=10, ge=1, le=25)
+    seed: int = 0
+
+
+def _calibration_error(message: str, param: str, status: int = 400) -> HTTPException:
+    return HTTPException(status, {"error_code": "invalid_calibration_param", "message": message, "metadata": {"param": param}})
+
+
+def _check_tier(tier: str, *, allow_both: bool = False) -> str:
+    from app.services import judge_calibration_service as calib
+
+    allowed = calib.LABEL_SOURCES if allow_both else calib.TIERS
+    if tier not in allowed:
+        raise _calibration_error(f"tier must be one of {', '.join(allowed)}.", "tier")
+    return tier
+
+
+def _synthetic_rows(project_id: int) -> list[dict]:
+    from app.services.synth_review_queue_service import _read_all_rows, _synthetic_jsonl_path
+
+    return _read_all_rows(_synthetic_jsonl_path(project_id))
+
+
+async def _calibration_project(db: AsyncSession, project_id: int):
+    from app.models.project import Project
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    return project
+
+
+@router.get("/calibration/settings")
+async def get_calibration_settings(project_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """The project's judge-calibration setting: ``label_source`` (default ``human``)."""
+    from app.services import judge_calibration_service as calib
+
+    project = await _calibration_project(db, project_id)
+    return {"label_source": calib.label_source_of(project.runtime_config),
+            "default": calib.DEFAULT_LABEL_SOURCE, "options": list(calib.LABEL_SOURCES)}
+
+
+@router.put("/calibration/settings")
+async def put_calibration_settings(
+    project_id: int, req: CalibrationSettingsRequest, db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Store ``label_source`` under ``runtime_config.judge_calibration`` (other keys kept)."""
+    from app.services import judge_calibration_service as calib
+
+    project = await _calibration_project(db, project_id)
+    if req.label_source not in calib.LABEL_SOURCES:
+        raise _calibration_error(f"label_source must be one of {', '.join(calib.LABEL_SOURCES)}.", "label_source", 422)
+    cfg = dict(project.runtime_config or {})
+    section = dict(cfg.get(calib.CONFIG_KEY) or {}) if isinstance(cfg.get(calib.CONFIG_KEY), dict) else {}
+    section["label_source"] = req.label_source
+    cfg[calib.CONFIG_KEY] = section
+    project.runtime_config = cfg
+    await db.commit()
+    return {"label_source": req.label_source, "default": calib.DEFAULT_LABEL_SOURCE, "options": list(calib.LABEL_SOURCES)}
+
+
+@router.get("/calibration/sample")
+async def get_calibration_sample(project_id: int, tier: str = "human", n: int = 20, seed: int = 0) -> dict[str, Any]:
+    """Rows to label BLIND in ``tier``: synthetic rows with at least one current judge verdict, not yet
+    labelled in the tier, spread evenly across the judge-consensus strata. Each row is what a judge reads
+    (task, artefact, passages) and nothing else — no verdict, consensus, review status or provenance;
+    the stratum is recomputed server-side when the label is posted."""
+    from app.services import judge_calibration_service as calib
+
+    _check_tier(tier)
+    if not 1 <= n <= calib.MAX_SAMPLE:
+        raise _calibration_error(f"n must be between 1 and {calib.MAX_SAMPLE}.", "n")
+    rows = calib.sample_rows(project_id, _synthetic_rows(project_id), tier, n, seed)
+    return {"tier": tier, "rows": [calib.render_blind(r) for r in rows]}
+
+
+@router.get("/calibration/labels")
+async def get_calibration_progress(project_id: int) -> dict[str, Any]:
+    """Labelling progress per tier: labelled / stale / pass / fail and per stratum population + labelled."""
+    from app.services import judge_calibration_service as calib
+
+    return calib.progress(project_id, _synthetic_rows(project_id))
+
+
+@router.post("/calibration/labels")
+async def post_calibration_label(project_id: int, req: CalibrationLabelRequest) -> dict[str, Any]:
+    """Record (or replace) one blind label. Only ``tier=human`` is posted by hand."""
+    from app.services import judge_calibration_service as calib
+
+    if req.tier != "human":
+        raise _calibration_error("Only human labels are posted here; reference-model labels come from the reference labelling Job.", "tier")
+    if req.label not in calib.LABELS:
+        raise _calibration_error("label must be pass or fail.", "label")
+    row = next((r for r in _synthetic_rows(project_id) if r.get("id") == req.row_id), None)
+    if row is None:
+        raise HTTPException(404, {"error_code": "row_not_found", "message": f"Synthetic row {req.row_id} not found.", "metadata": {"row_id": req.row_id}})
+    stratum = calib.stratum_for_row(project_id, row)
+    if stratum is None:
+        raise _calibration_error("This row has no current judge verdict, so it cannot calibrate a judge.", "row_id")
+    entry = calib.label_entry(row, req.label, stratum=stratum, labeller=calib.HUMAN_LABELLER, reason=req.reason)
+    calib.save_labels(project_id, "human", {req.row_id: entry})
+    return {"row_id": req.row_id, "tier": "human", "label": req.label, **({"reason": entry["reason"]} if "reason" in entry else {}), "at": entry["at"]}
+
+
+@router.post("/calibration/skips")
+async def post_calibration_skip(project_id: int, req: CalibrationSkipRequest) -> dict[str, Any]:
+    """Record that a person was shown this row and skipped it. Not a label: it keeps the row out of later
+    samples for the tier and is counted in the report (skipped rows are often the hard ones). Replaces a
+    label already in the tier; DELETE ``labels/{row_id}`` removes the marker."""
+    from app.services import judge_calibration_service as calib
+
+    if req.tier != "human":
+        raise _calibration_error("Only human skips are posted here; the reference labelling Job records its own.", "tier")
+    row = next((r for r in _synthetic_rows(project_id) if r.get("id") == req.row_id), None)
+    if row is None:
+        raise HTTPException(404, {"error_code": "row_not_found", "message": f"Synthetic row {req.row_id} not found.", "metadata": {"row_id": req.row_id}})
+    entry = calib.skip_entry(row, reason=req.reason or "skipped", labeller=calib.HUMAN_LABELLER)
+    calib.save_labels(project_id, "human", {req.row_id: entry})
+    return {"row_id": req.row_id, "tier": "human", "skipped": True, "at": entry["at"]}
+
+
+@router.delete("/calibration/labels/{row_id}")
+async def delete_calibration_label(project_id: int, row_id: int, tier: str = "human") -> dict[str, Any]:
+    """Remove one row's label or skip marker in ``tier`` (to relabel, post again — that replaces it)."""
+    from app.services import judge_calibration_service as calib
+
+    _check_tier(tier)
+    if not calib.delete_label(project_id, row_id, tier):
+        raise HTTPException(404, {"error_code": "label_not_found", "message": f"Row {row_id} has no {tier} label or skip.", "metadata": {"row_id": row_id, "tier": tier}})
+    return {"row_id": row_id, "tier": tier, "deleted": True}
+
+
+@router.get("/calibration/report")
+async def get_calibration_report(project_id: int, tier: str | None = None, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Per judge, against the blind labels of ``tier`` (``human`` / ``reference_model`` / ``both``; omitted =
+    the project's ``label_source``): fail-recall, pass-precision (Wilson 95% CIs), unsure rate, Cohen's kappa,
+    raw counts, effective n, ``insufficient``, the rubric mix and ``self`` (a reference labeller grading itself).
+    Tiers are never pooled: ``both`` returns one report per tier."""
+    from app.services import judge_calibration_service as calib
+
+    project = await _calibration_project(db, project_id)
+    source = calib.label_source_of(project.runtime_config)
+    chosen = _check_tier(tier, allow_both=True) if tier else source
+    return {
+        "label_source": source,
+        "tier": chosen,
+        "min_class_labels": calib.MIN_CLASS_LABELS,
+        "min_total_labels": calib.MIN_TOTAL_LABELS,
+        "reports": calib.report(project_id, _synthetic_rows(project_id), calib.tiers_for(chosen)),
+    }
+
+
+@router.post("/calibration/reference-labelling")
+async def start_reference_labelling(
+    project_id: int, req: CalibrationReferenceRequest, async_job: bool = False, db: AsyncSession = Depends(get_db),
+):
+    """A strong model labels a blind stratified sample into the ``reference_model`` tier (never the
+    review-assist verdicts, never review status). Runs as the ``judge_calibration_reference`` Job
+    (``?async_job=true``)."""
+    from app.services import judge_calibration_service as calib
+    from app.services.synth_backends import SynthBackendError
+    from app.services.synth_playbook_service import BACKEND_REGISTRY, pick_backend
+
+    if not async_job:
+        raise _calibration_error("Reference labelling runs as a background Job — add ?async_job=true.", "async_job")
+    await _calibration_project(db, project_id)
+    if not calib.sample_rows(project_id, _synthetic_rows(project_id), "reference_model", req.n, req.seed):
+        raise HTTPException(400, {
+            "error_code": "no_calibration_rows",
+            "message": "No rows to label: every row with a judge verdict already has a reference label or was skipped by an earlier run (or none has a verdict yet).",
+            "metadata": {"tier": "reference_model"},
+        })
+    cloud_override = await _resolve_cloud_backend_override(db, project_id, req.backend)
+    if cloud_override is None:
+        try:
+            pick_backend(req.backend, registry=BACKEND_REGISTRY)
+        except SynthBackendError as exc:
+            raise HTTPException(503, str(exc)) from exc
+    async with _reference_start_lock():
+        return await _start_reference_job(db, project_id, req)
+
+
+def _reference_start_lock() -> "asyncio.Lock":
+    """One lock per event loop: two concurrent POSTs can't both pass the in-flight check and start a Job."""
+    import asyncio
+
+    return _REFERENCE_START_LOCKS.setdefault(id(asyncio.get_running_loop()), asyncio.Lock())
+
+
+_REFERENCE_START_LOCKS: dict[int, Any] = {}
+
+
+async def _start_reference_job(db: AsyncSession, project_id: int, req: CalibrationReferenceRequest):
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import select
+
+    from app.models.job import Job, JobStatus
+    from app.services import jobs_service, judge_calibration_service as calib
+    from app.services.synth_playbook_service import BACKEND_REGISTRY, pick_backend
+
+    in_flight = (
+        await db.execute(
+            select(Job).where(Job.kind == "judge_calibration_reference", Job.project_id == project_id)
+            .where(Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING])).limit(1)
+        )
+    ).scalar_one_or_none()
+    if in_flight is not None:
+        raise HTTPException(409, {"error_code": "CALIBRATION_REFERENCE_ALREADY_RUNNING", "message": "Reference labelling is already running for this project. Watch the bell.", "metadata": {"existing_job_id": in_flight.id}})
+
+    async def _runner(handle: "jobs_service.JobProgressHandle") -> dict:
+        from app.database import async_session_factory
+
+        async def _progress(fraction: float, message: str) -> None:
+            await handle.set_progress(fraction=fraction, message=message)
+
+        async with async_session_factory() as runner_db:
+            override = await _resolve_cloud_backend_override(runner_db, project_id, req.backend)
+        backend_obj = override if override is not None else pick_backend(req.backend, registry=BACKEND_REGISTRY)
+        rows = calib.sample_rows(project_id, _synthetic_rows(project_id), "reference_model", req.n, req.seed)
+        if not rows:
+            raise RuntimeError("Reference labelling found no rows to label (they were labelled before it started).")
+        await handle.set_progress(message=f"Reference-labelling {len(rows)} rows…")
+        result = await calib.run_reference_labelling(
+            project_id, rows, backend_obj, rubric_text=req.rubric_text, rows_per_call=req.rows_per_call, progress=_progress,
+        )
+        await handle.set_progress(
+            fraction=1.0,
+            message=f"Reference-labelled {result['labelled']} rows · pass {result['labels']['pass']} · fail {result['labels']['fail']}",
+        )
+        return result
+
+    job = await jobs_service.start_job(
+        db,
+        kind="judge_calibration_reference",
+        title=f"Reference labels · {req.n} rows · {req.backend or 'local model'}",
+        runner=_runner,
+        project_id=project_id,
+        params={"backend": req.backend, "n": req.n, "rows_per_call": req.rows_per_call, "seed": req.seed,
+                **({"rubric_text": req.rubric_text} if req.rubric_text else {})},
+    )
+    return JSONResponse(
+        status_code=202,
+        content=await _with_budget_warning(db, project_id, jobs_service.serialize_job(job)),
+    )
+
+
 @router.post("/review-queue/bulk-update-by-source")
 async def bulk_update_synth_review_queue_by_source(
     project_id: int,

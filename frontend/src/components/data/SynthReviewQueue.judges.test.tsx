@@ -195,4 +195,17 @@ describe('SynthReviewQueue with several judges', () => {
         expect(screen.queryByTestId('synth-review-queue-judge-stats')).toBeNull();
         expect(screen.queryByTestId(`synth-review-queue-judge-rate-3-${A}`)).toBeNull();
     });
+
+    it('offers "Calibrate judges" only once some row has a judge verdict', async () => {
+        const { unmount } = render(<SynthReviewQueue projectId={5} />);
+        await screen.findByTestId('synth-review-queue-judges-3');
+        expect(screen.queryByTestId('judge-calibration-card')).toBeNull();
+        unmount();
+        mockGets({
+            ...payload,
+            facets: { ...payload.facets, judge_stats: [{ judge: A, judged: 4, pass: 3, fail: 1, unsure: 0, pass_rate: 0.75, rubber_stamp: false }] },
+        });
+        render(<SynthReviewQueue projectId={5} />);
+        expect(await screen.findByTestId('judge-calibration-toggle')).toHaveTextContent('Calibrate judges');
+    });
 });

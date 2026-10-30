@@ -17,6 +17,7 @@ import { toast } from '../../stores/toastStore';
 import { budgetExceededMessage, budgetWarningMessage } from '../../api/llmSpend';
 
 import GenerationModelPicker from '../shared/GenerationModelPicker';
+import JudgeCalibrationCard from './JudgeCalibrationCard';
 import type {
     AssistConsensus,
     JudgeStats,
@@ -424,6 +425,9 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                     synthJobId={filterJob}
                     onStarted={() => { setFlash('Pre-screen started — verdicts appear here as it runs (reload to refresh).'); }}
                 />
+                {(data.facets?.judge_stats ?? []).some((s) => s.judged > 0 || (s.unparseable ?? 0) > 0) && (
+                    <JudgeCalibrationCard projectId={projectId} />
+                )}
                 <FormatRecheckCard
                     projectId={projectId}
                     onApplied={(n) => { setFlash(`Marked ${n} mislabelled code example${n === 1 ? '' : 's'} as rejected (language_mismatch). Restore them from the Rejected section (Restore group).`); void load(); }}
