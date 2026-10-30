@@ -12,7 +12,7 @@ A **deployment plan** answers: *given this trained checkpoint + this target envi
 | Input | Where from |
 |---|---|
 | Source checkpoint | A row in `checkpoints` (see [Training](../workflows/training.md)). |
-| Target profile | `mobile_cpu` / `browser_webgpu` / `edge_gpu` / `vllm_server` / custom. |
+| Target profile | `mobile_cpu` / `browser_webgpu` / `edge_gpu` / `vllm_server` / `vllm_server_large` / custom. |
 | Compression choice | None / GGUF-Q4 / GGUF-Q8 / ONNX-INT8. |
 | Export bundle layout | `gguf+tokenizer.json` / `onnx+vocab.txt` / `huggingface`. |
 | Smoke prompts | Tiny gold-set sampled from your eval pack. |
@@ -87,7 +87,8 @@ The four built-in profiles capture different deploy constraints:
 | `mobile_cpu` | iOS / Android via CoreML or ONNX | ≤ 1.5 GB weights, INT8, no GPU. |
 | `browser_webgpu` | In-tab via Transformers.js | ≤ 800 MB weights, GGUF-Q4 favored. |
 | `edge_gpu` | NVIDIA Jetson / RK3588 | ≤ 4 GB weights, ONNX-INT8 preferred. |
-| `vllm_server` | Server-side vLLM | No weight budget; FP16 OK. |
+| `vllm_server` | Server-side vLLM | No weight budget; FP16 OK. Compatibility check assumes a 16 GB GPU. |
+| `vllm_server_large` | Server-side vLLM, large GPU | 80 GB-class baseline: 13B-30B bases in bf16. Opt-in. |
 
 Custom profiles can be registered as a plugin — see [Extensions → Contracts](../extensions/contracts.md) (the target profile plugin kind).
 

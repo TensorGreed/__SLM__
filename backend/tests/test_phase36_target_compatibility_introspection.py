@@ -111,6 +111,27 @@ class Phase36TargetCompatibilityIntrospectionTests(unittest.TestCase):
         self.assertTrue(any("could not be inferred" in item for item in reasons), reasons)
 
     @patch("app.services.target_profile_service.introspect_hf_model")
+    def test_large_gpu_server_target_admits_a_14b_base_that_vllm_server_blocks(self, mock_introspect):
+        mock_introspect.return_value = {
+            "model_id": "acme/coder-14b",
+            "resolved": True,
+            "source": "hf_config",
+            "params_estimate_b": 14.8,
+            "memory_profile": {"estimated_min_vram_gb": 31.0, "estimated_ideal_vram_gb": 40.0},
+            "architecture": "causal_lm",
+            "context_length": 32768,
+            "license": "apache-2.0",
+        }
+
+        blocked = check_compatibility("acme/coder-14b", "vllm_server")
+        self.assertFalse(bool(blocked.get("compatible")), blocked)
+        self.assertEqual(str(dict(blocked.get("vram_check") or {}).get("status") or ""), "blocked")
+
+        payload = check_compatibility("acme/coder-14b", "vllm_server_large")
+        self.assertTrue(bool(payload.get("compatible")), payload)
+        self.assertEqual(list(payload.get("reasons") or []), [])
+
+    @patch("app.services.target_profile_service.introspect_hf_model")
     def test_estimate_metrics_prefers_introspection_memory_profile(self, mock_introspect):
         mock_introspect.return_value = {
             "model_id": "acme/edge-2b",

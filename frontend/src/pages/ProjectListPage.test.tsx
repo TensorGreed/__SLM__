@@ -115,7 +115,8 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
     expect(screen.getByPlaceholderText(/One example per line\. Helps the brief analyzer/)).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/HuggingFaceTB\/SmolLM2-135M-Instruct/)).toBeInTheDocument();
     // Deployment target select is inside the advanced block — assert one of its options exists.
-    expect(screen.getByRole('option', { name: /vLLM Server/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'vLLM Server' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'vLLM Server (large GPU)' })).toBeInTheDocument();
   });
 
   it('passes parsed sample inputs/outputs when the user fills the advanced fields', async () => {

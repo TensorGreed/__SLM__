@@ -62,6 +62,7 @@ _TARGET_BASE_SECONDS_PER_STEP: dict[str, float] = {
     "browser_webgpu": 9.0,
     "edge_gpu": 2.2,
     "vllm_server": 0.6,
+    "vllm_server_large": 0.6,
 }
 
 _DEFAULT_TARGET_PROFILE = "vllm_server"
@@ -83,6 +84,7 @@ _TARGET_POWER_KW: dict[str, float] = {
     "browser_webgpu": 0.0,
     "edge_gpu": 0.05,
     "vllm_server": 0.30,  # a single A10G/L40S-class server GPU
+    "vllm_server_large": 0.70,  # a single A100/H100-class GPU
 }
 
 
@@ -191,7 +193,7 @@ def _hourly_rate_usd(target_profile: str) -> tuple[float, str]:
     if target in {"mobile_cpu", "browser_webgpu"}:
         return 0.0, "local_runtime"
 
-    if target == "vllm_server":
+    if target in {"vllm_server", "vllm_server_large"}:
         try:
             from app.services.cloud_burst_service import list_cloud_burst_catalog
 

@@ -48,6 +48,20 @@ _BUILTIN_TARGET_PROFILES = [
         "inference_runner_default": "runner.vllm",
     },
     {
+        # Opt-in: the same vLLM server on a large GPU (80 GB-class card or a
+        # large unified-memory box), so 13B-30B bf16 bases are not blocked by
+        # vllm_server's 16 GB baseline. vllm_server stays the default.
+        "id": "vllm_server_large",
+        "name": "vLLM Server (large GPU)",
+        "description": "High-throughput vLLM server on a large GPU (80 GB-class) for bigger base models.",
+        "device_class": "server",
+        "constraints": {
+            "min_vram_gb": 80.0,
+            "preferred_formats": ["huggingface"],
+        },
+        "inference_runner_default": "runner.vllm",
+    },
+    {
         "id": "mobile_cpu",
         "name": "Mobile (CPU)",
         "description": "On-device inference using mobile CPU (llama.cpp/GGUF).",

@@ -47,6 +47,7 @@ When a multimodal model is paired with a text-only runtime, the validator return
 | `browser_webgpu` | ≤ 800 MB | GGUF-Q4 of 1B–2B causal LM | Anything > 1B FP16 |
 | `edge_gpu` | ≤ 4 GB | ONNX-INT8 / GGUF-Q8 of 1B–4B | Multi-GB FP16 |
 | `vllm_server` | No hard cap | FP16 7B+, anything quantised | n/a |
+| `vllm_server_large` | No hard cap (80 GB VRAM baseline) | FP16/bf16 13B-30B | n/a |
 
 If `weight_size_within_budget` returns `false` at plan time, the [Deployability score](../deployment/rollback-and-score.md) will block promote. Suggested fixes (in order of preference):
 

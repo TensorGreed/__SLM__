@@ -421,7 +421,7 @@ The introspector's `--auto` flow detects every shape above *except* `kv_to_struc
 
 ## Target profile
 
-Deployment-environment shape: `mobile_cpu`, `browser_webgpu`, `edge_gpu`, `vllm_server`. Determines weight budget, compression preference, runtime constraints. Pluggable via the target-profile plugin kind.
+Deployment-environment shape: `mobile_cpu`, `browser_webgpu`, `edge_gpu`, `vllm_server`, `vllm_server_large` (80 GB-class GPU, for 13B-30B bases). Determines weight budget, compression preference, runtime constraints. Pluggable via the target-profile plugin kind.
 
 ## Task type
 

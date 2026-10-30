@@ -457,6 +457,7 @@ export default function ProjectListPage() {
                                                 onChange={(e) => setDeploymentTarget(e.target.value)}
                                             >
                                                 <option value="vllm_server">vLLM Server</option>
+                                                <option value="vllm_server_large">vLLM Server (large GPU)</option>
                                                 <option value="edge_gpu">Edge GPU</option>
                                                 <option value="mobile_cpu">Mobile CPU</option>
                                                 <option value="browser_webgpu">Browser WebGPU</option>

@@ -31,6 +31,7 @@ _TARGET_DEVICE_ALIASES: dict[str, str] = {
     "cloud": "server",
     "server": "server",
     "vllm_server": "server",
+    "vllm_server_large": "server",
 }
 
 _PRIMARY_LANGUAGE_ALIASES: dict[str, str] = {

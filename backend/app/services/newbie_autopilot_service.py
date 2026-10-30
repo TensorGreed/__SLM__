@@ -105,6 +105,7 @@ _TARGET_BASE_TIME_PER_1K_ROWS: dict[str, float] = {
     "browser_webgpu": 900.0,
     "edge_gpu": 220.0,
     "vllm_server": 60.0,
+    "vllm_server_large": 60.0,
 }
 
 _PLAN_PROFILE_MULTIPLIER: dict[str, float] = {
@@ -152,7 +153,7 @@ def _safe_defaults_for_target(target_profile_id: str) -> dict[str, Any]:
             "gradient_accumulation_steps": 8,
             "max_seq_length": 1024,
         }
-    if target_profile_id == "vllm_server":
+    if target_profile_id in {"vllm_server", "vllm_server_large"}:
         return {
             "batch_size": 4,
             "gradient_accumulation_steps": 4,
@@ -321,7 +322,7 @@ def _estimate_hourly_cost_usd(target_profile_id: str) -> tuple[float, str, dict[
     if normalized_target in {"mobile_cpu", "browser_webgpu"}:
         return 0.0, "local_runtime", {"reason": "Target runs locally; cloud pricing is not applied."}
 
-    if normalized_target == "vllm_server":
+    if normalized_target in {"vllm_server", "vllm_server_large"}:
         try:
             from app.services.cloud_burst_service import list_cloud_burst_catalog
 
