@@ -39,6 +39,7 @@ export const CLEAN_FILES = [
     'components/data/LabellingConventionsCard.tsx',
     'components/data/OutputSchemaEditor.tsx',
     'components/data/SyntheticPanel.tsx',
+    'components/data/SynthReviewQueue.tsx',
     'components/data/TaskShapeCard.tsx',
     'components/evaluation/EvalGapsPanel.tsx',
     'components/evaluation/EvalPackScaffoldPanel.tsx',

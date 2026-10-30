@@ -397,6 +397,33 @@ export interface ReviewQueueGroup {
      *  buckets with thousands of rows hit the cap). */
     truncated?: boolean;
     rows: ReviewQueueEntry[];
+    /** "Judges agree?" grouping only (judge calibration V3): each judge whose verdict formed the group's
+     *  consensus, with its trust status, and `trust` = the worst of them. */
+    judge_trust?: { judge: string; status: JudgeTrustStatus }[];
+    trust?: JudgeTrustStatus | null;
+}
+
+/** Judge calibration V3, worst first: passes nearly everything / catches too few bad rows (calibrated) /
+ *  no blind labels / some labels but not enough / calibrated and above the fail-recall floor. */
+export type JudgeTrustStatus = 'rubber_stamp' | 'below_floor' | 'uncalibrated' | 'insufficient' | 'calibrated_ok';
+
+/** A judge's trust status against the project's calibration label source. `tier` / `fail_recall` / `ci`
+ *  / `n` are those of the tier that decided it (`tier` null when nothing was measured under `both`). */
+export interface JudgeTrust {
+    status: JudgeTrustStatus;
+    tier: 'human' | 'reference_model' | null;
+    fail_recall: number | null;
+    /** Wilson 95% interval [low, high] of fail_recall. */
+    ci: [number, number] | null;
+    n: number;
+    label_source?: 'human' | 'reference_model' | 'both';
+    /** The fail-recall floor (0.7): below_floor = the upper CI bound is under it. */
+    floor?: number;
+    /** Labelled rows a judge needs before it counts as calibrated. */
+    min_labels?: number;
+    reasons?: string[];
+    /** rubber_stamp only: what its labels alone would say. */
+    calibrated_status?: JudgeTrustStatus;
 }
 
 /** One judge's record in the review queue. `rubber_stamp`: it passed at least 98% of 50+ rows, so it
@@ -410,6 +437,8 @@ export interface JudgeStats {
     unparseable?: number;
     pass_rate: number | null;
     rubber_stamp: boolean;
+    /** Judge calibration V3 (absent from older backends). */
+    trust?: JudgeTrust;
 }
 
 export interface ReviewQueueResponse {

@@ -22,7 +22,8 @@ labelled is weighted in its new stratum; the stored ``stratum`` is a record of w
 Metrics per judge (``fail`` is the positive class): fail-recall = P(judge says fail | label fail),
 unsure counted as "did not say fail"; pass-precision = P(label pass | judge says pass); unsure rate;
 Cohen's kappa on the rows the judge said pass / fail. Rates carry Wilson 95% intervals at the
-Kish effective n. Nothing here gates anything (V3 adds warnings).
+Kish effective n. Nothing here gates anything: V3 derives a per-judge trust status (``judge_trust``)
+that the review queue shows and the group-accept button warns on, never blocks.
 """
 
 from __future__ import annotations
@@ -32,9 +33,10 @@ import math
 import os
 import random
 import threading
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from app.config import settings
 from app.services import synth_review_assist_service as assist
@@ -443,12 +445,17 @@ SKIP_WARN_SHARE = 0.2
 SKIP_NOTE = "estimates may be optimistic; skipped rows are often the hard ones"
 
 
-def tier_report(project_id: int, rows: list[dict[str, Any]], tier: str) -> dict[str, Any]:
+def tier_report(
+    project_id: int, rows: list[dict[str, Any]], tier: str,
+    *, pop: list[tuple[dict[str, Any], dict[str, Any], str]] | None = None,
+) -> dict[str, Any]:
     """Per judge metrics against ``tier``'s current labels, stratum-weighted. A judge is never graded
     against labels it wrote itself (a reference model that is also a judge): those rows are left out of
     ITS metrics and the stratum weights are recomputed over the rows that remain (``self_rows`` counts
-    them; ``self`` = every labelled row it judged was its own, so nothing is left to measure)."""
-    pop = population(project_id, rows)
+    them; ``self`` = every labelled row it judged was its own, so nothing is left to measure).
+    ``pop`` = ``population(project_id, rows)`` when the caller already has it (one pass for several tiers)."""
+    if pop is None:
+        pop = population(project_id, rows)
     by_id = {int(r["id"]): (att, s) for r, att, s in pop}
     raw_by_id = {int(r["id"]): r for r, _, _ in pop}
     sidecar = read_labels(project_id)
@@ -534,7 +541,156 @@ def tier_report(project_id: int, rows: list[dict[str, Any]], tier: str) -> dict[
 
 
 def report(project_id: int, rows: list[dict[str, Any]], tiers: list[str]) -> list[dict[str, Any]]:
-    return [tier_report(project_id, rows, t) for t in tiers]
+    pop = population(project_id, rows) if tiers else []
+    return [tier_report(project_id, rows, t, pop=pop) for t in tiers]
+
+
+# ── trust status (V3): what the review queue shows next to each judge and on the consensus gates ──
+
+# A calibrated judge that catches fewer than this share of bad rows is flagged "below floor".
+FAIL_RECALL_FLOOR = 0.7
+# Worst first: a consensus group's trust is the worst status among the judges behind it.
+TRUST_STATUSES: tuple[str, ...] = ("rubber_stamp", "below_floor", "uncalibrated", "insufficient", "calibrated_ok")
+
+# (project id, tiers) -> (file-state key, reports), least recently used first. The report reads both
+# sidecars and hashes every row; the queue is read often and the inputs rarely change, so it is recomputed
+# only when one of the three files does.
+_TRUST_CACHE: "OrderedDict[tuple[int, tuple[str, ...]], tuple[Any, list[dict[str, Any]]]]" = OrderedDict()
+_TRUST_CACHE_MAX = 64
+_CACHE_LOCK = threading.Lock()
+
+
+def _file_state(path: Path) -> tuple[int, int] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
+def report_state(project_id: int, rows_path: Path) -> tuple[Any, ...] | None:
+    """The cache key: (mtime_ns, size) of the labels file, the verdict sidecar and the rows file; ``None``
+    when there is no labels file (nothing to report). Take it BEFORE reading the rows: a write landing
+    after it then leaves the entry under an older key, so the next read misses instead of serving a
+    stale report under a newer key."""
+    labels_state = _file_state(labels_path(project_id))
+    if labels_state is None:
+        return None
+    return labels_state, _file_state(assist.sidecar_path(project_id)), _file_state(rows_path)
+
+
+def cached_report_hit(project_id: int, tiers: list[str], state: Any) -> list[dict[str, Any]] | None:
+    """The cached report for ``state``, or ``None`` on a miss."""
+    slot = (int(project_id), tuple(tiers))
+    with _CACHE_LOCK:
+        hit = _TRUST_CACHE.get(slot)
+        if hit is None or hit[0] != state:
+            return None
+        _TRUST_CACHE.move_to_end(slot)
+        return hit[1]
+
+
+def compute_report(
+    project_id: int, rows: list[dict[str, Any]] | Callable[[], list[dict[str, Any]]], tiers: list[str], state: Any,
+) -> list[dict[str, Any]]:
+    """Compute ``report`` and cache it under ``state`` (evicting the least recently used entry when full)."""
+    reports = report(project_id, rows() if callable(rows) else rows, tiers)
+    slot = (int(project_id), tuple(tiers))
+    with _CACHE_LOCK:
+        _TRUST_CACHE[slot] = (state, reports)
+        _TRUST_CACHE.move_to_end(slot)
+        while len(_TRUST_CACHE) > _TRUST_CACHE_MAX:
+            _TRUST_CACHE.popitem(last=False)
+    return reports
+
+
+def cached_report(
+    project_id: int, rows: list[dict[str, Any]] | Callable[[], list[dict[str, Any]]], tiers: list[str], rows_path: Path,
+    *, state: Any = None,
+) -> list[dict[str, Any]]:
+    """``report`` for the review queue, cached per (labels file, verdict sidecar, rows file) state
+    (``state`` from ``report_state``, taken before the rows were read; computed here when omitted). No
+    labels file (every legacy project) → ``[]`` without computing anything. ``rows`` (or a callable
+    returning them, called only on a miss) must be the rows as stored: no read-time verdict keys, which
+    would change the row signatures."""
+    if state is None:
+        state = report_state(project_id, rows_path)
+    if state is None:
+        return []
+    hit = cached_report_hit(project_id, tiers, state)
+    return hit if hit is not None else compute_report(project_id, rows, tiers, state)
+
+
+def _tier_trust(entry: dict[str, Any] | None, tier: str) -> dict[str, Any]:
+    """One judge's status against one tier: ``calibrated_ok`` / ``below_floor`` (enough labels),
+    ``insufficient`` (some labels, not enough) or ``uncalibrated`` (none it can be graded on)."""
+    if not entry or not entry.get("n"):
+        return {"status": "uncalibrated", "tier": tier, "fail_recall": None, "ci": None, "n": 0}
+    fr = entry.get("fail_recall") or {}
+    low, high = fr.get("low"), fr.get("high")
+    out = {
+        "tier": tier, "fail_recall": fr.get("value"), "ci": [low, high] if low is not None and high is not None else None,
+        "n": int(entry.get("n") or 0),
+    }
+    if entry.get("insufficient"):
+        return {"status": "insufficient", **out, "reasons": list(entry.get("insufficient_reasons") or [])}
+    # The UPPER Wilson bound is compared with the floor: a judge is flagged only when even the most
+    # favourable reading of its labels (95%) leaves it below the floor, i.e. we are confident it misses
+    # bad rows. A point estimate under the floor with a wide interval is not enough evidence to flag it.
+    below = high is not None and high < FAIL_RECALL_FLOOR
+    return {"status": "below_floor" if below else "calibrated_ok", **out}
+
+
+def judge_trust(stat: dict[str, Any], reports: list[dict[str, Any]], label_source: str) -> dict[str, Any]:
+    """A judge's trust status for the review queue, by precedence: ``rubber_stamp`` (from its pass rate,
+    no labels needed) > ``below_floor`` / ``calibrated_ok`` (calibrated in a tier of ``label_source``) >
+    ``insufficient`` (some labels) > ``uncalibrated``. With ``both``, either tier being sufficient counts as
+    calibrated; when both are and they disagree, the worse status wins. The numbers (``tier``,
+    ``fail_recall``, ``ci``, ``n``) are those of the tier that decided the status."""
+    judge = stat.get("judge")
+    per_tier = []
+    for tier in tiers_for(label_source):
+        rep = next((r for r in reports if r.get("tier") == tier), None)
+        entry = next((j for j in (rep or {}).get("judges") or [] if j.get("judge") == judge), None)
+        per_tier.append(_tier_trust(entry, tier))
+    rank = {s: i for i, s in enumerate(TRUST_STATUSES)}
+    calibrated = [t for t in per_tier if t["status"] in ("below_floor", "calibrated_ok")]
+    if calibrated:
+        chosen = min(calibrated, key=lambda t: rank[t["status"]])
+    else:
+        partial = [t for t in per_tier if t["status"] == "insufficient"]
+        chosen = max(partial, key=lambda t: t["n"]) if partial else per_tier[0]
+    if label_source == "both" and chosen["status"] == "uncalibrated":
+        chosen = {**chosen, "tier": None}
+    out = {**chosen, "label_source": label_source, "floor": FAIL_RECALL_FLOOR, "min_labels": MIN_TOTAL_LABELS}
+    if stat.get("rubber_stamp"):
+        # Precedence: a judge that passes nearly everything is flagged whatever its labels say (the
+        # calibration numbers it has, if any, stay alongside as ``calibrated_status``).
+        out = {**out, "status": "rubber_stamp", "calibrated_status": chosen["status"]}
+    return out
+
+
+def trust_for_queue(
+    project_id: int, stored_rows: list[dict[str, Any]] | Callable[[], list[dict[str, Any]]], judge_stats: list[dict[str, Any]],
+    runtime_config: Any, rows_path: Path, *, state: Any = None,
+) -> dict[str, dict[str, Any]]:
+    """``{judge: trust}`` for every judge in the queue's ``judge_stats`` (synchronous; the queue uses
+    ``trust_from_reports`` and computes a missed report off the event loop)."""
+    if not judge_stats:
+        return {}
+    source = label_source_of(runtime_config)
+    reports = cached_report(project_id, stored_rows, tiers_for(source), rows_path, state=state)
+    return trust_from_reports(judge_stats, reports, source)
+
+
+def trust_from_reports(judge_stats: list[dict[str, Any]], reports: list[dict[str, Any]], label_source: str) -> dict[str, dict[str, Any]]:
+    return {str(s.get("judge")): judge_trust(s, reports, label_source) for s in judge_stats}
+
+
+def worst_trust(statuses: list[str]) -> str | None:
+    """The worst of ``statuses`` (``TRUST_STATUSES`` order); ``None`` for none."""
+    known = [s for s in statuses if s in TRUST_STATUSES]
+    return min(known, key=TRUST_STATUSES.index) if known else None
 
 
 # ── reference-model labelling ────────────────────────────────────────────

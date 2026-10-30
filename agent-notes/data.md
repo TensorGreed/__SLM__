@@ -148,6 +148,28 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   per tier ("vs your labels (human)" / "vs reference model (<labeller>)"), skip counts and the skip note per tier. Bell: deep link to the queue, summary "labelled N of
   M · pass · fail · K skipped · by <labeller>". A duplicated project copies the labels sidecar with `synthetic/`. Tests
   `tests/test_judge_calibration.py`, `JudgeCalibrationCard.test.tsx`, `SynthReviewQueue.judges.test.tsx`, `NotificationBell.test.tsx`.
+  **Judge calibration V3 (trust signals on the consensus gates; warn, never block).** `judge_calibration_service.judge_trust`:
+  each `facets.judge_stats` entry gains `trust {status, tier, fail_recall, ci [low, high], n, label_source, floor, min_labels,
+  reasons?, calibrated_status?}`. Precedence: `rubber_stamp` (V1 flag; `calibrated_status` keeps what the labels say) >
+  `below_floor` (calibrated and the weighted fail-recall UPPER Wilson bound < `FAIL_RECALL_FLOOR` 0.7: flagged only when we
+  are confident it misses bad rows) / `calibrated_ok` > `insufficient` (some labels, report says insufficient) >
+  `uncalibrated` (none; a self-graded reference judge with n 0 too). Tiers from the project's `label_source`; `both`: either
+  tier sufficient = calibrated, both sufficient and disagreeing → the worse; nothing measured → `tier` null. Worst-first order
+  `TRUST_STATUSES` (rubber_stamp, below_floor, uncalibrated, insufficient, calibrated_ok). Cost: `cached_report` runs the V2
+  report once for all tiers (one `population` pass) and caches it per (project, tiers) keyed on the (mtime_ns, size) of
+  `calibration_labels.json`, `review_assist.json` and `synthetic.jsonl` (`report_state`, taken BEFORE the queue reads the rows so a
+  write in between misses next time rather than caching stale under a newer key), LRU-evicted at 64; a miss is computed via
+  `asyncio.to_thread`; no labels file → no report at all (legacy
+  projects: every judge `uncalibrated`). The queue passes the rows minus the read-time verdict keys (`blind_row`), since those
+  keys would change the row signatures. With `group_by=assist_consensus` every group (pending / accepted / rejected) adds
+  `judge_trust [{judge, status}]` (the judges on its rows, label order) and `trust` = the worst (`worst_trust`). UI
+  (`SynthReviewQueue`): a badge after each judge's pass rate in the strip ("calibrated" / "below floor" / "rubber stamp?" /
+  "not calibrated" / "too few labels" for insufficient), the judges + badges on the head of `agree_pass` / `single:pass` groups,
+  and Accept group on such a group, when any judge behind it is not `calibrated_ok`, opens an inline confirm listing each
+  judge and why ("<judge> passes 100% of 247 rows; may not be checking", "not calibrated yet; label 20 rows in Calibrate
+  judges", "catches at most 55% of bad rows (vs human, n 24)") with Accept anyway / Cancel; the accept request
+  (`decided_via: group:...`) is unchanged, and an all-calibrated group (or a backend without `trust`) accepts in one click.
+  Tests `tests/test_judge_calibration.py` (TrustStatus / TrustCache / TrustQueueApi), `SynthReviewQueue.judges.test.tsx`.
 - **Versioned prepared splits** (Epic E) — `split_dataset` writes the active
   `prepared/{train,val,test}.jsonl` + `manifest.json` (the single source the
   trainer/export/coverage read) AND snapshots each run to

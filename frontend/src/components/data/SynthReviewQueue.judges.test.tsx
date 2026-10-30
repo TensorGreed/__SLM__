@@ -208,4 +208,100 @@ describe('SynthReviewQueue with several judges', () => {
         render(<SynthReviewQueue projectId={5} />);
         expect(await screen.findByTestId('judge-calibration-toggle')).toHaveTextContent('Calibrate judges');
     });
+
+    describe('trust signals (judge calibration V3)', () => {
+        const trust = (status: string, extra: Record<string, unknown> = {}) => ({
+            status, tier: 'human', fail_recall: null, ci: null, n: 0, label_source: 'human', floor: 0.7, min_labels: 20, ...extra,
+        });
+        const withTrust = (a: ReturnType<typeof trust>, b: ReturnType<typeof trust>, bStamp = false) => ({
+            ...payload,
+            facets: {
+                ...payload.facets,
+                judge_stats: [
+                    { judge: A, judged: 40, pass: 30, fail: 8, unsure: 2, pass_rate: 0.75, rubber_stamp: false, trust: a },
+                    { judge: B, judged: 247, pass: bStamp ? 247 : 200, fail: bStamp ? 0 : 47, unsure: 0,
+                        pass_rate: bStamp ? 1 : 0.8097, rubber_stamp: bStamp, trust: b },
+                ],
+            },
+            groups: groups.map((g) => (g.synth_source === 'agree_pass'
+                ? { ...g, judge_trust: [{ judge: A, status: a.status }, { judge: B, status: b.status }], trust: b.status }
+                : g.synth_source === 'single:pass' ? { ...g, judge_trust: [{ judge: A, status: a.status }], trust: a.status } : g)),
+        });
+        const okA = trust('calibrated_ok', { fail_recall: 0.9, ci: [0.75, 0.97], n: 30 });
+        const accepted = { data: { accepted: 2, rejected: 0, not_found: 0, not_pending: 0, total_remaining_pending: 4 } };
+        const sameRequest = ['/projects/5/synthetic/review-queue/bulk-update',
+            { row_ids: [1, 2], action: 'accept', reject_reason: null, decided_via: 'group:assist_consensus:agree_pass' }];
+
+        async function openConsensus() {
+            const user = userEvent.setup();
+            render(<SynthReviewQueue projectId={5} />);
+            await user.click(await screen.findByTestId('synth-review-queue-groupby-assist_consensus'));
+            return user;
+        }
+
+        it('shows a trust badge next to each judge pass rate', async () => {
+            mockGets(withTrust(okA, trust('rubber_stamp'), true));
+            render(<SynthReviewQueue projectId={5} />);
+            await screen.findByTestId('synth-review-queue-judge-stats');
+            expect(screen.getByTestId(`synth-review-queue-judge-trust-${A}`).textContent).toBe('calibrated');
+            expect(screen.getByTestId(`synth-review-queue-judge-trust-${B}`).textContent).toBe('rubber stamp?');
+            expect(screen.getByTestId(`synth-review-queue-judge-stat-${B}`).textContent)
+                .toBe(`${B} passes 100% of 247 rows; may not be checkingrubber stamp?`);
+        });
+
+        it.each([
+            ['below_floor', 'below floor'],
+            ['uncalibrated', 'not calibrated'],
+            ['insufficient', 'too few labels'],
+        ])('badge for %s', async (status, text) => {
+            mockGets(withTrust(okA, trust(status)));
+            render(<SynthReviewQueue projectId={5} />);
+            expect((await screen.findByTestId(`synth-review-queue-judge-trust-${B}`)).textContent).toBe(text);
+        });
+
+        it('lists the judges behind an accept group with their trust status', async () => {
+            mockGets(withTrust(okA, trust('uncalibrated')));
+            await openConsensus();
+            const head = await screen.findByTestId('synth-review-queue-group-trust-agree_pass');
+            expect(head.textContent).toBe(`${A} calibrated${B} not calibrated`);
+            expect(screen.getByTestId('synth-review-queue-group-trust-single:pass').textContent).toBe(`${A} calibrated`);
+            expect(screen.queryByTestId('synth-review-queue-group-trust-agree_fail')).toBeNull();
+        });
+
+        it.each([
+            ['uncalibrated', trust('uncalibrated'), false, `${B}: not calibrated yet; label 20 rows in Calibrate judges`],
+            ['below floor', trust('below_floor', { fail_recall: 0.3, ci: [0.12, 0.55], n: 24 }), false,
+                `${B} catches at most 55% of bad rows (vs human, n 24)`],
+            ['rubber stamp', trust('rubber_stamp'), true, `${B} passes 100% of 247 rows; may not be checking`],
+        ])('warns before accepting a group behind a %s judge, and Accept anyway sends the same request', async (_name, bTrust, stamp, text) => {
+            apiMock.post.mockResolvedValue(accepted);
+            mockGets(withTrust(okA, bTrust, stamp));
+            const user = await openConsensus();
+            await user.click(await screen.findByTestId('synth-review-queue-group-accept-agree_pass'));
+            const confirm = await screen.findByTestId('synth-review-queue-trust-confirm-agree_pass');
+            expect(confirm.textContent).toContain(text);
+            expect(confirm.textContent).not.toContain(`${A} `); // the calibrated judge is not listed
+            expect(apiMock.post).not.toHaveBeenCalled();
+            await user.click(screen.getByTestId('synth-review-queue-trust-accept-agree_pass'));
+            await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(...sameRequest));
+        });
+
+        it('Cancel accepts nothing', async () => {
+            mockGets(withTrust(okA, trust('uncalibrated')));
+            const user = await openConsensus();
+            await user.click(await screen.findByTestId('synth-review-queue-group-accept-agree_pass'));
+            await user.click(await screen.findByTestId('synth-review-queue-trust-cancel-agree_pass'));
+            expect(screen.queryByTestId('synth-review-queue-trust-confirm-agree_pass')).toBeNull();
+            expect(apiMock.post).not.toHaveBeenCalled();
+        });
+
+        it('accepts with one click when every judge behind the group is calibrated', async () => {
+            apiMock.post.mockResolvedValue(accepted);
+            mockGets(withTrust(okA, trust('calibrated_ok', { fail_recall: 0.8, ci: [0.71, 0.9], n: 40 })));
+            const user = await openConsensus();
+            await user.click(await screen.findByTestId('synth-review-queue-group-accept-agree_pass'));
+            await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(...sameRequest));
+            expect(screen.queryByTestId('synth-review-queue-trust-confirm-agree_pass')).toBeNull();
+        });
+    });
 });

@@ -21,6 +21,7 @@ import JudgeCalibrationCard from './JudgeCalibrationCard';
 import type {
     AssistConsensus,
     JudgeStats,
+    JudgeTrustStatus,
     ReviewAssist,
     ReviewAssistJudge,
     ReviewQueueEntry,
@@ -62,6 +63,9 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [flash, setFlash] = useState<string | null>(null);
+    // Judge calibration V3: a consensus group backed by a judge that is not calibrated_ok asks once, inline,
+    // before it is accepted (warn, never block).
+    const [confirmAccept, setConfirmAccept] = useState<{ key: string; warnings: string[] } | null>(null);
     // Arc 5 — purge confirmation lives on the parent so it survives
     // the post-purge re-render (after a successful purge the rejected
     // section unmounts; the flash needs to outlive it).
@@ -207,6 +211,7 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
     // re-judged rows, or another tab accepted some, since): the queue is re-fetched right before the
     // call and only the group's CURRENT pending rows whose verdict (and reason) still match go in.
     const handleGroupUpdate = async (group: ReviewQueueGroup, action: 'accept' | 'reject') => {
+        setConfirmAccept(null);
         const byConsensus = groupBy === 'assist_consensus';
         const verdict = byConsensus ? null : assistVerdictOf(group);
         if (action === 'accept' && !(byConsensus ? canAcceptConsensusGroup(group) : canAcceptGroup(group))) return;
@@ -260,6 +265,17 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
         } finally {
             setBusy(false);
         }
+    };
+
+    // Accept on a "Judges agree?" group: when any judge behind it is not calibrated_ok, list each one and
+    // why, and accept only on "Accept anyway". The accept request is the same either way.
+    const requestGroupAccept = (group: ReviewQueueGroup) => {
+        const warnings = groupBy === 'assist_consensus' ? groupTrustWarnings(group, data?.facets?.judge_stats) : [];
+        if (warnings.length > 0) {
+            setConfirmAccept({ key: group.synth_source, warnings });
+            return;
+        }
+        void handleGroupUpdate(group, 'accept');
     };
 
     const toggleRow = (id: number) => {
@@ -545,13 +561,16 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                                 )}
                                 <span className="synth-review-queue__group-count">{group.count}</span>
                             </label>
+                            {groupBy === 'assist_consensus' && canAcceptConsensusGroup(group) && (
+                                <GroupJudgesTrust group={group} stats={data.facets?.judge_stats} />
+                            )}
                             {(groupBy === 'assist_reason' || groupBy === 'verdict' || groupBy === 'assist_consensus') && group.rows.length > 0 && (
                                 <span className="synth-review-queue__group-actions">
                                     {(groupBy === 'assist_consensus' ? canAcceptConsensusGroup(group) : canAcceptGroup(group)) && (
                                         <button
                                             type="button"
                                             className="btn btn-primary"
-                                            onClick={() => handleGroupUpdate(group, 'accept')}
+                                            onClick={() => requestGroupAccept(group)}
                                             disabled={busy}
                                             data-testid={`synth-review-queue-group-accept-${group.synth_source}`}
                                         >
@@ -572,6 +591,35 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                                 </span>
                             )}
                         </div>
+                        {confirmAccept?.key === group.synth_source && (
+                            <div className="synth-review-queue__trust-confirm" data-testid={`synth-review-queue-trust-confirm-${group.synth_source}`}>
+                                <p className="synth-review-queue__subtitle">
+                                    Some judges behind this group may not be catching bad rows:
+                                </p>
+                                <ul>
+                                    {confirmAccept.warnings.map((w) => <li key={w}>{w}</li>)}
+                                </ul>
+                                <div className="synth-review-queue__rules-actions">
+                                    <button
+                                        type="button"
+                                        className="btn btn-primary"
+                                        onClick={() => handleGroupUpdate(group, 'accept')}
+                                        disabled={busy}
+                                        data-testid={`synth-review-queue-trust-accept-${group.synth_source}`}
+                                    >
+                                        Accept anyway
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={() => setConfirmAccept(null)}
+                                        data-testid={`synth-review-queue-trust-cancel-${group.synth_source}`}
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                         <ul className="synth-review-queue__rows">
                             {group.rows.map((row) => (
                                 <li
@@ -698,10 +746,81 @@ function JudgeStatsStrip({ stats }: { stats: JudgeStats[] }) {
                 >
                     <code>{s.judge}</code> {passRateText(s)}
                     {s.rubber_stamp ? '; may not be checking' : ''}
+                    {s.trust && <TrustBadge status={s.trust.status} testId={`synth-review-queue-judge-trust-${s.judge}`} />}
                 </span>
             ))}
         </div>
     );
+}
+
+/** Judge calibration V3: the short badge text per trust status (the group-accept warning says why). */
+const TRUST_BADGE: Record<JudgeTrustStatus, string> = {
+    calibrated_ok: 'calibrated',
+    below_floor: 'below floor',
+    rubber_stamp: 'rubber stamp?',
+    uncalibrated: 'not calibrated',
+    insufficient: 'too few labels',
+};
+
+function TrustBadge({ status, testId }: { status: JudgeTrustStatus; testId?: string }) {
+    return (
+        <span className={`synth-review-queue__trust synth-review-queue__trust--${status}`} data-testid={testId}>
+            {TRUST_BADGE[status]}
+        </span>
+    );
+}
+
+/** The judges whose verdicts formed a consensus group, with their trust status: from the queue's
+ *  `judge_trust` when present, else the judges on the group's rows with the strip's statuses. */
+function groupJudges(group: ReviewQueueGroup, stats?: JudgeStats[]): { judge: string; status?: JudgeTrustStatus }[] {
+    if (group.judge_trust) return group.judge_trust;
+    const names: string[] = [];
+    group.rows.forEach((r) => (r.review_assist_judges ?? []).forEach((j) => {
+        if (!names.includes(j.judge)) names.push(j.judge);
+    }));
+    return names.map((judge) => ({ judge, status: stats?.find((s) => s.judge === judge)?.trust?.status }));
+}
+
+/** "Judges agree?" accept groups: each judge behind the group with its trust badge. */
+function GroupJudgesTrust({ group, stats }: { group: ReviewQueueGroup; stats?: JudgeStats[] }) {
+    const judges = groupJudges(group, stats).filter((j) => j.status);
+    if (judges.length === 0) return null;
+    return (
+        <span className="synth-review-queue__group-trust" data-testid={`synth-review-queue-group-trust-${group.synth_source}`}>
+            {judges.map((j) => (
+                <span key={j.judge}>
+                    <code>{j.judge}</code> <TrustBadge status={j.status as JudgeTrustStatus} />
+                </span>
+            ))}
+        </span>
+    );
+}
+
+const pct = (v: number | null | undefined) => Math.round((v ?? 0) * 100);
+
+/** Why a judge behind a group may not be trusted, in plain words (null when it is calibrated_ok or the
+ *  backend reports no trust status). */
+function trustWarning(judge: string, status: JudgeTrustStatus | undefined, stat?: JudgeStats): string | null {
+    const t = stat?.trust;
+    const need = t?.min_labels ?? 20;
+    switch (status) {
+        case 'rubber_stamp':
+            return stat ? `${judge} ${passRateText(stat)}; may not be checking` : `${judge} passes nearly every row; may not be checking`;
+        case 'below_floor':
+            return `${judge} catches at most ${pct(t?.ci?.[1])}% of bad rows (vs ${t?.tier === 'reference_model' ? 'reference model' : 'human'}, n ${t?.n ?? 0})`;
+        case 'insufficient':
+            return `${judge}: not calibrated yet, too few labels (${t?.reasons?.length ? t.reasons.join('; ') : `n ${t?.n ?? 0}`}); label more rows in Calibrate judges`;
+        case 'uncalibrated':
+            return `${judge}: not calibrated yet; label ${need} rows in Calibrate judges`;
+        default:
+            return null;
+    }
+}
+
+function groupTrustWarnings(group: ReviewQueueGroup, stats?: JudgeStats[]): string[] {
+    return groupJudges(group, stats)
+        .map((j) => trustWarning(j.judge, j.status, stats?.find((s) => s.judge === j.judge)))
+        .filter((w): w is string => w !== null);
 }
 
 /** A judge's pass rate next to its verdict on a row ("(passes 99% of 247 rows; may not be checking)"). */

@@ -248,6 +248,49 @@ def _consensus_group_label(entries: list[dict[str, Any]]) -> str:
     return f"{head} · {' + '.join(names)}" if names else head
 
 
+def _consensus_group_trust(entries: list[dict[str, Any]], trust: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Judge calibration V3, consensus groupings only: ``judge_trust`` = each judge whose verdict is on the
+    group's rows (the ones that formed the consensus), with its trust status, and ``trust`` = the WORST of
+    them (``None`` for a group with no judge). Same judges and order as the group label."""
+    from app.services.judge_calibration_service import worst_trust
+
+    names: list[str] = []
+    for r in entries:
+        for e in _judges(r):
+            if e["judge"] not in names:
+                names.append(e["judge"])
+    judges = [{"judge": n, "status": (trust.get(n) or {}).get("status", "uncalibrated")} for n in names]
+    return {"judge_trust": judges, "trust": worst_trust([j["status"] for j in judges])}
+
+
+async def _judge_trust(
+    db: AsyncSession, project_id: int, state: Any, attached_rows: list[dict[str, Any]], stats: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """``{judge: trust}`` (``judge_calibration_service.judge_trust``) for the queue's judges. ``state`` =
+    ``report_state`` taken before the rows were read (``None``: no labels file, nothing computed). The
+    report is cached per file state; a miss is computed off the event loop."""
+    if not stats:
+        return {}
+    import asyncio
+
+    from app.models.project import Project
+    from app.services import judge_calibration_service as calib
+
+    project = await db.get(Project, project_id)
+    source = calib.label_source_of(project.runtime_config if project is not None else None)
+    tiers = calib.tiers_for(source)
+    reports: list[dict[str, Any]] = []
+    if state is not None:
+        hit = calib.cached_report_hit(project_id, tiers, state)
+        if hit is not None:
+            reports = hit
+        else:
+            # The report needs the rows as stored: the read-time verdict keys would change their signatures.
+            stored = [calib.blind_row(r) for r in attached_rows]
+            reports = await asyncio.to_thread(calib.compute_report, project_id, stored, tiers, state)
+    return calib.trust_from_reports(stats, reports, source)
+
+
 def _resolve_backend_label(row: dict[str, Any]) -> str:
     """Group key when grouping by backend — the pin that wrote the row."""
     backend = row.get("synth_backend")
@@ -300,6 +343,7 @@ def _bucket_rows_by_source(
     key_fn: Any = None,
     conventions_current: str | None = None,
     grouping: str | None = None,
+    judge_trust: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Group rows by a key (``synth_source`` by default, or the class label
     when ``key_fn`` is ``_resolve_class_label``), sort, project to the UI shape.
@@ -335,10 +379,14 @@ def _bucket_rows_by_source(
         else:
             visible_entries = entries
             truncated = False
+        extra: dict[str, Any] = {}
+        if grouping == "assist_consensus" and judge_trust is not None:
+            extra = _consensus_group_trust(groups[source], judge_trust)
         grouped.append({
             "synth_source": source,
             # job / backend groupings: "job:12 · cloud:anthropic:<model> · <mode> · batch".
             "label": _group_label(grouping, groups[source]),
+            **extra,
             "count": total_in_group,
             "truncated": truncated,
             # Span rows labelled under older labelling conventions than the
@@ -433,6 +481,11 @@ async def list_review_queue(
     )
     dataset = ds_result.scalar_one_or_none()
     path = _synthetic_jsonl_path(project_id)
+    from app.services import judge_calibration_service as calib
+
+    # Judge calibration V3: the trust report's cache key is taken BEFORE the rows are read (a write in
+    # between then misses the cache next time instead of caching a stale report under a newer key).
+    trust_state = calib.report_state(project_id, path)
     all_rows = _ensure_row_ids(path, _read_all_rows(path))
     # Pre-screen verdicts live in a sidecar (never in the jsonl): merge them on for display.
     from app.services.synth_review_assist_service import attach_verdicts, judge_stats
@@ -444,6 +497,13 @@ async def list_review_queue(
     # Per-judge pass rates (+ the rubber-stamp flag) over EVERY row a judge has a current verdict on —
     # accepting rows must not shrink a judge's record.
     facets["judge_stats"] = judge_stats(all_rows)
+    # Judge calibration V3: each judge's trust status (rubber stamp / below the fail-recall floor /
+    # calibrated / not enough labels / uncalibrated) against the project's label source. Additive; the
+    # consensus groups below carry the judges behind them with the worst status. Warn only, never gates.
+    trust = await _judge_trust(db, project_id, trust_state, all_rows, facets["judge_stats"])
+    for s in facets["judge_stats"]:
+        if s["judge"] in trust:
+            s["trust"] = trust[s["judge"]]
     total_rows_all = len(all_rows)
     if synth_job_id is not None:
         all_rows = [r for r in all_rows if _row_job_id(r) == synth_job_id]
@@ -523,13 +583,16 @@ async def list_review_queue(
         "total_rejected": len(rejected),
         "conventions_version": current,
         "labeller_pins": labeller_pins,
-        "groups": _bucket_rows_by_source(pending, key_fn=key_fn, conventions_current=current, grouping=normalized_group_by),
+        "groups": _bucket_rows_by_source(
+            pending, key_fn=key_fn, conventions_current=current, grouping=normalized_group_by, judge_trust=trust,
+        ),
         "accepted_groups": _bucket_rows_by_source(
             accepted, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP, key_fn=key_fn,
-            conventions_current=current, grouping=normalized_group_by,
+            conventions_current=current, grouping=normalized_group_by, judge_trust=trust,
         ),
         "rejected_groups": _bucket_rows_by_source(
             rejected, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP, key_fn=key_fn, grouping=normalized_group_by,
+            judge_trust=trust,
         ),
     }
 

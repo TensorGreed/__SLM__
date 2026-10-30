@@ -438,10 +438,17 @@ class CalibrationApi(unittest.TestCase):
         self.assertEqual(client.get(f"{self.base}/calibration/sample", params={"n": 101}).status_code, 400)
 
     def test_review_queue_is_unchanged_by_labels(self):
+        # Labels change nothing in the queue but the V3 trust status of the judges (never rows or groups).
+        def without_trust(body):
+            for s in body["facets"]["judge_stats"]:
+                s.pop("trust", None)
+            return body
+
         before = client.get(f"{self.base}/review-queue").json()
         client.post(f"{self.base}/calibration/labels", json={"row_id": 1, "label": "fail"})
         after = client.get(f"{self.base}/review-queue").json()
-        self.assertEqual(before, after)
+        self.assertEqual(after["facets"]["judge_stats"][0]["trust"]["status"], "insufficient")
+        self.assertEqual(without_trust(before), without_trust(after))
 
     def test_reference_job_writes_only_the_reference_tier(self):
         Ref.unsure_ids = {3}
@@ -524,3 +531,244 @@ class CalibrationApi(unittest.TestCase):
         self.assertEqual(j["counts"]["tp"] + j["counts"]["tn"], 2)
         self.assertTrue(j["insufficient"])
         self.assertTrue(math.isclose(j["fail_recall"]["value"], 1.0))
+
+
+# ── V3: trust status on the consensus gates ───────────────────────────────
+
+
+def tier_entry(judge, value, low, high, n=24, insufficient=False):
+    return {"judge": judge, "n": n, "fail_recall": {"value": value, "low": low, "high": high},
+            "insufficient": insufficient, "insufficient_reasons": ["fewer than 20 labelled rows (3)"] if insufficient else []}
+
+
+class TrustStatusTests(unittest.TestCase):
+    def stat(self, judge="j", rubber_stamp=False):
+        return {"judge": judge, "judged": 60, "pass": 30, "fail": 30, "unsure": 0, "pass_rate": 0.5, "rubber_stamp": rubber_stamp}
+
+    def test_floor_compares_the_upper_wilson_bound(self):
+        # 0.40 over 20: upper bound 0.613 < 0.7 → confidently below the floor.
+        low, high = calib.wilson(0.4, 20)
+        self.assertAlmostEqual(high, 0.6134, places=3)
+        t = calib._tier_trust(tier_entry("j", 0.4, low, high, n=20), "human")
+        self.assertEqual(t["status"], "below_floor")
+        self.assertEqual((t["tier"], t["fail_recall"], t["n"]), ("human", 0.4, 20))
+        self.assertEqual(t["ci"], [low, high])
+        # 0.55 over 20: the point estimate is under the floor, but the upper bound (0.742) is not → not flagged.
+        low, high = calib.wilson(0.55, 20)
+        self.assertAlmostEqual(high, 0.7418, places=3)
+        self.assertEqual(calib._tier_trust(tier_entry("j", 0.55, low, high, n=20), "human")["status"], "calibrated_ok")
+        self.assertEqual(calib.FAIL_RECALL_FLOOR, 0.7)
+
+    def test_precedence(self):
+        bad = [{"tier": "human", "judges": [tier_entry("j", 0.2, 0.05, 0.5)]}]
+        good = [{"tier": "human", "judges": [tier_entry("j", 0.9, 0.75, 0.97)]}]
+        few = [{"tier": "human", "judges": [tier_entry("j", 1.0, 0.4, 1.0, n=3, insufficient=True)]}]
+        # rubber stamp wins over everything, keeping the calibrated status alongside
+        t = calib.judge_trust(self.stat(rubber_stamp=True), good, "human")
+        self.assertEqual((t["status"], t["calibrated_status"]), ("rubber_stamp", "calibrated_ok"))
+        self.assertEqual(calib.judge_trust(self.stat(rubber_stamp=True), [], "human")["status"], "rubber_stamp")
+        self.assertEqual(calib.judge_trust(self.stat(), bad, "human")["status"], "below_floor")
+        self.assertEqual(calib.judge_trust(self.stat(), good, "human")["status"], "calibrated_ok")
+        t = calib.judge_trust(self.stat(), few, "human")
+        self.assertEqual((t["status"], t["n"]), ("insufficient", 3))
+        self.assertTrue(t["reasons"])
+        t = calib.judge_trust(self.stat(), [], "human")
+        self.assertEqual((t["status"], t["n"], t["fail_recall"]), ("uncalibrated", 0, None))
+        # another judge's labels do not calibrate this one; a self-graded judge (n 0) is uncalibrated
+        self.assertEqual(calib.judge_trust(self.stat("other"), good, "human")["status"], "uncalibrated")
+        zero = [{"tier": "human", "judges": [{**tier_entry("j", None, None, None, n=0, insufficient=True), "self": True}]}]
+        self.assertEqual(calib.judge_trust(self.stat(), zero, "human")["status"], "uncalibrated")
+        # the label source picks the tier: human labels do not count under reference_model
+        self.assertEqual(calib.judge_trust(self.stat(), good, "reference_model")["status"], "uncalibrated")
+        self.assertEqual(calib.judge_trust(self.stat(), good, "human")["floor"], 0.7)
+
+    def test_both_tiers(self):
+        def reps(human, ref):
+            return [{"tier": "human", "judges": [human] if human else []},
+                    {"tier": "reference_model", "judges": [ref] if ref else []}]
+        ok = tier_entry("j", 0.9, 0.75, 0.97)
+        bad = tier_entry("j", 0.2, 0.05, 0.5, n=30)
+        few = tier_entry("j", 1.0, 0.4, 1.0, n=3, insufficient=True)
+        # either tier sufficient → calibrated, measured against that tier
+        t = calib.judge_trust(self.stat(), reps(None, ok), "both")
+        self.assertEqual((t["status"], t["tier"]), ("calibrated_ok", "reference_model"))
+        t = calib.judge_trust(self.stat(), reps(bad, few), "both")
+        self.assertEqual((t["status"], t["tier"]), ("below_floor", "human"))
+        # both sufficient and disagreeing → the worse one
+        t = calib.judge_trust(self.stat(), reps(ok, bad), "both")
+        self.assertEqual((t["status"], t["tier"], t["n"]), ("below_floor", "reference_model", 30))
+        t = calib.judge_trust(self.stat(), reps(bad, ok), "both")
+        self.assertEqual((t["status"], t["tier"]), ("below_floor", "human"))
+        # neither sufficient
+        self.assertEqual(calib.judge_trust(self.stat(), reps(few, None), "both")["status"], "insufficient")
+        t = calib.judge_trust(self.stat(), reps(None, None), "both")
+        self.assertEqual((t["status"], t["tier"]), ("uncalibrated", None))
+
+    def test_worst_trust(self):
+        self.assertEqual(calib.worst_trust(["calibrated_ok", "insufficient"]), "insufficient")
+        self.assertEqual(calib.worst_trust(["calibrated_ok", "uncalibrated", "below_floor"]), "below_floor")
+        self.assertEqual(calib.worst_trust(["below_floor", "rubber_stamp"]), "rubber_stamp")
+        self.assertEqual(calib.worst_trust(["calibrated_ok"]), "calibrated_ok")
+        self.assertIsNone(calib.worst_trust([]))
+
+
+class TrustCacheTests(StoreBase):
+    def test_no_labels_file_computes_nothing(self):
+        rows = [row(1)]
+        assist.save_verdicts(self.PID, {1: verdict_entry(rows[0], "pass", "j:a")})
+        with patch.object(calib, "report", side_effect=AssertionError("must not compute")):
+            self.assertEqual(calib.cached_report(self.PID, rows, ["human"], self.root / "synthetic" / "synthetic.jsonl"), [])
+            trust = calib.trust_for_queue(self.PID, rows, [{"judge": "j:a", "rubber_stamp": False}],
+                                          None, self.root / "synthetic" / "synthetic.jsonl")
+        self.assertEqual(trust["j:a"]["status"], "uncalibrated")
+
+    def test_cached_until_a_file_changes(self):
+        rows = [row(i) for i in range(1, 4)]
+        syn = self.root / "synthetic"
+        syn.mkdir(parents=True, exist_ok=True)
+        rows_path = syn / "synthetic.jsonl"
+        rows_path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+        for r in rows:
+            assist.save_verdicts(self.PID, {r["id"]: verdict_entry(r, "pass", "j:a")})
+        calib.save_labels(self.PID, "human", {1: calib.label_entry(rows[0], "pass", stratum="x", labeller="human")})
+        calls = []
+        real = calib.report
+
+        def counting(*a, **kw):
+            calls.append(1)
+            return real(*a, **kw)
+
+        with patch.object(calib, "report", side_effect=counting):
+            first = calib.cached_report(self.PID, lambda: rows, ["human"], rows_path)
+            second = calib.cached_report(self.PID, lambda: rows, ["human"], rows_path)
+            self.assertIs(first, second)
+            self.assertEqual(len(calls), 1)
+            time.sleep(0.01)
+            calib.save_labels(self.PID, "human", {2: calib.label_entry(rows[1], "fail", stratum="x", labeller="human")})
+            third = calib.cached_report(self.PID, lambda: rows, ["human"], rows_path)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(third[0]["labelled"], 2)
+
+    def test_an_edited_row_invalidates_the_report(self):
+        rows = [row(i) for i in range(1, 4)]
+        syn = self.root / "synthetic"
+        syn.mkdir(parents=True, exist_ok=True)
+        rows_path = syn / "synthetic.jsonl"
+
+        def write(rs):
+            rows_path.write_text("\n".join(json.dumps(r) for r in rs) + "\n", encoding="utf-8")
+
+        write(rows)
+        for r in rows:
+            assist.save_verdicts(self.PID, {r["id"]: verdict_entry(r, "pass", "j:a")})
+        calib.save_labels(self.PID, "human", {1: calib.label_entry(rows[0], "pass", stratum="x", labeller="human")})
+        state = calib.report_state(self.PID, rows_path)
+        first = calib.cached_report(self.PID, rows, ["human"], rows_path, state=state)
+        self.assertEqual(first[0]["labelled"], 1)
+        # Same-size edit of the labelled row ("t1" -> "x1"): its label goes stale and the report is recomputed.
+        edited = [dict(rows[0], text="x1"), *rows[1:]]
+        size = rows_path.stat().st_size
+        time.sleep(0.01)
+        write(edited)
+        self.assertEqual(rows_path.stat().st_size, size)
+        state2 = calib.report_state(self.PID, rows_path)
+        self.assertNotEqual(state, state2)
+        self.assertIsNone(calib.cached_report_hit(self.PID, ["human"], state2))
+        second = calib.cached_report(self.PID, edited, ["human"], rows_path, state=state2)
+        self.assertEqual((second[0]["labelled"], second[0]["stale"]), (0, 1))
+
+    def test_a_state_taken_before_a_write_never_serves_the_newer_rows(self):
+        rows = [row(1)]
+        syn = self.root / "synthetic"
+        syn.mkdir(parents=True, exist_ok=True)
+        rows_path = syn / "synthetic.jsonl"
+        rows_path.write_text(json.dumps(rows[0]) + "\n", encoding="utf-8")
+        assist.save_verdicts(self.PID, {1: verdict_entry(rows[0], "pass", "j:a")})
+        calib.save_labels(self.PID, "human", {1: calib.label_entry(rows[0], "pass", stratum="x", labeller="human")})
+        old_state = calib.report_state(self.PID, rows_path)
+        time.sleep(0.01)
+        rows_path.write_text(json.dumps(dict(rows[0], text="later")) + "\n", encoding="utf-8")  # lands after the stat
+        calib.cached_report(self.PID, rows, ["human"], rows_path, state=old_state)
+        self.assertIsNone(calib.cached_report_hit(self.PID, ["human"], calib.report_state(self.PID, rows_path)))
+
+    def test_overflow_evicts_the_least_recently_used_entry(self):
+        with patch.object(calib, "_TRUST_CACHE_MAX", 2), patch.object(calib, "report", return_value=[]):
+            calib._TRUST_CACHE.clear()
+            calib.compute_report(1, [], ["human"], "s1")
+            calib.compute_report(2, [], ["human"], "s2")
+            self.assertEqual(calib.cached_report_hit(1, ["human"], "s1"), [])  # 1 is now the most recent
+            calib.compute_report(3, [], ["human"], "s3")
+            self.assertIsNotNone(calib.cached_report_hit(1, ["human"], "s1"))
+            self.assertIsNone(calib.cached_report_hit(2, ["human"], "s2"))
+            self.assertIsNotNone(calib.cached_report_hit(3, ["human"], "s3"))
+            calib._TRUST_CACHE.clear()
+
+
+class TrustQueueApi(unittest.TestCase):
+    """The queue adds ``trust`` to each ``facets.judge_stats`` entry and, grouped by consensus, the judges
+    behind each group with the worst status. Rows: 1-24 judged by good:a (fail on odd ids) and lax:b
+    (always pass), all labelled by a human (odd = fail); 25 judged by a, b and new:c (agree_pass,
+    unlabelled); 26 judged by few:d only (single pass), labelled pass."""
+
+    def setUp(self):
+        r = client.post("/api/projects", json={"name": f"trust-{time.time_ns()}", "description": "x"})
+        self.assertEqual(r.status_code, 201, r.text)
+        self.pid = r.json()["id"]
+        self.base = f"/api/projects/{self.pid}/synthetic"
+        syn = Path(settings.DATA_DIR) / "projects" / str(self.pid) / "synthetic"
+        syn.mkdir(parents=True, exist_ok=True)
+        rows = [row(i) for i in range(1, 27)]
+        (syn / "synthetic.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+        for r in rows[:25]:
+            rid = r["id"]
+            assist.save_verdicts(self.pid, {rid: verdict_entry(r, "fail" if rid % 2 and rid != 25 else "pass", "good:a")})
+            assist.save_verdicts(self.pid, {rid: verdict_entry(r, "pass", "lax:b")})
+        assist.save_verdicts(self.pid, {25: verdict_entry(rows[24], "pass", "new:c")})
+        assist.save_verdicts(self.pid, {26: verdict_entry(rows[25], "pass", "few:d")})
+        self.rows = rows
+
+    def label_all(self):
+        for r in self.rows[:24]:
+            resp = client.post(f"{self.base}/calibration/labels", json={"row_id": r["id"], "label": "fail" if r["id"] % 2 else "pass"})
+            self.assertEqual(resp.status_code, 200, resp.text)
+        client.post(f"{self.base}/calibration/labels", json={"row_id": 26, "label": "pass"})
+
+    def test_legacy_project_without_labels_is_all_uncalibrated(self):
+        body = client.get(f"{self.base}/review-queue", params={"group_by": "assist_consensus"}).json()
+        trust = {s["judge"]: s["trust"] for s in body["facets"]["judge_stats"]}
+        self.assertEqual({j: t["status"] for j, t in trust.items()},
+                         {"good:a": "uncalibrated", "lax:b": "uncalibrated", "new:c": "uncalibrated", "few:d": "uncalibrated"})
+        self.assertEqual(trust["good:a"]["tier"], "human")
+        # the V1 fields are all still there
+        for s in body["facets"]["judge_stats"]:
+            self.assertTrue({"judge", "judged", "pass", "fail", "unsure", "unparseable", "pass_rate", "rubber_stamp"} <= set(s))
+
+    def test_trust_on_judge_stats_and_consensus_groups(self):
+        self.label_all()
+        body = client.get(f"{self.base}/review-queue", params={"group_by": "assist_consensus"}).json()
+        trust = {s["judge"]: s["trust"] for s in body["facets"]["judge_stats"]}
+        self.assertEqual(trust["good:a"]["status"], "calibrated_ok")
+        self.assertEqual((trust["good:a"]["fail_recall"], trust["good:a"]["n"], trust["good:a"]["tier"]), (1.0, 24, "human"))
+        self.assertEqual(trust["lax:b"]["status"], "below_floor")
+        self.assertEqual(trust["lax:b"]["fail_recall"], 0.0)
+        self.assertLess(trust["lax:b"]["ci"][1], calib.FAIL_RECALL_FLOOR)
+        self.assertEqual(trust["new:c"]["status"], "uncalibrated")
+        self.assertEqual(trust["few:d"]["status"], "insufficient")
+        groups = {g["synth_source"]: g for g in body["groups"]}
+        self.assertEqual(groups["agree_pass"]["judge_trust"], [
+            {"judge": "good:a", "status": "calibrated_ok"}, {"judge": "lax:b", "status": "below_floor"},
+            {"judge": "new:c", "status": "uncalibrated"},
+        ])
+        self.assertEqual(groups["agree_pass"]["trust"], "below_floor")
+        self.assertEqual(groups["single:pass"]["judge_trust"], [{"judge": "few:d", "status": "insufficient"}])
+        self.assertEqual(groups["single:pass"]["trust"], "insufficient")
+        # other groupings carry no trust fields
+        plain = client.get(f"{self.base}/review-queue").json()
+        self.assertNotIn("trust", plain["groups"][0])
+        # the label source picks the tier: no reference labels → uncalibrated
+        client.put(f"{self.base}/calibration/settings", json={"label_source": "reference_model"})
+        body = client.get(f"{self.base}/review-queue").json()
+        self.assertEqual({s["trust"]["status"] for s in body["facets"]["judge_stats"]}, {"uncalibrated"})
+        client.put(f"{self.base}/calibration/settings", json={"label_source": "both"})
+        body = client.get(f"{self.base}/review-queue").json()
+        self.assertEqual({s["judge"]: s["trust"]["status"] for s in body["facets"]["judge_stats"]}["lax:b"], "below_floor")

@@ -664,3 +664,33 @@
 .synth-review-queue__rules-table th,
 .synth-review-queue__rules-table td { text-align: left; padding: 2px var(--space-sm); }
 .synth-review-queue__rules-actions { display: flex; gap: var(--space-sm); align-items: center; }
+
+/* Judge calibration V3: trust badges (judges strip, consensus group heads) and the inline accept warning. */
+.synth-review-queue__trust {
+    display: inline-block;
+    margin-left: var(--space-xs);
+    padding: 0 var(--space-xs);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.synth-review-queue__trust--calibrated_ok { color: var(--color-success); }
+.synth-review-queue__trust--below_floor { color: var(--color-danger); }
+.synth-review-queue__trust--rubber_stamp { color: var(--color-warning); }
+.synth-review-queue__group-trust {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs) var(--space-sm);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+.synth-review-queue__trust-confirm {
+    margin: var(--space-sm) 0;
+    padding: var(--space-sm);
+    border: 1px solid var(--color-warning);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+}
+.synth-review-queue__trust-confirm ul { margin: 0 0 var(--space-sm); padding-left: var(--space-lg); }
