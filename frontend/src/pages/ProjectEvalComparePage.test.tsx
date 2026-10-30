@@ -204,6 +204,37 @@ describe('ProjectEvalComparePage', () => {
         expect(navigateMock).not.toHaveBeenCalled();
     });
 
+    it('an older response without row_evidence renders no evidence block', async () => {
+        apiMock.get.mockResolvedValue({ data: makeCompareResponse() });
+        renderPage('?a=11&b=12');
+        await screen.findByTestId('eval-compare');
+        expect(screen.queryByTestId('eval-compare-evidence')).not.toBeInTheDocument();
+    });
+
+    it('puts the row-paired evidence block at the top', async () => {
+        apiMock.get.mockResolvedValue({
+            data: makeCompareResponse({
+                row_evidence: {
+                    verdict: 'within_noise', reason: null, message: null,
+                    metric_id: 'exact_match', score_key: 'correct',
+                    n: 78, better: 2, worse: 7, same: 69,
+                    mean_diff: -5 / 78, ci_low: -0.13937, ci_high: 0.01117,
+                    only_in_a: 0, only_in_b: 0, unscored: 0, metrics: [],
+                    comparability: { comparable: true, differences: [], notes: [] },
+                    rescore: null,
+                },
+            }),
+        });
+        renderPage('?a=11&b=12');
+        const block = await screen.findByTestId('eval-compare-evidence');
+        expect(block.textContent).toContain(
+            'B is within noise of A: 2 better, 7 worse, 69 same of 78 rows; change −6.4 pts (95% CI −14 to +1)',
+        );
+        // Above the side cards.
+        const summary = screen.getByTestId('eval-compare-summary');
+        expect(block.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
     it('surfaces an error when the URL lacks a / b params', async () => {
         renderPage('');
         await waitFor(() => {

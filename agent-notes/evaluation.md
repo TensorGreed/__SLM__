@@ -743,3 +743,42 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   cards per tier. Bell: deep link to the settings anchor, summary "labelled N of M answers · correct · partial · wrong · K skipped
   · by <labeller>". Tests `tests/test_eval_judge_calibration.py`, `EvalJudgeCalibrationCard.test.tsx`, `JudgeModelCard.test.tsx`,
   `EvalSummaryCard.test.tsx`, `NotificationBell.test.tsx`. Not done: external-benchmark / pipeline evals do not write the file.
+
+## Compare: row-paired evidence (Epic W1)
+
+- `compare_experiments` (Results → Compare) still picks each side's newest EvalResult with a pass_rate; it now also returns
+  `row_evidence` and `a.provenance` / `b.provenance` (additive; built in `compare_row_evidence_service`, best-effort: an
+  exception leaves `row_evidence: null`). Pairing is `paired_comparison_stats.pair_row_scores(before_rows, after_rows,
+  score_key)` → `{before, after, only_before, only_after, unscored, same_order}` (same keys + order pair positionally, else
+  first occurrence by key; None scores drop the row and count as `unscored`); `sft_lift_summary_service._paired_row_scores`
+  now wraps it (unchanged behaviour). Metrics: every metric both results report that is in `_ROW_SCORE_FOR_METRIC`,
+  headline-first in `_PREFERRED_HEADLINE_METRICS` order, one per score key (exact_match/accuracy share `correct`); the
+  headline = first that pairs. Verdict = `paired_difference_evidence` (min 5 rows, paired t) + `not_comparable`.
+  `reason`: `missing_eval` / `not_comparable` / `no_row_scores` ("no per-row scores (evaluated before per-row capture)") /
+  `no_row_metric` (e.g. macro-F1 / perplexity only).
+- **Comparability** (`compare_provenance`): not comparable when any differs — answer key (dataset type; else file sha256;
+  else split version on the same dataset), judge (`metrics.judge.judge`, a skipped judge = none; `metrics.rubric` judge +
+  `sha256` when `status == "judged"`; `metrics.code_example_judge.judge`), scoring (`eval_type` FAMILY — `exact_match` and
+  `f1` are one reference-matching scorer: the lift check labels a run `exact_match` via `eval_type_for_project` where a
+  manual held-out eval of the same file may say `f1`, pairing only uses metrics both report; `llm_judge` / `safety` /
+  `perplexity` stay distinct — plus `metrics.scoring_mode` and the remediation / structured-plan / tool-call fingerprints
+  when both carry one). Unknown answer key = a note. `certain: false` when every difference rests on an inferred answer key:
+  still no verdict, worded "answer key may differ: split v3 vs v5 (v3 inferred from eval time)" and "may have been scored
+  differently". Decoding (`metrics.inference.decoding`, else `details.inference.decoding`) never blocks: different settings,
+  or one side predating recorded decoding, add a `caveats` line.
+- **Answer-key identity**: `run_heldout_evaluation` stamps `details.dataset.sha256` (file read) + `details.dataset.version`
+  (newest `DatasetVersion` of that dataset whose manifest `sha256` matches; None for an edited file / gold sets) via
+  `answer_key_stamp`, before inference. Older results: version inferred = newest DatasetVersion of `details.dataset.id`
+  created at or before the eval (`version_source: "inferred"`); its manifest hash goes to `inferred_sha256`, never `sha256`.
+- **Re-score** (`rescore`): for not-comparable the side with the older eval; for missing row scores the side lacking them.
+  `available` = `auto_lift_skip_reason(manual=True)` is None and the other side was scored on the test examples
+  (`AUTO_LIFT_DATASET`); the button (after a GPU confirm) posts the existing `POST /evaluation/summary/lift-check` (base +
+  run on the CURRENT test split and judge). Otherwise `instruction` text (baseline / simulated / not completed / no weights /
+  other answer key). `in_progress` + `job_id` when a `post_training_lift_eval` Job for that run is QUEUED / RUNNING
+  (`post_training_eval_service.active_lift_job_id`; the UI shows a disabled "Re-score running"). `start_post_training_lift_job`
+  returns `{started: false, skipped_reason: "already_running", job_id}` then (the training watcher just records it) and the
+  lift-check endpoint answers 409.
+- UI: `components/evaluation/CompareRowEvidence.tsx` at the top of `ProjectEvalComparePage` (headline "B is within noise of
+  A: 2 better, 7 worse, 69 same of 78 rows; change −6.4 pts (95% CI −14 to +1)", labels as `liftEvidence`, other metrics,
+  differences, re-score, provenance per side). The pass-rate winner / "Fix the gap" banner is unchanged (W4 gates it).
+  Tests: `tests/test_compare_row_evidence.py`, `CompareRowEvidence.test.tsx`, `ProjectEvalComparePage.test.tsx`.

@@ -3504,6 +3504,11 @@ async def run_heldout_evaluation(
     if not dataset.file_path:
         raise ValueError(f"Dataset '{dataset.name}' has no file path")
     dataset_path = Path(dataset.file_path).expanduser().resolve()
+    # Which answer key this eval scores against (file hash + split version), read
+    # before inference so Compare can tell two evals of different splits apart.
+    from app.services.compare_row_evidence_service import answer_key_stamp
+
+    answer_key = await answer_key_stamp(db, dataset, dataset_path)
     # Pull the experiment's task_type so build_eval_context can fall
     # back to it when the prepared manifest doesn't declare a
     # task_profile (common for dataset-import projects).
@@ -3710,6 +3715,10 @@ async def run_heldout_evaluation(
         "file_path": str(dataset_path),
         "modalities_observed": sorted(modality_counts.keys()),
         "modality_breakdown": modality_counts,
+        # Answer-key identity (Compare's comparability check): content hash
+        # of the file read and the split version whose manifest matches it.
+        "sha256": answer_key["sha256"],
+        "version": answer_key["version"],
     }
     details["inference"] = {
         "model_path": model_ref,

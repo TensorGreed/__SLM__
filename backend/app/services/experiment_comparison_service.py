@@ -8,7 +8,10 @@ config + dataset version.
 Different surface from ``api/comparison.py``, which compares
 training-loss trajectories only. This service is the post-eval
 "did B actually do better than A?" view: metric deltas, failure-
-cluster diff, config diff, regressed flag.
+cluster diff, config diff, regressed flag — and (Epic W1) whether B's
+change is more than noise: ``row_evidence`` pairs the two evals' per-row
+scores (``compare_row_evidence_service``) and each side carries its
+``provenance`` (eval result, answer-key version, judge, scoring mode).
 
 Public entry point: ``compare_experiments(db, project_id, exp_a_id,
 exp_b_id)`` → JSON-serialisable dict (no SQLAlchemy objects leak).
@@ -16,6 +19,7 @@ exp_b_id)`` → JSON-serialisable dict (no SQLAlchemy objects leak).
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy import select
@@ -91,16 +95,50 @@ async def compare_experiments(
     pass_rate_b = eval_b.pass_rate if eval_b else None
     winner, regressed = _decide_winner(pass_rate_a, pass_rate_b)
 
+    summary_a = _experiment_summary(exp_a, eval_a)
+    summary_b = _experiment_summary(exp_b, eval_b)
+    row_evidence = await _row_evidence(db, exp_a, eval_a, summary_a, exp_b, eval_b, summary_b)
+
     return {
         "project_id": project_id,
-        "a": _experiment_summary(exp_a, eval_a),
-        "b": _experiment_summary(exp_b, eval_b),
+        "a": summary_a,
+        "b": summary_b,
+        "row_evidence": row_evidence,
         "metric_deltas": metric_deltas,
         "cluster_diff": cluster_diff,
         "config_diff": config_diff,
         "winner": winner,
         "regressed": regressed,
     }
+
+
+async def _row_evidence(
+    db: AsyncSession,
+    exp_a: Experiment,
+    eval_a: EvalResult | None,
+    summary_a: dict[str, Any],
+    exp_b: Experiment,
+    eval_b: EvalResult | None,
+    summary_b: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Attach each side's ``provenance`` and return the row-paired evidence.
+    Best-effort like the cluster diff: a failure leaves ``row_evidence`` None
+    and the rest of the comparison intact."""
+    from app.services.compare_row_evidence_service import build_row_evidence, eval_provenance
+
+    try:
+        prov_a = await eval_provenance(db, exp_a, eval_a)
+        prov_b = await eval_provenance(db, exp_b, eval_b)
+        summary_a["provenance"] = prov_a
+        summary_b["provenance"] = prov_b
+        return await build_row_evidence(
+            db, exp_a=exp_a, eval_a=eval_a, prov_a=prov_a, exp_b=exp_b, eval_b=eval_b, prov_b=prov_b,
+        )
+    except Exception:  # noqa: BLE001 - evidence is additive; never fail the comparison
+        logging.getLogger(__name__).warning("compare row evidence skipped", exc_info=True)
+        summary_a.setdefault("provenance", None)
+        summary_b.setdefault("provenance", None)
+        return None
 
 
 async def _load_experiment(

@@ -866,6 +866,29 @@ async def _run_seed_group_lift_eval(
     }
 
 
+async def active_lift_job_id(db: AsyncSession, project_id: int, experiment_id: int) -> int | None:
+    """Id of a QUEUED / RUNNING ``post_training_lift_eval`` Job for this run, else None."""
+    from app.models.job import Job, JobStatus
+
+    rows = await db.execute(
+        select(Job)
+        .where(
+            Job.kind == "post_training_lift_eval",
+            Job.project_id == project_id,
+            Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+        )
+        .order_by(desc(Job.id))
+    )
+    for job in rows.scalars().all():
+        params = job.params if isinstance(job.params, dict) else {}
+        try:
+            if int(params.get("experiment_id")) == int(experiment_id):
+                return int(job.id)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 async def start_post_training_lift_job(
     db: AsyncSession,
     *,
@@ -882,6 +905,11 @@ async def start_post_training_lift_job(
         project = await db.get(Project, project_id)
         if exp is None:
             return {"started": False, "skipped_reason": "experiment_missing"}
+        # One lift check per run at a time: a second click (or the watcher
+        # racing a manual re-score) must not queue a duplicate GPU eval.
+        active = await active_lift_job_id(db, project_id, experiment_id)
+        if active is not None:
+            return {"started": False, "skipped_reason": "already_running", "job_id": active}
         reason = auto_lift_skip_reason(exp, project, manual=manual)
         if reason is not None:
             return {"started": False, "skipped_reason": reason}

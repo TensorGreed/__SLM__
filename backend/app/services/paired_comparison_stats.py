@@ -98,6 +98,67 @@ def paired_difference_evidence(
     return evidence
 
 
+def _row_score_list(row_scores: Any, score_key: str) -> tuple[list[str], list[str], list[float]] | None:
+    """``(all_keys, scored_keys, scores)`` from ``details["row_scores"]``;
+    None when it lacks ``keys`` or ``score_key`` (or their lengths differ).
+    A None score (the judge couldn't score that row) drops the row from the
+    pairing rather than the whole comparison."""
+    if not isinstance(row_scores, dict):
+        return None
+    keys, values = row_scores.get("keys"), row_scores.get(score_key)
+    if not isinstance(keys, list) or not isinstance(values, list) or len(keys) != len(values):
+        return None
+    kept = [(str(k), float(v)) for k, v in zip(keys, values) if v is not None]
+    return [str(k) for k in keys], [k for k, _ in kept], [v for _, v in kept]
+
+
+def pair_row_scores(
+    before_row_scores: Any, after_row_scores: Any, score_key: str
+) -> dict[str, Any] | None:
+    """Pair two evals' per-row scores (``EvalResult.details["row_scores"]``)
+    on ``score_key`` by row key, so evals that saw the rows in a different
+    order or count still compare row for row.
+
+    Returns ``{before, after, only_before, only_after, unscored, same_order}``: the paired
+    score lists (matching order), how many distinct row keys only one side
+    evaluated, and how many rows both evaluated but at least one side left
+    unscored (a None score). None when either side lacks the score list.
+    Same keys in the same order pair positionally; otherwise the first
+    occurrence of a key wins.
+    """
+    before = _row_score_list(before_row_scores, score_key)
+    after = _row_score_list(after_row_scores, score_key)
+    if before is None or after is None:
+        return None
+    before_all, before_keys, before_vals = before
+    after_all, after_keys, after_vals = after
+    before_set, after_set = set(before_all), set(after_all)
+    shared = before_set & after_set
+    out: dict[str, Any] = {
+        "only_before": len(before_set - after_set),
+        "only_after": len(after_set - before_set),
+    }
+    out["same_order"] = before_keys == after_keys
+    if out["same_order"]:
+        out.update(before=list(before_vals), after=list(after_vals))
+    else:
+        before_by_key: dict[str, float] = {}
+        for key, value in zip(before_keys, before_vals):
+            before_by_key.setdefault(key, value)
+        paired_before: list[float] = []
+        paired_after: list[float] = []
+        seen: set[str] = set()
+        for key, value in zip(after_keys, after_vals):
+            if key in before_by_key and key not in seen:
+                seen.add(key)
+                paired_before.append(before_by_key[key])
+                paired_after.append(value)
+        out.update(before=paired_before, after=paired_after)
+    paired_keys = set(before_keys) & set(after_keys)
+    out["unscored"] = len(shared - paired_keys)
+    return out
+
+
 def seed_spread_evidence(
     baseline_value: float, trained_values: Sequence[float]
 ) -> dict[str, Any]:

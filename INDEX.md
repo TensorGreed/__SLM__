@@ -152,6 +152,7 @@ session-start guidance.
 - `backend/app/services/code_example_scoring.py` — Opt-in scoring of held-out ``code_example`` rows in a ``remediation`` eval.
 - `backend/app/services/code_findings_prompt.py` — Shared prompt + schema helpers for the ``code-findings`` recipe.
 - `backend/app/services/code_remediation_prompt.py` — Shared prompt + payload helpers for the ``code-remediation`` recipe.
+- `backend/app/services/compare_row_evidence_service.py` — Is B really different from A? Row-paired evidence for Compare (Epic W1).
 - `backend/app/services/compliance_bundles_service.py` — Compliance bundles: named groups of entity types, each type tagged with
 - `backend/app/services/compression_service.py` — Compression engine service — quantization, LoRA merge, benchmarking.
 - `backend/app/services/continued_pretraining_policy.py` — Continued pretraining for projects whose data is plain documents.
@@ -720,6 +721,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/BehavioralResultsTable.tsx` — Quality-Lift phase 8 slice 3 — BehavioralResultsTable.
 - `frontend/src/components/evaluation/BehavioralTestsSection.tsx` — Quality-Lift phase 7 slice 2 — Behavioral tests editor section.
 - `frontend/src/components/evaluation/ClassificationChartsPanel.tsx` — ClassificationChartsPanel — V1 of the ML-native visualisations arc.
+- `frontend/src/components/evaluation/CompareRowEvidence.tsx` — Compare page evidence block (Epic W1): is B really different from A?
 - `frontend/src/components/evaluation/DialogueJudgePanel.tsx` — DialogueJudgePanel — summary of the per-turn replay judge.
 - `frontend/src/components/evaluation/DriftReviewQueuePanel.tsx` — DriftReviewQueuePanel — UI for E4's drift-triggered hallucination
 - `frontend/src/components/evaluation/EvalGapPatchPreviewModal.tsx` — EvalGapPatchPreviewModal — Coach-stage-2 phase 5.
@@ -917,6 +919,7 @@ session-start guidance.
 - `backend/tests/test_code_remediation_playbooks.py` — `code-remediation` synth playbooks: remediation_from_findings and code_examples.
 - `backend/tests/test_code_remediation_recipe.py` — The ``code-remediation`` recipe: catalog entry, detection, the shared prompt (train == eval,
 - `backend/tests/test_command_backend.py` — Command (local CLI) synth backend + the hard API budget (phase G9).
+- `backend/tests/test_compare_row_evidence.py` — Compare page row-paired evidence (Epic W1).
 - `backend/tests/test_compliance_bundles.py` — Compliance bundles: built-in bundles are data (types + definitions +
 - `backend/tests/test_continued_pretraining.py` — Continued pretraining for documents-only projects (Wave 2c-1).
 - `backend/tests/test_curriculum_ab.py` — Tests for the Phase 6c A/B harness (pure-function pieces).
@@ -1314,6 +1317,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/BehavioralResultsTable.test.tsx` — Quality-Lift phase 8 slice 3 — BehavioralResultsTable tests.
 - `frontend/src/components/evaluation/BehavioralTestsSection.test.tsx` — Quality-Lift phase 7 slice 2 — BehavioralTestsSection tests.
 - `frontend/src/components/evaluation/ClassificationChartsPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/CompareRowEvidence.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/DriftReviewQueuePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalGapPatchPreviewModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalGapsPanel.test.tsx` — _(no docstring)_

@@ -119,6 +119,15 @@ always present, other changed fields surfaced). The ``regressed``
 flag fires when B's pass_rate is below A's — drives the
 "Fix the gap" CTA in the comparison page.
 
+Epic W1 (additive): ``row_evidence`` pairs the two evals' per-row
+scores by row key — rows better / worse / same for B vs A, the 95%
+interval of the mean per-row change, rows only in A / only in B, and
+a verdict (better / worse / within_noise / too_few_rows /
+not_comparable). Different answer key, judge or scoring mode →
+``not_comparable`` with the differences listed and a ``rescore``
+offer (the lift check on the older run). Each side carries
+``provenance`` (eval result id, split version, judge, scoring).
+
 400 — same experiment passed for a + b (no comparison to make).
 404 — either experiment missing / not in the project.
 

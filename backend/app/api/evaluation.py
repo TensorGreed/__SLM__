@@ -816,6 +816,15 @@ async def compare_two_experiments(
     flag fires when B's pass_rate is below A's — drives the
     "Fix the gap" CTA in the comparison page.
 
+    Epic W1 (additive): ``row_evidence`` pairs the two evals' per-row
+    scores by row key — rows better / worse / same for B vs A, the 95%
+    interval of the mean per-row change, rows only in A / only in B, and
+    a verdict (better / worse / within_noise / too_few_rows /
+    not_comparable). Different answer key, judge or scoring mode →
+    ``not_comparable`` with the differences listed and a ``rescore``
+    offer (the lift check on the older run). Each side carries
+    ``provenance`` (eval result id, split version, judge, scoring).
+
     400 — same experiment passed for a + b (no comparison to make).
     404 — either experiment missing / not in the project.
     """
@@ -1339,7 +1348,8 @@ async def rerun_lift_check(
     base model + fine-tuned run on the test examples, paired row by row —
     the same Job the training watcher spawns. Re-running picks up a judge
     model configured since (``answer_judge_service``) and re-evaluates the
-    base model when its cached result was not judged by the same judge."""
+    base model when its cached result was not judged by the same judge.
+    409 when a lift check for that run is already queued or running."""
     from app.services.post_training_eval_service import start_post_training_lift_job
 
     result = await start_post_training_lift_job(
@@ -1348,6 +1358,10 @@ async def rerun_lift_check(
     await db.commit()
     if not result.get("started"):
         reason = str(result.get("skipped_reason") or "unknown")
+        if reason == "already_running":
+            raise HTTPException(
+                409, f"A lift check for run #{data.experiment_id} is already running (job #{result.get('job_id')})."
+            )
         status = 404 if reason == "experiment_missing" else 400
         raise HTTPException(status, f"Lift check not started: {reason}")
     return result

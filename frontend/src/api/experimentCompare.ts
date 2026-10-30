@@ -33,6 +33,121 @@ export interface CompareExperimentSummary {
     eval_type: string | null;
     dataset_name: string | null;
     metrics: Record<string, number | null>;
+    /** What this side's eval was scored against (Epic W1). Absent on
+     *  older servers; null when it could not be read. */
+    provenance?: CompareProvenance | null;
+}
+
+
+/** Which answer key an eval scored against: the split version (recorded at
+ *  eval time, or inferred from the version that was newest then) and the
+ *  test file's hash. */
+export interface CompareAnswerKey {
+    dataset_id: number | null;
+    dataset_type: string | null;
+    version: number | null;
+    version_source: 'recorded' | 'inferred' | null;
+    /** Only a hash the eval recorded; an inferred one is in ``inferred_sha256``. */
+    sha256: string | null;
+    inferred_sha256?: string | null;
+}
+
+
+export interface CompareJudge {
+    answer: string | null;
+    rubric: string | null;
+    rubric_sha: string | null;
+    code_example: string | null;
+}
+
+
+export interface CompareProvenance {
+    experiment_id: number;
+    experiment_name: string;
+    eval_result_id: number | null;
+    evaluated_at: string | null;
+    answer_key: CompareAnswerKey | null;
+    judge: CompareJudge | null;
+    scoring: {
+        eval_type: string | null;
+        decoding?: Record<string, unknown> | null;
+        scoring_mode: string | null;
+        fingerprints: Record<string, string>;
+    } | null;
+    has_row_scores: boolean;
+}
+
+
+export type RowEvidenceVerdict =
+    | 'better'
+    | 'worse'
+    | 'within_noise'
+    | 'too_few_rows'
+    | 'not_comparable';
+
+
+/** Per-row B-vs-A evidence for one metric (backend
+ *  ``paired_difference_evidence`` + pairing counts). */
+export interface RowMetricEvidence {
+    metric_id: string;
+    score_key: string;
+    n: number;
+    better: number;
+    worse: number;
+    same: number;
+    mean_diff: number | null;
+    ci_low: number | null;
+    ci_high: number | null;
+    verdict: Exclude<RowEvidenceVerdict, 'not_comparable'>;
+    only_in_a: number;
+    only_in_b: number;
+    unscored: number;
+}
+
+
+export interface RescoreOffer {
+    side: 'a' | 'b';
+    experiment_id: number;
+    experiment_name: string;
+    why: 'not_comparable' | 'no_row_scores' | 'missing_eval';
+    available: boolean;
+    /** A lift check for this run is already queued / running. */
+    in_progress?: boolean;
+    job_id?: number | null;
+    unavailable_reason: string | null;
+    instruction: string;
+}
+
+
+/** Is B's change more than noise? Rows paired by key; headline metric
+ *  fields at the top level, every per-row metric under ``metrics``. */
+export interface CompareRowEvidence {
+    verdict: RowEvidenceVerdict;
+    reason: 'not_comparable' | 'no_row_scores' | 'no_row_metric' | 'missing_eval' | null;
+    message: string | null;
+    metric_id: string | null;
+    score_key: string | null;
+    n: number;
+    better: number;
+    worse: number;
+    same: number;
+    mean_diff: number | null;
+    ci_low: number | null;
+    ci_high: number | null;
+    only_in_a: number;
+    only_in_b: number;
+    unscored: number;
+    metrics: RowMetricEvidence[];
+    comparability: {
+        comparable: boolean;
+        /** False when every difference rests on an inferred answer key ("may differ"). */
+        certain?: boolean;
+        differences: { kind: 'answer_key' | 'judge' | 'scoring'; message: string; a: unknown; b: unknown; inferred?: boolean }[];
+        notes: string[];
+        /** Non-blocking, e.g. different decoding settings. */
+        caveats?: string[];
+    } | null;
+    rescore: RescoreOffer | null;
 }
 
 
@@ -83,6 +198,8 @@ export interface CompareResponse {
     config_diff: ConfigDiffRow[];
     winner: CompareWinner;
     regressed: boolean;
+    /** Epic W1 — absent on older servers; null when it could not be built. */
+    row_evidence?: CompareRowEvidence | null;
 }
 
 
@@ -123,4 +240,13 @@ export async function rerunExperimentFromManifest(
         },
     );
     return resp.data as RerunResponse;
+}
+
+
+/** Re-score a run on the current answer key and judge: the lift check
+ *  (the same Job as "Evaluate this run"), tracked by the bell. */
+export async function rescoreExperiment(projectId: number, experimentId: number): Promise<void> {
+    await api.post(`/projects/${projectId}/evaluation/summary/lift-check`, {
+        experiment_id: experimentId,
+    });
 }

@@ -3,6 +3,9 @@
  *
  * Rendered in Results → Compare (``/project/:projectId/results?tab=compare&a=<exp>&b=<exp>``).
  * Renders:
+ *   - Row-paired evidence (Epic W1): is B's change more than noise? Rows
+ *     better / worse / same, 95% range, verdict — or why A and B are not
+ *     comparable (answer key / judge / scoring) with a re-score offer.
  *   - Two experiment summary chips (A vs B) with pass_rate badges.
  *   - Per-metric delta table — regressions to the top.
  *   - Per-cluster failure diff: only-in-A (fixed), only-in-B
@@ -19,6 +22,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Star } from 'lucide-react';
 import LoadingState from '../components/shared/LoadingState';
+import CompareRowEvidence from '../components/evaluation/CompareRowEvidence';
 import { useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 
 import type {
@@ -171,6 +175,15 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                     winner's config when B is worse.
                 </p>
             </header>
+            )}
+
+            {data.row_evidence && (
+                <CompareRowEvidence
+                    projectId={projectId}
+                    evidence={data.row_evidence}
+                    a={data.a.provenance}
+                    b={data.b.provenance}
+                />
             )}
 
             <section className="eval-compare__summary" data-testid="eval-compare-summary">
