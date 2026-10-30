@@ -3868,11 +3868,55 @@ async def run_heldout_evaluation(
     except OSError as exc:
         logging.getLogger(__name__).warning("row predictions file not written: %s", exc)
         pointer = None
+    pointers: dict[str, Any] = {}
     if pointer is not None:
-        result.details = {**(result.details or {}), "row_predictions_file": pointer}
+        pointers["row_predictions_file"] = pointer
+    # Every scored row (not only judged ones) to eval_predictions/<result id>.jsonl, with what each judge
+    # graded -- the population eval-judge calibration samples from. Never fails the eval.
+    full = await asyncio.to_thread(
+        _write_eval_predictions, project_id, result.id, predictions, metrics, heldout_scoring_mode, task_handler, row_scores,
+    )
+    if full is not None:
+        pointers["eval_predictions_file"] = full
+    if pointers:
+        result.details = {**(result.details or {}), **pointers}
         await db.flush()
         await db.refresh(result)
     return result
+
+
+def _write_eval_predictions(
+    project_id: int,
+    result_id: int,
+    predictions: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    scoring_mode: str | None,
+    task_handler: Any,
+    row_scores: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """``eval_predictions_service.safe_write`` with this eval's judge labels; None on any failure."""
+    try:
+        from app.services import eval_predictions_service
+
+        judge = metrics.get("judge") if isinstance(metrics.get("judge"), dict) else {}
+        rubric = metrics.get("rubric") if isinstance(metrics.get("rubric"), dict) else {}
+        parse_json = getattr(task_handler, "_parse_json_safely", None)
+        if parse_json is None and str(scoring_mode or "") == "remediation":
+            from app.services.eval_task_handler_service import StructuredExtractionHandler
+
+            parse_json = StructuredExtractionHandler()._parse_json_safely
+        return eval_predictions_service.safe_write(
+            project_id, result_id, predictions,
+            scoring_mode=scoring_mode,
+            answer_label=judge.get("judge"),
+            rubric_label=rubric.get("judge"),
+            rubric_sha=rubric.get("sha256"),
+            parse_json=parse_json,
+            correct=list((row_scores or {}).get("correct") or []) or None,
+        )
+    except Exception as exc:  # noqa: BLE001 - the eval stands without its full predictions file
+        logging.getLogger(__name__).warning("eval predictions file not written: %s", exc)
+        return None
 
 
 def _heuristic_judge_score(reference: str, prediction: str) -> tuple[int, str]:

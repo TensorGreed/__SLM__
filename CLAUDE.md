@@ -142,6 +142,10 @@ Job kinds currently:
 - `reroute_to_rag` — clone a qa-sft project into a RAG-first sibling
 - `training_start` — watcher Job that mirrors Experiment progress
 - `auto_rag_comparison` — UI-triggered auto-RAG comparison harness
+- `judge_calibration_reference` — a reference model labels review-queue rows blind (Judge calibration V2;
+  `agent-notes/data.md`)
+- `eval_judge_calibration_reference` — a reference model labels judged eval answers blind (V4;
+  `agent-notes/evaluation.md`)
 - `pipeline_eval` — project-less multi-stage pipeline eval (`pipeline_eval_service`; files under `DATA_DIR/pipelines/`)
 - `post_training_lift_eval` — spawned by the `training_start` watcher when a
   real run completes (`post_training_eval_service`): base-model held-out eval

@@ -15,6 +15,7 @@ import api from '../../api/client';
 import { answerKeyReviewText, checkLiftAcrossSeeds, fetchEvalSummary, type BaselineDecodingBar, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
 import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import RedactionTryBox from './RedactionTryBox';
+import EvalJudgeTrustBadge from './EvalJudgeTrustBadge';
 import SeedShipTable from './SeedShipTable';
 import SpanThresholdTuner from './SpanThresholdTuner';
 import type { TuneThresholdsResult } from '../../api/spanThresholds';
@@ -24,7 +25,7 @@ import { toast } from '../../stores/toastStore';
 import { useJobsStore } from '../../stores/jobsStore';
 import './EvalSummaryCard.css';
 import { benchmarkScoreText, benchmarkSourceText } from '../../api/benchmarks';
-import { stagePath } from '../../utils/workspaceRoutes';
+import { settingsPath, stagePath } from '../../utils/workspaceRoutes';
 
 interface EvalSummaryCardProps {
     projectId: number;
@@ -546,6 +547,20 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     {summary.judge.wrong} wrong of {summary.judge.judged} answers
                     {summary.judge.unjudged ? ` (${summary.judge.unjudged} unjudged)` : ''}. The judge reads the question, the
                     answer key and the model's answer and grades the facts, not the wording — token F1 is still shown below.
+                    {summary.judge.trust && (
+                        <>
+                            {' '}
+                            <EvalJudgeTrustBadge trust={summary.judge.trust} testId="eval-summary-judge-trust" />
+                            {summary.judge.trust.status !== 'calibrated_ok' && (
+                                <>
+                                    {' '}
+                                    <a href={`${settingsPath(projectId)}#eval-judge-calibration`} data-testid="eval-summary-judge-calibrate">
+                                        Calibrate the judge
+                                    </a>
+                                </>
+                            )}
+                        </>
+                    )}
                 </p>
             )}
             {summary.judge?.retrieval && (

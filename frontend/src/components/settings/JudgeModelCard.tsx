@@ -9,6 +9,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { BILLING_LABELS, fetchEvalJudge, saveEvalJudge, type EvalJudgeState } from '../../api/evalJudge';
 import { extractApiErrorMessage } from '../../utils/apiError';
+import EvalJudgeTrustBadge from '../evaluation/EvalJudgeTrustBadge';
+import EvalJudgeCalibrationCard from './EvalJudgeCalibrationCard';
 
 export default function JudgeModelCard({ projectId }: { projectId: number }) {
     const [state, setState] = useState<EvalJudgeState | null>(null);
@@ -91,7 +93,18 @@ export default function JudgeModelCard({ projectId }: { projectId: number }) {
                     </>
                 ) : 'No judge is reachable right now.'}
             </p>
+            {resolved && state.trust?.verdict && (
+                <p className="settings-hint" data-testid="judge-trust-line">
+                    <EvalJudgeTrustBadge trust={state.trust.verdict} testId="judge-trust" />
+                </p>
+            )}
+            {resolved && state.trust?.rubric && (
+                <p className="settings-hint" data-testid="judge-trust-rubric-line">
+                    Plan rubric: <EvalJudgeTrustBadge trust={state.trust.rubric} what="plans" testId="judge-trust-rubric" />
+                </p>
+            )}
             {error && <div className="settings-error" role="alert" data-testid="judge-error">{error}</div>}
+            <EvalJudgeCalibrationCard projectId={projectId} />
         </section>
     );
 }

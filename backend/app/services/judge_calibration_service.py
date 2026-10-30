@@ -274,17 +274,20 @@ def render_blind(row: dict[str, Any]) -> dict[str, Any]:
 
 def stratified_sample(
     candidates: list[tuple[dict[str, Any], str]], n: int, seed: int = 0,
+    *, strata: tuple[str, ...] = STRATA, key: Callable[[dict[str, Any]], Any] = lambda r: r["id"],
 ) -> list[dict[str, Any]]:
     """Up to ``n`` raw rows from ``(row, stratum)`` pairs, spread evenly across the non-empty strata
-    (round-robin in ``STRATA`` order; each stratum shuffled by a seeded RNG). The picked rows are then
-    shuffled again, so a row's position says nothing about its stratum (the judges' verdicts)."""
+    (round-robin in ``strata`` order; each stratum shuffled by a seeded RNG, after sorting by ``key`` so
+    the draw does not depend on input order). The picked rows are then shuffled again, so a row's
+    position says nothing about its stratum (the judges' verdicts). Shared with eval-judge calibration
+    (V4), which passes its own strata and key."""
     rng = random.Random(seed)
-    buckets: dict[str, list[dict[str, Any]]] = {s: [] for s in STRATA}
-    for row, stratum in sorted(candidates, key=lambda c: c[0]["id"]):
+    buckets: dict[str, list[dict[str, Any]]] = {s: [] for s in strata}
+    for row, stratum in sorted(candidates, key=lambda c: key(c[0])):
         buckets.setdefault(stratum, []).append(row)
     for rows in buckets.values():
         rng.shuffle(rows)
-    queues = [buckets[s] for s in STRATA if buckets.get(s)]
+    queues = [buckets[s] for s in strata if buckets.get(s)]
     out: list[dict[str, Any]] = []
     while len(out) < n and any(queues):
         for q in queues:
@@ -379,7 +382,7 @@ def cohen_kappa(a: float, b: float, c: float, d: float) -> float | None:
     return (po - pe) / (1 - pe)
 
 
-def _rate(rows: list[tuple[float, bool]]) -> dict[str, Any]:
+def weighted_rate(rows: list[tuple[float, bool]]) -> dict[str, Any]:
     """Weighted proportion of ``hit`` over ``(weight, hit)`` rows, its Wilson CI at the effective n."""
     weights = [w for w, _ in rows]
     total = sum(weights)
@@ -391,6 +394,9 @@ def _rate(rows: list[tuple[float, bool]]) -> dict[str, Any]:
     ci = wilson(p, n_eff)
     return {"value": round(p, 4), "low": round(ci[0], 4) if ci else None, "high": round(ci[1], 4) if ci else None,
             "n": n, "n_eff": round(n_eff, 2)}
+
+
+_rate = weighted_rate
 
 
 def judge_metrics(items: list[dict[str, Any]]) -> dict[str, Any]:

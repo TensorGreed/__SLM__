@@ -1269,7 +1269,55 @@ async def get_eval_summary(
     completed trained run."""
     from app.services.eval_summary_service import build_eval_summary
 
-    return await build_eval_summary(db, project_id, experiment_id=experiment_id)
+    summary = await build_eval_summary(db, project_id, experiment_id=experiment_id)
+    judge = summary.get("judge") if isinstance(summary, dict) else None
+    if isinstance(judge, dict) and judge.get("judge"):
+        # Judge calibration V4: how far this judge can be trusted (additive; never fails the summary).
+        try:
+            import asyncio
+
+            from app.services import eval_judge_calibration_service as ecal
+
+            project = await db.get(Project, project_id)
+            live = await ecal.live_result_ids(db, project_id)
+            judge["trust"] = await asyncio.to_thread(
+                ecal.trust_for, project_id, str(judge["judge"]), getattr(project, "runtime_config", None), "verdict", live,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    return summary
+
+
+@router.get("/{eval_result_id}/predictions")
+async def get_eval_predictions(
+    project_id: int,
+    eval_result_id: int,
+    offset: int = 0,
+    limit: int = 50,
+    judged_only: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """Every scored row of one eval (``eval_predictions/<id>.jsonl``), paginated (``limit`` <= 500):
+    prompt, reference, prediction, the judge's verdict / score / reason and rubric pass, the judge label
+    and the ``row_scores`` key. ``available`` is false for an eval stored before rows were kept."""
+    import asyncio
+
+    from app.models.experiment import EvalResult, Experiment
+    from app.services import eval_predictions_service
+
+    found = (
+        await db.execute(
+            select(EvalResult.id).join(Experiment, Experiment.id == EvalResult.experiment_id)
+            .where(EvalResult.id == eval_result_id, Experiment.project_id == project_id)
+        )
+    ).scalar_one_or_none()
+    if found is None:
+        raise HTTPException(404, "eval_result_not_found")
+    if offset < 0 or not 1 <= limit <= eval_predictions_service.PAGE_MAX:
+        raise HTTPException(400, f"offset must be >= 0 and limit between 1 and {eval_predictions_service.PAGE_MAX}.")
+    return await asyncio.to_thread(
+        eval_predictions_service.read_page, project_id, eval_result_id, offset=offset, limit=limit, judged_only=judged_only,
+    )
 
 
 class CheckSeedsRequest(BaseModel):

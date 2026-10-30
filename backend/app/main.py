@@ -62,6 +62,7 @@ from app.api.compliance import router as compliance_router
 from app.api.llm_spend import budget_router as llm_budget_router
 from app.api.llm_spend import router as llm_spend_router
 from app.api.eval_judge import router as eval_judge_router
+from app.api.eval_judge_calibration import router as eval_judge_calibration_router
 from app.api.coach import router as coach_router
 from app.api.curriculum import router as curriculum_router
 from app.api.jobs import router as jobs_router
@@ -435,6 +436,7 @@ app.include_router(compliance_router, prefix="/api", dependencies=API_DEPENDENCI
 app.include_router(llm_spend_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(llm_budget_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(eval_judge_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(eval_judge_calibration_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(coach_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(curriculum_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(jobs_router, prefix="/api", dependencies=API_DEPENDENCIES)

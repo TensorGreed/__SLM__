@@ -170,6 +170,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   judges", "catches at most 55% of bad rows (vs human, n 24)") with Accept anyway / Cancel; the accept request
   (`decided_via: group:...`) is unchanged, and an all-calibrated group (or a backend without `trust`) accepts in one click.
   Tests `tests/test_judge_calibration.py` (TrustStatus / TrustCache / TrustQueueApi), `SynthReviewQueue.judges.test.tsx`.
+  **V4 (eval judges)** reuses this module: `stratified_sample` takes `strata=` / `key=` (defaults unchanged) and `_rate` is
+  public as `weighted_rate` (alias kept); see agent-notes/evaluation.md "Eval-judge calibration".
 - **Versioned prepared splits** (Epic E) — `split_dataset` writes the active
   `prepared/{train,val,test}.jsonl` + `manifest.json` (the single source the
   trainer/export/coverage read) AND snapshots each run to

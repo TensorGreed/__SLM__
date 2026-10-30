@@ -80,6 +80,22 @@ async def _resolved(db: AsyncSession, project: Project) -> dict[str, Any] | None
     return {"describe": judge.label, "local": bool(judge.local), "billing": billing}
 
 
+async def _trust(db: AsyncSession, project: Project, resolved: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Calibration trust (V4) of the judge in use: ``{verdict, rubric | None}``; None when no judge is
+    reachable or on any error (a status read never fails)."""
+    if not resolved:
+        return None
+    import asyncio
+
+    from app.services import eval_judge_calibration_service as ecal
+
+    try:
+        live = await ecal.live_result_ids(db, int(project.id))
+        return await asyncio.to_thread(ecal.trust_summary, int(project.id), resolved["describe"], project.runtime_config, live)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def _auto_billing(db: AsyncSession, project_id: int) -> str:
     """What "Automatic" resolves to when nothing is pinned: the first available
     backend that may be auto-picked (its billing), else a configured cloud key
@@ -104,6 +120,7 @@ async def _payload(db: AsyncSession, project: Project) -> dict[str, Any]:
     backend = str(cfg.get("backend") or "").strip() or None
     resolved = await _resolved(db, project)
     return {
+        "trust": await _trust(db, project, resolved),
         "enabled": cfg.get("enabled") is not False,
         "backend": backend,
         "env_override": (os.getenv("EVAL_JUDGE_BACKEND") or "").strip() or None,

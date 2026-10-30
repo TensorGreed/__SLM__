@@ -299,6 +299,28 @@ describe('EvalSummaryCard', () => {
         expect(screen.getByTestId('eval-summary-sweep-arms')).toHaveTextContent('top-3 0.55 (current) · top-5 0.39 (loses to current: 2 better, 8 worse) · top-3 + reranker ms-marco-MiniLM-L-6-v2 0.53 (within noise: 4 better, 5 worse).');
     });
 
+    it('shows the judge trust badge: calibrated, and not calibrated with a link to calibrate', async () => {
+        const trust = {
+            status: 'calibrated_ok', judge: 'ollama:gemma4:12b', scale: 'verdict', tier: 'human', n: 40, agreement: 0.84,
+            strict_agreement: 0.9, ci: [0.78, 0.96], too_strict: 0.06, too_lenient: 0.03, flags: [], label_source: 'human',
+            floor: 0.7, too_strict_ceiling: 0.15, too_lenient_ceiling: 0.15, min_labels: 20,
+        };
+        const judge = { judge: 'ollama:gemma4:12b', score: 0.45, judged: 19, unjudged: 0, correct: 6, partial: 5, wrong: 8 };
+        apiMock.get.mockResolvedValue({ data: { ...BETTER, judge: { ...judge, trust } } });
+        const { unmount } = render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        await screen.findByTestId('eval-summary');
+        expect(screen.getByTestId('eval-summary-judge-trust')).toHaveTextContent(
+            'calibrated judge calibrated vs human: agrees on correct vs not 90% (n 40; exact 84%); too strict 6%, too lenient 3%',
+        );
+        expect(screen.queryByTestId('eval-summary-judge-calibrate')).toBeNull();
+        unmount();
+        apiMock.get.mockResolvedValue({ data: { ...BETTER, judge: { ...judge, trust: { ...trust, status: 'uncalibrated', n: 0, agreement: null } } } });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        await screen.findByTestId('eval-summary');
+        expect(screen.getByTestId('eval-summary-judge-trust')).toHaveTextContent('not calibrated judge not calibrated: label 20 answers');
+        expect(screen.getByTestId('eval-summary-judge-calibrate').getAttribute('href')).toBe('/project/7/settings#eval-judge-calibration');
+    });
+
     it('names the LLM-judge headline and shows each failure\'s verdict', async () => {
         apiMock.get.mockResolvedValue({
             data: {
@@ -314,6 +336,8 @@ describe('EvalSummaryCard', () => {
         await screen.findByTestId('eval-summary');
         expect(screen.getByTestId('eval-summary-headline')).toHaveTextContent('judge: answer correct: 0.100 (base) → 0.450');
         expect(screen.getByTestId('eval-summary-judge')).toHaveTextContent('Judged by ollama:gemma4:12b: 6 correct, 5 partial, 8 wrong of 19 answers (1 unjudged)');
+        // older backends send no trust: no badge
+        expect(screen.queryByTestId('eval-summary-judge-trust')).toBeNull();
         expect(screen.getByTestId('eval-summary-failures')).toHaveTextContent('Judge: wrong — Contradicts the consent requirement.');
     });
 

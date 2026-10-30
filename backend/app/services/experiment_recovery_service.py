@@ -180,6 +180,11 @@ async def delete_experiment(
     name = exp.name
     previous_status = exp.status.value
     checkpoints_deleted = await _delete_checkpoint_rows(db, experiment_id)
+    from app.models.experiment import EvalResult as _EvalResult
+
+    eval_ids = [int(i) for i in (await db.execute(
+        select(_EvalResult.id).where(_EvalResult.experiment_id == experiment_id)
+    )).scalars().all()]
 
     dir_removed = False
     if purge_output_dir:
@@ -187,6 +192,13 @@ async def delete_experiment(
 
     await db.delete(exp)
     await db.flush()
+    # The eval results go with the experiment (cascade): so do their full-predictions files (V4).
+    try:
+        from app.services.eval_predictions_service import delete_files
+
+        delete_files(project_id, eval_ids)
+    except Exception:  # noqa: BLE001 - calibration also ignores files whose result is gone
+        pass
 
     return {
         "experiment_id": experiment_id,

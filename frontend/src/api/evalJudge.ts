@@ -1,4 +1,5 @@
 import api from './client';
+import type { EvalJudgeTrustSummary } from './evalJudgeCalibration';
 
 export type JudgeBilling = 'local' | 'metered' | 'subscription';
 
@@ -18,6 +19,8 @@ export interface EvalJudgeState {
     env_override: string | null;
     resolved: { describe: string; local: boolean; billing: JudgeBilling } | null;
     options: EvalJudgeOption[];
+    /** Judge calibration V4: how far the judge in use can be trusted (absent on older backends). */
+    trust?: EvalJudgeTrustSummary | null;
 }
 
 export async function fetchEvalJudge(projectId: number): Promise<EvalJudgeState> {

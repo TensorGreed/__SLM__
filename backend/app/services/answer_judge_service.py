@@ -216,10 +216,28 @@ def parse_verdict(raw: str | None) -> tuple[float, str, str] | None:
     return VERDICT_SCORES[verdict], verdict, reason
 
 
+def _judged_texts(question: str, reference: str, prediction: str) -> list[str]:
+    """The texts a verdict is about, normalised the one way the cache and calibration both key on."""
+    return [str(question or "").strip(), str(reference or "").strip(), str(prediction or "").strip()]
+
+
+def content_key(question: str, reference: str, prediction: str, task: str | None = None) -> str:
+    """A judge-independent key for one judged answer (question, reference, prediction), normalised
+    like ``cache_key``: eval-judge calibration labels are stored under it, so the same answer judged
+    in a later eval (or by another judge) reuses its label. ``task`` names the grading instruction
+    (``remediation`` / ``code_example`` / ``rubric``; None or ``answer`` = the plain prompt): the same
+    texts graded under another instruction are a different item."""
+    parts = _judged_texts(question, reference, prediction)
+    if task and task != "answer":
+        parts.append(f"task:{task}")
+    raw = "\x00".join(parts)
+    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:20]
+
+
 def cache_key(
     judge_label: str, question: str, reference: str, prediction: str, instruction: str | None = None
 ) -> str:
-    parts = [judge_label, question.strip(), reference.strip(), prediction.strip()]
+    parts = [judge_label, *_judged_texts(question, reference, prediction)]
     if instruction and instruction.strip():
         parts.append(instruction.strip())  # a different rubric is a different verdict
     raw = "\x00".join(parts)

@@ -245,6 +245,7 @@ describe('NotificationBell', () => {
         ['synth_playbook', '/project/3/data?open=review-queue&step=synthetic#synth-review-queue'],
         ['synth_review_assist', '/project/3/data?open=review-queue&step=synthetic#synth-review-queue'],
         ['judge_calibration_reference', '/project/3/data?open=review-queue&step=synthetic#synth-review-queue'],
+        ['eval_judge_calibration_reference', '/project/3/settings#eval-judge-calibration'],
         ['training_start', '/project/3/train?open=plan'],
         ['post_training_lift_eval', '/project/3/results'],
         ['documents_qa_flow', '/project/3/train#documents-qa-flow'],
@@ -379,6 +380,19 @@ describe('NotificationBell', () => {
         });
         expect(jobOutcomeSummary(job as never)).toBe(
             'labelled 17 of 20 \u00b7 pass 12 \u00b7 fail 5 \u00b7 3 skipped (unsure or unreadable) \u00b7 by ollama:big',
+        );
+    });
+
+    it('summarises an eval-judge reference-labelling job with its labels and skips', () => {
+        const job = jobFixture({
+            kind: 'eval_judge_calibration_reference', status: 'succeeded',
+            result: {
+                rows_sampled: 20, labelled: 18, labels: { correct: 9, partial: 4, wrong: 5 },
+                skipped_unparseable: 2, skipped_rubric_changed: 0, labeller: 'ollama:big',
+            },
+        });
+        expect(jobOutcomeSummary(job as never)).toBe(
+            'labelled 18 of 20 answers \u00b7 correct 9 \u00b7 partial 4 \u00b7 wrong 5 \u00b7 2 skipped (unreadable or another rubric) \u00b7 by ollama:big',
         );
     });
 

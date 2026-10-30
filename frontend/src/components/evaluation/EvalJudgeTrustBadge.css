@@ -1,0 +1,14 @@
+/* Judge calibration V4: the eval judge's trust badge (settings card, eval summary). */
+.eval-judge-trust { font-size: var(--font-size-sm); color: var(--text-secondary); }
+.eval-judge-trust__badge {
+    display: inline-block;
+    padding: 0 var(--space-xs);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.eval-judge-trust__badge--calibrated_ok { color: var(--color-success); }
+.eval-judge-trust__badge--below_floor { color: var(--color-danger); }
+.eval-judge-trust__badge--insufficient { color: var(--color-warning); }

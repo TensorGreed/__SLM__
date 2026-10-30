@@ -3,6 +3,7 @@
  * GET /api/projects/{id}/evaluation/summary?experiment_id=
  */
 
+import type { EvalJudgeTrust } from './evalJudgeCalibration';
 import api from './client';
 import type { LiftEvidence, SeedEvidence } from '../components/evaluation/liftEvidence';
 import type { RetrievalSplit } from '../components/evaluation/retrievalSplit';
@@ -162,6 +163,8 @@ export interface EvalSummaryJudge {
     judge_cached?: number | null;
     /** rag_passages: retrieval vs reading (retrievalSplit.ts). */
     retrieval?: RetrievalSplit | null;
+    /** Judge calibration V4: how far this judge can be trusted (absent on older backends). */
+    trust?: EvalJudgeTrust | null;
 }
 
 /** The strongest-baseline rule: the base model scored with neutral decoding

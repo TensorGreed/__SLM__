@@ -669,3 +669,77 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   title, params and result summary are visible to anyone who can reach the jobs API — not fixed in G10. Tests: `test_pipeline_eval.py`, held-out tool-call
   regression in `test_tool_scoring_acceptance.py`.
   Docs: `slm-docs/docs/workflows/pipeline-eval.md`.
+
+## Eval-judge calibration (Judge calibration V4)
+
+- **Full eval predictions** (`services/eval_predictions_service.py`): `run_heldout_evaluation` also writes EVERY scored row (judged
+  or not) to `DATA_DIR/projects/<pid>/eval_predictions/<eval_result_id>.jsonl` after the result id exists (temp file + `os.replace`),
+  and stores `details.eval_predictions_file = {path, count, truncated, judged}` beside the existing `row_predictions_file` (which
+  is unchanged: judged rows only, for preference pairs). Any failure (build or write) is logged and the eval goes on without it
+  (`_write_eval_predictions` / `safe_write`). Record: `row_key` (the row's key in `row_scores.keys`), `row_index`, `prompt` (or
+  `history` for chat rows, last 40 messages), `reference`, `prediction`, `correct` (the `row_scores.correct` value),
+  `row_exact_match` / `row_f1` when set, and per judge that graded it: `judge {scale: verdict, task: answer|remediation|code_example,
+  label, verdict, score, reason, content_key}` (answer judge; code examples read `_code_example_judge`) and/or `rubric {scale:
+  rubric, label, passed, weighted, critical_failed, rubric_sha, content_key, passages?}` (structured-plan rubric judge). What the
+  judge READ is rebuilt with the same views the judging used (`history_text`, `remediation_scoring.judge_view`,
+  `code_example_scoring.judge_view`, `structured_plan_scoring.rubric_view`); `question` / `reference` / `prediction` are stored on
+  the judge block only where they differ from the row's own texts (no duplication). Caps: 10 000 rows (`truncated` counts the
+  rest), 8 000 chars per text, 20 passages of 1 600 chars. `GET /evaluation/{eval_result_id}/predictions?offset&limit (<=500)&judged_only`
+  → `{available, total, offset, limit, rows}`; `available: false` for an older result without a file; 404 for another
+  project's result. `content_key` = `answer_judge_service.content_key(question, reference, prediction)` (sha1 of the texts
+  normalised exactly like `cache_key`, 20 hex; judge-independent) plus the task when it is not the plain prompt
+  (`remediation` / `code_example` / `rubric`): identical texts graded under another instruction are a separate item; keys stay
+  stable across results for the same task. The write runs off the event loop (`asyncio.to_thread`) and replaces any file for
+  the id atomically (an empty write removes it), so a reused id never inherits stale rows; `delete_experiment` removes its
+  results' files after the cascade.
+- **Calibration** (`services/eval_judge_calibration_service.py`; reuses V2's tiers, label_source setting, `weighted_rate`, Wilson,
+  `effective_n`, `cohen_kappa`, `stratified_sample(strata=, key=)`, sidecar writer, skip semantics). Scales: `verdict` (answer judge,
+  labels correct / partial / wrong) and `rubric` (pass / fail). Population per scale = every stored judged row, keyed by
+  `content_key` (the same answer in a later eval, or judged by another judge, shares ONE label; a judge's most recent verdict on a
+  key wins). Only files whose EvalResult still exists count (`live_result_ids`: one query per request, passed as `live_ids`;
+  also part of the report cache key). Rows whose stored question / reference / prediction reached `TEXT_CAP` (or whose chat
+  history was trimmed) are left out — never sampled, never sent to the reference Job — and counted as `over_cap` in progress
+  and in each tier report. Labels: `DATA_DIR/projects/<pid>/eval_judge_calibration.json` = `{scale: {content_key: {tier: {label, at, labeller,
+  reason?, stratum?, judge?}}}}` or skip markers; tiers `human` / `reference_model`, never pooled. Sampler: answers the chosen
+  judge (default: the one with most rows) graded, minus those labelled or skipped in the tier, round-robin across that judge's
+  verdicts, seeded, shuffled; rendered as `{content_key, scale, question, reference, prediction}` plus, for rubric rows,
+  `passages` / `passages_truncated` — the SAME list the reference model's rubric prompt gets (`budgeted_passages`: the review-assist
+  `_budget_context` over `ROW_BUDGET["structured_plan"]` minus the texts). Report per judge (positive =
+  correct / pass), each labelled row weighted by (judge's stratum population / labelled in stratum): `exact_agreement`,
+  `strict_agreement` (correct vs not), `pass_precision`, `pass_recall`, `wrong_recall` (fail-recall on rubric), `too_strict` (label
+  correct, judge partial / wrong) and `too_lenient` (judge correct, label partial / wrong), both shares of ALL labelled rows;
+  `kappa` = linear-weighted on wrong < partial < correct (`weighted_kappa`; Cohen on pass / fail); Wilson CIs at the Kish n;
+  `insufficient` when n < 20 or < 5 labelled correct / < 5 not-correct; per stratum population / labelled / skipped + skip note;
+  `tasks` / `rubric_shas` mix; `self_rows` / `self` (a reference labeller whose model is the judge — both sides through
+  `safe_backend_label`, `cloud:` prefix ignored, so `ollama:` / `command` / `teacher:` labels match too — is never graded on its own
+  labels). Trust (`judge_trust`): `below_floor` when the strict-agreement Wilson UPPER bound <
+  `STRICT_AGREEMENT_FLOOR` (0.7) or the too-strict / too-lenient Wilson LOWER bound > `TOO_STRICT_CEILING` / `TOO_LENIENT_CEILING`
+  (0.15) (`flags`), else `calibrated_ok`; `insufficient`; `uncalibrated` (none, or no labels file: computed without reading any
+  predictions). `both`: either tier sufficient = calibrated, the worse wins. `cached_report` keys on the labels file + every
+  predictions file's (mtime, size), LRU 64.
+- **API** (`api/eval_judge_calibration.py`, `/projects/{id}/eval-judge/calibration/`): `GET labels` (per scale: population, judges +
+  verdict counts, per-tier labelled / skipped / by_label), `GET sample?scale&judge&tier&n (1-100)&seed`, `POST labels {content_key,
+  scale, label, judge?, reason?}` (human only; 404 unknown key; 400 wrong vocabulary), `POST skips`, `DELETE labels/{key}?scale&tier`,
+  `GET report?scale&tier` (+ `trust` per judge), `GET trust?judge&scale`, `POST reference-labelling?async_job=true {backend?, scale,
+  judge?, n, seed}` → Job `eval_judge_calibration_reference`: blind, the answer judge's own machinery
+  (`_judge_from_synth_backend`: same system prompt / schema, with the remediation or code-example instruction per `task`), or for
+  `rubric` `build_rubric_prompt` + `score_item` with the project's CURRENT rubric (a row graded under another `rubric_sha` gets a
+  `rubric_changed` skip); writes only the `reference_model` tier, `labeller` = `safe_backend_label(describe())`; unreadable answer
+  → skip marker, failed call → nothing (retried next run); 0 labelled raises; cloud pins go through
+  `_resolve_cloud_backend_override` (budget guard); 409 `EVAL_CALIBRATION_REFERENCE_ALREADY_RUNNING` (in-flight check under a
+  per-loop asyncio lock). The label source is the shared `judge_calibration.label_source` (`/synthetic/calibration/settings`).
+  `GET /eval-judge` adds `trust {verdict, rubric|null}` for the judge in use; `GET /evaluation/summary` adds `judge.trust` (both
+  additive, never fail the read).
+- **UI**: `EvalJudgeTrustBadge` ("calibrated" / "below floor" / "too few labels" / "not calibrated" + "judge calibrated vs human:
+  agrees on correct vs not 90% (n 40; exact 84%); too strict 6%, too lenient 3%" — the headline is the strict agreement the floor
+  is checked on, exact agreement is secondary; a below-floor line names the limit: "agreement below the 70% floor" / "too strict
+  over the 15% limit"; or "judge not calibrated: label 20 answers") on Settings → Judge model
+  (`JudgeModelCard`, plus a "Plan rubric:" line when the judge graded plans) and on `EvalSummaryCard`'s judge line (with a
+  "Calibrate the judge" link to `/settings#eval-judge-calibration` unless calibrated). `EvalJudgeCalibrationCard` ("Calibrate eval
+  judge") sits inside `JudgeModelCard`: calibration is per judge and pooled over every eval, so it lives with the judge choice, not
+  under one run; collapsed and fetch-free until opened (opens itself on that hash). Label-source radios, a scale picker (only
+  when rubric answers exist), a judge picker (when >1), a blind labeller (question / reference answer / model's answer;
+  Correct / Partial / Wrong or Pass / Fail, Skip, Stop, reason), reference labelling (`GenerationModelPicker` + n) and per-judge
+  cards per tier. Bell: deep link to the settings anchor, summary "labelled N of M answers · correct · partial · wrong · K skipped
+  · by <labeller>". Tests `tests/test_eval_judge_calibration.py`, `EvalJudgeCalibrationCard.test.tsx`, `JudgeModelCard.test.tsx`,
+  `EvalSummaryCard.test.tsx`, `NotificationBell.test.tsx`. Not done: external-benchmark / pipeline evals do not write the file.

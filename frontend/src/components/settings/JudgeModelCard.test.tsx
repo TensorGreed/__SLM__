@@ -55,6 +55,21 @@ describe('JudgeModelCard', () => {
         expect(apiMock.put).toHaveBeenCalledWith('/projects/3/eval-judge', { enabled: false, backend: null });
     });
 
+    it('shows the judge trust badge (and a rubric line when the judge grades plans)', async () => {
+        const trust = {
+            status: 'below_floor', judge: 'ollama:qwen3:8b', scale: 'verdict', tier: 'human', n: 40, agreement: 0.6,
+            strict_agreement: 0.7, ci: [0.55, 0.82], too_strict: 0.3, too_lenient: 0.02, flags: ['too_strict'],
+            label_source: 'human', floor: 0.7, too_strict_ceiling: 0.15, too_lenient_ceiling: 0.15, min_labels: 20,
+        };
+        apiMock.get.mockResolvedValue({ data: { ...STATE, trust: { verdict: trust, rubric: { ...trust, scale: 'rubric', status: 'uncalibrated', n: 0 } } } });
+        render(<JudgeModelCard projectId={3} />);
+        expect(await screen.findByTestId('judge-trust')).toHaveTextContent(
+            'below floor judge below the trust floor vs human (too strict over the 15% limit): agrees on correct vs not 70% (n 40; exact 60%); too strict 30%, too lenient 2%',
+        );
+        expect(screen.getByTestId('judge-trust-rubric')).toHaveTextContent('judge not calibrated: label 20 plans');
+        expect(screen.getByTestId('eval-judge-calibration-toggle')).toBeInTheDocument();
+    });
+
     it('renders nothing when the judge settings cannot load', async () => {
         apiMock.get.mockRejectedValue(new Error('down'));
         const { container } = render(<JudgeModelCard projectId={3} />);

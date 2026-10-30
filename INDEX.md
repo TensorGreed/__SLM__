@@ -66,6 +66,7 @@ session-start guidance.
 - `backend/app/api/drift.py` — Project-scoped drift API (E4).
 - `backend/app/api/eval_gaps.py` — Eval Gap API — Coach-stage-2 phases 3 + 5.
 - `backend/app/api/eval_judge.py` — Judge-model selection for a project (``runtime_config["eval_judge"]``).
+- `backend/app/api/eval_judge_calibration.py` — Eval-judge calibration (Judge calibration V4): blind labels on judged eval answers → per-judge trust.
 - `backend/app/api/evaluation.py` — Evaluation API routes.
 - `backend/app/api/export.py` — Export API routes.
 - `backend/app/api/extensions.py` — Extensions API — plugin contract validators + scaffold generator
@@ -216,7 +217,9 @@ session-start guidance.
 - `backend/app/services/drift_trap_refresh_service.py` — Drift-triggered hallucination-trap refresh (E4).
 - `backend/app/services/eval_gap_service.py` — Eval Gap scanner + patch engine — Coach-stage-2 phases 3 + 5.
 - `backend/app/services/eval_jobs_service.py` — Job-runner wrappers for long-running evaluation endpoints.
+- `backend/app/services/eval_judge_calibration_service.py` — Eval-judge calibration (Judge calibration V4): how far the EVAL judges can be trusted.
 - `backend/app/services/eval_pack_scaffold_service.py` — Recipe-aware evaluation-pack scaffolder (E5).
+- `backend/app/services/eval_predictions_service.py` — Full per-row eval predictions, one JSONL file per EvalResult (Judge calibration V4, item 1).
 - `backend/app/services/eval_summary_service.py` — The Eval tab's one default card (Wave 3b): is the fine-tuned model
 - `backend/app/services/eval_task_handler_service.py` — Task-aware evaluation dispatcher (Phase 5.3.0).
 - `backend/app/services/evaluation_gate_catalog.py` — Gate-options catalog for the eval-pack scaffold editor (Gap #5 slice 1).
@@ -553,6 +556,7 @@ session-start guidance.
 - `frontend/src/api/errors.ts` — Shared error parsing + types for the platform's structured error
 - `frontend/src/api/evalGaps.ts` — Eval Gaps API client — Coach-stage-2 phases 3 + 5.
 - `frontend/src/api/evalJudge.ts` — _(no docstring)_
+- `frontend/src/api/evalJudgeCalibration.ts` — Eval-judge calibration (Judge calibration V4): blind labels on judged eval answers → per-judge trust.
 - `frontend/src/api/evalPackScaffold.ts` — Typed client for the recipe-aware eval-pack scaffolder (E5).
 - `frontend/src/api/evalSummary.ts` — The Eval tab's default card (Wave 3b).
 - `frontend/src/api/experimentCompare.ts` — Typed client for the eval-aware experiment comparison endpoint (E3).
@@ -720,6 +724,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/DriftReviewQueuePanel.tsx` — DriftReviewQueuePanel — UI for E4's drift-triggered hallucination
 - `frontend/src/components/evaluation/EvalGapPatchPreviewModal.tsx` — EvalGapPatchPreviewModal — Coach-stage-2 phase 5.
 - `frontend/src/components/evaluation/EvalGapsPanel.tsx` — EvalGapsPanel — Coach-stage-2 phase 3.
+- `frontend/src/components/evaluation/EvalJudgeTrustBadge.tsx` — EvalJudgeTrustBadge (Judge calibration V4): how far the eval judge can be trusted, from blind labels.
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.tsx` — EvalPackScaffoldPanel — recipe-aware draft eval-pack with inline
 - `frontend/src/components/evaluation/EvalPanel.tsx` — Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
 - `frontend/src/components/evaluation/EvalSummaryCard.tsx` — EvalSummaryCard — the Eval tab's default view (Wave 3b).
@@ -780,6 +785,7 @@ session-start guidance.
 - `frontend/src/components/pipelines/RunsCard.tsx` — RunsCard — start a pipeline run (a background Job) and list past runs.
 - `frontend/src/components/projects/ApproachChip.tsx` — Decision-engine chip (Theme 7).
 - `frontend/src/components/projects/ProjectTemplateGallery.tsx` — Project-template gallery — surfaces every available template on
+- `frontend/src/components/settings/EvalJudgeCalibrationCard.tsx` — "Calibrate eval judge" (Judge calibration V4): label judged eval answers blind, then see how far each
 - `frontend/src/components/settings/JudgeModelCard.tsx` — JudgeModelCard — Settings → "Judge model". Picks which model scores the
 - `frontend/src/components/shared/CommandSnippet.tsx` — CommandSnippet — collapsed "Show as CLI / API" disclosure rendered
 - `frontend/src/components/shared/DetailsDrawer.tsx` — "Details" — the collapsed drawer under a step's short form (Epic U phase
@@ -946,6 +952,7 @@ session-start guidance.
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).
 - `backend/tests/test_eval_gap_patch.py` — Eval Gap patch engine — Coach-stage-2 phase 5.
 - `backend/tests/test_eval_gap_service.py` — Eval Gap scanner — Coach-stage-2 phase 3.
+- `backend/tests/test_eval_judge_calibration.py` — Judge calibration V4: persisted eval predictions, blind eval-judge labels keyed by content, the
 - `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).
 - `backend/tests/test_eval_summary.py` — Eval tab summary card (Wave 3b): verdict vs the base model, headline
 - `backend/tests/test_evaluation_adopt_gate.py` — Tests for the adopt-gate-from-cluster action (Gap #5 slice 3).
@@ -1370,6 +1377,7 @@ session-start guidance.
 - `frontend/src/components/observability/TimelineTree.test.tsx` — _(no docstring)_
 - `frontend/src/components/pipeline/WorkflowRunMonitor.test.tsx` — _(no docstring)_
 - `frontend/src/components/projects/ProjectTemplateGallery.test.tsx` — _(no docstring)_
+- `frontend/src/components/settings/EvalJudgeCalibrationCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/settings/JudgeModelCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/CommandSnippet.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/DetailsDrawer.test.tsx` — _(no docstring)_
