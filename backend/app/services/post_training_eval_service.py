@@ -224,19 +224,32 @@ def _baseline_scoring_matches(result: EvalResult, fingerprint: str | None, tool_
     return fingerprint in (metrics.get("remediation_fingerprint"), metrics.get("structured_plan_fingerprint"))
 
 
-def _baseline_decoding_matches(result: EvalResult, decoding: str = "neutral") -> bool:
+def _baseline_decoding_matches(
+    result: EvalResult, decoding: str = "neutral", checked: dict[str, Any] | None = None
+) -> bool:
     """A cached base-model result stands for one bar only if it was decoded
     that way (lift evals are greedy): neutral, or the model's own settings
     (``decoding="model"``). Results from before decoding was recorded
     inherited the model's generation_config without saying so — they are
-    re-run once."""
+    re-run once.
+    ``checked``: the lift check's checked-decoding policy record
+    (``checked_decoding_service.policy_record``; None = off). The cached
+    result must carry the same one, so a base eval without checked decoding
+    is never the bar for a checked run, nor the other way round."""
     from app.services.decoding_settings import MODEL_DECODING, decoding_record, generation_kwargs, is_model_decoding
 
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
     inference = metrics.get("inference") if isinstance(metrics.get("inference"), dict) else {}
+    recorded = inference.get("decoding")
+    if isinstance(recorded, dict):
+        if recorded.get("checked_decoding") != checked:
+            return False
+        recorded = {k: v for k, v in recorded.items() if k != "checked_decoding"}
+    elif checked is not None:
+        return False
     if decoding == MODEL_DECODING:
-        return is_model_decoding(inference.get("decoding"))
-    return inference.get("decoding") == decoding_record(generation_kwargs(max_new_tokens=1, temperature=0.0))
+        return is_model_decoding(recorded)
+    return recorded == decoding_record(generation_kwargs(max_new_tokens=1, temperature=0.0))
 
 
 # How many recent base-model results to look through for a reusable one: the
@@ -253,6 +266,7 @@ async def _reusable_baseline_result(
     decoding: str = "neutral",
     scoring_fingerprint: str | None = None,
     tool_call_fingerprint: str | None = None,
+    checked: dict[str, Any] | None = None,
 ) -> EvalResult | None:
     """Newest baseline result on the test split decoded as ``decoding``, if
     newer than the split file (base models are deterministic under greedy
@@ -282,7 +296,7 @@ async def _reusable_baseline_result(
             continue
         if not _baseline_judge_matches(candidate, judge_label):
             continue
-        if not _baseline_decoding_matches(candidate, decoding):
+        if not _baseline_decoding_matches(candidate, decoding, checked):
             continue
         if not _baseline_scoring_matches(candidate, scoring_fingerprint, tool_call_fingerprint):
             continue
@@ -414,9 +428,13 @@ async def _baseline_bar(
         db, project_id, judge_label
     )
     tool_fp = await _tool_call_fingerprint_for(db, project_id)
+    # The lift check's checked-decoding policy (``common["checked_decoding"]``): the cache keys on it.
+    from app.services.checked_decoding_service import normalize_policy, policy_record
+
+    checked = policy_record(normalize_policy(common.get("checked_decoding")))
     neutral = await _reusable_baseline_result(
         db, baseline_exp, project_id, judge_label=judge_label, scoring_fingerprint=scoring_fp,
-        tool_call_fingerprint=tool_fp,
+        tool_call_fingerprint=tool_fp, checked=checked,
     )
     reused = neutral is not None
     if neutral is None:
@@ -437,7 +455,7 @@ async def _baseline_bar(
     else:
         own_result = await _reusable_baseline_result(
             db, baseline_exp, project_id, judge_label=judge_label, decoding=MODEL_DECODING,
-            scoring_fingerprint=scoring_fp, tool_call_fingerprint=tool_fp,
+            scoring_fingerprint=scoring_fp, tool_call_fingerprint=tool_fp, checked=checked,
         )
         if own_result is None:
             reused = False
@@ -619,10 +637,14 @@ async def run_post_training_lift_eval(
     experiment_id: int,
     progress=None,
     manual: bool = False,
+    checked_decoding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Baseline + fine-tuned held-out eval, then the paired lift summary.
     Commits after each eval so a failure in the second keeps the first.
-    Raises when the run isn't eligible (the Job surfaces the reason)."""
+    Raises when the run isn't eligible (the Job surfaces the reason).
+    ``checked_decoding``: override of the project's checked-decoding setting;
+    the policy is resolved ONCE and both evals (base and fine-tuned, every
+    seed) run under it."""
     from app.services.evaluation_service import run_heldout_evaluation
     from app.services.sft_lift_summary_service import compute_sft_lift_summary
 
@@ -639,13 +661,18 @@ async def run_post_training_lift_eval(
         raise ValueError(f"Automatic lift eval skipped: {reason}")
     from app.services.passage_reader_eval_service import is_passage_trained, run_passage_reader_evaluation
 
+    from app.services.checked_decoding_service import lift_policy_override
+
+    checked_override = lift_policy_override(project.runtime_config, checked_decoding)
     if is_seed_group_leader(exp):
         if is_passage_trained(exp):
             raise ValueError(
                 "A multi-seed run trained with retrieved passages isn't lift-checked as a group yet; "
                 "evaluate each seed run on its own."
             )
-        return await _run_seed_group_lift_eval(db, project=project, leader=exp, report=_report)
+        return await _run_seed_group_lift_eval(
+            db, project=project, leader=exp, report=_report, checked_override=checked_override
+        )
     if is_passage_trained(exp):
         # Trained to answer from the served passages: scored WITH them,
         # against the base model + the same passages (not the bare base).
@@ -665,6 +692,7 @@ async def run_post_training_lift_eval(
         "max_new_tokens": max_new_tokens,
         "temperature": 0.0,
         "judge_model": None,
+        "checked_decoding": checked_override,
     }
     answer_judge = await _resolve_lift_judge(db, project)
     common["answer_judge"] = answer_judge
@@ -762,7 +790,8 @@ async def seed_group_children(db: AsyncSession, leader: Experiment) -> list[Expe
 
 
 async def _run_seed_group_lift_eval(
-    db: AsyncSession, *, project: Project, leader: Experiment, report
+    db: AsyncSession, *, project: Project, leader: Experiment, report,
+    checked_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The multi-seed lift check: every completed child of the group is
     scored on the test split against the one (cached) base-model result;
@@ -774,6 +803,7 @@ async def _run_seed_group_lift_eval(
     first seed only, under the leader's name.
     """
     from app.services.evaluation_service import run_heldout_evaluation
+    from app.services.checked_decoding_service import lift_policy_override
     from app.services.paired_comparison_stats import seed_spread_evidence
     from app.services.sft_lift_summary_service import compute_sft_lift_summary
 
@@ -791,6 +821,9 @@ async def _run_seed_group_lift_eval(
         "max_new_tokens": max_new_tokens,
         "temperature": 0.0,
         "judge_model": None,
+        "checked_decoding": checked_override if checked_override is not None else lift_policy_override(
+            project.runtime_config, None
+        ),
     }
     answer_judge = await _resolve_lift_judge(db, project)
     common["answer_judge"] = answer_judge
@@ -895,8 +928,10 @@ async def start_post_training_lift_job(
     project_id: int,
     experiment_id: int,
     manual: bool = False,
+    checked_decoding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Spawn the lift-eval Job for a just-completed run, or return why not.
+    ``checked_decoding``: per-check override of the project's checked-decoding setting.
     Never raises — a failure here must not fail the training watcher.
     ``manual``: the user asked (re-run from the Eval tab) — the automatic
     opt-outs don't apply."""
@@ -928,6 +963,7 @@ async def start_post_training_lift_job(
                     experiment_id=experiment_id,
                     progress=_progress,
                     manual=manual,
+                    **({"checked_decoding": checked_decoding} if checked_decoding is not None else {}),
                 )
 
         from app.services.passage_reader_eval_service import is_passage_trained
@@ -946,7 +982,11 @@ async def start_post_training_lift_job(
             title=title,
             runner=_runner,
             project_id=project_id,
-            params={"experiment_id": experiment_id, "base_model": exp.base_model},
+            params={
+                "experiment_id": experiment_id,
+                "base_model": exp.base_model,
+                **({"checked_decoding": checked_decoding} if checked_decoding is not None else {}),
+            },
         )
         return {"started": True, "job_id": getattr(job, "id", None)}
     except Exception as exc:  # noqa: BLE001

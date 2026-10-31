@@ -826,3 +826,60 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   "eval-summary__sizing">`. Compare (`CompareRowEvidence`) shows `ev.sizing.line` only when within_noise /
   too_few_rows with no `reason` (`eval-compare-evidence-sizing`). Tests: `tests/test_eval_sizing.py` (hand-computed),
   `test_eval_summary.py`, `test_compare_row_evidence.py`, `EvalSummaryCard.test.tsx`, `CompareRowEvidence.test.tsx`.
+
+## Checked decoding: verify-and-retry at eval time (Epic Y1 + Y4)
+
+- **Opt-in, off by default** (`services/checked_decoding_service.py`). Setting `runtime_config["inference"]
+  ["checked_decoding"] = {enabled: false, mode: "resample"|"repair", max_attempts: 3 (1..5), verifiers: null (auto) |
+  [ids], sample_temperature: 0.7 (0 < t <= 2, resample), seed: 0}`; `normalize_policy` validates (`PolicyError`, a
+  ValueError). `GET/PUT /projects/{id}/evaluation/checked-decoding` reads / saves it (422 on a bad value). Per-eval
+  override: `checked_decoding` on `POST .../evaluation/run-heldout` (and its async Job params) and on `POST
+  .../evaluation/summary/lift-check` (both 422 via a pydantic validator); an override REPLACES the project setting
+  (`{"enabled": false}` turns it off for that eval). `run_heldout_evaluation(checked_decoding=...)` resolves it
+  (`resolve_policy`); perplexity evals ignore it.
+- **Loop** (`evaluation_service._run_transformers_inference(checked=...)` + `_checked_retry`): attempt 1 is exactly the
+  normal generation (same kwargs, same code path). Only when a verifier fails: `resample` = the same formatted prompt,
+  `generation_kwargs(temperature=sample_temperature)` (neutral sampling), `torch.manual_seed(attempt_seed(seed, row_index,
+  attempt))`; `repair` = history (or the prompt) + `{assistant: attempt N-1}` + `{user: "Your previous answer failed these
+  automatic checks:\n- <verifier>: <message>\nReturn a corrected answer in the same format."}` through the chat template,
+  same decoding as attempt 1 — without an applied chat template a repair attempt resamples (`modes_used`). First passing
+  attempt wins; none pass → attempt 1 kept. Replayed dialogue turns are never checked. Only the plain causal-LM path runs
+  it: GGUF / classifier head / token classification / seq2seq / multimodal → `metrics.checked_decoding.skipped =
+  "engine_unsupported"` and no policy in the decoding record.
+- **Verifier interface = the safety rule.** A verifier gets `(VerifierInput, answer)`. `build_verifier_input(pair,
+  eval_spec)` reads ONLY `prompt` / `history`, `code_example_row.language` + `.passages`, `plan_row.passages` (never
+  `acceptable`), `classification_candidates` (kept only when every label is visible in the prompt) and the eval's DECLARED
+  output schema (`output_json_schema(manifest)`; field_match only, never derived from references). `VerifierInput` has no
+  field for a reference / answer key / judge output. Test: `test_reference_never_reaches_a_verifier_end_to_end` (sentinel in
+  the reference + reference-like fields, spy verifier). Verifiers (generic, by answer shape): `code_checks` (code-example rows
+  with a declared language: `code_check_service.checks_for_language` runnable checks on the JSON `code` field, context
+  `{"path": None, "grounding_text": <prompt the model saw>}`; never requests `context_grounding` itself), `context_grounding`
+  (only when that check is registered — `get_code_check`; skipped `ok: None` is not a failure), `json_schema` (declared
+  field types, null always allowed, required keys), `label_set` (the classification scorer's reading: a label appears in the
+  answer), `citations` (every cited id is a prompt passage id; `[]` passes). A row with none → `skipped: "no_verifiers"`,
+  no retry.
+- **Records.** Per row (prediction dict, `predictions_preview`, `eval_predictions/<id>.jsonl`): `checked_decoding: {attempts,
+  chosen_attempt, attempts_detail: [{attempt, failed: [{verifier_id, messages (<=3, <=300 chars)}]}], verifiers, passed,
+  extra_generation_seconds, extra_generated_tokens, verify_seconds}`. Eval: `metrics.checked_decoding` (= `metrics.inference.
+  checked_decoding`) `{policy, label, rows, rows_checked, rows_without_verifiers, rows_failed_first_try, rows_retried,
+  rows_fixed_by_retry, rows_still_failing, mean_attempts, extra_generation_seconds, extra_generated_tokens, verify_seconds,
+  generation_seconds_total}`. **Latency / throughput / `generation_seconds` / per-row `latency_ms` + `generated_tokens` stay
+  attempt-1 numbers**; `generation_seconds_total` includes retries and checks. The policy (`policy_record`: mode,
+  max_attempts, verifiers or "auto", + temperature / seed for resample) is `metrics.inference.decoding.checked_decoding`.
+  With the setting off none of these keys exist.
+- **Lift check**: `run_post_training_lift_eval(checked_decoding=...)` resolves the policy ONCE (`lift_policy_override`, always
+  an explicit dict) and passes it to the base AND fine-tuned (and every seed) eval. The base-model cache
+  (`_baseline_decoding_matches(result, decoding, checked)`) requires the same `decoding.checked_decoding` record (None = off):
+  an unchecked base result is never the bar for a checked run and vice versa. Passage-reader lift checks do not use it yet.
+- **Compare (Y4)**: `compare_row_evidence_service._scoring` splits `checked_decoding` out of `decoding`; different policies →
+  difference `kind: "decoding_policy"`, "different decoding policy: checked decoding off vs up to 3 tries · resample" →
+  `not_comparable` + the usual re-score offer. Provenance carries `checked_decoding` (`checked_decoding_summary`).
+  `sft_lift_summary_service` adds `baseline/trained.checked_decoding` (only when present) and `checked_decoding_differs`;
+  `eval_summary_service` adds `checked_decoding` / `checked_decoding_differs` (only when present).
+- **UI**: `CheckedDecodingSettings` (Results eval settings in `EvalPanel`, under the per-turn judge toggle: "Checked decoding"
+  toggle, "When a check fails" = try again / ask the model to fix the listed problems, "Max tries per row" 1..5; saves the
+  project setting). `CheckedDecodingBadge` ("Checked decoding · up to N tries · mode" + "N rows fixed by a retry" + source
+  eval) on `EvalSummaryCard`, `SftLiftPanel` and each Compare provenance row; a "not like for like" line when the lift's two
+  sides differ. Tests: `tests/test_checked_decoding.py`, `tests/test_post_training_lift_eval.py`
+  (`test_checked_decoding_one_policy_for_both_evals_and_the_cache_keys_on_it`), `CheckedDecoding.test.tsx`. Not done (Y5):
+  Playground / local chat / export parity.

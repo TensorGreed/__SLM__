@@ -16,6 +16,7 @@ import { answerKeyReviewText, checkLiftAcrossSeeds, fetchEvalSummary, type Basel
 import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, sizingToShow, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import RedactionTryBox from './RedactionTryBox';
 import EvalJudgeTrustBadge from './EvalJudgeTrustBadge';
+import CheckedDecodingBadge from './CheckedDecodingBadge';
 import SeedShipTable from './SeedShipTable';
 import SpanThresholdTuner from './SpanThresholdTuner';
 import type { TuneThresholdsResult } from '../../api/spanThresholds';
@@ -463,6 +464,21 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         {' '}{head.absolute_delta > 0 ? '+' : ''}{fmt(head.absolute_delta)}
                         {head.relative_delta_pct != null ? ` (${head.relative_delta_pct > 0 ? '+' : ''}${head.relative_delta_pct}%)` : ''}
                     </span>
+                </p>
+            )}
+            {summary.checked_decoding && (
+                <p className="eval-summary__message" data-testid="eval-summary-checked-decoding">
+                    <CheckedDecodingBadge
+                        summary={summary.checked_decoding}
+                        source={summary.eval_result_id != null ? `eval #${summary.eval_result_id}` : null}
+                        testId="eval-summary-checked-decoding-badge"
+                    />
+                </p>
+            )}
+            {summary.checked_decoding_differs && (
+                <p className="eval-summary__message" data-testid="eval-summary-checked-decoding-differs">
+                    The base model and this run were decoded under different checked-decoding settings, so this lift
+                    is not like for like. Re-run the lift check: it scores both under the same setting.
                 </p>
             )}
             {head && decodingBarText(summary.baseline?.decoding_bar) && (

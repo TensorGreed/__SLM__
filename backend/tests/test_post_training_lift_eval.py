@@ -135,6 +135,12 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
             from app.services.decoding_settings import decoding_record, generation_kwargs
 
             metrics["inference"] = {"decoding": decoding_record(generation_kwargs(max_new_tokens=1, temperature=0.0))}
+        # Opt-in checked decoding: a real eval records the applied policy in its decoding record.
+        from app.services.checked_decoding_service import normalize_policy, policy_record
+
+        checked = policy_record(normalize_policy(kwargs.get("checked_decoding")))
+        if checked is not None and isinstance(metrics.get("inference"), dict):
+            metrics["inference"]["decoding"] = {**metrics["inference"]["decoding"], "checked_decoding": checked}
         if self.result_judge_block is not None:
             metrics["judge"] = dict(self.result_judge_block)
             if "score" in self.result_judge_block:
@@ -253,6 +259,38 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
             async with self.sf() as db:
                 out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=third)
             self.assertTrue(out["baseline_reused"])
+
+    async def test_checked_decoding_one_policy_for_both_evals_and_the_cache_keys_on_it(self):
+        """Checked decoding (opt-in): the lift check resolves the policy once and passes it to the
+        base AND the fine-tuned eval; a cached base eval without it is not the bar for a checked
+        run (and vice versa), while one under the same policy is reused."""
+        from app.services.checked_decoding_service import with_project_policy
+
+        pid = await self._project()
+        first, second, third, fourth = [await self._run(pid) for _ in range(4)]
+        out = await self._lift(pid, first)  # project setting off
+        self.assertEqual([c["checked_decoding"]["enabled"] for c in self.eval_calls], [False, False])
+        async with self.sf() as db:
+            project = await db.get(Project, pid)
+            project.runtime_config = with_project_policy(project.runtime_config, {"enabled": True, "mode": "repair"})
+            await db.commit()
+        self.eval_calls.clear()
+        out = await self._lift(pid, second)
+        self.assertFalse(out["baseline_reused"], "an unchecked base eval is not the bar for a checked run")
+        self.assertEqual([c["model_path"] for c in self.eval_calls], [BASE, None])
+        self.assertEqual({c["checked_decoding"]["mode"] for c in self.eval_calls}, {"repair"})
+        self.assertTrue(all(c["checked_decoding"]["enabled"] for c in self.eval_calls))
+        out = await self._lift(pid, third)
+        self.assertTrue(out["baseline_reused"], "same policy: the cached base eval is reused")
+        # A per-check override wins over the project setting and keys the cache too.
+        self.eval_calls.clear()
+        with mock.patch("app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout):
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(
+                    db, project_id=pid, experiment_id=fourth, checked_decoding={"enabled": False}
+                )
+        self.assertTrue(out["baseline_reused"], "the first (unchecked) base eval matches an off override")
+        self.assertEqual([c["checked_decoding"]["enabled"] for c in self.eval_calls], [False])
 
     async def test_baseline_decoded_differently_is_re_evaluated_once(self):
         """A cached base-model result from before decoding was recorded (it

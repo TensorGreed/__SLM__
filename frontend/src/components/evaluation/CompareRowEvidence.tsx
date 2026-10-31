@@ -20,6 +20,7 @@ import {
 import { toast } from '../../stores/toastStore';
 import { useJobsStore } from '../../stores/jobsStore';
 import { metricUnit } from './liftEvidence';
+import CheckedDecodingBadge from './CheckedDecodingBadge';
 
 
 const ANSWER_KEY_NAMES: Record<string, string> = {
@@ -245,7 +246,18 @@ export default function CompareRowEvidence({
                 {sides.map(({ label, prov }) => (
                     <div key={label} data-testid={`eval-compare-provenance-${label.toLowerCase()}`}>
                         <dt>{label}</dt>
-                        <dd>{provenanceText(prov)}</dd>
+                        <dd>
+                            {provenanceText(prov)}
+                            {prov?.checked_decoding && (
+                                <>
+                                    {' '}
+                                    <CheckedDecodingBadge
+                                        summary={prov.checked_decoding}
+                                        testId={`eval-compare-checked-decoding-${label.toLowerCase()}`}
+                                    />
+                                </>
+                            )}
+                        </dd>
                     </div>
                 ))}
             </dl>

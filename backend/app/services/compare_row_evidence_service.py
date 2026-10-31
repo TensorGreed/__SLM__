@@ -9,7 +9,8 @@ verdict (``paired_comparison_stats``: better / worse / within_noise /
 too_few_rows, plus ``not_comparable`` here).
 
 A verdict is only given when the two evals were scored the same way:
-same answer key (test split file), same judge, same scoring mode. When they
+same answer key (test split file), same judge, same scoring mode, same checked-decoding
+policy (opt-in verify-and-retry, ``checked_decoding_service``). When they
 differ the response says which, gives no verdict, and offers to re-score the
 older run with the lift check (``post_training_eval_service``) on the
 current answer key and judge.
@@ -29,6 +30,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dataset import Dataset, DatasetVersion
+from app.services.checked_decoding_service import checked_decoding_summary
 from app.models.experiment import EvalResult, Experiment
 
 
@@ -173,12 +175,22 @@ def _decoding(er: EvalResult) -> dict[str, Any] | None:
     return None
 
 
+def _checked_policy(decoding: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The checked-decoding policy an eval ran under (``checked_decoding_service.policy_record``),
+    None when off or not recorded (every eval from before the setting existed ran without it)."""
+    value = (decoding or {}).get("checked_decoding")
+    return dict(value) if isinstance(value, dict) else None
+
+
 def _scoring(er: EvalResult) -> dict[str, Any]:
     metrics = _metrics(er)
     mode = metrics.get("scoring_mode")
+    decoding = _decoding(er)
     return {
         "eval_type": er.eval_type or None,
-        "decoding": _decoding(er),
+        "decoding": {k: v for k, v in decoding.items() if k != "checked_decoding"} if decoding is not None else None,
+        # Opt-in checked decoding (verify-and-retry): a different policy blocks pairing.
+        "checked_decoding": _checked_policy(decoding),
         "scoring_mode": str(mode) if isinstance(mode, str) and mode else None,
         "fingerprints": {
             key: metrics[key] for key in _SCORING_FINGERPRINTS if isinstance(metrics.get(key), str)
@@ -232,6 +244,7 @@ async def eval_provenance(db: AsyncSession, exp: Experiment, er: EvalResult | No
             "judge": None,
             "scoring": None,
             "has_row_scores": False,
+            "checked_decoding": None,
         }
     return {
         "experiment_id": exp.id,
@@ -242,6 +255,8 @@ async def eval_provenance(db: AsyncSession, exp: Experiment, er: EvalResult | No
         "judge": _judge(er),
         "scoring": _scoring(er),
         "has_row_scores": isinstance(_details(er).get("row_scores"), dict),
+        # Opt-in checked decoding: what the retries did (None when off; key absent before it existed).
+        "checked_decoding": checked_decoding_summary(_metrics(er)),
     }
 
 
@@ -407,6 +422,22 @@ def compare_provenance(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
             if revision_note:
                 message = revision_note if fmt_a == fmt_b else f"{revision_note}; {message}"
             _diff("scoring", message, fps_a[name], fps_b[name])
+    checked_a, checked_b = scoring_a.get("checked_decoding"), scoring_b.get("checked_decoding")
+    if checked_a != checked_b:
+        from app.services.checked_decoding_service import policy_label
+
+        def _label(rec: Any) -> str:
+            if not rec:
+                return "off"
+            text = policy_label(rec).replace("Checked decoding · ", "")
+            if rec.get("mode") == "resample":
+                text += f" (temperature {rec.get('sample_temperature')}, seed {rec.get('seed')})"
+            if rec.get("verifiers") not in (None, "auto"):
+                text += f" [checks: {', '.join(rec.get('verifiers') or [])}]"
+            return text
+
+        _diff("decoding_policy", f"different decoding policy: checked decoding {_label(checked_a)} vs {_label(checked_b)}",
+              checked_a, checked_b)
 
     return {
         "comparable": not differences,

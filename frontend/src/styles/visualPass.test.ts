@@ -42,6 +42,8 @@ export const CLEAN_FILES = [
     'components/data/SynthReviewQueue.tsx',
     'components/data/TaskShapeCard.tsx',
     'components/evaluation/EvalGapsPanel.tsx',
+    'components/evaluation/CheckedDecodingBadge.tsx',
+    'components/evaluation/CheckedDecodingSettings.tsx',
     'components/evaluation/EvalJudgeTrustBadge.tsx',
     'components/evaluation/EvalSummaryCard.tsx',
     'components/evaluation/EvalPackScaffoldPanel.tsx',

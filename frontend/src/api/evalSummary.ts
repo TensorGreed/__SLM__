@@ -5,6 +5,7 @@
 
 import type { EvalJudgeTrust } from './evalJudgeCalibration';
 import api from './client';
+import type { CheckedDecodingSummary } from './checkedDecoding';
 import type { EvalSizing, LiftEvidence, SeedEvidence } from '../components/evaluation/liftEvidence';
 import type { RetrievalSplit } from '../components/evaluation/retrievalSplit';
 
@@ -249,6 +250,10 @@ export interface EvalSummary {
     failures: EvalSummaryFailure[];
     failed_count?: number | null;
     judge?: EvalSummaryJudge | null;
+    /** Opt-in checked decoding: present only when the run's latest eval ran with it. */
+    checked_decoding?: CheckedDecodingSummary | null;
+    /** The lift pairs evals decoded under different checked-decoding policies. */
+    checked_decoding_differs?: boolean;
 }
 
 export async function fetchEvalSummary(

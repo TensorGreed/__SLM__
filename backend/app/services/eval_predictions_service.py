@@ -201,6 +201,8 @@ def build_records(
         for key in ("row_exact_match", "row_f1"):
             if _num(p.get(key)) is not None:
                 rec[key] = _num(p.get(key))
+        if isinstance(p.get("checked_decoding"), dict):  # opt-in checked decoding: attempts + failed checks
+            rec["checked_decoding"] = p["checked_decoding"]
         try:
             judge = _judge_record(p, scoring_mode=scoring_mode, answer_label=answer_label, parse_json=parse_json)
         except Exception as exc:  # noqa: BLE001 - a row whose view can't be rebuilt is stored without it
