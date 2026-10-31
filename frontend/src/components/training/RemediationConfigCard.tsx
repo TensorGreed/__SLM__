@@ -208,6 +208,11 @@ export default function RemediationConfigCard({ projectId }: Props) {
                                 <span className={`remediation-config__status ${status === 'ready' ? 'is-ready' : 'is-off'}`}>
                                     {STATUS_TEXT[status]}
                                 </span>
+                                {c.opt_in && !c.default && (
+                                    <span className="remediation-config__status is-off" data-testid={`rem-check-${c.id}-opt-in`}>
+                                        only when picked
+                                    </span>
+                                )}
                                 {isolationOff && c.kind !== 'builtin' && status === 'ready' && (
                                     <span className="remediation-config__status is-off" data-testid={`rem-check-${c.id}-network`}>
                                         network not isolated

@@ -12,6 +12,7 @@ _ALIASES = {
     "py": "python", "python3": "python", "js": "javascript", "node": "javascript", "mjs": "javascript",
     "sh": "shell", "bash": "shell", "zsh": "shell", "tf": "terraform", "hcl": "terraform",
     "cs": "csharp", "c#": "csharp", "golang": "go", "rs": "rust", "yml": "yaml",
+    "ts": "typescript", "tsx": "typescript", "c++": "cpp", "cxx": "cpp", "cc": "cpp", "hpp": "cpp", "h": "c",
 }
 
 
@@ -53,6 +54,9 @@ class BaseCheck:
     kind = "builtin"
     binary: str | None = None
     requires_context: str | None = None  # a context key that must be present for default selection
+    # False = opt-in: left out of the default selection (``check_ids=None``) unless its id is listed in
+    # ``CODE_CHECK_ALLOWED``; it still runs whenever a caller names it in ``check_ids``.
+    default_enabled = True
     # Bumped when a check's pass / fail semantics change (1 = original). A check above 1 is named in the
     # remediation scoring fingerprint, so results scored by the older check are not reused or paired.
     revision = 1

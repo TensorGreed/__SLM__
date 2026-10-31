@@ -3815,7 +3815,7 @@ async def run_heldout_evaluation(
             if rem_cfg["checks"] is not None:
                 rev_ids = list(rem_cfg["checks"])
             else:
-                rev_ids = [c["id"] for c in ccs.list_code_checks() if c["available"] and c["allowed"] and c["kind"] != "detector"]
+                rev_ids = ccs.default_check_ids()
             revisions = ccs.check_revisions(rev_ids)
             if revisions:
                 metrics["remediation_check_revisions"] = revisions

@@ -19,6 +19,10 @@ export interface CodeCheckInfo {
     available: boolean;
     /** Allow-listed in CODE_CHECK_ALLOWED (always true for built-ins). */
     allowed: boolean;
+    /** Opt-in: runs only when picked (or listed in CODE_CHECK_ALLOWED), never by "every ready check". */
+    opt_in?: boolean;
+    /** Part of the default "every ready check" selection. */
+    default?: boolean;
 }
 
 export interface NetworkIsolationInfo {
@@ -35,7 +39,7 @@ export interface CodeCheckResult {
     check_id: string;
     ok: boolean | null;
     messages: string[];
-    /** unavailable | not_allowed | language_mismatch | timeout */
+    /** unavailable | not_allowed | language_mismatch | timeout | no_context | unresolvable_includes | ... */
     skipped: string | null;
 }
 

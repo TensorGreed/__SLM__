@@ -426,6 +426,31 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - Remediation scoring (fix lane): `code_checkable_count` / `code_parses_rate` depend on the ORIGINAL chunk only (malformed = checkable but not parsing), so base and fine-tuned share denominators. `issue_resolved_rate` / `new_findings_rate` are over rows whose patch applied (informational, hidden from the lift table); the lift metric is `issue_resolved_overall_rate` = resolved / (scored rows - detector-blind - detector-error rows). A finding the detector did not report on the ORIGINAL chunk is `detector_blind` (`row_detector_note`, `detector_blind_count`): `row_issue_resolved` None, excluded from both rates, ignored by the pass rule. Metrics carry `remediation_fingerprint` (detector identity incl. run id, effective check ids, `CODE_CHECK_ALLOWED`, retrieval settings, extra-field schema hash); a cached base result is reused only when it matches (`post_training_eval_service._baseline_scoring_matches`). Detector cache keys include the findings-prompt builder + decoding fingerprint and, for command detectors, the binary realpath/mtime/size. Retrieval for rows without passages runs in worker threads (`combine_datasets`, `_load_heldout_pairs`); own-chunk exclusion matches by normalised path suffix, source document id, or text containment (>= 80% of the row's lines).
 - `services/unified_diff.py`: `apply_patch_to_chunk` (absolute line numbers, exact match ± `max_offset`, reasons `empty_patch/not_a_diff/other_file/multiple_files/context_mismatch/overlapping_hunks/out_of_range/no_op`), `make_unified_diff` round-trips with it. `offsets[i]` = applied position minus stated position.
 
+- **Opt-in checks / Epic Y2-Y3.** `BaseCheck.default_enabled` (default True): False = left out of the default
+  selection (`check_ids=None`) unless the id is in `CODE_CHECK_ALLOWED`; naming it in `check_ids` always runs it.
+  `code_check_service.in_default_selection(c)` / `default_check_ids()` are the one place that rule lives (the
+  remediation fingerprint and `remediation_check_revisions` use `default_check_ids()`, so registering an opt-in
+  check changed no fingerprint). `list_code_checks` rows carry `opt_in` + `default`; the remediation settings card
+  shows "only when picked". `context_grounding` (`code_checks/grounding.py`, allowlists in
+  `code_checks/grounding_allowlists.py`) is a core built-in with `default_enabled=False`, `requires_context=
+  "grounding_text"` and `checkable_per_check=True`: term-extractor registry (`TERM_EXTRACTORS`,
+  `register_term_extractor`; `code_symbols` first, picked via `context["grounding_extractor"]`). Terms have kinds:
+  `import` terms ignore the code's own bindings, `member` / `attribute` terms (dotted tails, HCL attributes) accept
+  only declarations (functions, classes, fields, `self.x =`), not locals; everything else accepts locals too. Std
+  roots + names bound from std imports or std values (`_bind_std_locals`) are never checked past the root. No
+  `grounding_text` -> `skipped="no_context"`. `python_undefined_names` (pyflakes, in-process) sits in
+  `builtin.GATED_IN_PROCESS`: registered but not a core built-in, so it needs `CODE_CHECK_ALLOWED`; available iff
+  `pyflakes` imports. `c_syntax` (`external.CSyntax`): clang/clang++ preferred, gcc/g++ fallback; syntax-class
+  regex + same-line suppression (a syntax error on a line with a resolution error is ignored); missing headers are
+  blanked and re-checked (max 12, else `skipped="unresolvable_includes"`); a statement fragment is retried inside
+  `void __brewslm_snippet(void) {` with includes hoisted and `#line 1`. Code-example scoring passes
+  `grounding_text` (the prediction's `prompt`, else `judge_question(row)`) to every check; checks with
+  `checkable_per_check` drop only themselves when the reference fails them (gate checks keep the old whole-row rule,
+  so existing scores are byte-identical: `OffByDefaultTests` golden sha). Calibration metrics
+  `code_example_grounding_reference_{checked_count,pass_count,pass_rate}` + row
+  `row_code_example_grounding_reference_pass`, shown in `CodeExampleMetricsSection` (`ce-grounding-reference`).
+  Tests: `test_context_grounding.py`, `test_c_syntax_and_undefined_names.py` (real-binary / pyflakes cases skip when absent).
+
 ## `remediation` scoring + the code-remediation recipe (G5, lane B2)
 
 - Recipe `code-remediation` (`structured_extraction`, scoring mode `remediation`). Prompt + payload helpers live in

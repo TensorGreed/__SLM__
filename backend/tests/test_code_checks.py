@@ -371,7 +371,8 @@ class PluginTests(unittest.TestCase):
         self.assertEqual(set(diag["loaded_modules"]), {"zz_plugin_ok", "zz_plugin_dict"})
         self.assertEqual(set(diag["failed_modules"]), {"zz_plugin_bad", "zz_does_not_exist"})
         self.assertIn("zz_plug_a", {r["id"] for r in svc.list_code_checks()})
-        self.assertEqual(svc.list_code_checks()[0].keys(), {"id", "languages", "kind", "binary", "available", "allowed"})
+        self.assertEqual(svc.list_code_checks()[0].keys(),
+                         {"id", "languages", "kind", "binary", "available", "allowed", "opt_in", "default"})
         # a plugin is never trusted by what it declares: it runs only when allow-listed
         self.assertEqual(svc.run_code_checks("x", language="python", check_ids=["zz_plug_a"])["results"][0]["skipped"], "not_allowed")
         with Allow("zz_plug_a"):

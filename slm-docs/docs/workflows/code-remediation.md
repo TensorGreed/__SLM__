@@ -76,6 +76,16 @@ and Compare reports two evals with and without it as scored differently ("format
 eval metrics carry `remediation_format_before_check: true` when on). Served
 outputs are not reformatted: the serving gateway validates replies but has no post-processing step.
 
+**Grounding check** (opt-in: pick `context_grounding` in the Remediation settings' check list, i.e.
+`"checks": [..., "context_grounding"]`): the checks also receive the prompt the model saw, and the grounding check
+fails code that uses a module, function, attribute or type that is neither in the prompt nor defined in the code
+([how it decides](../extensions/code-checks.md#context_grounding)). Unlike the other checks, a reference answer that
+fails it only drops the grounding check for that row (the other checks still decide). The metrics
+`code_example_grounding_reference_checked_count` / `_pass_count` / `_pass_rate` say how often the REFERENCE answers
+pass it, shown on the results card as "passes on N of M reference answers": reference answers are correct, so the
+rest are false alarms. Each such row records `row_code_example_grounding_reference_pass`. All are absent when the
+check is not selected.
+
 | Check | Meaning |
 |---|---|
 | `output_parses` | the output is the code-example JSON (`{"code": ...}` with a code string) |

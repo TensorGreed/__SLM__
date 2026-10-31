@@ -25,6 +25,14 @@ A formatter that rejects the code (syntax error) or cannot run leaves the code a
 ``row_code_example_format`` {status, formatter, messages} and the metrics ``code_example_format_before_check``
 (both absent with the setting off). The reference code is not formatted (it decides checkability alone).
 
+Opt-in grounding (``"context_grounding"`` in ``remediation.checks``, or listed in ``CODE_CHECK_ALLOWED``): the
+checks get the prompt the model saw as ``context["grounding_text"]`` (the row's task + passages when the
+prediction carries no prompt). Unlike the other checks, a reference that FAILS the grounding check makes the
+row not checkable for that check only (``checkable_per_check``): the other checks still decide. The metrics
+``code_example_grounding_reference_{checked_count,pass_count,pass_rate}`` say how often REFERENCE answers pass
+it -- the check's false-positive gauge -- and each such row records ``row_code_example_grounding_reference_pass``
+(all absent when the check is not selected).
+
 ``row_code_example_pass`` = parses AND (checks pass or not checkable) AND citations valid (or no
 passages) AND judge pass. A row that fails a deterministic part fails whatever the judge says; a row
 that passes them all but has no judge verdict is unscored (``None``: out of the pass rate and of the
@@ -37,6 +45,7 @@ from typing import Any, Callable
 
 ROW_KEY = "code_example_row"
 MAX_CHECK_MESSAGES = 5
+GROUNDING_CHECK_ID = "context_grounding"
 
 JUDGE_INSTRUCTION = (
     "The model was asked to write code for the task in the question, using the API shown in the reference "
@@ -80,6 +89,20 @@ def _code_of(parsed: Any) -> str | None:
     return parsed.get("code") if isinstance(parsed, dict) and isinstance(parsed.get("code"), str) else None
 
 
+def grounding_text(prediction: dict[str, Any], row: dict[str, Any]) -> str:
+    """The text a grounding check reads: the prompt the model saw, else the row's task + passages."""
+    prompt = prediction.get("prompt")
+    if isinstance(prompt, str) and prompt.strip():
+        return prompt
+    return judge_question(row)
+
+
+def _per_check(check_id: Any) -> bool:
+    from app.services.code_check_service import get_code_check
+
+    return bool(getattr(get_code_check(str(check_id)), "checkable_per_check", False))
+
+
 def analyze_row(prediction: dict[str, Any], schema: dict[str, Any], parse_json: Callable[[Any], Any]) -> dict[str, Any]:
     """Parse the prediction and run the code checks (reference code first: which checks apply).
     Cached on the prediction as ``_code_example_analysis``."""
@@ -105,9 +128,17 @@ def analyze_row(prediction: dict[str, Any], schema: dict[str, Any], parse_json: 
     language = row.get("language") if isinstance(row.get("language"), str) else None
     if language and ref_code is not None:
         try:
-            before = run_code_checks(ref_code, language=language, check_ids=check_ids, context={"path": None})
-            ran = [_get(r, "check_id") for r in before.get("results", []) if _get(r, "ok") is not None]
-            if before.get("ok") is True and ran:
+            ctx = {"path": None, "grounding_text": grounding_text(prediction, row)}
+            before = run_code_checks(ref_code, language=language, check_ids=check_ids, context=ctx)
+            ran_results = [r for r in before.get("results", []) if _get(r, "ok") is not None]
+            out["reference_checks"] = {str(_get(r, "check_id")): bool(_get(r, "ok")) for r in ran_results}
+            # Gate checks (all of today's): any failure on the reference = the row is not checkable. Per-check
+            # ones (``checkable_per_check``: grounding) only drop themselves when the reference fails them.
+            gate = [r for r in ran_results if not _per_check(_get(r, "check_id"))]
+            ran = [_get(r, "check_id") for r in gate] + [
+                _get(r, "check_id") for r in ran_results if _per_check(_get(r, "check_id")) and _get(r, "ok") is True
+            ]
+            if all(_get(r, "ok") is True for r in gate) and ran:
                 out["checkable"] = True
                 if code is None:
                     out["checks_pass"] = False
@@ -116,7 +147,7 @@ def analyze_row(prediction: dict[str, Any], schema: dict[str, Any], parse_json: 
                         fmt = format_code(code, language=language)
                         out["format"] = {k: fmt[k] for k in ("status", "formatter", "messages")}
                         code = fmt["code"]  # the original code unless the formatter succeeded
-                    after = run_code_checks(code, language=language, check_ids=ran, context={"path": None})
+                    after = run_code_checks(code, language=language, check_ids=ran, context=ctx)
                     out["checks_pass"] = bool(after.get("ok") is True)
                     msgs: list[str] = []
                     for r in after.get("results", []):
@@ -189,6 +220,9 @@ def score_code_examples(
     remediation = schema.get("remediation") if isinstance(schema.get("remediation"), dict) else {}
     format_first = remediation.get("format_before_check") is True
     format_statuses: dict[str, int] = {}
+    configured = remediation.get("checks")
+    grounding_selected = isinstance(configured, list) and GROUNDING_CHECK_ID in configured
+    grounding_checked = grounding_ok = 0
 
     for prediction in predictions:
         row = row_context(prediction)
@@ -196,6 +230,12 @@ def score_code_examples(
             continue
         scored += 1
         a = analyze_row(prediction, schema, parse_json)
+        ref_grounding = (a.get("reference_checks") or {}).get(GROUNDING_CHECK_ID)
+        if ref_grounding is not None:
+            grounding_selected = True
+            grounding_checked += 1
+            grounding_ok += int(ref_grounding)
+            prediction["row_code_example_grounding_reference_pass"] = ref_grounding
         parsed = a["parsed"]
         parses = bool(a["parses"])
         n_parses += int(parses)
@@ -300,6 +340,11 @@ def score_code_examples(
         metrics["code_example_rows_with_passages"] = with_passages
     if judge_label:
         metrics["code_example_judge_label"] = judge_label
+    if grounding_selected:
+        # Opt-in only: how often the REFERENCE answers pass the grounding check (its false-positive gauge).
+        metrics["code_example_grounding_reference_checked_count"] = grounding_checked
+        metrics["code_example_grounding_reference_pass_count"] = grounding_ok
+        metrics["code_example_grounding_reference_pass_rate"] = _rate(grounding_ok, grounding_checked)
     if format_first:
         # Opt-in only (absent otherwise): how the formatter went per row. ``unavailable`` / ``not_allowed`` rows
         # were checked unformatted, exactly as with the setting off.

@@ -67,6 +67,10 @@ export interface RemediationMetrics {
     code_example_judge_unscored_reasons?: Record<string, number>;
     code_example_judge_label?: string | null;
     code_example_by_language?: Record<string, { scored?: number; decided?: number; passed?: number; not_checkable?: number; pass_rate?: number | null }>;
+    /** Opt-in grounding check (`context_grounding` in the checks): how often REFERENCE answers pass it. */
+    code_example_grounding_reference_checked_count?: number;
+    code_example_grounding_reference_pass_count?: number;
+    code_example_grounding_reference_pass_rate?: number | null;
 }
 
 export interface RemediationPassage {
@@ -191,6 +195,7 @@ export function CodeExampleMetricsSection({ metrics }: { metrics: RemediationMet
     const reasons = Object.entries(metrics.code_example_judge_unscored_reasons ?? {}).sort((a, b) => b[1] - a[1]);
     const languages = Object.entries(metrics.code_example_by_language ?? {});
     const hasCitations = typeof metrics.code_example_citations_valid_rate === 'number';
+    const groundingChecked = metrics.code_example_grounding_reference_checked_count;
     return (
         <div data-testid="ce-metrics">
             <h4 className="remediation__h4">Task → code rows</h4>
@@ -238,6 +243,13 @@ export function CodeExampleMetricsSection({ metrics }: { metrics: RemediationMet
                     </dd>
                 </div>
             </dl>
+            {typeof groundingChecked === 'number' && (
+                <p className="u-hint" data-testid="ce-grounding-reference">
+                    {groundingChecked > 0
+                        ? `The grounding check (every name the code uses appears in the prompt or is defined in the code) passes on ${metrics.code_example_grounding_reference_pass_count ?? 0} of ${groundingChecked} reference answers (${pct(metrics.code_example_grounding_reference_pass_rate)}). Reference answers are correct, so the rest are false alarms: rows whose reference fails it are not checked for grounding.`
+                        : 'The grounding check is selected but did not run on any reference answer.'}
+                </p>
+            )}
             {reasons.length > 0 && (
                 <ul className="remediation-row__messages" data-testid="ce-unscored">
                     {reasons.map(([reason, n]) => (

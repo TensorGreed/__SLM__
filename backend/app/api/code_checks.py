@@ -49,7 +49,8 @@ async def list_checks() -> dict[str, Any]:
 @router.post("/run")
 async def run_checks(body: RunCodeChecksRequest, request: Request) -> dict[str, Any]:
     _require_run_access(request)
-    ctx = {k: v for k, v in (body.context or {}).items() if k == "json_schema"}  # module_dir etc. are server-side only
+    # module_dir etc. are server-side only; grounding_text feeds the opt-in context_grounding check.
+    ctx = {k: v for k, v in (body.context or {}).items() if k in ("json_schema", "grounding_text")}
     return await asyncio.to_thread(
         code_check_service.run_code_checks,
         body.code, language=body.language, check_ids=body.check_ids, context=ctx,

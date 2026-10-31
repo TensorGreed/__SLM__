@@ -149,6 +149,8 @@ session-start guidance.
 - `backend/app/services/code_checks/base.py` — Shared types for code checks (no registry dependency, so built-ins can import it).
 - `backend/app/services/code_checks/builtin.py` — In-process code checks: no subprocess, always available.
 - `backend/app/services/code_checks/external.py` — External (sandboxed) syntax checks. Each is gated by CODE_CHECK_ALLOWED + PATH.
+- `backend/app/services/code_checks/grounding.py` — ``context_grounding``: every external symbol the code uses is grounded in the prompt context.
+- `backend/app/services/code_checks/grounding_allowlists.py` — Allowlists for the ``context_grounding`` check: names a language provides on its own (keywords,
 - `backend/app/services/code_chunker.py` — Code-aware chunking — one retrievable unit per function / method / block.
 - `backend/app/services/code_example_scoring.py` — Opt-in scoring of held-out ``code_example`` rows in a ``remediation`` eval.
 - `backend/app/services/code_findings_prompt.py` — Shared prompt + schema helpers for the ``code-findings`` recipe.
@@ -893,6 +895,7 @@ session-start guidance.
 - `backend/tests/test_bell_live_metrics.py` — Tests for the bell live-loss sparkline backend
 - `backend/tests/test_benchmark_contamination.py` — Benchmark gold-VALUE contamination scan: do the answers a benchmark
 - `backend/tests/test_bm25_tokenizer.py` — BM25 tokenizer (identifier-aware for code) and the index tokenizer-version stamp.
+- `backend/tests/test_c_syntax_and_undefined_names.py` — c_syntax (clang / gcc -fsyntax-only, sandbox stubbed + real-binary) and python_undefined_names (pyflakes).
 - `backend/tests/test_chat_template_rewrap.py` — Tests for the opt-in chat-template re-wrap pass
 - `backend/tests/test_check_seeds_endpoint.py` — ``POST /evaluation/summary/check-seeds`` — the multi-seed option for the
 - `backend/tests/test_checked_decoding.py` — Checked decoding (Epic Y1 + Y4): verify-and-retry at eval time, opt-in.
@@ -928,6 +931,7 @@ session-start guidance.
 - `backend/tests/test_command_backend.py` — Command (local CLI) synth backend + the hard API budget (phase G9).
 - `backend/tests/test_compare_row_evidence.py` — Compare page row-paired evidence (Epic W1).
 - `backend/tests/test_compliance_bundles.py` — Compliance bundles: built-in bundles are data (types + definitions +
+- `backend/tests/test_context_grounding.py` — context_grounding code check: term extractors per language family (true positives + false-positive
 - `backend/tests/test_continued_pretraining.py` — Continued pretraining for documents-only projects (Wave 2c-1).
 - `backend/tests/test_curriculum_ab.py` — Tests for the Phase 6c A/B harness (pure-function pieces).
 - `backend/tests/test_curriculum_api.py` — Tests for the curriculum-preview API (USER-SUCCESS Epic 6 Phase 6a).

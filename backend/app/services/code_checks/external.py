@@ -549,6 +549,149 @@ class RustSyntax(ExternalCheck):
         return res
 
 
+_C_DIAG_RE = re.compile(r"^(?:.*[/\\])?snippet\.(?:c|cpp):(\d+):(?:\d+:)?\s*(fatal error|error):\s*(.*)$")
+_C_MISSING_INCLUDE_RE = re.compile(r"^'?([^':]+?)'?(?::)? (?:file not found|No such file or directory)")
+# Syntax-class diagnostics (gcc + clang wording); everything else (undeclared / unknown names, types,
+# members, implicit declarations, template arguments...) is a resolution error and ignored.
+_C_SYNTAX_RE = re.compile(
+    r"\bexpected\b|missing terminating|unterminated|stray '|extraneous|unmatched|unbalanced|"
+    r"invalid preprocessing directive|#else without|#elif without|#endif without|#else after #else|"
+    r"empty character constant|extra tokens at end|invalid token|invalid suffix|"
+    r"function definition is not allowed here|a function-definition is not allowed here|"
+    r"duplicate '(?:const|static|unsigned|signed|volatile)'|two or more data types|"
+    r"expected expression|expected statement|expected declaration",
+    re.IGNORECASE,
+)
+# "expected" diagnostics that really mean an unknown name (``new Foo`` with Foo undeclared).
+_C_RESOLUTION_EXPECTED_RE = re.compile(
+    r"expected (?:a )?(?:class name|class-name|type(?:-specifier)?|namespace name|template-name|"
+    r"constructor, destructor, or type conversion)\b",
+    re.IGNORECASE,
+)
+_C_WRAP_NAME = "__brewslm_snippet"
+_C_INCLUDE_LINE_RE = re.compile(r"^[ \t]*#[ \t]*include\b[^\n]*$", re.MULTILINE)
+_C_MAX_INCLUDE_STRIPS = 12
+
+
+def c_diagnostics(stderr: str) -> tuple[list[tuple[int, str]], set[int], list[str]]:
+    """Compiler stderr -> ([(line, "line N: msg")] syntax errors, lines with a resolution error, headers that
+    were not found). A syntax error on a line that also has a resolution error is dropped by the caller: an
+    unknown macro or type (``ACME_EXPORT int f()``) makes the parser report "expected ';'" on that line."""
+    syntax: list[tuple[int, str]] = []
+    resolution_lines: set[int] = set()
+    missing: list[str] = []
+    for raw in stderr.splitlines():
+        m = _C_DIAG_RE.match(raw.strip())
+        if not m:
+            continue
+        line, level, msg = int(m.group(1)), m.group(2), m.group(3).strip()
+        if level == "fatal error":
+            mi = _C_MISSING_INCLUDE_RE.match(msg)
+            if mi:
+                missing.append(mi.group(1).strip())
+            continue
+        if _C_SYNTAX_RE.search(msg) and not _C_RESOLUTION_EXPECTED_RE.search(msg):
+            syntax.append((line, f"line {line}: {msg}"))
+        else:
+            resolution_lines.add(line)
+    return syntax, resolution_lines, missing
+
+
+def _strip_include(code: str, header: str) -> tuple[str, bool]:
+    """Blank every ``#include`` naming ``header`` (line numbers kept)."""
+    rx = re.compile(r"^[ \t]*#[ \t]*include[ \t]*[<\"]" + re.escape(header) + r"[>\"][^\n]*$", re.MULTILINE)
+    new = rx.sub("", code)
+    return new, new != code
+
+
+class CSyntax(ExternalCheck):
+    """C / C++ parse check: ``clang -fsyntax-only`` (``clang++`` for C++), else ``gcc`` / ``g++``; clang is
+    preferred because it recovers from unknown names without cascading syntax errors. Nothing is linked or
+    run. Only syntax-class errors fail; resolution errors (undeclared identifiers, unknown types and members)
+    are ignored -- a snippet rarely carries its declarations -- and so is a syntax error on a line that also
+    has a resolution error.
+
+    Headers that are not on this machine (``#include "acme/widget.h"``) are tolerated: the compiler stops at
+    the first missing header, so that include is blanked and the code re-checked (up to 12 headers; past that
+    the result is ``skipped="unresolvable_includes"``). Names from a removed header are then undeclared,
+    which only yields resolution errors (ignored), so a missing header never fails the check by itself.
+
+    A fragment of statements is retried wrapped in a function body (includes stay at file scope, ``#line``
+    keeps the line numbers), unless its braces are unbalanced."""
+
+    id = "c_syntax"
+    languages = frozenset({"c", "cpp"})
+    binary = "clang"
+    timeout_s = 30.0
+    cpu_s = 30
+    mem_mb = 2048
+    _COMPILERS = {"c": ("clang", "gcc", "cc"), "cpp": ("clang++", "g++", "c++")}
+
+    def available(self) -> bool:
+        return any(shutil.which(b) for names in self._COMPILERS.values() for b in names)
+
+    def compiler_for(self, language: str) -> str | None:
+        return next((b for b in self._COMPILERS.get(language, ()) if shutil.which(b)), None)
+
+    def _compile(self, exe: str, language: str, src: str) -> Any:
+        is_cpp = language == "cpp"
+        name = "snippet.cpp" if is_cpp else "snippet.c"
+        argv = [exe, "-fsyntax-only", "-w", "-std=gnu++17" if is_cpp else "-std=gnu17", "-x", "c++" if is_cpp else "c", name]
+        return self._sandbox(argv, {name: src})
+
+    @staticmethod
+    def wrapped(code: str) -> str:
+        includes = "\n".join(m.group(0).strip() for m in _C_INCLUDE_LINE_RE.finditer(code))
+        body = _C_INCLUDE_LINE_RE.sub("", code)
+        return f"{includes}\nvoid {_C_WRAP_NAME}(void) {{\n#line 1\n{body}\n}}\n"
+
+    def _run(self, code, language, context):
+        lang = "cpp" if language == "cpp" else "c"
+        exe = self.compiler_for(lang)
+        if exe is None:
+            return make_result(self.id, None, [f"no {lang} compiler on PATH"], skipped="unavailable")
+        src = code
+        removed: list[str] = []
+        failures: list[list[str]] = []
+        while True:
+            res = self._compile(exe, lang, src)
+            if res.timed_out:
+                return self._timeout()
+            syntax, res_lines, missing = c_diagnostics(res.stderr)
+            if missing:
+                progressed = False
+                for header in missing:
+                    src, changed = _strip_include(src, header)
+                    if changed:
+                        removed.append(header)
+                        progressed = True
+                if not progressed or len(removed) > _C_MAX_INCLUDE_STRIPS:
+                    return make_result(self.id, None, [f"headers not on this machine: {', '.join(removed or missing)}"],
+                                       skipped="unresolvable_includes")
+                continue
+            break
+        real = [t for ln, t in syntax if ln not in res_lines]
+        if res.returncode == 0 or not real:
+            return make_result(self.id, True)
+        failures.append(real)
+        neg_line, final = java_brace_balance(src)
+        if neg_line is None and final == 0:
+            res = self._compile(exe, lang, self.wrapped(src))
+            if res.timed_out:
+                return self._timeout()
+            syntax, res_lines, missing = c_diagnostics(res.stderr)
+            real = [t for ln, t in syntax if ln not in res_lines]
+            if not missing and (res.returncode == 0 or not real):
+                return make_result(self.id, True)
+            if real:
+                failures.append(real)
+        best = min(failures, key=len)
+        if removed:
+            best = [f"checked without headers not on this machine: {', '.join(removed)}"] + best
+        return make_result(self.id, False, best)
+
+
 EXTERNALS: list[Any] = [
     JavaSyntax(), GoSyntax(), GoVet(), TerraformFmt(), TerraformValidate(), Shellcheck(), NodeCheck(), CsharpSyntax(), RustSyntax(),
+    CSyntax(),
 ]

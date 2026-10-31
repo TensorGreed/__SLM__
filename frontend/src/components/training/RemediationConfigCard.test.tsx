@@ -23,6 +23,10 @@ const CHECKS = {
         { id: 'python_ast', languages: ['python'], kind: 'builtin', binary: null, available: true, allowed: true },
         { id: 'java_syntax', languages: ['java'], kind: 'external', binary: 'javac', available: true, allowed: false },
         { id: 'shellcheck', languages: ['shell'], kind: 'external', binary: 'shellcheck', available: false, allowed: true },
+        {
+            id: 'context_grounding', languages: ['python'], kind: 'builtin', binary: null, available: true, allowed: true,
+            opt_in: true, default: false,
+        },
     ],
     network_isolation: { mode: 'auto', available: false },
 };
@@ -47,6 +51,8 @@ describe('RemediationConfigCard', () => {
         expect(await screen.findByTestId('rem-check-python_ast')).toHaveTextContent('ready');
         expect(screen.getByTestId('rem-check-java_syntax')).toHaveTextContent('not allowed');
         expect(screen.getByTestId('rem-check-shellcheck')).toHaveTextContent('not installed');
+        expect(screen.getByTestId('rem-check-context_grounding-opt-in')).toHaveTextContent('only when picked');
+        expect(screen.queryByTestId('rem-check-python_ast-opt-in')).not.toBeInTheDocument();
         expect(screen.getByTestId('rem-isolation')).toHaveTextContent('not available on this machine');
         expect(screen.getByRole('option', { name: 'Findings tagger · run 31' })).toBeInTheDocument();
         expect(screen.getByTestId('rem-top-k')).toHaveValue(3);

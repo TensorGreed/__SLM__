@@ -201,4 +201,50 @@ class JsonSchemaCheck(BaseCheck):
         return make_result(self.id, False, msgs)
 
 
-BUILTINS: list[Any] = [PythonAst(), JsonParse(), YamlParse(), JsonSchemaCheck()]
+class PythonUndefinedNames(BaseCheck):
+    """pyflakes, in-process (it only parses: nothing is imported or run). Fails on undefined names (incl.
+    ``__all__`` entries and locals used before assignment) and on syntax errors; unused imports, redefinitions
+    and other style warnings are ignored. An indented fragment (a method body) is dedented first and may use
+    ``self`` / ``cls``. Gated like an external check: registered outside the core built-ins, so it runs only
+    when its id is in ``CODE_CHECK_ALLOWED`` and ``pyflakes`` is importable."""
+
+    id = "python_undefined_names"
+    languages = frozenset({"python"})
+
+    def available(self) -> bool:
+        import importlib.util
+
+        return importlib.util.find_spec("pyflakes") is not None
+
+    def run(self, code, *, language, context):
+        from pyflakes import checker
+        from pyflakes import messages as pm
+
+        extra: set[str] = set()
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as first:
+            dedented = textwrap.dedent(code)
+            try:
+                if dedented == code:
+                    raise first
+                tree = ast.parse(dedented)
+                extra = {"self", "cls"}  # a method body cut out of its class
+            except SyntaxError as exc:
+                line = f"line {exc.lineno}: " if exc.lineno else ""
+                return make_result(self.id, False, [f"{line}{exc.msg}"])
+        except (ValueError, RecursionError, MemoryError) as exc:
+            return make_result(self.id, False, [str(exc) or type(exc).__name__])
+        found = checker.Checker(tree, filename="<snippet>", builtins=extra).messages
+        bad = [m for m in found if isinstance(m, (pm.UndefinedName, pm.UndefinedExport, pm.UndefinedLocal))]
+        if not bad:
+            return make_result(self.id, True)
+        bad.sort(key=lambda m: (getattr(m, "lineno", 0), getattr(m, "col", 0)))
+        return make_result(self.id, False, [f"line {m.lineno}: {m.message % m.message_args}" for m in bad])
+
+
+from .grounding import ContextGrounding  # noqa: E402 - grounding imports this module's YAML helpers lazily
+
+BUILTINS: list[Any] = [PythonAst(), JsonParse(), YamlParse(), JsonSchemaCheck(), ContextGrounding()]
+# In-process, but gated like external checks (CODE_CHECK_ALLOWED + importable dependency).
+GATED_IN_PROCESS: list[Any] = [PythonUndefinedNames()]
