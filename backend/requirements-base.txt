@@ -27,3 +27,4 @@ sacrebleu
 rouge_score
 jiwer
 jsonschema>=4.18,<5
+pyflakes==3.4.0  # python_undefined_names code check (opt-in via CODE_CHECK_ALLOWED)

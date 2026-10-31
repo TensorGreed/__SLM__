@@ -161,6 +161,27 @@ describe('RemediationRowView', () => {
         expect(screen.getByTestId('ce-metrics')).toHaveTextContent('stub:judge');
     });
 
+    it('shows how often reference answers pass the opt-in grounding check', () => {
+        const base = {
+            ...METRICS, code_example_count: 4, code_example_decided_count: 4, code_example_correct: 2,
+            code_example_checkable_count: 4, code_example_not_checkable_count: 0,
+        };
+        const { rerender } = render(<RemediationMetricsPanel metrics={base} provenance="p" />);
+        expect(screen.queryByTestId('ce-grounding-reference')).not.toBeInTheDocument();
+        rerender(
+            <RemediationMetricsPanel
+                metrics={{
+                    ...base, code_example_grounding_reference_checked_count: 4,
+                    code_example_grounding_reference_pass_count: 3, code_example_grounding_reference_pass_rate: 0.75,
+                }}
+                provenance="p"
+            />,
+        );
+        const line = screen.getByTestId('ce-grounding-reference');
+        expect(line).toHaveTextContent('passes on 3 of 4 reference answers (75.0%)');
+        expect(line).toHaveTextContent('false alarms');
+    });
+
     it('hides the remediation grid when only task->code rows were scored', () => {
         render(
             <RemediationMetricsPanel

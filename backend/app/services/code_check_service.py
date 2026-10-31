@@ -7,11 +7,15 @@ sandboxed binary, ``detector`` an external finder) and returns a result dict::
 
 ``ok`` None means it did not run; ``skipped`` says why: ``unavailable``,
 ``not_allowed``, ``language_mismatch``, ``timeout``, ``no_schema``,
-``no_module_dir``, ``unknown_check``.
+``no_module_dir``, ``unknown_check``, ``no_context`` (``context_grounding`` without
+``context["grounding_text"]``), ``unresolvable_includes`` (``c_syntax``: headers that are not on
+this machine kept it from deciding).
 
 Built-ins are always available. Anything else runs only when its id is in
 ``settings.CODE_CHECK_ALLOWED`` (comma list; default empty) AND its binary
-resolves on PATH. Plugins (``settings.CODE_CHECK_PLUGIN_MODULES``, comma list)
+resolves on PATH. A check with ``default_enabled = False`` (``context_grounding``) is opt-in: the
+default selection (``check_ids=None``) leaves it out unless its id is in ``CODE_CHECK_ALLOWED``;
+a caller that names it in ``check_ids`` always gets it. Plugins (``settings.CODE_CHECK_PLUGIN_MODULES``, comma list)
 export ``register_code_checks(register)`` or a ``CODE_CHECKS`` list.
 
 Formatters: a check may also define ``format(code, *, language, context)`` (the language's canonical
@@ -33,6 +37,7 @@ __all__ = [
     "CodeCheck", "normalize_language", "register_code_check", "list_code_checks", "checks_for_language",
     "run_code_checks", "load_code_check_plugins", "load_code_check_plugins_from_settings",
     "get_plugin_diagnostics", "allowed_check_ids", "is_allowed", "get_code_check", "format_code", "formatter_for", "check_revisions",
+    "in_default_selection", "default_check_ids",
 ]
 
 _REGISTRY: dict[str, Any] = {}
@@ -58,6 +63,21 @@ def is_allowed(check: Any) -> bool:
     if any(check is b for b in _CORE_BUILTINS):
         return True
     return check.id in allowed_check_ids()
+
+
+def in_default_selection(check: Any) -> bool:
+    """Part of the default selection (``check_ids=None``) on a language it supports: not a detector,
+    allowed, available, and either default-enabled or explicitly listed in ``CODE_CHECK_ALLOWED``."""
+    if check.kind == "detector" or not is_allowed(check):
+        return False
+    if not getattr(check, "default_enabled", True) and check.id not in allowed_check_ids():
+        return False
+    return bool(check.available())
+
+
+def default_check_ids() -> list[str]:
+    """Ids of every check in the default selection (any language), sorted."""
+    return sorted(cid for cid, c in list(_REGISTRY.items()) if in_default_selection(c))
 
 
 def register_code_check(check: Any) -> None:
@@ -100,6 +120,10 @@ def list_code_checks() -> list[dict[str, Any]]:
             "binary": c.binary,
             "available": bool(c.available()),
             "allowed": is_allowed(c),
+            # Opt-in checks run only when named (or listed in CODE_CHECK_ALLOWED); ``default`` = in the
+            # default "every ready check" selection.
+            "opt_in": not getattr(c, "default_enabled", True),
+            "default": in_default_selection(c),
         })
     return out
 
@@ -111,10 +135,7 @@ def checks_for_language(language: str | None, check_ids: list[str] | None = None
     lang = normalize_language(language)
     if check_ids is not None:
         return [_REGISTRY[i] for i in check_ids if i in _REGISTRY and lang in _REGISTRY[i].languages]
-    return [
-        c for _id, c in sorted(_REGISTRY.items())
-        if lang in c.languages and c.kind != "detector" and is_allowed(c) and c.available()
-    ]
+    return [c for _id, c in sorted(_REGISTRY.items()) if lang in c.languages and in_default_selection(c)]
 
 
 def _execute(check: Any, code: str, lang: str, context: dict[str, Any]) -> dict[str, Any]:
@@ -209,12 +230,12 @@ def format_code(code: str, *, language: str | None, context: dict[str, Any] | No
 
 
 def _register_builtins() -> None:
-    from app.services.code_checks.builtin import BUILTINS
+    from app.services.code_checks.builtin import BUILTINS, GATED_IN_PROCESS
     from app.services.code_checks.external import EXTERNALS
 
-    for c in BUILTINS + EXTERNALS:
+    for c in BUILTINS + GATED_IN_PROCESS + EXTERNALS:
         register_code_check(c)
-    _CORE_BUILTINS[:] = list(BUILTINS)
+    _CORE_BUILTINS[:] = list(BUILTINS)  # GATED_IN_PROCESS checks still need CODE_CHECK_ALLOWED
 
 
 def load_code_check_plugins(module_paths: list[str], *, force_reload: bool = False) -> dict[str, Any]:

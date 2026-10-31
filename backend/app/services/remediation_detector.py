@@ -444,7 +444,7 @@ async def remediation_scoring_fingerprint(
     if cfg["checks"] is not None:
         check_ids = sorted(cfg["checks"])
     else:
-        check_ids = sorted(c["id"] for c in ccs.list_code_checks() if c["available"] and c["allowed"] and c["kind"] != "detector")
+        check_ids = ccs.default_check_ids()
     props = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
     parts = {
         "detector": await detector_identity(db, cfg["detector"]),

@@ -13,9 +13,9 @@ Every result has the same shape:
 {"check_id": "python_ast", "ok": true, "messages": [], "skipped": null}
 ```
 
-`ok: null` means the check did not run; `skipped` says why: `unavailable` (binary missing, or the sandbox refused), `not_allowed`, `language_mismatch`, `timeout`, `no_schema`, `no_module_dir`, `unknown_check`. Messages are capped at 20, 300 characters each. A run's overall `ok` is true when every check that ran passed, and `null` when none ran.
+`ok: null` means the check did not run; `skipped` says why: `unavailable` (binary missing, or the sandbox refused), `not_allowed`, `language_mismatch`, `timeout`, `no_schema`, `no_module_dir`, `unknown_check`, `no_context` (`context_grounding` without `context.grounding_text`), `unresolvable_includes` (`c_syntax` could not get past headers that are not on this machine). Messages are capped at 20, 300 characters each. A run's overall `ok` is true when every check that ran passed, and `null` when none ran.
 
-Language ids are lower-case; aliases are normalised (`py` → `python`, `js` → `javascript`, `sh`/`bash` → `shell`, `tf`/`hcl` → `terraform`, `cs` → `csharp`, `golang` → `go`, `rs` → `rust`, `yml` → `yaml`).
+Language ids are lower-case; aliases are normalised (`py` → `python`, `js` → `javascript`, `sh`/`bash` → `shell`, `tf`/`hcl` → `terraform`, `cs` → `csharp`, `golang` → `go`, `rs` → `rust`, `yml` → `yaml`, `ts` → `typescript`, `c++`/`cc`/`cxx`/`hpp` → `cpp`, `h` → `c`).
 
 ## Built-in checks (always on, in-process)
 
@@ -25,6 +25,44 @@ Language ids are lower-case; aliases are normalised (`py` → `python`, `js` →
 | `json_parse` | json | `json.loads` |
 | `yaml_parse` | yaml | safe YAML load of every document, aliases refused, duplicate mapping keys at any depth refused (`line 10: found duplicate key 'envFrom' (first at line 8)`). Merges work only as a literal `<<: {…}` (or a list of literal mappings), since aliases such as `<<: *base` are refused; a key overriding a merged one is fine. Keys are compared as written (`1.0` and `1`, or `on` and `true`, are different keys). Templated YAML with control lines (`{{- if }}` / `{% else %}` / `{{- range }}`) skips the duplicate check, since the template's branches flatten into sibling keys (template comment lines such as `{{/* … */}}` or `{# … #}` don't count); template expressions (`{{ … }}`, `{% … %}`, Helm / Jinja) are replaced by a placeholder first, so templated YAML is checked as YAML |
 | `json_schema` | json | validates the JSON against `context.json_schema`; skipped (`no_schema`) without one |
+
+## Opt-in in-process checks
+
+These run in-process but are **left out of the default selection** (a run without `check_ids`, the remediation
+settings' "every ready check"), so adding them changed no existing score.
+
+| id | language | what it does | how to turn it on |
+|---|---|---|---|
+| `context_grounding` | python, javascript, typescript, java, csharp, go, rust, c, cpp, shell, terraform, yaml | every external name the code uses appears in the prompt context (below) | name it in `check_ids` / pick it in the remediation settings, or list it in `CODE_CHECK_ALLOWED` to make it part of the default selection |
+| `python_undefined_names` | python | `pyflakes` (parse only, nothing is imported or run): undefined names, `__all__` entries that do not exist, locals used before assignment, and syntax errors fail; unused imports and other style warnings do not. An indented fragment is dedented and may use `self` / `cls` | list it in `CODE_CHECK_ALLOWED` (and have `pyflakes` installed, it is in the backend requirements); skipped `unavailable` without `pyflakes` |
+
+### `context_grounding`
+
+"Is every symbol the code depends on grounded in what the model was shown?" It reads the prompt from
+`context.grounding_text` (without it: `ok: null`, `skipped: no_context`). A *term extractor* lists the names the code
+uses and the names it declares itself; the first one, `code_symbols`, uses regex tables per language family: C-like
+(C, C++, C#, Java, JavaScript / TypeScript, Go, Rust), Python, shell, HCL / Terraform and YAML keys. It looks at
+imported modules and imported names, bare function calls, dotted attribute paths (`client.fetch_widget`: each segment
+after a root that is not part of the standard library), type names (`new Widget()`, annotations, declarations), shell
+commands, Terraform resource / data source types, `data.<type>.<name>.<attribute>` and `var.` / `local.` references,
+and YAML keys. A name passes when it
+
+1. appears in the grounding text as a whole word (also case- and `_` / `-`-insensitively: `widgetId` matches `widget_id`),
+2. is defined in the code itself (functions, classes, fields, variables, parameters; Terraform variables, locals,
+   resources and data sources declared in the code; an attribute set inside the code's own `data` / `resource` block), or
+3. is in the language's keyword / builtin / standard-library allowlist (`app/services/code_checks/grounding_allowlists.py`).
+
+It favours precision over recall: comments and string contents are ignored, a standard-library root (`os.path.x`,
+`fmt.X`, `std::x`, a local bound from one such as `log = logging.getLogger()`) is never checked past the root, YAML
+template expressions are neutralised, YAML keys directly under author-named parents (`labels`, `env`, `variables`,
+`services`...) are skipped, Terraform module outputs are not checked, and lines over 1,000 characters (minified code, inline data) are ignored. A local variable does not ground an
+attribute: `ids = w.ids` still flags `w.ids`. Messages name each ungrounded symbol (up to 20):
+``"`w.ids`: not in the context or defined in the answer"``. Another extractor (plain text, say) registers with
+`grounding.register_term_extractor(id, fn)` and is picked with `context.grounding_extractor`.
+
+In task→code scoring (see [code remediation](../workflows/code-remediation.md#scoring-task-to-code-rows-opt-in)) a
+reference answer that fails the grounding check makes that row "not checkable" for grounding only, and
+`code_example_grounding_reference_pass_rate` reports how often reference answers pass it: its false-alarm gauge.
 
 ## External checks (sandboxed, opt-in)
 
@@ -41,6 +79,7 @@ An external check runs only when its id is in `CODE_CHECK_ALLOWED` **and** its b
 | `shellcheck` | `shellcheck -f gcc --severity=error` | Fails on errors only (warnings and style are not failures); a snippet without a shebang or `# shellcheck shell=` directive is checked as bash |
 | `node_check` | `node --check` | |
 | `csharp_syntax` | `csc` / `mcs` | best effort |
+| `c_syntax` | `clang` / `clang++`, else `gcc` / `g++` | `-fsyntax-only -w -std=gnu17` (C) or `-std=gnu++17` (C++, by the declared language); clang is preferred because it recovers from unknown names without cascading errors. Only syntax-class errors fail (expected ..., unterminated, stray, extraneous, ...); undeclared identifiers, unknown types / members and implicit declarations are ignored, and so is a syntax error on a line that also has one of those (an unknown macro such as `ACME_EXPORT int f()`). A header that is not on the machine (`fatal error: 'x.h' file not found`) is removed (line kept blank) and the code re-checked, up to 12 headers; past that, or when the missing header is not a literal `#include`, the result is `skipped: unresolvable_includes`. A missing header therefore never fails the check by itself; a real syntax error elsewhere still does (the messages then start with "checked without headers not on this machine: ..."). A statement fragment is retried inside a function body (includes stay at file scope, `#line` keeps line numbers) unless its braces are unbalanced |
 
 Check revisions: a check whose pass / fail rules changed carries a `revision` above 1 (`yaml_parse` is 2: duplicate keys fail). The remediation scoring fingerprint includes the revision of each such check it selects, so an evaluation scored with the older rules is not reused as a baseline or compared row by row (Compare says "built-in check revised (yaml_parse v2: duplicate keys now fail) — re-score the older run"); selections without a revised check keep their fingerprint.
 
@@ -50,7 +89,7 @@ Settings (environment or `.env`):
 
 | setting | default | meaning |
 |---|---|---|
-| `CODE_CHECK_ALLOWED` | empty | comma list of external check ids that may run |
+| `CODE_CHECK_ALLOWED` | empty | comma list of external / gated check ids that may run (e.g. `c_syntax,python_undefined_names`); listing an opt-in check such as `context_grounding` also puts it in the default selection |
 | `CODE_CHECK_PLUGIN_MODULES` | empty | comma list of plugin modules (below) |
 | `CODE_CHECK_NETWORK_ISOLATION` | `auto` | `auto` isolates the network when `unshare -rn` works on the host, `off` never, `require` refuses to run external checks without it |
 
@@ -83,5 +122,5 @@ Only `kind="builtin"` skips the allow-list; external and detector checks still n
 
 ## HTTP API
 
-- `GET /api/code-checks` returns `{checks: [{id, languages, kind, binary, available, allowed}], network_isolation: {mode, available}}`.
-- `POST /api/code-checks/run` with `{language, code, check_ids?}` (code up to 200,000 characters; admin or engineer when auth is on) returns `{ok, results}`. Without `check_ids` it runs every available and allowed check for the language; naming ids reports skipped ones too.
+- `GET /api/code-checks` returns `{checks: [{id, languages, kind, binary, available, allowed, opt_in, default}], network_isolation: {mode, available}}`. `opt_in` marks a check that runs only when named; `default` says whether it is in the default selection right now.
+- `POST /api/code-checks/run` with `{language, code, check_ids?, context?}` (code up to 200,000 characters; admin or engineer when auth is on) returns `{ok, results}`. Without `check_ids` it runs every available and allowed check for the language except opt-in ones; naming ids reports skipped ones too. `context` honours `json_schema` and `grounding_text` only.
