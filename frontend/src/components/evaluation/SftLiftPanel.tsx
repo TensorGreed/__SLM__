@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { AlertTriangle, Check, XCircle } from 'lucide-react';
 import LoadingState from '../shared/LoadingState';
+import CheckedDecodingBadge from './CheckedDecodingBadge';
 import './SftLiftPanel.css';
 
 import {
@@ -307,6 +308,25 @@ export default function SftLiftPanel({
                         </>
                     )}
                 </p>
+                {(baseline?.checked_decoding || trained?.checked_decoding) && (
+                    <p className="u-hint u-mt-xs u-mb0" data-testid="sft-lift-checked-decoding">
+                        <CheckedDecodingBadge
+                            summary={trained?.checked_decoding ?? baseline?.checked_decoding}
+                            source={
+                                trained?.checked_decoding
+                                    ? `fine-tuned eval #${trained.eval_result_id}`
+                                    : `base-model eval #${baseline?.eval_result_id}`
+                            }
+                            testId="sft-lift-checked-decoding-badge"
+                        />
+                    </p>
+                )}
+                {summary.checked_decoding_differs && (
+                    <p className="u-hint u-mt-xs u-mb0" data-testid="sft-lift-checked-decoding-differs">
+                        Baseline and trained were decoded under different checked-decoding settings: this lift is not
+                        like for like. Re-run the lift check to score both under one setting.
+                    </p>
+                )}
             </div>
 
             {trained?.experiment_id != null && (

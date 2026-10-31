@@ -6,6 +6,7 @@
 
 import api from './client';
 import type { LiftEvidence } from '../components/evaluation/liftEvidence';
+import type { CheckedDecodingSummary } from './checkedDecoding';
 
 export interface SftLiftExperimentRef {
     experiment_id: number;
@@ -18,6 +19,8 @@ export interface SftLiftExperimentRef {
     eval_type: string;
     metrics: Record<string, number>;
     pass_rate: number | null;
+    /** Opt-in checked decoding: present only when this eval ran with it. */
+    checked_decoding?: CheckedDecodingSummary | null;
 }
 
 export interface SftLiftMetricRow {
@@ -72,6 +75,8 @@ export interface SftLiftSummary {
     gate_status: SftLiftGateRow[];
     eval_pack_id?: string;
     task_profile_used?: string | null;
+    /** The two evals ran under different checked-decoding policies (not like for like). */
+    checked_decoding_differs?: boolean;
 }
 
 /** ``experimentId`` pins the trained side to that run (and the baseline to

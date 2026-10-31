@@ -136,6 +136,7 @@ session-start guidance.
 - `backend/app/services/benchmark_contamination_service.py` — Benchmark gold-VALUE contamination (the honesty guard behind a benchmark score).
 - `backend/app/services/brewslm_manifest_service.py` — Pipeline-as-code manifest serializer + deserializer (priority.md P21).
 - `backend/app/services/capability_contract_service.py` — Shared training capability contract helpers.
+- `backend/app/services/checked_decoding_service.py` — Checked decoding: verify-and-retry at eval time (opt-in, Epic Y1).
 - `backend/app/services/checkpoint_registry_service.py` — Local pre-fine-tuned warm-start checkpoint registry (Track 1, Epic B).
 - `backend/app/services/checkpoint_service.py` — P16 — Checkpoint browser backend (priority.md, RM3).
 - `backend/app/services/cleaning_service.py` — Data Cleaning service — deduplication, PII detection, quality scoring, chunking.
@@ -546,6 +547,7 @@ session-start guidance.
 - `frontend/src/api/behavioralTests.ts` — Behavioral tests CRUD client (Quality-Lift phase 7 slice 2).
 - `frontend/src/api/benchmarks.ts` — External benchmarks (Epic G-B1): a labelled set someone else made, mapped
 - `frontend/src/api/blueprintAnalyze.ts` — Typed wrapper for the brief-analysis endpoint
+- `frontend/src/api/checkedDecoding.ts` — Checked decoding (Epic Y): opt-in verify-and-retry at eval time.
 - `frontend/src/api/client.ts` — Axios HTTP client configured with /api base URL and auth-token interceptor that redirects on 401.
 - `frontend/src/api/coach.ts` — Coach suggestion types + async fetcher for stage-specific coaching recommendations.
 - `frontend/src/api/codeChecks.ts` — Typed client for the code-check registry (syntax / parse / lint checks that
@@ -721,6 +723,8 @@ session-start guidance.
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.tsx` — AutoRagComparisonPanel — USER-SUCCESS Epic 9 Phase 9d.
 - `frontend/src/components/evaluation/BehavioralResultsTable.tsx` — Quality-Lift phase 8 slice 3 — BehavioralResultsTable.
 - `frontend/src/components/evaluation/BehavioralTestsSection.tsx` — Quality-Lift phase 7 slice 2 — Behavioral tests editor section.
+- `frontend/src/components/evaluation/CheckedDecodingBadge.tsx` — CheckedDecodingBadge (Epic Y4): says that an eval was decoded with checked decoding
+- `frontend/src/components/evaluation/CheckedDecodingSettings.tsx` — CheckedDecodingSettings (Epic Y4): the project's "Checked decoding" setting, shown with the
 - `frontend/src/components/evaluation/ClassificationChartsPanel.tsx` — ClassificationChartsPanel — V1 of the ML-native visualisations arc.
 - `frontend/src/components/evaluation/CompareRowEvidence.tsx` — Compare page evidence block (Epic W1): is B really different from A?
 - `frontend/src/components/evaluation/DialogueJudgePanel.tsx` — DialogueJudgePanel — summary of the per-turn replay judge.
@@ -891,6 +895,7 @@ session-start guidance.
 - `backend/tests/test_bm25_tokenizer.py` — BM25 tokenizer (identifier-aware for code) and the index tokenizer-version stamp.
 - `backend/tests/test_chat_template_rewrap.py` — Tests for the opt-in chat-template re-wrap pass
 - `backend/tests/test_check_seeds_endpoint.py` — ``POST /evaluation/summary/check-seeds`` — the multi-seed option for the
+- `backend/tests/test_checked_decoding.py` — Checked decoding (Epic Y1 + Y4): verify-and-retry at eval time, opt-in.
 - `backend/tests/test_checkpoint_registry.py` — Unit tests for the warm-start checkpoint registry (Track 1, Epic B).
 - `backend/tests/test_classification_adapter_prompt_wrap.py` — β-fix tests — classification-label adapter writes the production
 - `backend/tests/test_classification_inference_path.py` — Classification-aware inference path (fix #3).
@@ -1320,6 +1325,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.test.tsx` — AutoRagComparisonPanel — Hardening tests for the "Run comparison"
 - `frontend/src/components/evaluation/BehavioralResultsTable.test.tsx` — Quality-Lift phase 8 slice 3 — BehavioralResultsTable tests.
 - `frontend/src/components/evaluation/BehavioralTestsSection.test.tsx` — Quality-Lift phase 7 slice 2 — BehavioralTestsSection tests.
+- `frontend/src/components/evaluation/CheckedDecoding.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ClassificationChartsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/CompareRowEvidence.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/DriftReviewQueuePanel.test.tsx` — _(no docstring)_

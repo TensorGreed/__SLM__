@@ -3,7 +3,7 @@
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -70,6 +70,30 @@ class HeldoutEvalRunRequest(BaseModel):
     # Multi-turn rows: replay every assistant turn from the gold history and judge each one
     # (result: metrics.dialogue_judge). Off by default — one generation + judge call per turn.
     dialogue_judge: bool = False
+    # Checked decoding for this eval only (``checked_decoding_service``): {enabled, mode:
+    # resample|repair, max_attempts 1..5, verifiers: [ids] | null, sample_temperature, seed}.
+    # Omitted / null = the project's setting (runtime_config.inference.checked_decoding).
+    checked_decoding: dict[str, Any] | None = None
+
+    @field_validator("checked_decoding")
+    @classmethod
+    def _valid_checked_decoding(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        from app.services.checked_decoding_service import normalize_policy
+
+        return normalize_policy(value)  # PolicyError is a ValueError -> 422
+
+
+class CheckedDecodingSettings(BaseModel):
+    """The project's checked-decoding setting (every field optional; defaults fill the rest)."""
+
+    enabled: bool | None = None
+    mode: str | None = None
+    max_attempts: int | None = None
+    verifiers: list[str] | None = None
+    sample_temperature: float | None = None
+    seed: int | None = None
 
 
 class EvaluationPackPreferenceUpdateRequest(BaseModel):
@@ -196,6 +220,8 @@ async def run_eval_on_heldout(
                 "model_path": req.model_path,
                 "judge_model": req.judge_model,
                 "dialogue_judge": req.dialogue_judge,
+                # only when set, so a job's params read as before otherwise
+                **({"checked_decoding": req.checked_decoding} if req.checked_decoding is not None else {}),
             },
         )
         return JSONResponse(status_code=202, content=serialize_job(job))
@@ -213,10 +239,59 @@ async def run_eval_on_heldout(
             model_path=req.model_path,
             judge_model=req.judge_model,
             dialogue_judge=req.dialogue_judge,
+            checked_decoding=req.checked_decoding,
         )
         return EvalResultResponse.model_validate(result)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@router.get("/checked-decoding")
+async def get_checked_decoding(project_id: int, db: AsyncSession = Depends(get_db)):
+    """The project's checked-decoding setting (``runtime_config.inference.checked_decoding``,
+    defaults filled in) plus the verifier ids and modes it accepts. Held-out evals and lift
+    checks use it unless a request overrides it."""
+    from app.services import checked_decoding_service as cds
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    return _checked_decoding_payload(cds.project_policy(project.runtime_config))
+
+
+@router.put("/checked-decoding")
+async def put_checked_decoding(
+    project_id: int, body: CheckedDecodingSettings, db: AsyncSession = Depends(get_db)
+):
+    """Save the project's checked-decoding setting. 422 on a bad value (mode not resample /
+    repair, max_attempts outside 1..5, unknown verifier id, sample_temperature outside (0, 2],
+    negative seed)."""
+    from app.services import checked_decoding_service as cds
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    raw = {k: v for k, v in body.model_dump().items() if v is not None}
+    try:
+        project.runtime_config = cds.with_project_policy(project.runtime_config, raw)
+    except cds.PolicyError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    await db.commit()
+    await db.refresh(project)
+    return _checked_decoding_payload(cds.project_policy(project.runtime_config))
+
+
+def _checked_decoding_payload(policy: dict[str, Any]) -> dict[str, Any]:
+    from app.services import checked_decoding_service as cds
+
+    record = cds.policy_record(policy)
+    return {
+        "settings": policy,
+        "label": cds.policy_label(record),
+        "modes": list(cds.MODES),
+        "verifier_ids": list(cds.VERIFIER_IDS),
+        "max_attempts_limit": cds.MAX_ATTEMPTS_LIMIT,
+    }
 
 
 @router.get("/local-judge/serve-runs")
@@ -1346,6 +1421,18 @@ class CheckSeedsRequest(BaseModel):
 
 class LiftCheckRequest(BaseModel):
     experiment_id: int
+    # Checked decoding for this lift check (both the base-model and the fine-tuned evals use it);
+    # omitted / null = the project's setting.
+    checked_decoding: dict[str, Any] | None = None
+
+    @field_validator("checked_decoding")
+    @classmethod
+    def _valid_checked_decoding(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        from app.services.checked_decoding_service import normalize_policy
+
+        return normalize_policy(value)  # PolicyError is a ValueError -> 422
 
 
 @router.post("/summary/lift-check", status_code=202)
@@ -1359,11 +1446,14 @@ async def rerun_lift_check(
     the same Job the training watcher spawns. Re-running picks up a judge
     model configured since (``answer_judge_service``) and re-evaluates the
     base model when its cached result was not judged by the same judge.
+    ``checked_decoding`` overrides the project's checked-decoding setting for
+    both evals (a cached base result is reused only under the same policy).
     409 when a lift check for that run is already queued or running."""
     from app.services.post_training_eval_service import start_post_training_lift_job
 
+    extra = {"checked_decoding": data.checked_decoding} if data.checked_decoding is not None else {}
     result = await start_post_training_lift_job(
-        db, project_id=project_id, experiment_id=data.experiment_id, manual=True
+        db, project_id=project_id, experiment_id=data.experiment_id, manual=True, **extra
     )
     await db.commit()
     if not result.get("started"):

@@ -1,0 +1,34 @@
+/* Checked decoding (Epic Y): the badge (summary, lift, Compare) and the eval-settings block. */
+.checked-decoding {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-xs);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+.checked-decoding__badge {
+    display: inline-block;
+    padding: 0 var(--space-xs);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius-sm);
+    background: var(--accent-bg);
+    color: var(--accent-text);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+}
+.checked-decoding__source { font-size: var(--font-size-xs); }
+
+.checked-decoding-settings {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+.checked-decoding-settings__row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    align-items: flex-end;
+}
+.checked-decoding-settings__field { min-width: 12rem; }
+.checked-decoding-settings__error { color: var(--color-error); font-size: var(--font-size-sm); }

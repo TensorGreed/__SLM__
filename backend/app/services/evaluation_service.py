@@ -1304,8 +1304,15 @@ def _run_transformers_inference(
     *,
     apply_chat_template: bool = True,
     decoding: str = NEUTRAL_DECODING,
+    checked: dict[str, Any] | None = None,
 ) -> tuple[list[dict], dict]:
     """Transformers-backed text generation for eval.
+
+    ``checked`` (opt-in checked decoding, ``checked_decoding_service``):
+    ``{"policy": <normalized policy>, "inputs": [VerifierInput | None per pair]}``.
+    Attempt 1 is the normal generation below; only a row whose answer fails a
+    verifier is retried. Latency / throughput stay attempt-1 numbers; the
+    retries' time is reported apart (``runtime["checked_decoding"]``).
 
     ``decoding="model"`` decodes greedily with the model's own
     ``generation_config`` (a lift check's second base-model bar —
@@ -1382,7 +1389,10 @@ def _run_transformers_inference(
     chat_template_applied_count = 0
     replay = {"generations": 0, "seconds": 0.0, "tokens": 0}  # dialogue-judge replay turns, kept out of the stats
     generation_started = perf_counter()
-    for row in pairs:
+    checked_policy = checked.get("policy") if checked else None
+    checked_inputs = list(checked.get("inputs") or []) if checked else []
+    checked_records: list[dict[str, Any] | None] = []
+    for row_pos, row in enumerate(pairs):
         prompt = row["prompt"]
         reference = row["reference"]
         is_replay = "_replay" in row
@@ -1401,38 +1411,63 @@ def _run_transformers_inference(
         else:
             formatted_prompt, template_applied = prompt, False
 
-        inputs = tokenizer(formatted_prompt, return_tensors="pt")
-        if use_cuda:
-            inputs = {k: v.to("cuda") for k, v in inputs.items()}
+        def _generate_once(text: str, sample_temperature: float | None = None) -> tuple[str, int, float]:
+            """One generation for ``text``: (stop-trimmed answer, new tokens, seconds).
+            ``sample_temperature``: checked decoding's resample attempts (plain sampling)."""
+            inputs = tokenizer(text, return_tensors="pt")
+            if use_cuda:
+                inputs = {k: v.to("cuda") for k, v in inputs.items()}
 
-        prompt_tokens = int(inputs["input_ids"].shape[-1])
-        # Resolve stopping criteria for this row. The top-level
-        # `stopping_criteria` is either a built StoppingCriteriaList
-        # (StopStringCriteria available) or a tuple flagged as
-        # "fallback_custom" carrying the parts needed to instantiate a
-        # per-row criterion that knows this row's prompt length.
-        active_stopping = None
-        if stopping_criteria is not None:
-            if isinstance(stopping_criteria, tuple) and stopping_criteria[0] == "fallback_custom":
-                _flag, stops, criteria_list_cls, criterion_cls = stopping_criteria
-                active_stopping = criteria_list_cls(
-                    [criterion_cls(tokenizer, prompt_tokens, stops)]
-                )
-            else:
-                active_stopping = stopping_criteria
-        started = perf_counter()
-        with torch.inference_mode():
-            gen_kwargs: dict[str, Any] = generation_kwargs(
-                max_new_tokens=max_new_tokens, temperature=temperature,
-                pad_token_id=tokenizer.pad_token_id, decoding=decoding,
-            )
-            if active_stopping is not None:
-                gen_kwargs["stopping_criteria"] = active_stopping
-            output_ids = model.generate(**inputs, **gen_kwargs)
-        elapsed = perf_counter() - started
+            prompt_tokens = int(inputs["input_ids"].shape[-1])
+            # Resolve stopping criteria for this row. The top-level
+            # `stopping_criteria` is either a built StoppingCriteriaList
+            # (StopStringCriteria available) or a tuple flagged as
+            # "fallback_custom" carrying the parts needed to instantiate a
+            # per-row criterion that knows this row's prompt length.
+            active_stopping = None
+            if stopping_criteria is not None:
+                if isinstance(stopping_criteria, tuple) and stopping_criteria[0] == "fallback_custom":
+                    _flag, stops, criteria_list_cls, criterion_cls = stopping_criteria
+                    active_stopping = criteria_list_cls(
+                        [criterion_cls(tokenizer, prompt_tokens, stops)]
+                    )
+                else:
+                    active_stopping = stopping_criteria
+            started = perf_counter()
+            with torch.inference_mode():
+                if sample_temperature is None:
+                    gen_kwargs: dict[str, Any] = generation_kwargs(
+                        max_new_tokens=max_new_tokens, temperature=temperature,
+                        pad_token_id=tokenizer.pad_token_id, decoding=decoding,
+                    )
+                else:
+                    gen_kwargs = generation_kwargs(
+                        max_new_tokens=max_new_tokens, temperature=sample_temperature,
+                        pad_token_id=tokenizer.pad_token_id,
+                    )
+                if active_stopping is not None:
+                    gen_kwargs["stopping_criteria"] = active_stopping
+                output_ids = model.generate(**inputs, **gen_kwargs)
+            elapsed_s = perf_counter() - started
 
-        generated = output_ids[0][prompt_tokens:]
-        generated_tokens = int(generated.shape[-1])
+            generated = output_ids[0][prompt_tokens:]
+            n_tokens = int(generated.shape[-1])
+            answer = tokenizer.decode(generated, skip_special_tokens=True).strip()
+            # Trim anything after the first stop sequence so the eval
+            # downstream sees only the "real" output, not the trailing
+            # text that triggered the stop. (StopStringCriteria stops
+            # generation but still leaves the stop string in the decoded
+            # output.)
+            if stops_clean and answer:
+                earliest_cut = len(answer)
+                for stop_str in stops_clean:
+                    idx = answer.find(stop_str)
+                    if 0 <= idx < earliest_cut:
+                        earliest_cut = idx
+                answer = answer[:earliest_cut].rstrip()
+            return answer, n_tokens, elapsed_s
+
+        prediction, generated_tokens, elapsed = _generate_once(formatted_prompt)
         if is_replay:
             replay["generations"] += 1
             replay["seconds"] += elapsed
@@ -1440,43 +1475,59 @@ def _run_transformers_inference(
         else:
             latencies_s.append(elapsed)
             generated_tokens_total += generated_tokens
-        prediction = tokenizer.decode(generated, skip_special_tokens=True).strip()
-        # Trim anything after the first stop sequence so the eval
-        # downstream sees only the "real" output, not the trailing
-        # text that triggered the stop. (StopStringCriteria stops
-        # generation but still leaves the stop string in the decoded
-        # output.)
-        if stops_clean and prediction:
-            earliest_cut = len(prediction)
-            for stop_str in stops_clean:
-                idx = prediction.find(stop_str)
-                if 0 <= idx < earliest_cut:
-                    earliest_cut = idx
-            prediction = prediction[:earliest_cut].rstrip()
-        predictions.append(
-            {
-                "prompt": prompt,
-                "formatted_prompt": formatted_prompt if template_applied else "",
-                "reference": reference,
-                "prediction": prediction,
-                "generated_tokens": generated_tokens,
-                "latency_ms": round(elapsed * 1000, 3),
-            }
-        )
+        row_checked: dict[str, Any] | None = None
+        if checked_policy is not None and not is_replay:
+            prediction, row_checked = _checked_retry(
+                policy=checked_policy,
+                vin=checked_inputs[row_pos] if row_pos < len(checked_inputs) else None,
+                row=row,
+                row_pos=row_pos,
+                formatted_prompt=formatted_prompt,
+                template_applied=template_applied,
+                first=(prediction, generated_tokens, elapsed),
+                generate_once=_generate_once,
+                tokenizer=tokenizer,
+                torch_module=torch,
+            )
+            checked_records.append(row_checked)
+        prediction_row: dict[str, Any] = {
+            "prompt": prompt,
+            "formatted_prompt": formatted_prompt if template_applied else "",
+            "reference": reference,
+            "prediction": prediction,
+            "generated_tokens": generated_tokens,
+            "latency_ms": round(elapsed * 1000, 3),
+        }
+        if row_checked is not None:
+            prediction_row["checked_decoding"] = row_checked
+        predictions.append(prediction_row)
 
     total_generation_seconds = max(0.0, perf_counter() - generation_started - replay["seconds"])
+    checked_summary: dict[str, Any] | None = None
+    if checked_policy is not None:
+        from app.services import checked_decoding_service as cds
+
+        checked_summary = cds.summarize(checked_records, checked_policy)
+        # Latency / throughput stay attempt-1 numbers; the total includes the retries and the checks.
+        checked_summary["generation_seconds_total"] = round(total_generation_seconds, 3)
+        total_generation_seconds = max(
+            0.0, total_generation_seconds - checked_summary["extra_generation_seconds"] - checked_summary["verify_seconds"]
+        )
     latency_ms = [v * 1000 for v in latencies_s]
     avg_latency_ms = (sum(latency_ms) / len(latency_ms)) if latency_ms else 0.0
     token_tps = generated_tokens_total / total_generation_seconds if total_generation_seconds > 0 else 0.0
+    decoding_rec = (
+        model_decoding_record(getattr(model, "generation_config", None))
+        if decoding == MODEL_DECODING
+        else decoding_record(generation_kwargs(max_new_tokens=max_new_tokens, temperature=temperature))
+    )
+    if checked_summary is not None:
+        decoding_rec["checked_decoding"] = checked_summary["policy"]
     runtime = {
         "engine": "transformers",
         "device": "cuda" if use_cuda else "cpu",
         "dtype": str(getattr(model, "dtype", "unknown")),
-        "decoding": (
-            model_decoding_record(getattr(model, "generation_config", None))
-            if decoding == MODEL_DECODING
-            else decoding_record(generation_kwargs(max_new_tokens=max_new_tokens, temperature=temperature))
-        ),
+        "decoding": decoding_rec,
         "model_load_seconds": round(load_seconds, 3),
         "generation_seconds": round(total_generation_seconds, 3),
         "average_latency_ms": round(avg_latency_ms, 3),
@@ -1486,7 +1537,63 @@ def _run_transformers_inference(
         "total_generated_tokens": generated_tokens_total,
         **_replay_runtime(replay),
     }
+    if checked_summary is not None:
+        runtime["checked_decoding"] = checked_summary
     return predictions, runtime
+
+
+def _checked_retry(
+    *,
+    policy: dict[str, Any],
+    vin: Any,
+    row: dict[str, Any],
+    row_pos: int,
+    formatted_prompt: str,
+    template_applied: bool,
+    first: tuple[str, int, float],
+    generate_once: Any,
+    tokenizer: Any,
+    torch_module: Any,
+) -> tuple[str, dict[str, Any]]:
+    """Checked decoding for one row (``checked_decoding_service``): verify attempt 1 and, on a
+    failure, resample (seeded per row / attempt) or repair (one follow-up chat turn listing the
+    failed checks, the previous answer as the assistant turn). Returns (chosen answer, the row's
+    record). Repair needs the chat template; without one a repair attempt resamples instead
+    (the record's ``modes_used`` says so). ``row`` is read for its prompt / history / row index
+    only — the reference never reaches a verifier (``vin`` is built from an allow-list)."""
+    from app.services import checked_decoding_service as cds
+
+    row_index = row.get("_row_index", row_pos)
+
+    def _resample(attempt_no: int) -> dict[str, Any]:
+        torch_module.manual_seed(cds.attempt_seed(int(policy["seed"]), row_index, attempt_no))
+        text, n_tokens, secs = generate_once(formatted_prompt, float(policy["sample_temperature"]))
+        return {"text": text, "tokens": n_tokens, "seconds": secs, "mode": "resample"}
+
+    def _regenerate(attempt_no: int, previous: dict[str, Any], failures: list[dict[str, Any]]) -> dict[str, Any]:
+        if policy["mode"] == "repair" and template_applied:
+            messages = list(row.get("history") or [{"role": "user", "content": row["prompt"]}])
+            messages += [
+                {"role": "assistant", "content": str(previous.get("text") or "")},
+                {"role": "user", "content": cds.repair_message(failures)},
+            ]
+            try:
+                follow_up = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            except Exception:  # noqa: BLE001 - a template that can't take the turn: resample instead
+                follow_up = None
+            if isinstance(follow_up, str) and follow_up.strip():
+                text, n_tokens, secs = generate_once(follow_up)
+                return {"text": text, "tokens": n_tokens, "seconds": secs, "mode": "repair"}
+        return _resample(attempt_no)
+
+    text, n_tokens, secs = first
+    chosen, record = cds.run_checked_row(
+        policy=policy,
+        vin=cds.with_prompt(vin, formatted_prompt),
+        first={"text": text, "tokens": n_tokens, "seconds": secs},
+        regenerate=_regenerate,
+    )
+    return str(chosen.get("text") or ""), record
 
 
 def _replay_runtime(replay: dict[str, Any]) -> dict[str, Any]:
@@ -2426,9 +2533,12 @@ def _run_local_inference(
     *,
     apply_chat_template: bool = True,
     decoding: str = NEUTRAL_DECODING,
+    checked: dict[str, Any] | None = None,
 ) -> tuple[list[dict], dict]:
     """``decoding="model"`` applies to plain causal-LM checkpoints — the
-    base models a lift check scores; every other path decodes neutrally."""
+    base models a lift check scores; every other path decodes neutrally.
+    ``checked`` (opt-in checked decoding) runs on the plain causal-LM path
+    only; the other engines ignore it (the caller records it as skipped)."""
     model_path = Path(model_ref).expanduser()
     if model_path.exists() and model_path.suffix.lower() == ".gguf":
         return _run_llama_cpp_inference(
@@ -2470,6 +2580,11 @@ def _run_local_inference(
     if seq2seq_artifacts is not None:
         return _run_seq2seq_inference(
             seq2seq_artifacts, pairs, max_new_tokens, temperature,
+        )
+    if checked is not None:
+        return _run_transformers_inference(
+            model_ref, pairs, max_new_tokens, temperature, stop_sequences,
+            apply_chat_template=apply_chat_template, decoding=decoding, checked=checked,
         )
     return _run_transformers_inference(
         model_ref, pairs, max_new_tokens, temperature, stop_sequences,
@@ -3381,6 +3496,7 @@ async def _generate_heldout_predictions(
     max_new_tokens: int,
     temperature: float,
     decoding: str = NEUTRAL_DECODING,
+    checked_policy: dict[str, Any] | None = None,
 ) -> tuple[list[dict], dict, dict[str, int], dict[str, Any]]:
     """Run the experiment's model over prepared held-out ``pairs`` the way
     ``run_heldout_evaluation`` does (handler token cap / stop sequences /
@@ -3435,6 +3551,18 @@ async def _generate_heldout_predictions(
 
     handler_wraps_prompt = handler_wraps_own_prompt(task_handler, getattr(eval_ctx, "manifest", None))
     apply_chat_template = not handler_wraps_prompt
+    # Opt-in checked decoding: the verifier input of every pair, from an allow-list of
+    # prompt-visible fields (``checked_decoding_service.build_verifier_input``); replayed
+    # dialogue turns are never checked.
+    checked_kwargs: dict[str, Any] = {}
+    if checked_policy is not None:
+        from app.services import checked_decoding_service as cds
+
+        eval_spec = {"json_schema": cds.output_json_schema(getattr(eval_ctx, "manifest", None))}
+        checked_kwargs["checked"] = {
+            "policy": checked_policy,
+            "inputs": [None if "_replay" in pair else cds.build_verifier_input(pair, eval_spec) for pair in pairs],
+        }
     predictions, runtime = await asyncio.to_thread(
         _run_local_inference,
         model_ref,
@@ -3444,7 +3572,14 @@ async def _generate_heldout_predictions(
         handler_stop_sequences,
         apply_chat_template=apply_chat_template,
         decoding=decoding,
+        **checked_kwargs,
     )
+    if checked_policy is not None and isinstance(runtime, dict) and "checked_decoding" not in runtime:
+        # Not a plain causal-LM checkpoint (classifier head, GGUF, seq2seq, ...): nothing was checked.
+        from app.services import checked_decoding_service as cds
+
+        rec = cds.policy_record(checked_policy)
+        runtime["checked_decoding"] = {"policy": rec, "label": cds.policy_label(rec), "skipped": "engine_unsupported"}
     modality_counts: dict[str, int] = {}
     for idx, pair in enumerate(pairs):
         modality = str(pair.get("input_modality") or "text")
@@ -3476,8 +3611,19 @@ async def run_heldout_evaluation(
     answer_judge_enabled: bool = True,
     decoding: str = NEUTRAL_DECODING,
     dialogue_judge: bool = False,
+    checked_decoding: dict[str, Any] | None = None,
 ) -> EvalResult:
     """Run end-to-end evaluation by generating predictions on held-out data.
+
+    ``checked_decoding`` (opt-in, ``checked_decoding_service``): a per-eval
+    override of the project's ``runtime_config["inference"]["checked_decoding"]``
+    (None = use the project setting; off by default). When on, a row whose
+    answer fails a prompt-only verifier is retried; the result carries
+    ``metrics["checked_decoding"]`` (rows retried / fixed / still failing,
+    mean attempts, extra generation time), the policy in
+    ``metrics.inference.decoding.checked_decoding`` and a per-row
+    ``checked_decoding`` record. Raises ``PolicyError`` (a ValueError) on a
+    bad override.
 
     A chat row (``messages``) is scored on its final assistant turn given the whole history
     before it. ``dialogue_judge=True`` additionally replays EVERY assistant turn of rows
@@ -3523,6 +3669,10 @@ async def run_heldout_evaluation(
             dataset_path=dataset_path, model_path=model_path,
             max_samples=max_samples, reason="requested",
         )
+    from app.services import checked_decoding_service as cds
+
+    project_for_policy = await db.get(Project, project_id)
+    checked_policy = cds.resolve_policy(getattr(project_for_policy, "runtime_config", None), checked_decoding)
     exp_config = dict(exp.config or {})
     experiment_task_type = str(exp_config.get("task_type") or "").strip() or None
     eval_ctx, task_handler = build_eval_context(
@@ -3596,6 +3746,7 @@ async def run_heldout_evaluation(
         max_new_tokens=max_new_tokens,
         temperature=temperature,
         decoding=decoding,
+        checked_policy=checked_policy,
     )
     replay_predictions = predictions[held_pair_count:]
     predictions = predictions[:held_pair_count]
@@ -3640,6 +3791,8 @@ async def run_heldout_evaluation(
     metrics = dict(result.metrics or {})
     metrics["evaluated_samples"] = len(predictions)
     metrics["inference"] = runtime
+    if isinstance(runtime, dict) and isinstance(runtime.get("checked_decoding"), dict):
+        metrics["checked_decoding"] = runtime["checked_decoding"]
     if heldout_scoring_mode == "remediation":
         try:
             from app.services.remediation_detector import remediation_scoring_fingerprint
@@ -3868,6 +4021,8 @@ async def run_heldout_evaluation(
             "latency_ms": p.get("latency_ms"),
             "input_modality": p.get("input_modality"),
             "dialogue_judge": p.get("dialogue_judge"),
+            # opt-in checked decoding only (absent otherwise, so previews are unchanged)
+            **({"checked_decoding": p["checked_decoding"]} if "checked_decoding" in p else {}),
         }
         for p in predictions[:5]
     ]

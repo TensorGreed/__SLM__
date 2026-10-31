@@ -39,6 +39,7 @@ import RerouteRecommendationPanel from './RerouteRecommendationPanel';
 import EvalGapsPanel from './EvalGapsPanel';
 import ProbePackPanel from './ProbePackPanel';
 import EvalSummaryCard from './EvalSummaryCard';
+import CheckedDecodingSettings from './CheckedDecodingSettings';
 import './EvalPanel.css';
 import ExternalBenchmarksPanel from './ExternalBenchmarksPanel';
 import RedactionTryBox from './RedactionTryBox';
@@ -1666,6 +1667,8 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                             reference. One generation per turn, so it takes longer and costs more with a cloud judge.
                         </p>
                     </div>
+
+                    <CheckedDecodingSettings projectId={projectId} />
 
                     {evalType === 'llm_judge' && (
                         <div className="u-grid-2">

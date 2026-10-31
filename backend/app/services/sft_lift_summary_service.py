@@ -494,7 +494,26 @@ def _serialize_experiment(item: _ExperimentEval) -> dict[str, Any]:
         # A baseline: which decoding set the bar and both scores
         # (post_training_eval_service._baseline_bar); None otherwise.
         "decoding_bar": {k: v for k, v in _baseline_bar(er).items() if k != "chosen_here"} or None,
+        # Opt-in checked decoding (verify-and-retry): present only when the eval ran with it.
+        **_checked_block(er),
     }
+
+
+def _checked_block(er: Any) -> dict[str, Any]:
+    from app.services.checked_decoding_service import checked_decoding_summary
+
+    summary = checked_decoding_summary(er.metrics if isinstance(er.metrics, dict) else {})
+    return {"checked_decoding": summary} if summary is not None else {}
+
+
+def _checked_policy_differs(baseline: Any, trained: Any) -> bool:
+    """True when the two evals ran under different checked-decoding policies (the lift is then
+    not like for like; a lift check runs both under one policy)."""
+    def policy(item: Any) -> Any:
+        return ((_checked_block(item.eval_result).get("checked_decoding") or {}).get("policy")
+                if item is not None else None)
+
+    return policy(baseline) != policy(trained)
 
 
 async def compute_sft_lift_summary(
@@ -585,6 +604,7 @@ async def compute_sft_lift_summary(
         "gate_status": gate_status,
         "eval_pack_id": eval_pack_id,
         "task_profile_used": task_profile_hint,
+        **({"checked_decoding_differs": True} if _checked_policy_differs(baseline, trained) else {}),
     }
 
 

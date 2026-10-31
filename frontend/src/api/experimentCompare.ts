@@ -7,6 +7,7 @@
  */
 
 import api from './client';
+import type { CheckedDecodingPolicy, CheckedDecodingSummary } from './checkedDecoding';
 import type { EvalSizing } from '../components/evaluation/liftEvidence';
 
 
@@ -74,8 +75,12 @@ export interface CompareProvenance {
         decoding?: Record<string, unknown> | null;
         scoring_mode: string | null;
         fingerprints: Record<string, string>;
+        /** Opt-in checked decoding policy (null = off); a different one blocks pairing. */
+        checked_decoding?: CheckedDecodingPolicy | null;
     } | null;
     has_row_scores: boolean;
+    /** What checked decoding did in this eval (null when off). */
+    checked_decoding?: CheckedDecodingSummary | null;
 }
 
 

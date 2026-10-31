@@ -355,7 +355,22 @@ async def _build_eval_summary_core(
         # None when the task isn't long-answer or no judge was reachable.
         "judge": _judge_block(metrics),
         "dataset_name": (details.get("dataset") or {}).get("name") if isinstance(details.get("dataset"), dict) else latest.dataset_name,
+        # Opt-in checked decoding (verify-and-retry): present only when this eval ran with it;
+        # ``checked_decoding_differs``: the lift pairs evals decoded under different policies.
+        **_checked_decoding_block(metrics, lift),
     }
+
+
+def _checked_decoding_block(metrics: dict[str, Any], lift: dict[str, Any]) -> dict[str, Any]:
+    from app.services.checked_decoding_service import checked_decoding_summary
+
+    out: dict[str, Any] = {}
+    summary = checked_decoding_summary(metrics)
+    if summary is not None:
+        out["checked_decoding"] = summary
+    if lift.get("checked_decoding_differs"):
+        out["checked_decoding_differs"] = True
+    return out
 
 
 def _answer_key_source(project_id: int) -> str | None:
