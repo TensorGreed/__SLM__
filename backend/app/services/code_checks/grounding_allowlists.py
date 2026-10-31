@@ -115,6 +115,77 @@ JAVA_TYPES = _words("""
 
 JAVA_STDLIB_ROOTS = _words("java javax jdk")
 
+# The common public types of the standard packages a wildcard import (``import java.util.concurrent.*;``)
+# makes visible by their simple names. A wildcard import of a standard package NOT listed here allows any
+# bare PascalCase type name (its members are unknown, and a false failure costs more than a miss).
+JAVA_STDLIB_PACKAGE_TYPES: dict[str, frozenset[str]] = {
+    "java.util": _words("""
+        AbstractMap AbstractList AbstractSet AbstractCollection ArrayDeque ArrayList Arrays Base64 BitSet Calendar
+        Collection Collections Comparator ConcurrentModificationException Currency Date Deque EnumMap EnumSet
+        Formatter GregorianCalendar HashMap HashSet Hashtable IdentityHashMap Iterator LinkedHashMap
+        LinkedHashSet LinkedList List ListIterator Locale Map NavigableMap NavigableSet NoSuchElementException
+        Objects Optional OptionalDouble OptionalInt OptionalLong PriorityQueue Properties Queue Random
+        ResourceBundle Scanner Set SortedMap SortedSet Spliterator Spliterators Stack StringJoiner
+        StringTokenizer TimeZone Timer TimerTask TreeMap TreeSet UUID Vector WeakHashMap
+    """),
+    "java.util.concurrent": _words("""
+        ArrayBlockingQueue BlockingDeque BlockingQueue Callable CancellationException CompletableFuture
+        CompletionException CompletionService CompletionStage ConcurrentHashMap ConcurrentLinkedDeque
+        ConcurrentLinkedQueue ConcurrentMap ConcurrentSkipListMap ConcurrentSkipListSet CopyOnWriteArrayList
+        CopyOnWriteArraySet CountDownLatch CyclicBarrier DelayQueue Delayed Exchanger ExecutionException
+        Executor ExecutorCompletionService ExecutorService Executors Flow ForkJoinPool ForkJoinTask Future
+        FutureTask LinkedBlockingDeque LinkedBlockingQueue Phaser PriorityBlockingQueue RecursiveAction
+        RecursiveTask RejectedExecutionException ScheduledExecutorService ScheduledFuture
+        ScheduledThreadPoolExecutor Semaphore SynchronousQueue ThreadFactory ThreadLocalRandom
+        ThreadPoolExecutor TimeUnit TimeoutException
+    """),
+    "java.util.concurrent.atomic": _words("""
+        AtomicBoolean AtomicInteger AtomicIntegerArray AtomicLong AtomicLongArray AtomicReference
+        AtomicReferenceArray DoubleAdder DoubleAccumulator LongAdder LongAccumulator
+    """),
+    "java.util.concurrent.locks": _words("""
+        Condition Lock LockSupport ReadWriteLock ReentrantLock ReentrantReadWriteLock StampedLock
+    """),
+    "java.util.function": _words("""
+        BiConsumer BiFunction BiPredicate BinaryOperator BooleanSupplier Consumer DoubleBinaryOperator
+        DoubleConsumer DoubleFunction DoublePredicate DoubleSupplier DoubleUnaryOperator Function IntBinaryOperator
+        IntConsumer IntFunction IntPredicate IntSupplier IntUnaryOperator LongBinaryOperator LongConsumer
+        LongFunction LongPredicate LongSupplier LongUnaryOperator ObjIntConsumer Predicate Supplier
+        ToDoubleFunction ToIntFunction ToLongFunction UnaryOperator
+    """),
+    "java.util.stream": _words("""
+        Collector Collectors DoubleStream IntStream LongStream Stream StreamSupport
+    """),
+    "java.util.regex": _words("MatchResult Matcher Pattern PatternSyntaxException"),
+    "java.io": _words("""
+        BufferedInputStream BufferedOutputStream BufferedReader BufferedWriter ByteArrayInputStream
+        ByteArrayOutputStream Closeable Console DataInputStream DataOutputStream EOFException File
+        FileInputStream FileNotFoundException FileOutputStream FileReader FileWriter Flushable IOException
+        InputStream InputStreamReader ObjectInputStream ObjectOutputStream OutputStream OutputStreamWriter
+        PrintStream PrintWriter Reader Serializable StringReader StringWriter UncheckedIOException
+        UnsupportedEncodingException Writer
+    """),
+    "java.nio": _words("Buffer ByteBuffer ByteOrder CharBuffer IntBuffer LongBuffer"),
+    "java.nio.charset": _words("Charset StandardCharsets"),
+    "java.nio.file": _words("""
+        DirectoryStream FileAlreadyExistsException FileSystem FileSystems FileVisitResult Files LinkOption
+        NoSuchFileException Path PathMatcher Paths SimpleFileVisitor StandardCopyOption StandardOpenOption
+        WatchService
+    """),
+    "java.time": _words("""
+        Clock DayOfWeek Duration Instant LocalDate LocalDateTime LocalTime Month OffsetDateTime Period Year
+        YearMonth ZoneId ZoneOffset ZonedDateTime
+    """),
+    "java.time.format": _words("DateTimeFormatter DateTimeParseException FormatStyle"),
+    "java.time.temporal": _words("ChronoUnit ChronoField Temporal TemporalUnit"),
+    "java.math": _words("BigDecimal BigInteger MathContext RoundingMode"),
+    "java.net": _words("""
+        HttpURLConnection InetAddress InetSocketAddress MalformedURLException ServerSocket Socket URI
+        URISyntaxException URL URLDecoder URLEncoder
+    """),
+    "java.net.http": _words("HttpClient HttpHeaders HttpRequest HttpResponse"),
+}
+
 JAVA_METHODS = _words("""
     out err println print printf getMessage getClass getName getSimpleName stream collect toList toSet
     toMap groupingBy joining orElse orElseThrow orElseGet isPresent ifPresent ofNullable asList emptyList

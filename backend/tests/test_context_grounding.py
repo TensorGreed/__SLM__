@@ -215,6 +215,72 @@ class CLikeTests(unittest.TestCase):
 # ── shell / HCL / YAML ───────────────────────────────────────────────────
 
 
+class ReviewedFalsePositiveTests(unittest.TestCase):
+    """Correct code the check used to flag (precision over recall)."""
+
+    def test_cpp_direct_initialisation_declares_the_name(self):
+        code = (
+            "#include <fstream>\n#include <string>\n"
+            "void read_it(const std::string& p) {\n"
+            "    std::ifstream file(p);\n    file.close();\n"
+            "    std::string s(\"x\");\n    s.size();\n"
+            "    std::vector<int> v(3, 0);\n    v.size();\n}\n"
+        )
+        self.assertEqual(missing(code, "cpp", "read a config"), [])
+        # A call statement is still not a declaration: ``return f(x);`` / ``else g(y);`` define nothing.
+        got = missing("int h(int x) {\n    if (x) return acme_f(x);\n    else acme_g(x);\n    return 0;\n}\n", "cpp", "h")
+        self.assertEqual(set(got), {"acme_f", "acme_g"})
+
+    def test_java_nested_and_wildcard_imported_standard_types(self):
+        code = (
+            "import java.util.*;\n"
+            "import java.util.concurrent.*;\n"
+            "public class Totals {\n"
+            "    int sum(Map<String, Integer> m, ExecutorService ex) throws Exception {\n"
+            "        int t = 0;\n"
+            "        for (Map.Entry<String, Integer> e : m.entrySet()) { t += e.getValue(); }\n"
+            "        Future<Integer> f = ex.submit(() -> 1);\n"
+            "        java.util.concurrent.Future<Integer> g = f;\n"
+            "        AbstractMap.SimpleEntry<String, Integer> p = new AbstractMap.SimpleEntry<>(\"a\", 1);\n"
+            "        ConcurrentHashMap<String, Integer> c = new ConcurrentHashMap<>();\n"
+            "        return t + g.get() + c.size();\n"
+            "    }\n}\n"
+        )
+        self.assertEqual(missing(code, "java", "sum the values"), [])
+        # Without the wildcard import those types are not visible: still flagged.
+        no_import = "class A {\n    void f() { Future<Integer> f = null; AcmeThing t = null; }\n}\n"
+        self.assertEqual(set(missing(no_import, "java", "x")), {"Future", "AcmeThing"})
+        # A standard package whose members are not listed: bare type names pass, invented members don't.
+        other = "import java.util.logging.*;\nclass A {\n    void f(Widget w) { Level l = null; w.acmeRun(); }\n}\n"
+        self.assertEqual(missing(other, "java", "Widget"), ["w.acmeRun"])
+
+    def test_go_one_line_struct_fields(self):
+        code = (
+            "package main\n\n"
+            "type Acc struct{ total float64 }\n"
+            "type Pt struct{ x, y int; label string }\n\n"
+            "func (a *Acc) Add(v float64) { a.total += v }\n"
+            "func show(p Pt) int { _ = p.label; return p.x + p.y }\n"
+            "func bad(a *Acc) float64 { return a.acmeRate }\n"
+        )
+        self.assertEqual(missing(code, "go", "accumulate"), ["a.acmeRate"])
+
+    def test_long_dotted_chains_stay_fast_and_capped(self):
+        chain = ".".join("abcdefghij"[i % 10] for i in range(500))  # 999 chars: under the long-line cut
+        code = "\n".join(f"{chain}" for _ in range(200))
+        t0 = time.monotonic()
+        got = missing(code, "python", "ctx")
+        self.assertLess(time.monotonic() - t0, 1.0)
+        self.assertLessEqual(len(got), grounding.MAX_PATH_SEGMENTS)
+        # Distinct roots: the per-check term cap bounds the work.
+        code = "\n".join(f"q{k}.{chain[:600]}" for k in range(400))
+        t0 = time.monotonic()
+        extracted = grounding.TERM_EXTRACTORS["code_symbols"](code, "python")
+        self.assertLess(time.monotonic() - t0, 1.0)
+        self.assertLessEqual(len(extracted.terms), grounding.MAX_TERMS)
+        self.assertEqual(len(extracted.terms), len(set(extracted.terms)), "terms are deduplicated")
+
+
 class ShellHclYamlTests(unittest.TestCase):
     def test_shell(self):
         ctx = "Run acme-cli fetch --id N to fetch a widget."

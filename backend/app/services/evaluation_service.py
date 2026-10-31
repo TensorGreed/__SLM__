@@ -1560,10 +1560,33 @@ def _checked_retry(
     failed checks, the previous answer as the assistant turn). Returns (chosen answer, the row's
     record). Repair needs the chat template; without one a repair attempt resamples instead
     (the record's ``modes_used`` says so). ``row`` is read for its prompt / history / row index
-    only — the reference never reaches a verifier (``vin`` is built from an allow-list)."""
+    only — the reference never reaches a verifier (``vin`` is built from an allow-list).
+    The torch CPU / CUDA RNG state is saved before and restored after every retry generation,
+    so a retry never shifts the sampling of the rows after it."""
     from app.services import checked_decoding_service as cds
 
     row_index = row.get("_row_index", row_pos)
+
+    def _with_rng_restored(fn: Any) -> Any:
+        def wrapped(*args: Any) -> Any:
+            cpu_state = torch_module.get_rng_state()
+            cuda_states = None
+            try:
+                if torch_module.cuda.is_available():
+                    cuda_states = torch_module.cuda.get_rng_state_all()
+            except Exception:  # noqa: BLE001 - no CUDA state to keep
+                cuda_states = None
+            try:
+                return fn(*args)
+            finally:
+                torch_module.set_rng_state(cpu_state)
+                if cuda_states is not None:
+                    try:
+                        torch_module.cuda.set_rng_state_all(cuda_states)
+                    except Exception:  # noqa: BLE001
+                        pass
+
+        return wrapped
 
     def _resample(attempt_no: int) -> dict[str, Any]:
         torch_module.manual_seed(cds.attempt_seed(int(policy["seed"]), row_index, attempt_no))
@@ -1591,7 +1614,7 @@ def _checked_retry(
         policy=policy,
         vin=cds.with_prompt(vin, formatted_prompt),
         first={"text": text, "tokens": n_tokens, "seconds": secs},
-        regenerate=_regenerate,
+        regenerate=_with_rng_restored(_regenerate),
     )
     return str(chosen.get("text") or ""), record
 
@@ -3685,6 +3708,13 @@ async def run_heldout_evaluation(
     await _apply_structured_plan_live_config(db, project_id, eval_ctx)
     await _apply_remediation_live_config(db, project_id, eval_ctx)
     await _apply_tool_call_live_config(db, project_id, eval_ctx, task_handler)
+    # context_grounding joins auto-mode checked decoding only when opted in (CODE_CHECK_ALLOWED,
+    # the project's code-check selection, or the policy's verifiers).
+    checked_policy = cds.with_grounding_opt_in(
+        checked_policy,
+        runtime_config=getattr(project_for_policy, "runtime_config", None),
+        manifest=getattr(eval_ctx, "manifest", None),
+    )
     # Off the event loop: a remediation row without passages is retrieved for (embedding + search).
     pairs = await asyncio.to_thread(
         _load_heldout_pairs,

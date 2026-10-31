@@ -319,5 +319,29 @@ class SftLiftSummaryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(by_id["exact_match"]["direction"], "unchanged")
 
 
+class CheckedPolicyDiffersTests(unittest.TestCase):
+    """A side whose engine skipped checked decoding ran unchecked, even though its block still
+    names the requested policy: the lift is then not like for like with a checked side."""
+
+    def _item(self, block):
+        from types import SimpleNamespace
+
+        metrics = {"checked_decoding": block} if block is not None else {}
+        return SimpleNamespace(eval_result=SimpleNamespace(metrics=metrics))
+
+    def test_engine_unsupported_counts_as_off(self):
+        from app.services.sft_lift_summary_service import _checked_policy_differs
+
+        rec = {"mode": "resample", "max_attempts": 3, "verifiers": "auto", "sample_temperature": 0.7, "seed": 0}
+        checked = self._item({"policy": rec, "label": "x", "rows": 4})
+        skipped = self._item({"policy": rec, "label": "x", "skipped": "engine_unsupported"})
+        off = self._item(None)
+        self.assertTrue(_checked_policy_differs(skipped, checked))
+        self.assertTrue(_checked_policy_differs(checked, skipped))
+        self.assertFalse(_checked_policy_differs(skipped, off))
+        self.assertFalse(_checked_policy_differs(checked, self._item({"policy": rec, "rows": 2})))
+        self.assertFalse(_checked_policy_differs(off, off))
+
+
 if __name__ == "__main__":
     unittest.main()

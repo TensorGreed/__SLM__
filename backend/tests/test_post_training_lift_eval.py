@@ -292,6 +292,45 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(out["baseline_reused"], "the first (unchecked) base eval matches an off override")
         self.assertEqual([c["checked_decoding"]["enabled"] for c in self.eval_calls], [False])
 
+    async def test_checked_decoding_reaches_span_and_head_runs_and_passage_runs_say_not_applied(self):
+        """The resolved policy is threaded into the span and head-only branches (their engines record
+        ``engine_unsupported``); a passage-trained run's harness has no checked decoding, so the
+        Job result says ``run_type_unsupported`` instead of silently ignoring it."""
+        pid = await self._project()
+        override = {"enabled": True, "mode": "resample", "max_attempts": 2}
+        head = await self._run(pid, config={"task_type": "classification"})
+        span = await self._run(pid, config={"task_type": "token_classification"})
+        passage = await self._run(pid, config={"passage_prompts": True})
+        with mock.patch("app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout), \
+                mock.patch.object(svc, "base_is_causal_lm", return_value=False), \
+                mock.patch.object(svc, "project_has_answer_key", return_value=False), \
+                mock.patch.object(svc, "project_type_regimes", return_value={}), \
+                mock.patch.object(svc, "span_block", return_value={}):
+            for exp_id in (head, span):
+                self.eval_calls.clear()
+                async with self.sf() as db:
+                    await svc.run_post_training_lift_eval(
+                        db, project_id=pid, experiment_id=exp_id, checked_decoding=override
+                    )
+                with self.subTest(exp_id=exp_id):
+                    self.assertEqual(len(self.eval_calls), 1)
+                    self.assertTrue(self.eval_calls[0]["checked_decoding"]["enabled"])
+                    self.assertEqual(self.eval_calls[0]["checked_decoding"]["max_attempts"], 2)
+
+        async def fake_reader(db, *, project, experiment, report, comparison_fn=None):
+            return {"kind": "passage_reader_eval", "experiment_id": experiment.id}
+
+        with mock.patch("app.services.passage_reader_eval_service.run_passage_reader_evaluation", fake_reader):
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(
+                    db, project_id=pid, experiment_id=passage, checked_decoding=override
+                )
+            self.assertEqual(out["checked_decoding"]["skipped"], "run_type_unsupported")
+            self.assertEqual(out["checked_decoding"]["policy"]["max_attempts"], 2)
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=passage)
+            self.assertNotIn("checked_decoding", out, "off: the result is unchanged")
+
     async def test_baseline_decoded_differently_is_re_evaluated_once(self):
         """A cached base-model result from before decoding was recorded (it
         inherited the model's own repetition penalty) is not paired with a

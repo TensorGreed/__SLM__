@@ -951,6 +951,19 @@ describe('NotificationBell passage-trained lift check', () => {
         });
         expect(jobOutcomeSummary(job as never)).toBe('judge score with passages: base 0.585 → fine-tuned 0.700 (within noise · 6 better, 3 worse)');
     });
+
+    it('says when checked decoding could not apply to a passages check', () => {
+        const job = jobFixture({
+            kind: 'post_training_lift_eval', status: 'succeeded',
+            result: {
+                kind: 'passage_reader_eval',
+                base_with_passages: { score: 0.5 }, finetune_with_passages: { score: 0.6 },
+                evidence: { verdict: 'better', better: 7, worse: 1 },
+                checked_decoding: { skipped: 'run_type_unsupported', policy: { mode: 'resample', max_attempts: 3 } },
+            },
+        });
+        expect(jobOutcomeSummary(job as never)).toContain('checked decoding not applied (passages check)');
+    });
 });
 
 

@@ -429,9 +429,14 @@ async def _baseline_bar(
     )
     tool_fp = await _tool_call_fingerprint_for(db, project_id)
     # The lift check's checked-decoding policy (``common["checked_decoding"]``): the cache keys on it.
-    from app.services.checked_decoding_service import normalize_policy, policy_record
+    # With context_grounding opted in for auto mode, the eval records it (``auto_includes_grounding``).
+    from app.services.checked_decoding_service import normalize_policy, policy_record, with_grounding_opt_in
 
-    checked = policy_record(normalize_policy(common.get("checked_decoding")))
+    project_row = await db.get(Project, project_id)
+    checked = policy_record(with_grounding_opt_in(
+        normalize_policy(common.get("checked_decoding")),
+        runtime_config=getattr(project_row, "runtime_config", None),
+    ))
     neutral = await _reusable_baseline_result(
         db, baseline_exp, project_id, judge_label=judge_label, scoring_fingerprint=scoring_fp,
         tool_call_fingerprint=tool_fp, checked=checked,
@@ -591,9 +596,13 @@ async def project_has_answer_key(db: AsyncSession, project_id: int) -> bool:
 
 async def run_span_evaluation(
     db: AsyncSession, *, project_id: int, experiment: Experiment, report=None,
+    checked_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Score a token-classification run on the test examples and, when
-    the project has an answer key, on it too. Returns the Job result."""
+    the project has an answer key, on it too. Returns the Job result.
+    ``checked_override``: the lift check's resolved checked-decoding policy,
+    passed to every eval (a token-classification head records it as
+    ``skipped: "engine_unsupported"``); None = the project's setting."""
     from app.services.evaluation_service import run_heldout_evaluation
 
     async def _report(fraction: float, message: str) -> None:
@@ -619,6 +628,7 @@ async def run_span_evaluation(
             model_path=None,
             judge_model=None,
             answer_judge_enabled=False,
+            **({"checked_decoding": checked_override} if checked_override is not None else {}),
         )
         await db.commit()
         blocks[label] = span_block(result, type_regimes)
@@ -676,11 +686,21 @@ async def run_post_training_lift_eval(
     if is_passage_trained(exp):
         # Trained to answer from the served passages: scored WITH them,
         # against the base model + the same passages (not the bare base).
-        return await run_passage_reader_evaluation(db, project=project, experiment=exp, report=_report)
+        # The passages harness has no checked decoding: the one resolved
+        # policy applies to neither side, and the result says so.
+        result = await run_passage_reader_evaluation(db, project=project, experiment=exp, report=_report)
+        not_applied = checked_not_applied(checked_override)
+        if not_applied is not None and isinstance(result, dict):
+            result["checked_decoding"] = not_applied
+        return result
     if is_token_classification(exp):
-        return await run_span_evaluation(db, project_id=project_id, experiment=exp, report=_report)
+        return await run_span_evaluation(
+            db, project_id=project_id, experiment=exp, report=_report, checked_override=checked_override
+        )
     if is_encoder_classification(exp):
-        return await run_head_only_evaluation(db, project=project, experiment=exp, report=_report)
+        return await run_head_only_evaluation(
+            db, project=project, experiment=exp, report=_report, checked_override=checked_override
+        )
 
     eval_type = eval_type_for_project(project)
     max_samples, max_new_tokens = _lift_eval_limits()
@@ -744,9 +764,14 @@ async def run_post_training_lift_eval(
     }
 
 
-async def run_head_only_evaluation(db: AsyncSession, *, project: Project, experiment: Experiment, report) -> dict[str, Any]:
+async def run_head_only_evaluation(
+    db: AsyncSession, *, project: Project, experiment: Experiment, report,
+    checked_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Score a classification-head run on an encoder against the test
-    examples only — there is no zero-shot base model to compare with."""
+    examples only — there is no zero-shot base model to compare with.
+    ``checked_override``: the lift check's resolved checked-decoding policy
+    (a classifier head records ``skipped: "engine_unsupported"``)."""
     from app.services.evaluation_service import run_heldout_evaluation
 
     await report(0.2, f"Evaluating run #{experiment.id} (classifier head; no base-model baseline for an encoder)")
@@ -755,6 +780,7 @@ async def run_head_only_evaluation(db: AsyncSession, *, project: Project, experi
         db=db, project_id=project.id, experiment_id=experiment.id, dataset_name=AUTO_LIFT_DATASET,
         eval_type=eval_type_for_project(project), max_samples=max_samples, max_new_tokens=max_new_tokens,
         temperature=0.0, judge_model=None, model_path=None,
+        **({"checked_decoding": checked_override} if checked_override is not None else {}),
     )
     await db.commit()
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
@@ -769,6 +795,28 @@ async def run_head_only_evaluation(db: AsyncSession, *, project: Project, experi
         "macro_f1": metrics.get("macro_f1"),
         "rows": metrics.get("evaluated_samples") or metrics.get("total"),
     }
+
+
+def checked_decoding_unsupported_reason(exp: Any) -> str | None:
+    """Why a lift check of ``exp`` can't run under checked decoding, else None. A run trained
+    with retrieved passages is scored by the passages harness, which has no checked decoding
+    (the lift-check endpoint answers 422 to an explicit enabled override for it)."""
+    from app.services.passage_reader_eval_service import is_passage_trained
+
+    if is_passage_trained(exp):
+        return "run_type_unsupported"
+    return None
+
+
+def checked_not_applied(policy: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The job-result block for a run type checked decoding can't apply to: None when the
+    resolved policy is off, else ``{policy, label, skipped: "run_type_unsupported"}``."""
+    from app.services.checked_decoding_service import policy_label, policy_record
+
+    record = policy_record(policy)
+    if record is None:
+        return None
+    return {"policy": record, "label": policy_label(record), "skipped": "run_type_unsupported"}
 
 
 def is_seed_group_leader(exp: Experiment) -> bool:

@@ -35,6 +35,8 @@ from .base import BaseCheck, make_result, normalize_language
 
 MAX_CODE_CHARS = 200_000
 MAX_LINE_CHARS = 1000
+MAX_PATH_SEGMENTS = 8  # a dotted path is checked up to its first 8 segments (long chains stay linear)
+MAX_TERMS = 2000  # distinct terms per check; past it the rest are not checked (precision over recall)
 _LONG_LINE = re.compile(r"^[^\n]{%d,}$" % (MAX_LINE_CHARS + 1), re.MULTILINE)
 
 _IDENT = r"[A-Za-z_$][\w$]*"
@@ -55,11 +57,20 @@ class ExtractedTerms:
     locals: set[str] = field(default_factory=set)  # variables / parameters: satisfy bare names only
     std_bound: set[str] = field(default_factory=set)  # names bound by standard-library imports
     allow: frozenset[str] = frozenset()
+    # A wildcard import of a standard package whose members are not listed: bare PascalCase type names pass.
+    wildcard_std: bool = False
+    _seen: set[Term] = field(default_factory=set, repr=False)
 
     def add(self, display: str, *names: str, kind: str = "symbol") -> None:
+        """Add a term once (duplicates are dropped); at most ``MAX_TERMS`` distinct terms."""
         cands = tuple(n for n in names if n)
-        if cands:
-            self.terms.append(Term(display, cands, kind))
+        if not cands or len(self.terms) >= MAX_TERMS:
+            return
+        term = Term(display, cands, kind)
+        if term in self._seen:
+            return
+        self._seen.add(term)
+        self.terms.append(term)
 
 
 Extractor = Callable[[str, str], ExtractedTerms]
@@ -294,6 +305,17 @@ _GLOBAL = re.compile(r"\b(?:global|nonlocal)\s+([\w\s,]+)")
 _GO_RECEIVER = re.compile(r"\bfunc\s*\(\s*(\w+)")
 _GENERIC_PARAMS = re.compile(r"(?:\b(?:class|struct|interface|fn|func|trait|impl|type|record|enum)\s+\w*\s*|^\s*)<([^<>()]*)>", re.MULTILINE)
 _LABEL = re.compile(r"(?:^|[{};])\s*(" + _IDENT + r")\s*:\s*(?:for|while|do|loop)\b")
+# C++ direct initialisation: ``std::ifstream file(p);``, ``std::string s("x");``, ``Widget w(1, 2);``.
+_DIRECT_INIT = re.compile(
+    r"(?<![\w$.>])(" + _IDENT + r")\s*(?:::\s*" + _IDENT + r"\s*)*(?:<[^;=(){}]*>)?[\s*&]+(" + _IDENT
+    + r")\s*\([^;{}]*\)\s*;"
+)
+_NOT_A_TYPE = frozenset({"return", "throw", "delete", "new", "else", "case", "goto", "co_return", "co_yield",
+                         "co_await", "sizeof", "typedef", "using", "namespace", "operator", "not", "and", "or",
+                         "if", "while", "switch", "for", "do", "throws", "default"})
+# Go one-line struct types: ``type Acc struct{ total float64 }`` / ``struct{ x, y int; name string }``.
+_GO_STRUCT_ONE_LINE = re.compile(r"\bstruct\s*\{([^{}\n]*)\}")
+_GO_STRUCT_FIELD = re.compile(r"^\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s+[*\[\]]*[A-Za-z_][\w.]*")
 
 _CALL = re.compile(r"(?<![\w$.@#>:!?])(" + _IDENT + r")\s*\(")
 _NEW = re.compile(r"\bnew\s+(" + _IDENT + r")\s*[(<\[{]")
@@ -340,7 +362,8 @@ _STD_ROOTS: dict[str, frozenset[str]] = {
     "python": al.PYTHON_STDLIB_ROOTS,
     "js": frozenset({"console", "Math", "JSON", "Object", "Array", "Promise", "Reflect", "Intl", "process",
                      "window", "document", "navigator", "globalThis", "Number", "String", "Date", "Symbol"}),
-    "java": al.JAVA_STDLIB_ROOTS | frozenset({"System", "Math", "Arrays", "Collections", "Objects", "Stream",
+    # Java's standard types are roots too: ``Map.Entry``, ``List.of`` are never checked past them.
+    "java": al.JAVA_STDLIB_ROOTS | al.JAVA_TYPES | frozenset({"System", "Math", "Arrays", "Collections", "Objects", "Stream",
                                               "Collectors", "Optional", "Files", "Paths", "Thread", "String",
                                               "Integer", "Long", "Double", "Boolean", "Executors", "TimeUnit"}),
     "csharp": al.CSHARP_STDLIB_ROOTS | frozenset({"Console", "Math", "Convert", "String", "DateTime", "Task",
@@ -437,7 +460,13 @@ def _defined_c_like(clean: str, family: str, language: str) -> tuple[set[str], s
     if family == "go":
         decls.update(m.group(1) for m in _GO_FIELD.finditer(clean))
         d.update(m.group(1) for m in _GO_RECEIVER.finditer(clean))
+        for m in _GO_STRUCT_ONE_LINE.finditer(clean):
+            for part in m.group(1).split(";"):
+                f = _GO_STRUCT_FIELD.match(part)
+                if f:
+                    decls.update(_idents(f.group(1)))
     if family == "c":
+        decls.update(m.group(2) for m in _DIRECT_INIT.finditer(clean) if m.group(1) not in _NOT_A_TYPE)
         for m in _C_DEFINE.finditer(clean):
             decls.add(m.group(1))
             if m.group(2):
@@ -514,13 +543,21 @@ def _imports(raw: str, nocom: str, family: str, out: ExtractedTerms, std_roots: 
         for m in _JAVA_IMPORT.finditer(nocom):
             path = m.group(2)
             segs = path.split(".")
-            if segs[-1] == "*":
+            wildcard = segs[-1] == "*"
+            if wildcard:
                 segs = segs[:-1]
             else:
                 out.defined.add(segs[-1])
             if segs[0] in std_roots:
-                if path.split(".")[-1] != "*":
+                if not wildcard:
                     out.std_bound.add(segs[-1])
+                elif not m.group(1):  # ``import java.util.concurrent.*;``: its types by their simple names
+                    members = al.JAVA_STDLIB_PACKAGE_TYPES.get(".".join(segs))
+                    if members is None:
+                        out.wildcard_std = True
+                    else:
+                        out.allow = out.allow | members
+                        out.std_bound.update(members)
                 continue
             out.add(".".join(segs), segs[-1], ".".join(segs), kind="import")
     elif family == "csharp":
@@ -619,7 +656,7 @@ def _extract_c_like(code: str, language: str) -> ExtractedTerms:
         if root not in _ROOT_SELF and root not in out.defined and root not in out.locals:
             out.add(root, root, kind="symbol")
         display = root
-        for sep, name in zip(seps, names[1:]):
+        for sep, name in list(zip(seps, names[1:]))[:MAX_PATH_SEGMENTS - 1]:
             display = f"{display}{sep}{name}"
             out.add(display, name, kind="member")
     in_path = _spans_lookup(path_spans)
@@ -642,6 +679,8 @@ def _extract_c_like(code: str, language: str) -> ExtractedTerms:
             for name in _idents(m.group(1)):
                 if _pascal(name) and not in_path(m.start(1)):
                     out.add(name, name, kind="type")
+    if out.wildcard_std:
+        out.terms = [t for t in out.terms if not (t.kind in ("type", "symbol") and _pascal(t.display))]
     return out
 
 

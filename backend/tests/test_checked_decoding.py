@@ -358,16 +358,23 @@ class VerifierTests(unittest.TestCase):
         self.assertTrue(res["messages"][0].startswith("python_ast:"))
         self.assertFalse(cds.verify_code_checks(_code_vin(), "not json")["ok"])
 
-    def test_grounding_only_when_registered_and_gets_the_prompt(self):
+    def test_grounding_only_when_opted_in_and_registered_and_gets_the_prompt(self):
         policy = _policy()
+        opted = {**policy, cds.GROUNDING_OPT_IN_KEY: True}
         with mock.patch("app.services.code_check_service.get_code_check", return_value=None):
-            self.assertEqual(cds.applicable_verifiers(_code_vin(), policy), ["code_checks", "citations"])
+            self.assertEqual(cds.applicable_verifiers(_code_vin(), opted), ["code_checks", "citations"])
         with mock.patch("app.services.code_check_service.get_code_check", return_value=object()):
+            # Auto mode: a registered (core built-in) grounding check is NOT on by default.
+            self.assertEqual(cds.applicable_verifiers(_code_vin(), policy), ["code_checks", "citations"])
             self.assertEqual(
-                cds.applicable_verifiers(_code_vin(), policy), ["code_checks", "context_grounding", "citations"]
+                cds.applicable_verifiers(_code_vin(), opted), ["code_checks", "context_grounding", "citations"]
             )
             self.assertEqual(
                 cds.applicable_verifiers(_code_vin(), _policy(verifiers=["code_checks"])), ["code_checks"]
+            )
+            self.assertEqual(
+                cds.applicable_verifiers(_code_vin(), _policy(verifiers=["code_checks", "context_grounding"])),
+                ["code_checks", "context_grounding"],
             )
         seen = {}
 
@@ -641,6 +648,212 @@ class ApiTests(unittest.TestCase):
         r = _client_cm.post(f"/api/projects/{_make_project()}/evaluation/summary/lift-check",
                             json={"experiment_id": 1, "checked_decoding": {"mode": "nope"}})
         self.assertEqual(r.status_code, 422, r.text)
+
+
+def _make_experiment(project_id: int, config: dict) -> int:
+    import asyncio
+
+    from app.database import async_session_factory
+    from app.models.experiment import Experiment, ExperimentStatus
+
+    async def _go():
+        async with async_session_factory() as db:
+            exp = Experiment(project_id=project_id, name="e", description="", status=ExperimentStatus.COMPLETED,
+                             base_model="toy/model", output_dir="/nonexistent", config=config)
+            db.add(exp)
+            await db.commit()
+            return exp.id
+
+    return asyncio.run(_go())
+
+
+class ApiReviewFixTests(unittest.TestCase):
+    def test_put_merges_a_partial_update_into_the_saved_setting(self):
+        client = _client_cm
+        pid = _make_project()
+        url = f"/api/projects/{pid}/evaluation/checked-decoding"
+        self.assertEqual(client.put(url, json={"enabled": True, "mode": "repair", "max_attempts": 4}).status_code, 200)
+        r = client.put(url, json={"max_attempts": 2})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual({k: r.json()["settings"][k] for k in ("enabled", "mode", "max_attempts")},
+                         {"enabled": True, "mode": "repair", "max_attempts": 2})
+        self.assertEqual(client.put(url, json={"verifiers": ["label_set"]}).json()["settings"]["verifiers"],
+                         ["label_set"])
+        r = client.put(url, json={"verifiers": None})  # explicit null: back to auto
+        self.assertIsNone(r.json()["settings"]["verifiers"])
+        self.assertEqual(r.json()["settings"]["mode"], "repair")
+        self.assertEqual(client.put(url, json={"max_attempts": 9}).status_code, 422)
+        self.assertEqual(client.get(url).json()["settings"]["max_attempts"], 2, "a rejected update saves nothing")
+
+    def test_lift_check_422_for_an_enabled_override_on_a_passage_trained_run(self):
+        pid = _make_project()
+        eid = _make_experiment(pid, {"passage_prompts": True})
+        url = f"/api/projects/{pid}/evaluation/summary/lift-check"
+        r = _client_cm.post(url, json={"experiment_id": eid, "checked_decoding": {"enabled": True}})
+        self.assertEqual(r.status_code, 422, r.text)
+        self.assertIn("passages", r.json()["detail"])
+
+        async def not_started(db, **kwargs):
+            return {"started": False, "skipped_reason": "stubbed"}
+
+        with mock.patch("app.services.post_training_eval_service.start_post_training_lift_job", not_started):
+            r = _client_cm.post(url, json={"experiment_id": eid, "checked_decoding": {"enabled": False}})
+            self.assertEqual(r.status_code, 400, r.text)  # off: no 422
+            other = _make_experiment(pid, {})
+            r = _client_cm.post(url, json={"experiment_id": other, "checked_decoding": {"enabled": True}})
+            self.assertEqual(r.status_code, 400, r.text)  # a plain run takes it
+
+
+class RetryErrorTests(unittest.TestCase):
+    def _vin(self):
+        return cds.VerifierInput(prompt="p", label_set=("a",))
+
+    def test_a_retry_that_raises_keeps_attempt_one_and_stops(self):
+        calls = []
+
+        def boom(n, previous, failures):
+            calls.append(n)
+            raise RuntimeError("generation failed")
+
+        chosen, rec = cds.run_checked_row(policy=_policy(max_attempts=3), vin=self._vin(),
+                                          first={"text": "b", "tokens": 2, "seconds": 0.1}, regenerate=boom)
+        self.assertEqual(chosen["text"], "b")
+        self.assertEqual(calls, [2])
+        self.assertEqual(rec["attempts_detail"][1], {"attempt": 2, "error": "RuntimeError"})
+        self.assertEqual((rec["attempts"], rec["chosen_attempt"], rec["passed"]), (1, 1, False))
+        self.assertEqual(rec["retry_error"], "RuntimeError")
+        self.assertNotIn("chosen_stats", rec)
+        s = cds.summarize([rec], _policy())
+        self.assertEqual((s["rows_failed_first_try"], s["rows_still_failing"], s["rows_retried"]), (1, 1, 0))
+
+    def test_a_cuda_out_of_memory_retry_frees_the_cache(self):
+        import torch
+
+        oom_cls = getattr(torch.cuda, "OutOfMemoryError", RuntimeError)
+
+        def oom(*_a):
+            raise oom_cls("CUDA out of memory. Tried to allocate 2.00 GiB")
+
+        def other(*_a):
+            raise ValueError("bad")
+
+        with mock.patch("torch.cuda.is_available", return_value=True), \
+                mock.patch("torch.cuda.empty_cache") as empty:
+            _, rec = cds.run_checked_row(policy=_policy(), vin=self._vin(),
+                                         first={"text": "b", "tokens": 1, "seconds": 0.0}, regenerate=oom)
+            self.assertEqual(empty.call_count, 1)
+            self.assertEqual(rec["attempts_detail"][-1]["error"], oom_cls.__name__)
+            cds.run_checked_row(policy=_policy(), vin=self._vin(),
+                                first={"text": "b", "tokens": 1, "seconds": 0.0}, regenerate=other)
+            self.assertEqual(empty.call_count, 1, "only an out-of-memory error frees the cache")
+
+    def test_the_eval_loop_survives_a_retry_generation_error(self):
+        orig = _FakeModel.generate
+
+        def flaky(self, **kw):
+            if self.calls:
+                self.calls.append({})
+                raise RuntimeError("boom")
+            return orig(self, **kw)
+
+        pairs = [_label_pair(0)]
+        with mock.patch.object(_FakeModel, "generate", flaky):
+            preds, runtime = _infer(pairs, ["gamma"], checked=_checked(_policy(), pairs))
+        self.assertEqual(preds[0]["prediction"], "gamma")
+        self.assertEqual(preds[0]["checked_decoding"]["retry_error"], "RuntimeError")
+        self.assertEqual(runtime["checked_decoding"]["rows_still_failing"], 1)
+
+
+class RngAndStatsTests(unittest.TestCase):
+    def test_retries_restore_the_rng_state(self):
+        import torch
+
+        torch.manual_seed(1234)
+        before = torch.get_rng_state().clone()
+        pairs = [_label_pair(5)]
+        _infer(pairs, ["gamma", "delta", "beta"], checked=_checked(_policy(seed=11), pairs))
+        self.assertEqual(len(_infer.last.seeds), 2, "two seeded retries ran")
+        self.assertTrue(torch.equal(torch.get_rng_state(), before), "the retries left the RNG as they found it")
+
+    def test_a_later_chosen_attempt_records_its_own_stats(self):
+        pairs = [_label_pair(5)]
+        preds, _ = _infer(pairs, ["gamma", "delta", "beta"], checked=_checked(_policy(), pairs))
+        rec = preds[0]["checked_decoding"]
+        self.assertEqual(rec["chosen_attempt"], 3)
+        self.assertEqual(set(rec["chosen_stats"]), {"generated_tokens", "latency_ms"})
+        self.assertEqual(rec["chosen_stats"]["generated_tokens"], 1)
+        self.assertEqual(preds[0]["generated_tokens"], 1)  # top-level stays attempt 1's
+        passing, _ = _infer(pairs, ["alpha"], checked=_checked(_policy(), pairs))
+        self.assertNotIn("chosen_stats", passing[0]["checked_decoding"])
+
+
+class GroundingOptInTests(unittest.TestCase):
+    RC = {"remediation": {"checks": ["python_ast", "context_grounding"]}}
+
+    def test_sources(self):
+        from app.config import settings
+
+        p = _policy()
+        self.assertFalse(cds.grounding_opted_in(p))
+        self.assertFalse(cds.grounding_opted_in(p, runtime_config={"remediation": {"checks": ["python_ast"]}}))
+        self.assertTrue(cds.grounding_opted_in(_policy(verifiers=["context_grounding"])))
+        self.assertTrue(cds.grounding_opted_in(p, runtime_config=self.RC))
+        self.assertTrue(cds.grounding_opted_in(
+            p, manifest={"output_schema": {"remediation": {"checks": ["context_grounding"]}}}))
+        with mock.patch.object(settings, "CODE_CHECK_ALLOWED", "context_grounding"):
+            self.assertTrue(cds.grounding_opted_in(p))
+
+    def test_auto_mode_leaves_the_registered_check_out_unless_opted_in(self):
+        p = _policy()
+        self.assertNotIn("context_grounding", cds.applicable_verifiers(_code_vin(), p))
+        self.assertNotIn("context_grounding", cds.applicable_verifiers(_code_vin(), cds.with_grounding_opt_in(p)))
+        self.assertIn("context_grounding",
+                      cds.applicable_verifiers(_code_vin(), cds.with_grounding_opt_in(p, runtime_config=self.RC)))
+        self.assertEqual(cds.policy_record(cds.with_grounding_opt_in(p)), cds.policy_record(p))
+        self.assertTrue(cds.policy_record(cds.with_grounding_opt_in(p, runtime_config=self.RC))["auto_includes_grounding"])
+        self.assertIsNone(cds.with_grounding_opt_in(None))
+
+    def test_heldout_eval_resolves_the_opt_in(self):
+        rc = cds.with_project_policy({}, {"enabled": True})
+        _, seen = _run_heldout(ROWS, runtime_config=rc)
+        self.assertFalse(seen["kwargs"]["checked"]["policy"][cds.GROUNDING_OPT_IN_KEY])
+        _, seen = _run_heldout(ROWS, runtime_config={**rc, **self.RC})
+        self.assertTrue(seen["kwargs"]["checked"]["policy"][cds.GROUNDING_OPT_IN_KEY])
+
+
+class SchemaAndLabelTests(unittest.TestCase):
+    def test_json_schema_requires_only_what_the_schema_declares(self):
+        schema = cds.output_json_schema({"output_schema": {"properties": {"a": {"type": "string"}, "b": {}}}})
+        self.assertEqual(schema["required"], [])
+        vin = cds.VerifierInput(prompt="p", json_schema=schema)
+        self.assertTrue(cds.verify_json_schema(vin, "{}")["ok"])
+        self.assertFalse(cds.verify_json_schema(vin, '{"a": 3}')["ok"])
+
+    def test_label_answer_must_be_exactly_one_label(self):
+        vin = cds.VerifierInput(prompt="p", label_set=("alpha", "very_positive"))
+        for ok in ("alpha", " Alpha. ", '"alpha"', "**ALPHA**", "very_positive", "'Very_Positive'"):
+            with self.subTest(ok=ok):
+                self.assertTrue(cds.verify_label_set(vin, ok)["ok"])
+        for bad in ("alpha or beta", "not alpha", "alphabet", "The label is alpha", "", "positive"):
+            with self.subTest(bad=bad):
+                self.assertFalse(cds.verify_label_set(vin, bad)["ok"])
+
+    def test_label_set_only_when_the_prompt_enumerates_the_candidates(self):
+        from app.services.eval_task_handler_service import ClassificationHandler
+
+        h = ClassificationHandler()
+        cands = ["alpha", "beta"]
+        listed = {"prompt": h._build_prompt_text("hello", cands), "classification_candidates": cands}
+        self.assertEqual(cds.build_verifier_input(listed).label_set, ("alpha", "beta"))
+        # The labels appear in the input text only: no label verifier.
+        unlisted = {"prompt": "Classify the following text. Reply with just the class label, nothing else.\n"
+                              "Text: alpha or beta?\nLabel:", "classification_candidates": cands}
+        self.assertEqual(cds.build_verifier_input(unlisted).label_set, ())
+        # More candidates than the prompt lists: no label verifier, even if every label is in the text.
+        many = [f"label{i}" for i in range(h.LABEL_LIST_PROMPT_CAP + 1)]
+        prompt = h._build_prompt_text(" ".join(many), many)
+        self.assertNotIn("Reply with exactly one of", prompt)
+        self.assertEqual(cds.build_verifier_input({"prompt": prompt, "classification_candidates": many}).label_set, ())
 
 
 if __name__ == "__main__":

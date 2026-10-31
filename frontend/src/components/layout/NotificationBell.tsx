@@ -394,10 +394,13 @@ function jobOutcomeSummaryCore(job: Job): string | null {
             const base = (r.base_with_passages || {}) as { score?: number };
             const ft = (r.finetune_with_passages || {}) as { score?: number };
             const ev = (r.evidence || {}) as { verdict?: string; better?: number; worse?: number };
-            if (typeof base.score !== 'number' || typeof ft.score !== 'number') return 'passages check done';
+            // Checked decoding was on but the passages comparison has none: say so, never silently.
+            const cd = (r.checked_decoding || null) as { skipped?: string } | null;
+            const notApplied = cd && cd.skipped === 'run_type_unsupported' ? ' · checked decoding not applied (passages check)' : '';
+            if (typeof base.score !== 'number' || typeof ft.score !== 'number') return `passages check done${notApplied}`;
             const verb = ev.verdict === 'better' ? 'better' : ev.verdict === 'worse' ? 'worse' : ev.verdict === 'too_few_rows' ? 'too few rows to tell' : 'within noise';
             const counts = typeof ev.better === 'number' && typeof ev.worse === 'number' ? ` · ${ev.better} better, ${ev.worse} worse` : '';
-            return `judge score with passages: base ${base.score.toFixed(3)} → fine-tuned ${ft.score.toFixed(3)} (${verb}${counts})`;
+            return `judge score with passages: base ${base.score.toFixed(3)} → fine-tuned ${ft.score.toFixed(3)} (${verb}${counts})${notApplied}`;
         }
         if (r.kind === 'head_eval') {
             // Classifier head on an encoder: scored alone (no zero-shot base model to compare with).

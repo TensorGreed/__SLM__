@@ -337,12 +337,20 @@ class ClassificationHandler:
 
     # ── Prompt assembly ──
 
+    @classmethod
+    def candidate_list_line(cls, candidates: list[str]) -> str | None:
+        """The prompt's explicit enumeration of ``candidates`` (None when there are none or more
+        than ``LABEL_LIST_PROMPT_CAP``: the prompt then lists no labels). Checked decoding's
+        label verifier applies only when a prompt carries this line."""
+        if not 0 < len(candidates) <= cls.LABEL_LIST_PROMPT_CAP:
+            return None
+        return f"Reply with exactly one of: {', '.join(candidates)}.\n"
+
     def _build_prompt_text(self, input_text: str, candidates: list[str]) -> str:
-        if 0 < len(candidates) <= self.LABEL_LIST_PROMPT_CAP:
-            label_list = ", ".join(candidates)
+        line = self.candidate_list_line(candidates)
+        if line is not None:
             return (
-                f"Classify the following text. Reply with exactly one of: "
-                f"{label_list}.\n"
+                f"Classify the following text. {line}"
                 f"Text: {input_text}\n"
                 f"Label:"
             )

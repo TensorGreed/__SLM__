@@ -508,10 +508,12 @@ def _checked_block(er: Any) -> dict[str, Any]:
 
 def _checked_policy_differs(baseline: Any, trained: Any) -> bool:
     """True when the two evals ran under different checked-decoding policies (the lift is then
-    not like for like; a lift check runs both under one policy)."""
+    not like for like; a lift check runs both under one policy). A side whose engine skipped it
+    (``skipped: "engine_unsupported"``, which still names the requested policy) ran unchecked:
+    policy None, the way Compare reads the decoding record."""
     def policy(item: Any) -> Any:
-        return ((_checked_block(item.eval_result).get("checked_decoding") or {}).get("policy")
-                if item is not None else None)
+        block = (_checked_block(item.eval_result).get("checked_decoding") or {}) if item is not None else {}
+        return None if block.get("skipped") else block.get("policy")
 
     return policy(baseline) != policy(trained)
 

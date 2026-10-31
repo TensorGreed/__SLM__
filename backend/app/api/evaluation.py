@@ -263,17 +263,20 @@ async def get_checked_decoding(project_id: int, db: AsyncSession = Depends(get_d
 async def put_checked_decoding(
     project_id: int, body: CheckedDecodingSettings, db: AsyncSession = Depends(get_db)
 ):
-    """Save the project's checked-decoding setting. 422 on a bad value (mode not resample /
-    repair, max_attempts outside 1..5, unknown verifier id, sample_temperature outside (0, 2],
-    negative seed)."""
+    """Save the project's checked-decoding setting. A partial update: the fields the body
+    names are merged over the saved setting (an explicit ``null`` resets that field to its
+    default; ``verifiers: null`` = auto) and the merged result is validated — 422 on a bad
+    value (mode not resample / repair, max_attempts outside 1..5, unknown verifier id,
+    sample_temperature outside (0, 2], negative seed)."""
     from app.services import checked_decoding_service as cds
 
     project = await db.get(Project, project_id)
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
-    raw = {k: v for k, v in body.model_dump().items() if v is not None}
+    partial = body.model_dump(exclude_unset=True)
     try:
-        project.runtime_config = cds.with_project_policy(project.runtime_config, raw)
+        merged = cds.merged_project_policy(project.runtime_config, partial)
+        project.runtime_config = cds.with_project_policy(project.runtime_config, merged)
     except cds.PolicyError as exc:
         raise HTTPException(422, str(exc)) from exc
     await db.commit()
@@ -1447,10 +1450,30 @@ async def rerun_lift_check(
     model configured since (``answer_judge_service``) and re-evaluates the
     base model when its cached result was not judged by the same judge.
     ``checked_decoding`` overrides the project's checked-decoding setting for
-    both evals (a cached base result is reused only under the same policy).
+    both evals (a cached base result is reused only under the same policy);
+    422 when it is enabled for a run trained with retrieved passages (the
+    passages comparison has no checked decoding; with only the project
+    setting on, the Job result carries ``checked_decoding.skipped =
+    "run_type_unsupported"``).
     409 when a lift check for that run is already queued or running."""
-    from app.services.post_training_eval_service import start_post_training_lift_job
+    from app.models.experiment import Experiment
+    from app.services.post_training_eval_service import (
+        checked_decoding_unsupported_reason,
+        is_seed_group_leader,
+        start_post_training_lift_job,
+    )
 
+    if data.checked_decoding is not None and data.checked_decoding.get("enabled"):
+        exp = await db.get(Experiment, data.experiment_id)
+        if exp is not None and exp.project_id == project_id and not is_seed_group_leader(exp):
+            reason = checked_decoding_unsupported_reason(exp)
+            if reason is not None:
+                raise HTTPException(
+                    422,
+                    f"Checked decoding can't apply to run #{data.experiment_id}: it was trained with retrieved "
+                    "passages, and that lift check is scored by the passages comparison, which has no "
+                    "checked decoding. Re-run without checked decoding.",
+                )
     extra = {"checked_decoding": data.checked_decoding} if data.checked_decoding is not None else {}
     result = await start_post_training_lift_job(
         db, project_id=project_id, experiment_id=data.experiment_id, manual=True, **extra
