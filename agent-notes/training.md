@@ -126,7 +126,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   block is computed for SFT `training_mode` only. Pairs files from an eval (`source`, `source_split`, `messages` columns) feed the
   DPO/ORPO loader through `_adapt_record_to_preference` (only prompt / chosen / rejected are read; the loader strips the prompt). ORPO: `_resolve_pairwise_trainer` falls back to
   `trl.experimental.orpo` (trl ≥ 1.0 dropped the top-level `ORPOTrainer`, so ORPO mode
-  raised). Tests: `tests/test_multi_turn_masking.py` (tiny in-process tokenizer
+  raised). DPO/ORPO preflight (2026-11-02) checks the config's `alignment_dataset_path` (project-relative, resolved like
+  `start_training` does; missing / outside-project paths are errors) instead of `prepared/train.jsonl`, so a pairs file
+  next to SFT splits no longer fails "Preference pair coverage 0%"; `capability_summary.dataset.alignment_dataset_path`
+  labels the file checked (`tests/test_phase24_alignment_scaffold.py`). Tests: `tests/test_multi_turn_masking.py` (tiny in-process tokenizer
   `tests/_tiny_chat_tokenizer.py`; real SmolLM2 run skips without GPU/BREWSLM_REAL_TRAINING).
   **Same config → same weights** (2026-10-18): `train.py`
   `enable_deterministic_training` (config `deterministic`, schema default

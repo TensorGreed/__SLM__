@@ -250,6 +250,56 @@ class Phase24AlignmentScaffoldTests(unittest.TestCase):
         alignment_quality = dataset.get("alignment_quality", {})
         self.assertGreater(int(alignment_quality.get("scored_count", 0)), 0)
 
+    def _dpo_preflight(self, project_id: int, **config) -> dict:
+        resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments/preflight",
+            json={
+                "config": {
+                    "base_model": "microsoft/phi-2",
+                    "training_mode": "dpo",
+                    "task_type": "causal_lm",
+                    "trainer_backend": "hf_trainer",
+                    **config,
+                }
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        return resp.json().get("preflight", {})
+
+    def test_dpo_preflight_checks_configured_alignment_dataset_path(self):
+        # train.jsonl holds SFT rows (no chosen/rejected); the pairs live in their own file.
+        project_id = self._create_project("phase24-alignment-8")
+        project_dir = settings.DATA_DIR / "projects" / str(project_id)
+        (project_dir / "prepared" / "alignment").mkdir(parents=True, exist_ok=True)
+        (project_dir / "prepared" / "train.jsonl").write_text(
+            '{"text": "an SFT row", "answer": "no pairs here"}\n', encoding="utf-8"
+        )
+        pairs_path = project_dir / "prepared" / "alignment" / "pairs.jsonl"
+        pairs_path.write_text(
+            '{"prompt": "How often should keys rotate?", "chosen": "Rotate keys every 90 days and after incidents.", "rejected": "Do not rotate keys."}\n'
+            '{"prompt": "How to secure API traffic?", "chosen": "Require TLS for all endpoints.", "rejected": "Use plaintext HTTP."}\n',
+            encoding="utf-8",
+        )
+
+        without_path = self._dpo_preflight(project_id)
+        self.assertTrue(
+            any("Preference pair coverage" in str(e) for e in without_path.get("errors", [])),
+            without_path.get("errors"),
+        )
+
+        with_path = self._dpo_preflight(project_id, alignment_dataset_path="prepared/alignment/pairs.jsonl")
+        errors = [str(e) for e in with_path.get("errors", [])]
+        self.assertFalse(any("Preference pair coverage" in e or "No scorable preference rows" in e for e in errors), errors)
+        dataset = with_path.get("capability_summary", {}).get("dataset", {})
+        self.assertEqual(dataset.get("alignment_dataset_path"), str(pairs_path.resolve()))
+        self.assertGreater(int(dataset.get("alignment_quality", {}).get("scored_count", 0)), 0)
+
+        missing = self._dpo_preflight(project_id, alignment_dataset_path="prepared/alignment/nope.jsonl")
+        self.assertTrue(any("alignment_dataset_path not found" in str(e) for e in missing.get("errors", [])))
+
+        outside = self._dpo_preflight(project_id, alignment_dataset_path="/etc/passwd")
+        self.assertTrue(any("within the project data directory" in str(e) for e in outside.get("errors", [])))
+
     def test_dpo_start_training_auto_filter_wires_filtered_dataset(self):
         project_id = self._create_project("phase24-alignment-7")
         self._import_preference_rows(

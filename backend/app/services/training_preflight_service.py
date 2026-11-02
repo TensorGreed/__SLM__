@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.services.alignment_dataset_service import resolve_alignment_dataset_path
 from app.services.alignment_service import (
     analyze_preference_dataset_contract,
     analyze_preference_dataset_quality,
@@ -992,11 +993,29 @@ def run_training_preflight(
             if text and text not in hints:
                 hints.append(text)
 
-    if train_exists and training_mode in {"dpo", "orpo"}:
+    # A configured alignment_dataset_path is what DPO/ORPO trains on (start_training swaps it in
+    # for train.jsonl), so the pair checks read that file instead.
+    alignment_dataset_path: Path | None = None
+    alignment_path_ok = True
+    if training_mode in {"dpo", "orpo"} and str(resolved_config.get("alignment_dataset_path") or "").strip():
+        try:
+            alignment_dataset_path = resolve_alignment_dataset_path(
+                project_id, str(resolved_config.get("alignment_dataset_path")).strip()
+            )
+        except ValueError as exc:
+            errors.append(f"alignment_dataset_path: {exc}")
+            alignment_path_ok = False
+        else:
+            if alignment_dataset_path is not None and not alignment_dataset_path.is_file():
+                errors.append(f"Configured alignment_dataset_path not found: {alignment_dataset_path}")
+                alignment_path_ok = False
+
+    if alignment_path_ok and (train_exists or alignment_dataset_path is not None) and training_mode in {"dpo", "orpo"}:
         alignment_contract = analyze_preference_dataset_contract(
             project_id=project_id,
             sample_size=400,
             min_coverage=0.85,
+            dataset_path=alignment_dataset_path,
         )
         for item in alignment_contract.get("errors", []):
             text = str(item).strip()
@@ -1031,6 +1050,7 @@ def run_training_preflight(
             project_id=project_id,
             sample_size=400,
             quality_threshold=quality_threshold,
+            dataset_path=alignment_dataset_path,
         )
         scored_count = int(alignment_quality.get("scored_count", 0))
         keep_count = int(alignment_quality.get("keep_count", 0))
@@ -1194,6 +1214,7 @@ def run_training_preflight(
             "media_contract": media_contract or {},
             "alignment_contract": alignment_contract or {},
             "alignment_quality": alignment_quality or {},
+            "alignment_dataset_path": str(alignment_dataset_path) if alignment_dataset_path else None,
         },
         "model_modality_contract": {
             **dict(model_modality_contract.get("summary") or {}),

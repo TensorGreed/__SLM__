@@ -352,9 +352,11 @@ def analyze_preference_dataset_contract(
     project_id: int,
     sample_size: int = 400,
     min_coverage: float = 0.85,
+    dataset_path: Path | None = None,
 ) -> dict[str, Any]:
+    """``dataset_path`` (a resolved pairs file) replaces the prepared ``train.jsonl`` when given."""
     prepared_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
-    train_file = prepared_dir / "train.jsonl"
+    train_file = dataset_path or prepared_dir / "train.jsonl"
 
     if not train_file.exists():
         return {
@@ -391,9 +393,11 @@ def analyze_preference_dataset_quality(
     project_id: int,
     sample_size: int = 400,
     quality_threshold: float = 3.0,
+    dataset_path: Path | None = None,
 ) -> dict[str, Any]:
+    """``dataset_path`` (a resolved pairs file) replaces the prepared ``train.jsonl`` when given."""
     prepared_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
-    train_file = prepared_dir / "train.jsonl"
+    train_file = dataset_path or prepared_dir / "train.jsonl"
 
     if not train_file.exists():
         return {
