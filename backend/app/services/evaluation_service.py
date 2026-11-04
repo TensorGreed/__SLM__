@@ -900,6 +900,7 @@ async def run_evaluation(
     # ``{mean, std, ...}`` for free.
     await _apply_structured_plan_live_config(db, project_id, eval_ctx)
     await _apply_remediation_live_config(db, project_id, eval_ctx)
+    await _apply_multi_option_live_config(db, project_id, eval_ctx, task_handler)
     project_row = await db.execute(select(Project).where(Project.id == project_id))
     project = project_row.scalar_one_or_none()
     slice_defs = None
@@ -2852,6 +2853,10 @@ def _prediction_failed(prediction: dict[str, Any]) -> bool:
         return not prediction["row_structured_plan_pass"]
     if isinstance(prediction.get("row_tool_call_pass"), bool):
         return not prediction["row_tool_call_pass"]
+    if "row_multi_option_pass" in prediction:
+        # multi_option: the row_pass rule over verified options; None = excluded (an infrastructure
+        # verifier error), neither failed nor correct (``_prediction_unscored``).
+        return prediction["row_multi_option_pass"] is False
     judge_score = prediction.get("row_judge_score")
     if isinstance(judge_score, (int, float)) and not isinstance(judge_score, bool):
         # A judged long answer: wrong or partial is a failure; exact match
@@ -2866,6 +2871,12 @@ def _prediction_failed(prediction: dict[str, Any]) -> bool:
     return _normalize_answer(str(prediction.get("prediction") or "")) != _normalize_answer(reference)
 
 
+def _prediction_unscored(prediction: dict[str, Any]) -> bool:
+    """A row the scorer excluded from its aggregate (``correct`` = None, so pairing skips it): today a
+    ``multi_option`` row whose verifier could not run."""
+    return "row_multi_option_pass" in prediction and prediction["row_multi_option_pass"] is None
+
+
 def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Compact per-row scores for EVERY evaluated row, so two evals of the
     same split (base model vs fine-tuned) can be compared row by row —
@@ -2875,14 +2886,15 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
     ``keys`` identify a row by its prompt + reference so results pair up even
     if the two evals saw the rows in a different order or count. ``f1`` is
     the handler's per-row F1 where it records one; ``correct`` is 1 / 0 per
-    row (same rule as ``_prediction_failed``). None when nothing is scorable.
+    row (same rule as ``_prediction_failed``; None for a row the scorer excluded,
+    ``_prediction_unscored``). None when nothing is scorable.
     """
     import hashlib
 
     keys: list[str] = []
     f1: list[float | None] = []
     judge: list[float | None] = []
-    correct: list[int] = []
+    correct: list[int | None] = []
     # Row identity by INPUT text alone (``gold_review_service.text_key``),
     # so a stored eval can be joined to the answer key's rows after a
     # reviewer changed some references; and per-row span counts so the
@@ -2895,6 +2907,7 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
     plan_pass: list[float | None] = []
     tool_pass: list[float | None] = []
     ce_pass: list[float | None] = []
+    mo_pass: list[float | None] = []
     for p in predictions:
         if not isinstance(p, dict):
             continue
@@ -2922,11 +2935,14 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         ce_pass.append(
             float(p["row_code_example_pass"]) if isinstance(p.get("row_code_example_pass"), bool) else None
         )
+        mo_pass.append(
+            float(p["row_multi_option_pass"]) if isinstance(p.get("row_multi_option_pass"), bool) else None
+        )
         row_f1 = p.get("row_f1")
         f1.append(float(row_f1) if isinstance(row_f1, (int, float)) and not isinstance(row_f1, bool) else None)
         row_judge = p.get("row_judge_score")
         judge.append(float(row_judge) if isinstance(row_judge, (int, float)) and not isinstance(row_judge, bool) else None)
-        correct.append(0 if _prediction_failed(p) else 1)
+        correct.append(None if _prediction_unscored(p) else (0 if _prediction_failed(p) else 1))
     if not keys:
         return None
     scores: dict[str, Any] = {"keys": keys, "correct": correct, "inputs": inputs}
@@ -2945,12 +2961,14 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         scores["tool_call_pass"] = tool_pass
     if any(value is not None for value in ce_pass):
         scores["code_example_pass"] = ce_pass
+    if any(value is not None for value in mo_pass):
+        scores["multi_option_pass"] = mo_pass
     return scores
 
 
-def row_correct(predictions: list[dict[str, Any]]) -> list[int]:
+def row_correct(predictions: list[dict[str, Any]]) -> list[int | None]:
     """1 / 0 per prediction dict -- the ``correct`` column of
-    ``_row_scores_for_pairing`` (same rule as ``_prediction_failed``)."""
+    ``_row_scores_for_pairing`` (same rule as ``_prediction_failed``; None = excluded by the scorer)."""
     scores = _row_scores_for_pairing(predictions)
     return list(scores["correct"]) if scores else []
 
@@ -2976,6 +2994,7 @@ async def heldout_scoring_context(
     await _apply_structured_plan_live_config(db, project_id, eval_ctx)
     await _apply_remediation_live_config(db, project_id, eval_ctx)
     await _apply_tool_call_live_config(db, project_id, eval_ctx, task_handler)
+    await _apply_multi_option_live_config(db, project_id, eval_ctx, task_handler)
     return eval_ctx, task_handler
 
 
@@ -2994,7 +3013,35 @@ _CODE_EXAMPLE_PREVIEW_KEYS: tuple[str, ...] = (
     "row_code_example_pass",
 )
 
-_ROW_PASS_FLAGS = ("row_remediation_pass", "row_structured_plan_pass", "row_tool_call_pass", "row_code_example_pass")
+# Per-row keys of a ``multi_option`` row, added to the preview only for those rows (never the verifier payload).
+_MULTI_OPTION_PREVIEW_KEYS: tuple[str, ...] = (
+    "row_option_count",
+    "row_option_count_in_range",
+    "row_options",
+    "row_options_passing",
+    "row_top_option_pass",
+    "row_any_option_pass",
+    "row_distinct_strategies",
+    "row_distinct_strategies_all",
+    "row_verifier_error",
+    "row_option_verifier_failures",
+    "row_verifier_note",
+    "row_multi_option_pass",
+    "row_explanation",
+    "row_reference_options",
+)
+
+def _multi_option_preview(prediction: dict[str, Any]) -> dict[str, Any]:
+    """The multi-option preview keys with option / format counts and fix text capped (payload size)."""
+    from app.services import multi_option_scoring as mos
+
+    return mos.preview_fields(prediction, _MULTI_OPTION_PREVIEW_KEYS)
+
+
+_ROW_PASS_FLAGS = (
+    "row_remediation_pass", "row_structured_plan_pass", "row_tool_call_pass", "row_code_example_pass",
+    "row_multi_option_pass",
+)
 
 
 def judge_decides_row(prediction: dict[str, Any]) -> bool:
@@ -3034,6 +3081,8 @@ async def _run_heldout_judges(
         units = sum(1 for p in predictions if isinstance(p.get("row_rubric_passed"), bool))
         return {"kind": "rubric", "label": label, "ran": True, "units": units, "reason": None}
     if getattr(task_handler, "profile_id", None) == "tool_calling":  # scored deterministically
+        return None
+    if mode == "multi_option":  # scored by the option verifier
         return None
     snapshot = await _safe_judge_answers(
         db, project_id=project_id, task_profile=eval_ctx.task_profile,
@@ -3075,6 +3124,8 @@ async def score_predictions_like_heldout(
             )
         elif mode == "structured_plan":
             await _prepare_structured_plan_predictions(task_handler, eval_ctx, predictions)
+        elif mode == "multi_option":
+            await _prepare_multi_option_predictions(db, project_id, task_handler, eval_ctx, predictions)
         metrics = dict(task_handler.score(predictions, eval_ctx) or {})
         await _apply_tool_scoring(db, project_id, task_handler, predictions, metrics, mode)
         if run_judges:
@@ -3121,6 +3172,73 @@ async def _apply_structured_plan_live_config(db: AsyncSession, project_id: int, 
         "tool_block": spp.tool_block_for(getattr(project, "runtime_config", None)),
     })
     eval_ctx.manifest["output_schema"]["structured_plan"] = stamp
+
+
+async def _apply_multi_option_live_config(db: AsyncSession, project_id: int, eval_ctx: Any, task_handler: Any) -> None:
+    """Opt-in ``multi_option`` scoring: a structured-extraction eval whose manifest says ``multi_option``,
+    or whose project turned it on (``runtime_config.multi_option.enabled``), prompts and scores with the
+    project's CURRENT settings (formats, option range, taxonomy, verifier id) overlaid on the manifest's
+    stamp. The verifier is resolved here (operator file + ``CODE_CHECK_ALLOWED``): its label lands on the
+    schema, or ``verifier_unavailable`` says why it cannot run. Anything else is left untouched."""
+    from app.services import multi_option_scoring as mos
+
+    manifest = getattr(eval_ctx, "manifest", None)
+    if not isinstance(manifest, dict) or getattr(task_handler, "profile_id", None) != "structured_extraction":
+        return
+    project = await db.get(Project, project_id)
+    runtime_config = getattr(project, "runtime_config", None)
+    if not mos.uses_multi_option(runtime_config, manifest):
+        return
+    from app.services import external_checks
+
+    schema = manifest.get("output_schema") if isinstance(manifest.get("output_schema"), dict) else {}
+    cfg = mos.effective_config(runtime_config, schema)
+    stamp = {**schema, "scoring_mode": mos.SCORING_MODE, mos.CONFIG_KEY: cfg}
+    stamp.pop("verifier_label", None)
+    stamp.pop("verifier_unavailable", None)
+    try:
+        check = external_checks.resolve_option_verifier((cfg.get("verifier") or {}).get("check_id"))
+        stamp["verifier_label"] = {"id": check.id, "revision": int(getattr(check, "revision", 1) or 1)}
+    except external_checks.VerifierUnavailable as exc:
+        stamp["verifier_unavailable"] = str(exc)
+    manifest["output_schema"] = stamp
+    if getattr(task_handler, "_schema", None) is not None:
+        task_handler._schema = None  # re-resolve with the overlay
+
+
+async def _prepare_multi_option_predictions(
+    db: AsyncSession, project_id: int, task_handler: Any, eval_ctx: Any, predictions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Before scoring a ``multi_option`` eval: run the configured option verifier on every option in a
+    worker thread (sandboxed, cached per project by sha256 of verifier identity + payload + option).
+    Never raises: a verifier that cannot run leaves its rows unverified (marked, excluded from rates)."""
+    from app.services import external_checks
+    from app.services import multi_option_scoring as mos
+
+    try:
+        schema = task_handler._resolve_schema(predictions, eval_ctx)
+        cfg = schema.get(mos.CONFIG_KEY) or {}
+        cache = None
+        try:
+            check = external_checks.resolve_option_verifier((cfg.get("verifier") or {}).get("check_id"))
+            cache = external_checks.VerdictCache(external_checks.verdict_cache_path(project_id))
+            verify = external_checks.make_verify_fn(check, cache)
+        except external_checks.VerifierUnavailable as exc:
+            verify = _unavailable_verifier(str(exc))
+        await asyncio.to_thread(mos.precompute, predictions, schema, task_handler._parse_json_safely, verify)
+        if cache is not None:
+            cache.flush()
+        return {"cached": cache.hits if cache is not None else 0}
+    except Exception as exc:  # noqa: BLE001 - never blocks the eval
+        logging.getLogger(__name__).warning("multi-option preparation skipped: %s", exc)
+        return {"error": f"{type(exc).__name__}: {exc}"[:240]}
+
+
+def _unavailable_verifier(note: str) -> Any:
+    def verify(_payload: Any, _option: Any, _formats: list[str]) -> dict[str, Any]:
+        return {"error": note}
+
+    return verify
 
 
 _REMEDIATION_LIVE_FLAGS = ("score_code_examples", "format_before_check")
@@ -3483,6 +3601,8 @@ _ROW_EXTRA_KEYS: tuple[str, ...] = (
     "plan_row",
     # tool_calling: the gold calls the scorer compares against (None = the row has no gold call).
     "tool_gold_calls",
+    # multi_option: the row's context, the opaque verifier payload and the reference options.
+    "multi_option_row",
 )
 
 
@@ -3496,7 +3616,7 @@ def copy_row_extras(prediction: dict[str, Any], pair: dict[str, Any]) -> dict[st
     for key in _ROW_EXTRA_KEYS:
         value = pair.get(key)
         if key in ("rag_has_context", "alignment_has_pair", "path", "language", "start_line", "remediation_row", "plan_row",
-                   "code_example_row"):
+                   "code_example_row", "multi_option_row"):
             if value is not None:
                 prediction[key] = value
         elif key == "tool_gold_calls":
@@ -3581,7 +3701,10 @@ async def _generate_heldout_predictions(
     if checked_policy is not None:
         from app.services import checked_decoding_service as cds
 
-        eval_spec = {"json_schema": cds.output_json_schema(getattr(eval_ctx, "manifest", None))}
+        eval_spec = {
+            "json_schema": cds.output_json_schema(getattr(eval_ctx, "manifest", None)),
+            "multi_option_shape": cds.output_option_shape(getattr(eval_ctx, "manifest", None)),
+        }
         checked_kwargs["checked"] = {
             "policy": checked_policy,
             "inputs": [None if "_replay" in pair else cds.build_verifier_input(pair, eval_spec) for pair in pairs],
@@ -3708,6 +3831,7 @@ async def run_heldout_evaluation(
     await _apply_structured_plan_live_config(db, project_id, eval_ctx)
     await _apply_remediation_live_config(db, project_id, eval_ctx)
     await _apply_tool_call_live_config(db, project_id, eval_ctx, task_handler)
+    await _apply_multi_option_live_config(db, project_id, eval_ctx, task_handler)
     # context_grounding joins auto-mode checked decoding only when opted in (CODE_CHECK_ALLOWED,
     # the project's code-check selection, or the policy's verifiers).
     checked_policy = cds.with_grounding_opt_in(
@@ -3797,6 +3921,8 @@ async def run_heldout_evaluation(
         )
     elif heldout_scoring_mode == "structured_plan":
         await _prepare_structured_plan_predictions(task_handler, eval_ctx, predictions)
+    elif heldout_scoring_mode == "multi_option":
+        await _prepare_multi_option_predictions(db, project_id, task_handler, eval_ctx, predictions)
 
     eval_dataset_name = dataset.dataset_type.value
     if eval_type == "llm_judge":
@@ -3853,6 +3979,14 @@ async def run_heldout_evaluation(
             logging.getLogger(__name__).warning("remediation fingerprint skipped: %s", exc)
         if code_example_judge is not None:
             metrics["code_example_judge"] = code_example_judge
+    if heldout_scoring_mode == "multi_option":
+        try:
+            from app.services import multi_option_scoring as mos
+
+            mo_schema = (getattr(eval_ctx, "manifest", None) or {}).get("output_schema") or {}
+            metrics["multi_option_fingerprint"] = mos.multi_option_fingerprint(mo_schema.get(mos.CONFIG_KEY) or {})
+        except Exception as exc:  # noqa: BLE001 - a fingerprint failure must not fail the eval
+            logging.getLogger(__name__).warning("multi-option fingerprint skipped: %s", exc)
     metrics["modality_breakdown"] = modality_counts
     # Story 1.5 Gate 2 — surface "the model is emitting a different
     # JSON schema than gold" as a top-level metric so the UI banner
@@ -3881,7 +4015,7 @@ async def run_heldout_evaluation(
     if (
         eval_type in ("exact_match", "f1")
         and answer_judge_enabled
-        and heldout_scoring_mode != "structured_plan"
+        and heldout_scoring_mode not in ("structured_plan", "multi_option")
         and getattr(task_handler, "profile_id", None) != "tool_calling"  # scored deterministically
     ):
         judge_snapshot = await _safe_judge_answers(
@@ -4025,6 +4159,8 @@ async def run_heldout_evaluation(
             "row_tool_args_match": p.get("row_tool_args_match"),
             "row_tool_calls": p.get("row_tool_calls"),
             "grid_cell": (p.get("plan_row") or {}).get("grid_cell") if isinstance(p.get("plan_row"), dict) else None,
+            # multi_option only (absent otherwise, so previews are unchanged): the option cards.
+            **(_multi_option_preview(p) if "row_multi_option_pass" in p else {}),
             # Phase 5.3.5: RAGHandler enrichments — the context the
             # model was given, the row's faithfulness score (token
             # overlap of pred with context), context recall (gold

@@ -1,7 +1,9 @@
 """Code-check registry: cheap, deterministic "does this code still parse" checks.
 
 A check has an id, a set of languages, a kind (``builtin`` in-process, ``external``
-sandboxed binary, ``detector`` an external finder) and returns a result dict::
+sandboxed binary, ``detector`` an external finder, ``option_verifier`` an operator-registered
+command that judges one option of a ``multi_option`` answer -- see ``external_checks``) and returns
+a result dict::
 
     {"check_id", "ok": bool|None, "messages": [str] (<=20, each <=300 chars), "skipped": str|None}
 
@@ -37,10 +39,13 @@ __all__ = [
     "CodeCheck", "normalize_language", "register_code_check", "list_code_checks", "checks_for_language",
     "run_code_checks", "load_code_check_plugins", "load_code_check_plugins_from_settings",
     "get_plugin_diagnostics", "allowed_check_ids", "is_allowed", "get_code_check", "format_code", "formatter_for", "check_revisions",
-    "in_default_selection", "default_check_ids",
+    "in_default_selection", "default_check_ids", "unregister_code_check",
 ]
 
 _REGISTRY: dict[str, Any] = {}
+# Kinds that are never part of the default "every ready check" selection: they are not syntax checks
+# (a detector reports findings; an option verifier judges a ``multi_option`` answer) and run only when named.
+_NEVER_DEFAULT_KINDS = frozenset({"detector", "option_verifier"})
 _CORE_BUILTINS: list[Any] = []  # the in-process built-in instances registered by the core module
 _LOCK = threading.RLock()
 _LOADED_PLUGIN_MODULES: set[str] = set()
@@ -68,7 +73,7 @@ def is_allowed(check: Any) -> bool:
 def in_default_selection(check: Any) -> bool:
     """Part of the default selection (``check_ids=None``) on a language it supports: not a detector,
     allowed, available, and either default-enabled or explicitly listed in ``CODE_CHECK_ALLOWED``."""
-    if check.kind == "detector" or not is_allowed(check):
+    if check.kind in _NEVER_DEFAULT_KINDS or not is_allowed(check):
         return False
     if not getattr(check, "default_enabled", True) and check.id not in allowed_check_ids():
         return False
@@ -94,7 +99,24 @@ def register_code_check(check: Any) -> None:
         _REGISTRY[cid] = check
 
 
+def unregister_code_check(check_id: str) -> None:
+    """Drop a check from the registry (operator-file entries that were removed from the file)."""
+    with _LOCK:
+        _REGISTRY.pop(check_id, None)
+
+
+def _sync_external_checks() -> None:
+    """Pick up the operator's ``EXTERNAL_CHECKS_FILE`` (a no-op when unset; never raises)."""
+    try:
+        from app.services import external_checks
+
+        external_checks.ensure_loaded()
+    except Exception:  # noqa: BLE001 - a broken operator file never breaks the registry
+        pass
+
+
 def get_code_check(check_id: str) -> Any | None:
+    _sync_external_checks()
     return _REGISTRY.get(check_id)
 
 
@@ -110,6 +132,7 @@ def check_revisions(check_ids: list[str]) -> dict[str, int]:
 
 
 def list_code_checks() -> list[dict[str, Any]]:
+    _sync_external_checks()
     out = []
     for cid in sorted(_REGISTRY):
         c = _REGISTRY[cid]

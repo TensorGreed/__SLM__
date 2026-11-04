@@ -781,12 +781,17 @@ class StructuredExtractionHandler:
     # ``structured_plan``: a JSON plan validated against a schema bundle, with JSON-pointer field
     # matches and an optional rubric (see structured_plan_scoring.py).
     SCORING_MODE_STRUCTURED_PLAN: str = "structured_plan"
+    # ``multi_option``: N alternative options x M formats, each judged by an operator-registered
+    # option verifier (see multi_option_scoring.py / external_checks.py). Opt-in.
+    SCORING_MODE_MULTI_OPTION: str = "multi_option"
+    MULTI_OPTION_MAX_NEW_TOKENS: int = 2048
     _SUPPORTED_SCORING_MODES: set[str] = {
         SCORING_MODE_FIELD_MATCH,
         SCORING_MODE_SPAN_SET,
         SCORING_MODE_FINDING_SET,
         SCORING_MODE_REMEDIATION,
         SCORING_MODE_STRUCTURED_PLAN,
+        SCORING_MODE_MULTI_OPTION,
     }
 
     def __init__(self) -> None:
@@ -825,6 +830,9 @@ class StructuredExtractionHandler:
                 return self._schema
             if scoring_mode == self.SCORING_MODE_STRUCTURED_PLAN:
                 self._schema = self._structured_plan_schema(manifest_schema, ctx)
+                return self._schema
+            if scoring_mode == self.SCORING_MODE_MULTI_OPTION:
+                self._schema = self._multi_option_schema(manifest_schema, ctx)
                 return self._schema
             properties = manifest_schema.get("properties")
             required = manifest_schema.get("required")
@@ -888,6 +896,23 @@ class StructuredExtractionHandler:
             "structured_plan": dict(settings_cfg),
             "project_id": getattr(ctx, "project_id", None),
         }
+
+    def _multi_option_schema(self, manifest_schema: dict[str, Any], ctx: EvalContext) -> dict[str, Any]:
+        from app.services import multi_option_scoring as mos
+
+        cfg, _errors = mos.normalize_config(manifest_schema.get(mos.CONFIG_KEY))
+        out: dict[str, Any] = {
+            "fields": ["explanation", "options"],
+            "required": ["options"],
+            "scoring_mode": self.SCORING_MODE_MULTI_OPTION,
+            mos.CONFIG_KEY: cfg,
+            "project_id": getattr(ctx, "project_id", None),
+        }
+        # Set by the eval overlay (``evaluation_service._apply_multi_option_live_config``).
+        for key in ("verifier_label", "verifier_unavailable"):
+            if manifest_schema.get(key) is not None:
+                out[key] = manifest_schema[key]
+        return out
 
     def _structured_plan_bundle(self, schema: dict[str, Any]) -> Any:
         from app.services import structured_plan_prompt as spp
@@ -1033,7 +1058,11 @@ class StructuredExtractionHandler:
         finding_mode = schema.get("scoring_mode") == self.SCORING_MODE_FINDING_SET
         remediation_mode = schema.get("scoring_mode") == self.SCORING_MODE_REMEDIATION
         plan_mode = schema.get("scoring_mode") == self.SCORING_MODE_STRUCTURED_PLAN
+        multi_option_mode = schema.get("scoring_mode") == self.SCORING_MODE_MULTI_OPTION
         for row in rows:
+            if multi_option_mode:
+                built.append(self._build_multi_option_prompt(row, schema))
+                continue
             if plan_mode:
                 built.append(self._build_structured_plan_prompt(row, schema))
                 continue
@@ -1173,6 +1202,27 @@ class StructuredExtractionHandler:
         }
         return BuiltPrompt(prompt=prompt, reference=reference, extras=extras)
 
+    def _build_multi_option_prompt(self, row: dict[str, Any], schema: dict[str, Any]) -> BuiltPrompt:
+        """A ``multi_option`` row: rendered from its ``context`` with the project's formats / option
+        range / taxonomy (``multi_option_scoring.build_multi_option_prompt``); a row without
+        ``context`` keeps its own prompt text (``prompt`` / ``source_text`` / ...). The verifier payload
+        never reaches the prompt; it rides as ``multi_option_row`` for the scorer only."""
+        from app.services import multi_option_scoring as mos
+
+        cfg = schema.get(mos.CONFIG_KEY) or {}
+        if row.get("context") is not None:
+            prompt = mos.build_multi_option_prompt(row.get("context"), cfg)
+        else:
+            prompt = self._extract_input_text(row)
+        ref = mos.reference_payload(row)
+        reference = json.dumps(ref, ensure_ascii=False, sort_keys=True) if ref else self._reference_as_string(row)
+        extras: dict[str, Any] = {
+            "structured_fields": list(schema.get("fields") or []),
+            "structured_input": prompt,
+            "multi_option_row": mos.build_row_context(row),
+        }
+        return BuiltPrompt(prompt=prompt, reference=reference, extras=extras)
+
     # ── Generation hint ──
 
     def max_new_tokens_override(self, default: int) -> int:
@@ -1182,6 +1232,9 @@ class StructuredExtractionHandler:
 
         if (self._schema or {}).get("scoring_mode") == self.SCORING_MODE_STRUCTURED_PLAN:
             return self.STRUCTURED_PLAN_MAX_NEW_TOKENS
+        if (self._schema or {}).get("scoring_mode") == self.SCORING_MODE_MULTI_OPTION:
+            # Several options, each in several formats.
+            return max(self.MULTI_OPTION_MAX_NEW_TOKENS, int(default or 0))
         if (self._schema or {}).get("scoring_mode") == self.SCORING_MODE_REMEDIATION:
             # A unified diff plus a rationale outgrows the 512-token record cap.
             return min(self.REMEDIATION_MAX_NEW_TOKENS, max(self.REMEDIATION_MAX_NEW_TOKENS_FLOOR, int(default or 0)))
@@ -1237,6 +1290,12 @@ class StructuredExtractionHandler:
             from app.services.remediation_scoring import score_remediation
 
             return score_remediation(predictions, schema, self._parse_json_safely)
+        if scoring_mode == self.SCORING_MODE_MULTI_OPTION:
+            from app.services.multi_option_scoring import score_multi_option
+
+            # Verdicts come from ``evaluation_service._prepare_multi_option_predictions`` (worker thread);
+            # a row it did not reach is "the option verifier did not run" (excluded, never failed).
+            return score_multi_option(predictions, schema, self._parse_json_safely)
         if scoring_mode == self.SCORING_MODE_STRUCTURED_PLAN:
             from app.services import structured_plan_prompt as spp
             from app.services.structured_plan_scoring import score_structured_plan
@@ -1768,6 +1827,7 @@ class StructuredExtractionHandler:
             mode = str((manifest_schema or {}).get("scoring_mode") or "").strip().lower() if isinstance(manifest_schema, dict) else ""
         return mode not in (
             self.SCORING_MODE_FINDING_SET, self.SCORING_MODE_REMEDIATION, self.SCORING_MODE_STRUCTURED_PLAN,
+            self.SCORING_MODE_MULTI_OPTION,
         )
 
     def expected_prompt_prefixes(self) -> list[str]:

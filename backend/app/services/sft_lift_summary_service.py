@@ -52,6 +52,9 @@ _PREFERRED_HEADLINE_METRICS: tuple[str, ...] = (
     # tool-calling: the share of calls that select the right tool, are valid against the tool catalog
     # (when there is one) and match the expected arguments (exists only for that profile).
     "tool_call_pass_rate",
+    # multi_option: rows passing the project's row_pass rule (top / any / all options pass the option
+    # verifier); verifier-error rows are excluded (exists only for that mode).
+    "multi_option_pass_rate",
     # "Is the answer right" (LLM judge, long-answer tasks) outranks token
     # overlap when both evals have it — see answer_judge_service.
     "judge_correct",
@@ -86,6 +89,8 @@ _LOWER_IS_BETTER: frozenset[str] = frozenset({
     "invalid_finding_count",
     "malformed_count",
     "clean_chunk_fp_count",
+    # multi_option: options whose strategy is outside the project's taxonomy.
+    "out_of_taxonomy_rate",
 })
 
 
@@ -119,6 +124,11 @@ _HIDDEN_METRICS: frozenset[str] = frozenset({
     # ``issue_resolved_overall_rate`` (every scored row) is the lift metric.
     "issue_resolved_rate",
     "new_findings_rate",
+    # multi_option bookkeeping (sizes, not quality).
+    "verifier_error_rows",
+    "option_verifier_failures",
+    "options_scored",
+    "skipped_non_multi_option_rows",
 })
 
 
@@ -254,6 +264,7 @@ _ROW_SCORE_FOR_METRIC: dict[str, str] = {
     "code_example_pass_rate": "code_example_pass",
     "structured_plan_pass_rate": "structured_plan_pass",
     "tool_call_pass_rate": "tool_call_pass",
+    "multi_option_pass_rate": "multi_option_pass",
 }
 
 

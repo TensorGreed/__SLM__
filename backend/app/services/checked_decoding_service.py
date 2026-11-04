@@ -43,7 +43,11 @@ Verifiers (by answer shape; none names a domain):
 * ``label_set``         - label answers: the whole answer (trimmed, casefolded,
   surrounding quotes / punctuation stripped) is one of the labels the prompt
   explicitly enumerates (the classification handler's candidate list);
-* ``citations``         - every passage id the answer cites is in the prompt.
+* ``citations``         - every passage id the answer cites is in the prompt;
+* ``multi_option_shape`` - a ``multi_option`` answer's SHAPE against the project's config (the
+  option count range, strategies from the taxonomy and distinct, a non-empty fix in every format).
+  It never runs the option verifier: a row's ``verifier_payload`` (which may hold hidden assertions)
+  is not in the allow-list below, so no checked-decoding verifier ever sees it.
 
 A row with no applicable verifier is not retried (``skipped: "no_verifiers"``).
 A retry generation that raises (CUDA out of memory, say) stops the row's
@@ -60,7 +64,7 @@ from typing import Any, Callable, Mapping
 CONFIG_KEY = "checked_decoding"
 INFERENCE_KEY = "inference"
 MODES = ("resample", "repair")
-VERIFIER_IDS = ("code_checks", "context_grounding", "json_schema", "label_set", "citations")
+VERIFIER_IDS = ("code_checks", "context_grounding", "json_schema", "label_set", "citations", "multi_option_shape")
 GROUNDING_CHECK_ID = "context_grounding"
 # Set on a resolved policy (never saved / validated) by ``with_grounding_opt_in``.
 GROUNDING_OPT_IN_KEY = "grounding_opt_in"
@@ -225,6 +229,8 @@ class VerifierInput:
     passage_ids: tuple[str, ...] = ()
     label_set: tuple[str, ...] = ()
     json_schema: Mapping[str, Any] | None = field(default=None, hash=False)
+    # ``multi_option`` config (formats, option range, taxonomy): project settings the prompt renders.
+    option_shape: Mapping[str, Any] | None = field(default=None, hash=False)
 
 
 def _prompt_text(pair: Mapping[str, Any]) -> str:
@@ -267,9 +273,11 @@ def build_verifier_input(pair: Mapping[str, Any], eval_spec: Mapping[str, Any] |
     * ``classification_candidates`` - kept only when the prompt explicitly enumerates them
       (the classification handler's candidate-list line; never when there are more
       candidates than the prompt lists, or the labels merely appear in the input text);
-    * ``eval_spec["json_schema"]`` - the eval's declared output schema (project config).
+    * ``eval_spec["json_schema"]`` - the eval's declared output schema (project config);
+    * ``eval_spec["multi_option_shape"]`` - the ``multi_option`` formats / option range / taxonomy
+      (project config, rendered into the prompt).
 
-    ``reference`` and every other key are never read."""
+    ``reference``, ``multi_option_row`` (its ``verifier_payload``) and every other key are never read."""
     prompt = _prompt_text(pair)
     code_language: str | None = None
     passage_ids: tuple[str, ...] = ()
@@ -287,12 +295,14 @@ def build_verifier_input(pair: Mapping[str, Any], eval_spec: Mapping[str, Any] |
         if clean and _prompt_enumerates(pair.get("prompt"), clean):
             labels = tuple(clean)
     schema = (eval_spec or {}).get("json_schema")
+    shape = (eval_spec or {}).get("multi_option_shape")
     return VerifierInput(
         prompt=prompt,
         code_language=code_language,
         passage_ids=passage_ids,
         label_set=labels,
         json_schema=schema if isinstance(schema, Mapping) else None,
+        option_shape=shape if isinstance(shape, Mapping) else None,
     )
 
 
@@ -327,6 +337,18 @@ def output_json_schema(manifest: Any) -> dict[str, Any] | None:
     # The schema's own ``required`` only; none declared = nothing required.
     req = [str(r) for r in required if str(r) in out_props] if isinstance(required, list) else []
     return {"type": "object", "properties": out_props, "required": req}
+
+
+def output_option_shape(manifest: Any) -> dict[str, Any] | None:
+    """The ``multi_option`` shape spec (formats, option range, taxonomy) of an eval whose output schema
+    is in that mode, else None. Project config only -- never the row's verifier payload."""
+    schema = (manifest or {}).get("output_schema") if isinstance(manifest, Mapping) else None
+    if not isinstance(schema, Mapping) or str(schema.get("scoring_mode") or "").strip().lower() != "multi_option":
+        return None
+    from app.services import multi_option_scoring as mos
+
+    cfg, _errors = mos.normalize_config(schema.get(mos.CONFIG_KEY))
+    return {k: cfg[k] for k in ("formats", "min_options", "max_options", "strategy_taxonomy")}
 
 
 # ── verifiers ─────────────────────────────────────────────────────────────
@@ -442,12 +464,47 @@ def verify_citations(vin: VerifierInput, answer: str) -> dict[str, Any]:
 
 Verifier = Callable[[VerifierInput, str], dict[str, Any]]
 
+def verify_multi_option_shape(vin: VerifierInput, answer: str) -> dict[str, Any]:
+    """Shape only: an ``options`` list within the configured range, each option an object whose
+    strategy is in the taxonomy (when one is configured) and distinct, with a non-empty fix in every
+    configured format. Deterministic, in-process, no external command."""
+    spec = dict(vin.option_shape or {})
+    parsed = parse_json_object(answer)
+    options = parsed.get("options") if isinstance(parsed, dict) else None
+    if not isinstance(options, list):
+        return _result("multi_option_shape", False, ["the answer is not a JSON object with an options list"])
+    lo, hi = int(spec.get("min_options") or 1), int(spec.get("max_options") or 1)
+    problems: list[str] = []
+    if not lo <= len(options) <= hi:
+        problems.append(f"{len(options)} option(s); expected {lo}-{hi}" if lo != hi else f"{len(options)} option(s); expected {lo}")
+    taxonomy = {" ".join(str(t).split()).lower() for t in spec.get("strategy_taxonomy") or []}
+    seen: set[str] = set()
+    for i, option in enumerate(options[:10], 1):
+        if not isinstance(option, dict):
+            problems.append(f"option {i} is not an object")
+            continue
+        strategy = " ".join(str(option.get("strategy") or "").split()).lower()
+        if not strategy:
+            problems.append(f"option {i} has no strategy")
+        elif taxonomy and strategy not in taxonomy:
+            problems.append(f"option {i}: strategy '{strategy}' is not one of the listed strategy ids")
+        elif strategy in seen:
+            problems.append(f"option {i} repeats strategy '{strategy}'")
+        seen.add(strategy)
+        fixes = option.get("fixes") if isinstance(option.get("fixes"), dict) else {}
+        missing = [f for f in spec.get("formats") or [] if not (isinstance(fixes.get(f), str) and fixes[f].strip())]
+        if missing:
+            problems.append(f"option {i} has no fix in: {', '.join(missing)}")
+    return _result("multi_option_shape", not problems, problems[:MAX_MESSAGES_PER_FAILURE * 2])
+
+
 _VERIFIERS: dict[str, Verifier] = {
     "code_checks": verify_code_checks,
     "context_grounding": verify_context_grounding,
     "json_schema": verify_json_schema,
     "label_set": verify_label_set,
     "citations": verify_citations,
+    "multi_option_shape": verify_multi_option_shape,
 }
 
 
@@ -509,6 +566,8 @@ def applicable_verifiers(vin: VerifierInput | None, policy: Mapping[str, Any]) -
         ids.append("label_set")
     if vin.passage_ids:
         ids.append("citations")
+    if vin.option_shape:
+        ids.append("multi_option_shape")
     return ids if wanted is None else [v for v in ids if v in wanted]
 
 

@@ -221,7 +221,10 @@ def _baseline_scoring_matches(result: EvalResult, fingerprint: str | None, tool_
             return False
     if fingerprint is None:
         return True
-    return fingerprint in (metrics.get("remediation_fingerprint"), metrics.get("structured_plan_fingerprint"))
+    return fingerprint in (
+        metrics.get("remediation_fingerprint"), metrics.get("structured_plan_fingerprint"),
+        metrics.get("multi_option_fingerprint"),
+    )
 
 
 def _baseline_decoding_matches(
@@ -388,6 +391,25 @@ async def _structured_plan_fingerprint_for(db: AsyncSession, project_id: int, ju
         return "unavailable"
 
 
+async def _multi_option_fingerprint_for(db: AsyncSession, project_id: int) -> str | None:
+    """The scoring fingerprint a reusable ``multi_option`` baseline must carry (None for any other
+    project). Includes the option verifier's revision, so bumping it re-runs the base model."""
+    try:
+        from app.services import multi_option_scoring as mos
+        from app.services.eval_task_handler_service import read_prepared_manifest
+
+        project = await db.get(Project, project_id)
+        if project is None:
+            return None
+        manifest = read_prepared_manifest(project_id)
+        runtime_config = getattr(project, "runtime_config", None)
+        if not mos.uses_multi_option(runtime_config, manifest):
+            return None
+        return mos.multi_option_fingerprint(mos.effective_config(runtime_config, manifest.get("output_schema")))
+    except Exception:  # noqa: BLE001 - cannot fingerprint: never reuse blindly
+        return "unavailable"
+
+
 async def _tool_call_fingerprint_for(db: AsyncSession, project_id: int) -> str | None:
     """The current tool-call scoring fingerprint (a cached ``tool_call`` baseline must carry the same one)."""
     try:
@@ -424,8 +446,10 @@ async def _baseline_bar(
     from app.services.decoding_settings import MODEL_DECODING, model_decoding_differs
     from app.services.evaluation_service import PERPLEXITY_EVAL_TYPE, run_heldout_evaluation
 
-    scoring_fp = await _remediation_fingerprint_for(db, project_id) or await _structured_plan_fingerprint_for(
-        db, project_id, judge_label
+    scoring_fp = (
+        await _remediation_fingerprint_for(db, project_id)
+        or await _structured_plan_fingerprint_for(db, project_id, judge_label)
+        or await _multi_option_fingerprint_for(db, project_id)
     )
     tool_fp = await _tool_call_fingerprint_for(db, project_id)
     # The lift check's checked-decoding policy (``common["checked_decoding"]``): the cache keys on it.

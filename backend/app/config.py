@@ -273,6 +273,11 @@ class Settings(BaseSettings):
     CODE_CHECK_PLUGIN_MODULES: str = ""
     # Sandbox network isolation (unshare -rn): "auto" | "off" | "require".
     CODE_CHECK_NETWORK_ISOLATION: str = "auto"
+    # Operator-registered external commands (option verifiers / detectors): a JSON file listing
+    # ``{id, kind, protocol, argv, ...}`` entries (``services/external_checks.py``). Unset = none.
+    # Each entry still runs only when its id is ALSO in CODE_CHECK_ALLOWED (two keys); projects can
+    # only pick an id, never supply a command line.
+    EXTERNAL_CHECKS_FILE: str = ""
 
     # ── Dataset Import LLM-assist (Phase H) ─────────────────────────────
     # When enabled, the introspector can optionally consult the teacher

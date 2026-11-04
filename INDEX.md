@@ -82,6 +82,7 @@ session-start guidance.
 - `backend/app/api/llm_spend.py` — Project cloud-LLM spend tally + monthly budget (``llm_spend_service``).
 - `backend/app/api/manifest.py` — Pipeline-as-code manifest API (priority.md P21 + P22).
 - `backend/app/api/models.py` — Universal base-model registry + compatibility API routes.
+- `backend/app/api/multi_option_config.py` — ``multi_option`` scoring settings API (opt-in): formats, option range, strategy taxonomy, the option
 - `backend/app/api/pipeline.py` — Pipeline status API routes.
 - `backend/app/api/pipelines.py` — Multi-stage pipeline evaluation routes (G10).
 - `backend/app/api/probe_packs.py` — Probe Pack API — Coach-stage-2 phase 8.
@@ -236,6 +237,7 @@ session-start guidance.
 - `backend/app/services/experiment_recovery_service.py` — Experiment lifecycle recovery actions (Story 1.7).
 - `backend/app/services/export_service.py` — Export & runtime packaging service.
 - `backend/app/services/external_benchmark_service.py` — External benchmarks: score a project's runs on a labelled set someone
+- `backend/app/services/external_checks.py` — Operator-registered external commands: option verifiers and detectors.
 - `backend/app/services/failure_cluster_service.py` — P12 — Failure-cluster service.
 - `backend/app/services/finding_set_scoring.py` — ``finding_set`` scoring: a model proposes ``{"findings": [{label, start_line,
 - `backend/app/services/frontier_comparison_service.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
@@ -270,6 +272,7 @@ session-start guidance.
 - `backend/app/services/model_benchmark_service.py` — Real sampled benchmark sweep for model-selection onboarding.
 - `backend/app/services/model_introspection_service.py` — Model introspection helpers for Hugging Face compatible model IDs.
 - `backend/app/services/model_selection_service.py` — Heuristic base-model recommendation service for the training wizard.
+- `backend/app/services/multi_option_scoring.py` — ``multi_option`` scoring: the model answers with a *menu* of alternative fixes -- N options, each
 - `backend/app/services/newbie_autopilot_service.py` — Newbie autopilot intent mapping for zero-knowledge training UX.
 - `backend/app/services/nl2pipeline_service.py` — Natural Language to Pipeline (Magic Create) service.
 - `backend/app/services/openapi_tools.py` — Convert an OpenAPI 3.0 / 3.1 document into tool-catalog tools (no OpenAPI library).
@@ -743,6 +746,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/FindingSetMetricsPanel.tsx` — FindingSetMetricsPanel — results of a findings eval (the finding_set
 - `frontend/src/components/evaluation/FrontierComparisonPanel.tsx` — FrontierComparisonPanel — Track 1, Epic D.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.
+- `frontend/src/components/evaluation/MultiOptionMetricsPanel.tsx` — MultiOptionMetricsPanel — results of a `multi_option` eval (the opt-in scoring
 - `frontend/src/components/evaluation/PackSectionEditor.tsx` — Quality-Lift phase 7 slice 1 — Generic pack section editor.
 - `frontend/src/components/evaluation/PerSliceMetricsTable.tsx` — Quality-Lift phase 8 slice 2 — PerSliceMetricsTable.
 - `frontend/src/components/evaluation/PreferencePairsFromEvalCard.tsx` — PreferencePairsFromEvalCard — turn one eval result's wrong / partial answers
@@ -864,6 +868,7 @@ session-start guidance.
 
 - `backend/tests/_gateway_helpers.py` — Seeding helpers shared by the gateway tests (no network, no real models).
 - `backend/tests/_job_wait.py` — Shared test helper: let background Jobs finish before the next test.
+- `backend/tests/_multi_option_toy.py` — A toy option verifier for the ``multi_option`` tests: a config fix delivered in two formats.
 - `backend/tests/_tiny_chat_tokenizer.py` — Tiny, download-free fast tokenizer for trainer masking tests.
 - `backend/tests/conftest.py` — Pytest session-scoped safety pin — force every test to write to /tmp.
 - `backend/tests/fake_mcp_server.py` — A tiny stdio MCP server for tests: a toy "deploy service" with four tools.
@@ -977,6 +982,7 @@ session-start guidance.
 - `backend/tests/test_experiment_comparison.py` — Tests for the eval-aware experiment comparison service + API (E3).
 - `backend/tests/test_export_scoping_and_merge.py` — Export correctness (Wave 1b).
 - `backend/tests/test_external_benchmarks.py` — External benchmarks (Epic G-B1): import a labelled set someone else made,
+- `backend/tests/test_external_checks.py` — Operator-registered external commands (``external_checks``): the operator file, the two-key gate
 - `backend/tests/test_failure_cluster_handler_drilldown.py` — Arc 2 — failure-cluster drill-down backend pass-through.
 - `backend/tests/test_finding_set_scoring.py` — ``finding_set`` scoring (code findings): label + inclusive line-range IoU
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
@@ -1009,6 +1015,8 @@ session-start guidance.
 - `backend/tests/test_mcp_client.py` — MCP client: stdio via the fake server (allow-listed by absolute path), streamable HTTP via
 - `backend/tests/test_mcp_server.py` — BrewSLM MCP server (G11): protocol, tools, error mapping, import hygiene.
 - `backend/tests/test_multi_lora_plan.py` — vLLM multi-LoRA serve plan (G11).
+- `backend/tests/test_multi_option_eval_flow.py` — End to end: a toy config-fix project in ``multi_option`` scoring, a base and a trained run evaluated
+- `backend/tests/test_multi_option_scoring.py` — ``multi_option`` scoring over canned verifier verdicts (pure; no subprocess, no DB), the prompt
 - `backend/tests/test_multi_seed_aggregation.py` — Tests for Quality-Lift phase 1, slice 2 — multi-seed dispatch + aggregation.
 - `backend/tests/test_multi_seed_gate_variance.py` — Tests for Quality-Lift phase 1, slice 3 — variance-aware gate evaluator.
 - `backend/tests/test_multi_seed_schema.py` — Tests for Quality-Lift phase 1, slice 1 — multi-seed schema foundation.
@@ -1355,6 +1363,8 @@ session-start guidance.
 - `frontend/src/components/evaluation/FieldMatchMetricsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/FrontierComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/MultiOptionBackendShape.test.tsx` — Feeds the panel and the option cards a payload generated by the real backend: the metrics are the
+- `frontend/src/components/evaluation/MultiOptionMetricsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/PackSectionEditor.test.tsx` — Quality-Lift phase 7 slice 1 — Generic PackSectionEditor tests.
 - `frontend/src/components/evaluation/PerSliceMetricsTable.test.tsx` — Quality-Lift phase 8 slice 2 — PerSliceMetricsTable tests.
 - `frontend/src/components/evaluation/PreferencePairsFromEvalCard.test.tsx` — _(no docstring)_

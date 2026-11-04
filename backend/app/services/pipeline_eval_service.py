@@ -29,7 +29,7 @@ and carried with ``evaluation_service.copy_row_extras`` -- the same extras
 held-out eval scores with. The judges held-out would run are run per stage
 view. A unit is never counted right or wrong for want of scoring context,
 a judge or a working scorer: it is UNSCORED with a reason
-(``row_context_unavailable`` / ``needs_judge`` / ``scoring_error``) and kept
+(``row_context_unavailable`` / ``needs_judge`` / ``scoring_error`` / ``row_unscored``) and kept
 out of the end-to-end share and the attribution.
 
 Model calls go through ``gateway_service.run_internal`` (no rate limit, no
@@ -665,6 +665,8 @@ async def _score_slot(db: AsyncSession, sc: _StageCtx, units: list[Unit], scorer
             u.unscored_reason = "needs_judge"
         elif idx >= len(correct):
             u.unscored_reason = "scoring_error"
+        elif correct[idx] is None:  # the scorer excluded the row (e.g. its verifier could not run)
+            u.unscored_reason = "row_unscored"
         else:
             u.correct = bool(correct[idx])
     return out

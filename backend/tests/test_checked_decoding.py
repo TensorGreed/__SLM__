@@ -107,6 +107,7 @@ def _pair_with_sentinels() -> dict:
         "tool_gold_calls": [{"name": SENTINEL}],
         "alignment_chosen": SENTINEL,
         "remediation_row": {"finding": {"label": SENTINEL}},
+        "multi_option_row": {"context": "c", "verifier_payload": {"hidden": SENTINEL}, "reference_options": [SENTINEL]},
         "judge": {"verdict": SENTINEL},
     }
 
@@ -120,7 +121,9 @@ class AllowListTests(unittest.TestCase):
         self.assertEqual(vin.label_set, ("alpha", "beta"))
         # The dataclass has no field a reference could live in.
         self.assertEqual(
-            set(vin.__dataclass_fields__), {"prompt", "code_language", "passage_ids", "label_set", "json_schema"}
+            set(vin.__dataclass_fields__),
+            # option_shape: the multi_option formats / option range / taxonomy (project config, like json_schema).
+            {"prompt", "code_language", "passage_ids", "label_set", "json_schema", "option_shape"},
         )
 
     def test_labels_not_shown_in_the_prompt_are_not_passed(self):

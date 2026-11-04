@@ -1,0 +1,663 @@
+{
+  "metrics": {
+    "scoring_mode": "multi_option",
+    "schema": {
+      "fields": [
+        "explanation",
+        "options"
+      ],
+      "required": [
+        "options"
+      ],
+      "scoring_mode": "multi_option",
+      "verifier_label": {
+        "id": "example_option_verifier",
+        "revision": 3
+      }
+    },
+    "multi_option": {
+      "formats": [
+        "format_a",
+        "format_b"
+      ],
+      "min_options": 2,
+      "max_options": 3,
+      "row_pass": "top_option",
+      "require_agreement": true,
+      "strategy_taxonomy": [
+        "guard-clause",
+        "validate-at-boundary",
+        "total-api"
+      ],
+      "verifier": {
+        "id": "example_option_verifier",
+        "revision": 3
+      }
+    },
+    "skipped_non_multi_option_rows": 0,
+    "total": 4,
+    "correct": 2,
+    "verifier_error_rows": 1,
+    "option_verifier_failures": 1,
+    "options_scored": 12,
+    "multi_option_pass_rate": 0.5,
+    "exact_match": 0.5,
+    "option_pass_rate": 0.75,
+    "rows_with_passing_option_rate": 0.75,
+    "top_option_pass_rate": 0.5,
+    "all_options_pass_rate": 0.25,
+    "distinct_strategies_mean": 0.75,
+    "rows_with_two_distinct_passing_rate": 0.0,
+    "option_count_in_range_rate": 0.6,
+    "json_validity_rate": 0.8,
+    "malformed_rate": 0.2,
+    "format_pass_rate": {
+      "format_a": 1.0,
+      "format_b": 0.9091
+    },
+    "check_pass_rate": {
+      "behaviour_changed": 0.9545,
+      "behaviour_preserved": 1.0,
+      "parses": 1.0
+    },
+    "out_of_taxonomy_rate": 0.5714,
+    "cross_format_agreement_rate": 0.9091,
+    "verifier_error": "1 row(s) could not be verified and are excluded from the rates",
+    "option_verifier_failure_note": "1 option(s) failed in the verifier (timeout, crash or bad output) and count as failing",
+    "multi_option_fingerprint": "0123456789abcdef"
+  },
+  "predictions_preview": [
+    {
+      "scoring_mode": "multi_option",
+      "row_malformed": false,
+      "row_option_count": 3,
+      "row_option_count_in_range": true,
+      "row_options": [
+        {
+          "rank": 0,
+          "strategy": "guard-clause",
+          "in_taxonomy": true,
+          "malformed": false,
+          "fixes": {
+            "format_a": "--- a/f.py\n+++ b/f.py\n@@ -1 +1,2 @@\n+# guard-clause\n def f(xs):",
+            "format_b": "def f(xs):\n    # guard-clause\n    return xs[0] if xs else None\n"
+          },
+          "formats": {
+            "format_a": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": true
+              },
+              "passes": true,
+              "messages": []
+            },
+            "format_b": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": null
+              },
+              "passes": true,
+              "messages": []
+            }
+          },
+          "agreement": {
+            "agree": true,
+            "differences": []
+          },
+          "passes": true,
+          "error": null,
+          "note": null,
+          "title": "Return early on empty input",
+          "rationale": "Why guard-clause.",
+          "tradeoffs": "Some.",
+          "rollback": "Revert the change."
+        },
+        {
+          "rank": 1,
+          "strategy": "validate-at-boundary",
+          "in_taxonomy": true,
+          "malformed": false,
+          "fixes": {
+            "format_a": "--- a/f.py\n+++ b/f.py\n@@ -1 +1,2 @@\n+# validate-at-boundary\n def f(xs):",
+            "format_b": "def f(xs):\n    # validate-at-boundary\n    return xs[0] if xs else None\n"
+          },
+          "formats": {
+            "format_a": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": true
+              },
+              "passes": true,
+              "messages": []
+            },
+            "format_b": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": null
+              },
+              "passes": true,
+              "messages": []
+            }
+          },
+          "agreement": {
+            "agree": false,
+            "differences": [
+              "format_b leaves the old branch in place"
+            ]
+          },
+          "passes": false,
+          "error": null,
+          "note": null,
+          "title": "Validate the caller's input",
+          "rationale": "Why validate-at-boundary.",
+          "tradeoffs": "Some.",
+          "rollback": "Revert the change."
+        },
+        {
+          "rank": 2,
+          "strategy": "rewrite",
+          "in_taxonomy": false,
+          "malformed": false,
+          "fixes": {
+            "format_a": "--- a/f.py\n+++ b/f.py\n@@ -1 +1,2 @@\n+# rewrite\n def f(xs):",
+            "format_b": "def f(xs):\n    # rewrite\n    return xs[0] if xs else None\n"
+          },
+          "formats": {
+            "format_a": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": true
+              },
+              "passes": true,
+              "messages": []
+            },
+            "format_b": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": null
+              },
+              "passes": true,
+              "messages": []
+            }
+          },
+          "agreement": {
+            "agree": true,
+            "differences": []
+          },
+          "passes": true,
+          "error": null,
+          "note": null,
+          "title": "Rewrite it all",
+          "rationale": "Why rewrite.",
+          "tradeoffs": "Some.",
+          "rollback": "Revert the change."
+        }
+      ],
+      "row_options_passing": 2,
+      "row_top_option_pass": true,
+      "row_any_option_pass": true,
+      "row_distinct_strategies": 1,
+      "row_distinct_strategies_all": 2,
+      "row_verifier_error": false,
+      "row_option_verifier_failures": 0,
+      "row_verifier_note": null,
+      "row_multi_option_pass": true,
+      "row_explanation": "f crashes on an empty list.",
+      "row_reference_options": null
+    },
+    {
+      "scoring_mode": "multi_option",
+      "row_malformed": false,
+      "row_option_count": 3,
+      "row_option_count_in_range": true,
+      "row_options": [
+        {
+          "rank": 0,
+          "strategy": "total-api",
+          "in_taxonomy": true,
+          "malformed": false,
+          "fixes": {
+            "format_a": "--- a/f.py\n+++ b/f.py\n@@ -1 +1,2 @@\n+# total-api\n def f(xs):",
+            "format_b": "def f(xs):\n    # total-api\n    return xs[0] if xs else None\n"
+          },
+          "formats": {
+            "format_a": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": true
+              },
+              "passes": true,
+              "messages": []
+            },
+            "format_b": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": false,
+                "behaviour_preserved": null
+              },
+              "passes": false,
+              "messages": [
+                "the failing input still fails"
+              ]
+            }
+          },
+          "agreement": {
+            "agree": true,
+            "differences": []
+          },
+          "passes": false,
+          "error": null,
+          "note": null,
+          "title": "Use a total accessor",
+          "rationale": "Why total-api.",
+          "tradeoffs": "Some.",
+          "rollback": "Revert the change."
+        },
+        {
+          "rank": 1,
+          "strategy": "guard-clause",
+          "in_taxonomy": true,
+          "malformed": false,
+          "fixes": {
+            "format_a": "--- a/f.py\n+++ b/f.py\n@@ -1 +1,2 @@\n+# guard-clause\n def f(xs):",
+            "format_b": "def f(xs):\n    # guard-clause\n    return xs[0] if xs else None\n"
+          },
+          "formats": {
+            "format_a": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": true
+              },
+              "passes": true,
+              "messages": []
+            },
+            "format_b": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": null
+              },
+              "passes": true,
+              "messages": []
+            }
+          },
+          "agreement": {
+            "agree": true,
+            "differences": []
+          },
+          "passes": true,
+          "error": null,
+          "note": null,
+          "title": "Guard clause",
+          "rationale": "Why guard-clause.",
+          "tradeoffs": "Some.",
+          "rollback": "Revert the change."
+        },
+        {
+          "rank": 2,
+          "strategy": "crash",
+          "in_taxonomy": false,
+          "malformed": false,
+          "fixes": {
+            "format_a": "--- a/f.py\n+++ b/f.py\n@@ -1 +1,2 @@\n+# crash\n def f(xs):",
+            "format_b": "def f(xs):\n    # crash\n    return xs[0] if xs else None\n"
+          },
+          "formats": {},
+          "agreement": null,
+          "passes": false,
+          "error": null,
+          "note": "exit 3: verifier crashed",
+          "title": "crash",
+          "rationale": "Why crash.",
+          "tradeoffs": "Some.",
+          "rollback": "Revert the change.",
+          "failure_reason": "verifier_crash"
+        }
+      ],
+      "row_options_passing": 1,
+      "row_top_option_pass": false,
+      "row_any_option_pass": true,
+      "row_distinct_strategies": 1,
+      "row_distinct_strategies_all": 2,
+      "row_verifier_error": false,
+      "row_option_verifier_failures": 1,
+      "row_verifier_note": null,
+      "row_multi_option_pass": false,
+      "row_explanation": "f crashes on an empty list.",
+      "row_reference_options": null
+    },
+    {
+      "scoring_mode": "multi_option",
+      "row_malformed": false,
+      "row_option_count": 2,
+      "row_option_count_in_range": true,
+      "row_options": [
+        {
+          "rank": 0,
+          "strategy": "launch-fail",
+          "in_taxonomy": false,
+          "malformed": false,
+          "fixes": {
+            "format_a": "--- a/f.py\n+++ b/f.py\n@@ -1 +1,2 @@\n+# launch-fail\n def f(xs):",
+            "format_b": "def f(xs):\n    # launch-fail\n    return xs[0] if xs else None\n"
+          },
+          "formats": {},
+          "agreement": null,
+          "passes": null,
+          "error": "could not run: binary not found: verify",
+          "note": null,
+          "title": "Guard clause",
+          "rationale": "Why launch-fail.",
+          "tradeoffs": "Some.",
+          "rollback": "Revert the change."
+        },
+        {
+          "rank": 1,
+          "strategy": "guard-clause",
+          "in_taxonomy": true,
+          "malformed": false,
+          "fixes": {
+            "format_a": "--- a/f.py\n+++ b/f.py\n@@ -1 +1,2 @@\n+# guard-clause\n def f(xs):",
+            "format_b": "def f(xs):\n    # guard-clause\n    return xs[0] if xs else None\n"
+          },
+          "formats": {
+            "format_a": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": true
+              },
+              "passes": true,
+              "messages": []
+            },
+            "format_b": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": null
+              },
+              "passes": true,
+              "messages": []
+            }
+          },
+          "agreement": {
+            "agree": true,
+            "differences": []
+          },
+          "passes": true,
+          "error": null,
+          "note": null,
+          "title": "Guard clause",
+          "rationale": "Why guard-clause.",
+          "tradeoffs": "Some.",
+          "rollback": "Revert the change."
+        }
+      ],
+      "row_options_passing": 1,
+      "row_top_option_pass": null,
+      "row_any_option_pass": null,
+      "row_distinct_strategies": 1,
+      "row_distinct_strategies_all": 1,
+      "row_verifier_error": true,
+      "row_option_verifier_failures": 0,
+      "row_verifier_note": "1 option(s) could not be verified: could not run: binary not found: verify",
+      "row_multi_option_pass": null,
+      "row_explanation": "f crashes on an empty list.",
+      "row_reference_options": null
+    },
+    {
+      "scoring_mode": "multi_option",
+      "row_malformed": true,
+      "row_option_count": 0,
+      "row_option_count_in_range": false,
+      "row_options": [],
+      "row_options_passing": 0,
+      "row_top_option_pass": false,
+      "row_any_option_pass": false,
+      "row_distinct_strategies": 0,
+      "row_distinct_strategies_all": 0,
+      "row_verifier_error": false,
+      "row_option_verifier_failures": 0,
+      "row_verifier_note": null,
+      "row_multi_option_pass": false,
+      "row_explanation": null,
+      "row_reference_options": null
+    },
+    {
+      "scoring_mode": "multi_option",
+      "row_malformed": false,
+      "row_option_count": 6,
+      "row_option_count_in_range": false,
+      "row_options": [
+        {
+          "rank": 0,
+          "strategy": "guard-clause",
+          "in_taxonomy": true,
+          "malformed": false,
+          "fixes": {
+            "format_a": "--- a/f.py\n+++ b/f.py\n@@ -1 +1,2 @@\n+# guard-clause\n def f(xs):\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding line\n+# padding l",
+            "format_b": "def f(xs):\n    # guard-clause\n    return xs[0] if xs else None\n"
+          },
+          "formats": {
+            "format_a": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": true
+              },
+              "passes": true,
+              "messages": []
+            },
+            "format_b": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": null
+              },
+              "passes": true,
+              "messages": []
+            }
+          },
+          "agreement": {
+            "agree": true,
+            "differences": []
+          },
+          "passes": true,
+          "error": null,
+          "note": null,
+          "title": "Return early on empty input",
+          "rationale": "Why guard-clause.",
+          "tradeoffs": "Some.",
+          "rollback": "Revert the change.",
+          "fixes_truncated": [
+            "format_a"
+          ]
+        },
+        {
+          "rank": 1,
+          "strategy": "alt-0",
+          "in_taxonomy": false,
+          "malformed": false,
+          "fixes": {
+            "format_a": "--- a/f.py\n+++ b/f.py\n@@ -1 +1,2 @@\n+# alt-0\n def f(xs):",
+            "format_b": "def f(xs):\n    # alt-0\n    return xs[0] if xs else None\n"
+          },
+          "formats": {
+            "format_a": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": true
+              },
+              "passes": true,
+              "messages": []
+            },
+            "format_b": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": null
+              },
+              "passes": true,
+              "messages": []
+            }
+          },
+          "agreement": {
+            "agree": true,
+            "differences": []
+          },
+          "passes": true,
+          "error": null,
+          "note": null,
+          "title": "alt-0",
+          "rationale": "Why alt-0.",
+          "tradeoffs": "Some.",
+          "rollback": "Revert the change."
+        },
+        {
+          "rank": 2,
+          "strategy": "alt-1",
+          "in_taxonomy": false,
+          "malformed": false,
+          "fixes": {
+            "format_a": "--- a/f.py\n+++ b/f.py\n@@ -1 +1,2 @@\n+# alt-1\n def f(xs):",
+            "format_b": "def f(xs):\n    # alt-1\n    return xs[0] if xs else None\n"
+          },
+          "formats": {
+            "format_a": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": true
+              },
+              "passes": true,
+              "messages": []
+            },
+            "format_b": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": null
+              },
+              "passes": true,
+              "messages": []
+            }
+          },
+          "agreement": {
+            "agree": true,
+            "differences": []
+          },
+          "passes": true,
+          "error": null,
+          "note": null,
+          "title": "alt-1",
+          "rationale": "Why alt-1.",
+          "tradeoffs": "Some.",
+          "rollback": "Revert the change."
+        },
+        {
+          "rank": 3,
+          "strategy": "alt-2",
+          "in_taxonomy": false,
+          "malformed": false,
+          "fixes": {
+            "format_a": "--- a/f.py\n+++ b/f.py\n@@ -1 +1,2 @@\n+# alt-2\n def f(xs):",
+            "format_b": "def f(xs):\n    # alt-2\n    return xs[0] if xs else None\n"
+          },
+          "formats": {
+            "format_a": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": true
+              },
+              "passes": true,
+              "messages": []
+            },
+            "format_b": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": null
+              },
+              "passes": true,
+              "messages": []
+            }
+          },
+          "agreement": {
+            "agree": true,
+            "differences": []
+          },
+          "passes": true,
+          "error": null,
+          "note": null,
+          "title": "alt-2",
+          "rationale": "Why alt-2.",
+          "tradeoffs": "Some.",
+          "rollback": "Revert the change."
+        },
+        {
+          "rank": 4,
+          "strategy": "alt-3",
+          "in_taxonomy": false,
+          "malformed": false,
+          "fixes": {
+            "format_a": "--- a/f.py\n+++ b/f.py\n@@ -1 +1,2 @@\n+# alt-3\n def f(xs):",
+            "format_b": "def f(xs):\n    # alt-3\n    return xs[0] if xs else None\n"
+          },
+          "formats": {
+            "format_a": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": true
+              },
+              "passes": true,
+              "messages": []
+            },
+            "format_b": {
+              "checks": {
+                "parses": true,
+                "behaviour_changed": true,
+                "behaviour_preserved": null
+              },
+              "passes": true,
+              "messages": []
+            }
+          },
+          "agreement": {
+            "agree": true,
+            "differences": []
+          },
+          "passes": true,
+          "error": null,
+          "note": null,
+          "title": "alt-3",
+          "rationale": "Why alt-3.",
+          "tradeoffs": "Some.",
+          "rollback": "Revert the change."
+        }
+      ],
+      "row_options_passing": 6,
+      "row_top_option_pass": true,
+      "row_any_option_pass": true,
+      "row_distinct_strategies": 1,
+      "row_distinct_strategies_all": 1,
+      "row_verifier_error": false,
+      "row_option_verifier_failures": 0,
+      "row_verifier_note": null,
+      "row_multi_option_pass": true,
+      "row_explanation": "f crashes on an empty list.",
+      "row_reference_options": null,
+      "row_options_truncated": true
+    }
+  ]
+}

@@ -40,7 +40,7 @@ def make_result(check_id: str, ok: bool | None, messages: list[str] | None = Non
 class CodeCheck(Protocol):
     id: str
     languages: frozenset[str]
-    kind: str  # "builtin" | "external" | "detector"
+    kind: str  # "builtin" | "external" | "detector" | "option_verifier"
     binary: str | None
 
     def available(self) -> bool: ...

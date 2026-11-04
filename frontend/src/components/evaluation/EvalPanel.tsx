@@ -16,6 +16,7 @@ import { Term } from '../shared/Term';
 import ClassificationChartsPanel from './ClassificationChartsPanel';
 import RemediationMetricsPanel, { RemediationRowView, isRemediationMetrics, isRemediationRow, type RemediationMetrics, type RemediationRow } from './RemediationMetricsPanel';
 import StructuredPlanMetricsPanel, { StructuredPlanRowView, isStructuredPlanMetrics, isStructuredPlanRow, type StructuredPlanMetrics, type StructuredPlanRow } from './StructuredPlanMetricsPanel';
+import MultiOptionMetricsPanel, { MultiOptionRowView, isMultiOptionMetrics, isMultiOptionRow, type MultiOptionMetrics, type MultiOptionRow } from './MultiOptionMetricsPanel';
 import ToolCallMetricsPanel, { ToolCallRowView, isToolCallMetrics, isToolCallRow, type ToolCallMetrics, type ToolCallRow } from './ToolCallMetricsPanel';
 import FindingSetMetricsPanel, { FindingSetRowView, isFindingSetMetrics, type FindingSetMetrics, type FindingSetRow } from './FindingSetMetricsPanel';
 import DialogueJudgePanel, { findDialogueJudge, hasJudgedRows } from './DialogueJudgePanel';
@@ -125,7 +126,7 @@ interface EvalMetrics {
     overall_em?: number | null;
 }
 
-interface PredictionPreviewRow extends FindingSetRow, RemediationRow, StructuredPlanRow, ToolCallRow {
+interface PredictionPreviewRow extends FindingSetRow, RemediationRow, StructuredPlanRow, ToolCallRow, MultiOptionRow {
     prompt?: string;
     reference?: string;
     prediction?: string;
@@ -2124,6 +2125,18 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 />
                             ))}
 
+                        {/* Multi-option evals (multi_option): options passing the operator's verifier, top
+                            option, distinct strategies, cross-format agreement, per-format / per-check bars. */}
+                        {evalResults
+                            .filter((r) => isMultiOptionMetrics(r.metrics))
+                            .map((r) => (
+                                <MultiOptionMetricsPanel
+                                    key={`mo-metrics-${r.id}`}
+                                    metrics={r.metrics as unknown as MultiOptionMetrics}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                />
+                            ))}
+
                         {/* Tool-call evals (tool_call): pass rate, tool pick, validity against the catalog. */}
                         {evalResults
                             .filter((r) => isToolCallMetrics(r.metrics))
@@ -2459,6 +2472,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                         )}
                                                         {isStructuredPlanRow(row) && (
                                                             <StructuredPlanRowView row={row} />
+                                                        )}
+                                                        {isMultiOptionRow(row) && (
+                                                            <MultiOptionRowView row={row} />
                                                         )}
                                                         {isToolCallRow(row) && (
                                                             <ToolCallRowView row={row} />

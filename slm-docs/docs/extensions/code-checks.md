@@ -107,7 +107,7 @@ from app.services.code_checks.base import BaseCheck, make_result
 class RubySyntax(BaseCheck):
     id = "ruby_syntax"
     languages = frozenset({"ruby"})
-    kind = "external"      # builtin | external | detector
+    kind = "external"      # builtin | external | detector | option_verifier
     binary = "ruby"
 
     def run(self, code, *, language, context):
@@ -119,6 +119,29 @@ def register_code_checks(register):
 ```
 
 Only `kind="builtin"` skips the allow-list; external and detector checks still need their id in `CODE_CHECK_ALLOWED`. A failing plugin import is recorded and does not stop the rest from loading.
+
+## Operator-registered commands (`EXTERNAL_CHECKS_FILE`)
+
+Some scoring needs a domain-specific judge that does not belong in BrewSLM: the `multi_option` scoring mode hands each option a model proposes to an **option verifier**, and the remediation detector can be a **command detector**. An operator (never a project) registers these commands in a JSON file named by the `EXTERNAL_CHECKS_FILE` setting; unset (the default) means none:
+
+```json
+[{"id": "my_option_verifier", "kind": "option_verifier", "protocol": 1,
+  "argv": ["/opt/verifiers/mine/verify"], "formats": ["format_a", "format_b"],
+  "timeout_s": 120, "cpu_s": 120, "mem_mb": 2048, "revision": 1},
+ {"id": "my_detector", "kind": "detector", "protocol": 1,
+  "argv": ["/opt/verifiers/mine/detect", "-"], "languages": ["python"],
+  "timeout_s": 30, "cpu_s": 30, "mem_mb": 1024, "revision": 1}]
+```
+
+Each entry is registered as an opt-in check and still runs only when its id is **also** in `CODE_CHECK_ALLOWED`: the file declares it, the allow-list enables it. Projects pick an id; they can never supply a command line. Commands run in the sandbox above with the payload on stdin. The file is re-read when it changes; a malformed entry is skipped and logged. Bump `revision` when a command's verdicts change: cached verdicts and cached base-model lift results are then recomputed.
+
+- **Detector protocol**: stdin is the code; stdout `{"findings": [{"label", "start_line", "end_line"}]}`.
+- **Option-verifier protocol 1**: stdin `{"protocol": 1, "payload": <the row's verifier_payload>, "option": <one option>, "formats": [...]}`; stdout `{"formats": {"<format>": {"checks": {"<name>": true|false|null}, "passes": true|false, "messages": []}}, "agreement": {"agree": true|false, "differences": []}, "option_passes": true|false}`. Exit 0 means a verdict was produced (pass or fail). What happens on an error depends on who caused it:
+  - **The option failed the verifier** -- a timeout, a non-zero exit, output that is not a JSON object, output over the size cap, or a verdict that leaves a format (or the required agreement) undecided. The option under test caused it, so that option **fails**, with the reason shown on its card (`verifier_timeout`, `verifier_crash`, `verifier_bad_output`, `verifier_output_too_large`, `verifier_undecided`) and counted in `option_verifier_failures`.
+  - **The verifier could not run at all** -- the sandbox could not launch it, or it is not registered, not allow-listed or not installed. Those options are "not verified"; a row whose rule needs them is left out of the rates (`verifier_error_rows`). With `row_pass: top_option` only the top option decides the row, so an error on another option never excludes it. If every row is left out, the pass rate reads "not scored", never 0%.
+  - A project config that turns `multi_option` on needs at least one format; with none, an option passes only on an explicit `"option_passes": true`.
+
+Verdicts are cached per project, each entry signed with a server-side key; an edited entry is ignored and re-verified. **Isolate what your verifier executes**: it runs model-written options, and the sandbox limits time, memory and network, not the files the verifier itself can reach. Run the option inside the verifier's own container, VM or throwaway copy.
 
 ## HTTP API
 

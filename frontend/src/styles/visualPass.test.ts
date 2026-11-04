@@ -53,6 +53,7 @@ export const CLEAN_FILES = [
     'components/evaluation/FieldMatchMetricsPanel.tsx',
     'components/evaluation/RemediationMetricsPanel.tsx',
     'components/evaluation/StructuredPlanMetricsPanel.tsx',
+    'components/evaluation/MultiOptionMetricsPanel.tsx',
     'components/evaluation/ToolCallMetricsPanel.tsx',
     'components/evaluation/RerouteRecommendationPanel.tsx',
     'components/evaluation/runSelection.ts',

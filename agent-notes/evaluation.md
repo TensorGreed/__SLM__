@@ -568,6 +568,103 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - Tests: `tests/test_structured_plan_recipe.py`, `tests/test_structured_plan_acceptance.py`. Docs:
   `slm-docs/docs/workflows/structured-plan.md`.
 
+## `multi_option` scoring + operator-registered verifiers (opt-in)
+
+- **What it scores.** The model answers with a *menu*: `{"explanation", "options": [{strategy, title, rationale,
+  tradeoffs, rollback, fixes: {<format>: text}}]}` (option order = ranking, option 0 = top). Each option is judged by an
+  **option verifier**: an external command the OPERATOR registers; the domain logic lives there, BrewSLM stays generic.
+  Scoring mode `multi_option` of `StructuredExtractionHandler` (`_multi_option_schema`, `_build_multi_option_prompt`,
+  `wraps_own_prompt` false, `max_new_tokens_override` >= 2048). Code: `services/multi_option_scoring.py`.
+- **Turning it on.** Manifest `output_schema.scoring_mode == "multi_option"` (config in `output_schema.multi_option`), or
+  `runtime_config.multi_option.enabled = true` on a structured-extraction project. Settings in `runtime_config["multi_option"]`
+  overlay the manifest stamp (`evaluation_service._apply_multi_option_live_config`, called by `run_heldout_evaluation`,
+  `run_evaluation` and `heldout_scoring_context`): `formats`, `min_options` / `max_options`, `strategy_taxonomy`,
+  `verifier: {check_id}` (an id ONLY -- `normalize_config` and the API drop anything else, so a project can never supply
+  argv), `require_agreement`, `row_pass` (`top_option` default / `any_option` / `all_options`; EVERY rule also needs
+  `n >= min_options`, so too few options fail the row), `instruction` (default "Propose alternative solutions for the problem
+  below."; `effective_instruction`). API: `api/multi_option_config.py` GET/PUT `/projects/{id}/multi-option-config`
+  (lists the registered verifiers read-only, never their argv; 422 `INVALID_MULTI_OPTION_CONFIG` with `metadata.errors`
+  for bad values, an id that is not a registered option verifier, or `enabled: true` with no format in the effective config
+  -- an option with nothing to check would otherwise pass vacuously; `normalize_config` reports the same for `enabled` raw
+  configs). With no format at all (e.g. a manifest-only config), an option is decided ONLY by an explicit `option_passes`
+  bool from the verifier; anything else fails it as `verifier_undecided`.
+- **Rows.** `context` (rendered into the prompt), `verifier_payload` (opaque, handed to the verifier only -- may hold hidden
+  assertions; never rendered into a prompt, never in `predictions_preview`, never read by checked decoding),
+  optional `options_json` (reference options, display only). A row without `context` keeps its own prompt text. The row rides
+  as `prediction["multi_option_row"]` (`_ROW_EXTRA_KEYS`). Training-row mapping (data adapter / recipe / playbook) is not built:
+  prepare rows with `build_multi_option_prompt` so train and eval prompts match.
+- **Operator allow-list (`services/external_checks.py`).** `settings.EXTERNAL_CHECKS_FILE` (default unset = none) names a JSON
+  list of `{id, kind: option_verifier|detector, protocol: 1, argv, formats|languages, timeout_s, cpu_s, mem_mb, revision}`.
+  Each becomes an `ExternalCommandCheck` in the code-check registry (`default_enabled=False`; `option_verifier` and
+  `detector` kinds are never in the default selection) and runs only when its id is ALSO in `CODE_CHECK_ALLOWED` (two keys).
+  The file is re-read on path / mtime / size change (`ensure_loaded`, called from `get_code_check` / `list_code_checks`);
+  removed entries unregister; a malformed entry or one shadowing a non-file check is skipped and reported. Execution:
+  `sandbox_exec.run_sandboxed` (temp dir, scrubbed env, rlimits, `unshare -rn` per `CODE_CHECK_NETWORK_ISOLATION`), payload
+  on stdin, no files shared. Detector entries use the unchanged `remediation_detector` contract (`kind: "command"`); their
+  revision joins the detector identity.
+- **Option-verifier protocol v1.** stdin `{"protocol": 1, "payload": <verifier_payload>, "option": <one option>, "formats": [...]}`;
+  stdout `{"formats": {fmt: {"checks": {name: bool|null}, "passes": bool, "messages": []}}, "agreement": {"agree", "differences"},
+  "option_passes": bool}` (`normalize_verdict`: non-bool check = n/a; missing `passes` = all decided checks passed). Exit 0 =
+  a verdict. Errors carry `error_kind`: `infrastructure` (sandbox could not launch it) or `option` with `reason`
+  (`verifier_timeout` / `verifier_crash` (non-zero exit) / `verifier_output_too_large` / `verifier_bad_output`). An option
+  passes when every format passes, the formats agree (when `require_agreement` and >= 2 formats) and `option_passes` is not
+  false. A format with no fix fails locally (`checks: {present: false}`) without asking the verifier.
+- **Which verifier errors exclude a row (maintainer rule).** Only INFRASTRUCTURE errors: the sandbox could not launch the
+  verifier, or it is not registered / not allow-listed / not installed (`metrics.verifier_unavailable`) / did not run. That
+  option gets `passes: null` + `error`; the row is EXCLUDED (`row_verifier_error`, `row_multi_option_pass: null`,
+  `row_exact_match: null`, `row_scores.correct` None so pairing skips it) only when its rule cannot be decided without it --
+  `top_option` looks at option 0 alone, `any_option` is decided by any passing option, `all_options` by any failing one.
+  `verifier_error_rows` counts excluded rows. Everything the model's option CAUSED -- a per-option timeout, a non-zero exit,
+  unparseable or oversized output, a verdict leaving a format / the agreement undecided (`verifier_undecided`) -- FAILS that
+  option (`passes: false`, `failure_reason`, `note`); `option_verifier_failures` counts them (decided rows). Nothing raises.
+  When every row is excluded (or there are none) `multi_option_pass_rate` / `exact_match` are None ("not scored"), never 0.0.
+- **Verdict cache.** Verdicts run in a worker thread before scoring (`_prepare_multi_option_predictions` -> `precompute`,
+  cached on the prediction as `_multi_option_analysis`) and are cached per project in
+  `DATA_DIR/projects/<id>/multi_option_verifier_cache.json`, keyed by sha256 of verifier identity (`id:p<protocol>:r<revision>`)
+  + payload + option + formats (errors never cached). Each entry is `{"v": verdict, "mac": HMAC-SHA256}` keyed by
+  `SECRETS_ENCRYPTION_KEY` (else `JWT_SECRET`) mixed with a per-install random key `DATA_DIR/.multi_option_verdict_cache.key`
+  (0600; a per-process key if unwritable); an entry whose MAC fails (edited file, older unsigned format) is dropped on load
+  (`VerdictCache.rejected`). Operator verifiers run untrusted model output and must isolate it themselves (`sandbox_exec`
+  limits time / memory / network, not the filesystem).
+- **Metrics.** `multi_option_pass_rate` (row_pass rule over verified rows; also `exact_match`), `option_pass_rate`,
+  `rows_with_passing_option_rate`, `top_option_pass_rate`, `all_options_pass_rate`, `distinct_strategies_mean` (distinct
+  in-taxonomy strategies among PASSING options; `row_distinct_strategies_all` counts all options),
+  `rows_with_two_distinct_passing_rate`, `out_of_taxonomy_rate` (only with a taxonomy), `cross_format_agreement_rate` (only
+  when reported), `option_count_in_range_rate` (reported; fewer than `min_options` also fails the row), `format_pass_rate{}`,
+  `check_pass_rate{}`, `malformed_rate`, `json_validity_rate`, `verifier_error_rows`, `option_verifier_failures`,
+  `metrics.multi_option` (formats, range, rule, verifier id + revision). Per row: `row_options` (cards; `failure_reason` on
+  verifier-failed options), `row_options_passing`, `row_top_option_pass`, `row_any_option_pass`, `row_distinct_strategies`,
+  `row_option_verifier_failures`, `row_multi_option_pass`, `row_exact_match`. The stored preview
+  (`evaluation_service._multi_option_preview` -> `multi_option_scoring.preview_fields`) caps each fix text at 1500 chars
+  (`fixes_truncated` names the clipped formats), options at 5 (`row_options_truncated`) and formats at 6; scores always use
+  the full analysis.
+- **Lift / Compare.** `multi_option_fingerprint` (formats, range, taxonomy, row_pass, require_agreement, sha256 of the
+  effective instruction, verifier identity) is
+  stamped on the metrics; `post_training_eval_service._multi_option_fingerprint_for` + `_baseline_scoring_matches` reuse a
+  cached base result only when it matches (bumping the verifier `revision` re-runs the base model); Compare refuses to pair
+  across fingerprints (`_SCORING_FINGERPRINTS`). `multi_option_pass_rate` is a headline lift metric (after
+  `tool_call_pass_rate`), pairing on `row_scores.multi_option_pass`; `out_of_taxonomy_rate` is lower-is-better; the counts are
+  hidden. The answer judge never runs for this mode (deterministic, like `structured_plan`).
+- **Checked decoding.** `multi_option_shape` verifier (auto when the eval is in this mode): option count in range, strategies in
+  the taxonomy and distinct, a non-empty fix in every format. It reads only `VerifierInput.option_shape` (project config the
+  prompt renders); it NEVER runs the option verifier, whose payload may hold hidden assertions.
+- **UI.** `MultiOptionMetricsPanel` (tiles, verifier id + revision + fingerprint provenance, per-format / per-check bars with
+  10% width steps) and `MultiOptionRowView` / `OptionCard` (rank, strategy chip muted when out of taxonomy, rationale /
+  tradeoffs / rollback disclosure, one tab per format with the fix, format x check grid, agreement badge with differences,
+  failed-check messages, "not verified" for infrastructure errors, "Fails: the verifier crashed / timed out ..." for
+  option-level failures, "(truncated)" on capped fixes / option lists, "not scored" for a null headline) in `EvalPanel`.
+  Fixture `multiOptionBackendShape.fixture.json` is generated from the real scorer + `_multi_option_preview`. Pipeline eval
+  marks an excluded row unscored (`row_unscored`).
+- **Not built yet:** Compare per-row option counts side by side, a Settings card (the API exists), a synth / review-queue gate
+  ("keep rows whose options all pass"), alignment pairs from passing vs failing options, the optional detector inside
+  multi-option scoring, a recipe / data-adapter mapping.
+- Tests: `tests/test_multi_option_scoring.py` (pure scoring, prompt, shape verifier, defaults unchanged),
+  `tests/test_external_checks.py` (operator file, two-key gate, sandbox call, protocol errors + error kinds, cache + revision,
+  tampered cache entries, detector),
+  `tests/test_multi_option_eval_flow.py` (TestClient end to end with a real toy verifier script from `tests/_multi_option_toy.py`,
+  summary headline, settings API, fingerprint on revision bump); frontend `MultiOptionMetricsPanel.test.tsx`,
+  `MultiOptionBackendShape.test.tsx`.
+
 ## Tool-call scoring (G7)
 
 - `services/tool_call_scoring.py` is the scorer; the catalog it scores against is `tool_catalog_service` (see

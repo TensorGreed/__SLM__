@@ -8,7 +8,8 @@ evaluated) or
   shared ``code_findings_prompt`` builder renders each chunk with that project's labels, the run
   generates greedily through the eval inference path, and the G4 findings parser reads the output.
 * ``{"kind": "command", "check_id": str}`` -- an allow-listed code check registered with
-  ``kind="detector"`` in the code-check registry. It reads the code and reports
+  ``kind="detector"`` in the code-check registry (a plugin, or an operator-file entry from
+  ``EXTERNAL_CHECKS_FILE`` -- ``external_checks``; same contract). It reads the code and reports
   ``{"findings": [{label, start_line, end_line}]}`` (its ``run`` result may carry a ``findings``
   list, or a JSON message holding that object); it runs wherever the check runs (sandboxed).
 
@@ -321,7 +322,12 @@ def _resolve_command_detector(cfg: dict[str, Any]) -> ResolvedDetector:
                 out.append(None)
         return out
 
-    return ResolvedDetector("command", check_id, f"command:{check_id}:{binary_fingerprint(getattr(check, 'binary', None))}", detect)
+    identity = f"command:{check_id}:{binary_fingerprint(getattr(check, 'binary', None))}"
+    if callable(getattr(check, "identity", None)):
+        # An operator-file detector (``external_checks``): its declared revision joins the identity, so
+        # bumping it invalidates cached verdicts and the scoring fingerprint.
+        identity += f":{check.identity()}"
+    return ResolvedDetector("command", check_id, identity, detect)
 
 
 def _labels_from_check_result(res: Any) -> list[str] | None:

@@ -196,7 +196,7 @@ def build_records(
             rec["prompt"] = _cap(p.get("prompt"))
         rec["reference"] = _cap(p.get("reference"))
         rec["prediction"] = _cap(p.get("prediction"))
-        if correct is not None and idx < len(correct):
+        if correct is not None and idx < len(correct) and correct[idx] is not None:
             rec["correct"] = int(correct[idx])
         for key in ("row_exact_match", "row_f1"):
             if _num(p.get(key)) is not None:

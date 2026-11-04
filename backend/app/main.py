@@ -27,6 +27,7 @@ from app.api.remediation import router as remediation_router
 from app.api.alignment_pairs import router as alignment_pairs_router
 from app.api.remediation_config import router as remediation_config_router
 from app.api.structured_plan_config import router as structured_plan_config_router
+from app.api.multi_option_config import router as multi_option_config_router
 from app.api.tool_scoring_config import router as tool_scoring_config_router
 from app.api.settings import router as settings_router
 from app.api.pipelines import (
@@ -401,6 +402,7 @@ app.include_router(remediation_router, prefix="/api", dependencies=API_DEPENDENC
 app.include_router(alignment_pairs_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(remediation_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(structured_plan_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(multi_option_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(tool_scoring_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(code_checks_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(drift_router, prefix="/api", dependencies=API_DEPENDENCIES)

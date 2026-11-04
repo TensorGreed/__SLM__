@@ -320,6 +320,7 @@ def _metric_label(metric_id: str) -> str:
         "code_example_pass_rate": "code-example pass rate",
         "structured_plan_pass_rate": "plan pass rate",
         "tool_call_pass_rate": "tool-call pass rate",
+        "multi_option_pass_rate": "option pass rate",
     }.get(metric_id, metric_id)
 
 
