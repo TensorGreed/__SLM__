@@ -63,7 +63,9 @@ class HeldoutEvalRunRequest(BaseModel):
     dataset_name: str = Field(default="test", min_length=1, max_length=255)
     eval_type: Literal["exact_match", "f1", "llm_judge"] = "exact_match"
     max_samples: int = Field(default=100, ge=1, le=5000)
-    max_new_tokens: int = Field(default=128, ge=1, le=1024)
+    # Upper bound fits long structured answers (multi_option menus run 3-6k tokens); handlers still clamp
+    # their own modes (e.g. StructuredExtractionHandler caps plain JSON at MAX_NEW_TOKENS_HARDCAP).
+    max_new_tokens: int = Field(default=128, ge=1, le=8192)
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     model_path: str | None = None
     judge_model: str = Field(default="meta-llama/Meta-Llama-3-70B-Instruct", min_length=1, max_length=255)

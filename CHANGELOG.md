@@ -1,5 +1,9 @@
 # Changelog
 
+### Longer answers in held-out eval (November 4, 2026)
+
+- The held-out eval's `max_new_tokens` (`POST /api/projects/{id}/evaluation/run-heldout`) now accepts up to 8,192, up from 1,024, so `multi_option` answers (several options, each in several formats; often 3,000–6,000 tokens) are no longer cut off. Limit change only: the default stays 128, every scoring mode still applies its own cap (plain JSON extraction is still clamped to its hard limit), and values above 8,192 are rejected.
+
 ### Multiple-option answers scored by an operator verifier (November 4, 2026)
 
 - New opt-in **`multi_option`** scoring mode for structured-extraction projects whose answers are a menu of alternative fixes: several options, each built on a strategy and delivered in several formats. Every option is judged by an **option verifier** command that the server operator registers in the file named by the new `EXTERNAL_CHECKS_FILE` setting (unset by default) and enables in `CODE_CHECK_ALLOWED`; projects only pick a registered id (`GET/PUT /api/projects/{id}/multi-option-config`). Results report options passing every check, rows with at least one passing option, whether the top option passes, distinct strategies against the project's strategy list and agreement between formats. An option the verifier times out or crashes on counts as failing (with the reason); only rows the verifier could not run on at all are counted and left out of the rates. Every rule needs the minimum number of options, an enabled config needs at least one format, and cached verdicts are signed so an edited cache entry is ignored. The Results tab shows one card per option with its strategy, fixes per format and a check grid. Nothing changes for projects that do not turn it on.

@@ -574,7 +574,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   tradeoffs, rollback, fixes: {<format>: text}}]}` (option order = ranking, option 0 = top). Each option is judged by an
   **option verifier**: an external command the OPERATOR registers; the domain logic lives there, BrewSLM stays generic.
   Scoring mode `multi_option` of `StructuredExtractionHandler` (`_multi_option_schema`, `_build_multi_option_prompt`,
-  `wraps_own_prompt` false, `max_new_tokens_override` >= 2048). Code: `services/multi_option_scoring.py`.
+  `wraps_own_prompt` false, `max_new_tokens_override` >= 2048; it honours a larger request — the run-heldout API allows up to 8192, and real
+  menus run 3-6k tokens, so ask for ~6144). Code: `services/multi_option_scoring.py`.
 - **Turning it on.** Manifest `output_schema.scoring_mode == "multi_option"` (config in `output_schema.multi_option`), or
   `runtime_config.multi_option.enabled = true` on a structured-extraction project. Settings in `runtime_config["multi_option"]`
   overlay the manifest stamp (`evaluation_service._apply_multi_option_live_config`, called by `run_heldout_evaluation`,

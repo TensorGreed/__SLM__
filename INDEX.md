@@ -1001,6 +1001,7 @@ session-start guidance.
 - `backend/tests/test_gold_set_diagnostics.py` — V4 of the ML-native visualisations arc — gold-set class balance
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
 - `backend/tests/test_heldout_dataset_resolution.py` — Held-out eval dataset resolution: aliases resolve by type priority.
+- `backend/tests/test_heldout_eval_request_limits.py` — HeldoutEvalRunRequest token budget: default unchanged, long structured answers allowed, still bounded.
 - `backend/tests/test_hub_publish.py` — Publish an export to the Hugging Face Hub: the pure front-matter helper,
 - `backend/tests/test_hyperparameter_sweep.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
