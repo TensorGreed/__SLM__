@@ -590,7 +590,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   configs). With no format at all (e.g. a manifest-only config), an option is decided ONLY by an explicit `option_passes`
   bool from the verifier; anything else fails it as `verifier_undecided`.
 - **Rows.** `context` (rendered into the prompt), `verifier_payload` (opaque, handed to the verifier only -- may hold hidden
-  assertions; never rendered into a prompt, never in `predictions_preview`, never read by checked decoding),
+  assertions; never rendered into a prompt, never in `predictions_preview`, never read by checked decoding; both are read
+  from the TOP LEVEL of the row, a nested copy is not seen),
   optional `options_json` (reference options, display only). A row without `context` keeps its own prompt text. The row rides
   as `prediction["multi_option_row"]` (`_ROW_EXTRA_KEYS`). Training-row mapping (data adapter / recipe / playbook) is not built:
   prepare rows with `build_multi_option_prompt` so train and eval prompts match.
@@ -615,8 +616,12 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   option gets `passes: null` + `error`; the row is EXCLUDED (`row_verifier_error`, `row_multi_option_pass: null`,
   `row_exact_match: null`, `row_scores.correct` None so pairing skips it) only when its rule cannot be decided without it --
   `top_option` looks at option 0 alone, `any_option` is decided by any passing option, `all_options` by any failing one.
-  `verifier_error_rows` counts excluded rows. Everything the model's option CAUSED -- a per-option timeout, a non-zero exit,
-  unparseable or oversized output, a verdict leaving a format / the agreement undecided (`verifier_undecided`) -- FAILS that
+  `verifier_error_rows` counts excluded rows. A row with no `verifier_payload` (null or absent) is the same case: the
+  verifier is NOT called, the option gets `multi_option_scoring.NO_PAYLOAD_ERROR`, and `rows_missing_verifier_payload` counts
+  it (the card warns). An empty payload (`{}`, `[]`, `""`, `0`) is still a payload, so a verifier that needs nothing from the
+  row uses `{}`. Malformed output and options with no fix need no verifier and stay decided. Everything the model's option CAUSED -- a per-option timeout, a non-zero exit,
+  unparseable or oversized output, a verdict leaving a format / the agreement undecided (`verifier_undecided`; a missing
+  agreement is undecided only when it would decide the option, not after a failed format or an `option_passes: false`) -- FAILS that
   option (`passes: false`, `failure_reason`, `note`); `option_verifier_failures` counts them (decided rows). Nothing raises.
   When every row is excluded (or there are none) `multi_option_pass_rate` / `exact_match` are None ("not scored"), never 0.0.
 - **Verdict cache.** Verdicts run in a worker thread before scoring (`_prepare_multi_option_predictions` -> `precompute`,

@@ -51,6 +51,8 @@ CANNED = {
     "disagree": verdict(agree=False),
     "veto": verdict(option_passes=False),
     "no-agreement": {"formats": verdict()["formats"], "agreement": None},
+    "failed-no-agreement": {"formats": verdict(passes_b=False)["formats"], "agreement": None},
+    "veto-no-agreement": {"formats": verdict()["formats"], "agreement": None, "option_passes": False},
 }
 
 
@@ -199,6 +201,18 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(m["verifier_error_rows"], 0)
         self.assertEqual(m["option_verifier_failures"], 1)
 
+    def test_no_agreement_on_an_option_that_already_failed_is_not_undecided(self):
+        # A failed format or a veto decides the option: the missing agreement changes nothing, so it
+        # must not be counted as a verifier failure.
+        for strategy in ("failed-no-agreement", "veto-no-agreement"):
+            row = pred(opt(strategy))
+            m = score([row], schema(min_options=1))
+            view = row["row_options"][0]
+            self.assertIs(view["passes"], False, strategy)
+            self.assertNotIn("failure_reason", view, strategy)
+            self.assertEqual(m["option_verifier_failures"], 0, strategy)
+            self.assertEqual(m["verifier_error_rows"], 0, strategy)
+
     def test_verifier_can_veto(self):
         row = pred(opt("veto"))
         score([row], schema(min_options=1))
@@ -345,6 +359,52 @@ class ScoringTests(unittest.TestCase):
         small = pred(opt("guard-clause"), opt("total-api"))
         score([small])
         self.assertNotIn("row_options_truncated", es._multi_option_preview(small))
+
+    def test_row_without_a_verifier_payload_is_unverifiable_and_never_sent_to_the_verifier(self):
+        calls: list = []
+        bare, good = pred(opt("guard-clause"), opt("total-api")), pred(opt("guard-clause"), opt("total-api"))
+        bare["multi_option_row"]["verifier_payload"] = None
+        m = score([bare, good], verify=canned_verify(calls))
+        self.assertEqual(len(calls), 2)  # only the row that has a payload
+        self.assertTrue(all(payload == PAYLOAD for payload, _o, _f in calls))
+        self.assertIsNone(bare["row_multi_option_pass"])
+        self.assertIsNone(bare["row_exact_match"])
+        self.assertTrue(bare["row_verifier_error"])
+        self.assertIn("verifier_payload", bare["row_verifier_note"])
+        self.assertEqual(m["verifier_error_rows"], 1)
+        self.assertEqual(m["rows_missing_verifier_payload"], 1)
+        self.assertEqual(m["option_verifier_failures"], 0)
+        self.assertEqual(m["total"], 1)  # the bare row is out of every rate
+
+    def test_every_row_without_a_payload_reports_not_scored(self):
+        rows = [pred(opt("guard-clause"), opt("total-api")) for _ in range(2)]
+        for row in rows:
+            row["multi_option_row"]["verifier_payload"] = None
+        m = score(rows)
+        self.assertIsNone(m["multi_option_pass_rate"])
+        self.assertEqual(m["rows_missing_verifier_payload"], 2)
+
+    def test_empty_payload_is_still_a_payload(self):
+        # A verifier that needs nothing from the row gets an explicit empty payload.
+        for empty in ({}, [], "", 0):
+            calls: list = []
+            row = pred(opt("guard-clause"), opt("validate-at-boundary"))
+            row["multi_option_row"]["verifier_payload"] = empty
+            m = score([row], verify=canned_verify(calls))
+            self.assertEqual(len(calls), 2)
+            self.assertIs(row["row_multi_option_pass"], True)
+            self.assertEqual(m["rows_missing_verifier_payload"], 0)
+
+    def test_payload_less_row_still_fails_what_the_model_caused(self):
+        # Malformed output and options with no fix at all need no verifier, so they stay decided.
+        malformed, empty = pred(raw="not json"), pred(opt("guard-clause", format_a=" ", format_b=""), opt("total-api", format_a="", format_b=""))
+        for row in (malformed, empty):
+            row["multi_option_row"]["verifier_payload"] = None
+        m = score([malformed, empty])
+        self.assertIs(malformed["row_multi_option_pass"], False)
+        self.assertIs(empty["row_multi_option_pass"], False)
+        self.assertEqual(m["verifier_error_rows"], 0)
+        self.assertEqual(m["rows_missing_verifier_payload"], 0)
 
     def test_no_verifier_means_every_row_unverified(self):
         rows = [pred(opt("guard-clause"))]

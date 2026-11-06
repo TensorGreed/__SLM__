@@ -78,6 +78,7 @@ export interface MultiOptionMetrics {
     format_pass_rate?: Record<string, number | null> | null;
     check_pass_rate?: Record<string, number | null> | null;
     verifier_error_rows?: number;
+    rows_missing_verifier_payload?: number;
     option_verifier_failures?: number;
     verifier_error?: string;
     verifier_unavailable?: string;
@@ -179,6 +180,7 @@ export default function MultiOptionMetricsPanel({ metrics, provenance }: PanelPr
     const formats = cfg.formats ?? [];
     const rule = ROW_RULE_LABEL[cfg.row_pass ?? 'top_option'] ?? cfg.row_pass ?? '';
     const errors = metrics.verifier_error_rows ?? 0;
+    const missingPayload = metrics.rows_missing_verifier_payload ?? 0;
     const optionFailures = metrics.option_verifier_failures ?? 0;
     const formatRates = metrics.format_pass_rate ?? {};
     const checkRates = metrics.check_pass_rate ?? {};
@@ -203,6 +205,12 @@ export default function MultiOptionMetricsPanel({ metrics, provenance }: PanelPr
             {errors > 0 && (
                 <p className="mo-metrics__warn" data-testid="mo-verifier-errors">
                     {errors} row{errors === 1 ? '' : 's'} could not be verified and {errors === 1 ? 'is' : 'are'} left out of every rate below.
+                </p>
+            )}
+            {missingPayload > 0 && (
+                <p className="mo-metrics__warn" data-testid="mo-missing-payload">
+                    {missingPayload} row{missingPayload === 1 ? ' has' : 's have'} no verifier_payload at the top level of the
+                    test file, so the verifier was not run on {missingPayload === 1 ? 'it' : 'them'}.
                 </p>
             )}
             {optionFailures > 0 && (

@@ -34,7 +34,10 @@ Verifier errors split in two (never a raised eval):
 * **Infrastructure** -- the sandbox could not launch the verifier, or the verifier is not registered /
   not allow-listed / not installed (or no verifier ran). The option gets ``passes = None`` and
   ``error``; a row whose ``row_pass`` rule cannot be decided without it is excluded from every rate
-  (``row_verifier_error``) and counted in ``verifier_error_rows``.
+  (``row_verifier_error``) and counted in ``verifier_error_rows``. A row with no ``verifier_payload``
+  is the same case (the data is at fault, not the option): the verifier is not called and
+  ``rows_missing_verifier_payload`` counts it. A verifier that needs nothing from the row takes an
+  explicit empty payload (``{}``).
 * **Option-level** -- a per-option timeout, a non-zero exit, unparseable output, output over the size
   cap, or a verdict that leaves a format / the agreement undecided. The model's option caused it, so
   THAT option fails (``passes = False``) with ``failure_reason`` (``verifier_timeout``,
@@ -58,6 +61,7 @@ SCORING_MODE = "multi_option"
 CONFIG_KEY = "multi_option"
 ROW_PASS_MODES = ("top_option", "any_option", "all_options")
 MAX_OPTIONS_LIMIT = 10
+NO_PAYLOAD_ERROR = "this row has no verifier_payload, so the option verifier was not run"
 MAX_FORMATS = 6
 MAX_TAXONOMY = 200
 MAX_FIX_CHARS = 6000
@@ -314,7 +318,8 @@ def _decide_option(view: dict[str, Any], verdict: dict[str, Any], cfg: dict[str,
     passes = all(view["formats"][f]["passes"] is True for f in formats)
     if cfg.get("require_agreement") and len(formats) >= 2 and not missing:
         agree = (view["agreement"] or {}).get("agree")
-        if agree is None:
+        # Only an option the agreement would decide is undecided; a failed format or a veto already failed it.
+        if agree is None and passes and option_passes is not False:
             _fail_option(view, "verifier_undecided", "the verifier reported no cross-format agreement")
             return
         passes = passes and agree is True
@@ -358,6 +363,9 @@ def analyze_row(
             continue
         if verify is None:
             view["error"] = "the option verifier did not run"
+            continue
+        if row.get("verifier_payload") is None:
+            view["error"] = NO_PAYLOAD_ERROR
             continue
         try:
             verdict = verify(row.get("verifier_payload"), option, formats)
@@ -429,7 +437,7 @@ def score_multi_option(
 
     rows = skipped = decided = malformed_n = valid_json = 0
     error_rows = row_pass_n = top_pass = any_pass = all_pass = two_distinct = in_range = 0
-    option_failures = 0
+    option_failures = missing_payload_rows = 0
     options_scored = options_passing = options_total = out_of_tax = 0
     agree_den = agree_num = 0
     distinct_sum = 0
@@ -453,6 +461,7 @@ def score_multi_option(
         count_ok = lo <= n <= hi
         in_range += int(count_ok)
         errored = [v for v in views if v.get("error")]
+        missing_payload_rows += int(any(v.get("error") == NO_PAYLOAD_ERROR for v in views))
         failed_by_verifier = [v for v in views if v.get("failure_reason")]
         row_flag: bool | None = False if malformed else _row_pass(mode, views, n, lo)
         row_error = row_flag is None
@@ -543,6 +552,7 @@ def score_multi_option(
         "total": decided,
         "correct": row_pass_n,
         "verifier_error_rows": error_rows,
+        "rows_missing_verifier_payload": missing_payload_rows,
         "option_verifier_failures": option_failures,
         "options_scored": options_scored,
     }

@@ -126,6 +126,7 @@ _HIDDEN_METRICS: frozenset[str] = frozenset({
     "new_findings_rate",
     # multi_option bookkeeping (sizes, not quality).
     "verifier_error_rows",
+    "rows_missing_verifier_payload",
     "option_verifier_failures",
     "options_scored",
     "skipped_non_multi_option_rows",

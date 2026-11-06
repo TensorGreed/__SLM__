@@ -30,6 +30,24 @@ describe('MultiOptionMetricsPanel', () => {
         expect(screen.getByText(/at least one option passes/)).toBeInTheDocument();
     });
 
+    it('says when rows have no verifier payload', () => {
+        render(
+            <MultiOptionMetricsPanel
+                provenance="Run #3 · test · result 9"
+                metrics={{
+                    scoring_mode: 'multi_option',
+                    multi_option: { formats: ['format_a'], row_pass: 'top_option', min_options: 1, max_options: 3, verifier: null },
+                    multi_option_pass_rate: null,
+                    verifier_error_rows: 2,
+                    rows_missing_verifier_payload: 2,
+                    total: 0,
+                    correct: 0,
+                }}
+            />,
+        );
+        expect(screen.getByTestId('mo-missing-payload')).toHaveTextContent('2 rows have no verifier_payload');
+    });
+
     it('snaps bar widths to 10% steps', () => {
         expect(widthStep(0.04)).toBe(0);
         expect(widthStep(0.75)).toBe(80);

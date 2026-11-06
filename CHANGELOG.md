@@ -1,5 +1,10 @@
 # Changelog
 
+### Clearer multiple-option results when a row can't be verified (November 6, 2026)
+
+- A `multi_option` test row with no `verifier_payload` at its top level is now reported as unverifiable and left out of the rates, and the verifier is no longer run on it. Before, the verifier ran with an empty payload and its failure counted against the model. The new `rows_missing_verifier_payload` metric counts these rows and the Results card shows a warning. A verifier that needs nothing from the row can use an empty payload (`{}`).
+- An option that already failed a format, or that the verifier vetoed, is no longer labelled `verifier_undecided` when the verifier reports no cross-format agreement. Pass and fail results don't change, only the reason and the `option_verifier_failures` count.
+
 ### Longer answers in held-out eval (November 4, 2026)
 
 - The held-out eval's `max_new_tokens` (`POST /api/projects/{id}/evaluation/run-heldout`) now accepts up to 8,192, up from 1,024, so `multi_option` answers (several options, each in several formats; often 3,000–6,000 tokens) are no longer cut off. Limit change only: the default stays 128, every scoring mode still applies its own cap (plain JSON extraction is still clamped to its hard limit), and values above 8,192 are rejected.
