@@ -405,6 +405,7 @@ session-start guidance.
 - `backend/app/services/training_config_gap_service.py` — Training Config Gap scanner + patch engine — Coach-stage-2 phases 1 + 2 + 3.
 - `backend/app/services/training_data_gate.py` — Pre-training data-shape gate.
 - `backend/app/services/training_epoch_policy.py` — Dataset-size-aware epoch policy (``auto_epochs``).
+- `backend/app/services/training_failure_service.py` — Why a real (external-runtime) training run stopped, saved once as ``_runtime.failure``.
 - `backend/app/services/training_manifest_service.py` — P14 — Capture + read immutable training-run manifests.
 - `backend/app/services/training_preflight_service.py` — Training capability matrix and preflight checks.
 - `backend/app/services/training_process_service.py` — Track + stop the OS process behind an external training run.
@@ -835,6 +836,7 @@ session-start guidance.
 - `frontend/src/components/training/PlanRefinementCard.tsx` — PlanRefinementCard — Phase 1 of the post-data plan-refinement pass.
 - `frontend/src/components/training/PreRunConfirmModal.tsx` — PreRunConfirmModal — P20 pre-run confirm with cost provenance badge.
 - `frontend/src/components/training/RemediationConfigCard.tsx` — RemediationConfigCard — how a code-remediation project's patches are
+- `frontend/src/components/training/RunFailureBanner.tsx` — RunFailureBanner — why a failed real run stopped, and a one-click way to continue it.
 - `frontend/src/components/training/StructuredPlanConfigCard.tsx` — StructuredPlanConfigCard — how a structured-plan project's JSON plans are
 - `frontend/src/components/training/TokenLengthDistributionPanel.tsx` — TokenLengthDistributionPanel — V3 of the ML-native visualisations arc.
 - `frontend/src/components/training/TokenizationPanel.tsx` — Token distribution analyzer with histogram and sequence-length statistics.
@@ -1249,6 +1251,7 @@ session-start guidance.
 - `backend/tests/test_training_config_gaps_coach_rollup.py` — Coach-stage-2 phase 1 — Coach training-stage roll-up nudge.
 - `backend/tests/test_training_correctness.py` — Training-correctness regression net (fresh-look audit, Wave 1).
 - `backend/tests/test_training_data_gate.py` — Pre-training data-shape gate (training_data_gate).
+- `backend/tests/test_training_failure_reason.py` — A real run that does not complete says why: ``_runtime.failure``, the job error, the timeline.
 - `backend/tests/test_training_memory_defaults.py` — Memory defaults for long-prompt runs: gradient checkpointing "auto" looks
 - `backend/tests/test_training_reproducibility.py` — Training reproducibility: one config + one dataset → the same weights.
 - `backend/tests/test_unified_diff.py` — Unified-diff parser / applier (pure).
@@ -1431,6 +1434,7 @@ session-start guidance.
 - `frontend/src/components/training/PlanRefinementCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/PreRunConfirmModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/RemediationConfigCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/RunFailureBanner.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/StructuredPlanConfigCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TokenLengthDistributionPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ToolScoringConfigCard.test.tsx` — _(no docstring)_

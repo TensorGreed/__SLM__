@@ -9,6 +9,7 @@ import CheckpointsPanel from './CheckpointsPanel';
 import ErrorPanel from '../shared/ErrorPanel';
 import LossCurvePanel from './LossCurvePanel';
 import MultiTurnMaskingCard from './MultiTurnMaskingCard';
+import RunFailureBanner from './RunFailureBanner';
 import WarmStartDeltaChart from './WarmStartDeltaChart';
 import WhyThisPlanPanel from './WhyThisPlanPanel';
 import { TerminalConsole } from '../shared/TerminalConsole';
@@ -163,6 +164,13 @@ export default function TrainingRunView({
           </div>
         </div>
 
+        <RunFailureBanner
+          projectId={projectId}
+          experiment={activeExperiment}
+          onContinued={() => {
+            onRefreshExperiments();
+          }}
+        />
         {trainingError && (
           <ErrorPanel
             envelope={trainingError}

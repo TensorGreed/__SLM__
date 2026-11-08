@@ -477,6 +477,25 @@ While a run is in flight:
 
 **Warm-start delta curve.** When a run [warm-started](#warm-start-checkpoints) from a checkpoint (`_warm_start.source=checkpoint`), the active-run view adds a **Δ-vs-baseline** chart: the live loss curve plus a second series of `loss(step) − the warm-start's initial loss on your data`, with a headline of how much your rows reduced loss below the pre-tuned base's starting point — so you can see your data's *marginal* contribution, not just the absolute loss the base already provided.
 
+## When a run fails
+
+When a real (GPU) run stops without finishing, BrewSLM saves why in the run's `config._runtime.failure`,
+and the run page shows it above the metrics, for example:
+
+> Stopped at step 60 of 250: reached the 6-hour limit (EXTERNAL_COMMAND_TIMEOUT_SECONDS). Last checkpoint: step 50.
+
+`code` is `timeout` (the worker's training time limit, `EXTERNAL_COMMAND_TIMEOUT_SECONDS`, default 6 hours),
+`signal` (the process was stopped by a signal it did not get from BrewSLM; `SIGKILL` is often the system
+running out of memory), `exit` (non-zero exit; the message quotes the last error line, never a metric or
+progress line) or `error` (the run could not be monitored). The record also has `last_step`, `total_steps`,
+`last_checkpoint_step` and `resumable_checkpoint_step`. The same sentence is the `training_start` job's error
+in the notification bell and the Celery task's error, and the run timeline gets a `training_<code>` error
+event (`GET /api/run-events/run/exp-42`).
+
+When a resumable checkpoint exists, the banner's **Continue from step N** button creates a new run that
+continues at that step (the same as [Resume from](#checkpoint-browser) in the checkpoint browser). The failed
+run stays as the record; start the new run from the runs list. Runs that were cancelled get no failure record.
+
 ## Pause + resume + cancel
 
 Long runs can be paused (writes a checkpoint, releases GPU) and resumed from the same step later.

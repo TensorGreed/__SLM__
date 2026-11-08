@@ -737,10 +737,20 @@ async def _monitor_external_training(
     captured_stderr: str | None = None,
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
+    stop_reason: str | None = None,
+    timeout_seconds: int | None = None,
 ) -> str:
-    """Monitor external training process and sync experiment status."""
+    """Monitor external training process and sync experiment status.
+
+    ``stop_reason="timeout"`` (with ``timeout_seconds``) says the worker's time limit stopped
+    the process; a run that does not complete gets ``_runtime.failure`` (see
+    ``training_failure_service``) and a ``training_<code>`` timeline event.
+    """
+    from app.services.training_failure_service import describe_training_failure, emit_failure_event
+
     started = started_at or datetime.now(timezone.utc)
     final_status = "failed"
+    failure_event: dict | None = None
     try:
         if captured_stdout is None or captured_stderr is None:
             try:
@@ -909,12 +919,35 @@ async def _monitor_external_training(
                         project_id=int(exp.project_id),
                         experiment_id=int(exp.id),
                     )
+                    runtime.pop("failure", None)
                     exp.config = {**config, "_runtime": runtime}
                 else:
                     exp.status = ExperimentStatus.FAILED
                     final_status = "failed"
+                    try:
+                        failure = describe_training_failure(
+                            returncode=process.returncode,
+                            stdout_text=stdout_text,
+                            stderr_text=stderr_text,
+                            output_dir=output_dir,
+                            stop_reason=stop_reason,
+                            timeout_seconds=timeout_seconds,
+                            total_steps_hint=exp.total_steps,
+                        )
+                    except Exception as describe_error:  # noqa: BLE001 - never blocks the status
+                        failure = {
+                            "code": "exit",
+                            "message": f"Training exited with code {process.returncode}.",
+                            "returncode": process.returncode,
+                            "describe_error": str(describe_error)[:300],
+                        }
+                    runtime["failure"] = failure
+                    exp.config = {**config, "_runtime": runtime}
+                    failure_event = {"project_id": int(exp.project_id), "name": str(exp.name or ""), "failure": failure}
                 exp.completed_at = finished
             await db.commit()
+        if failure_event is not None:
+            await emit_failure_event(experiment_id=experiment_id, **failure_event)
         # Multi-seed: tell the seed-group aggregator that this child is done.
         # No-op for single-seed runs.
         await _fire_seed_group_aggregation(experiment_id)
@@ -958,8 +991,23 @@ async def _monitor_external_training(
                 else:
                     exp.status = ExperimentStatus.FAILED
                     exp.completed_at = datetime.now(timezone.utc)
+                    try:
+                        failure = describe_training_failure(
+                            returncode=getattr(process, "returncode", None),
+                            output_dir=output_dir,
+                            stop_reason=stop_reason,
+                            timeout_seconds=timeout_seconds,
+                            error=str(e),
+                            total_steps_hint=exp.total_steps,
+                        )
+                    except Exception:  # noqa: BLE001 - never blocks the status
+                        failure = {"code": "error", "message": f"Training failed: {str(e)[:300]}"}
+                    runtime["failure"] = failure
+                    failure_event = {"project_id": int(exp.project_id), "name": str(exp.name or ""), "failure": failure}
                 exp.config = config
                 await db.commit()
+        if failure_event is not None:
+            await emit_failure_event(experiment_id=experiment_id, **failure_event)
         await _fire_seed_group_aggregation(experiment_id)
         await broadcast_event(
             experiment_id,

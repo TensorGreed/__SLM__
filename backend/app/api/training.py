@@ -5392,6 +5392,7 @@ async def _spawn_training_watcher_job(
         JobProgressHandle,
         start_job,
     )
+    from app.services.training_failure_service import failure_from_config
 
     async def _runner(handle: JobProgressHandle) -> dict:
         started = time.monotonic()
@@ -5407,6 +5408,7 @@ async def _spawn_training_watcher_job(
                 status = exp.status
                 total_steps = exp.total_steps or 0
                 final_loss = exp.final_train_loss
+                saved_failure = failure_from_config(exp.config)
                 # Latest checkpoint = approximate current step.
                 ckpt_result = await runner_db.execute(
                     select(Checkpoint)
@@ -5459,6 +5461,10 @@ async def _spawn_training_watcher_job(
                     "auto_lift_eval": auto_lift,
                 }
             if status == ExperimentStatus.FAILED:
+                if saved_failure:
+                    raise RuntimeError(
+                        f"Experiment {experiment_id} failed. {saved_failure['message']}"
+                    )
                 raise RuntimeError(
                     f"Experiment {experiment_id} failed (see the Train page for details)"
                 )

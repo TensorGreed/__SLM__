@@ -1,5 +1,10 @@
 # Changelog
 
+### Failed runs say why, with a Continue button (November 7, 2026)
+
+- A real (GPU) run that stops without finishing now saves why in `config._runtime.failure`: hit the training time limit (`timeout`, naming `EXTERNAL_COMMAND_TIMEOUT_SECONDS`), stopped by a signal (`signal`), exited with an error (`exit`) or could not be monitored (`error`), with the step it reached, the total steps and its last resumable checkpoint. Before, only the exit code was kept (e.g. `-15`), and the error quoted the run's last output line, which was often a loss metric.
+- The run page shows this reason in a banner. When a resumable checkpoint exists, **Continue from step N** creates a new run that continues from it. The `training_start` job in the notification bell shows the same sentence instead of "see the Train page", and the run timeline gets a `training_timeout` / `training_signal` / `training_exit` / `training_error` event. Cancelled and completed runs are unchanged.
+
 ### Resume from a checkpoint continues the run (November 7, 2026)
 
 - **Resume from** on a real (GPU) run now continues at the checkpoint's step with its saved weights, optimizer, scheduler and random state. Before, the new run started again from step 0 on the base model: the resume details reached only the simulated runtime, never `train.py`. The new run's config gets `resume_from_checkpoint` set to the checkpoint's directory, and the response says what carries over (`resume_from.resumes_training_state`, `has_optimizer_state`).

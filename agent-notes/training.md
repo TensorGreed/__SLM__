@@ -70,6 +70,15 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   no training report — killed / timed-out / crashed runs used to get no rows, so they could not be resumed.
   NB `start_training` writes `training_config.json` only when it is missing, so editing an existing
   experiment's config does not reach `train.py`; fork instead. Tests: `tests/test_checkpoint_resume_real.py`.
+  **Why a real run failed** — `training_failure_service.describe_training_failure` builds
+  `_runtime.failure` (`code` timeout|signal|exit|error, `message`, `last_step`, `total_steps` from
+  SLM_METRIC steps / tqdm `n/N` / newest checkpoint's `trainer_state.max_steps`, `last_checkpoint_step`,
+  `resumable_checkpoint_step`, `error_line` = last error-like line, metric/event/progress lines skipped).
+  `_monitor_external_training(stop_reason="timeout", timeout_seconds=…)` (passed by `worker.run_training_job`)
+  saves it on FAILED only (cancel → none; COMPLETED pops it) and emits a `training_<code>` RunEvent. The
+  Celery error, the worker's live `failed` status and the `training_start` Job error reuse `message`.
+  UI: `RunFailureBanner` (TrainingRunView) with "Continue from step N" → resume-from. Tests:
+  `tests/test_training_failure_reason.py`, `RunFailureBanner.test.tsx`.
   `scripts/train.py` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
   (`configure_cuda_allocator`, setdefault at the top of `main()`, report
   `runtime_environment.cuda_alloc_conf`): micro-batch-1 rows of many lengths made

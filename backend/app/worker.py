@@ -560,7 +560,14 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                     captured_stderr="\n".join(stderr_lines),
                     started_at=started_at,
                     finished_at=finished_at,
+                    stop_reason="timeout" if timed_out else None,
+                    timeout_seconds=timeout_seconds,
                 )
+                failure_message = ""
+                if monitor_status != "cancelled" and process.returncode != 0:
+                    from app.services.training_failure_service import load_failure_message
+
+                    failure_message = await load_failure_message(experiment_id)
 
                 if monitor_status == "cancelled":
                     _queue_log("[worker] training process stopped by cancel request")
@@ -572,12 +579,17 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                             f"{timeout_seconds} seconds"
                         )
                     )
-                    await _publish_status("failed", {"error": "external command timeout"})
+                    await _publish_status("failed", {"error": failure_message or "external command timeout"})
                 else:
+                    status_extra: dict = {"returncode": process.returncode}
+                    if failure_message:
+                        status_extra["error"] = failure_message
                     await _publish_status(
                         str(monitor_status or ("completed" if process.returncode == 0 else "failed")),
-                        {"returncode": process.returncode},
+                        status_extra,
                     )
+                if failure_message:
+                    _queue_log(f"[worker] {failure_message}")
                 _queue_log(
                     f"[worker] training process exited with code {process.returncode}"
                 )
@@ -600,6 +612,7 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                     "returncode": process.returncode,
                     "cancelled": monitor_status == "cancelled",
                     "payload": payload,
+                    "failure_message": failure_message,
                 }
             finally:
                 tps.clear_training_process(output_dir, pid=process.pid)
@@ -620,20 +633,15 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
         if returncode == 0:
             return {"status": "success", "experiment_id": experiment_id}
         else:
+            failure_message = str(execution.get("failure_message") or "") if isinstance(execution, dict) else ""
+            if failure_message:
+                raise Exception(f"Training failed: {failure_message}")
+            from app.services.training_failure_service import last_error_line
+
             payload = execution.get("payload", {}) if isinstance(execution, dict) else {}
-            error_tail = ""
-            for key in ("stdout", "stderr"):
-                text = str(payload.get(key, ""))
-                for line in reversed(text.splitlines()):
-                    stripped = line.strip()
-                    if stripped:
-                        error_tail = stripped
-                        break
-                if error_tail:
-                    break
+            # Skip metric / event / progress lines: they say nothing about why it stopped.
+            error_tail = last_error_line(str(payload.get("stdout", "")), str(payload.get("stderr", "")))
             if error_tail:
-                if len(error_tail) > 320:
-                    error_tail = f"{error_tail[:320].rstrip()}..."
                 raise Exception(f"Training command failed with return code {returncode}: {error_tail}")
             raise Exception(f"Training command failed with return code {returncode}")
             

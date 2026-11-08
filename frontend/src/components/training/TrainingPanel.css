@@ -2205,3 +2205,36 @@
     background: rgba(234, 179, 8, 0.16);
     color: var(--color-warning);
 }
+
+/* Why a failed real run stopped + "Continue from step N" (RunFailureBanner). */
+.run-failure-banner {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-md);
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--color-error-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-error-bg);
+    font-size: var(--font-size-sm);
+}
+
+.run-failure-banner__body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    flex: 1 1 280px;
+    overflow-wrap: anywhere;
+}
+
+.run-failure-banner__message,
+.run-failure-banner__notice {
+    color: var(--text-secondary);
+}
+
+.run-failure-banner__error {
+    color: var(--color-error);
+}

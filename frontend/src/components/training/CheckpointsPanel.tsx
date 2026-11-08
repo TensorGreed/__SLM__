@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
-import { forkNotice, type ResumeFromResponse } from './checkpointsPanelUtils';
+import { errorDetail, forkNotice, type ResumeFromResponse } from './checkpointsPanelUtils';
 
 interface ExperimentSummary {
     id: number;
@@ -61,18 +61,6 @@ interface CheckpointsPanelProps {
     onForked?: (newExperimentId: number) => void;
     /** Called after a successful pause/resume to let the parent refresh state. */
     onLifecycleChange?: () => void;
-}
-
-const ERROR_TEXT: Record<string, string> = {
-    checkpoint_not_resumable:
-        "This checkpoint can't be resumed: its training state or weights are missing on disk, so a new run would start again from step 0.",
-};
-
-function errorDetail(err: unknown, fallback: string): string {
-    const detail = (err as { response?: { data?: { detail?: string } } })?.response
-        ?.data?.detail;
-    if (typeof detail === 'string' && ERROR_TEXT[detail]) return ERROR_TEXT[detail];
-    return typeof detail === 'string' && detail ? detail : fallback;
 }
 
 function formatLoss(value: number | null): string {
