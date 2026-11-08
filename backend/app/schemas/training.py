@@ -235,6 +235,15 @@ class TrainingConfig(BaseModel):
     
     # Checkpointing
     save_steps: int = Field(100, ge=1)
+    external_timeout_seconds: int | None = Field(
+        None,
+        ge=60,
+        le=7 * 24 * 3600,
+        description=(
+            "Training time limit for this run, in seconds (real runs only). Unset uses the "
+            "server's EXTERNAL_COMMAND_TIMEOUT_SECONDS (default 6 hours)."
+        ),
+    )
     eval_steps: int = Field(100, ge=1)
     early_stopping_patience: int = Field(3, ge=1)
 

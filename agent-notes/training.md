@@ -79,6 +79,18 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   Celery error, the worker's live `failed` status and the `training_start` Job error reuse `message`.
   UI: `RunFailureBanner` (TrainingRunView) with "Continue from step N" → resume-from. Tests:
   `tests/test_training_failure_reason.py`, `RunFailureBanner.test.tsx`.
+  **Training time limit** — `training_time_limit_service`: `resolve_training_timeout(config)` = the run's
+  `external_timeout_seconds` (60 s … 7 d, schema + preflight error) else `EXTERNAL_COMMAND_TIMEOUT_SECONDS`;
+  `_start_builtin_external_celery` sends it as task kwargs `timeout_seconds` / `timeout_source` (tasks
+  without them use the setting). Preflight warns (external_celery only) when the limit >
+  `CELERY_VISIBILITY_TIMEOUT_SECONDS`. Worker: `TimeLimitProjector` (speed from the first seen step,
+  progress from SLM_METRIC steps + tqdm n/N, checked every 30 s) → one warning: log line, WS
+  `time_limit_warning`, `_runtime.time_limit_warning`, RunEvent `training_time_limit_projected`.
+  Re-delivery guard: `tps.redelivery_skip_reason` — same task id in `training_task_done.json`
+  (written in the worker's finally) or a live recorded process (`identify_process == match`) → task
+  returns `{"status": "skipped"}` without spawning; a gone process still re-runs (crash recovery). NOT
+  status-based: `start_training` only flushes RUNNING before dispatch, so the worker can see the old status.
+  Tests: `tests/test_training_time_limit.py`, `timeLimit.test.ts`.
   `scripts/train.py` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
   (`configure_cuda_allocator`, setdefault at the top of `main()`, report
   `runtime_environment.cuda_alloc_conf`): micro-batch-1 rows of many lengths made

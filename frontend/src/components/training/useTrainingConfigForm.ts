@@ -28,6 +28,8 @@ export function useTrainingConfigForm() {
   const [optimizer, setOptimizer] = useState('paged_adamw_8bit');
   const [saveSteps, setSaveSteps] = useState(100);
   const [evalSteps, setEvalSteps] = useState(100);
+  // Training time limit in hours for this run ('' = the server's limit).
+  const [timeLimitHours, setTimeLimitHours] = useState('');
   const [sequencePacking, setSequencePacking] = useState(true);
   const [useLora, setUseLora] = useState(true);
   // Phase 6d — curriculum learning toggle. Default starts off; the
@@ -117,6 +119,8 @@ export function useTrainingConfigForm() {
     setSaveSteps,
     evalSteps,
     setEvalSteps,
+    timeLimitHours,
+    setTimeLimitHours,
     sequencePacking,
     setSequencePacking,
     useLora,

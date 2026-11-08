@@ -476,3 +476,38 @@ export function buildModelSelectionSummary(wizardResult: ModelWizardResponse | n
 }
 
 export type ModelSelectionSummary = ReturnType<typeof buildModelSelectionSummary>;
+
+/** Per-run training time limit bounds (backend ``external_timeout_seconds``). */
+export const TIME_LIMIT_MIN_SECONDS = 60;
+export const TIME_LIMIT_MAX_SECONDS = 7 * 24 * 3600;
+
+/**
+ * Hours typed in the form → ``external_timeout_seconds``. ``null`` = blank (use the
+ * server's limit); ``'invalid'`` = not a number in 1 minute … 7 days.
+ */
+export function timeLimitSecondsFromHours(text: string): number | null | 'invalid' {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const hours = Number(trimmed);
+  if (!Number.isFinite(hours)) return 'invalid';
+  const seconds = Math.round(hours * 3600);
+  if (seconds < TIME_LIMIT_MIN_SECONDS || seconds > TIME_LIMIT_MAX_SECONDS) return 'invalid';
+  return seconds;
+}
+
+/** Saved ``external_timeout_seconds`` → the hours text the form shows ('' when unset). */
+export function hoursFromSeconds(value: unknown): string {
+  const seconds = typeof value === 'number' ? value : Number(value);
+  if (value === null || value === undefined || value === '' || !Number.isFinite(seconds) || seconds <= 0) return '';
+  return String(Math.round((seconds / 3600) * 1000) / 1000);
+}
+
+/** ``config._runtime.time_limit_warning.message`` — set when a run is on pace to hit its limit. */
+export function timeLimitWarning(config: Record<string, unknown> | undefined | null): string | null {
+  const runtime = config?.['_runtime'];
+  if (!runtime || typeof runtime !== 'object') return null;
+  const warning = (runtime as Record<string, unknown>)['time_limit_warning'];
+  if (!warning || typeof warning !== 'object') return null;
+  const message = (warning as Record<string, unknown>)['message'];
+  return typeof message === 'string' && message ? message : null;
+}

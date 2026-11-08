@@ -185,6 +185,7 @@ def describe_training_failure(
     output_dir: Path | str | None = None,
     stop_reason: str | None = None,
     timeout_seconds: int | None = None,
+    timeout_source: str | None = None,
     error: str | None = None,
     total_steps_hint: int | None = None,
 ) -> dict[str, Any]:
@@ -199,7 +200,10 @@ def describe_training_failure(
 
     if stop_reason == "timeout":
         code = "timeout"
-        reason = f"reached the {format_duration(timeout_seconds)} limit ({TIMEOUT_SETTING})"
+        from app.services.training_time_limit_service import timeout_setting_name
+
+        setting = timeout_setting_name(timeout_source)
+        reason = f"reached the {format_duration(timeout_seconds)} limit ({setting})"
     elif error:
         code = "error"
         reason = f"the run could not be monitored: {str(error)[:_ERROR_LINE_CAP]}"
@@ -244,7 +248,8 @@ def describe_training_failure(
     }
     if code == "timeout":
         record["timeout_seconds"] = int(timeout_seconds) if timeout_seconds else None
-        record["setting"] = TIMEOUT_SETTING
+        record["setting"] = setting
+        record["timeout_source"] = timeout_source or "server"
     if code == "signal" and isinstance(returncode, int):
         record["signal"] = _signal_name(returncode)
     return record

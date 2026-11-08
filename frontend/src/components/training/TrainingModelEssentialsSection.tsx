@@ -16,7 +16,7 @@ import type {
   ModelIntrospectionSummary,
 } from './trainingPanelTypes';
 import type { ModelSelectionApplySource } from './trainingPanelUtils';
-import { MODEL_WIZARD_TASK_PROFILES } from './trainingPanelUtils';
+import { MODEL_WIZARD_TASK_PROFILES, timeLimitSecondsFromHours } from './trainingPanelUtils';
 import type { TrainingConfigForm } from './useTrainingConfigForm';
 
 interface TrainingModelEssentialsSectionProps {
@@ -133,6 +133,8 @@ export default function TrainingModelEssentialsSection({
     setSaveSteps,
     evalSteps,
     setEvalSteps,
+    timeLimitHours,
+    setTimeLimitHours,
     useProfileDefaults,
     touchedConfig,
     setTouchedConfig,
@@ -754,6 +756,29 @@ export default function TrainingModelEssentialsSection({
                       setTouchedConfig((prev) => ({ ...prev, eval_steps: true }));
                     }}
                   />
+                </div>
+              </div>
+              <div className="training-grid-2">
+                <div className="form-group">
+                  <label className="form-label" htmlFor="training-time-limit-hours">
+                    Time limit (hours)
+                  </label>
+                  <input
+                    id="training-time-limit-hours"
+                    className="input"
+                    type="number"
+                    min={0.02}
+                    max={168}
+                    step="any"
+                    placeholder="Server default"
+                    value={timeLimitHours}
+                    onChange={(e) => setTimeLimitHours(e.target.value)}
+                  />
+                  <div className="form-hint">
+                    {timeLimitHours.trim() && timeLimitSecondsFromHours(timeLimitHours) === 'invalid'
+                      ? 'Use 1 minute to 168 hours; this value is ignored.'
+                      : 'Real runs stop at this limit and keep their checkpoints. Blank uses the server limit (EXTERNAL_COMMAND_TIMEOUT_SECONDS, 6 hours unless changed).'}
+                  </div>
                 </div>
               </div>
             </>

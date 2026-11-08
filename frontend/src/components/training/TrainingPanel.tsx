@@ -73,6 +73,8 @@ import {
   type ModelSelectionApplySource,
   buildModelSelectionSummary,
   buildPreflightContractDetails,
+  hoursFromSeconds,
+  timeLimitSecondsFromHours,
 } from './trainingPanelUtils';
 
 
@@ -158,6 +160,8 @@ export default function TrainingPanel({
     setSaveSteps,
     evalSteps,
     setEvalSteps,
+    timeLimitHours,
+    setTimeLimitHours,
     sequencePacking,
     setSequencePacking,
     useLora,
@@ -337,6 +341,9 @@ export default function TrainingPanel({
     if (includeField('optimizer')) config.optimizer = optimizer;
     if (includeField('save_steps')) config.save_steps = saveSteps;
     if (includeField('eval_steps')) config.eval_steps = evalSteps;
+    // An explicit per-run time limit is always sent; blank keeps the server's.
+    const limitSeconds = timeLimitSecondsFromHours(timeLimitHours);
+    if (typeof limitSeconds === 'number') config.external_timeout_seconds = limitSeconds;
     if (includeField('sequence_packing')) config.sequence_packing = sequencePacking;
     if (includeField('use_lora')) config.use_lora = useLora;
     // Phase 6d — only forward curriculum when the user has explicitly
@@ -455,6 +462,7 @@ export default function TrainingPanel({
     setOptimizer(parseString(config.optimizer, optimizer));
     setSaveSteps(Math.max(1, parseNumber(config.save_steps, saveSteps)));
     setEvalSteps(Math.max(1, parseNumber(config.eval_steps, evalSteps)));
+    setTimeLimitHours(hoursFromSeconds(config.external_timeout_seconds));
     setSequencePacking(parseBoolean(config.sequence_packing, sequencePacking));
     const nextUseLora = parseBoolean(config.use_lora, useLora);
     setUseLora(nextUseLora);
@@ -1448,6 +1456,18 @@ export default function TrainingPanel({
             });
           }
           setTrainingLogs((prev) => [...prev.slice(-999), text]);
+          return;
+        }
+        if (data.type === 'time_limit_warning' && data.payload && typeof data.payload === 'object') {
+          // The worker projects the run will overrun its time limit: show it now.
+          setActiveExperiment((prev) => {
+            if (!prev) return prev;
+            const runtime = (prev.config?._runtime as Record<string, unknown> | undefined) ?? {};
+            return {
+              ...prev,
+              config: { ...(prev.config ?? {}), _runtime: { ...runtime, time_limit_warning: data.payload } },
+            } as typeof prev;
+          });
           return;
         }
         if (data.type === 'status' && data.status) {

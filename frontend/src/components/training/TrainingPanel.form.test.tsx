@@ -88,6 +88,23 @@ describe('TrainingPanel — form layout', () => {
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/1/training/experiments/77/start'));
     });
 
+    it('a time limit in hours is sent as external_timeout_seconds; blank sends none', async () => {
+        const user = userEvent.setup();
+        render(<TrainingPanel projectId={1} openSection="model" />);
+        await waitFor(() => expect(screen.getByTestId('train-form-readiness')).toHaveTextContent('Ready to train.'));
+        await user.click(screen.getByTestId('train-form-train'));
+        await waitFor(() => expect(screen.getByTestId('pre-run-modal')).toBeInTheDocument());
+        const first = apiMock.post.mock.calls.find(([url]) => url === '/projects/1/training/experiments');
+        expect((first![1] as { config: Record<string, unknown> }).config).not.toHaveProperty('external_timeout_seconds');
+
+        apiMock.post.mockClear();
+        await user.type(await screen.findByLabelText('Time limit (hours)'), '24');
+        await user.click(screen.getByTestId('train-form-train'));
+        await waitFor(() => expect(apiMock.post.mock.calls.some(([url]) => url === '/projects/1/training/experiments')).toBe(true));
+        const second = apiMock.post.mock.calls.find(([url]) => url === '/projects/1/training/experiments');
+        expect((second![1] as { config: Record<string, unknown> }).config.external_timeout_seconds).toBe(86400);
+    });
+
     it('a blocked preflight disables nothing but shows the issues, and Fix opens the Checks section', async () => {
         installApi({ ok: false, errors: ['No prepared split'], warnings: [] });
         const user = userEvent.setup();

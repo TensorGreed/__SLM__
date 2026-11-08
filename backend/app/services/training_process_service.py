@@ -259,6 +259,41 @@ def clear_cancel_marker(output_dir: Path | str) -> None:
         pass
 
 
+def task_done_file(output_dir: Path | str) -> Path:
+    return Path(output_dir) / "training_task_done.json"
+
+
+def mark_task_done(output_dir: Path | str, *, task_id: str | None, returncode: int | None) -> None:
+    """Note that the worker finished this Celery task, so a later re-delivery of it is ignored."""
+    if not task_id:
+        return
+    try:
+        _write_json(task_done_file(output_dir), {"task_id": task_id, "returncode": returncode, "finished_at": _now()})
+    except OSError:
+        pass
+
+
+def redelivery_skip_reason(output_dir: Path | str, *, task_id: str | None) -> str | None:
+    """Why a training task must not spawn ``train.py`` now, or None.
+
+    The queue re-delivers a task (same task id) that outlives its visibility timeout. A second
+    ``train.py`` on the same output dir would race the first, so:
+    - ``task_already_finished`` — the worker already ran this task id to the end.
+    - ``training_process_still_running`` — a training process for this output dir is alive
+      (same start time and command as recorded).
+    A recorded process that is gone (the worker crashed and the process died with it) does not
+    block: the task runs again, as crash recovery always did.
+    """
+    if task_id:
+        done = _read_json(task_done_file(output_dir))
+        if done and str(done.get("task_id") or "") == str(task_id):
+            return "task_already_finished"
+    record = read_training_process(output_dir)
+    if record and identify_process(record) == "match":
+        return "training_process_still_running"
+    return None
+
+
 # ── identity + termination ─────────────────────────────────────────────
 
 

@@ -739,6 +739,7 @@ async def _monitor_external_training(
     finished_at: datetime | None = None,
     stop_reason: str | None = None,
     timeout_seconds: int | None = None,
+    timeout_source: str | None = None,
 ) -> str:
     """Monitor external training process and sync experiment status.
 
@@ -932,6 +933,7 @@ async def _monitor_external_training(
                             output_dir=output_dir,
                             stop_reason=stop_reason,
                             timeout_seconds=timeout_seconds,
+                            timeout_source=timeout_source,
                             total_steps_hint=exp.total_steps,
                         )
                     except Exception as describe_error:  # noqa: BLE001 - never blocks the status
@@ -997,6 +999,7 @@ async def _monitor_external_training(
                             output_dir=output_dir,
                             stop_reason=stop_reason,
                             timeout_seconds=timeout_seconds,
+                            timeout_source=timeout_source,
                             error=str(e),
                             total_steps_hint=exp.total_steps,
                         )

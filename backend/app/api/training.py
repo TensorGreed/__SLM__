@@ -4779,6 +4779,10 @@ async def ws_training_status(
                             await websocket.send_json(payload)
                         elif event_type == "log":
                             await websocket.send_json({"type": "log", "text": str(envelope.get("text", ""))})
+                        elif event_type == "time_limit_warning" and isinstance(envelope.get("payload"), dict):
+                            await websocket.send_json(
+                                {"type": "time_limit_warning", "payload": dict(envelope["payload"])}
+                            )
                         else:
                             await websocket.send_json({"type": "log", "text": str(raw)})
                     except Exception:

@@ -22,7 +22,7 @@ import type {
   VibeCheckSnapshot,
   VibeCheckTimelineResponse,
 } from './trainingPanelTypes';
-import { asRecord, statusColor } from './trainingPanelUtils';
+import { asRecord, statusColor, timeLimitWarning } from './trainingPanelUtils';
 
 interface TrainingRunViewProps {
   projectId: number;
@@ -177,6 +177,11 @@ export default function TrainingRunView({
             onDismiss={onDismissError}
             testIdPrefix="training-error"
           />
+        )}
+        {activeExperiment.status === 'running' && timeLimitWarning(activeExperiment.config) && (
+          <div className="training-alert training-alert--warning" data-testid="time-limit-warning">
+            {timeLimitWarning(activeExperiment.config)}
+          </div>
         )}
         {trainingWarnings.length > 0 && (
           <div className="training-alert training-alert--warning">

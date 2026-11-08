@@ -413,6 +413,7 @@ session-start guidance.
 - `backend/app/services/training_runtime_service.py` — Training runtime plugin SDK and registry.
 - `backend/app/services/training_service.py` — Training pipeline service — SFT, LoRA, checkpoint management.
 - `backend/app/services/training_telemetry_service.py` — Training wizard telemetry persistence helpers.
+- `backend/app/services/training_time_limit_service.py` — Training time limit for real (external-runtime) runs.
 - `backend/app/services/unified_diff.py` — Unified-diff parser / applier for code chunks (pure, no subprocess).
 - `backend/app/services/unlabeled_pool_scoring_service.py` — Quality-Lift phase 3, slice 1 — Unlabeled-pool uncertainty scoring.
 - `backend/app/services/vibe_check_service.py` — Vibe-check timeline service for qualitative prompt snapshots during training.
@@ -1254,6 +1255,7 @@ session-start guidance.
 - `backend/tests/test_training_failure_reason.py` — A real run that does not complete says why: ``_runtime.failure``, the job error, the timeline.
 - `backend/tests/test_training_memory_defaults.py` — Memory defaults for long-prompt runs: gradient checkpointing "auto" looks
 - `backend/tests/test_training_reproducibility.py` — Training reproducibility: one config + one dataset → the same weights.
+- `backend/tests/test_training_time_limit.py` — Training time limit: per-run override, queue-visibility warning, re-delivery guard, pace warning.
 - `backend/tests/test_unified_diff.py` — Unified-diff parser / applier (pure).
 - `backend/tests/test_unlabeled_pool_scoring_slice1.py` — Quality-Lift phase 3 slice 1 — Unlabeled-pool scoring service.
 - `backend/tests/test_user_probe_packs.py` — User-authored probe packs: runner properties, severity / critical
@@ -1451,6 +1453,7 @@ session-start guidance.
 - `frontend/src/components/training/TrainingPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WarmStartDeltaChart.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WhyThisPlanPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/timeLimit.test.ts` — _(no docstring)_
 - `frontend/src/components/video/TabVideoLink.test.tsx` — _(no docstring)_
 - `frontend/src/components/video/YouTubeEmbedModal.test.tsx` — _(no docstring)_
 - `frontend/src/pages/Pipelines.test.tsx` — _(no docstring)_

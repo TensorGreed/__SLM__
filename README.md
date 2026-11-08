@@ -81,7 +81,7 @@ source .venv/bin/activate
 celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2
 ```
 
-If long-running tasks (for example training jobs >1 hour) are re-received repeatedly with the same task id, set `CELERY_VISIBILITY_TIMEOUT_SECONDS` in `backend/.env` to a larger value (for example `43200`).
+If long-running tasks (for example training jobs >1 hour) are re-received repeatedly with the same task id, set `CELERY_VISIBILITY_TIMEOUT_SECONDS` in `backend/.env` to a larger value (for example `43200`). The worker ignores a re-delivered training task whose run already finished or whose training process is still alive, so a re-delivery never starts a second training process; keep the visibility timeout above your longest training time limit anyway (preflight warns when a run's limit is longer).
 
 ### 3. Frontend
 
@@ -597,7 +597,7 @@ Common backend env vars (see `backend/.env.example`):
 ### Process runtime controls
 
 - `STRICT_EXECUTION_MODE`
-- `EXTERNAL_COMMAND_TIMEOUT_SECONDS`
+- `EXTERNAL_COMMAND_TIMEOUT_SECONDS` (training time limit for real runs, default 6 hours; a run's own `external_timeout_seconds` overrides it)
 
 ### Domain hook plugins
 

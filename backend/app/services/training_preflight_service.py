@@ -859,6 +859,21 @@ def run_training_preflight(
 
     is_simulate_runtime = runtime_id == BUILTIN_SIMULATE_RUNTIME_ID
 
+    # Training time limit (external_timeout_seconds): validated for every run; the
+    # queue-redelivery warning only matters to the Celery-backed runtime.
+    from app.services.training_time_limit_service import (
+        time_limit_preflight_warnings,
+        validate_training_timeout,
+    )
+
+    for item in validate_training_timeout(resolved_config):
+        if item not in errors:
+            errors.append(item)
+    if runtime_id == "builtin.external_celery":
+        for item in time_limit_preflight_warnings(resolved_config):
+            if item not in warnings:
+                warnings.append(item)
+
     dependencies = _dependency_status_snapshot()
     for package_name in runtime_required_dependencies:
         if not dependencies.get(package_name, False):

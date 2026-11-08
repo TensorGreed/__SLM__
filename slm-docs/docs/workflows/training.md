@@ -477,6 +477,25 @@ While a run is in flight:
 
 **Warm-start delta curve.** When a run [warm-started](#warm-start-checkpoints) from a checkpoint (`_warm_start.source=checkpoint`), the active-run view adds a **Δ-vs-baseline** chart: the live loss curve plus a second series of `loss(step) − the warm-start's initial loss on your data`, with a headline of how much your rows reduced loss below the pre-tuned base's starting point — so you can see your data's *marginal* contribution, not just the absolute loss the base already provided.
 
+## Training time limit
+
+A real (GPU) run stops when it reaches its time limit: the server's `EXTERNAL_COMMAND_TIMEOUT_SECONDS`
+(default 6 hours), or the run's own `external_timeout_seconds` (60 seconds to 7 days), set as
+**Time limit (hours)** under **Model and hyperparameters**. Blank keeps the server's limit. Checkpoints
+saved before the limit are kept, and the run can be continued from the last one (see below).
+
+- **Before the run starts**, preflight warns when the limit is longer than the task queue's visibility
+  timeout (`CELERY_VISIBILITY_TIMEOUT_SECONDS`, default 12 hours). Past that the queue can deliver the
+  same training task to the worker again. The worker ignores such a repeat while the run's training
+  process is alive or after the run finished, so it never starts a second process; raising the
+  visibility timeout above the limit avoids the repeat altogether.
+- **During the run**, once real speed is known (10 minutes of steps, or 5% of the limit when shorter),
+  the worker warns once if the run is on pace to need more time than its limit, for example
+  "On pace to need about 20.5 h, past its 6 h limit: step 12 of 250 after 1.2 h (295.0 s per step)."
+  The warning appears in the run's log and above its metrics, is saved as
+  `config._runtime.time_limit_warning`, and adds a `training_time_limit_projected` timeline event. The
+  run keeps going; stop it and continue from a checkpoint with a longer limit, or let it run to the limit.
+
 ## When a run fails
 
 When a real (GPU) run stops without finishing, BrewSLM saves why in the run's `config._runtime.failure`,
@@ -484,7 +503,7 @@ and the run page shows it above the metrics, for example:
 
 > Stopped at step 60 of 250: reached the 6-hour limit (EXTERNAL_COMMAND_TIMEOUT_SECONDS). Last checkpoint: step 50.
 
-`code` is `timeout` (the worker's training time limit, `EXTERNAL_COMMAND_TIMEOUT_SECONDS`, default 6 hours),
+`code` is `timeout` (the run's [time limit](#training-time-limit); the message names the setting that applied),
 `signal` (the process was stopped by a signal it did not get from BrewSLM; `SIGKILL` is often the system
 running out of memory), `exit` (non-zero exit; the message quotes the last error line, never a metric or
 progress line) or `error` (the run could not be monitored). The record also has `last_step`, `total_steps`,

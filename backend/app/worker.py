@@ -43,6 +43,7 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 TRAINING_METRIC_PREFIX = "SLM_METRIC "
 TRAINING_EVENT_PREFIX = "SLM_EVENT "
 TQDM_PROGRESS_RE = re.compile(r"^\s*\d+%\|.*\|\s*\d+/\d+")
+TQDM_STEPS_RE = re.compile(r"\|\s*(\d+)/(\d+)\s*\[")
 
 
 def _coerce_metric_number(value):
@@ -290,8 +291,22 @@ def run_workflow_node_job(
     }
 
 @celery_app.task(bind=True, name="run_training_job", track_started=True)
-def run_training_job(self, experiment_id: int, command: str, log_path: str, output_dir: str):
-    """Executes the external training script within the Celery worker."""
+def run_training_job(
+    self,
+    experiment_id: int,
+    command: str,
+    log_path: str,
+    output_dir: str,
+    timeout_seconds: int | None = None,
+    timeout_source: str | None = None,
+):
+    """Executes the external training script within the Celery worker.
+
+    ``timeout_seconds`` is the run's training time limit (its ``external_timeout_seconds``,
+    resolved at start); tasks queued without it use ``EXTERNAL_COMMAND_TIMEOUT_SECONDS``.
+    A re-delivered task whose run already finished, or whose ``train.py`` is still alive,
+    exits without starting a second one.
+    """
     logger.info(f"Starting training job for experiment {experiment_id}")
     
     # We must run the async monitoring in a new event loop inside the celery thread
@@ -390,6 +405,24 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                 await redis_client.aclose()
                 return {"returncode": None, "cancelled": True, "payload": {}}
 
+            task_id = getattr(self.request, "id", None)
+            skip_reason = tps.redelivery_skip_reason(output_dir, task_id=task_id)
+            if skip_reason:
+                note = (
+                    f"[worker] ignoring a repeated delivery of training task {task_id} for experiment "
+                    f"{experiment_id}: {skip_reason.replace('_', ' ')}"
+                )
+                logger.warning(note)
+                _queue_log(note)
+                publisher_stop.set()
+                try:
+                    await asyncio.wait_for(asyncio.shield(publisher_task), timeout=5.0)
+                except Exception:
+                    publisher_task.cancel()
+                    await asyncio.gather(publisher_task, return_exceptions=True)
+                await redis_client.aclose()
+                return {"returncode": None, "skipped": skip_reason, "payload": {}}
+
             # Own session/process group so a cancel can signal train.py and
             # everything it spawns (dataloader workers, the shell wrapper).
             process = await asyncio.create_subprocess_shell(
@@ -426,6 +459,8 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                 stderr_lines: list[str] = []
                 last_progress_emit: dict[str, float] = {"stdout": 0.0, "stderr": 0.0}
                 last_metric_signature: str | None = None
+                # Latest step / total steps, for the time-limit projection.
+                progress: dict[str, int | None] = {"step": None, "total": None}
 
                 def _handle_stream_line(line: str, sink: list[str], is_stderr: bool) -> None:
                     nonlocal last_metric_signature
@@ -433,7 +468,13 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                     if not text_line:
                         return
                     sink.append(text_line)
+                    bar = TQDM_STEPS_RE.search(text_line) if "%|" in text_line else None
+                    if bar and int(bar.group(2)) > 0:
+                        progress["step"] = max(progress["step"] or 0, int(bar.group(1)))
+                        progress["total"] = int(bar.group(2))
                     metric = _parse_training_metric_line(text_line, experiment_id)
+                    if metric is not None and isinstance(metric.get("step"), int):
+                        progress["step"] = max(progress["step"] or 0, int(metric["step"]))
                     if metric is not None:
                         signature = json.dumps(metric, sort_keys=True, ensure_ascii=False)
                         if signature == last_metric_signature:
@@ -514,7 +555,13 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                     _stream_reader(process.stderr, stderr_lines, True)
                 )
 
-                timeout_seconds = int(settings.EXTERNAL_COMMAND_TIMEOUT_SECONDS)
+                from app.services.training_time_limit_service import (
+                    TimeLimitProjector,
+                    record_time_limit_warning,
+                )
+
+                limit_seconds = int(timeout_seconds or settings.EXTERNAL_COMMAND_TIMEOUT_SECONDS)
+                limit_source = timeout_source if timeout_seconds else "server"
                 timed_out = False
                 fallback_record = {
                     "pid": process.pid,
@@ -524,10 +571,22 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                 }
                 wait_task = asyncio.ensure_future(process.wait())
                 wait_started = time.monotonic()
+                projector = TimeLimitProjector(limit_seconds, wait_started)
+                next_projection = wait_started + 30.0
                 while True:
                     done, _ = await asyncio.wait({wait_task}, timeout=2.0)
                     if done:
                         break
+                    now_monotonic = time.monotonic()
+                    if now_monotonic >= next_projection:
+                        next_projection = now_monotonic + 30.0
+                        warning = projector.observe(
+                            progress["step"], progress["total"], now_monotonic, source=limit_source
+                        )
+                        if warning:
+                            _queue_log(f"[worker] {warning['message']}")
+                            _queue_publish({"type": "time_limit_warning", "payload": warning})
+                            await record_time_limit_warning(experiment_id, warning)
                     if tps.cancel_requested(output_dir) and not cancelled_by_worker:
                         # Worker-side path: the API also signals the group,
                         # but this one works even when it could not.
@@ -538,7 +597,7 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                             grace_seconds=float(settings.TRAINING_CANCEL_GRACE_SECONDS),
                         )
                         continue
-                    if time.monotonic() - wait_started > timeout_seconds:
+                    if time.monotonic() - wait_started > limit_seconds:
                         timed_out = True
                         await tps.terminate_process_record(
                             process_record or fallback_record,
@@ -561,7 +620,8 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                     started_at=started_at,
                     finished_at=finished_at,
                     stop_reason="timeout" if timed_out else None,
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=limit_seconds,
+                    timeout_source=limit_source,
                 )
                 failure_message = ""
                 if monitor_status != "cancelled" and process.returncode != 0:
@@ -576,7 +636,7 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                     _queue_log(
                         (
                             "[worker] external training command timed out after "
-                            f"{timeout_seconds} seconds"
+                            f"{limit_seconds} seconds"
                         )
                     )
                     await _publish_status("failed", {"error": failure_message or "external command timeout"})
@@ -615,6 +675,7 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                     "failure_message": failure_message,
                 }
             finally:
+                tps.mark_task_done(output_dir, task_id=task_id, returncode=process.returncode)
                 tps.clear_training_process(output_dir, pid=process.pid)
                 publisher_stop.set()
                 try:
@@ -628,6 +689,8 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
         execution = loop.run_until_complete(_run())
         if isinstance(execution, dict) and execution.get("cancelled"):
             return {"status": "cancelled", "experiment_id": experiment_id}
+        if isinstance(execution, dict) and execution.get("skipped"):
+            return {"status": "skipped", "reason": execution["skipped"], "experiment_id": experiment_id}
         returncode = int(execution.get("returncode", -1))
         
         if returncode == 0:

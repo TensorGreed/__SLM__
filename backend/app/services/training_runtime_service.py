@@ -312,8 +312,11 @@ async def _start_builtin_external_celery(ctx: TrainingRuntimeStartContext) -> Tr
     )
     external_command, command_note = _normalize_external_python_command(external_command)
 
+    from app.services.training_time_limit_service import resolve_training_timeout
     from app.worker import celery_app
 
+    # The run's own time limit (``external_timeout_seconds``) or the server's.
+    limit_seconds, limit_source = resolve_training_timeout(dict(ctx.config or {}))
     task = celery_app.send_task(
         "run_training_job",
         kwargs={
@@ -321,6 +324,8 @@ async def _start_builtin_external_celery(ctx: TrainingRuntimeStartContext) -> Tr
             "command": external_command,
             "log_path": str(output_dir / "external_training.log"),
             "output_dir": str(output_dir),
+            "timeout_seconds": limit_seconds,
+            "timeout_source": limit_source,
         },
     )
     updates: dict[str, Any] = {
@@ -332,6 +337,8 @@ async def _start_builtin_external_celery(ctx: TrainingRuntimeStartContext) -> Tr
         "train_file": str(ctx.train_file),
         "val_file": str(ctx.val_file),
         "task_id": task.id,
+        "training_timeout_seconds": limit_seconds,
+        "training_timeout_source": limit_source,
     }
     if command_note:
         updates["command_note"] = command_note
