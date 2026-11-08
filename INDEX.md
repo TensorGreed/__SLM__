@@ -905,6 +905,7 @@ session-start guidance.
 - `backend/tests/test_check_seeds_endpoint.py` — ``POST /evaluation/summary/check-seeds`` — the multi-seed option for the
 - `backend/tests/test_checked_decoding.py` — Checked decoding (Epic Y1 + Y4): verify-and-retry at eval time, opt-in.
 - `backend/tests/test_checkpoint_registry.py` — Unit tests for the warm-start checkpoint registry (Track 1, Epic B).
+- `backend/tests/test_checkpoint_resume_real.py` — Resume a real (external-runtime) run from one of its Trainer checkpoints.
 - `backend/tests/test_classification_adapter_prompt_wrap.py` — β-fix tests — classification-label adapter writes the production
 - `backend/tests/test_classification_inference_path.py` — Classification-aware inference path (fix #3).
 - `backend/tests/test_classification_training_launch.py` — Epic G phase G1.5 — classification samples must be trainable.

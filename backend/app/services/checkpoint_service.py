@@ -28,12 +28,22 @@ Stable error reason codes used by the API layer:
   - ``manifest_not_captured`` — resume needs the parent's P14 manifest to
     rebuild the resumed config; raised when the parent ran before P14
     was hooked in (or capture failed silently).
+  - ``checkpoint_not_resumable`` — a real (external-runtime) run's checkpoint
+    directory is missing, or lacks ``trainer_state.json`` / model weights, so
+    the fork could not continue from that step (it would restart at step 0).
+
+A real run's fork also gets ``resume_from_checkpoint`` = the checkpoint's
+absolute directory, which ``scripts/train.py`` hands to the Trainer: the new
+run continues at that step with the saved optimizer, scheduler and RNG state
+(``_resume_from.resumes_training_state`` / ``has_optimizer_state``). Simulated
+runs keep using ``_resume_from`` only.
 """
 
 from __future__ import annotations
 
 import copy
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select, update
@@ -41,7 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.experiment import Checkpoint, Experiment, TrainingMode
 from app.models.training_manifest import TrainingManifest
-from app.services.training_service import create_experiment
+from app.services.training_service import checkpoint_dir_details, create_experiment
 
 
 _RESUME_KEY = "_resume_from"
@@ -173,6 +183,14 @@ async def promote_checkpoint(
     return serialize_checkpoint(target)
 
 
+def _is_real_run(exp: Experiment) -> bool:
+    """True when the run trained with the external (train.py) runtime, not the simulator."""
+    runtime = dict((exp.config or {}).get("_runtime") or {})
+    return str(runtime.get("backend") or "").strip().lower() == "external" or str(
+        runtime.get("runtime_kind") or ""
+    ).strip().lower().startswith("external")
+
+
 def _normalize_training_mode(value: Any, fallback: TrainingMode) -> TrainingMode:
     if isinstance(value, TrainingMode):
         return value
@@ -232,7 +250,7 @@ async def resume_from_checkpoint(
         raise ValueError("manifest_not_captured")
 
     resolved_config = copy.deepcopy(dict(manifest.resolved_config or {}))
-    resolved_config[_RESUME_KEY] = {
+    resume_block: dict[str, Any] = {
         "parent_experiment_id": int(parent_experiment_id),
         "manifest_id": int(manifest.id),
         "checkpoint_step": int(ckpt.step),
@@ -241,6 +259,24 @@ async def resume_from_checkpoint(
         "checkpoint_is_best": bool(ckpt.is_best),
         "reason": "resume-from-checkpoint",
     }
+    # A real run's checkpoint is a Trainer directory: hand train.py its absolute path so the
+    # new run continues from that step with the saved optimizer / scheduler / RNG state.
+    # (``_resume_from`` alone only steers the simulated runtime; train.py never reads it.)
+    ckpt_dir = Path(str(ckpt.file_path or "")).expanduser()
+    if ckpt.file_path and ckpt_dir.is_dir():
+        details = checkpoint_dir_details(ckpt_dir)
+        if not details.get("resumable"):
+            raise ValueError("checkpoint_not_resumable")
+        resolved_config["resume_from_checkpoint"] = str(ckpt_dir.resolve())
+        resume_block["resumes_training_state"] = True
+        resume_block["has_optimizer_state"] = bool(details.get("has_optimizer_state"))
+    elif _is_real_run(parent_exp):
+        # The files are gone: a fork would silently start again from step 0.
+        raise ValueError("checkpoint_not_resumable")
+    else:
+        resolved_config.pop("resume_from_checkpoint", None)
+        resume_block["resumes_training_state"] = False
+    resolved_config[_RESUME_KEY] = resume_block
 
     base_model = manifest.base_model_source_ref or parent_exp.base_model
     mode = _normalize_training_mode(manifest.training_mode, parent_exp.training_mode)

@@ -59,6 +59,17 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `task_id` was never persisted. Verified live 2026-10-14 (run #68: cancel →
   process_terminated, train.py gone, GPU freed, stays CANCELLED). Tests:
   `tests/test_training_cancel_external.py`.
+  **Resume from a checkpoint (real runs)** — `checkpoint_service.resume_from_checkpoint` forks a
+  PENDING run; for a checkpoint dir on disk it sets `resume_from_checkpoint` = the dir's absolute path,
+  which is the only resume key `train.py` reads (`_resolve_resume_checkpoint` → `trainer.train(resume_from_checkpoint=…)`).
+  `_resume_from` steers only `_simulate_training_loop`. A real run (`_runtime.backend == "external"`)
+  whose checkpoint is gone or not `resumable` (`training_service.checkpoint_dir_details`: needs
+  `trainer_state.json` + weights; `has_optimizer_state` = optimizer.pt + scheduler.pt) → 409
+  `checkpoint_not_resumable`. `_monitor_external_training` registers `checkpoint-<step>` dirs as
+  Checkpoint rows (`_register_checkpoint_dirs`, losses / best flag from trainer_state) whenever there is
+  no training report — killed / timed-out / crashed runs used to get no rows, so they could not be resumed.
+  NB `start_training` writes `training_config.json` only when it is missing, so editing an existing
+  experiment's config does not reach `train.py`; fork instead. Tests: `tests/test_checkpoint_resume_real.py`.
   `scripts/train.py` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
   (`configure_cuda_allocator`, setdefault at the top of `main()`, report
   `runtime_environment.cuda_alloc_conf`): micro-batch-1 rows of many lengths made

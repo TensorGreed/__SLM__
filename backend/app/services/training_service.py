@@ -3,6 +3,7 @@
 import copy
 import asyncio
 import json
+import math
 import random
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -593,6 +594,102 @@ def _extract_step_from_checkpoint_dir(path: Path) -> int | None:
     return int(suffix)
 
 
+_CHECKPOINT_WEIGHT_FILES = (
+    "adapter_model.safetensors",
+    "adapter_model.bin",
+    "model.safetensors",
+    "model.safetensors.index.json",
+    "pytorch_model.bin",
+    "pytorch_model.bin.index.json",
+)
+
+
+def checkpoint_dir_details(path: Path) -> dict:
+    """What one Trainer ``checkpoint-<step>`` directory holds, read from its ``trainer_state.json``.
+
+    ``resumable`` means a run can continue from it with its training state: the trainer state
+    and model weights are both on disk. ``has_optimizer_state`` says whether the optimizer and
+    scheduler come back too (without them the weights resume but the optimizer restarts).
+    """
+    path = Path(path)
+    state_path = path / "trainer_state.json"
+    has_weights = any((path / name).is_file() for name in _CHECKPOINT_WEIGHT_FILES)
+    details: dict = {
+        "source": "checkpoint_dir_scan",
+        "has_trainer_state": state_path.is_file(),
+        "has_weights": has_weights,
+        "has_optimizer_state": (path / "optimizer.pt").is_file() and (path / "scheduler.pt").is_file(),
+        "train_loss": None,
+        "eval_loss": None,
+        "epoch_progress": None,
+        "global_step": None,
+        "is_best": False,
+    }
+    if state_path.is_file():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            details["has_trainer_state"] = False
+            details["trainer_state_error"] = str(exc)[:200]
+            state = None
+        if isinstance(state, dict):
+            details["epoch_progress"] = _coerce_float(state.get("epoch"))
+            step = state.get("global_step")
+            details["global_step"] = int(step) if isinstance(step, (int, float)) else None
+            for entry in state.get("log_history") or []:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("loss") is not None:
+                    details["train_loss"] = _coerce_float(entry.get("loss"))
+                if entry.get("eval_loss") is not None:
+                    details["eval_loss"] = _coerce_float(entry.get("eval_loss"))
+            best = str(state.get("best_model_checkpoint") or "").strip()
+            details["is_best"] = bool(best) and Path(best).name == path.name
+    details["resumable"] = bool(details["has_trainer_state"] and has_weights)
+    return details
+
+
+async def _register_checkpoint_dirs(db, experiment_id: int, output_dir: Path) -> int:
+    """Add a Checkpoint row for every ``checkpoint-<step>`` dir in ``output_dir`` that has none.
+
+    Runs that end without a training report (killed, timed out, crashed) still leave the
+    Trainer's checkpoints on disk; without rows they can't be listed or resumed from.
+    Returns how many rows were added.
+    """
+    existing_steps = set(
+        (
+            await db.execute(select(Checkpoint.step).where(Checkpoint.experiment_id == experiment_id))
+        ).scalars().all()
+    )
+    added = 0
+    checkpoint_dirs = sorted(
+        [p for p in Path(output_dir).glob("checkpoint-*") if p.is_dir() and _extract_step_from_checkpoint_dir(p) is not None],
+        key=lambda p: _extract_step_from_checkpoint_dir(p) or 0,
+    )
+    for checkpoint_dir in checkpoint_dirs:
+        step = _extract_step_from_checkpoint_dir(checkpoint_dir)
+        if step is None or step <= 0 or step in existing_steps:
+            continue
+        details = checkpoint_dir_details(checkpoint_dir)
+        progress = details.get("epoch_progress")
+        epoch = max(1, math.ceil(progress)) if isinstance(progress, float) and progress > 0 else 1
+        db.add(
+            Checkpoint(
+                experiment_id=experiment_id,
+                epoch=epoch,
+                step=step,
+                train_loss=details.get("train_loss"),
+                eval_loss=details.get("eval_loss"),
+                file_path=str(checkpoint_dir),
+                is_best=bool(details.get("is_best")),
+                metrics=details,
+            )
+        )
+        existing_steps.add(step)
+        added += 1
+    return added
+
+
 def _parse_stream_event_payload(line: str) -> dict | None:
     token = str(line or "").strip()
     if not token:
@@ -765,32 +862,18 @@ async def _monitor_external_training(
                             db.add(ckpt)
                             existing_steps.add(step)
                     else:
-                        checkpoints_root = output_dir
-                        checkpoint_dirs = sorted(
-                            [
-                                p for p in checkpoints_root.glob("checkpoint-*")
-                                if p.is_dir() and _extract_step_from_checkpoint_dir(p) is not None
-                            ],
-                            key=lambda p: _extract_step_from_checkpoint_dir(p) or 0,
-                        )
-                        for checkpoint_dir in checkpoint_dirs:
-                            step = _extract_step_from_checkpoint_dir(checkpoint_dir)
-                            if step is None or step in existing_steps:
-                                continue
-                            ckpt = Checkpoint(
-                                experiment_id=experiment_id,
-                                epoch=1,
-                                step=step,
-                                train_loss=None,
-                                eval_loss=None,
-                                file_path=str(checkpoint_dir),
-                                is_best=False,
-                                metrics={"source": "checkpoint_dir_scan"},
-                            )
-                            db.add(ckpt)
-                            existing_steps.add(step)
+                        await _register_checkpoint_dirs(db, experiment_id, output_dir)
                 except Exception as parse_error:
                     runtime["report_parse_error"] = str(parse_error)
+            else:
+                # No report: the run was killed, timed out or crashed. Its checkpoints are
+                # still on disk — register them so the run can be resumed from one.
+                try:
+                    added = await _register_checkpoint_dirs(db, experiment_id, output_dir)
+                    if added:
+                        runtime["checkpoints_registered_from_dirs"] = added
+                except Exception as scan_error:  # noqa: BLE001 - best effort, never blocks the status
+                    runtime["checkpoint_scan_error"] = str(scan_error)[:300]
 
             exp.config = config
 
@@ -859,6 +942,12 @@ async def _monitor_external_training(
                     }
                 )
                 config["_runtime"] = runtime
+                try:
+                    added = await _register_checkpoint_dirs(db, experiment_id, output_dir)
+                    if added:
+                        runtime["checkpoints_registered_from_dirs"] = added
+                except Exception as scan_error:  # noqa: BLE001 - best effort, never blocks the status
+                    runtime["checkpoint_scan_error"] = str(scan_error)[:300]
                 from app.services.training_process_service import cancel_requested
 
                 if exp.status == ExperimentStatus.CANCELLED or cancel_requested(output_dir):

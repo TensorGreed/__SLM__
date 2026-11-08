@@ -15,6 +15,7 @@ const { apiMock } = vi.hoisted(() => ({
 vi.mock('../../api/client', () => ({ default: apiMock }));
 
 import CheckpointsPanel from './CheckpointsPanel';
+import { forkNotice } from './checkpointsPanelUtils';
 
 const RUNNING_EXP = { id: 7, name: 'phi-2 sft', status: 'running' };
 const PAUSED_EXP = { id: 7, name: 'phi-2 sft', status: 'paused' };
@@ -212,6 +213,44 @@ describe('CheckpointsPanel', () => {
         expect(onForked).toHaveBeenCalledWith(99);
     });
 
+    it('says a real-run fork continues with the saved training state', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: LIST_RESPONSE });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                experiment_id: 99,
+                status: 'pending',
+                resume_from: { checkpoint_step: 50, resumes_training_state: true, has_optimizer_state: true },
+            },
+        });
+        apiMock.get.mockResolvedValueOnce({ data: LIST_RESPONSE });
+
+        const user = userEvent.setup();
+        render(<CheckpointsPanel projectId={5} experiment={COMPLETED_EXP} />);
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalledTimes(1));
+        await user.click(screen.getAllByRole('button', { name: /^Resume from…$/i })[0]);
+
+        expect(
+            await screen.findByText(
+                'Run #99 created. It continues at step 50 with its weights, optimizer and scheduler state. Start it from the runs list.',
+            ),
+        ).toBeInTheDocument();
+    });
+
+    it('explains a checkpoint that cannot be resumed instead of showing the code', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: LIST_RESPONSE });
+        apiMock.post.mockRejectedValueOnce({
+            response: { data: { detail: 'checkpoint_not_resumable' } },
+        });
+
+        const user = userEvent.setup();
+        render(<CheckpointsPanel projectId={5} experiment={COMPLETED_EXP} />);
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalledTimes(1));
+        await user.click(screen.getAllByRole('button', { name: /^Resume from…$/i })[0]);
+
+        expect(await screen.findByText(/would start again from step 0/)).toBeInTheDocument();
+        expect(screen.queryByText('checkpoint_not_resumable')).not.toBeInTheDocument();
+    });
+
     it('surfaces a friendly error when pause is rejected by the API', async () => {
         apiMock.get.mockResolvedValueOnce({ data: LIST_RESPONSE });
         apiMock.post.mockRejectedValueOnce({
@@ -245,5 +284,16 @@ describe('CheckpointsPanel', () => {
         expect(
             screen.getByText(/No checkpoints yet/i),
         ).toBeInTheDocument();
+    });
+});
+
+describe('forkNotice', () => {
+    it('describes a weights-only resume and a simulated fork', () => {
+        expect(
+            forkNotice(3, 20, { resume_from: { resumes_training_state: true, has_optimizer_state: false } }),
+        ).toContain('the optimizer restarts');
+        expect(forkNotice(4, 10, { resume_from: { resumes_training_state: false } })).toBe(
+            'Run #4 created from step 10. Start it from the runs list.',
+        );
     });
 });

@@ -1,5 +1,11 @@
 # Changelog
 
+### Resume from a checkpoint continues the run (November 7, 2026)
+
+- **Resume from** on a real (GPU) run now continues at the checkpoint's step with its saved weights, optimizer, scheduler and random state. Before, the new run started again from step 0 on the base model: the resume details reached only the simulated runtime, never `train.py`. The new run's config gets `resume_from_checkpoint` set to the checkpoint's directory, and the response says what carries over (`resume_from.resumes_training_state`, `has_optimizer_state`).
+- A run that stops without finishing (cancelled, timed out, crashed) now lists the checkpoints it saved, with step, losses and the best flag read from each one, so it can be resumed. Before, only runs that wrote a final report listed any.
+- If a real run's checkpoint is missing on disk or lacks its training state or weights, resuming is refused with `409 checkpoint_not_resumable` and the Checkpoints panel explains why. Simulated runs behave as before.
+
 ### Clearer multiple-option results when a row can't be verified (November 6, 2026)
 
 - A `multi_option` test row with no `verifier_payload` at its top level is now reported as unverifiable and left out of the rates, and the verifier is no longer run on it. Before, the verifier ran with an empty payload and its failure counted against the model. The new `rows_missing_verifier_payload` metric counts these rows and the Results card shows a warning. A verifier that needs nothing from the row can use an empty payload (`{}`).

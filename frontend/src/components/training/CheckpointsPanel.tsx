@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
+import { forkNotice, type ResumeFromResponse } from './checkpointsPanelUtils';
 
 interface ExperimentSummary {
     id: number;
@@ -62,9 +63,15 @@ interface CheckpointsPanelProps {
     onLifecycleChange?: () => void;
 }
 
+const ERROR_TEXT: Record<string, string> = {
+    checkpoint_not_resumable:
+        "This checkpoint can't be resumed: its training state or weights are missing on disk, so a new run would start again from step 0.",
+};
+
 function errorDetail(err: unknown, fallback: string): string {
     const detail = (err as { response?: { data?: { detail?: string } } })?.response
         ?.data?.detail;
+    if (typeof detail === 'string' && ERROR_TEXT[detail]) return ERROR_TEXT[detail];
     return typeof detail === 'string' && detail ? detail : fallback;
 }
 
@@ -91,6 +98,7 @@ export default function CheckpointsPanel({
     const [isLoading, setIsLoading] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [actionInFlight, setActionInFlight] = useState<string | null>(null);
+    const [notice, setNotice] = useState<string | null>(null);
 
     const fetchList = useCallback(async () => {
         setIsLoading(true);
@@ -165,14 +173,16 @@ export default function CheckpointsPanel({
         async (step: number) => {
             setActionInFlight(`resume-from-${step}`);
             setErrorMessage(null);
+            setNotice(null);
             try {
-                const response = await api.post<{ experiment_id?: number }>(
+                const response = await api.post<ResumeFromResponse>(
                     `/projects/${projectId}/training/runs/${experiment.id}/resume-from/${step}`,
                     {},
                 );
                 const newId = Number(response.data?.experiment_id);
-                if (Number.isFinite(newId) && newId > 0 && onForked) {
-                    onForked(newId);
+                if (Number.isFinite(newId) && newId > 0) {
+                    setNotice(forkNotice(newId, step, response.data));
+                    onForked?.(newId);
                 }
                 await fetchList();
             } catch (err) {
@@ -225,6 +235,7 @@ export default function CheckpointsPanel({
             {errorMessage && (
                 <div className="checkpoints-panel__error">{errorMessage}</div>
             )}
+            {notice && <div className="checkpoints-panel__notice">{notice}</div>}
 
             <div className="checkpoints-panel__meta">
                 <span>Run status: <strong>{data?.run_status ?? status ?? '—'}</strong></span>

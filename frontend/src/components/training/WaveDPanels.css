@@ -172,6 +172,12 @@
     margin-bottom: var(--space-sm);
 }
 
+.checkpoints-panel__notice {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--space-sm);
+}
+
 .checkpoints-panel__meta {
     display: flex;
     align-items: center;

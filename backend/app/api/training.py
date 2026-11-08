@@ -5969,6 +5969,9 @@ async def resume_run_from_checkpoint(
             "manifest_not_captured",
         }:
             raise HTTPException(404, detail) from exc
+        if detail == "checkpoint_not_resumable":
+            # The checkpoint's training state or weights are gone: a fork would restart at step 0.
+            raise HTTPException(409, detail) from exc
         raise HTTPException(400, detail) from exc
 
     cfg = dict(exp.config or {})

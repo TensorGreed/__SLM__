@@ -527,7 +527,12 @@ Every N steps the runtime saves a checkpoint. The browser lets you promote a non
 **Ship** → **Package** → **Releases** → **Registered models** → click the experiment row → **Checkpoints** drawer. Each row has actions:
 
 - **Promote** — mark this checkpoint as the run's `final` (replaces what eval will use).
-- **Resume from** — kick off a continuation from this step.
+- **Resume from** — create a new run that continues from this step. For a real (GPU) run, the new run gets
+  the checkpoint's weights, optimizer, scheduler and random state and carries on at that step, not step 0;
+  the panel says what it carried over, and you start the new run from the runs list. A run that stopped early
+  (cancelled, timed out, crashed) still lists the checkpoints it saved, so you can resume it. If a checkpoint's
+  training state or weights are missing on disk, the panel says so and no run is created
+  (`409 checkpoint_not_resumable`), because the new run would start again from step 0.
 
 ### CLI
 
@@ -540,9 +545,9 @@ brewslm train checkpoints --project 1 --experiment 42 --resume-from-step 150
 ### API
 
 ```sh
-curl "http://localhost:8000/api/projects/1/experiments/42/checkpoints"
-curl -X POST http://localhost:8000/api/projects/1/experiments/42/checkpoints/200/promote
-curl -X POST http://localhost:8000/api/projects/1/experiments/42/checkpoints/150/resume
+curl "http://localhost:8000/api/projects/1/training/runs/42/checkpoints"
+curl -X POST http://localhost:8000/api/projects/1/training/runs/42/checkpoints/200/promote
+curl -X POST http://localhost:8000/api/projects/1/training/runs/42/resume-from/150   # new PENDING run
 ```
 
 ## Reason codes you might hit
