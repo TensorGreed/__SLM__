@@ -43,7 +43,6 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 TRAINING_METRIC_PREFIX = "SLM_METRIC "
 TRAINING_EVENT_PREFIX = "SLM_EVENT "
 TQDM_PROGRESS_RE = re.compile(r"^\s*\d+%\|.*\|\s*\d+/\d+")
-TQDM_STEPS_RE = re.compile(r"\|\s*(\d+)/(\d+)\s*\[")
 
 
 def _coerce_metric_number(value):
@@ -461,6 +460,9 @@ def run_training_job(
                 last_metric_signature: str | None = None
                 # Latest step / total steps, for the time-limit projection.
                 progress: dict[str, int | None] = {"step": None, "total": None}
+                from app.services.training_failure_service import TrainingBarTracker
+
+                bar_tracker = TrainingBarTracker()
 
                 def _handle_stream_line(line: str, sink: list[str], is_stderr: bool) -> None:
                     nonlocal last_metric_signature
@@ -468,10 +470,11 @@ def run_training_job(
                     if not text_line:
                         return
                     sink.append(text_line)
-                    bar = TQDM_STEPS_RE.search(text_line) if "%|" in text_line else None
-                    if bar and int(bar.group(2)) > 0:
-                        progress["step"] = max(progress["step"] or 0, int(bar.group(1)))
-                        progress["total"] = int(bar.group(2))
+                    for part in text_line.split("\r"):
+                        bar_tracker.observe(part)
+                    if bar_tracker.total:
+                        progress["total"] = bar_tracker.total
+                        progress["step"] = max(progress["step"] or 0, bar_tracker.step or 0)
                     metric = _parse_training_metric_line(text_line, experiment_id)
                     if metric is not None and isinstance(metric.get("step"), int):
                         progress["step"] = max(progress["step"] or 0, int(metric["step"]))

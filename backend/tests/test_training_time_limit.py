@@ -131,6 +131,17 @@ class ProjectorTests(unittest.TestCase):
         p.observe(10, 100, 60.0)
         self.assertIsNone(p.observe(50, 100, 400.0))  # 40 steps / 340 s → done in ~13 min
 
+    def test_bar_tracker_keeps_the_training_loop(self):
+        from app.services.training_failure_service import TrainingBarTracker
+
+        t = TrainingBarTracker()
+        for line in ("Map:  50%|█████     | 136/272 [00:00<00:00, 900.1 examples/s]",
+                     " 10%|█         | 108/1080 [00:12<01:48,  9.0it/s]",
+                     " 25%|██▌       | 3/12 [00:00<00:01,  9.9it/s]",
+                     " 11%|█         | 120/1080 [00:13<01:47,  9.0it/s]"):
+            t.observe(line)
+        self.assertEqual((t.step, t.total), (120, 1080))
+
     def test_needs_step_and_total(self):
         p = TimeLimitProjector(60, started_at=0.0, min_observe_seconds=0)
         self.assertIsNone(p.observe(None, 100, 1.0))

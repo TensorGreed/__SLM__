@@ -35,6 +35,7 @@ TIMEOUT_SETTING = "EXTERNAL_COMMAND_TIMEOUT_SECONDS"
 _METRIC_PREFIX = "SLM_METRIC "
 _EVENT_PREFIX = "SLM_EVENT "
 _PROGRESS_RE = re.compile(r"(\d+)/(\d+)\s*\[")
+_BAR_HEAD_RE = re.compile(r"\d+%\|")
 _TQDM_RE = re.compile(r"^\s*\d+%\|.*\|\s*\d+/\d+")
 _ERRORISH_RE = re.compile(r"(error|exception|traceback|killed|out of memory|oom)\b", re.IGNORECASE)
 _ERROR_LINE_CAP = 300
@@ -89,10 +90,48 @@ def last_error_line(stdout_text: str | None, stderr_text: str | None) -> str:
     return chosen
 
 
+def training_bar(line: str) -> tuple[int, int] | None:
+    """(done, total) from a progress bar that could be the training loop's, else None.
+
+    A run prints several bars: dataset steps ("Map: 40%|... examples/s"), evaluation
+    ("25%|... 3/12") and the training loop. Labelled bars and bars counting examples are
+    data preparation, never the training loop.
+    """
+    head = _BAR_HEAD_RE.search(line)
+    if head is None or re.search(r"[A-Za-z]", line[: head.start()]) or "examples/s" in line:
+        return None
+    match = _PROGRESS_RE.search(line, head.end())
+    if not match or int(match.group(2)) <= 0:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+class TrainingBarTracker:
+    """The training loop's step / total from progress bars.
+
+    Evaluation bars run inside training and are shorter than the training loop, so the
+    bar with the largest total is taken as the training loop's.
+    """
+
+    def __init__(self) -> None:
+        self.step: int | None = None
+        self.total: int | None = None
+
+    def observe(self, line: str) -> None:
+        bar = training_bar(line)
+        if bar is None:
+            return
+        done, total = bar
+        if self.total is None or total > self.total:
+            self.total, self.step = total, done
+        elif total == self.total:
+            self.step = max(self.step or 0, done)
+
+
 def _stream_progress(stdout_text: str | None, stderr_text: str | None) -> tuple[int | None, int | None]:
-    """Highest step seen in metric lines and progress bars, and the bar's total."""
+    """Highest step seen in metric lines and the training progress bar, and that bar's total."""
     last_step: int | None = None
-    total: int | None = None
+    bars = TrainingBarTracker()
     for line in _lines(stdout_text, stderr_text):
         idx = line.find(_METRIC_PREFIX)
         if idx >= 0:
@@ -104,13 +143,10 @@ def _stream_progress(stdout_text: str | None, stderr_text: str | None) -> tuple[
             if isinstance(step, (int, float)) and not isinstance(step, bool):
                 last_step = max(last_step or 0, int(step))
             continue
-        match = _PROGRESS_RE.search(line) if "%|" in line else None
-        if match:
-            done, of = int(match.group(1)), int(match.group(2))
-            if of > 0:
-                total = of
-                last_step = max(last_step or 0, done)
-    return last_step, total
+        bars.observe(line)
+    if bars.step is not None:
+        last_step = max(last_step or 0, bars.step)
+    return last_step, bars.total
 
 
 def _checkpoint_dirs(output_dir: Path | None) -> list[tuple[int, Path]]:
@@ -141,6 +177,9 @@ def _checkpoint_progress(output_dir: Path | None) -> dict[str, int | None]:
         if result["last_checkpoint_step"] is None:
             result["last_checkpoint_step"] = step
             result["checkpoint_global_step"] = details.get("global_step")
+        if result["max_steps"] is None:
+            # The newest checkpoint can be incomplete (stopped mid-save): take the
+            # total from the newest one that recorded it.
             try:
                 state = json.loads((path / "trainer_state.json").read_text(encoding="utf-8"))
                 max_steps = state.get("max_steps") if isinstance(state, dict) else None

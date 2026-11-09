@@ -114,6 +114,24 @@ class DescribeFailureTests(unittest.TestCase):
         self.assertIsNone(f["resumable_checkpoint_step"])
         self.assertIn("Checkpoint step 100 is incomplete", f["message"])
 
+    def test_total_comes_from_the_training_bar_not_eval_or_data_bars(self):
+        # Seen on a real run: an evaluation bar ("3/12") printed after the training bar
+        # made the message read "step 440 of 12".
+        stderr = "\n".join([
+            "Map:  50%|█████     | 136/272 [00:00<00:00, 900.1 examples/s]",
+            "Filter: 100%|██████████| 360/360 [00:00<00:00, 45199.95 examples/s]",
+            " 40%|████      | 440/1080 [00:50<01:10,  9.0it/s]",
+            " 25%|██▌       | 3/12 [00:00<00:01,  9.9it/s]",
+        ])
+        write_checkpoint(self.root, 400, max_steps=1080)
+        write_checkpoint(self.root, 440, state=False)  # stopped mid-save
+        f = describe_training_failure(returncode=-15, stderr_text=stderr, output_dir=self.root,
+                                      stop_reason="timeout", timeout_seconds=75)
+        self.assertEqual((f["last_step"], f["total_steps"]), (440, 1080))
+        self.assertTrue(f["message"].startswith("Stopped at step 440 of 1080:"))
+        f = describe_training_failure(returncode=-15, stderr_text=stderr, output_dir=None)
+        self.assertEqual(f["total_steps"], 1080)  # no checkpoint: the training bar's total
+
     def test_monitor_error_code(self):
         f = describe_training_failure(returncode=None, output_dir=self.root, error="disk full")
         self.assertEqual(f["code"], "error")

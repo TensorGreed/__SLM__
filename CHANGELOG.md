@@ -5,6 +5,7 @@
 - A real (GPU) run can set its own time limit: **Time limit (hours)** under **Model and hyperparameters**, or `external_timeout_seconds` in the config (60 seconds to 7 days). Blank keeps the server's `EXTERNAL_COMMAND_TIMEOUT_SECONDS` (default 6 hours), so existing runs are unchanged. Before, training always used the server limit; the per-run value only applied to workflow nodes. A timed-out run's failure message names the setting that applied.
 - Once real speed is known, a run on pace to need more time than its limit gets one warning in its log, above its metrics and on the run timeline (`training_time_limit_projected`), with the projected time and seconds per step. The run is not stopped.
 - Preflight warns when a run's limit is longer than the task queue's `CELERY_VISIBILITY_TIMEOUT_SECONDS`. The worker now ignores a re-delivered training task when that task already finished or its training process is still alive, so a re-delivery can no longer start a second training process on the same run. A task whose process died with a crashed worker still runs again, as before.
+- The step total in failure messages and the pace estimate now come from the training loop's progress bar. Before, an evaluation or data-preparation bar printed last could set it (a real run read "step 440 of 12"), and that also stopped the pace warning from appearing.
 
 ### Failed runs say why, with a Continue button (November 7, 2026)
 
