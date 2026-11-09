@@ -442,7 +442,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `JAVA_STDLIB_PACKAGE_TYPES`, and of an unlisted one any bare PascalCase type). C++ direct initialisation
   (`std::ifstream file(p);`) and Go one-line structs (`struct{ total float64 }`) declare their names. Terms are
   deduplicated, dotted paths are checked up to `MAX_PATH_SEGMENTS` (8) segments and at most `MAX_TERMS` (2,000) terms per
-  check (long chains stay linear). No `grounding_text` -> `skipped="no_context"`. `python_undefined_names` (pyflakes, in-process) sits in
+  check (long chains stay linear). No `grounding_text` -> `skipped="no_context"`. `python_undefined_names` (pyflakes, in-process; rev 2: identifiers in `grounding_text` count as defined) sits in
   `builtin.GATED_IN_PROCESS`: registered but not a core built-in, so it needs `CODE_CHECK_ALLOWED`; available iff
   `pyflakes` imports. `properties_parse` (`builtin.PropertiesParse`, also in `GATED_IN_PROCESS`; language `properties`,
   aliases `java-properties` / `java_properties` / `javaproperties` in `base._ALIASES`): fails when the whole text is a JSON

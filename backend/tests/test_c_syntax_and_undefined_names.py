@@ -184,3 +184,28 @@ class PythonUndefinedNamesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAS_PYFLAKES, "pyflakes is not installed")
+class PythonUndefinedNamesGroundingTests(unittest.TestCase):
+    """Names the question / passages show count as defined: a snippet continues the code it was shown."""
+
+    def check(self, code, grounding=None):
+        ctx = {"path": None, "grounding_text": grounding} if grounding is not None else None
+        with Allow("python_undefined_names"):
+            return svc.run_code_checks(code, language="python", check_ids=["python_undefined_names"],
+                                       context=ctx)["results"][0]
+
+    def test_notebook_names_from_the_passages_pass(self):
+        code = "masked = dp.protect(test_df, INTERNAL_OBJECT)\nspark.sql('select 1')\n"
+        self.assertIs(self.check(code)["ok"], False)  # no context: still an undefined-name failure
+        shown = "[P1] df cell:\ntest_df = spark.table('t')\nINTERNAL_OBJECT = 'x'\ndp = Protector()"
+        self.assertIs(self.check(code, shown)["ok"], True)
+
+    def test_a_name_the_question_never_shows_still_fails(self):
+        r = self.check("print(totally_unknown_name)\n", "[P1] spark.sql('select 1')")
+        self.assertIs(r["ok"], False)
+        self.assertIn("totally_unknown_name", " ".join(r["messages"]))
+
+    def test_revision_bumped(self):
+        self.assertEqual(svc.check_revisions(["python_undefined_names"]), {"python_undefined_names": 2})

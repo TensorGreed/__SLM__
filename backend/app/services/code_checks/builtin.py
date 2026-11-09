@@ -201,15 +201,22 @@ class JsonSchemaCheck(BaseCheck):
         return make_result(self.id, False, msgs)
 
 
+_IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
+
+
 class PythonUndefinedNames(BaseCheck):
     """pyflakes, in-process (it only parses: nothing is imported or run). Fails on undefined names (incl.
     ``__all__`` entries and locals used before assignment) and on syntax errors; unused imports, redefinitions
     and other style warnings are ignored. An indented fragment (a method body) is dedented first and may use
-    ``self`` / ``cls``. Gated like an external check: registered outside the core built-ins, so it runs only
-    when its id is in ``CODE_CHECK_ALLOWED`` and ``pyflakes`` is importable."""
+    ``self`` / ``cls``. A name that appears in the text the model was shown (``context["grounding_text"]``: the
+    question and its passages) counts as defined: a snippet continues code the question shows (a notebook's
+    ``spark`` / ``df``, a constant from an earlier cell). Gated like an external check: registered outside the core
+    built-ins, so it runs only when its id is in ``CODE_CHECK_ALLOWED`` and ``pyflakes`` is importable."""
 
     id = "python_undefined_names"
     languages = frozenset({"python"})
+    revision = 2  # 2: names shown in the question / passages count as defined (2026-11-09)
+    revision_note = "names shown in the question count as defined"
 
     def available(self) -> bool:
         import importlib.util
@@ -235,6 +242,9 @@ class PythonUndefinedNames(BaseCheck):
                 return make_result(self.id, False, [f"{line}{exc.msg}"])
         except (ValueError, RecursionError, MemoryError) as exc:
             return make_result(self.id, False, [str(exc) or type(exc).__name__])
+        grounding = (context or {}).get("grounding_text") if isinstance(context, dict) else None
+        if isinstance(grounding, str) and grounding:
+            extra |= set(_IDENTIFIER_RE.findall(grounding))
         found = checker.Checker(tree, filename="<snippet>", builtins=extra).messages
         bad = [m for m in found if isinstance(m, (pm.UndefinedName, pm.UndefinedExport, pm.UndefinedLocal))]
         if not bad:
