@@ -2,7 +2,8 @@
  * RemediationConfigCard — how a code-remediation project's patches are
  * judged: the detector that decides "finding resolved", the code checks run
  * on patched code (and which of them are usable on this machine), the judge,
- * and passage retrieval for rows without their own passages.
+ * passage retrieval for rows without their own passages, and an optional extra
+ * line for task→code prompts.
  *
  * Shown on the Train page for `code-remediation` projects. Saved settings
  * apply at dataset prep, held-out eval and in the synthetic playbooks.
@@ -12,6 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { checkStatus, listCodeChecks, type CodeCheckInfo, type NetworkIsolationInfo } from '../../api/codeChecks';
 import {
+    CODE_EXAMPLE_INSTRUCTION_MAX,
     detectorOptionLabel,
     getRemediationConfig,
     putRemediationConfig,
@@ -71,6 +73,7 @@ export default function RemediationConfigCard({ projectId }: Props) {
     const [topK, setTopK] = useState(3);
     const [scoreExamples, setScoreExamples] = useState(false);
     const [formatFirst, setFormatFirst] = useState(false);
+    const [instruction, setInstruction] = useState('');
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -84,6 +87,7 @@ export default function RemediationConfigCard({ projectId }: Props) {
         setTopK(res.config.top_k ?? res.effective.top_k);
         setScoreExamples(res.config.score_code_examples ?? res.effective.score_code_examples ?? false);
         setFormatFirst(res.config.format_before_check ?? res.effective.format_before_check ?? false);
+        setInstruction(res.config.code_example_instruction ?? '');
     }, []);
 
     useEffect(() => {
@@ -113,6 +117,7 @@ export default function RemediationConfigCard({ projectId }: Props) {
             // PUT replaces the settings: leaving it out stores the default (off).
             ...(scoreExamples ? { score_code_examples: true } : {}),
             ...(formatFirst ? { format_before_check: true } : {}),
+            ...(instruction.trim() ? { code_example_instruction: instruction.trim() } : {}),
         };
         try {
             apply(await putRemediationConfig(projectId, body));
@@ -275,6 +280,26 @@ export default function RemediationConfigCard({ projectId }: Props) {
                     code is formatted first, so spacing or alignment alone does not fail a row. Code the formatter rejects still
                     fails; without the formatter installed and allowed, code is checked as written. Evals with and without
                     this setting are scored differently and are not compared row by row.
+                </p>
+            </fieldset>
+
+            <fieldset className="remediation-config__group">
+                <legend>Task→code prompt</legend>
+                <label htmlFor="rem-code-example-instruction">Extra instruction (optional)</label>
+                <textarea
+                    id="rem-code-example-instruction"
+                    className="input remediation-config__instruction"
+                    rows={2}
+                    maxLength={CODE_EXAMPLE_INSTRUCTION_MAX}
+                    value={instruction}
+                    onChange={(e) => setInstruction(e.target.value)}
+                    placeholder="Leave empty for the standard prompt"
+                    data-testid="rem-code-example-instruction"
+                />
+                <p className="u-hint u-mt0" data-testid="rem-code-example-instruction-hint">
+                    Added as its own line right after the first line of every task→code prompt, for training rows and
+                    held-out eval alike. It takes effect when the dataset split is prepared again, so training and eval
+                    always see the same prompt. Up to {CODE_EXAMPLE_INSTRUCTION_MAX} characters.
                 </p>
             </fieldset>
 

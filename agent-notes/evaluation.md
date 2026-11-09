@@ -444,7 +444,11 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   deduplicated, dotted paths are checked up to `MAX_PATH_SEGMENTS` (8) segments and at most `MAX_TERMS` (2,000) terms per
   check (long chains stay linear). No `grounding_text` -> `skipped="no_context"`. `python_undefined_names` (pyflakes, in-process) sits in
   `builtin.GATED_IN_PROCESS`: registered but not a core built-in, so it needs `CODE_CHECK_ALLOWED`; available iff
-  `pyflakes` imports. `c_syntax` (`external.CSyntax`): clang/clang++ preferred, gcc/g++ fallback; syntax-class
+  `pyflakes` imports. `properties_parse` (`builtin.PropertiesParse`, also in `GATED_IN_PROCESS`; language `properties`,
+  aliases `java-properties` / `java_properties` / `javaproperties` in `base._ALIASES`): fails when the whole text is a JSON
+  object / array, or a logical line (`properties_logical_lines`: Java `\` continuations, `#` / `!` comments and blanks
+  skipped) starts with `{` `}` `[` `]` or `- `, naming the first physical line (max 5 lines + "and N more"); `key=value`,
+  `key: value`, `key value`, bare `key` pass. `c_syntax` (`external.CSyntax`): clang/clang++ preferred, gcc/g++ fallback; syntax-class
   regex + same-line suppression (a syntax error on a line with a resolution error is ignored); missing headers are
   blanked and re-checked (max 12, else `skipped="unresolvable_includes"`); a statement fragment is retried inside
   `void __brewslm_snippet(void) {` with includes hoisted and `#line 1`. Code-example scoring passes
@@ -515,7 +519,17 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   not formatted. UI: toggle in `RemediationConfigCard` (Held-out eval). Tests: `tests/test_code_example_format_before_check.py`.
 - API: `api/remediation_config.py` (`/projects/{id}/remediation-config`; `api/remediation.py` is the older failure-plan API).
   Probe packs: `_RECIPES_WITHOUT_PROBE_PACK`. Not wired: `coach_service._PER_CLASS_RECIPE_IDS` (no `per_class` is emitted).
-- Tests: `tests/test_code_remediation_recipe.py`, `tests/test_code_example_scoring.py`. Docs: `slm-docs/docs/workflows/code-remediation.md`.
+- **Opt-in code-example instruction** (`runtime_config["remediation"]["code_example_instruction"]`, default None; string,
+  `normalize_code_example_instruction` collapses whitespace, cap `MAX_CODE_EXAMPLE_INSTRUCTION_CHARS` 500; the API 422s
+  longer, blank clears). `build_code_example_prompt(..., extra_instruction)` puts it as its own line after the first
+  instruction line; None/blank = byte-identical (golden sha in `tests/test_code_example_checks_and_repeats.py`). It is
+  stamped into the manifest `remediation` block ONLY when set (`_remediation_schema_stamp`), copied into
+  `adapter_config["remediation"]` (training rows, `_map_remediation`), and the eval handler reads the stamp -- NOT live
+  (not in `_REMEDIATION_LIVE_FLAGS`), so train/eval prompts match; changing it needs a re-split. The remediation
+  fingerprint gains `code_example_instruction` (sha of the manifest stamp) only when set. UI: "Task→code prompt" textarea
+  in `RemediationConfigCard` (sent only when non-blank; PUT replaces).
+- Tests: `tests/test_code_remediation_recipe.py`, `tests/test_code_example_scoring.py`,
+  `tests/test_code_example_checks_and_repeats.py`. Docs: `slm-docs/docs/workflows/code-remediation.md`.
 
 ## `structured_plan` scoring + the structured-plan recipe (G6, lane B2)
 
@@ -976,7 +990,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `generation_kwargs(temperature=sample_temperature)` (neutral sampling), `torch.manual_seed(attempt_seed(seed, row_index,
   attempt))`; `repair` = history (or the prompt) + `{assistant: attempt N-1}` + `{user: "Your previous answer failed these
   automatic checks:\n- <verifier>: <message>\nReturn a corrected answer in the same format."}` through the chat template,
-  same decoding as attempt 1 — without an applied chat template a repair attempt resamples (`modes_used`). First passing
+  same decoding as attempt 1 — without an applied chat template a repair attempt resamples (`modes_used`).
+  `resample_on_repeat` (default false): a retry whose `.strip()`ped text equals any earlier attempt's is a repeat; with
+  the flag on, the NEXT attempt calls `run_checked_row(resample=...)` (eval passes `_resample`) instead of `regenerate`.
+  Record `repeats` and summary `rows_with_repeats` exist when > 0 or the flag is on; `policy_record` adds
+  `resample_on_repeat: true` + `sample_temperature` / `seed` only when on AND mode is repair (resample mode ignores the
+  flag, so its key never changes). Repair-mode records also carry `repair_messages: 2` (`REPAIR_MESSAGES_REVISION`, the
+  clearer code-shape / fence messages): repair-mode results cached before it are not reused as a bar. UI: checkbox
+  "If a retry repeats the same answer, sample a new one" in `CheckedDecodingSettings` (repair mode only). First passing
   attempt wins; none pass → attempt 1 kept. A retry generation that raises stops that row's retries and keeps attempt 1
   (`attempts_detail` gets `{attempt, error: <type name>}`, record `retry_error`); a CUDA OOM also runs
   `torch.cuda.empty_cache()` (guarded). The torch CPU + CUDA RNG state is saved / restored around every retry generation,
@@ -992,7 +1013,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   field for a reference / answer key / judge output. Test: `test_reference_never_reaches_a_verifier_end_to_end` (sentinel in
   the reference + reference-like fields, spy verifier). Verifiers (generic, by answer shape): `code_checks` (code-example rows
   with a declared language: `code_check_service.checks_for_language` runnable checks on the JSON `code` field, context
-  `{"path": None, "grounding_text": <prompt the model saw>}`; never requests `context_grounding` itself), `context_grounding`
+  `{"path": None, "grounding_text": <prompt the model saw>}`; never requests `context_grounding` itself; messages only:
+  a dict/list `code` says it must be a string holding the <language> source, and when the checks FAILED on a `code`
+  starting with ```` ``` ```` a fence hint is the last message, kept inside `MAX_MESSAGES_PER_FAILURE`), `context_grounding`
   (opt-in even in auto mode: `run_heldout_evaluation` stamps `grounding_opt_in` on the resolved policy via
   `with_grounding_opt_in` — true only when the id is in `CODE_CHECK_ALLOWED`, in the project's code-check selection
   (`runtime_config.remediation.checks` / the manifest's `output_schema.remediation.checks`), or named in the policy's

@@ -338,10 +338,32 @@ def canonical_code_example_json(payload: Any) -> str:
     )
 
 
-def build_code_example_prompt(task: str, language: str | None, passages: list[dict[str, Any]] | None) -> str:
+MAX_CODE_EXAMPLE_INSTRUCTION_CHARS = 500
+
+
+def normalize_code_example_instruction(value: Any) -> str | None:
+    """The project's extra code-example instruction as one line (whitespace collapsed, at most
+    ``MAX_CODE_EXAMPLE_INSTRUCTION_CHARS``), or None when unset / blank / not a string."""
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split())
+    return text[:MAX_CODE_EXAMPLE_INSTRUCTION_CHARS] or None
+
+
+def build_code_example_prompt(
+    task: str,
+    language: str | None,
+    passages: list[dict[str, Any]] | None,
+    extra_instruction: str | None = None,
+) -> str:
+    """The code-example prompt. ``extra_instruction`` (the project's opt-in
+    ``remediation.code_example_instruction``) is its own line right after the first instruction
+    line; None / blank = the prompt byte for byte as before the setting existed."""
     plist = normalize_passages(passages)
+    extra = normalize_code_example_instruction(extra_instruction)
     parts = [
         "Write idiomatic code for the task below, using the API shown in the reference passages.",
+        *([extra] if extra else []),
         "",
         f"Language: {language or 'unknown'}",
         "",
@@ -356,12 +378,13 @@ def build_code_example_prompt(task: str, language: str | None, passages: list[di
     return "\n".join(parts).strip()
 
 
-def build_code_example_prompt_from_row(row: dict[str, Any]) -> str:
+def build_code_example_prompt_from_row(row: dict[str, Any], extra_instruction: str | None = None) -> str:
     task = row.get("task") if isinstance(row.get("task"), str) else _row_code(row)
     return build_code_example_prompt(
         task,
         row.get("language") if isinstance(row.get("language"), str) else None,
         row.get("passages") if isinstance(row.get("passages"), list) else None,
+        extra_instruction,
     )
 
 
@@ -391,8 +414,10 @@ def _clamp_top_k(value: Any) -> int:
 
 
 def effective_remediation_config(runtime_config: Any, project_id: int | None = None) -> dict[str, Any]:
-    """``{detector, checks, judge, retrieve_passages, top_k, score_code_examples, format_before_check}`` with
-    defaults applied. ``retrieve_passages`` defaults to true iff the project has a document index;
+    """``{detector, checks, judge, retrieve_passages, top_k, score_code_examples, format_before_check,
+    code_example_instruction}`` with defaults applied. ``code_example_instruction`` (default None) is an extra
+    line for the code-example prompt (``build_code_example_prompt``); it is stamped into the prepared manifest,
+    so training rows and held-out eval render the same prompt (re-prepare the split after changing it). ``retrieve_passages`` defaults to true iff the project has a document index;
     ``score_code_examples`` (held-out ``code_example`` rows are scored instead of skipped) and
     ``format_before_check`` (the predicted code is run through the language's canonical formatter before
     the code checks, ``code_example_scoring``) default to false."""
@@ -411,6 +436,7 @@ def effective_remediation_config(runtime_config: Any, project_id: int | None = N
         "top_k": _clamp_top_k(raw.get("top_k", DEFAULT_TOP_K)),
         "score_code_examples": raw.get("score_code_examples") is True,
         "format_before_check": raw.get("format_before_check") is True,
+        "code_example_instruction": normalize_code_example_instruction(raw.get("code_example_instruction")),
     }
 
 

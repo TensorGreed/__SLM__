@@ -1016,6 +1016,10 @@ def _remediation_schema_stamp(project: Any, schema: dict[str, Any]) -> dict[str,
         # Opt-in only (absent otherwise, so existing manifests are unchanged). Held-out eval re-reads the
         # live setting (``evaluation_service._apply_remediation_live_config``).
         stamp["remediation"]["score_code_examples"] = True
+    if cfg["code_example_instruction"]:
+        # Opt-in only (absent otherwise): the extra code-example prompt line. Training rows (the adapter config
+        # below copies it) and held-out eval both render from this stamp, so their prompts match.
+        stamp["remediation"]["code_example_instruction"] = cfg["code_example_instruction"]
     tax = lts.project_taxonomy(project) if project is not None else None
     stamp["label_parents"] = taxonomy_label_parents(tax)
     stamp["label_titles"] = {
@@ -1180,6 +1184,8 @@ async def _apply_recipe_adapter_config(
                 "retrieval": retrieval_settings(project_row) if project_row else None,
                 "label_titles": declared.get("label_titles") or {},
             }
+            if settings_cfg.get("code_example_instruction"):
+                adapter_config["remediation"]["code_example_instruction"] = settings_cfg["code_example_instruction"]
 
     # structured-plan: the schema bundle the prompt embeds and the passage-retrieval settings.
     if adapter_id == "structured-extraction" and not (adapter_config and "structured_plan" in adapter_config):

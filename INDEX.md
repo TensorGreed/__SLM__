@@ -924,6 +924,7 @@ session-start guidance.
 - `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
 - `backend/tests/test_code_checks.py` — Code-check registry, built-ins, external checks (sandbox stubbed), plugins, API.
 - `backend/tests/test_code_chunker.py` — Code chunker: declaration-level chunks with exact line ranges.
+- `backend/tests/test_code_example_checks_and_repeats.py` — Stronger checks for code-example evals (all opt-in; defaults unchanged).
 - `backend/tests/test_code_example_format_before_check.py` — Opt-in "format before check" for held-out code-example scoring
 - `backend/tests/test_code_example_scoring.py` — Opt-in held-out scoring of ``code_example`` (task -> code) rows in a ``remediation`` eval
 - `backend/tests/test_code_examples_declared_language.py` — `code_examples` playbook: the reply declares its language; validation checks the code under it.

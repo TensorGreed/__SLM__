@@ -1,7 +1,8 @@
 """Code-remediation settings API: the detector behind ``issue_resolved``, the code checks that
 decide "the patched code still parses", the judge, passage retrieval and whether held-out
 ``code_example`` rows are scored (``score_code_examples``, default off) and whether their predicted code is
-run through the language's canonical formatter before the checks (``format_before_check``, default off). Stored in
+run through the language's canonical formatter before the checks (``format_before_check``, default off), and an
+optional extra line for the code-example prompt (``code_example_instruction``, default none). Stored in
 ``Project.runtime_config["remediation"]``; see ``services/code_remediation_prompt.py``
 (defaults) and ``services/remediation_detector.py``.
 """
@@ -24,6 +25,7 @@ from app.services import code_check_service
 from app.services import remediation_detector as rd
 from app.services.code_remediation_prompt import (
     CONFIG_KEY,
+    MAX_CODE_EXAMPLE_INSTRUCTION_CHARS,
     MAX_TOP_K,
     effective_remediation_config,
     project_is_code_remediation,
@@ -52,6 +54,12 @@ class RemediationConfigBody(BaseModel):
         default=None,
         description="Run the language's canonical formatter (gofmt, terraform fmt, rustfmt) on predicted code before "
         "the code checks, so a format-only difference is not a failure. Default off.",
+    )
+    code_example_instruction: str | None = Field(
+        default=None,
+        description="An extra instruction line for code-example prompts, placed right after the first instruction "
+        f"line (training rows and held-out eval alike; re-prepare the split after changing it). At most "
+        f"{MAX_CODE_EXAMPLE_INSTRUCTION_CHARS} characters; whitespace is collapsed to one line. Null / blank = none.",
     )
 
 
@@ -87,6 +95,8 @@ async def _payload(db: AsyncSession, request: Request, project: Project) -> dict
         "top_k": stored.get("top_k") if isinstance(stored.get("top_k"), int) else None,
         "score_code_examples": stored.get("score_code_examples") if isinstance(stored.get("score_code_examples"), bool) else None,
         "format_before_check": stored.get("format_before_check") if isinstance(stored.get("format_before_check"), bool) else None,
+        "code_example_instruction": stored.get("code_example_instruction")
+        if isinstance(stored.get("code_example_instruction"), str) else None,
     }
     return {
         "config": config,
@@ -109,7 +119,8 @@ async def put_remediation_config(
     """Validate and store the settings (replacing the previous ones). 422 with ``error_code``
     ``INVALID_REMEDIATION_CONFIG`` and nothing saved when the detector project is not a
     code-findings project with a completed weighted run (or not accessible to the caller), a
-    check id is unknown, or ``top_k`` is outside 1..10."""
+    check id is unknown, ``top_k`` is outside 1..10, or ``code_example_instruction`` is longer than
+    500 characters."""
     project = await _project(db, project_id)
     if not project_is_code_remediation(project):
         raise HTTPException(409, {"error_code": "NOT_CODE_REMEDIATION", "message": "Pick the code-remediation task type first."})
@@ -135,6 +146,15 @@ async def put_remediation_config(
         stored["score_code_examples"] = body.score_code_examples
     if body.format_before_check is not None:
         stored["format_before_check"] = body.format_before_check
+    if body.code_example_instruction is not None:
+        text = " ".join(body.code_example_instruction.split())
+        if len(text) > MAX_CODE_EXAMPLE_INSTRUCTION_CHARS:
+            raise _invalid(
+                "INVALID_REMEDIATION_CONFIG",
+                f"code_example_instruction must be at most {MAX_CODE_EXAMPLE_INSTRUCTION_CHARS} characters.",
+            )
+        if text:
+            stored["code_example_instruction"] = text
 
     if body.detector is not None:
         det = body.detector

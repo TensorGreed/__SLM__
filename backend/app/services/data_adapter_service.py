@@ -1614,7 +1614,7 @@ def _map_remediation(
         return out
     # A code example: task + its passages -> {code, rationale, citations}.
     row = {**record, "task": source}
-    prompt = crp.build_code_example_prompt_from_row(row)
+    prompt = crp.build_code_example_prompt_from_row(row, cfg.get("code_example_instruction"))
     return {
         "text": source,
         "answer": target,

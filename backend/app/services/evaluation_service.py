@@ -1563,7 +1563,8 @@ def _checked_retry(
     (the record's ``modes_used`` says so). ``row`` is read for its prompt / history / row index
     only — the reference never reaches a verifier (``vin`` is built from an allow-list).
     The torch CPU / CUDA RNG state is saved before and restored after every retry generation,
-    so a retry never shifts the sampling of the rows after it."""
+    so a retry never shifts the sampling of the rows after it. With ``resample_on_repeat`` on, the
+    attempt after a retry that repeated an earlier answer is a resample (``_resample``)."""
     from app.services import checked_decoding_service as cds
 
     row_index = row.get("_row_index", row_pos)
@@ -1616,6 +1617,8 @@ def _checked_retry(
         vin=cds.with_prompt(vin, formatted_prompt),
         first={"text": text, "tokens": n_tokens, "seconds": secs},
         regenerate=_with_rng_restored(_regenerate),
+        # ``resample_on_repeat``: the attempt after a repeated answer is sampled, not repaired.
+        resample=_with_rng_restored(_resample),
     )
     return str(chosen.get("text") or ""), record
 

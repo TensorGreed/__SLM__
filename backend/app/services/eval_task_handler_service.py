@@ -1123,7 +1123,10 @@ class StructuredExtractionHandler:
         settings_cfg = schema.get("remediation") or {}
         if not crp.is_remediation_row(row) and crp.is_code_example_row(row):
             task = row.get("task") or row.get("text")
-            prompt = crp.build_code_example_prompt_from_row({**row, "task": task})
+            # Same opt-in extra instruction the training rows were rendered with (the manifest stamp).
+            prompt = crp.build_code_example_prompt_from_row(
+                {**row, "task": task}, settings_cfg.get("code_example_instruction")
+            )
             payload = crp.code_example_payload(row)
             reference = crp.canonical_code_example_json(payload)
             ce_extras: dict[str, Any] = {"structured_fields": ["code"]}

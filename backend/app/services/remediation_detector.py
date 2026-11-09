@@ -474,4 +474,10 @@ async def remediation_scoring_fingerprint(
         # Same rule: on = a different scorer (W1's Compare and the base-result reuse see different fingerprints).
         # Only with code-example scoring on: it formats nothing otherwise.
         parts["format_before_check"] = True
+    stamp = schema.get("remediation") if isinstance(schema.get("remediation"), dict) else {}
+    instruction = stamp.get("code_example_instruction")
+    if isinstance(instruction, str) and instruction:
+        # The prompt's extra code-example line (from the prepared manifest, which is what eval renders).
+        # Only when set, so fingerprints stamped before the setting existed still match.
+        parts["code_example_instruction"] = hashlib.sha256(instruction.encode()).hexdigest()[:10]
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]

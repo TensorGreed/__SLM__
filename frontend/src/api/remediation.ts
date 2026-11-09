@@ -80,7 +80,13 @@ export interface RemediationConfig {
     /** Run the language's canonical formatter (gofmt, terraform fmt, rustfmt) on predicted code before the
      *  code checks, so a format-only difference is not a failure. Default off. */
     format_before_check?: boolean | null;
+    /** An extra instruction line for code-example prompts, right after the first instruction line (training rows
+     *  and held-out eval alike; re-prepare the split after changing it). At most 500 characters. null = none. */
+    code_example_instruction?: string | null;
 }
+
+/** Longest ``code_example_instruction`` the API accepts. */
+export const CODE_EXAMPLE_INSTRUCTION_MAX = 500;
 
 export interface RemediationEffective {
     detector?: RemediationDetector | null;
@@ -90,6 +96,7 @@ export interface RemediationEffective {
     top_k: number;
     score_code_examples?: boolean;
     format_before_check?: boolean;
+    code_example_instruction?: string | null;
 }
 
 export interface AvailableDetector {

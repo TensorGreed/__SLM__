@@ -19,7 +19,10 @@ import EvalSummaryCard from './EvalSummaryCard';
 import { checkedDecodingBadgeText, rowsFixedText, type CheckedDecodingSettings as Settings } from '../../api/checkedDecoding';
 import type { CompareProvenance, CompareRowEvidence as RowEvidence } from '../../api/experimentCompare';
 
-const OFF: Settings = { enabled: false, mode: 'resample', max_attempts: 3, verifiers: null, sample_temperature: 0.7, seed: 0 };
+const OFF: Settings = {
+    enabled: false, mode: 'resample', max_attempts: 3, verifiers: null, sample_temperature: 0.7, seed: 0,
+    resample_on_repeat: false,
+};
 
 function payload(settings: Settings) {
     return {
@@ -85,6 +88,21 @@ describe('CheckedDecodingSettings', () => {
         await userEvent.selectOptions(mode, 'repair');
         await waitFor(() => expect(apiMock.put).toHaveBeenLastCalledWith('/projects/7/evaluation/checked-decoding', { mode: 'repair' }));
         expect(screen.getByTestId('checked-decoding-max')).toHaveAttribute('max', '5');
+    });
+
+    it('offers "sample a new one on a repeat" in repair mode only, off by default', async () => {
+        apiMock.get.mockResolvedValue(payload({ ...OFF, enabled: true }));
+        apiMock.put.mockImplementation((_url: string, body: Partial<Settings>) => Promise.resolve(payload({ ...OFF, enabled: true, mode: 'repair', ...body })));
+        render(<CheckedDecodingSettings projectId={7} />);
+        await screen.findByTestId('checked-decoding-mode');
+        expect(screen.queryByTestId('checked-decoding-resample-on-repeat')).toBeNull();
+        await userEvent.selectOptions(screen.getByTestId('checked-decoding-mode'), 'repair');
+        const box = await screen.findByTestId('checked-decoding-resample-on-repeat');
+        expect(box).not.toBeChecked();
+        expect(box.closest('label')).toHaveTextContent('If a retry repeats the same answer, sample a new one');
+        await userEvent.click(box);
+        await waitFor(() => expect(apiMock.put).toHaveBeenLastCalledWith('/projects/7/evaluation/checked-decoding', { resample_on_repeat: true }));
+        await waitFor(() => expect(screen.getByTestId('checked-decoding-resample-on-repeat')).toBeChecked());
     });
 
     it('shows the server message when a save is refused', async () => {

@@ -7,3 +7,4 @@
 .remediation-config__status.is-ready { color: var(--color-success); }
 .remediation-config__status.is-off { color: var(--color-error); }
 .remediation-config__error { color: var(--color-error); font-size: var(--font-size-sm); }
+.remediation-config__instruction { width: 100%; resize: vertical; }

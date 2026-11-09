@@ -35,6 +35,14 @@ settings' "every ready check"), so adding them changed no existing score.
 |---|---|---|---|
 | `context_grounding` | python, javascript, typescript, java, csharp, go, rust, c, cpp, shell, terraform, yaml | every external name the code uses appears in the prompt context (below) | name it in `check_ids` / pick it in the remediation settings, or list it in `CODE_CHECK_ALLOWED` to make it part of the default selection |
 | `python_undefined_names` | python | `pyflakes` (parse only, nothing is imported or run): undefined names, `__all__` entries that do not exist, locals used before assignment, and syntax errors fail; unused imports and other style warnings do not. An indented fragment is dedented and may use `self` / `cls` | list it in `CODE_CHECK_ALLOWED` (and have `pyflakes` installed, it is in the backend requirements); skipped `unavailable` without `pyflakes` |
+| `properties_parse` | properties (also `java-properties`) | a `.properties` file in Java `Properties.load` syntax. Fails when the whole text is a JSON object or array, or when a logical line (after `\` continuations; `#` / `!` comments and blank lines skipped) starts with `{`, `}`, `[`, `]` or `- ` (a YAML list item), naming the line (`line 2: starts with '{' ...`). `key=value`, `key: value`, `key value` and a bare `key` pass | list it in `CODE_CHECK_ALLOWED` |
+
+### Checked decoding messages
+
+Checked decoding (verify-and-retry at eval time) runs these checks on a code answer's JSON `"code"` string. Two shape
+mistakes get their own message, so a repair turn can fix them: a `"code"` given as a JSON object or list, and (only when
+a check failed) a `"code"` string that starts with a markdown fence. Pass and fail are the checks' own; the messages
+stay within the per-failure cap.
 
 ### `context_grounding`
 

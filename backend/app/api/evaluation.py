@@ -73,7 +73,8 @@ class HeldoutEvalRunRequest(BaseModel):
     # (result: metrics.dialogue_judge). Off by default — one generation + judge call per turn.
     dialogue_judge: bool = False
     # Checked decoding for this eval only (``checked_decoding_service``): {enabled, mode:
-    # resample|repair, max_attempts 1..5, verifiers: [ids] | null, sample_temperature, seed}.
+    # resample|repair, max_attempts 1..5, verifiers: [ids] | null, sample_temperature, seed,
+    # resample_on_repeat}.
     # Omitted / null = the project's setting (runtime_config.inference.checked_decoding).
     checked_decoding: dict[str, Any] | None = None
 
@@ -96,6 +97,8 @@ class CheckedDecodingSettings(BaseModel):
     verifiers: list[str] | None = None
     sample_temperature: float | None = None
     seed: int | None = None
+    # Repair mode: when a retry repeats an earlier answer, the next try is a sampled one. Default off.
+    resample_on_repeat: bool | None = None
 
 
 class EvaluationPackPreferenceUpdateRequest(BaseModel):

@@ -127,6 +127,18 @@ export default function CheckedDecodingSettings({ projectId }: Props) {
                     </div>
                 </div>
             )}
+            {settings.enabled && settings.mode === 'repair' && (
+                <label className="eval-panel__toggle">
+                    <input
+                        type="checkbox"
+                        checked={Boolean(settings.resample_on_repeat)}
+                        disabled={saving}
+                        onChange={(e) => void save({ resample_on_repeat: e.target.checked })}
+                        data-testid="checked-decoding-resample-on-repeat"
+                    />
+                    If a retry repeats the same answer, sample a new one
+                </label>
+            )}
             {settings.enabled && (
                 <p className="u-hint u-mt0" data-testid="checked-decoding-summary">
                     The first answer is always the normal one; a retry happens only when a check fails, and if no try

@@ -105,6 +105,27 @@ out of `code_example_pass_rate` and of the paired lift, never counted as a pass.
 `remediation_pass_rate` stays the headline. The lift pairs rows on `code_example_pass`. A cached base-model result is
 reused only when it was scored with the same setting.
 
+### Extra instruction for task-to-code prompts (opt-in)
+
+Off by default. `code_example_instruction` (Remediation settings: **Task→code prompt**, up to 500 characters;
+whitespace is collapsed to one line) is added as its own line right after the first line of every task-to-code prompt
+("Write idiomatic code for the task below, ..."), for example `Put only the source text in "code", as a string, with no
+markdown fences.` It is stamped into the manifest when the split is prepared, and training rows and held-out eval both
+render from that stamp, so their prompts always match: change it, then prepare the split again. Unset, the prompt is
+byte for byte what it was before the setting existed. A set instruction is part of the remediation scoring fingerprint,
+so a base-model result prepared without it is not reused as the bar for one prepared with it.
+
+### Checked decoding on task-to-code rows
+
+With [checked decoding](../extensions/code-checks.md#checked-decoding-messages) on, a task-to-code answer is re-tried when
+the language's code checks fail. The failure messages name the two common shape mistakes so a repair turn can fix them:
+`"code"` given as a JSON object or list (`the "code" field must be a string holding the yaml source text, not a JSON
+object or list`), and, when a check failed, a `"code"` string that starts with a markdown fence. In repair mode,
+`resample_on_repeat: true` (Results eval settings: **If a retry repeats the same answer, sample a new one**; off by
+default) makes the try after a repeated answer a sampled one (`sample_temperature`, `seed`) instead of another repair
+turn. Rows record `repeats` and the eval `rows_with_repeats` (present when above 0 or when the setting is on); the flag
+and the sampling knobs join the decoding policy record only when it is on, so existing records are unchanged.
+
 ### Detector for `issue_resolved`
 
 Set `detector` to one of:
@@ -116,7 +137,7 @@ A finding the detector does not report on the *original* code cannot be shown re
 
 ## Settings API
 
-`GET /api/projects/{id}/remediation-config` returns `{config, effective, detector_label, available_detectors}`: what is stored, the defaults applied, the detector's name, and the code-findings projects you can use (completed weighted runs). `PUT` with `{detector, checks, judge, retrieve_passages, top_k, score_code_examples, format_before_check}` replaces the settings (an omitted field goes back to its default; `score_code_examples` and `format_before_check` default to false); it answers 422 `INVALID_REMEDIATION_CONFIG` (nothing saved) for a detector project that is not a code-findings project with a completed weighted run, an unknown check id, or a `top_k` outside 1 to 10. `checks` limits which parse checks run (`null`: every runnable check for the language).
+`GET /api/projects/{id}/remediation-config` returns `{config, effective, detector_label, available_detectors}`: what is stored, the defaults applied, the detector's name, and the code-findings projects you can use (completed weighted runs). `PUT` with `{detector, checks, judge, retrieve_passages, top_k, score_code_examples, format_before_check, code_example_instruction}` replaces the settings (an omitted field goes back to its default; `score_code_examples` and `format_before_check` default to false, `code_example_instruction` to none, and a blank one clears it); it answers 422 `INVALID_REMEDIATION_CONFIG` (nothing saved) for a detector project that is not a code-findings project with a completed weighted run, an unknown check id, a `top_k` outside 1 to 10, or a `code_example_instruction` longer than 500 characters. `checks` limits which parse checks run (`null`: every runnable check for the language).
 
 ## Synthetic data
 

@@ -69,6 +69,7 @@ GROUNDING_CHECK_ID = "context_grounding"
 # Set on a resolved policy (never saved / validated) by ``with_grounding_opt_in``.
 GROUNDING_OPT_IN_KEY = "grounding_opt_in"
 MAX_ATTEMPTS_LIMIT = 5
+REPAIR_MESSAGES_REVISION = 2
 MAX_MESSAGES_PER_FAILURE = 3
 MAX_MESSAGE_CHARS = 300
 
@@ -79,6 +80,9 @@ DEFAULTS: dict[str, Any] = {
     "verifiers": None,  # None = every verifier the answer shape allows
     "sample_temperature": 0.7,
     "seed": 0,
+    # When a retry's answer repeats an earlier attempt's (after ``.strip()``), the NEXT attempt is a resample
+    # (``sample_temperature`` / ``seed``) instead of a repair turn. Off by default.
+    "resample_on_repeat": False,
 }
 
 REPAIR_TEMPLATE = (
@@ -138,6 +142,10 @@ def normalize_policy(raw: Any) -> dict[str, Any]:
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise PolicyError("checked_decoding.seed must be a non-negative integer")
         out["seed"] = value
+    if raw.get("resample_on_repeat") is not None:
+        if not isinstance(raw["resample_on_repeat"], bool):
+            raise PolicyError("checked_decoding.resample_on_repeat must be true or false")
+        out["resample_on_repeat"] = raw["resample_on_repeat"]
     return out
 
 
@@ -186,7 +194,9 @@ def lift_policy_override(runtime_config: Any, override: Any = None) -> dict[str,
 
 def policy_record(policy: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """What the decoding record carries (None = off): every knob that can
-    change an answer. The sampling knobs only matter for resample."""
+    change an answer. The sampling knobs only matter for resample, or when
+    ``resample_on_repeat`` is on (the flag is recorded only when on, so records
+    made without it are unchanged)."""
     if not policy or not policy.get("enabled"):
         return None
     rec: dict[str, Any] = {
@@ -196,7 +206,14 @@ def policy_record(policy: Mapping[str, Any] | None) -> dict[str, Any] | None:
     }
     if policy.get("verifiers") is None and policy.get(GROUNDING_OPT_IN_KEY):
         rec["auto_includes_grounding"] = True  # auto mode with context_grounding opted in
-    if policy["mode"] == "resample":
+    repeat_resample = policy["mode"] == "repair" and bool(policy.get("resample_on_repeat"))
+    if policy["mode"] == "repair":
+        # Revision of the repair-turn text: 2 = clearer code-shape / markdown-fence messages.
+        # Repair-mode results cached before it are not reused as a bar.
+        rec["repair_messages"] = REPAIR_MESSAGES_REVISION
+    if repeat_resample:
+        rec["resample_on_repeat"] = True
+    if policy["mode"] == "resample" or repeat_resample:
         rec["sample_temperature"] = float(policy["sample_temperature"])
         rec["seed"] = int(policy["seed"])
     return rec
@@ -388,19 +405,42 @@ def _code_check_ids(language: str) -> list[str]:
     return [c.id for c in ccs.checks_for_language(language) if c.id != GROUNDING_CHECK_ID]
 
 
+def _starts_with_fence(code: str) -> bool:
+    return code.lstrip().startswith("```")
+
+
 def verify_code_checks(vin: VerifierInput, answer: str) -> dict[str, Any]:
+    """The language's runnable code checks on the answer's JSON ``code`` string. The messages name the
+    two common shape mistakes so a repair turn can fix them: ``code`` given as a JSON object / list, and
+    (only when a check failed) a ``code`` string wrapped in a markdown fence. Pass / fail is the checks'."""
     from app.services import code_check_service as ccs
 
-    code = _code_of(answer)
-    if code is None:
-        return _result("code_checks", False, ['the answer is not a JSON object with a "code" string'])
+    from app.services.code_checks.base import normalize_language
+
+    language = normalize_language(vin.code_language) or "code"
+    parsed = parse_json_object(answer)
+    raw = parsed.get("code") if parsed else None
+    if not isinstance(raw, str):
+        if isinstance(raw, (dict, list)):
+            msg = f'the "code" field must be a string holding the {language} source text, not a JSON object or list'
+        else:
+            msg = 'the answer is not a JSON object with a "code" string'
+        return _result("code_checks", False, [msg])
+    code = raw
     ids = _code_check_ids(vin.code_language or "")
     if not ids:
         return _result("code_checks", None, ["no runnable check for this language"])
     report = ccs.run_code_checks(
         code, language=vin.code_language, check_ids=ids, context={"path": None, "grounding_text": vin.prompt}
     )
-    return _result("code_checks", report.get("ok"), _check_failures(report))
+    messages = _check_failures(report)
+    if report.get("ok") is False and _starts_with_fence(code):
+        # Kept inside the per-failure cap (``_failures``) so the hint always reaches the repair turn.
+        messages = messages[: MAX_MESSAGES_PER_FAILURE - 1] + [
+            f'the "code" string starts with a markdown fence; put only the {language} source text in it, '
+            "without ``` fences"
+        ]
+    return _result("code_checks", report.get("ok"), messages)
 
 
 def verify_context_grounding(vin: VerifierInput, answer: str) -> dict[str, Any]:
@@ -612,6 +652,12 @@ def repair_message(failures: list[dict[str, Any]]) -> str:
 # next attempt; an attempt is ``{"text", "tokens", "seconds"}`` (+ optional "mode").
 # When it raises, the row's retries stop and attempt 1 is kept.
 Regenerate = Callable[[int, dict[str, Any], list[dict[str, Any]]], dict[str, Any]]
+# ``resample(attempt_number)`` returns a sampled attempt of the same prompt (``resample_on_repeat``).
+Resample = Callable[[int], dict[str, Any]]
+
+
+def _same_text(a: Any, b: Any) -> bool:
+    return str(a or "").strip() == str(b or "").strip()
 
 
 def run_checked_row(
@@ -620,6 +666,7 @@ def run_checked_row(
     vin: VerifierInput | None,
     first: dict[str, Any],
     regenerate: Regenerate,
+    resample: Resample | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """``(chosen attempt, row record)``. ``first`` is attempt 1 (the normal generation).
 
@@ -627,7 +674,12 @@ def run_checked_row(
     into ``attempts_detail`` and attempt 1 is kept (no attempt passed, since the loop stops at the
     first pass); a CUDA out-of-memory error also frees the CUDA cache. When a later attempt is
     chosen, its ``generated_tokens`` / ``latency_ms`` are ``record["chosen_stats"]`` (the row's
-    top-level fields stay attempt 1's)."""
+    top-level fields stay attempt 1's).
+
+    A retry whose text equals an earlier attempt's (after ``.strip()``) is a repeat, counted as
+    ``record["repeats"]`` (present when > 0 or when ``resample_on_repeat`` is on). With
+    ``resample_on_repeat`` on and a ``resample`` given, the attempt after a repeat calls
+    ``resample(n)`` instead of ``regenerate``."""
     verifier_ids = applicable_verifiers(vin, policy)
     if not verifier_ids:
         return first, {
@@ -642,15 +694,24 @@ def run_checked_row(
     modes_used: list[str] = []
     current = first
     retry_error: str | None = None
+    resample_on_repeat = bool(policy.get("resample_on_repeat")) and resample is not None
+    repeats = 0
+    last_repeated = False
     for n in range(1, max_attempts + 1):
         if n > 1:
             try:
-                current = regenerate(n, attempts[-1], detail[-1]["failed"])
+                if resample_on_repeat and last_repeated:
+                    current = resample(n)  # type: ignore[misc]
+                else:
+                    current = regenerate(n, attempts[-1], detail[-1]["failed"])
             except Exception as exc:  # noqa: BLE001 - a failed retry never fails the eval
                 _free_cuda_cache_after(exc)
                 retry_error = type(exc).__name__
                 detail.append({"attempt": n, "error": retry_error})
                 break
+            last_repeated = any(_same_text(current.get("text"), a.get("text")) for a in attempts)
+            if last_repeated:
+                repeats += 1
             attempts.append(current)
             modes_used.append(str(current.get("mode") or policy.get("mode")))
         started = perf_counter()
@@ -675,6 +736,8 @@ def run_checked_row(
         record["modes_used"] = modes_used
     if retry_error is not None:
         record["retry_error"] = retry_error
+    if repeats or policy.get("resample_on_repeat"):
+        record["repeats"] = repeats
     chosen = attempts[(chosen_index or 1) - 1]
     if chosen_index is not None and chosen_index > 1:
         record["chosen_stats"] = {
@@ -718,7 +781,8 @@ def summarize(records: list[dict[str, Any] | None], policy: Mapping[str, Any]) -
     fixed = [r for r in first_failed if r.get("passed") and r["chosen_attempt"] > 1]
     still = [r for r in first_failed if not r.get("passed")]
     rec = policy_record(policy)
-    return {
+    with_repeats = sum(1 for r in rows if int(r.get("repeats") or 0) > 0)
+    out = {
         "policy": rec,
         "label": policy_label(rec),
         "rows": len(rows),
@@ -733,6 +797,9 @@ def summarize(records: list[dict[str, Any] | None], policy: Mapping[str, Any]) -
         "extra_generated_tokens": int(sum(int(r.get("extra_generated_tokens") or 0) for r in rows)),
         "verify_seconds": round(sum(float(r.get("verify_seconds") or 0.0) for r in rows), 3),
     }
+    if with_repeats or (policy or {}).get("resample_on_repeat"):
+        out["rows_with_repeats"] = with_repeats  # retries that repeated an earlier answer
+    return out
 
 
 def checked_decoding_summary(metrics: Any) -> dict[str, Any] | None:
@@ -742,7 +809,7 @@ def checked_decoding_summary(metrics: Any) -> dict[str, Any] | None:
     if not isinstance(block, Mapping):
         return None
     keys = ("policy", "label", "skipped", "rows", "rows_checked", "rows_retried", "rows_fixed_by_retry",
-            "rows_still_failing", "mean_attempts", "extra_generation_seconds")
+            "rows_still_failing", "rows_with_repeats", "mean_attempts", "extra_generation_seconds")
     return {k: block[k] for k in keys if k in block}
 
 

@@ -18,6 +18,8 @@ export interface CheckedDecodingSettings {
     verifiers: string[] | null;
     sample_temperature: number;
     seed: number;
+    /** When a retry repeats an earlier answer, the next try is a sampled one (repair mode). Default off. */
+    resample_on_repeat: boolean;
 }
 
 export interface CheckedDecodingPayload {
@@ -35,6 +37,8 @@ export interface CheckedDecodingPolicy {
     verifiers: string[] | 'auto';
     sample_temperature?: number;
     seed?: number;
+    /** Present (true) only when the policy had it on. */
+    resample_on_repeat?: boolean;
 }
 
 /** ``checked_decoding_summary``: what the retries did in one eval. */
@@ -47,6 +51,8 @@ export interface CheckedDecodingSummary {
     rows_retried?: number;
     rows_fixed_by_retry?: number;
     rows_still_failing?: number;
+    /** Rows where a retry repeated an earlier answer (present when > 0 or when resample_on_repeat was on). */
+    rows_with_repeats?: number;
     mean_attempts?: number;
     extra_generation_seconds?: number;
 }

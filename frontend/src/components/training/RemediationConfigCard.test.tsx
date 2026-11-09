@@ -172,6 +172,30 @@ describe('RemediationConfigCard', () => {
         expect(screen.getByTestId('rem-format-before-check-hint')).toHaveTextContent('terraform fmt');
     });
 
+    it('code-example instruction is empty by default and sent only when set', async () => {
+        mockGets();
+        apiMock.put.mockResolvedValue({ data: CONFIG });
+        const user = userEvent.setup();
+        render(<RemediationConfigCard projectId={4} />);
+        const box = await screen.findByTestId('rem-code-example-instruction');
+        expect(box).toHaveValue('');
+        expect(box).toHaveAttribute('maxLength', '500');
+        await user.click(screen.getByTestId('rem-save'));
+        await waitFor(() => expect(apiMock.put).toHaveBeenCalledTimes(1));
+        expect(apiMock.put.mock.calls[0][1]).not.toHaveProperty('code_example_instruction');
+        await user.type(box, '  Put only the source text in code. ');
+        await user.click(screen.getByTestId('rem-save'));
+        await waitFor(() => expect(apiMock.put).toHaveBeenCalledTimes(2));
+        expect(apiMock.put.mock.calls[1][1]).toMatchObject({ code_example_instruction: 'Put only the source text in code.' });
+    });
+
+    it('shows the stored code-example instruction', async () => {
+        mockGets({ ...CONFIG, config: { ...CONFIG.config, code_example_instruction: 'Be brief.' } });
+        render(<RemediationConfigCard projectId={4} />);
+        expect(await screen.findByTestId('rem-code-example-instruction')).toHaveValue('Be brief.');
+        expect(screen.getByTestId('rem-code-example-instruction-hint')).toHaveTextContent('prepared again');
+    });
+
     it('shows a validation error from the server', async () => {
         mockGets();
         apiMock.put.mockRejectedValue({ response: { data: { message: 'detector project has no completed run' } } });

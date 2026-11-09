@@ -243,8 +243,82 @@ class PythonUndefinedNames(BaseCheck):
         return make_result(self.id, False, [f"line {m.lineno}: {m.message % m.message_args}" for m in bad])
 
 
+def properties_logical_lines(code: str) -> list[tuple[int, str]]:
+    """``(first physical line number, text)`` of each logical line of a ``.properties`` file, per the Java
+    ``Properties.load`` rules: blank lines and comment lines (first non-blank character ``#`` or ``!``) are
+    skipped; a line ending in an odd number of backslashes continues on the next line, whose leading
+    whitespace is dropped. A comment line never continues."""
+    out: list[tuple[int, str]] = []
+    lines = re.split(r"\r\n|\r|\n", code)  # Java breaks lines only on these
+    i = 0
+    while i < len(lines):
+        start = i
+        text = lines[i].lstrip(" \t\f")
+        i += 1
+        if not text or text[0] in "#!":
+            continue
+        parts: list[str] = []
+        while True:
+            trailing = len(text) - len(text.rstrip("\\"))
+            if trailing % 2 == 1 and i < len(lines):
+                parts.append(text[:-1])
+                text = lines[i].lstrip(" \t\f")
+                i += 1
+                continue
+            parts.append(text[:-1] if trailing % 2 == 1 else text)
+            break
+        out.append((start + 1, "".join(parts)))
+    return out
+
+
+# A logical line starting with one of these is JSON / YAML structure, not ``key=value``.
+_PROPERTIES_BAD_STARTS = ("{", "}", "[", "]", "- ")
+_PROPERTIES_MAX_LINES_REPORTED = 5
+
+
+class PropertiesParse(BaseCheck):
+    """A ``.properties`` file (Java ``Properties.load`` syntax). Almost any text loads as properties, so the
+    check fails only on the clear mistakes: the whole text parses as a JSON object or array, or a logical line
+    (after ``\\`` continuations; ``#`` / ``!`` comments and blank lines skipped) starts with ``{``, ``}``,
+    ``[``, ``]`` or ``- `` (a YAML list item). ``key=value``, ``key: value``, ``key value`` and a bare ``key``
+    (empty value) are valid. Gated like ``python_undefined_names``: runs only when its id is in
+    ``CODE_CHECK_ALLOWED``."""
+
+    id = "properties_parse"
+    languages = frozenset({"properties"})
+
+    def run(self, code, *, language, context):
+        stripped = code.strip()
+        if stripped[:1] in ("{", "["):
+            try:
+                parsed = json.loads(stripped)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, (dict, list)):
+                kind = "object" if isinstance(parsed, dict) else "array"
+                return make_result(self.id, False, [
+                    f"the text is a JSON {kind}, not a .properties file; write one key=value pair per line"
+                ])
+        bad = [
+            (lineno, text) for lineno, text in properties_logical_lines(code)
+            if text.startswith(_PROPERTIES_BAD_STARTS)
+        ]
+        if not bad:
+            return make_result(self.id, True)
+        msgs = []
+        for lineno, text in bad[:_PROPERTIES_MAX_LINES_REPORTED]:
+            start = "-" if text.startswith("- ") else text[0]
+            msgs.append(
+                f"line {lineno}: starts with '{start}' -- a .properties line is key=value "
+                "(JSON or YAML structure is not valid here)"
+            )
+        if len(bad) > _PROPERTIES_MAX_LINES_REPORTED:
+            msgs.append(f"and {len(bad) - _PROPERTIES_MAX_LINES_REPORTED} more line(s) like these")
+        return make_result(self.id, False, msgs)
+
+
 from .grounding import ContextGrounding  # noqa: E402 - grounding imports this module's YAML helpers lazily
 
 BUILTINS: list[Any] = [PythonAst(), JsonParse(), YamlParse(), JsonSchemaCheck(), ContextGrounding()]
 # In-process, but gated like external checks (CODE_CHECK_ALLOWED + importable dependency).
-GATED_IN_PROCESS: list[Any] = [PythonUndefinedNames()]
+GATED_IN_PROCESS: list[Any] = [PythonUndefinedNames(), PropertiesParse()]

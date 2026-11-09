@@ -13,6 +13,7 @@ _ALIASES = {
     "sh": "shell", "bash": "shell", "zsh": "shell", "tf": "terraform", "hcl": "terraform",
     "cs": "csharp", "c#": "csharp", "golang": "go", "rs": "rust", "yml": "yaml",
     "ts": "typescript", "tsx": "typescript", "c++": "cpp", "cxx": "cpp", "cc": "cpp", "hpp": "cpp", "h": "c",
+    "java-properties": "properties", "java_properties": "properties", "javaproperties": "properties",
 }
 
 

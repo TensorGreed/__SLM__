@@ -83,7 +83,7 @@ class PolicyTests(unittest.TestCase):
                                "sample_temperature": 0.7, "seed": 0})
         self.assertEqual(cds.policy_label(rec), "Checked decoding · up to 4 tries · resample")
         rec = cds.policy_record(_policy(mode="repair", verifiers=["label_set"]))
-        self.assertEqual(rec, {"mode": "repair", "max_attempts": 3, "verifiers": ["label_set"]})
+        self.assertEqual(rec, {"mode": "repair", "max_attempts": 3, "verifiers": ["label_set"], "repair_messages": 2})
 
     def test_lift_override_is_always_explicit(self):
         self.assertEqual(cds.lift_policy_override({}, None), cds.DEFAULTS)
