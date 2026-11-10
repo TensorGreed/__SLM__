@@ -2,7 +2,7 @@
 
 ### Evals release the model when they finish (November 10, 2026)
 
-- A held-out evaluation (also lift checks, probe runs and perplexity evals) now frees its model as soon as it finishes, fails or is cancelled: it drops its references, runs a garbage collection and empties the CUDA cache. Before, a model could stay in memory after the eval when loading it left a reference cycle behind, so a second eval in the same backend process could hold two copies of a large model and run out of memory. Results and defaults are unchanged.
+- A held-out evaluation (also lift checks, probe runs and perplexity evals) now frees its model when its inference run returns or fails (a cancelled eval frees it once its in-flight generation loop ends, which still runs every row): it drops its references, runs a garbage collection and empties the CUDA cache. Before, a model could stay in memory after the eval when loading it left a reference cycle behind, so a second eval in the same backend process could hold two copies of a large model and run out of memory. Results and defaults are unchanged.
 
 ### Stronger checks for code-example evals (November 9, 2026)
 

@@ -189,14 +189,26 @@ class InferenceReleaseTests(unittest.TestCase):
             self.assertEqual(loader.alive_at_load, [[], [False]])
             self.assertEqual(loader.alive(), [False, False])
 
-    def test_cuda_cache_is_emptied_when_cuda_is_available(self):
+    def test_cuda_cache_is_emptied_when_a_cuda_context_exists(self):
         from app.services import evaluation_service as ev
 
         with mock.patch("torch.cuda.is_available", return_value=True), \
+                mock.patch("torch.cuda.is_initialized", return_value=True), \
                 mock.patch("torch.cuda.empty_cache") as empty, \
                 mock.patch("torch.cuda.ipc_collect") as ipc:
             ev.release_inference_memory()
         self.assertEqual((empty.call_count, ipc.call_count), (1, 1))
+
+    def test_no_cuda_context_is_created_when_none_exists(self):
+        # ipc_collect() lazily initialises CUDA; an eval that never used it (e.g. llama.cpp) must not open one.
+        from app.services import evaluation_service as ev
+
+        with mock.patch("torch.cuda.is_available", return_value=True), \
+                mock.patch("torch.cuda.is_initialized", return_value=False), \
+                mock.patch("torch.cuda.empty_cache") as empty, \
+                mock.patch("torch.cuda.ipc_collect") as ipc:
+            ev.release_inference_memory()
+        self.assertEqual((empty.call_count, ipc.call_count), (0, 0))
 
     def test_nested_calls_release_once_at_the_outermost_return(self):
         from app.services import evaluation_service as ev

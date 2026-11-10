@@ -1310,7 +1310,9 @@ def release_inference_memory() -> None:
     torch_module = sys.modules.get("torch")
     if torch_module is not None:
         try:
-            if torch_module.cuda.is_available():
+            # Only when a CUDA context already exists: ipc_collect() would otherwise create one
+            # (e.g. after a llama.cpp eval that never touched CUDA).
+            if torch_module.cuda.is_available() and torch_module.cuda.is_initialized():
                 torch_module.cuda.empty_cache()
                 torch_module.cuda.ipc_collect()
         except Exception:  # noqa: BLE001

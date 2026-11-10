@@ -141,6 +141,7 @@ class RecipeCatalogTests(unittest.TestCase):
         findings = recipe_service.get_recipe("code-findings")
         self.assertEqual(findings.scoring_mode, "finding_set")
 
+    @patch.object(settings, "CODE_CHECK_ALLOWED", "")  # a local .env may opt in gated checks
     def test_example_row_is_a_canonical_remediation_row(self):
         row = recipe_service.get_recipe("code-remediation").gold_template.example_row
         self.assertTrue(crp.is_remediation_row(row))

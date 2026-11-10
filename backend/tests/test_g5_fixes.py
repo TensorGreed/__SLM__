@@ -403,8 +403,16 @@ class PlaybookFixTests(unittest.TestCase):
 
 class CodeCheckTrustTests(unittest.TestCase):
     def test_core_builtins_are_trusted_by_identity(self):
+        from unittest import mock
+
+        from app.config import settings
         from app.services import code_check_service as svc
 
+        # Pin the operator allow-list: a local .env may list java_syntax.
+        with mock.patch.object(settings, "CODE_CHECK_ALLOWED", ""):
+            self._assert_core_trust(svc)
+
+    def _assert_core_trust(self, svc):
         self.assertTrue(svc.is_allowed(svc.get_code_check("python_ast")))
         self.assertFalse(svc.is_allowed(svc.get_code_check("java_syntax")))
 
