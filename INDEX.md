@@ -977,6 +977,7 @@ session-start guidance.
 - `backend/tests/test_eval_gap_patch.py` — Eval Gap patch engine — Coach-stage-2 phase 5.
 - `backend/tests/test_eval_gap_service.py` — Eval Gap scanner — Coach-stage-2 phase 3.
 - `backend/tests/test_eval_judge_calibration.py` — Judge calibration V4: persisted eval predictions, blind eval-judge labels keyed by content, the
+- `backend/tests/test_eval_model_release.py` — Held-out eval releases its model when the run ends.
 - `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).
 - `backend/tests/test_eval_sizing.py` — Detectable difference + rows needed for any per-row metric (Epic W2).
 - `backend/tests/test_eval_summary.py` — Eval tab summary card (Wave 3b): verdict vs the base model, headline

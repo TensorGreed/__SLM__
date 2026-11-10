@@ -1,5 +1,9 @@
 # Changelog
 
+### Evals release the model when they finish (November 10, 2026)
+
+- A held-out evaluation (also lift checks, probe runs and perplexity evals) now frees its model as soon as it finishes, fails or is cancelled: it drops its references, runs a garbage collection and empties the CUDA cache. Before, a model could stay in memory after the eval when loading it left a reference cycle behind, so a second eval in the same backend process could hold two copies of a large model and run out of memory. Results and defaults are unchanged.
+
 ### Stronger checks for code-example evals (November 9, 2026)
 
 - Checked decoding explains two common code-answer mistakes so a repair turn can fix them: a `"code"` field given as a JSON object or list (`the "code" field must be a string holding the yaml source text, not a JSON object or list`), and, when a check failed, a `"code"` string wrapped in a markdown fence. Only the messages changed: pass and fail are the same as before.

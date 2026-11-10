@@ -1057,3 +1057,24 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   sides differ. Tests: `tests/test_checked_decoding.py`, `tests/test_post_training_lift_eval.py`
   (`test_checked_decoding_one_policy_for_both_evals_and_the_cache_keys_on_it`), `CheckedDecoding.test.tsx`. Not done (Y5):
   Playground / local chat / export parity.
+
+## Eval model memory release
+
+- Held-out / lift / probe / perplexity evals load the model fresh on every call (no cache across calls or Jobs); the
+  sync paths that load one — `_run_local_inference` (every engine), `_run_transformers_inference` (also called directly
+  by the generative probe `predict_fn`) and `_compute_perplexity` — carry `@_releases_inference_memory`. When the
+  OUTERMOST of them returns or raises (thread-local depth, so the dispatcher → engine nesting releases once) it calls
+  `release_inference_memory()`: `gc.collect()`, then `torch.cuda.empty_cache()` + `ipc_collect()` when CUDA is available,
+  then glibc `malloc_trim(0)` (best-effort, never raises). On an error it first runs `traceback.clear_frames` on the
+  exception, so the exception the Job runner records doesn't pin the model through its frames' locals.
+- Why: loading a checkpoint can import modules that keep a frame in a self-cycle (`inspect.currentframe()` held in a
+  local at import time — e.g. the first load of an architecture in the process). Its `f_back` chain reaches the eval's
+  frame, so the model + tokenizer survived the return and were freed only by the cyclic GC, whose object-count
+  thresholds never notice a 50+ GB model — a second eval in the same uvicorn / celery process stacked a second copy
+  (OOM-kill on a unified-memory GPU box).
+- `_run_transformers_inference` also empties its `model` / `tokenizer` cells in a `finally`: the per-row
+  `_generate_once` closure shares them, and a traceback frame keeps its function (and closure) alive even after
+  `frame.clear()`. Results, defaults and in-call reuse (checked-decoding retries, replayed dialogue turns) are unchanged.
+- Tests: `tests/test_eval_model_release.py` (automatic GC off; a fake loader reproduces the frame cycle; weakref to the
+  fake model is dead after a call, after a failing call, after a `heldout_evaluation` Job that succeeds or fails, and a
+  second Job's load never sees the first model alive).

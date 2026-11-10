@@ -1,9 +1,14 @@
 """Evaluation framework service — metrics, safety, regression comparison."""
 
 import asyncio
+import functools
+import gc
 import json
 import re
 import string
+import sys
+import threading
+import traceback
 from collections import Counter
 from pathlib import Path
 from time import perf_counter
@@ -1286,6 +1291,65 @@ def _resolve_model_reference(experiment: Experiment, override_model_path: str | 
     )
 
 
+_RELEASE_STATE = threading.local()
+
+
+def release_inference_memory() -> None:
+    """Hand the memory of a finished eval model back: collect cyclic garbage, empty
+    torch's CUDA caching allocator, and trim the C heap (Linux). Best-effort; never raises.
+
+    Why ``gc.collect`` is needed: loading a checkpoint can import modules that keep a frame
+    in a reference cycle (e.g. ``inspect.currentframe()`` held in a local at import time).
+    That frame's ``f_back`` chain reaches the eval function's frame, so the loaded model
+    and tokenizer survive the return and are only freed by the cyclic GC — whose thresholds
+    count objects, not bytes, so a 50+ GB model can sit there into the next eval and stack."""
+    try:
+        gc.collect()
+    except Exception:  # noqa: BLE001
+        pass
+    torch_module = sys.modules.get("torch")
+    if torch_module is not None:
+        try:
+            if torch_module.cuda.is_available():
+                torch_module.cuda.empty_cache()
+                torch_module.cuda.ipc_collect()
+        except Exception:  # noqa: BLE001
+            pass
+    if sys.platform.startswith("linux"):
+        try:
+            import ctypes
+
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:  # noqa: BLE001 - not glibc
+            pass
+
+
+def _releases_inference_memory(fn):  # noqa: ANN001, ANN202
+    """Decorator for the sync eval inference paths that load a model: when the outermost
+    one returns or raises, nothing of the model outlives it. On an error the traceback's
+    finished frames are cleared first (``traceback.clear_frames``), so the exception that
+    propagates to the Job runner doesn't keep the model alive through its frames' locals.
+    Nested calls (the dispatcher calling an engine) release once, at the outermost return.
+    A model is loaded per call, so nothing reused inside one call (checked-decoding
+    retries, replayed dialogue turns) is affected; results are unchanged."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        depth = getattr(_RELEASE_STATE, "depth", 0)
+        _RELEASE_STATE.depth = depth + 1
+        try:
+            return fn(*args, **kwargs)
+        except BaseException as exc:
+            traceback.clear_frames(exc.__traceback__)
+            raise
+        finally:
+            _RELEASE_STATE.depth = depth
+            if depth == 0:
+                release_inference_memory()
+
+    return wrapper
+
+
 def _inference_dtype(torch_module):  # noqa: ANN001
     """bf16 / fp16 on a GPU; fp32 on CPU. transformers >= 5 loads a
     checkpoint in its SAVED dtype by default (bf16 for most small instruct
@@ -1296,6 +1360,7 @@ def _inference_dtype(torch_module):  # noqa: ANN001
     return torch_module.float32
 
 
+@_releases_inference_memory
 def _run_transformers_inference(
     model_ref: str,
     pairs: list[dict],
@@ -1329,218 +1394,225 @@ def _run_transformers_inference(
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    load_started = perf_counter()
-    tokenizer = AutoTokenizer.from_pretrained(model_ref, trust_remote_code=True)
-    if tokenizer.pad_token_id is None:
-        if tokenizer.eos_token:
-            tokenizer.pad_token = tokenizer.eos_token
-        else:
-            tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
+    # The model / tokenizer are also captured by the per-row ``_generate_once`` closure; the
+    # ``finally`` empties those shared cells, so a frame kept by an error's traceback (or by a
+    # reference cycle) can't keep the weights alive after this call.
+    model = tokenizer = None
+    try:
+        load_started = perf_counter()
+        tokenizer = AutoTokenizer.from_pretrained(model_ref, trust_remote_code=True)
+        if tokenizer.pad_token_id is None:
+            if tokenizer.eos_token:
+                tokenizer.pad_token = tokenizer.eos_token
+            else:
+                tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
 
-    use_cuda = torch.cuda.is_available()
-    model_kwargs: dict = {"trust_remote_code": True, "dtype": _inference_dtype(torch)}
+        use_cuda = torch.cuda.is_available()
+        model_kwargs: dict = {"trust_remote_code": True, "dtype": _inference_dtype(torch)}
 
-    model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
-    if len(tokenizer) > model.get_input_embeddings().num_embeddings:
-        model.resize_token_embeddings(len(tokenizer))
-    if use_cuda:
-        model = model.to("cuda")
-    model.eval()
-    load_seconds = perf_counter() - load_started
+        model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
+        if len(tokenizer) > model.get_input_embeddings().num_embeddings:
+            model.resize_token_embeddings(len(tokenizer))
+        if use_cuda:
+            model = model.to("cuda")
+        model.eval()
+        load_seconds = perf_counter() - load_started
 
-    # Build a transformers StoppingCriteria from the handler's stop list,
-    # if any. Newer transformers (>=4.41) ships StopStringCriteria which
-    # accepts a tokenizer + string list directly. Older versions need a
-    # custom criterion that decodes-and-checks each step.
-    stops_clean = [s for s in (stop_sequences or []) if s]
-    stopping_criteria = None
-    if stops_clean:
-        try:
-            from transformers import StoppingCriteriaList, StopStringCriteria
+        # Build a transformers StoppingCriteria from the handler's stop list,
+        # if any. Newer transformers (>=4.41) ships StopStringCriteria which
+        # accepts a tokenizer + string list directly. Older versions need a
+        # custom criterion that decodes-and-checks each step.
+        stops_clean = [s for s in (stop_sequences or []) if s]
+        stopping_criteria = None
+        if stops_clean:
+            try:
+                from transformers import StoppingCriteriaList, StopStringCriteria
 
-            stopping_criteria = StoppingCriteriaList(
-                [StopStringCriteria(tokenizer=tokenizer, stop_strings=stops_clean)]
+                stopping_criteria = StoppingCriteriaList(
+                    [StopStringCriteria(tokenizer=tokenizer, stop_strings=stops_clean)]
+                )
+            except Exception:
+                # Fallback: custom criterion. Decodes generated tokens at
+                # every step and checks for any stop string as a substring.
+                from transformers import StoppingCriteria, StoppingCriteriaList
+
+                class _StringStop(StoppingCriteria):
+                    def __init__(self, tk, prompt_len, stops):
+                        super().__init__()
+                        self.tk = tk
+                        self.prompt_len = prompt_len
+                        self.stops = stops
+
+                    def __call__(self, input_ids, scores, **kwargs):  # noqa: ARG002
+                        generated = input_ids[0][self.prompt_len :]
+                        if generated.shape[-1] == 0:
+                            return False
+                        decoded = self.tk.decode(generated, skip_special_tokens=True)
+                        return any(s in decoded for s in self.stops)
+
+                # NB: the prompt length depends on the row, so we'll build
+                # the criterion fresh per row inside the loop below.
+                stopping_criteria = ("fallback_custom", stops_clean, StoppingCriteriaList, _StringStop)
+
+        predictions: list[dict] = []
+        latencies_s: list[float] = []
+        generated_tokens_total = 0
+        chat_template_applied_count = 0
+        replay = {"generations": 0, "seconds": 0.0, "tokens": 0}  # dialogue-judge replay turns, kept out of the stats
+        generation_started = perf_counter()
+        checked_policy = checked.get("policy") if checked else None
+        checked_inputs = list(checked.get("inputs") or []) if checked else []
+        checked_records: list[dict[str, Any] | None] = []
+        for row_pos, row in enumerate(pairs):
+            prompt = row["prompt"]
+            reference = row["reference"]
+            is_replay = "_replay" in row
+
+            # Wrap with the model's own chat template when present so the model
+            # sees the same prompt shape it was trained against. Handlers
+            # that build their own complete prompts (e.g. ClassificationHandler)
+            # disable this so the chat-template wrap doesn't override their
+            # task-specific format.
+            if apply_chat_template:
+                formatted_prompt, template_applied = _apply_chat_template_if_present(
+                    tokenizer, prompt, row.get("history")
+                )
+                if template_applied and not is_replay:
+                    chat_template_applied_count += 1
+            else:
+                formatted_prompt, template_applied = prompt, False
+
+            def _generate_once(text: str, sample_temperature: float | None = None) -> tuple[str, int, float]:
+                """One generation for ``text``: (stop-trimmed answer, new tokens, seconds).
+                ``sample_temperature``: checked decoding's resample attempts (plain sampling)."""
+                inputs = tokenizer(text, return_tensors="pt")
+                if use_cuda:
+                    inputs = {k: v.to("cuda") for k, v in inputs.items()}
+
+                prompt_tokens = int(inputs["input_ids"].shape[-1])
+                # Resolve stopping criteria for this row. The top-level
+                # `stopping_criteria` is either a built StoppingCriteriaList
+                # (StopStringCriteria available) or a tuple flagged as
+                # "fallback_custom" carrying the parts needed to instantiate a
+                # per-row criterion that knows this row's prompt length.
+                active_stopping = None
+                if stopping_criteria is not None:
+                    if isinstance(stopping_criteria, tuple) and stopping_criteria[0] == "fallback_custom":
+                        _flag, stops, criteria_list_cls, criterion_cls = stopping_criteria
+                        active_stopping = criteria_list_cls(
+                            [criterion_cls(tokenizer, prompt_tokens, stops)]
+                        )
+                    else:
+                        active_stopping = stopping_criteria
+                started = perf_counter()
+                with torch.inference_mode():
+                    if sample_temperature is None:
+                        gen_kwargs: dict[str, Any] = generation_kwargs(
+                            max_new_tokens=max_new_tokens, temperature=temperature,
+                            pad_token_id=tokenizer.pad_token_id, decoding=decoding,
+                        )
+                    else:
+                        gen_kwargs = generation_kwargs(
+                            max_new_tokens=max_new_tokens, temperature=sample_temperature,
+                            pad_token_id=tokenizer.pad_token_id,
+                        )
+                    if active_stopping is not None:
+                        gen_kwargs["stopping_criteria"] = active_stopping
+                    output_ids = model.generate(**inputs, **gen_kwargs)
+                elapsed_s = perf_counter() - started
+
+                generated = output_ids[0][prompt_tokens:]
+                n_tokens = int(generated.shape[-1])
+                answer = tokenizer.decode(generated, skip_special_tokens=True).strip()
+                # Trim anything after the first stop sequence so the eval
+                # downstream sees only the "real" output, not the trailing
+                # text that triggered the stop. (StopStringCriteria stops
+                # generation but still leaves the stop string in the decoded
+                # output.)
+                if stops_clean and answer:
+                    earliest_cut = len(answer)
+                    for stop_str in stops_clean:
+                        idx = answer.find(stop_str)
+                        if 0 <= idx < earliest_cut:
+                            earliest_cut = idx
+                    answer = answer[:earliest_cut].rstrip()
+                return answer, n_tokens, elapsed_s
+
+            prediction, generated_tokens, elapsed = _generate_once(formatted_prompt)
+            if is_replay:
+                replay["generations"] += 1
+                replay["seconds"] += elapsed
+                replay["tokens"] += generated_tokens
+            else:
+                latencies_s.append(elapsed)
+                generated_tokens_total += generated_tokens
+            row_checked: dict[str, Any] | None = None
+            if checked_policy is not None and not is_replay:
+                prediction, row_checked = _checked_retry(
+                    policy=checked_policy,
+                    vin=checked_inputs[row_pos] if row_pos < len(checked_inputs) else None,
+                    row=row,
+                    row_pos=row_pos,
+                    formatted_prompt=formatted_prompt,
+                    template_applied=template_applied,
+                    first=(prediction, generated_tokens, elapsed),
+                    generate_once=_generate_once,
+                    tokenizer=tokenizer,
+                    torch_module=torch,
+                )
+                checked_records.append(row_checked)
+            prediction_row: dict[str, Any] = {
+                "prompt": prompt,
+                "formatted_prompt": formatted_prompt if template_applied else "",
+                "reference": reference,
+                "prediction": prediction,
+                "generated_tokens": generated_tokens,
+                "latency_ms": round(elapsed * 1000, 3),
+            }
+            if row_checked is not None:
+                prediction_row["checked_decoding"] = row_checked
+            predictions.append(prediction_row)
+
+        total_generation_seconds = max(0.0, perf_counter() - generation_started - replay["seconds"])
+        checked_summary: dict[str, Any] | None = None
+        if checked_policy is not None:
+            from app.services import checked_decoding_service as cds
+
+            checked_summary = cds.summarize(checked_records, checked_policy)
+            # Latency / throughput stay attempt-1 numbers; the total includes the retries and the checks.
+            checked_summary["generation_seconds_total"] = round(total_generation_seconds, 3)
+            total_generation_seconds = max(
+                0.0, total_generation_seconds - checked_summary["extra_generation_seconds"] - checked_summary["verify_seconds"]
             )
-        except Exception:
-            # Fallback: custom criterion. Decodes generated tokens at
-            # every step and checks for any stop string as a substring.
-            from transformers import StoppingCriteria, StoppingCriteriaList
-
-            class _StringStop(StoppingCriteria):
-                def __init__(self, tk, prompt_len, stops):
-                    super().__init__()
-                    self.tk = tk
-                    self.prompt_len = prompt_len
-                    self.stops = stops
-
-                def __call__(self, input_ids, scores, **kwargs):  # noqa: ARG002
-                    generated = input_ids[0][self.prompt_len :]
-                    if generated.shape[-1] == 0:
-                        return False
-                    decoded = self.tk.decode(generated, skip_special_tokens=True)
-                    return any(s in decoded for s in self.stops)
-
-            # NB: the prompt length depends on the row, so we'll build
-            # the criterion fresh per row inside the loop below.
-            stopping_criteria = ("fallback_custom", stops_clean, StoppingCriteriaList, _StringStop)
-
-    predictions: list[dict] = []
-    latencies_s: list[float] = []
-    generated_tokens_total = 0
-    chat_template_applied_count = 0
-    replay = {"generations": 0, "seconds": 0.0, "tokens": 0}  # dialogue-judge replay turns, kept out of the stats
-    generation_started = perf_counter()
-    checked_policy = checked.get("policy") if checked else None
-    checked_inputs = list(checked.get("inputs") or []) if checked else []
-    checked_records: list[dict[str, Any] | None] = []
-    for row_pos, row in enumerate(pairs):
-        prompt = row["prompt"]
-        reference = row["reference"]
-        is_replay = "_replay" in row
-
-        # Wrap with the model's own chat template when present so the model
-        # sees the same prompt shape it was trained against. Handlers
-        # that build their own complete prompts (e.g. ClassificationHandler)
-        # disable this so the chat-template wrap doesn't override their
-        # task-specific format.
-        if apply_chat_template:
-            formatted_prompt, template_applied = _apply_chat_template_if_present(
-                tokenizer, prompt, row.get("history")
-            )
-            if template_applied and not is_replay:
-                chat_template_applied_count += 1
-        else:
-            formatted_prompt, template_applied = prompt, False
-
-        def _generate_once(text: str, sample_temperature: float | None = None) -> tuple[str, int, float]:
-            """One generation for ``text``: (stop-trimmed answer, new tokens, seconds).
-            ``sample_temperature``: checked decoding's resample attempts (plain sampling)."""
-            inputs = tokenizer(text, return_tensors="pt")
-            if use_cuda:
-                inputs = {k: v.to("cuda") for k, v in inputs.items()}
-
-            prompt_tokens = int(inputs["input_ids"].shape[-1])
-            # Resolve stopping criteria for this row. The top-level
-            # `stopping_criteria` is either a built StoppingCriteriaList
-            # (StopStringCriteria available) or a tuple flagged as
-            # "fallback_custom" carrying the parts needed to instantiate a
-            # per-row criterion that knows this row's prompt length.
-            active_stopping = None
-            if stopping_criteria is not None:
-                if isinstance(stopping_criteria, tuple) and stopping_criteria[0] == "fallback_custom":
-                    _flag, stops, criteria_list_cls, criterion_cls = stopping_criteria
-                    active_stopping = criteria_list_cls(
-                        [criterion_cls(tokenizer, prompt_tokens, stops)]
-                    )
-                else:
-                    active_stopping = stopping_criteria
-            started = perf_counter()
-            with torch.inference_mode():
-                if sample_temperature is None:
-                    gen_kwargs: dict[str, Any] = generation_kwargs(
-                        max_new_tokens=max_new_tokens, temperature=temperature,
-                        pad_token_id=tokenizer.pad_token_id, decoding=decoding,
-                    )
-                else:
-                    gen_kwargs = generation_kwargs(
-                        max_new_tokens=max_new_tokens, temperature=sample_temperature,
-                        pad_token_id=tokenizer.pad_token_id,
-                    )
-                if active_stopping is not None:
-                    gen_kwargs["stopping_criteria"] = active_stopping
-                output_ids = model.generate(**inputs, **gen_kwargs)
-            elapsed_s = perf_counter() - started
-
-            generated = output_ids[0][prompt_tokens:]
-            n_tokens = int(generated.shape[-1])
-            answer = tokenizer.decode(generated, skip_special_tokens=True).strip()
-            # Trim anything after the first stop sequence so the eval
-            # downstream sees only the "real" output, not the trailing
-            # text that triggered the stop. (StopStringCriteria stops
-            # generation but still leaves the stop string in the decoded
-            # output.)
-            if stops_clean and answer:
-                earliest_cut = len(answer)
-                for stop_str in stops_clean:
-                    idx = answer.find(stop_str)
-                    if 0 <= idx < earliest_cut:
-                        earliest_cut = idx
-                answer = answer[:earliest_cut].rstrip()
-            return answer, n_tokens, elapsed_s
-
-        prediction, generated_tokens, elapsed = _generate_once(formatted_prompt)
-        if is_replay:
-            replay["generations"] += 1
-            replay["seconds"] += elapsed
-            replay["tokens"] += generated_tokens
-        else:
-            latencies_s.append(elapsed)
-            generated_tokens_total += generated_tokens
-        row_checked: dict[str, Any] | None = None
-        if checked_policy is not None and not is_replay:
-            prediction, row_checked = _checked_retry(
-                policy=checked_policy,
-                vin=checked_inputs[row_pos] if row_pos < len(checked_inputs) else None,
-                row=row,
-                row_pos=row_pos,
-                formatted_prompt=formatted_prompt,
-                template_applied=template_applied,
-                first=(prediction, generated_tokens, elapsed),
-                generate_once=_generate_once,
-                tokenizer=tokenizer,
-                torch_module=torch,
-            )
-            checked_records.append(row_checked)
-        prediction_row: dict[str, Any] = {
-            "prompt": prompt,
-            "formatted_prompt": formatted_prompt if template_applied else "",
-            "reference": reference,
-            "prediction": prediction,
-            "generated_tokens": generated_tokens,
-            "latency_ms": round(elapsed * 1000, 3),
-        }
-        if row_checked is not None:
-            prediction_row["checked_decoding"] = row_checked
-        predictions.append(prediction_row)
-
-    total_generation_seconds = max(0.0, perf_counter() - generation_started - replay["seconds"])
-    checked_summary: dict[str, Any] | None = None
-    if checked_policy is not None:
-        from app.services import checked_decoding_service as cds
-
-        checked_summary = cds.summarize(checked_records, checked_policy)
-        # Latency / throughput stay attempt-1 numbers; the total includes the retries and the checks.
-        checked_summary["generation_seconds_total"] = round(total_generation_seconds, 3)
-        total_generation_seconds = max(
-            0.0, total_generation_seconds - checked_summary["extra_generation_seconds"] - checked_summary["verify_seconds"]
+        latency_ms = [v * 1000 for v in latencies_s]
+        avg_latency_ms = (sum(latency_ms) / len(latency_ms)) if latency_ms else 0.0
+        token_tps = generated_tokens_total / total_generation_seconds if total_generation_seconds > 0 else 0.0
+        decoding_rec = (
+            model_decoding_record(getattr(model, "generation_config", None))
+            if decoding == MODEL_DECODING
+            else decoding_record(generation_kwargs(max_new_tokens=max_new_tokens, temperature=temperature))
         )
-    latency_ms = [v * 1000 for v in latencies_s]
-    avg_latency_ms = (sum(latency_ms) / len(latency_ms)) if latency_ms else 0.0
-    token_tps = generated_tokens_total / total_generation_seconds if total_generation_seconds > 0 else 0.0
-    decoding_rec = (
-        model_decoding_record(getattr(model, "generation_config", None))
-        if decoding == MODEL_DECODING
-        else decoding_record(generation_kwargs(max_new_tokens=max_new_tokens, temperature=temperature))
-    )
-    if checked_summary is not None:
-        decoding_rec["checked_decoding"] = checked_summary["policy"]
-    runtime = {
-        "engine": "transformers",
-        "device": "cuda" if use_cuda else "cpu",
-        "dtype": str(getattr(model, "dtype", "unknown")),
-        "decoding": decoding_rec,
-        "model_load_seconds": round(load_seconds, 3),
-        "generation_seconds": round(total_generation_seconds, 3),
-        "average_latency_ms": round(avg_latency_ms, 3),
-        "token_throughput_tps": round(token_tps, 3),
-        "chat_template_applied_count": chat_template_applied_count,
-        "chat_template_applied": chat_template_applied_count > 0,
-        "total_generated_tokens": generated_tokens_total,
-        **_replay_runtime(replay),
-    }
-    if checked_summary is not None:
-        runtime["checked_decoding"] = checked_summary
-    return predictions, runtime
+        if checked_summary is not None:
+            decoding_rec["checked_decoding"] = checked_summary["policy"]
+        runtime = {
+            "engine": "transformers",
+            "device": "cuda" if use_cuda else "cpu",
+            "dtype": str(getattr(model, "dtype", "unknown")),
+            "decoding": decoding_rec,
+            "model_load_seconds": round(load_seconds, 3),
+            "generation_seconds": round(total_generation_seconds, 3),
+            "average_latency_ms": round(avg_latency_ms, 3),
+            "token_throughput_tps": round(token_tps, 3),
+            "chat_template_applied_count": chat_template_applied_count,
+            "chat_template_applied": chat_template_applied_count > 0,
+            "total_generated_tokens": generated_tokens_total,
+            **_replay_runtime(replay),
+        }
+        if checked_summary is not None:
+            runtime["checked_decoding"] = checked_summary
+        return predictions, runtime
+    finally:
+        model = tokenizer = stopping_criteria = None
 
 
 def _checked_retry(
@@ -2551,6 +2623,7 @@ def _run_classifier_head_inference(
     return predictions, runtime
 
 
+@_releases_inference_memory
 def _run_local_inference(
     model_ref: str,
     pairs: list[dict],
@@ -2648,6 +2721,7 @@ def _heldout_texts(dataset_path: Path, max_docs: int) -> list[str]:
     return texts
 
 
+@_releases_inference_memory
 def _compute_perplexity(
     model_ref: str,
     texts: list[str],
