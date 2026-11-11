@@ -1352,6 +1352,25 @@ def _releases_inference_memory(fn):  # noqa: ANN001, ANN202
     return wrapper
 
 
+def _init_cuda_context_before_load(torch_module, use_cuda: bool) -> bool:  # noqa: ANN001
+    """Create the CUDA context before a model is loaded on the CPU.
+
+    On unified-memory GPUs a large CPU load plus the weight files' page cache (which the
+    driver does not reclaim) can leave too little free memory, and the context created
+    by the later ``.to("cuda")`` then fails with "CUDA error: out of memory". Creating
+    it first avoids that and changes nothing else. No-op without CUDA; a failure here is
+    left to the real ``.to("cuda")`` to surface.
+    """
+    if not use_cuda:
+        return False
+    try:
+        torch_module.cuda.init()
+        torch_module.empty(1, device="cuda")
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _inference_dtype(torch_module):  # noqa: ANN001
     """bf16 / fp16 on a GPU; fp32 on CPU. transformers >= 5 loads a
     checkpoint in its SAVED dtype by default (bf16 for most small instruct
@@ -1410,6 +1429,7 @@ def _run_transformers_inference(
                 tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
 
         use_cuda = torch.cuda.is_available()
+        _init_cuda_context_before_load(torch, use_cuda)
         model_kwargs: dict = {"trust_remote_code": True, "dtype": _inference_dtype(torch)}
 
         model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
@@ -1995,6 +2015,7 @@ def _run_multimodal_inference(
         tokenizer.pad_token = tokenizer.eos_token
 
     use_cuda = torch.cuda.is_available()
+    _init_cuda_context_before_load(torch, use_cuda)
     model_kwargs: dict[str, Any] = {"trust_remote_code": True, "dtype": _inference_dtype(torch)}
 
     base = loader_cls.from_pretrained(base_model, **model_kwargs)
@@ -2204,6 +2225,7 @@ def _run_seq2seq_inference(
             tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
 
     use_cuda = torch.cuda.is_available()
+    _init_cuda_context_before_load(torch, use_cuda)
     model_kwargs: dict[str, Any] = {"trust_remote_code": True}
     if use_cuda and torch.cuda.is_bf16_supported():
         model_kwargs["dtype"] = torch.bfloat16
@@ -2540,6 +2562,7 @@ def _run_classifier_head_inference(
             tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
 
     use_cuda = torch.cuda.is_available()
+    _init_cuda_context_before_load(torch, use_cuda)
     model_kwargs: dict[str, Any] = {
         "trust_remote_code": True,
         "num_labels": num_labels,
@@ -2748,6 +2771,7 @@ def _compute_perplexity(
         tokenizer_source = adapter_base_model(ref_path) or model_ref
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
     use_cuda = torch.cuda.is_available()
+    _init_cuda_context_before_load(torch, use_cuda)
     model = AutoModelForCausalLM.from_pretrained(model_ref)
     model = model.to("cuda" if use_cuda else "cpu").eval()
     eos = tokenizer.eos_token_id

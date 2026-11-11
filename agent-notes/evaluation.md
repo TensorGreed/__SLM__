@@ -1078,6 +1078,12 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - Cancel: the row loop has no cancel check and `to_thread` work isn't interrupted, so a cancelled eval frees its
   model only when its generation loop ends (every row still runs). An eval started right after a cancel can briefly
   hold two copies.
+- CUDA context before the load: every generation / perplexity loader (`_run_transformers_inference`, the PEFT causal,
+  seq2seq and sequence-classification adapter loaders, `_compute_perplexity`) calls `_init_cuda_context_before_load`
+  right after `use_cuda` is resolved, before `from_pretrained`. On unified-memory GPUs a ~57 GB CPU load plus the
+  weight files' page cache (not reclaimed by the driver) left too little free memory, and the context created by the
+  later `.to("cuda")` failed with `CUDA error: out of memory`. No-op without CUDA; a failure is left to `.to("cuda")`.
+  Same fix in `train.py` (`agent-notes/training.md`). Tests: `tests/test_eval_cuda_context_early.py`.
 - Tests: `tests/test_eval_model_release.py` (automatic GC off; a fake loader reproduces the frame cycle; weakref to the
   fake model is dead after a call, after a failing call, after a `heldout_evaluation` Job that succeeds or fails, and a
   second Job's load never sees the first model alive).
