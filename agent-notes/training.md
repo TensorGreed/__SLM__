@@ -42,6 +42,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `optimizer_effective` (`paged_adamw_8bit` → `adamw_torch` without
   bitsandbytes) — the config's wishes silently fall back, the report is the
   truth.
+  **CUDA context before the model load** — `train.py` creates the CUDA context
+  (`_init_cuda_context_early`) right after `use_cuda` is resolved, before
+  `from_pretrained`. On unified-memory GPUs a ~57 GB CPU load plus the weight
+  files' page cache (not reclaimed by the driver) left too little free memory,
+  and the context later failed with `CUDA error: out of memory` at
+  `set_device`, before step 1. No-op without CUDA; a failure is a warning.
+  Recorded as `runtime_environment.cuda_context_before_load`. Tests:
+  `tests/test_train_cuda_context_early.py`.
   **Cancel stops the process (external runtime)** —
   `services/training_process_service.py`: the worker starts `train.py` in its
   own session and writes `training_process.json` {pid, pgid, /proc start

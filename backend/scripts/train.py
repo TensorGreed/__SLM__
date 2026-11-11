@@ -1873,6 +1873,26 @@ def _parse_supported_sm_values(arch_list: list[str]) -> list[int]:
     return values
 
 
+def _init_cuda_context_early(torch_mod, use_cuda: bool, warnings: list[str]) -> bool:
+    """Create the CUDA context before the base model is loaded on the CPU.
+
+    On unified-memory machines the context needs free system memory. Loading a large
+    model on the CPU fills memory with the weights plus the page cache of the weight
+    files (which the GPU driver does not reclaim), so a context created after the load
+    can fail with "CUDA error: out of memory" before step 1. Creating it first avoids
+    that and changes nothing else. No-op without CUDA.
+    """
+    if not use_cuda:
+        return False
+    try:
+        torch_mod.cuda.init()
+        torch_mod.empty(1, device="cuda")
+        return True
+    except Exception as exc:  # pragma: no cover - surfaced later by the real CUDA path
+        warnings.append(f"early CUDA context init failed: {exc}")
+        return False
+
+
 def _collect_runtime_environment(torch_mod, use_cuda: bool, warnings: list[str]) -> dict[str, Any]:
     runtime_env: dict[str, Any] = {
         "torch_version": getattr(torch_mod, "__version__", "unknown"),
@@ -2467,6 +2487,7 @@ def _run_training_attempt(
 
     use_cuda = torch.cuda.is_available()
     runtime_environment = _collect_runtime_environment(torch, use_cuda, warnings)
+    runtime_environment["cuda_context_before_load"] = _init_cuda_context_early(torch, use_cuda, warnings)
     runtime_environment["use_lora"] = {
         "enabled": bool(use_lora),
         "requested": config.get("use_lora"),

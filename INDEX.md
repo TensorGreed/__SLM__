@@ -1243,6 +1243,7 @@ session-start guidance.
 - `backend/tests/test_tool_call_scoring.py` — Tool-call scoring unit tests: extraction variants, validity against a catalog, argument match,
 - `backend/tests/test_tool_catalog.py` — Tool catalog: store / version / flags / history / secrets / API / domain-pack hookup / dry-run safety.
 - `backend/tests/test_tool_scoring_acceptance.py` — Acceptance: tool-call scoring end to end. A tool catalog is imported from the fake MCP server over
+- `backend/tests/test_train_cuda_context_early.py` — train.py creates the CUDA context before the CPU model load (no-op without CUDA).
 - `backend/tests/test_train_script_standalone.py` — ``scripts/train.py`` is launched as a standalone script by the training
 - `backend/tests/test_train_split_loading.py` — ``scripts/train.py`` loads the train and validation JSONL files in separate
 - `backend/tests/test_train_token_classification.py` — Token classification for span extraction — the pure parts:
