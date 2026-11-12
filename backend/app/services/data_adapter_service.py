@@ -1430,27 +1430,82 @@ def _map_structured_plan(
     return out
 
 
+SPAN_TARGET_KEYS: tuple[str, ...] = ("entities", "entities_json", "spans")
+
+
+def _is_span_dict(item: Any) -> bool:
+    return isinstance(item, dict) and ("type" in item or "label" in item) and "start" in item and "end" in item
+
+
+def span_entity_list(value: Any) -> list[Any] | None:
+    """The span list of a span target — a list of ``{type|label, start, end}``
+    dicts, ``{"entities": <that>}``, or a JSON string of either (``[]`` and
+    ``{"entities": []}`` count). None for anything else (e.g. the
+    ``{"entities": [{field, value}]}`` rows ``kv_to_structured`` writes)."""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text.startswith(("[", "{")):
+            return None
+        try:
+            value = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    if isinstance(value, dict):
+        if set(value) != {"entities"}:
+            return None
+        value = value["entities"]
+    if isinstance(value, list) and all(_is_span_dict(item) for item in value):
+        return value
+    return None
+
+
 def _legacy_span_payload(record: dict[str, Any]) -> Any:
     """Span rows written under the old field: ``entities_json``, a JSON string
     of ``{"entities": [...]}`` (``bio_to_spans`` before it wrote ``entities``).
-    The decoded value is the target; None when absent or not JSON."""
+    The decoded value is the target when it holds spans; None when absent, not
+    JSON, empty (see ``_empty_list_payload``) or not spans — ``kv_to_structured``'s
+    ``{field, value}`` lists stay unmapped, as before."""
     value = record.get("entities_json")
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except (json.JSONDecodeError, ValueError):
-            return None
-    return value if isinstance(value, (dict, list)) and _is_present(value) else None
+    spans = span_entity_list(value)
+    if not spans:
+        return None
+    return json.loads(value) if isinstance(value, str) else value
 
 
-def _empty_list_payload(record: dict[str, Any], aliases: list[str]) -> list[Any] | None:
+def _empty_targets_allowed(config: dict[str, Any], key: str) -> bool:
+    """Whether an empty list under ``key`` is a training target ("nothing to
+    extract"). Span task shapes only, unless the project opts in:
+    ``keep_empty_targets: true`` → any output field; a span_set recipe
+    (``span_set: true``, stamped by ``dataset_service._apply_recipe_adapter_config``)
+    → any output field; another declared scoring mode (``span_set: false``,
+    e.g. field_match / json-extraction) → never; no recipe → only the span
+    fields (``entities`` / ``entities_json`` / ``spans``)."""
+    if config.get("keep_empty_targets") is True:
+        return True
+    declared = config.get("span_set")
+    if declared is True:
+        return True
+    if declared is False:
+        return False
+    return key in SPAN_TARGET_KEYS
+
+
+def _empty_list_payload(record: dict[str, Any], aliases: list[str], config: dict[str, Any]) -> Any:
     """``[]`` when an output alias holds an empty list (or a JSON string of
-    one), else None. Only consulted when no alias holds a non-empty target."""
+    one) and the project's task shape allows empty targets, else None. A
+    legacy ``entities_json`` keeps its own form (``{"entities": []}`` stays
+    wrapped, like that field's non-empty rows). Only consulted when no alias
+    holds a non-empty target."""
     for key in aliases:
         value = record.get(key)
-        if isinstance(value, str) and value.strip() == "[]":
-            return []
-        if isinstance(value, list) and not value:
+        if key == "entities_json":
+            if span_entity_list(value) == [] and _empty_targets_allowed(config, key):
+                return json.loads(value) if isinstance(value, str) else value
+            continue
+        empty = (isinstance(value, list) and not value) or (
+            isinstance(value, str) and value.strip() == "[]"
+        )
+        if empty and _empty_targets_allowed(config, key):
             return []
     return None
 
@@ -1514,7 +1569,7 @@ def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[s
         # Nothing to extract is an answer too: an empty list (a span row with
         # no spans — a negative example) is the target "[]", not a missing one.
         target_payload = _empty_list_payload(
-            record, output_aliases if output_fields else [*output_aliases, "entities_json"]
+            record, output_aliases if output_fields else [*output_aliases, "entities_json"], config
         )
     target = _json_text(target_payload)
     if mapped_input and not target:

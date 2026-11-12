@@ -73,9 +73,63 @@ def test_a_present_target_wins_over_an_empty_list():
     assert mapped["structured_output"] == [EMAIL]
 
 
-def test_explicit_output_fields_keep_their_empty_list():
-    mapped = _adapt({"text": NEG_TEXT, "found": []}, {"output_fields": ["found"]})
-    assert mapped is not None and mapped["target_text"] == " []"
+def test_explicit_output_fields_keep_empty_lists_only_on_opt_in():
+    row = {"text": NEG_TEXT, "found": []}
+    assert _adapt(row, {"output_fields": ["found"]}) is None
+    mapped = _adapt(row, {"output_fields": ["found"], "keep_empty_targets": True})
+    assert mapped is not None and mapped["answer"] == "[]"
+
+
+# ── empty targets are a span-shape thing (other structured projects unchanged) ──
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("key", ["output", "json", "labels", "structured_output", "answer", "target"])
+def test_empty_lists_under_non_span_fields_still_drop_without_a_recipe(key):
+    assert _adapt({"text": NEG_TEXT, key: []}) is None
+
+
+@pytest.mark.parametrize("key", ["entities", "output", "spans"])
+def test_a_field_match_recipe_drops_empty_lists_as_before(key):
+    assert _adapt({"text": NEG_TEXT, key: []}, {"span_set": False}) is None
+
+
+def test_a_span_set_recipe_keeps_empty_lists_under_any_output_field():
+    assert _adapt({"text": NEG_TEXT, "output": []}, {"span_set": True})["answer"] == "[]"
+
+
+def test_opt_in_keeps_empty_lists_for_any_structured_project():
+    assert _adapt({"text": NEG_TEXT, "output": []}, {"span_set": False, "keep_empty_targets": True})["answer"] == "[]"
+
+
+def test_kv_to_structured_rows_stay_unmapped():
+    """``{"entities": [{field, value}]}`` is a field list, not spans: dropped as before the span fixes."""
+    row = {"text": "Invoice total 5 USD", "entities_json": json.dumps({"entities": [{"field": "total", "value": "5"}]})}
+    assert _adapt(row) is None
+
+
+def test_recipe_scoring_mode_is_stamped_on_the_adapter_config():
+    import asyncio
+    from unittest import mock
+
+    from app.services import dataset_service as ds
+
+    async def schema(mode):
+        async def _fake(*_a, **_k):
+            return {"scoring_mode": mode}
+        with mock.patch.object(ds, "_recipe_output_schema", _fake):
+            return await ds._apply_recipe_adapter_config(None, 1, "structured-extraction", None)
+
+    assert asyncio.run(schema("span_set"))["span_set"] is True
+    assert asyncio.run(schema("field_match"))["span_set"] is False
+
+    async def none(*_a, **_k):
+        return None
+
+    with mock.patch.object(ds, "_recipe_output_schema", none):
+        assert asyncio.run(ds._apply_recipe_adapter_config(None, 1, "structured-extraction", None)) is None
 
 
 # ── token-classification training ────────────────────────────────────

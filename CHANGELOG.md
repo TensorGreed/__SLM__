@@ -1,5 +1,12 @@
 # Changelog
 
+### Span rows: offset import, negatives that train, a fixed span scorer; offline distillation through the API (November 12, 2026)
+
+- The import wizard and CLI import span rows with character offsets (`span_offsets_passthrough`; offsets kept exactly) and `bio_to_spans` writes the `entities` list the trainer reads. The preview's `accepted_count` is now the true count, not the sample size.
+- A span row with no spans (`entities: []`, the hard-negatives playbook's rows) now trains as a "nothing to tag" example. Other structured projects (json-extraction, field_match) still drop empty-list targets unless the adapter config sets `keep_empty_targets: true`. Preparing a span project's split again therefore adds its negatives, so the split differs from earlier runs' splits.
+- span_set scoring read a bare-list reference (`[...]`) as no gold spans; it now reads it as the spans, and results carry `span_set_scoring_version` 2. Span F1 recorded before this on bare-list splits is not comparable to new results; the next lift check re-scores the base model instead of reusing an old-scorer result.
+- `POST /experiments` accepts `training_mode: "distillation"` and the offline-KD keys the `recipe.kd.*` presets set.
+
 ### Classification projects are gated on classification metrics (November 12, 2026)
 
 - The built-in rule set `evalpack.classification.default` now exists. The classification recipe, the classification project templates and the sentiment demo already named it, but it was missing, so those projects fell back (with a "not available" warning) to the domain profile's rule set, which required F1, LLM-judge pass rate and safety pass rate. A classification eval reports none of the first two, so those required rules could never pass. Those projects are now gated on accuracy and macro-F1 (required, 0.5 each), with safety pass rate optional (0.9). This changes their pass/fail rules, as a fix. Projects that chose a rule set explicitly keep it, and the order the rule set is picked in is unchanged.

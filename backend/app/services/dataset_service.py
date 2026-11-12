@@ -640,8 +640,10 @@ def _scan_structured_extraction_fields(
         if payload is None and not output_fields:
             # Same fallback as the adapter: span rows written under the
             # old ``entities_json`` field.
+            from app.services.data_adapter_service import span_entity_list
+
             legacy = row.get("entities_json")
-            payload = legacy if legacy not in (None, "") else None
+            payload = legacy if span_entity_list(legacy) is not None else None
         if payload is None:
             continue
         scanned += 1
@@ -1261,6 +1263,16 @@ async def _apply_recipe_adapter_config(
         if isinstance(declared_props, dict) and declared_props:
             adapter_config = dict(adapter_config or {})
             adapter_config["fields"] = sorted(declared_props)
+
+    # Span task shape: a span_set recipe lets empty-list targets ("nothing to
+    # tag") train; any other declared scoring mode keeps dropping them
+    # (data_adapter_service._empty_targets_allowed). No recipe = no key.
+    if adapter_id == "structured-extraction" and not (adapter_config and "span_set" in adapter_config):
+        declared = await _recipe_output_schema(db, project_id)
+        mode = str((declared or {}).get("scoring_mode") or "")
+        if mode and _mode_allowed(declared):
+            adapter_config = dict(adapter_config or {})
+            adapter_config["span_set"] = mode == "span_set"
 
     # code-findings: the allowed-label list the prompt names comes from the
     # project taxonomy, the same list the manifest stamps for the eval handler.

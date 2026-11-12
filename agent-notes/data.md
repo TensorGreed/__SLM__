@@ -1134,6 +1134,12 @@ generated from the document (they keep their rows), `predefined_split_service._d
   decoded; the decoded value is the target) and only when `adapter_config.output_fields` is unset —
   rows written by older imports (and `kv_to_structured`'s `entities_json`) now map instead of dropping.
   Tests: `tests/test_span_field_agreement.py`.
+- **Empty targets are span-shape only** (code review S2): `_empty_targets_allowed(config, key)` — `keep_empty_targets:
+  true` opts any structured project in; `adapter_config["span_set"]` (stamped by `_apply_recipe_adapter_config` from the
+  recipe's scoring mode: True for span_set, False for any other declared mode) True → any output field, False → never
+  (json-extraction / field_match drop `[]` as before); no recipe → only `entities` / `entities_json` / `spans`. The
+  legacy `entities_json` read (`_legacy_span_payload`, `span_entity_list`) maps only span lists, so `kv_to_structured`'s
+  `{"entities": [{field, value}]}` rows stay unmapped as before (its field_match target was never decided).
 - **Empty-span rows train** (negatives, incl. the span `hard_negatives` playbook's `{text, spans: []}`):
   `_structured_parts` falls back to `_empty_list_payload` — an empty list (or `"[]"`) under an output alias
   (or `entities_json`) is the target `"[]"`, consulted only when no alias holds a non-empty value. Rows
