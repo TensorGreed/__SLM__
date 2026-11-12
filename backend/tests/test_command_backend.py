@@ -465,8 +465,6 @@ class TestTransientClassification(CommandTestCase):
         guard adds none and its breaker stops the loop after the 3rd failed row."""
         from app.services import judge_call_guard as jcg
 
-        jcg.reset_registry()
-        self.addCleanup(jcg.reset_registry)
         backend = CommandBackend()
         judge = answer_judge_service._judge_from_synth_backend(backend, "command")
         rows = [{"prompt": f"[[CONNFAIL]] Q{i}", "reference": "r " * 10, "prediction": "p"} for i in range(6)]
@@ -1246,6 +1244,49 @@ class TestPauseHandling(CommandTestCase):
 
 
 class TestCancellation(CommandTestCase):
+    def test_a_handle_from_another_loop_is_never_used(self):
+        """S4: the rubric judge runs the CLI on a worker thread's own loop (``to_thread`` + ``asyncio.run``)
+        with the Job's context copied in. The handle belongs to the Job's loop: no cancel poll and no
+        pause message from the thread; a handle on the running loop (or one with no loop) is used."""
+        import threading
+
+        foreign = _FakeHandle(cancel_after_checks=0)  # would cancel at once if it were polled
+        foreign.loop = asyncio.new_event_loop()
+        self.addCleanup(foreign.loop.close)
+        out: dict = {}
+
+        def thread():
+            from app.services import jobs_service
+
+            async def go():
+                token = jobs_service.current_job_handle.set(foreign)
+                try:
+                    return await CommandBackend().complete("hi")
+                finally:
+                    jobs_service.current_job_handle.reset(token)
+
+            out["text"] = asyncio.run(go())
+
+        t = threading.Thread(target=thread)
+        t.start()
+        t.join(30)
+        self.assertTrue(out.get("text"))
+        self.assertEqual(foreign.checks, 0)
+        self.assertEqual(foreign.messages, [])
+
+        async def same_loop():
+            from app.services import jobs_service
+
+            own = _FakeHandle()
+            own.loop = asyncio.get_running_loop()
+            token = jobs_service.current_job_handle.set(own)
+            try:
+                return command_module._job_handle_here() is own
+            finally:
+                jobs_service.current_job_handle.reset(token)
+
+        self.assertTrue(asyncio.run(same_loop()))
+
     def test_cancelled_job_never_launches_the_cli(self):
         handle = _FakeHandle(cancel_after_checks=0)
         with self.assertRaises(asyncio.CancelledError):

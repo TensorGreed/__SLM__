@@ -2980,6 +2980,35 @@ def _prediction_failed(prediction: dict[str, Any]) -> bool:
     return _normalize_answer(str(prediction.get("prediction") or "")) != _normalize_answer(reference)
 
 
+def _pass_rate_without_unjudged(
+    predictions: list[dict[str, Any]], metrics: dict[str, Any]
+) -> "tuple[float | None, int] | None":
+    """``(pass rate, rows left out)`` with the rows the answer judge was asked to decide but left without a
+    verdict (``row_judge_status`` "unjudged") left out of the pass rate -- the same row mean
+    ``EvalResult.pass_rate`` falls back to (``exact_match``, else ``f1``) over the other rows. None when
+    no such row exists, or when the pass rate is a handler's own ``pass_rate`` (its rows already decide
+    pass / fail without the judge). The pass rate is None when every row was left out."""
+    left_out = [
+        i for i, p in enumerate(predictions)
+        if isinstance(p, dict) and p.get("row_judge_status") == "unjudged" and judge_decides_row(p)
+    ]
+    if not left_out or metrics.get("pass_rate"):
+        return None
+    if metrics.get("exact_match"):
+        key = "row_exact_match"
+    elif metrics.get("f1") is not None:
+        key = "row_f1"
+    else:
+        return None
+    skip = set(left_out)
+    values = [
+        float(p[key]) for i, p in enumerate(predictions)
+        if i not in skip and isinstance(p, dict)
+        and isinstance(p.get(key), (int, float)) and not isinstance(p.get(key), bool)
+    ]
+    return (round(sum(values) / len(values), 4) if values else None), len(left_out)
+
+
 def _prediction_unscored(prediction: dict[str, Any]) -> bool:
     """A row the scorer excluded from its aggregate (``correct`` = None, so pairing skips it): a
     ``multi_option`` row whose verifier could not run, a scored code example without a pass verdict
@@ -4247,6 +4276,11 @@ async def run_heldout_evaluation(
             except Exception as exc:  # noqa: BLE001 - the dialogue judge adds a metric, it never fails the eval
                 logging.getLogger(__name__).warning("dialogue judge skipped: %s", exc)
                 metrics["dialogue_judge"] = {"skipped": f"error: {exc}"[:200]}
+    excluded_pass_rate = _pass_rate_without_unjudged(predictions, metrics)
+    if excluded_pass_rate is not None:
+        # D2: rows the judge was asked to decide but left without a verdict are out of the pass rate
+        # too (only on evals that left such rows; every other eval's pass rate is unchanged).
+        result.pass_rate, metrics["pass_rate_unjudged_excluded"] = excluded_pass_rate
     result.metrics = metrics
 
     details = dict(result.details or {})

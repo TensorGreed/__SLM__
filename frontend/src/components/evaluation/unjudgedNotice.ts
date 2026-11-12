@@ -2,13 +2,19 @@
  * The eval summary's "rows without a judge verdict" notice (judge resilience A1).
  *
  * A held-out eval whose judge was unreachable (or answered without a verdict)
- * leaves those rows unjudged: they are out of the judged score and the pass /
- * fail counts, with a reason per row. The backend snapshot says how many and
- * why (``unjudged_reasons``) and, when the breaker stopped the calls, where
- * (``breaker``). Pure, so it is unit-tested apart from the card.
+ * leaves those rows unjudged, with a reason per row. What that leaves them out
+ * of depends on the judge (``LEFT_OUT``). The backend says how many and why
+ * (``unjudged_reasons``) and, when the breaker stopped the calls, where
+ * (``breaker``); ``kind`` names the judge block (answer / code-example / rubric /
+ * dialogue — the summary's ``unjudged_notice``). Pure, so it is unit-tested
+ * apart from the card.
  */
 
+export type UnjudgedJudgeKind = 'judge' | 'code_example_judge' | 'rubric' | 'dialogue_judge';
+
 export interface UnjudgedJudgeBlock {
+    /** Which judge (absent = the answer judge, the summary's ``judge`` block). */
+    kind?: UnjudgedJudgeKind | string | null;
     judge?: string | null;
     judged?: number | null;
     unjudged?: number | null;
@@ -30,6 +36,31 @@ const REASON_WORDS: Record<string, string> = {
     unparseable: 'no verdict in the reply',
     permanent_error: 'request refused',
     invalid_row: 'not a valid row',
+    no_judge: 'no judge was available',
+};
+
+/** Per judge: what its rows are called and what an unjudged row is left out of. */
+const KIND_WORDS: Record<string, { noun: [string, string]; who: string; leftOut: string }> = {
+    judge: {
+        noun: ['answer', 'answers'],
+        who: 'judge',
+        leftOut: 'They are left out of the judged score, the pass rate, the failure list and the base-vs-fine-tuned pairing.',
+    },
+    code_example_judge: {
+        noun: ['code example', 'code examples'],
+        who: 'code-example judge',
+        leftOut: 'They are left out of the code-example pass rate, the failure list and the base-vs-fine-tuned pairing.',
+    },
+    rubric: {
+        noun: ['plan', 'plans'],
+        who: 'rubric judge',
+        leftOut: 'They are left out of the rubric scores; those plans pass or fail on the other checks alone.',
+    },
+    dialogue_judge: {
+        noun: ['turn', 'turns'],
+        who: 'dialogue judge',
+        leftOut: 'They are left out of the dialogue scores.',
+    },
 };
 
 /** Plain words for an unjudged-row reason. */
@@ -47,17 +78,19 @@ export function unjudgedReasonsText(reasons: Record<string, number> | null | und
 }
 
 /** The notice text, or null when every row the judge was asked about got a verdict. Results stored
- *  before unjudged rows carried a reason (no ``status``) get no notice: they still count those rows by
- *  exact match, so "left out of the pass / fail counts" would not be true for them. */
+ *  before unjudged rows carried a reason (no ``status`` / ``unjudged_reasons``) get no notice: they still
+ *  count those rows by exact match, so "left out of …" would not be true for them. */
 export function unjudgedNoticeText(judge: UnjudgedJudgeBlock | null | undefined, evalResultId: number | null | undefined): string | null {
     const unjudged = typeof judge?.unjudged === 'number' ? judge.unjudged : 0;
-    if (!judge || unjudged <= 0 || !judge.status) return null;
+    if (!judge || unjudged <= 0 || !judge.status || !judge.unjudged_reasons) return null;
+    const words = KIND_WORDS[judge.kind || 'judge'] ?? KIND_WORDS.judge;
     const judged = typeof judge.judged === 'number' ? judge.judged : 0;
     const total = judged + unjudged;
     const reasons = unjudgedReasonsText(judge.unjudged_reasons);
+    const verdict = words.who === 'judge' ? 'judge verdict' : `verdict from the ${words.who}`;
     const parts = [
-        `${unjudged} of ${total} answer${total === 1 ? '' : 's'} ha${unjudged === 1 ? 's' : 've'} no judge verdict${reasons ? `: ${reasons}` : ''}.`,
-        'They are left out of the judged score and the pass / fail counts.',
+        `${unjudged} of ${total} ${words.noun[total === 1 ? 0 : 1]} ha${unjudged === 1 ? 's' : 've'} no ${verdict}${reasons ? `: ${reasons}` : ''}.`,
+        words.leftOut,
     ];
     const b = judge.breaker;
     if (judge.status === 'paused' && b) {
@@ -66,7 +99,7 @@ export function unjudgedNoticeText(judge: UnjudgedJudgeBlock | null | undefined,
         const waited = typeof b.waited_seconds === 'number' && b.waited_seconds > 0
             ? ` after waiting ${Math.round(b.waited_seconds / 60)} min`
             : '';
-        parts.push(`The judge stopped${where} after failed calls${kind}${waited}.`);
+        parts.push(`The ${words.who} stopped${where} after failed calls${kind}${waited}.`);
     }
     const provenance = [judge.judge ? `judge ${judge.judge}` : null, evalResultId != null ? `eval #${evalResultId}` : null]
         .filter(Boolean)

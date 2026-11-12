@@ -124,6 +124,9 @@ class JobProgressHandle:
             self.loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
         except RuntimeError:
             self.loop = None
+        # Judge resilience, mode "wait": wall seconds this Job has already spent waiting for an
+        # unreachable judge -- ONE budget per Job, shared by all its judge loops (``judge_call_guard``).
+        self.judge_wait_spent_seconds: float = 0.0
 
     async def set_message(self, message: str | None) -> None:
         """Publish a message, keeping the last fraction."""

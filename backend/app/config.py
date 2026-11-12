@@ -144,13 +144,15 @@ class Settings(BaseSettings):
 
     # ── Judge resilience (LLM judges in evals) ──────────────────────────
     # judge_call_guard: a judge call that fails for a transient reason
-    # (connection, timeout, 408/429/5xx) is retried; after
-    # JUDGE_BREAKER_CONSECUTIVE transient failures in a row (or more than
+    # (connection, timeout, 408/425/429/5xx) is retried; after
+    # JUDGE_BREAKER_CONSECUTIVE rows in a row failed transiently (or more than
     # JUDGE_BREAKER_ERROR_RATE of the last JUDGE_BREAKER_WINDOW calls, with at
     # least JUDGE_BREAKER_MIN_CALLS) the breaker opens and the remaining rows
-    # are left unjudged (``judge_unreachable``) without a call. false = every
-    # row is called as before. A project can override breaker / mode /
-    # max wait in runtime_config["eval_judge"]["resilience"].
+    # are left unjudged (``judge_unreachable``) without a call. The breaker is
+    # per run: each new eval (and each judge loop in it) starts closed. false =
+    # every row is called once with no guard retries, never stopped (as before
+    # the guard). A project can override breaker / mode / max wait in
+    # runtime_config["eval_judge"]["resilience"].
     JUDGE_BREAKER_ENABLED: bool = True
     JUDGE_BREAKER_CONSECUTIVE: int = 3
     JUDGE_BREAKER_WINDOW: int = 20
@@ -159,11 +161,15 @@ class Settings(BaseSettings):
     # An open breaker lets one probe call through after this long.
     JUDGE_BREAKER_COOLDOWN_SECONDS: float = 300.0
     # Extra attempts per row for a transient failure (0 for a backend that
-    # retries internally, e.g. the command backend), backoff base * 3^n ± 20%.
+    # retries internally, e.g. the command backend, and 0 with the breaker
+    # off), backoff base * 3^n ± 20%.
     JUDGE_TRANSIENT_RETRIES: int = 2
     JUDGE_RETRY_BACKOFF_SECONDS: float = 10.0
     # When the breaker opens: "stop" (leave the rest unjudged) or "wait"
     # (probe every JUDGE_OUTAGE_PROBE_SECONDS, up to the max wait, then stop).
+    # Wait applies only to evals run as a Job (else stop); the max wait is
+    # wall time, probe calls included, ONE budget per Job, capped at half of
+    # CELERY_VISIBILITY_TIMEOUT_SECONDS.
     JUDGE_OUTAGE_MODE: str = "stop"
     JUDGE_OUTAGE_PROBE_SECONDS: float = 300.0
     JUDGE_OUTAGE_MAX_WAIT_SECONDS: float = 3600.0

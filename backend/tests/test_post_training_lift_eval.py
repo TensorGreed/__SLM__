@@ -528,6 +528,42 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
                 out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=third)
             self.assertTrue(out["baseline_reused"])
 
+    async def test_old_or_unparseable_gaps_never_warn_and_a_blip_base_is_reused(self):
+        """M2: a base stored before unjudged rows carried reasons (``unjudged: 2``, no reasons) is reused
+        and adds no "judge incomplete"; neither do unparseable-only gaps. A leg with one row lost to a
+        blip IS reported (an outage, ``judge_kind``), and the lift verdict is still in the result (the bell
+        appends the warning)."""
+        from app.services.answer_judge_service import ResolvedJudge
+
+        async def _noop(q, r, p):
+            return None
+
+        pid = await self._project()
+        first, second, third, fourth = [await self._run(pid) for _ in range(4)]
+        self.judge = ResolvedJudge(label="ollama:judge-a", judge=_noop)
+        with mock.patch("app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout):
+            self.result_judge_block = {"judge": "ollama:judge-a", "score": 0.5, "judged": 8, "unjudged": 2}
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=first)
+            self.assertNotIn("judge_status", out, "a pre-reason block never warns")
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=second)
+            self.assertTrue(out["baseline_reused"])
+            self.assertNotIn("judge_status", out)
+            self.result_judge_block = {"judge": "ollama:judge-a", "score": 0.5, "judged": 685, "unjudged": 3,
+                                       "status": "partial", "unjudged_reasons": {"unparseable": 3}}
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=third)
+            self.assertNotIn("judge_status", out, "unparseable-only gaps: a re-run would not fix them")
+            self.assertIn("lift_status", out)
+            self.result_judge_block = {"judge": "ollama:judge-a", "score": 0.5, "judged": 687, "unjudged": 1,
+                                       "status": "partial", "unjudged_reasons": {"transient_error": 1}}
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=fourth)
+            self.assertEqual(out["judge_status"], "partial")
+            self.assertEqual(out["judge_kind"], "answer judge")
+            self.assertIsNotNone(out.get("headline"), "the lift verdict is still reported")
+
     async def test_short_answer_task_reuses_the_baseline_with_a_judge_configured(self):
         from app.services.answer_judge_service import ResolvedJudge
 

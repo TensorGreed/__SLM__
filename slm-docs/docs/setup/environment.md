@@ -53,19 +53,19 @@ Details: [Synthetic-data backends](../extensions/synth-backends.md#command-local
 
 ### Judge resilience (LLM judges in evals)
 
-When the judge model that scores eval answers is unreachable, a held-out eval retries the failed call, then stops calling it and leaves the remaining rows **unjudged** (every answer is still saved). A project can change the breaker, the mode and the longest wait under **Settings → Judge model → When the judge is unreachable**.
+When the judge model that scores eval answers is unreachable, a held-out eval retries the failed call, then stops calling it and leaves the remaining rows **unjudged** (every answer is still saved). Each eval starts fresh: an outage during an earlier eval never stops the next one before it has tried. A project can change the breaker, the mode and the longest wait under **Settings → Judge model → When the judge is unreachable**.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `JUDGE_BREAKER_ENABLED` | `true` | `false` asks the judge about every row, however long each failure takes (the old behaviour). |
-| `JUDGE_BREAKER_CONSECUTIVE` | `3` | Failed calls in a row (connection, timeout, 408 / 429 / 5xx) that stop the judge. |
+| `JUDGE_BREAKER_ENABLED` | `true` | `false` asks the judge about every row once, with no retries and no stop, however long each failure takes (the behaviour before the breaker; the command backend still retries a failed CLI call itself, as it always did). Unjudged rows still get their reason. |
+| `JUDGE_BREAKER_CONSECUTIVE` | `3` | Rows in a row whose judge call still failed after its retries (connection, timeout, 408 / 425 / 429 / 5xx) that stop the judge for the rest of that eval. A refused request in between resets the count. |
 | `JUDGE_BREAKER_WINDOW` / `JUDGE_BREAKER_MIN_CALLS` / `JUDGE_BREAKER_ERROR_RATE` | `20` / `10` / `0.5` | Also stop when more than this share of the last calls failed. |
-| `JUDGE_BREAKER_COOLDOWN_SECONDS` | `300` | A stopped judge lets one call through after this long. Every new eval also tries it once. |
-| `JUDGE_TRANSIENT_RETRIES` | `2` | Extra attempts for a failed call (none for the command backend, which retries itself). |
+| `JUDGE_BREAKER_COOLDOWN_SECONDS` | `300` | In `wait` mode, how long a stopped judge rests before a normal call is tried again. |
+| `JUDGE_TRANSIENT_RETRIES` | `2` | Extra attempts for a failed call (none for the command backend, which retries itself, and none with the breaker off). |
 | `JUDGE_RETRY_BACKOFF_SECONDS` | `10` | First wait between attempts (then ×3, ±20 %). |
-| `JUDGE_OUTAGE_MODE` | `stop` | `stop` leaves the remaining rows unjudged; `wait` checks the judge again every `JUDGE_OUTAGE_PROBE_SECONDS` and resumes when it answers. |
+| `JUDGE_OUTAGE_MODE` | `stop` | `stop` leaves the remaining rows unjudged; `wait` checks the judge again every `JUDGE_OUTAGE_PROBE_SECONDS` and resumes when it answers. Only an eval running as a background job waits; any other eval stops. |
 | `JUDGE_OUTAGE_PROBE_SECONDS` | `300` | Time between checks in `wait` mode. |
-| `JUDGE_OUTAGE_MAX_WAIT_SECONDS` | `3600` | Longest wait in `wait` mode before stopping. |
+| `JUDGE_OUTAGE_MAX_WAIT_SECONDS` | `3600` | Longest wait in `wait` mode before stopping: wall time, the checks' own calls included, one budget for the whole job (both legs of a lift check share it; the call under way finishes, so it can run over by one call). Capped at half of `CELERY_VISIBILITY_TIMEOUT_SECONDS` (6 h by default). |
 
 ## Auth variables
 

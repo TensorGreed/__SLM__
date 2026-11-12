@@ -88,6 +88,32 @@ class EvalSummaryTests(unittest.IsolatedAsyncioTestCase):
         async with self.sf() as db:
             return await build_eval_summary(db, self.pid, experiment_id=experiment_id)
 
+    async def test_unjudged_notice_covers_every_guarded_judge(self):
+        """S6: a code-example judge that was unreachable gets the notice (with its kind), even though the
+        answer judge is absent; a fully judged eval and a result stored before reasons existed get none."""
+        base = await self._exp(baseline=True)
+        await self._result(base, 0.1)
+        run = await self._exp()
+        async with self.sf() as db:
+            db.add(EvalResult(experiment_id=run, dataset_name="test", eval_type="exact_match", metrics={
+                "exact_match": 0.4, "evaluated_samples": 40,
+                "code_example_judge": {"judge": "j", "judged": 10, "unjudged": 30, "status": "paused",
+                                       "unjudged_reasons": {"transient_error": 3, "judge_unreachable": 27},
+                                       "breaker": {"tripped": True, "tripped_at_row": 12}},
+            }, details={}))
+            await db.commit()
+        notice = (await self._summary())["unjudged_notice"]
+        self.assertEqual((notice["kind"], notice["status"], notice["unjudged"], notice["judged"]),
+                         ("code_example_judge", "paused", 30, 10))
+        self.assertEqual(notice["breaker"]["tripped_at_row"], 12)
+        run2 = await self._exp()
+        async with self.sf() as db:
+            db.add(EvalResult(experiment_id=run2, dataset_name="test", eval_type="exact_match", metrics={
+                "exact_match": 0.4, "judge": {"judge": "j", "score": 0.5, "judged": 38, "unjudged": 2},
+            }, details={}))
+            await db.commit()
+        self.assertIsNone((await self._summary(run2))["unjudged_notice"])
+
     async def test_no_trained_run_and_not_evaluated(self):
         self.assertEqual((await self._summary())["verdict"], "no_trained_run")
         await self._exp(baseline=True)

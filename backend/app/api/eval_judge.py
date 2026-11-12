@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.services.judge_call_guard import MAX_WAIT_CAP_SECONDS
 from app.models.project import Project
 
 router = APIRouter(prefix="/projects/{project_id}/eval-judge", tags=["Evaluation"])
@@ -29,7 +30,8 @@ class JudgeResilienceUpdate(BaseModel):
 
     breaker: bool | None = None
     mode: Literal["stop", "wait"] | None = None
-    max_wait_seconds: float | None = Field(default=None, ge=0, le=24 * 3600)
+    # Capped at half the task queue's visibility timeout (``judge_call_guard.max_wait_cap_seconds``).
+    max_wait_seconds: float | None = Field(default=None, ge=0, le=MAX_WAIT_CAP_SECONDS)
 
 
 class EvalJudgeUpdate(BaseModel):
@@ -130,7 +132,7 @@ async def _payload(db: AsyncSession, project: Project) -> dict[str, Any]:
     cfg = rc.get("eval_judge") if isinstance(rc.get("eval_judge"), dict) else {}
     backend = str(cfg.get("backend") or "").strip() or None
     resolved = await _resolved(db, project)
-    from app.services.judge_call_guard import normalize_project_resilience, resolve_resilience
+    from app.services.judge_call_guard import max_wait_cap_seconds, normalize_project_resilience, resolve_resilience
 
     effective = resolve_resilience(rc)
     return {
@@ -141,6 +143,8 @@ async def _payload(db: AsyncSession, project: Project) -> dict[str, Any]:
             "mode": effective.mode,
             "max_wait_seconds": effective.max_wait_seconds,
             "consecutive": effective.consecutive,
+            # The longest wait a project may choose (half the task queue's visibility timeout).
+            "max_wait_cap_seconds": max_wait_cap_seconds(),
         },
         "trust": await _trust(db, project, resolved),
         "enabled": cfg.get("enabled") is not False,

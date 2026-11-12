@@ -165,6 +165,10 @@ async def _seed_group_summary(
         "failures": failures,
         "failed_count": failed_count,
         "judge": _judge_block(metrics),
+        # Rows a judge (answer / code-example / rubric / dialogue) was asked about and left without a
+        # verdict, on results written with reasons (``judge_call_guard.unjudged_notice_block``); an
+        # outage block first. None when every judge gave every verdict.
+        "unjudged_notice": _unjudged_notice(metrics),
         "dataset_name": (details.get("dataset") or {}).get("name") if isinstance(details.get("dataset"), dict) else representative["eval_result"].dataset_name,
     }
 
@@ -354,6 +358,10 @@ async def _build_eval_summary_core(
         # who judged, correct / partial / wrong counts, calls + cache hits.
         # None when the task isn't long-answer or no judge was reachable.
         "judge": _judge_block(metrics),
+        # Rows a judge (answer / code-example / rubric / dialogue) was asked about and left without a
+        # verdict, on results written with reasons (``judge_call_guard.unjudged_notice_block``); an
+        # outage block first. None when every judge gave every verdict.
+        "unjudged_notice": _unjudged_notice(metrics),
         "dataset_name": (details.get("dataset") or {}).get("name") if isinstance(details.get("dataset"), dict) else latest.dataset_name,
         # Opt-in checked decoding (verify-and-retry): present only when this eval ran with it;
         # ``checked_decoding_differs``: the lift pairs evals decoded under different policies.
@@ -517,6 +525,12 @@ async def span_eval_summary(db: AsyncSession, project_id: int, experiment: Exper
         "seeds": None,
         "n_seeds": 1,
     }
+
+
+def _unjudged_notice(metrics: dict[str, Any]) -> dict[str, Any] | None:
+    from app.services.judge_call_guard import unjudged_notice_block
+
+    return unjudged_notice_block(metrics)
 
 
 def _judge_block(metrics: dict[str, Any]) -> dict[str, Any] | None:

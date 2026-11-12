@@ -57,6 +57,37 @@ export interface LiftEvidence {
     metric_id?: string | null;
     /** Epic W2: detectable difference on these paired rows (absent on older servers). */
     sizing?: EvalSizing | null;
+    /** Rows both evals ran but one left without a score (unjudged, a verifier error): not in ``n``. */
+    excluded_unscored?: number | null;
+}
+
+export interface JudgedSubsetSide {
+    judged: number;
+    unjudged: number;
+    /** The judge was unreachable for some of them (the judged rows are then the first ones, not a sample). */
+    outage?: boolean;
+}
+
+/** A judge-based lift metric whose value rests on the judged rows only, per side (backend
+ *  ``sft_lift_summary_service._attach_judged_subset``). */
+export type JudgedSubset = { baseline?: JudgedSubsetSide; trained?: JudgedSubsetSide };
+
+/** "on judged rows only — fine-tuned 40 of 688 judged (judge unreachable), base 688 of 688", or null. */
+export function judgedSubsetText(subset: JudgedSubset | null | undefined): string | null {
+    if (!subset) return null;
+    const sides: Array<[string, JudgedSubsetSide | undefined]> = [['fine-tuned', subset.trained], ['base', subset.baseline]];
+    const parts = sides
+        .filter((entry): entry is [string, JudgedSubsetSide] => !!entry[1] && entry[1].unjudged > 0)
+        .map(([name, side]) => `${name} ${side.judged} of ${side.judged + side.unjudged} judged${side.outage ? ' (judge unreachable)' : ''}`);
+    if (!parts.length) return null;
+    const outage = sides.some(([, side]) => side?.outage);
+    return `on judged rows only — ${parts.join(', ')}${outage ? '. Re-run the eval when the judge is back before relying on this lift' : ''}`;
+}
+
+/** " · 10 excluded (no score on one side)" for an evidence block that left rows out, else "". */
+export function excludedRowsText(ev: Pick<LiftEvidence, 'excluded_unscored'> | null | undefined): string {
+    const k = ev?.excluded_unscored;
+    return typeof k === 'number' && k > 0 ? ` · ${k} excluded (no score on one side, e.g. unjudged)` : '';
 }
 
 /** Run-to-run evidence: the same config trained with N seeds, each scored
@@ -116,7 +147,10 @@ export function rowCountsText(ev: LiftEvidence, subject: string): string {
     const rows = (count: number) => `${count} row${count === 1 ? '' : 's'}`;
     const parts = [`helped ${rows(ev.better)}`, `hurt ${rows(ev.worse)}`];
     if (ev.same > 0) parts.push(`no change on ${ev.same}`);
-    return `${subject} ${parts.join(', ')}.`;
+    const excluded = typeof ev.excluded_unscored === 'number' && ev.excluded_unscored > 0
+        ? ` ${rows(ev.excluded_unscored)} left out: no score on one side (e.g. unjudged).`
+        : '';
+    return `${subject} ${parts.join(', ')}.${excluded}`;
 }
 
 /**
@@ -183,13 +217,13 @@ export function metricDisplayName(metricId: string | null | undefined): string {
 
 /** One compact line for dense places (a metric row, the bell):
  *  "within noise · 14 rows better, 6 worse". */
-export function shortEvidenceText(ev: Pick<LiftEvidence, 'verdict' | 'better' | 'worse'>): string {
+export function shortEvidenceText(ev: Pick<LiftEvidence, 'verdict' | 'better' | 'worse' | 'excluded_unscored'>): string {
     const label = ev.verdict === 'within_noise'
         ? 'within noise'
         : ev.verdict === 'too_few_rows'
             ? 'too few rows to tell'
             : 'beyond row noise';
-    return `${label} · ${ev.better} row${ev.better === 1 ? '' : 's'} better, ${ev.worse} worse`;
+    return `${label} · ${ev.better} row${ev.better === 1 ? '' : 's'} better, ${ev.worse} worse${excludedRowsText(ev)}`;
 }
 
 /** True when a better / worse reading isn't backed by the rows. */

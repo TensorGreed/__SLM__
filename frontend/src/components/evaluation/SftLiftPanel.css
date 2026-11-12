@@ -23,6 +23,7 @@
 .sft-lift__delta { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); min-width: 110px; text-align: right; }
 .sft-lift__evidence { font-size: var(--font-size-xs); color: var(--text-secondary); text-align: right; }
 .sft-lift__evidence--unproven { color: var(--color-warning); }
+.sft-lift__judged-subset { color: var(--color-warning); }
 .sft-lift__gate-row { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) 0; font-size: var(--font-size-sm); }
 .sft-lift__error { background: var(--color-error-bg); color: var(--color-error); }
 .sft-lift__w-0 { width: 0%; }

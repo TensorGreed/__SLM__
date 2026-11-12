@@ -158,6 +158,26 @@ describe('SftLiftPanel', () => {
         expect(screen.getByTestId('sft-lift-delta-exact_match')).toHaveClass('sft-lift__text--good');
     });
 
+    it('marks a headline resting on judged rows and counts the excluded rows (S3)', async () => {
+        const [f1Row] = HAPPY_SUMMARY.metric_lifts;
+        apiMock.get.mockResolvedValue({
+            data: {
+                ...HAPPY_SUMMARY,
+                metric_lifts: [{
+                    ...f1Row, metric_id: 'judge_correct',
+                    judged_subset: { trained: { judged: 40, unjudged: 648, outage: true }, baseline: { judged: 688, unjudged: 0 } },
+                    evidence: { n: 40, better: 12, worse: 2, same: 26, mean_diff: 0.2, ci_low: 0.1, ci_high: 0.3, verdict: 'better', excluded_unscored: 648 },
+                }],
+            },
+        });
+        render(<SftLiftPanel projectId={1} />);
+        const mark = await screen.findByTestId('sft-lift-headline-judged-subset');
+        expect(mark).toHaveTextContent('on judged rows only — fine-tuned 40 of 688 judged (judge unreachable)');
+        expect(mark).not.toHaveTextContent('base 688');
+        expect(screen.getByTestId('sft-lift-evidence-judge_correct')).toHaveTextContent('· 648 excluded (no score on one side');
+        expect(screen.getByTestId('sft-lift-judged-subset-judge_correct')).toBeInTheDocument();
+    });
+
     it('shows no evidence line for rows without it (older results, non-row metrics)', async () => {
         apiMock.get.mockResolvedValue({ data: HAPPY_SUMMARY });
         render(<SftLiftPanel projectId={1} />);

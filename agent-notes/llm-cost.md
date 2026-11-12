@@ -116,7 +116,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   by the guard. See `agent-notes/data.md` for the backend's design.
 - **Transient vs permanent failures (judge resilience A1)** — `CloudLlmError(message, status_code=, transient=)`: `status_code`
   is the provider's HTTP status (None when no response came back), `transient` is True for an `httpx.TransportError`
-  (connect / read timeout / DNS) and for 408 / 409 / 425 / 429 / 5xx (`cloud_llm_service.is_transient_status`). The command
+  (connect / read timeout / DNS) and for 408 / 425 / 429 / 5xx (409 is the request's) (`cloud_llm_service.is_transient_status`). The command
   backend classifies a failed call from the reply's structured fields (`api_error` in `SYNTH_COMMAND_TRANSIENT_API_ERRORS`,
   `api_error_status` 408 / 425 / 5xx) and `SYNTH_COMMAND_TRANSIENT_REGEX` on the failure TEXT only (stderr / the `result`
   message; never the whole JSON, whose `output_tokens: 512` would look like a 5xx); a timeout is transient. When its own

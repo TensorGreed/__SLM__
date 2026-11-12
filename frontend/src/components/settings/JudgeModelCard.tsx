@@ -141,7 +141,7 @@ const MAX_WAIT_CHOICES: Array<[number, string]> = [
     [3600, '1 hour'],
     [7200, '2 hours'],
     [14400, '4 hours'],
-    [28800, '8 hours'],
+    [21600, '6 hours'],
 ];
 
 function waitLabel(seconds: number): string {
@@ -162,16 +162,20 @@ function JudgeOutageSettings({
 }) {
     const stored = resilience.stored || {};
     const update = (patch: JudgeResilienceSettings) => onSave({ ...stored, ...patch });
-    const waitChoices = MAX_WAIT_CHOICES.some(([s]) => s === resilience.max_wait_seconds)
-        ? MAX_WAIT_CHOICES
-        : [...MAX_WAIT_CHOICES, [resilience.max_wait_seconds, waitLabel(resilience.max_wait_seconds)] as [number, string]];
+    // Never offer more than the server accepts (half the task queue's visibility timeout).
+    const cap = typeof resilience.max_wait_cap_seconds === 'number' ? resilience.max_wait_cap_seconds : Infinity;
+    const allowed = MAX_WAIT_CHOICES.filter(([s]) => s <= cap);
+    const waitChoices = allowed.some(([s]) => s === resilience.max_wait_seconds)
+        ? allowed
+        : [...allowed, [resilience.max_wait_seconds, waitLabel(resilience.max_wait_seconds)] as [number, string]];
     return (
         <details className="settings-details" data-testid="judge-outage">
             <summary>When the judge is unreachable</summary>
             <p className="settings-hint">
-                A judge call that fails because of the network or the provider is retried. After {resilience.consecutive} failed
-                calls in a row the eval stops asking: every answer is still saved, and the rows the judge did not score are
-                left out of the score and the pass / fail counts, with the reason.
+                A judge call that fails because of the network or the provider is retried. After {resilience.consecutive} rows
+                in a row whose call still failed, this eval stops asking (each new eval starts asking again): every answer
+                is still saved, and the rows the judge did not score are left out of the judged score, the pass rate, the
+                failure list and the base-vs-fine-tuned pairing, with the reason.
             </p>
             <label className="settings-row">
                 <input
@@ -183,7 +187,7 @@ function JudgeOutageSettings({
                 />
                 <span>
                     <strong>Stop calling an unreachable judge</strong>
-                    <small>Off asks the judge about every row, however long each failure takes.</small>
+                    <small>Off asks the judge about every row once, without retries, however long each failure takes (as before this setting existed).</small>
                 </span>
             </label>
             <label className="settings-row">
@@ -216,7 +220,7 @@ function JudgeOutageSettings({
                                 <option key={s} value={String(s)}>{label}</option>
                             ))}
                         </select>
-                        <small>Then the remaining rows are left unjudged.</small>
+                        <small>In total for the eval, probe calls included; only an eval running as a background job waits (others stop). Then the remaining rows are left unjudged.</small>
                     </span>
                 </label>
             )}

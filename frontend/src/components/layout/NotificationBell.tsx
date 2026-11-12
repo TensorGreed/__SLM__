@@ -125,14 +125,16 @@ function jobStatusLabel(job: Job): string {
  */
 export function jobOutcomeSummary(job: Job): string | null {
     let core = jobOutcomeSummaryCore(job);
-    // Any eval-running kind: the judge left rows unjudged (unreachable / no verdict). The Job
-    // succeeded, but its judged numbers are incomplete — say so first, and give a lift check
-    // no better / worse verdict.
+    // Any eval-running kind: an unreachable judge left rows unjudged (the backend sets
+    // ``judge_status`` only then — never for unparseable-only gaps or results stored before rows
+    // carried a reason). The Job succeeded; the warning is APPENDED, never replacing the outcome
+    // (a lift check keeps its verdict).
     const judgeWarning = job.status === 'succeeded' ? judgeWarningText((job.result || {}) as Record<string, unknown>) : null;
     if (judgeWarning) {
-        core = job.kind === 'post_training_lift_eval'
-            ? `${judgeWarning} · no lift verdict until the eval is re-run`
-            : core ? `${judgeWarning} · ${core}` : judgeWarning;
+        const advice = job.kind === 'post_training_lift_eval' ? ' — re-run the eval before relying on this lift' : '';
+        core = core
+            ? `${core} · with a warning: ${judgeWarning}${advice}`
+            : `Done, with a warning: ${judgeWarning}${advice}`;
     }
     // Any kind: the jobs framework meters every runner's cloud-LLM calls
     // into result.tokens / cost_usd — also on a failed or cancelled Job
@@ -144,8 +146,9 @@ export function jobOutcomeSummary(job: Job): string | null {
     return core;
 }
 
-/** "Done, with a warning: judge incomplete by <judge> — 80 of 80 rows unjudged (77 not sent …) (eval #12)"
- *  from a Job result whose eval left rows unjudged (``judge_status`` is only set then), else null. */
+/** "judge incomplete by <judge> — 80 of 80 rows unjudged (77 not sent …) (eval #12)" from a Job result
+ *  whose eval lost rows to an unreachable judge (``judge_status`` is only set then), else null. A judge
+ *  other than the answer judge is named ("rubric judge incomplete …"). */
 export function judgeWarningText(r: Record<string, unknown>): string | null {
     if (typeof r.judge_status !== 'string') return null;
     const unjudged = typeof r.judge_unjudged === 'number' ? r.judge_unjudged : null;
@@ -158,7 +161,8 @@ export function judgeWarningText(r: Record<string, unknown>): string | null {
     const reasons = unjudgedReasonsText((r.judge_unjudged_reasons || null) as Record<string, number> | null);
     const label = typeof r.judge_label === 'string' && r.judge_label ? ` by ${r.judge_label}` : '';
     const id = typeof r.judge_eval_result_id === 'number' ? ` (eval #${r.judge_eval_result_id})` : '';
-    return `Done, with a warning: judge incomplete${label} — ${counts}${reasons ? ` (${reasons})` : ''}${id}`;
+    const kind = typeof r.judge_kind === 'string' && r.judge_kind && r.judge_kind !== 'answer judge' ? r.judge_kind : 'judge';
+    return `${kind} incomplete${label} — ${counts}${reasons ? ` (${reasons})` : ''}${id}`;
 }
 
 /** "12k tokens (~$0.04 at list price)" from a Job result that carries

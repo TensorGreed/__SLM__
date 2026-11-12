@@ -189,14 +189,16 @@ def _baseline_judge_matches(result: EvalResult, judge_label: str | None) -> bool
     was judged by the same judge (or the task isn't a long-answer one, so
     neither eval is judged). A pre-judge result is re-run once."""
     if judge_label is None:
+        # No judge resolves now: the fine-tuned eval is not judged, so the base's judge blocks (complete
+        # or not) never reach the comparison -- deliberately no completeness check here.
         return True
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
-    # A base result the judge left incomplete (unreachable: paused / transient failures / no verdict at
-    # all) is no bar: its unjudged rows would pair as nothing. Re-run it (a re-judge without the GPU is
-    # a later phase).
-    from app.services.judge_call_guard import snapshot_incomplete
+    # A base result the judge left too incomplete (``snapshot_blocks_base_reuse``: the breaker stopped it,
+    # it judged nothing, or more than 5 % of its rows were lost to an outage) is no bar: re-run it. A few
+    # rows lost to a blip only drop out of the pairing (a re-judge without the GPU is a later phase).
+    from app.services.judge_call_guard import snapshot_blocks_base_reuse
 
-    if any(snapshot_incomplete(metrics.get(k)) for k in ("judge", "code_example_judge", "rubric")):
+    if any(snapshot_blocks_base_reuse(metrics.get(k)) for k in ("judge", "code_example_judge", "rubric")):
         return False
     if metrics.get("scoring_mode") == "structured_plan":
         # The rubric judge (if the project has a rubric) is stamped in the rubric block; the scoring
@@ -859,8 +861,8 @@ async def run_post_training_lift_eval(
         "experiment_id": experiment_id,
         "base_model": exp.base_model,
         "evidence": evidence,
-        # Only when the judge left rows unjudged on either leg: the bell says "judge incomplete" and
-        # gives no lift verdict.
+        # Only when an unreachable judge left rows unjudged on either leg: the bell appends "judge
+        # incomplete" to the lift verdict.
         **job_result_fields(trained_result, baseline_result),
         "baseline_experiment_id": baseline_exp.id,
         "baseline_eval_result_id": getattr(baseline_result, "id", None),

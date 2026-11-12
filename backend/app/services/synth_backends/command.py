@@ -157,6 +157,25 @@ def reset_pause() -> None:
     _PAUSE["until_wall"] = 0.0
 
 
+def _job_handle_here() -> Any:
+    """The running Job's progress handle, but only on the event loop that owns it. A call made from a
+    worker thread's own loop (the rubric judge: ``asyncio.to_thread`` + ``asyncio.run``) inherits the
+    context variable, yet the handle's methods open sessions on the shared engine bound to the Job's
+    loop -- there it gets None (no cancel poll, no pause message; the thread has its own cancel path)."""
+    from app.services import jobs_service
+
+    handle = jobs_service.current_job_handle.get()
+    if handle is None:
+        return None
+    owner = getattr(handle, "loop", None)
+    if owner is None:
+        return handle  # a handle built outside a loop (tests' fakes): nothing to cross
+    try:
+        return handle if asyncio.get_running_loop() is owner else None
+    except RuntimeError:
+        return None
+
+
 def _global_limit() -> int:
     return int(_clamp(getattr(settings, "SYNTH_COMMAND_CONCURRENCY", 1), 1, 8, 1, integer=True))
 
@@ -351,13 +370,11 @@ class CommandBackend:
         return argv, (prompt if mode == "stdin" else None)
 
     async def _invoke(self, prompt: str) -> _Outcome:
-        from app.services import jobs_service
-
         argv, stdin_text = self._build_argv(prompt)
         resolved = _check_allowed(argv[0])  # per call too: settings can change
         argv[0] = resolved
         output_path = str(settings.SYNTH_COMMAND_OUTPUT or ".result").strip()
-        handle = jobs_service.current_job_handle.get()
+        handle = _job_handle_here()
         # ONE process-wide limit (the setting); a per-project override can only
         # lower it, via an extra semaphore taken first.
         async with contextlib.AsyncExitStack() as slots:
@@ -473,11 +490,9 @@ class CommandBackend:
             return False
 
     async def _wait_if_paused(self) -> None:
-        from app.services import jobs_service
-
         if not is_paused():
             return
-        handle = jobs_service.current_job_handle.get()
+        handle = _job_handle_here()
         tally = self._tally()
         if handle is not None and not str(handle.last_message or "").startswith(_WAITING_PREFIX):
             handle.pre_pause_message = handle.last_message  # remembered once per Job
@@ -511,13 +526,11 @@ class CommandBackend:
         llm_usage.record("", f"subscription:{self.binary}", **(usage or {}))
 
     async def _ask(self, text: str) -> str:
-        from app.services import jobs_service
-
         failures = 0
         limit_hits = 0
         while True:
             await self._wait_if_paused()
-            handle = jobs_service.current_job_handle.get()
+            handle = _job_handle_here()
             if handle is not None and await handle.check_cancelled():
                 raise asyncio.CancelledError()
             outcome = await self._invoke(text)

@@ -4,7 +4,7 @@ An LLM judge scores eval rows one call at a time. When its provider (or the netw
 call fails, and a loop that swallows each error and moves on spends hours failing (a backend that
 retries internally multiplies that). This module gives such a loop three things:
 
-* ``classify_judge_error(exc)`` -> ``"transient"`` (connection / DNS / timeout / 408 / 429 / 5xx /
+* ``classify_judge_error(exc)`` -> ``"transient"`` (connection / DNS / timeout / 408 / 425 / 429 / 5xx /
   ``SynthBackendTransientError`` -- the network's or the provider's fault, worth retrying later) or
   ``"permanent"`` (the request's: 4xx, a bad key, anything unknown). It walks ``__cause__``, because the
   synth backends wrap provider errors in ``SynthBackendError``.
@@ -13,17 +13,21 @@ retries internally multiplies that). This module gives such a loop three things:
   returns ``GuardOutcome(result, reason, error)``. ``reason`` is None for a verdict, else why the row is
   unjudged: ``unparseable`` (the judge answered, no verdict), ``permanent_error``, ``transient_error``
   (failed after retries), ``judge_unreachable`` (the breaker is open: no call was made).
-* A circuit breaker per judge label, shared by every loop in this process (``threading.Lock``; never an
-  asyncio primitive, so a loop running in a worker thread can use it too). It opens after
-  ``JUDGE_BREAKER_CONSECUTIVE`` transient failures in a row, or when more than
-  ``JUDGE_BREAKER_ERROR_RATE`` of the last ``JUDGE_BREAKER_WINDOW`` calls (at least
+* A circuit breaker per run (one per guard; nothing carries over from an earlier run, so every new run
+  or eval starts closed and its first calls get the normal retries). It opens after
+  ``JUDGE_BREAKER_CONSECUTIVE`` rows in a row failed transiently (after their retries), or when more
+  than ``JUDGE_BREAKER_ERROR_RATE`` of the last ``JUDGE_BREAKER_WINDOW`` calls (at least
   ``JUDGE_BREAKER_MIN_CALLS``) failed transiently. Then, in mode ``stop`` (default), the run's remaining
-  rows are left unjudged without a call; in mode ``wait`` the run probes every
-  ``JUDGE_OUTAGE_PROBE_SECONDS`` for up to ``max_wait_seconds`` and resumes when a probe answers, else
-  stops. Every NEW run sends its first call through as a probe, whatever the shared state says, so a run
-  started right after another one tripped is not written off without one call; an open breaker also
-  lets one call through after ``JUDGE_BREAKER_COOLDOWN_SECONDS``. Permanent failures and unparseable
-  replies never count towards the breaker. The registry is per process (a celery worker has its own).
+  rows are left unjudged without a call; in mode ``wait`` (only for a run with a Job handle on its own
+  loop; otherwise ``stop``) the run probes every ``JUDGE_OUTAGE_PROBE_SECONDS`` and resumes when a
+  probe answers, else stops once the Job's wait budget is spent. The budget (``max_wait_seconds``,
+  capped at ``max_wait_cap_seconds()`` -- half the task queue's visibility timeout) is wall time,
+  probe calls included, and ONE per Job: every judge loop of that Job draws on it (a probe already
+  under way finishes, so a run can overrun it by at most one call). A permanent failure (the provider
+  answered) resets the consecutive count; permanent failures and unparseable replies never count
+  towards the breaker. Breaker off: every row is asked once, no guard retries, never stopped (the
+  behaviour before the guard; a backend that retries a failed call itself -- the command backend --
+  still does, as before; rows without a verdict still get their reason).
 
 ``LlmBudgetExceeded`` and cancellation always propagate.
 
@@ -60,12 +64,18 @@ REASON_UNREACHABLE = "judge_unreachable"
 REASON_TRANSIENT = "transient_error"
 REASON_UNPARSEABLE = "unparseable"
 REASON_PERMANENT = "permanent_error"
-UNJUDGED_REASONS: tuple[str, ...] = (REASON_UNREACHABLE, REASON_TRANSIENT, REASON_UNPARSEABLE, REASON_PERMANENT)
+# The rubric judge: no judge could be resolved for the row (never an outage).
+REASON_NO_JUDGE = "no_judge"
+UNJUDGED_REASONS: tuple[str, ...] = (REASON_UNREACHABLE, REASON_TRANSIENT, REASON_UNPARSEABLE, REASON_PERMANENT, REASON_NO_JUDGE)
 # Reasons that mean "the judge was not reachable" (worth judging again later).
 OUTAGE_REASONS: frozenset[str] = frozenset({REASON_UNREACHABLE, REASON_TRANSIENT})
 
 MODES: tuple[str, ...] = ("stop", "wait")
-MAX_WAIT_CAP_SECONDS = 24 * 3600.0
+# Hard ceiling of the wait budget; ``max_wait_cap_seconds()`` is the effective cap.
+_MAX_WAIT_CEILING_SECONDS = 24 * 3600.0
+# A lift check refuses to reuse a base result whose judge left more than this share of its rows unjudged
+# for an outage (``judge_unreachable`` / ``transient_error``), or that the breaker stopped.
+BASE_REUSE_MAX_OUTAGE_SHARE = 0.05
 _ERROR_CHARS = 200
 # Sleep / probe waits are sliced so a cancel is noticed within this long.
 _SLICE_SECONDS = 5.0
@@ -77,7 +87,8 @@ WAITING_PREFIX = "judge unreachable"
 
 
 def _status_transient(code: int) -> bool:
-    return code in (408, 409, 425, 429) or 500 <= code <= 599
+    # 409 (a conflict) is the request's: not retried.
+    return code in (408, 425, 429) or 500 <= code <= 599
 
 
 def classify_judge_error(exc: BaseException) -> str:
@@ -133,6 +144,20 @@ def error_kind(exc: BaseException) -> str:
 # ── settings ────────────────────────────────────────────────────────
 
 
+def max_wait_cap_seconds() -> float:
+    """The longest wait budget a project may set: half the task queue's visibility timeout
+    (``CELERY_VISIBILITY_TIMEOUT_SECONDS``, 12 h by default -> 6 h), so an eval that waits and then
+    still has to finish stays well under the point where the queue would hand the task out again."""
+    try:
+        visibility = float(getattr(settings, "CELERY_VISIBILITY_TIMEOUT_SECONDS", 43200) or 43200)
+    except (TypeError, ValueError):
+        visibility = 43200.0
+    return max(0.0, min(_MAX_WAIT_CEILING_SECONDS, visibility / 2.0))
+
+
+MAX_WAIT_CAP_SECONDS = max_wait_cap_seconds()
+
+
 def _num(value: Any, lo: float, hi: float, default: float) -> float:
     try:
         number = float(value)
@@ -169,14 +194,15 @@ def normalize_project_resilience(raw: Any) -> dict[str, Any]:
     if mode in MODES:
         out["mode"] = mode
     if raw.get("max_wait_seconds") is not None:
-        out["max_wait_seconds"] = _num(raw.get("max_wait_seconds"), 0.0, MAX_WAIT_CAP_SECONDS, 3600.0)
+        out["max_wait_seconds"] = _num(raw.get("max_wait_seconds"), 0.0, max_wait_cap_seconds(), 3600.0)
     return out
 
 
 def resolve_resilience(runtime_config: Any = None, *, retries_internally: bool = False, threaded: bool = False) -> JudgeResilience:
     """Settings from ``config.py`` overlaid with the project's ``eval_judge.resilience`` block.
     ``retries_internally``: the backend retries a failed call itself -> no extra guard retries.
-    ``threaded``: the loop runs in a worker thread -> always ``stop`` (no waiting, no Job messages)."""
+    ``threaded``: the loop runs in a worker thread -> always ``stop`` (no waiting, no Job messages).
+    Breaker off -> no guard retries either: every row is asked once, as before the guard."""
     block: dict[str, Any] = {}
     if isinstance(runtime_config, dict) and isinstance(runtime_config.get("eval_judge"), dict):
         block = normalize_project_resilience(runtime_config["eval_judge"].get("resilience"))
@@ -192,21 +218,23 @@ def resolve_resilience(runtime_config: Any = None, *, retries_internally: bool =
         min_calls=int(_num(getattr(settings, "JUDGE_BREAKER_MIN_CALLS", 10), 1, 10000, 10)),
         error_rate=_num(getattr(settings, "JUDGE_BREAKER_ERROR_RATE", 0.5), 0.0, 1.0, 0.5),
         cooldown_seconds=_num(getattr(settings, "JUDGE_BREAKER_COOLDOWN_SECONDS", 300.0), 0.0, 86400.0, 300.0),
-        retries=0 if retries_internally else retries,
+        retries=0 if (retries_internally or not breaker) else retries,
         backoff_seconds=_num(getattr(settings, "JUDGE_RETRY_BACKOFF_SECONDS", 10.0), 0.0, 3600.0, 10.0),
         mode=mode,
         probe_seconds=_num(getattr(settings, "JUDGE_OUTAGE_PROBE_SECONDS", 300.0), 1.0, 86400.0, 300.0),
         max_wait_seconds=block.get("max_wait_seconds")
         if "max_wait_seconds" in block
-        else _num(getattr(settings, "JUDGE_OUTAGE_MAX_WAIT_SECONDS", 3600.0), 0.0, MAX_WAIT_CAP_SECONDS, 3600.0),
+        else _num(getattr(settings, "JUDGE_OUTAGE_MAX_WAIT_SECONDS", 3600.0), 0.0, max_wait_cap_seconds(), 3600.0),
     )
 
 
-# ── the shared breaker ──────────────────────────────────────────────
+# ── the per-run breaker ─────────────────────────────────────────────
 
 
 class JudgeCircuit:
-    """Health of one judge (by label), shared across loops. Every method takes the lock."""
+    """Health of one judge during ONE run (each guard owns its own; nothing is shared between runs, so a
+    run started after an outage is never written off by state the outage left). The lock lets the run's
+    worker thread and its loop read it safely."""
 
     def __init__(self, label: str) -> None:
         self.label = label
@@ -222,10 +250,6 @@ class JudgeCircuit:
         with self._lock:
             return self.opened_at is not None and now - self.opened_at < cooldown
 
-    def is_open(self) -> bool:
-        with self._lock:
-            return self.opened_at is not None
-
     def record_success(self) -> None:
         with self._lock:
             self.consecutive = 0
@@ -233,8 +257,10 @@ class JudgeCircuit:
             self.opened_at = None
 
     def record_permanent(self) -> None:
-        # The provider answered (it rejected the request): not an outage, and not proof of health either.
+        # The provider answered (it rejected the request): not an outage, so the run of transient
+        # failures is broken -- but not proof of health either (the cool-down stays).
         with self._lock:
+            self.consecutive = 0
             self.window.append(False)
 
     def record_transient(self, cfg: JudgeResilience, now: float, kind: str, error: str) -> bool:
@@ -256,24 +282,6 @@ class JudgeCircuit:
                 self.opened_at = now  # (re-)open: a failed probe restarts the cool-down
                 return True
             return False
-
-
-_REGISTRY: dict[str, JudgeCircuit] = {}
-_REGISTRY_LOCK = threading.Lock()
-
-
-def circuit_for(label: str) -> JudgeCircuit:
-    with _REGISTRY_LOCK:
-        circuit = _REGISTRY.get(label)
-        if circuit is None:
-            circuit = _REGISTRY[label] = JudgeCircuit(label)
-        return circuit
-
-
-def reset_registry() -> None:
-    """Tests: forget every judge's health."""
-    with _REGISTRY_LOCK:
-        _REGISTRY.clear()
 
 
 # ── the per-run guard ───────────────────────────────────────────────
@@ -301,7 +309,7 @@ def _et_clock(ts: float) -> str:
 
 @dataclass
 class JudgeCallGuard:
-    """One judge loop's guard (see module doc). Not shared between loops; the circuit is."""
+    """One judge loop's guard (see module doc). Not shared between loops; nor is its circuit."""
 
     label: str
     resilience: JudgeResilience = field(default_factory=JudgeResilience)
@@ -312,8 +320,7 @@ class JudgeCallGuard:
     clock: Callable[[], float] | None = None
 
     def __post_init__(self) -> None:
-        self.circuit = circuit_for(self.label)
-        self.probed = False
+        self.circuit = JudgeCircuit(self.label)
         self.tripped = False
         self.tripped_at_row: int | None = None
         self.calls = 0
@@ -418,7 +425,7 @@ class JudgeCallGuard:
         return GuardOutcome(None, REASON_UNREACHABLE, self.last_error or self.circuit.last_error)
 
     def _open_now(self) -> bool:
-        """Whether this run must not call now (the shared circuit is open and cooling down)."""
+        """Whether this run must not call now (its circuit is open and cooling down)."""
         if not self.resilience.breaker:
             return False
         return self.circuit.snapshot_open(self._now(), self.resilience.cooldown_seconds)
@@ -459,26 +466,53 @@ class JudgeCallGuard:
                     attempt += 1
                     continue
                 if self.circuit.record_transient(self.resilience, self._now(), kind, text):
-                    if self.resilience.mode != "wait":
+                    if not self._can_wait():
                         self._trip()
                 return GuardOutcome(None, REASON_TRANSIENT, text)
             self.circuit.record_success()
             return GuardOutcome(result, None if result is not None else REASON_UNPARSEABLE, None)
 
+    def _can_wait(self) -> bool:
+        """Mode ``wait`` applies only to a run with a Job handle on its own loop (cancellable, one budget
+        per Job); anything else (a worker thread, a task-queue eval without a Job) stops."""
+        return (
+            self.resilience.mode == "wait"
+            and not self.threaded
+            and self.resilience.max_wait_seconds > 0
+            and self._handle_here() is not None
+        )
+
+    def _wait_spent(self) -> float:
+        handle = self._handle_here()
+        return float(getattr(handle, "judge_wait_spent_seconds", 0.0) or 0.0) if handle is not None else 0.0
+
+    def _add_wait(self, seconds: float) -> None:
+        self.waited_seconds += seconds
+        handle = self._handle_here()
+        if handle is not None:
+            handle.judge_wait_spent_seconds = float(getattr(handle, "judge_wait_spent_seconds", 0.0) or 0.0) + seconds
+
     async def _wait_for_judge(self, fn: Callable[..., Any], args: tuple) -> GuardOutcome:
-        """Mode ``wait``: probe every ``probe_seconds`` until a call answers or the wait budget runs out."""
+        """Mode ``wait``: probe every ``probe_seconds`` until a call answers or the Job's wait budget is
+        spent. The budget is wall time (sleeps AND probe calls) shared by every judge loop of the Job."""
         cfg = self.resilience
         previous = getattr(self._handle_here(), "last_message", None)
-        while self.waited_seconds < cfg.max_wait_seconds:
-            step = min(cfg.probe_seconds, cfg.max_wait_seconds - self.waited_seconds)
-            resume = time.time() + step
-            await self._message(
-                f"{WAITING_PREFIX} ({self.last_error_kind or self.circuit.last_error_kind or 'error'}) — "
-                f"retrying ~{_et_clock(resume)}"
-            )
-            await self._sleep(step)
-            self.waited_seconds += step
-            outcome = await self._attempts(fn, args, 0)
+        while True:
+            remaining = cfg.max_wait_seconds - self._wait_spent()
+            if remaining <= 0:
+                break
+            step = min(cfg.probe_seconds, remaining)
+            started = self._now()
+            outcome: GuardOutcome | None = None
+            try:
+                await self._message(
+                    f"{WAITING_PREFIX} ({self.last_error_kind or self.circuit.last_error_kind or 'error'}) — "
+                    f"retrying ~{_et_clock(time.time() + step)}"
+                )
+                await self._sleep(step)
+                outcome = await self._attempts(fn, args, 0)
+            finally:
+                self._add_wait(max(0.0, self._now() - started))
             if outcome.reason != REASON_TRANSIENT:
                 if previous and not str(previous).startswith(WAITING_PREFIX):
                     await self._message(str(previous))
@@ -500,16 +534,8 @@ class JudgeCallGuard:
             return self._unreachable()
         if self.cancel_event is not None and self.cancel_event.is_set():
             raise asyncio.CancelledError()
-        if not self.probed:
-            # A new run always gets one call, whatever an earlier run left the circuit in. A probe into
-            # an open circuit gets no retries: one answer is enough to know.
-            self.probed = True
-            outcome = await self._attempts(fn, args, 0 if self.circuit.is_open() else self.resilience.retries)
-            if self.tripped:
-                await self._stop_message()
-            return outcome
         if self._open_now():
-            if self.resilience.mode == "wait" and not self.threaded and self.resilience.max_wait_seconds > 0:
+            if self._can_wait():
                 return await self._wait_for_judge(fn, args)
             self._trip()
             await self._stop_message()
@@ -532,11 +558,10 @@ class JudgeCallGuard:
             raise JudgeCancelled("cancelled")
         if self.tripped:
             return self._unreachable()
-        if self.probed and self._open_now():
+        if self._open_now():
             self._trip()
             return self._unreachable()
-        retries = 0 if (not self.probed and self.circuit.is_open()) else self.resilience.retries
-        self.probed = True
+        retries = self.resilience.retries
         attempt = 0
         while True:
             try:
@@ -597,49 +622,146 @@ def reason_for_exception(exc: BaseException) -> str:
     return REASON_TRANSIENT if classify_judge_error(exc) == TRANSIENT else REASON_PERMANENT
 
 
+def _outage_unjudged(snapshot: dict[str, Any]) -> int:
+    reasons = snapshot.get("unjudged_reasons")
+    if not isinstance(reasons, dict):
+        return 0
+    total = 0
+    for reason in OUTAGE_REASONS:
+        try:
+            total += int(reasons.get(reason) or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _stopped(snapshot: dict[str, Any]) -> bool:
+    breaker = snapshot.get("breaker")
+    return snapshot.get("status") == "paused" or (isinstance(breaker, dict) and breaker.get("tripped") is True)
+
+
 def snapshot_incomplete(snapshot: Any) -> bool:
-    """Whether a judge snapshot (answer / code-example / rubric block) is missing verdicts because the
-    judge was not reachable: the breaker stopped it (``status`` "paused"), a row failed transiently, or it
-    was asked about rows and judged none. Such a result must not stand in as a bar (the lift check's base
-    reuse) -- its holes would pair as nothing."""
+    """Whether a judge snapshot (answer / code-example / rubric / dialogue block) is missing verdicts
+    because the judge was not reachable: the breaker stopped it (``status`` "paused" / ``breaker.tripped``),
+    a row failed transiently, or it was asked about rows and judged none."""
     if not isinstance(snapshot, dict):
         return False
-    if snapshot.get("status") == "paused":
-        return True
-    reasons = snapshot.get("unjudged_reasons")
-    if isinstance(reasons, dict) and any(int(reasons.get(r) or 0) > 0 for r in OUTAGE_REASONS):
+    if _stopped(snapshot) or _outage_unjudged(snapshot) > 0:
         return True
     judged = snapshot.get("judged")
     unjudged = snapshot.get("unjudged")
     return isinstance(judged, int) and isinstance(unjudged, int) and judged == 0 and unjudged > 0
 
 
-def incomplete_summary(metrics: Any) -> dict[str, Any] | None:
-    """``{status, judge, judged, unjudged, unjudged_reasons}`` of the first incomplete judge block of an
-    eval's metrics (answer judge, code-example judge, rubric), else None. For Job results ("done, with a
-    warning")."""
+def snapshot_blocks_base_reuse(snapshot: Any) -> bool:
+    """Whether a base result's judge snapshot is too incomplete to stand in as a lift check's bar: the
+    breaker stopped it, it judged none of the rows it was asked about, or more than
+    ``BASE_REUSE_MAX_OUTAGE_SHARE`` of its rows were left unjudged for an outage. A few rows lost to a
+    blip (or any number of unparseable replies, which a re-run would not fix) do not force a GPU re-run
+    of the base model; those rows simply do not pair."""
+    if not isinstance(snapshot, dict):
+        return False
+    if _stopped(snapshot):
+        return True
+    judged = snapshot.get("judged")
+    unjudged = snapshot.get("unjudged")
+    if isinstance(judged, int) and isinstance(unjudged, int):
+        if judged == 0 and unjudged > 0:
+            return True
+        total = judged + unjudged
+        if total > 0 and _outage_unjudged(snapshot) / total > BASE_REUSE_MAX_OUTAGE_SHARE:
+            return True
+    return False
+
+
+# Judge blocks of an eval's metrics, in the order a warning reports them, with a plain name each.
+JUDGE_BLOCKS: tuple[tuple[str, str], ...] = (
+    ("judge", "answer judge"),
+    ("code_example_judge", "code-example judge"),
+    ("rubric", "rubric judge"),
+    ("dialogue_judge", "dialogue judge"),
+)
+
+
+def _judged_count(block: dict[str, Any]) -> Any:
+    # The dialogue judge counts judged turns as ``turns_judged``.
+    return block.get("judged") if block.get("judged") is not None else block.get("turns_judged")
+
+
+def judge_outage(block: Any) -> bool:
+    """Whether a judge block written WITH unjudged-row reasons (an eval run since rows carried them) lost
+    rows to an unreachable judge. Results stored before that (no ``unjudged_reasons``) never qualify, and
+    neither do gaps that are only unparseable replies or refused requests (a re-run would not fix them)."""
+    if not isinstance(block, dict) or not isinstance(block.get("unjudged_reasons"), dict):
+        return False
+    return _stopped(block) or _outage_unjudged(block) > 0
+
+
+def judged_subset(block: Any) -> dict[str, int] | None:
+    """``{judged, unjudged}`` when a judge block written with unjudged-row reasons left rows unjudged (its
+    numbers then rest on the judged rows only), else None."""
+    if not isinstance(block, dict) or not isinstance(block.get("unjudged_reasons"), dict):
+        return None
+    try:
+        unjudged = int(block.get("unjudged") or 0)
+        judged = int(_judged_count(block) or 0)
+    except (TypeError, ValueError):
+        return None
+    return {"judged": judged, "unjudged": unjudged} if unjudged > 0 else None
+
+
+def unjudged_notice_block(metrics: Any) -> dict[str, Any] | None:
+    """The judge block an eval summary's "rows without a verdict" notice describes: the first block
+    (``JUDGE_BLOCKS`` order) that lost rows to an unreachable judge, else the first that left any rows
+    unjudged -- only blocks written with unjudged-row reasons. ``{kind, judge, judged, unjudged, status
+    ("paused" / "partial"), unjudged_reasons, breaker?}``; None when there is nothing to say."""
     if not isinstance(metrics, dict):
         return None
-    for key in ("judge", "code_example_judge", "rubric"):
+    candidates = [(key, metrics.get(key)) for key, _name in JUDGE_BLOCKS if judged_subset(metrics.get(key))]
+    if not candidates:
+        return None
+    key, block = next(((k, b) for k, b in candidates if judge_outage(b)), candidates[0])
+    out: dict[str, Any] = {
+        "kind": key,
+        "judge": block.get("judge"),
+        "judged": _judged_count(block),
+        "unjudged": block.get("unjudged"),
+        "status": "paused" if _stopped(block) else "partial",
+        "unjudged_reasons": block.get("unjudged_reasons") or {},
+    }
+    if isinstance(block.get("breaker"), dict):
+        out["breaker"] = block["breaker"]
+    return out
+
+
+def incomplete_summary(metrics: Any) -> dict[str, Any] | None:
+    """``{status, judge, judge_kind, judged, unjudged, unjudged_reasons, incomplete}`` of the first judge
+    block of an eval's metrics that lost rows to an unreachable judge (``judge_outage``), else None. For
+    Job results ("done, with a warning")."""
+    if not isinstance(metrics, dict):
+        return None
+    for key, name in JUDGE_BLOCKS:
         block = metrics.get(key)
-        if not isinstance(block, dict) or not int(block.get("unjudged") or 0):
+        if not judge_outage(block):
             continue
         return {
-            "status": block.get("status") or ("paused" if snapshot_incomplete(block) else "partial"),
+            "status": "paused" if _stopped(block) else "partial",
             "judge": block.get("judge"),
-            "judged": block.get("judged"),
+            "judge_kind": name,
+            "judged": _judged_count(block),
             "unjudged": block.get("unjudged"),
             "unjudged_reasons": block.get("unjudged_reasons") or {},
-            "incomplete": snapshot_incomplete(block),
+            "incomplete": True,
         }
     return None
 
 
 def job_result_fields(*results: Any) -> dict[str, Any]:
-    """Keys a Job runner adds to its result when an eval it ran left rows unjudged (nothing otherwise):
-    ``judge_status`` ("paused" / "partial"), ``judge_unjudged``, ``judge_judged``,
-    ``judge_unjudged_reasons``, ``judge_label``, ``judge_eval_result_id``. With several results (base +
-    fine-tuned) the first incomplete one is reported."""
+    """Keys a Job runner adds to its result when an eval it ran lost rows to an unreachable judge (nothing
+    otherwise -- unparseable-only gaps and results stored before unjudged rows carried a reason add
+    nothing): ``judge_status`` ("paused" / "partial"), ``judge_unjudged``, ``judge_judged``,
+    ``judge_unjudged_reasons``, ``judge_label``, ``judge_kind``, ``judge_eval_result_id``. With several
+    results (base + fine-tuned) the first incomplete one is reported."""
     for result in results:
         if result is None:
             continue
@@ -652,6 +774,7 @@ def job_result_fields(*results: Any) -> dict[str, Any]:
             "judge_judged": summary["judged"],
             "judge_unjudged_reasons": summary["unjudged_reasons"],
             "judge_label": summary["judge"],
+            "judge_kind": summary["judge_kind"],
             "judge_eval_result_id": getattr(result, "id", None),
         }
     return {}

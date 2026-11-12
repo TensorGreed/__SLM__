@@ -14,7 +14,7 @@ describe('unjudgedNotice', () => {
         }, 1391);
         expect(text).toBe(
             '80 of 80 answers have no judge verdict: 77 not sent (the judge was unreachable), 3 connection or provider error. '
-            + 'They are left out of the judged score and the pass / fail counts. '
+            + 'They are left out of the judged score, the pass rate, the failure list and the base-vs-fine-tuned pairing. '
             + 'The judge stopped at row 3 after failed calls (connection error). '
             + '(judge command · eval #1391) Re-run the eval when the judge is reachable again.',
         );
@@ -31,6 +31,22 @@ describe('unjudgedNotice', () => {
         expect(unjudgedNoticeText({ judge: 'j', judged: 10, unjudged: 0 }, 1)).toBeNull();
         expect(unjudgedNoticeText({ judge: 'j', judged: 9, unjudged: 1 }, 1)).toBeNull();
         expect(unjudgedNoticeText(null, 1)).toBeNull();
+    });
+
+    it('names any guarded judge and what its unjudged rows are left out of (S6)', () => {
+        const code = unjudgedNoticeText({
+            kind: 'code_example_judge', judge: 'j', judged: 10, unjudged: 30, status: 'paused',
+            unjudged_reasons: { judge_unreachable: 27, transient_error: 3 },
+            breaker: { tripped: true, tripped_at_row: 12 },
+        }, 9);
+        expect(code).toContain('30 of 40 code examples have no verdict from the code-example judge');
+        expect(code).toContain('left out of the code-example pass rate');
+        expect(code).toContain('The code-example judge stopped at row 13');
+        const rubric = unjudgedNoticeText({
+            kind: 'rubric', judge: 'j', judged: 9, unjudged: 1, status: 'partial', unjudged_reasons: { no_judge: 1 },
+        }, 9);
+        expect(rubric).toContain('1 of 10 plans has no verdict from the rubric judge: 1 no judge was available.');
+        expect(rubric).toContain('pass or fail on the other checks alone');
     });
 
     it('labels reasons in plain words, largest first', () => {

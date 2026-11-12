@@ -24,8 +24,10 @@ export interface JudgeResilienceState {
     breaker: boolean;
     mode: 'stop' | 'wait';
     max_wait_seconds: number;
-    /** Failed calls in a row that stop the judge (install setting). */
+    /** Rows in a row whose judge call failed (after retries) that stop the judge (install setting). */
     consecutive: number;
+    /** The longest wait a project may choose (half the task queue's visibility timeout; absent on older backends). */
+    max_wait_cap_seconds?: number;
 }
 
 /** GET/PUT /projects/{id}/eval-judge. */

@@ -295,6 +295,58 @@ def _paired_row_scores(
     return None
 
 
+def _paired_unscored(baseline: EvalResult | None, trained: EvalResult | None, metric_id: str) -> int:
+    """Rows both evals scored but at least one left without a score for this metric (e.g. unjudged):
+    left out of the pairing. 0 when it can't be told."""
+    from app.services.paired_comparison_stats import pair_row_scores
+
+    score_key = _ROW_SCORE_FOR_METRIC.get(metric_id)
+    if score_key is None or baseline is None or trained is None:
+        return 0
+
+    def _row_scores(result: EvalResult) -> Any:
+        details = result.details if isinstance(result.details, dict) else {}
+        return details.get("row_scores")
+
+    paired = pair_row_scores(_row_scores(baseline), _row_scores(trained), score_key)
+    return int(paired.get("unscored") or 0) if paired else 0
+
+
+# Metric -> the judge block (``EvalResult.metrics[...]``) whose verdicts it is computed from: such a
+# metric is a mean over the JUDGED rows only, so a judge that left rows unjudged changes its base.
+_JUDGE_BLOCK_FOR_METRIC: dict[str, str] = {
+    "judge_correct": "judge",
+    "code_example_pass_rate": "code_example_judge",
+    # Unjudged plans pass or fail on the other checks alone; the rubric rates are over judged plans.
+    "structured_plan_pass_rate": "rubric",
+    "rubric_pass_rate": "rubric",
+    "rubric_mean_score": "rubric",
+}
+
+
+def _attach_judged_subset(
+    metric_lifts: list[dict[str, Any]], baseline: EvalResult, trained: EvalResult
+) -> None:
+    """Mark each judge-based lift row whose value (on either side) rests on the judged rows only:
+    ``judged_subset = {baseline?: {judged, unjudged, outage}, trained?: {...}}``. Only results written
+    with unjudged-row reasons qualify (``judge_call_guard.judged_subset``); nothing is added otherwise."""
+    from app.services.judge_call_guard import judge_outage, judged_subset
+
+    for row in metric_lifts:
+        block_key = _JUDGE_BLOCK_FOR_METRIC.get(str(row.get("metric_id") or ""))
+        if block_key is None:
+            continue
+        mark: dict[str, Any] = {}
+        for side, result in (("baseline", baseline), ("trained", trained)):
+            metrics = result.metrics if isinstance(result.metrics, dict) else {}
+            block = metrics.get(block_key)
+            subset = judged_subset(block)
+            if subset is not None:
+                mark[side] = {**subset, "outage": judge_outage(block)}
+        if mark:
+            row["judged_subset"] = mark
+
+
 def _attach_row_evidence(
     metric_lifts: list[dict[str, Any]], baseline: EvalResult, trained: EvalResult
 ) -> None:
@@ -313,6 +365,10 @@ def _attach_row_evidence(
             continue
         evidence = paired_difference_evidence(*paired)
         evidence["metric_id"] = metric_id
+        # Rows both evals ran but one left unscored (unjudged, a verifier error): not in ``n``.
+        excluded = _paired_unscored(baseline, trained, metric_id)
+        if excluded:
+            evidence["excluded_unscored"] = excluded
         # Epic W2: the smallest change these paired rows reliably show and the
         # rows a TARGET_GAP change needs (eval_sizing_service; additive).
         evidence["sizing"] = paired_sizing(
@@ -591,6 +647,7 @@ async def compute_sft_lift_summary(
 
     metric_lifts = _compute_metric_lifts(baseline.metrics, trained.metrics)
     _attach_row_evidence(metric_lifts, baseline.eval_result, trained.eval_result)
+    _attach_judged_subset(metric_lifts, baseline.eval_result, trained.eval_result)
     gates, eval_pack_id = _gates_from_general_default_pack(task_profile_hint)
     gate_status: list[dict[str, Any]] = []
     for gate in gates:

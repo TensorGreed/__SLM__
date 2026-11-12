@@ -272,8 +272,6 @@ class EvalServiceHooksTests(unittest.TestCase):
 
             raise SynthBackendTransientError("connection_failed")
 
-        jcg.reset_registry()
-        self.addCleanup(jcg.reset_registry)
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(judge_svc.settings, "DATA_DIR", Path(tmp)), \
                 mock.patch.object(jcg.settings, "JUDGE_TRANSIENT_RETRIES", 0):
             rows = [{"prompt": f"q{i}", "reference": LONG, "prediction": "x"} for i in range(8)]
@@ -294,6 +292,40 @@ class EvalServiceHooksTests(unittest.TestCase):
         fine = EvalResult(details={"row_scores": {"keys": ["a", "b", "c"], "judge_correct": [1.0, 1.0, None]}})
         self.assertEqual(_paired_row_scores(base, fine, "judge_correct"), ([0.0], [1.0]))
         self.assertIsNone(_paired_row_scores(base, fine, "f1"))
+
+    def test_lift_headline_says_it_rests_on_judged_rows_and_counts_the_excluded(self):
+        """S3: the fine-tuned leg stopped at row 40 of 50 (outage). The judge-score lift row carries the
+        excluded-row count in its evidence and ``judged_subset`` per side; a complete base adds nothing,
+        and results stored before reasons existed are never marked."""
+        from app.models.experiment import EvalResult
+        from app.services.sft_lift_summary_service import _attach_judged_subset, _attach_row_evidence
+
+        keys = [f"k{i}" for i in range(50)]
+        base = EvalResult(
+            metrics={"judge_correct": 0.6, "judge": {"judge": "j", "judged": 50, "unjudged": 0}},
+            details={"row_scores": {"keys": keys, "judge_correct": [0.5] * 50}},
+        )
+        fine = EvalResult(
+            metrics={"judge_correct": 0.8, "judge": {
+                "judge": "j", "judged": 40, "unjudged": 10, "status": "paused",
+                "unjudged_reasons": {"transient_error": 3, "judge_unreachable": 7}, "breaker": {"tripped": True},
+            }},
+            details={"row_scores": {"keys": keys, "judge_correct": [1.0] * 40 + [None] * 10}},
+        )
+        rows = [{"metric_id": "judge_correct", "is_headline": True}, {"metric_id": "f1"}]
+        _attach_row_evidence(rows, base, fine)
+        _attach_judged_subset(rows, base, fine)
+        self.assertEqual(rows[0]["evidence"]["n"], 40)
+        self.assertEqual(rows[0]["evidence"]["excluded_unscored"], 10)
+        self.assertEqual(rows[0]["judged_subset"], {"trained": {"judged": 40, "unjudged": 10, "outage": True}})
+        self.assertNotIn("judged_subset", rows[1])
+        old = EvalResult(metrics={"judge_correct": 0.8, "judge": {"judge": "j", "judged": 40, "unjudged": 10}},
+                         details={"row_scores": {"keys": keys, "judge_correct": [1.0] * 50}})
+        rows = [{"metric_id": "judge_correct"}]
+        _attach_row_evidence(rows, base, old)
+        _attach_judged_subset(rows, base, old)
+        self.assertNotIn("judged_subset", rows[0])
+        self.assertNotIn("excluded_unscored", rows[0]["evidence"])
 
 
 class ResolutionTests(unittest.TestCase):

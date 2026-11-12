@@ -162,11 +162,11 @@ The [Autopilot decision log](../workflows/newbie-autopilot.md#decision-log) show
 
 ### Judge unreachable during a held-out eval (rows unjudged)
 
-**Symptom**: the eval finishes "Done, with a warning: judge incomplete — N of M rows unjudged"; the eval summary says how many answers have no judge verdict and why (`not sent (the judge was unreachable)`, `connection or provider error`, …), and the judged score is missing or rests on fewer rows.
+**Symptom**: the eval finishes "Done, with a warning: judge incomplete — N of M rows unjudged" (a lift check keeps its verdict and adds "with a warning: judge incomplete …"); the eval summary says how many answers (or code examples, plans, turns) have no judge verdict and why (`not sent (the judge was unreachable)`, `connection or provider error`, …), and the judged score is missing or rests on fewer rows ("on judged rows only" next to the lift headline). Rows without a verdict only because the judge's reply had none do not raise the warning: re-running would not fix them.
 
-**Why**: the judge model (a cloud API, a local server or a CLI) failed with a connection / timeout / 5xx error. A failed call is retried; after 3 failed calls in a row the eval stops asking it and leaves the remaining rows unjudged, so an outage costs minutes, not hours. Every answer is still saved, and unjudged rows count neither right nor wrong.
+**Why**: the judge model (a cloud API, a local server or a CLI) failed with a connection / timeout / 5xx error. A failed call is retried (up to 3 attempts per row); after 3 rows in a row whose call still failed, the eval stops asking it and leaves the remaining rows unjudged, so an outage costs minutes, not hours. The next eval starts asking again. Every answer is still saved, and unjudged rows count neither right nor wrong.
 
-**Fix**: check the judge's network / provider status, then re-run the eval. A lift check re-runs a base-model result whose judge was unreachable instead of reusing it. To wait out short outages instead, set **Settings → Judge model → When the judge is unreachable** to "Wait for the judge" (up to the longest wait you pick). `JUDGE_BREAKER_ENABLED=false` restores asking about every row.
+**Fix**: check the judge's network / provider status, then re-run the eval. A lift check re-runs a base-model result whose judge was stopped or lost more than 5 % of its rows to an outage, instead of reusing it. To wait out short outages instead, set **Settings → Judge model → When the judge is unreachable** to "Wait for the judge" (up to the longest wait you pick, in total for the eval). Turning the breaker off (`JUDGE_BREAKER_ENABLED=false`, or unticking it there) asks the judge about every row once, without retries, as before the breaker existed.
 
 ### `eval_dataset_missing`
 

@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
 import { answerKeyReviewText, checkLiftAcrossSeeds, fetchEvalSummary, type BaselineDecodingBar, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
-import { evidenceNote, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, sizingToShow, type LiftEvidence, type SeedEvidence } from './liftEvidence';
+import { evidenceNote, judgedSubsetText, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, sizingToShow, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import RedactionTryBox from './RedactionTryBox';
 import EvalJudgeTrustBadge from './EvalJudgeTrustBadge';
 import CheckedDecodingBadge from './CheckedDecodingBadge';
@@ -332,6 +332,12 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     // within-noise sentence when there is one, else one muted line.
     const sizing = sizingToShow(evidence, summary.sizing);
     const head = summary.headline;
+    // Any guarded judge's unjudged rows (answer / code-example / rubric / dialogue); older backends send
+    // only the answer judge's block.
+    const unjudgedNotice = unjudgedNoticeText(
+        summary.unjudged_notice !== undefined ? summary.unjudged_notice : summary.judge,
+        summary.eval_result_id,
+    );
     const runId = summary.experiment_id;
     const isSeedGroup = (summary.n_seeds ?? 1) > 1;
     // The multi-seed option: a single evaluated run can be re-trained with
@@ -465,6 +471,11 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         {' '}{head.absolute_delta > 0 ? '+' : ''}{fmt(head.absolute_delta)}
                         {head.relative_delta_pct != null ? ` (${head.relative_delta_pct > 0 ? '+' : ''}${head.relative_delta_pct}%)` : ''}
                     </span>
+                    {judgedSubsetText(head.judged_subset) && (
+                        <span className="eval-summary__judged-subset" data-testid="eval-summary-judged-subset">
+                            {' '}— {judgedSubsetText(head.judged_subset)}.
+                        </span>
+                    )}
                 </p>
             )}
             {summary.checked_decoding && (
@@ -603,9 +614,9 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     )}
                 </p>
             )}
-            {unjudgedNoticeText(summary.judge, summary.eval_result_id) && (
+            {unjudgedNotice && (
                 <p className="eval-summary__judge eval-summary__unjudged" role="status" data-testid="eval-summary-unjudged">
-                    {unjudgedNoticeText(summary.judge, summary.eval_result_id)}
+                    {unjudgedNotice}
                 </p>
             )}
             {summary.judge?.retrieval && (

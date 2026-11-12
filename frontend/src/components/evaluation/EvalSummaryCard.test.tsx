@@ -360,10 +360,36 @@ describe('EvalSummaryCard', () => {
         expect(screen.getByTestId('eval-summary-judge')).toHaveTextContent('The judge command scored none of the answers.');
         const notice = screen.getByTestId('eval-summary-unjudged');
         expect(notice).toHaveTextContent('80 of 80 answers have no judge verdict: 77 not sent (the judge was unreachable), 3 connection or provider error.');
-        expect(notice).toHaveTextContent('left out of the judged score and the pass / fail counts');
+        expect(notice).toHaveTextContent('left out of the judged score, the pass rate, the failure list and the base-vs-fine-tuned pairing');
         expect(notice).toHaveTextContent('The judge stopped at row 3 after failed calls (connection error).');
         expect(notice).toHaveTextContent('(judge command · eval #1391)');
         expect(notice).not.toHaveTextContent('Re-judge');
+    });
+
+    it('shows the notice for any guarded judge, and marks a headline that rests on judged rows (S3, S6)', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                ...BETTER,
+                eval_result_id: 77,
+                headline: {
+                    metric_id: 'judge_correct', baseline_value: 0.62, trained_value: 0.8, absolute_delta: 0.18,
+                    relative_delta_pct: 29, direction: 'improved',
+                    judged_subset: { trained: { judged: 40, unjudged: 648, outage: true } },
+                },
+                evidence: { n: 40, better: 12, worse: 2, same: 26, mean_diff: 0.2, ci_low: 0.1, ci_high: 0.3, verdict: 'better', excluded_unscored: 648 },
+                unjudged_notice: {
+                    kind: 'code_example_judge', judge: 'j', judged: 10, unjudged: 30, status: 'paused',
+                    unjudged_reasons: { judge_unreachable: 27, transient_error: 3 },
+                },
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        await screen.findByTestId('eval-summary');
+        expect(screen.getByTestId('eval-summary-judged-subset')).toHaveTextContent(
+            'on judged rows only — fine-tuned 40 of 688 judged (judge unreachable)',
+        );
+        expect(screen.getByTestId('eval-summary-row-counts')).toHaveTextContent('648 rows left out: no score on one side');
+        expect(screen.getByTestId('eval-summary-unjudged')).toHaveTextContent('30 of 40 code examples have no verdict from the code-example judge');
     });
 
     it('splits a passages run\'s wrong answers into retrieval missed vs the model misread', async () => {

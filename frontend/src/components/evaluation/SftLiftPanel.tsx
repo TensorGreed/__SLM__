@@ -27,7 +27,7 @@ import {
     type SftLiftGateRow,
     type SftLiftGateStatus,
 } from '../../api/sftLift';
-import { isUnproven, metricDisplayName, shortEvidenceText } from './liftEvidence';
+import { isUnproven, judgedSubsetText, metricDisplayName, shortEvidenceText } from './liftEvidence';
 import { resultsPath } from '../../utils/workspaceRoutes';
 
 interface SftLiftPanelProps {
@@ -132,6 +132,11 @@ function MetricLiftRow({ row }: { row: SftLiftMetricRow }) {
                         className={`sft-lift__evidence${unproven ? ' sft-lift__evidence--unproven' : ''}`}
                     >
                         {shortEvidenceText(evidence)}
+                    </div>
+                )}
+                {judgedSubsetText(row.judged_subset) && (
+                    <div data-testid={`sft-lift-judged-subset-${row.metric_id}`} className="sft-lift__evidence sft-lift__judged-subset">
+                        {judgedSubsetText(row.judged_subset)}
                     </div>
                 )}
             </div>
@@ -305,6 +310,11 @@ export default function SftLiftPanel({
                                 {formatAbsDelta(headline.absolute_delta)} (
                                 {formatRelativeDelta(headline.relative_delta_pct)})
                             </strong>
+                            {judgedSubsetText(headline.judged_subset) && (
+                                <span className="sft-lift__judged-subset" data-testid="sft-lift-headline-judged-subset">
+                                    {' '}— {judgedSubsetText(headline.judged_subset)}.
+                                </span>
+                            )}
                         </>
                     )}
                 </p>

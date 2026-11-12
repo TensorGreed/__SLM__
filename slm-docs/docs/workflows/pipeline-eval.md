@@ -66,7 +66,7 @@ The judges the project's held-out eval would run also run here, per stage view: 
 |---|---|
 | `row_context_unavailable` | The project's evaluator cannot build a row from the stage inputs (for example a fix without the code or finding it applies to, a plan without a scenario). |
 | `needs_judge` | A judge would decide this output, but none was reachable or it failed. The stage says `judge_not_run` with the reason. A plan that fails its schema is still wrong; only outputs the judge would decide are held back. |
-| `row_unscored` | The stage's own scorer left this output out of pass / fail (for example a scored code example with no judge verdict). Before, such an output counted as correct. |
+| `row_unscored` | The stage's own scorer left this output out of pass / fail (for example a row its verifier could not check, or a scored code example with no judge verdict when no answer judge ran — with one, that output is `needs_judge`). Before, such an output counted as correct. |
 | `scoring_error` | The evaluator raised. The stage shows `scoring_error`. |
 
 Unscored outputs are left out of the stage's accuracy, and a final item whose path runs through one is left out of the end-to-end share and the attribution (`unscored_items`, by reason). An output that failed on its own (missing input, model error, invalid JSON, a prompt the recipe could not build) counts as wrong when it has gold.

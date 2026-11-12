@@ -111,6 +111,12 @@
     color: var(--color-warning);
 }
 
+/* The headline lift rests on the judged rows only (a judge left rows unjudged). */
+.eval-summary__judged-subset {
+    color: var(--color-warning);
+    font-size: 0.85rem;
+}
+
 .eval-summary__judge-verdict {
     margin-top: 0.25rem;
     font-size: 0.85rem;

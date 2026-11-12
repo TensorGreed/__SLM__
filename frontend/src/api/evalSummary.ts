@@ -6,8 +6,9 @@
 import type { EvalJudgeTrust } from './evalJudgeCalibration';
 import api from './client';
 import type { CheckedDecodingSummary } from './checkedDecoding';
-import type { EvalSizing, LiftEvidence, SeedEvidence } from '../components/evaluation/liftEvidence';
+import type { EvalSizing, JudgedSubset, LiftEvidence, SeedEvidence } from '../components/evaluation/liftEvidence';
 import type { RetrievalSplit } from '../components/evaluation/retrievalSplit';
+import type { UnjudgedJudgeBlock } from '../components/evaluation/unjudgedNotice';
 
 export type EvalVerdict =
     | 'better'
@@ -132,6 +133,9 @@ export interface EvalSummaryHeadline {
     /** Multi-seed run: the headline is the mean across seeds. */
     trained_std?: number | null;
     n_seeds?: number;
+    /** A judge-based metric whose value (per side) rests on the judged rows only: the judge left
+     *  ``unjudged`` rows without a verdict (``outage``: it was unreachable). Absent otherwise. */
+    judged_subset?: JudgedSubset | null;
 }
 
 export interface EvalSummaryFailure {
@@ -266,6 +270,10 @@ export interface EvalSummary {
     failures: EvalSummaryFailure[];
     failed_count?: number | null;
     judge?: EvalSummaryJudge | null;
+    /** Rows a judge (answer / code-example / rubric / dialogue) was asked about and left without a
+     *  verdict — an outage first; null when every verdict came back or for results stored before
+     *  unjudged rows carried a reason (absent on older backends). */
+    unjudged_notice?: UnjudgedJudgeBlock | null;
     /** Opt-in checked decoding: present only when the run's latest eval ran with it. */
     checked_decoding?: CheckedDecodingSummary | null;
     /** The lift pairs evals decoded under different checked-decoding policies. */

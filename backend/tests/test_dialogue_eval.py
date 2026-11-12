@@ -249,8 +249,6 @@ class DialogueJudgeEndToEnd(unittest.TestCase):
 
         from app.services import judge_call_guard as jcg
 
-        jcg.reset_registry()
-        self.addCleanup(jcg.reset_registry)
         calls = []
 
         async def down(question, reference, prediction, instruction=None):

@@ -5,7 +5,7 @@
  */
 
 import api from './client';
-import type { LiftEvidence } from '../components/evaluation/liftEvidence';
+import type { JudgedSubset, LiftEvidence } from '../components/evaluation/liftEvidence';
 import type { CheckedDecodingSummary } from './checkedDecoding';
 
 export interface SftLiftExperimentRef {
@@ -36,6 +36,8 @@ export interface SftLiftMetricRow {
     /** Rows better / worse / same vs the base model + noise verdict; null
      * for metrics that aren't a per-row mean or for older results. */
     evidence?: LiftEvidence | null;
+    /** Judge-based metric resting on the judged rows only (per side); absent otherwise. */
+    judged_subset?: JudgedSubset | null;
 }
 
 export type SftLiftGateStatus =

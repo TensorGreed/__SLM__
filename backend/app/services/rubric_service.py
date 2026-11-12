@@ -428,7 +428,7 @@ def judge_rows_with_rubric(
                 if reason is None:
                     reason = jcg.REASON_UNPARSEABLE
         elif scores is None:
-            reason = "no_judge"
+            reason = jcg.REASON_NO_JUDGE
         if scores is None:
             unjudged += 1
             reason = reason or jcg.REASON_UNPARSEABLE

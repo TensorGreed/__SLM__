@@ -1027,7 +1027,7 @@ describe('NotificationBell judge-incomplete warning', () => {
         );
     });
 
-    it('a lift check with an incomplete judge gives no lift verdict', () => {
+    it('a lift check with an incomplete judge keeps its verdict and appends the warning (M2)', () => {
         const job = jobFixture({
             kind: 'post_training_lift_eval', status: 'succeeded',
             result: {
@@ -1037,9 +1037,22 @@ describe('NotificationBell judge-incomplete warning', () => {
             },
         });
         const text = jobOutcomeSummary(job as never) ?? '';
-        expect(text).toContain('judge incomplete');
-        expect(text).toContain('no lift verdict until the eval is re-run');
-        expect(text).not.toContain('better than base');
+        const plain = jobOutcomeSummary(jobFixture({
+            kind: 'post_training_lift_eval', status: 'succeeded',
+            result: {
+                headline: { metric_id: 'judge_correct', baseline_value: 0.2, trained_value: 0.4, direction: 'improved' },
+                evidence: { verdict: 'better', better: 5, worse: 0 },
+            },
+        }) as never) ?? '';
+        expect(plain).not.toContain('judge incomplete');
+        expect(text.startsWith(plain)).toBe(true);
+        expect(text).toContain(' · with a warning: judge incomplete by command');
+        expect(text).toContain('re-run the eval before relying on this lift');
+    });
+
+    it('names a judge other than the answer judge', () => {
+        const job = jobFixture({ kind: 'heldout_evaluation', status: 'succeeded', result: { ...incomplete, judge_kind: 'rubric judge' } });
+        expect(jobOutcomeSummary(job as never)).toContain('Done, with a warning: rubric judge incomplete by command');
     });
 
     it('complete evals are unchanged', () => {

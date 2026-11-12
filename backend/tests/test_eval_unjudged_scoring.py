@@ -54,17 +54,28 @@ class _UpJudge:
         return 1.0, "correct", "ok", 0
 
 
+class _HalfDownJudge:
+    """Answers the first ``up`` calls, then the connection fails."""
+
+    def __init__(self, up: int):
+        self.up, self.calls = up, 0
+
+    async def __call__(self, q, r, p, instruction=None):
+        self.calls += 1
+        if self.calls <= self.up:
+            return 1.0, "correct", "ok", 0
+        raise SynthBackendTransientError("Command backend failed: connection_failed")
+
+
 class UnjudgedEndToEndTests(unittest.TestCase):
     ROWS = [{"question": f"What about item {i}?", "answer": f"Item {i} is {LONG}"} for i in range(6)]
 
     def setUp(self):
-        jcg.reset_registry()
         patcher = patch.object(jcg.settings, "JUDGE_TRANSIENT_RETRIES", 0)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def tearDown(self):
-        jcg.reset_registry()
         for pid in getattr(self, "_pids", []):
             shutil.rmtree(settings.DATA_DIR / "projects" / str(pid), ignore_errors=True)
 
@@ -88,6 +99,10 @@ class UnjudgedEndToEndTests(unittest.TestCase):
         self.assertEqual(details["failed_count"], 0)
         self.assertEqual(details["failures_preview"], [])
         self.assertEqual(details["row_scores"]["correct"], [None] * 6)
+        # D2 / S7: the pass rate leaves them out too -- every row was left out, so there is none.
+        self.assertIsNone(result.pass_rate)
+        self.assertEqual(result.metrics["pass_rate_unjudged_excluded"], 6)
+        self.assertIn("exact_match", result.metrics, "the exact-match metric itself is unchanged")
         records = preds.read_records(pid, result.id)
         self.assertEqual(len(records), 6, "every answer is saved")
         for record in records:
@@ -115,16 +130,32 @@ class UnjudgedEndToEndTests(unittest.TestCase):
         for key in ("status", "unjudged_reasons", "coverage", "breaker"):
             self.assertNotIn(key, snap)
         self.assertEqual(jcg.job_result_fields(result), {})
+        self.assertNotIn("pass_rate_unjudged_excluded", result.metrics)
+        self.assertEqual(result.pass_rate, result.metrics.get("pass_rate") or result.metrics.get("exact_match")
+                         or result.metrics.get("f1"))
         from app.services.post_training_eval_service import _baseline_judge_matches
 
         self.assertTrue(_baseline_judge_matches(result, "up:judge"))
+
+    def test_pass_rate_is_over_the_rows_the_judge_decided(self):
+        pid, result = self._run(answer_judge=ResolvedJudge(label="half:judge", judge=_HalfDownJudge(3)))
+        snap = result.metrics["judge"]
+        self.assertEqual((snap["judged"], snap["unjudged"]), (3, 3))
+        self.assertEqual(result.metrics["pass_rate_unjudged_excluded"], 3)
+        records = preds.read_records(pid, result.id)
+        judged_em = [float(r["row_exact_match"]) for r in records if "judge" in r]
+        self.assertEqual(len(judged_em), 3)
+        self.assertAlmostEqual(result.pass_rate, round(sum(judged_em) / 3, 4))
 
     def test_partial_outage_marks_base_incomplete_and_unparseable_does_not(self):
         from app.services.post_training_eval_service import _baseline_judge_matches
 
         partial = SimpleNamespace(metrics={"judge": {"judge": "j", "judged": 9, "unjudged": 1,
                                                      "unjudged_reasons": {"transient_error": 1}}})
-        self.assertFalse(_baseline_judge_matches(partial, "j"))
+        self.assertFalse(_baseline_judge_matches(partial, "j"), "10 % lost to an outage: over the 5 % floor")
+        blip = SimpleNamespace(metrics={"judge": {"judge": "j", "judged": 687, "unjudged": 1, "status": "partial",
+                                                  "unjudged_reasons": {"transient_error": 1}}})
+        self.assertTrue(_baseline_judge_matches(blip, "j"), "S5: one timed-out row of 688 does not force a re-run")
         unparseable = SimpleNamespace(metrics={"judge": {"judge": "j", "judged": 9, "unjudged": 1,
                                                          "unjudged_reasons": {"unparseable": 1}}})
         self.assertTrue(_baseline_judge_matches(unparseable, "j"))

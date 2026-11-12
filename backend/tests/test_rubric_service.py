@@ -286,8 +286,6 @@ class UnjudgedReasonTests(unittest.TestCase):
         from app.services import jobs_service
         from app.services import judge_call_guard as jcg
 
-        jcg.reset_registry()
-        self.addCleanup(jcg.reset_registry)
         handle = mock.MagicMock()
         touched = []
         handle.check_cancelled.side_effect = lambda *a, **k: touched.append(threading.current_thread().name)

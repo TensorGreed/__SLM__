@@ -65,7 +65,7 @@ class CloudLlmResponse:
 
 
 # HTTP statuses that mean "the provider, not the request": worth retrying later.
-TRANSIENT_STATUS_CODES: frozenset[int] = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
+TRANSIENT_STATUS_CODES: frozenset[int] = frozenset({408, 425, 429, 500, 502, 503, 504, 529})  # 409 (a conflict) is the request's
 
 
 def is_transient_status(status_code: int | None) -> bool:
@@ -80,7 +80,7 @@ class CloudLlmError(RuntimeError):
 
     ``status_code``: the provider's HTTP status (None when no response
     came back). ``transient``: the failure is the network's or the
-    provider's (connection / DNS / timeout, 408 / 429 / 5xx), not the
+    provider's (connection / DNS / timeout, 408 / 425 / 429 / 5xx), not the
     request's — ``judge_call_guard`` retries those."""
 
     def __init__(self, message: str = "", *, status_code: int | None = None, transient: bool | None = None) -> None:

@@ -78,7 +78,8 @@ describe('JudgeModelCard', () => {
         });
         render(<JudgeModelCard projectId={3} />);
         const block = await screen.findByTestId('judge-outage');
-        expect(block).toHaveTextContent('After 3 failed calls in a row the eval stops asking');
+        expect(block).toHaveTextContent('After 3 rows in a row whose call still failed, this eval stops asking');
+        expect(block).toHaveTextContent('each new eval starts asking again');
         expect(screen.queryByTestId('judge-outage-max-wait')).toBeNull();
         await userEvent.selectOptions(screen.getByTestId('judge-outage-mode'), 'wait');
         await waitFor(() => expect(apiMock.put).toHaveBeenCalledWith('/projects/3/eval-judge', {
@@ -92,6 +93,15 @@ describe('JudgeModelCard', () => {
         await waitFor(() => expect(apiMock.put).toHaveBeenLastCalledWith('/projects/3/eval-judge', {
             enabled: true, backend: 'command', resilience: { mode: 'wait', max_wait_seconds: 14400 },
         }));
+    });
+
+    it('never offers a wait longer than the server cap', async () => {
+        const resilience = { stored: { mode: 'wait' }, breaker: true, mode: 'wait', max_wait_seconds: 3600, consecutive: 3, max_wait_cap_seconds: 7200 };
+        apiMock.get.mockResolvedValue({ data: { ...STATE, resilience } });
+        render(<JudgeModelCard projectId={3} />);
+        const select = await screen.findByTestId('judge-outage-max-wait');
+        const values = Array.from(select.querySelectorAll('option')).map((o) => o.getAttribute('value'));
+        expect(values).toEqual(['900', '3600', '7200']);
     });
 
     it('hides the outage block on older backends', async () => {
