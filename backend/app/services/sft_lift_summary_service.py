@@ -99,6 +99,8 @@ _LOWER_IS_BETTER: frozenset[str] = frozenset({
 # baseline-vs-trained comparison.
 _HIDDEN_METRICS: frozenset[str] = frozenset({
     "schema_mismatch",
+    # Scorer bookkeeping (an int stamp, not a quality metric).
+    "span_set_scoring_version",
     "samples",
     "total",
     "correct",
@@ -586,6 +588,31 @@ def _checked_policy_differs(baseline: Any, trained: Any) -> bool:
     return policy(baseline) != policy(trained)
 
 
+def span_set_version_mismatch(base_metrics: Any, tuned_metrics: Any) -> dict[str, Any] | None:
+    """``{"base", "tuned", "message"}`` when a span_set lift pairs results
+    scored under different ``span_set_scoring_version``s (a result without one
+    predates version 2), else None. A note, not a block: the lift check re-runs
+    the base under the current scorer (post_training_eval_service)."""
+    a = base_metrics if isinstance(base_metrics, dict) else {}
+    b = tuned_metrics if isinstance(tuned_metrics, dict) else {}
+    if "span_set" not in (a.get("scoring_mode"), b.get("scoring_mode")):
+        return None
+    va, vb = a.get("span_set_scoring_version"), b.get("span_set_scoring_version")
+    if va == vb:  # same scorer (both missing = both v1)
+        return None
+    label = lambda v: f"v{v}" if v is not None else "v1 (before versions were recorded)"  # noqa: E731
+    stale = "the base-model result" if (va or 0) < (vb or 0) else "the run's result"
+    return {
+        "base": va,
+        "tuned": vb,
+        "message": (
+            f"The base model and this run were scored by different span scorers ({label(va)} vs {label(vb)}), "
+            f"so this lift is not like for like. Re-score {stale}: re-run the lift check (it scores the base "
+            "model again under the current scorer) or evaluate the run again."
+        ),
+    }
+
+
 async def compute_sft_lift_summary(
     db: AsyncSession,
     project_id: int,
@@ -676,6 +703,9 @@ async def compute_sft_lift_summary(
         "eval_pack_id": eval_pack_id,
         "task_profile_used": task_profile_hint,
         **({"checked_decoding_differs": True} if _checked_policy_differs(baseline, trained) else {}),
+        **({"scoring_version_differs": mismatch} if (
+            mismatch := span_set_version_mismatch(baseline.eval_result.metrics, trained.eval_result.metrics)
+        ) else {}),
     }
 
 

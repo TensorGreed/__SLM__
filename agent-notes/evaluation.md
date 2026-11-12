@@ -1243,3 +1243,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `{"entities": [...]}` (v1 read a list reference as its first span: gold empty, so old numbers on bare-list
   splits were vacuous) + list references no longer name prompt fields. Older results stay as recorded and are not
   comparable to v2 ones. Tests: `tests/test_span_set_scoring_version.py`.
+- Outside the lift Job the pairing is flagged, not blocked: `sft_lift_summary_service.span_set_version_mismatch`
+  (raw eval_result metrics; a missing stamp = v1; both missing = same scorer) puts `scoring_version_differs
+  {base, tuned, message}` on the lift summary, passed through by the eval summary and shown in `EvalSummaryCard`
+  / `SftLiftPanel` (it names which side to re-score). Compare's `_scoring` carries `span_set_scoring_version` and
+  `compare_provenance` adds a *note* (pair stays comparable) naming the side to evaluate again. The stamp is in
+  `_HIDDEN_METRICS`, so it never shows as a metric/lift row. Tests: `tests/test_span_set_version_pairing.py`.

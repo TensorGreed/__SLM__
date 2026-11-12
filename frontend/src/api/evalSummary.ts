@@ -278,6 +278,8 @@ export interface EvalSummary {
     checked_decoding?: CheckedDecodingSummary | null;
     /** The lift pairs evals decoded under different checked-decoding policies. */
     checked_decoding_differs?: boolean;
+    /** The lift pairs span_set results scored by different scorer versions (a note, not a block). */
+    scoring_version_differs?: { base: number | null; tuned: number | null; message: string };
 }
 
 export async function fetchEvalSummary(

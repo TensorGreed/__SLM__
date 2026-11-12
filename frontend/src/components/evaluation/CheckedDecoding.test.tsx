@@ -214,5 +214,15 @@ describe('Eval summary / lift card with checked decoding', () => {
         await screen.findByTestId('eval-summary');
         expect(screen.queryByTestId('eval-summary-checked-decoding')).toBeNull();
         expect(screen.queryByTestId('eval-summary-checked-decoding-differs')).toBeNull();
+        expect(screen.queryByTestId('eval-summary-scoring-version-differs')).toBeNull();
+    });
+
+    it('notes a lift whose two sides were scored by different span scorers', async () => {
+        const message = 'The base model and this run were scored by different span scorers (v1 vs v2).';
+        apiMock.get.mockResolvedValue({
+            data: { ...SUMMARY_CARD, scoring_version_differs: { base: null, tuned: 2, message } },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        expect(await screen.findByTestId('eval-summary-scoring-version-differs')).toHaveTextContent(message);
     });
 });

@@ -493,6 +493,11 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     is not like for like. Re-run the lift check: it scores both under the same setting.
                 </p>
             )}
+            {summary.scoring_version_differs && (
+                <p className="eval-summary__message" data-testid="eval-summary-scoring-version-differs">
+                    {summary.scoring_version_differs.message}
+                </p>
+            )}
             {head && decodingBarText(summary.baseline?.decoding_bar) && (
                 <p className="eval-summary__message" data-testid="eval-summary-decoding-bar">
                     {decodingBarText(summary.baseline?.decoding_bar)}

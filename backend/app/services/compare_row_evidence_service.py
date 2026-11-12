@@ -349,6 +349,8 @@ def _scoring(er: EvalResult) -> dict[str, Any]:
         # Opt-in checked decoding (verify-and-retry): a different policy blocks pairing.
         "checked_decoding": _checked_policy(decoding),
         "scoring_mode": str(mode) if isinstance(mode, str) and mode else None,
+        # span_set scorer version (None = before versions were recorded = v1).
+        "span_set_scoring_version": metrics.get("span_set_scoring_version") if mode == "span_set" else None,
         "fingerprints": {
             key: metrics[key] for key in _SCORING_FINGERPRINTS if isinstance(metrics.get(key), str)
         },
@@ -668,6 +670,21 @@ def compare_provenance(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
             if revision_note:
                 message = revision_note if fmt_a == fmt_b else f"{revision_note}; {message}"
             _diff("scoring", message, fps_a[name], fps_b[name])
+    if scoring_a.get("scoring_mode") == scoring_b.get("scoring_mode") == "span_set":
+        from app.services.sft_lift_summary_service import span_set_version_mismatch
+
+        mismatch = span_set_version_mismatch(
+            {"scoring_mode": "span_set", "span_set_scoring_version": scoring_a.get("span_set_scoring_version")},
+            {"scoring_mode": "span_set", "span_set_scoring_version": scoring_b.get("span_set_scoring_version")},
+        )
+        if mismatch is not None:
+            # A note, not a block: the rows still pair; the older result should be re-scored.
+            va, vb = mismatch["base"], mismatch["tuned"]
+            older = "A" if (va or 0) < (vb or 0) else "B"
+            notes.append(
+                f"Scored by different span scorers (A: v{va or 1}, B: v{vb or 1}); scores across them are not "
+                f"like for like. Evaluate {older} again to re-score it under the current scorer."
+            )
     checked_a, checked_b = scoring_a.get("checked_decoding"), scoring_b.get("checked_decoding")
     if checked_a != checked_b:
         from app.services.checked_decoding_service import policy_label

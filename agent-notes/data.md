@@ -1140,9 +1140,18 @@ generated from the document (they keep their rows), `predefined_split_service._d
   in `combine_datasets` (before writing) and over every role in the predefined-split import: when both forms occur,
   the bare-list rows are rewritten to the wrapped form (answer, target_text, structured_output, and the prompt
   header copied from a wrapped row via `_PROMPT_HEAD`). Rule = the wrapped form wins, because rows already in
-  it (demo bundles, older `answer` rows, all-`entities_json` projects) then keep their exact targets and prompts;
-  only rows new to the project change. Single-format projects are untouched. Manifest `span_target_format`
+  it (demo bundles, older `answer` rows, all-`entities_json` projects) then keep their exact targets and prompts.
+  Single-format projects are untouched. Manifest `span_target_format`
   `{converted, format}` only when rows were rewritten. Tests: `tests/test_span_field_agreement.py`.
+  Known, left as is (re-review R3): existing rows *can* change. A project training on bare `entities` lists that also
+  holds `entities_json`-only rows (silently dropped before 2026-11-12) gets those rows mapped wrapped, so its bare
+  rows flip to wrapped: targets, test references and prompt header change (benign: the v2 scorer reads both forms,
+  and the new eval_input_sha re-runs the base). `keep_test` / `keep_val` rows are harmonized too, so a pinned test
+  file can change. The predefined-split import computes leakage keys before harmonizing, which is harmless only
+  while all roles share one prompt header. Not covered by a test: harmonizing `keep_test` rows.
+  Also left as is (R4): `_apply_recipe_adapter_config` stamps `span_set: true/false` into every structured-extraction
+  project's `adapter_config` that has a recipe. It is not in `EVAL_INPUT_MANIFEST_KEYS` (no base re-run), but the
+  prepared manifest's `adapter_config` changes on the next prepare, visible wherever manifests are diffed.
 - **Empty targets are span-shape only** (code review S2): `_empty_targets_allowed(config, key)` — `keep_empty_targets:
   true` opts any structured project in; `adapter_config["span_set"]` (stamped by `_apply_recipe_adapter_config` from the
   recipe's scoring mode: True for span_set, False for any other declared mode) True → any output field, False → never

@@ -79,6 +79,14 @@ export interface SftLiftSummary {
     task_profile_used?: string | null;
     /** The two evals ran under different checked-decoding policies (not like for like). */
     checked_decoding_differs?: boolean;
+    /** span_set results scored by different scorer versions (null = before versions were recorded). */
+    scoring_version_differs?: ScoringVersionDiffers;
+}
+
+export interface ScoringVersionDiffers {
+    base: number | null;
+    tuned: number | null;
+    message: string;
 }
 
 /** ``experimentId`` pins the trained side to that run (and the baseline to

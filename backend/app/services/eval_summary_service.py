@@ -378,6 +378,9 @@ def _checked_decoding_block(metrics: dict[str, Any], lift: dict[str, Any]) -> di
         out["checked_decoding"] = summary
     if lift.get("checked_decoding_differs"):
         out["checked_decoding_differs"] = True
+    # A span_set lift pairing results from different scorer versions (a note, not a block).
+    if isinstance(lift.get("scoring_version_differs"), dict):
+        out["scoring_version_differs"] = lift["scoring_version_differs"]
     return out
 
 

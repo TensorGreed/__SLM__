@@ -337,6 +337,11 @@ export default function SftLiftPanel({
                         like for like. Re-run the lift check to score both under one setting.
                     </p>
                 )}
+                {summary.scoring_version_differs && (
+                    <p className="u-hint u-mt-xs u-mb0" data-testid="sft-lift-scoring-version-differs">
+                        {summary.scoring_version_differs.message}
+                    </p>
+                )}
             </div>
 
             {trained?.experiment_id != null && (
