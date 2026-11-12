@@ -149,6 +149,24 @@ class DescribeFailureTests(unittest.TestCase):
         self.assertEqual(failure_from_config({"_runtime": {"failure": {"message": "m"}}}), {"message": "m"})
 
 
+class FailureCodesAreInTheTaxonomyTests(unittest.TestCase):
+    def test_every_failure_code_is_a_known_training_reason_code(self):
+        from app.models.reason_codes import KNOWN_REASON_CODES, REASON_CODES_BY_STAGE
+        from app.models.run_event import STAGE_TRAINING
+
+        cases = [
+            describe_training_failure(returncode=-15, stop_reason="timeout", timeout_seconds=60),
+            describe_training_failure(returncode=-9),
+            describe_training_failure(returncode=1),
+            describe_training_failure(returncode=None, error="boom"),
+        ]
+        self.assertEqual({c["code"] for c in cases}, {"timeout", "signal", "exit", "error"})
+        for case in cases:
+            reason = f"training_{case['code']}"
+            self.assertIn(reason, KNOWN_REASON_CODES)
+            self.assertIn(reason, REASON_CODES_BY_STAGE[STAGE_TRAINING])
+
+
 class MonitorSavesFailureTests(unittest.TestCase):
     def _run(self) -> tuple[int, int, Path]:
         resp = _CLIENT.post("/api/projects", json={"name": f"fail-reason-{uuid.uuid4().hex[:8]}", "description": "t"})
@@ -172,9 +190,9 @@ class MonitorSavesFailureTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, out, ignore_errors=True)
         return project_id, exp_id, out
 
-    def _monitor(self, exp_id: int, out: Path, **kw) -> str:
+    def _monitor(self, exp_id: int, out: Path, returncode: int = -15, **kw) -> str:
         return asyncio.run(_monitor_external_training(
-            exp_id, SimpleNamespace(returncode=-15), "train.py", out / "external_training.log", out,
+            exp_id, SimpleNamespace(returncode=returncode), "train.py", out / "external_training.log", out,
             captured_stdout=METRICS, captured_stderr="", **kw))
 
     def _state(self, project_id: int, exp_id: int):
@@ -201,6 +219,38 @@ class MonitorSavesFailureTests(unittest.TestCase):
         self.assertEqual(failed[0].severity, "error")
         self.assertIn(failure["message"], failed[0].summary)
         self.assertEqual(failed[0].payload["failure"]["code"], "timeout")
+
+    def _assert_one_stored_event(self, project_id: int, exp_id: int, code: str) -> None:
+        _, config, events = self._state(project_id, exp_id)
+        self.assertEqual(config["_runtime"]["failure"]["code"], code)
+        stored = [e for e in events if e.reason_code == f"training_{code}"]
+        self.assertEqual(len(stored), 1, [e.reason_code for e in events])
+        self.assertEqual(stored[0].severity, "error")
+        self.assertEqual(stored[0].stage, "training")
+        self.assertEqual(stored[0].payload["failure"]["code"], code)
+
+    def test_signal_killed_run_emits_stored_event(self):
+        # A run stopped by a signal without a timeout (e.g. an OOM kill) used to fail
+        # ``invalid_reason_code`` inside emit_event and never reach the timeline.
+        project_id, exp_id, out = self._run()
+        self.assertEqual(self._monitor(exp_id, out, returncode=-9), "failed")
+        self._assert_one_stored_event(project_id, exp_id, "signal")
+
+    def test_nonzero_exit_run_emits_stored_event(self):
+        project_id, exp_id, out = self._run()
+        self.assertEqual(self._monitor(exp_id, out, returncode=1), "failed")
+        self._assert_one_stored_event(project_id, exp_id, "exit")
+
+    def test_monitor_error_failure_emits_stored_event(self):
+        from app.services.training_failure_service import emit_failure_event
+
+        project_id, exp_id, _ = self._run()
+        failure = describe_training_failure(returncode=None, error="lost the process handle")
+        asyncio.run(emit_failure_event(project_id=project_id, experiment_id=exp_id, name="r", failure=failure))
+        _, _, events = self._state(project_id, exp_id)
+        stored = [e for e in events if e.reason_code == "training_error"]
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0].payload["failure"]["code"], "error")
 
     def test_cancelled_run_saves_no_failure(self):
         project_id, exp_id, out = self._run()

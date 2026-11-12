@@ -92,6 +92,16 @@ TRAINING_TIMEOUT = "training_timeout"
 """Training run exceeded the configured wallclock budget."""
 TRAINING_CANCELLED = "training_cancelled"
 """Training run was cancelled (operator action or upstream signal)."""
+TRAINING_SIGNAL = "training_signal"
+"""Training process was stopped by a signal it did not ask for (e.g. SIGKILL,
+often the system running out of memory). Emitted by
+``training_failure_service.emit_failure_event`` for failure code ``signal``."""
+TRAINING_EXIT = "training_exit"
+"""Training process exited with a non-zero code. Emitted for failure code
+``exit``; the payload's ``failure.error_line`` quotes the last error."""
+TRAINING_ERROR = "training_error"
+"""The run could not be monitored to completion (the monitor itself raised).
+Emitted for failure code ``error``."""
 
 # -- eval ---------------------------------------------------------------
 EVAL_RUNTIME_ERROR = "eval_runtime_error"
@@ -164,6 +174,9 @@ REASON_CODES_BY_STAGE: dict[str, frozenset[str]] = {
         TRAINING_OOM,
         TRAINING_TIMEOUT,
         TRAINING_CANCELLED,
+        TRAINING_SIGNAL,
+        TRAINING_EXIT,
+        TRAINING_ERROR,
     }),
     STAGE_EVAL: frozenset({
         EVAL_RUNTIME_ERROR,

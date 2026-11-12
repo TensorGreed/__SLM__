@@ -83,7 +83,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   SLM_METRIC steps / tqdm `n/N` / newest checkpoint's `trainer_state.max_steps`, `last_checkpoint_step`,
   `resumable_checkpoint_step`, `error_line` = last error-like line, metric/event/progress lines skipped).
   `_monitor_external_training(stop_reason="timeout", timeout_seconds=…)` (passed by `worker.run_training_job`)
-  saves it on FAILED only (cancel → none; COMPLETED pops it) and emits a `training_<code>` RunEvent. The
+  saves it on FAILED only (cancel → none; COMPLETED pops it) and emits a `training_<code>` RunEvent. All four
+  codes (`training_timeout|signal|exit|error`) are in `models/reason_codes.py` — `emit_event` rejects an
+  unregistered code and the emit is best effort, so a new failure `code` must be registered there too
+  (`FailureCodesAreInTheTaxonomyTests` guards it). The
   Celery error, the worker's live `failed` status and the `training_start` Job error reuse `message`.
   UI: `RunFailureBanner` (TrainingRunView) with "Continue from step N" → resume-from. Tests:
   `tests/test_training_failure_reason.py`, `RunFailureBanner.test.tsx`.
