@@ -26,12 +26,17 @@ The deep doctor inspects readiness, recent timeline, and the cluster table — u
 **Fixes** (pick one):
 
 ```sh
-# Dev: nuke + auto-recreate
-rm backend/data/brewslm.db
-# Restart the backend — SQLite auto-create kicks in.
+# DB created by the SQLite auto-create path and never stamped:
+# mark it current (do not `upgrade head` it: early migrations use
+# ALTER COLUMN, which SQLite refuses)
+cd backend && alembic stamp head
 
-# Or run migrations explicitly
-cd backend && alembic -c alembic.ini upgrade head
+# A stamped DB that is behind: apply the new migrations
+cd backend && alembic upgrade head
+
+# Dev only: move the DB aside (loses its data), restart the backend so
+# auto-create rebuilds it, then `alembic stamp head`
+mv data/slm_platform.db data/slm_platform.db.bak
 ```
 
 ### `ModuleNotFoundError: app` running CLI

@@ -37,7 +37,7 @@ npm install
 
 ## Database
 
-SQLite is the default (`DATABASE_URL="sqlite+aiosqlite:///./data/slm_platform.db"`, relative to where you start uvicorn). The first boot creates the tables (`ALLOW_SQLITE_AUTOCREATE=true`). Then stop the backend and run `cd backend && alembic stamp head` once, so later `alembic upgrade head` runs apply only new migrations. Do not run `upgrade head` on a never-stamped SQLite DB: some early migrations use `ALTER COLUMN`, which SQLite refuses.
+SQLite is the default (`DATABASE_URL="sqlite+aiosqlite:///./data/slm_platform.db"`, a relative path resolves against the repo root, so the file is `data/slm_platform.db` there). The first boot creates the tables (`ALLOW_SQLITE_AUTOCREATE=true`). Then stop the backend and run `cd backend && alembic stamp head` once, so later `alembic upgrade head` runs apply only new migrations. Do not run `upgrade head` on a never-stamped SQLite DB: some early migrations use `ALTER COLUMN`, which SQLite refuses.
 
 For Postgres, set:
 

@@ -34,7 +34,7 @@ cd ../slm-docs
 npm install
 ```
 
-The default DB is SQLite at `backend/data/brewslm.db` — created on first boot. No setup needed.
+The default DB is SQLite at `data/slm_platform.db` (repo root); the first boot creates its tables. On a fresh DB, stop the backend once after that first boot and run `cd backend && alembic stamp head`, so later `alembic upgrade head` runs only apply new migrations.
 
 ## 2. Boot the backend
 
@@ -170,7 +170,7 @@ The next page narrates this same workflow in more detail with a real dataset —
 
 | Symptom | Fix |
 |---|---|
-| `Alembic head mismatch` on backend startup | Delete `backend/data/brewslm.db` (auto-recreate path takes over) OR run `alembic -c backend/alembic.ini upgrade head`. |
+| `Alembic head mismatch` on backend startup | Never-stamped DB (made by auto-create): `cd backend && alembic stamp head`. Otherwise `cd backend && alembic upgrade head`. Or move `data/slm_platform.db` aside to rebuild it (loses its data). |
 | `ModuleNotFoundError: app` from the CLI | Forgot to activate the backend venv. `source backend/.venv/bin/activate`. |
 | Frontend CORS errors in browser console | Set `VITE_API_BASE=http://localhost:8000/api` in `frontend/.env.local`. |
 | Geist font flickers on first paint | Loaded fresh from Google Fonts. Self-host via `@fontsource/geist` if it bothers you. |
