@@ -12,7 +12,10 @@ Expected raw row shape:
     }
 
 ``entities`` may also be a JSON string of that list, or of
-``{"entities": [...]}``. ``label`` is read when ``type`` is missing, ``value``
+``{"entities": [...]}``. Offsets count Unicode code points (Python string
+indices), not UTF-16 units: a source that counts UTF-16 (JavaScript tools)
+misaligns after characters outside the BMP, which a span's ``text`` exposes
+as ``span_text_mismatch``. ``label`` is read when ``type`` is missing, ``value``
 when ``text`` is missing. An empty
 list is a valid row: text with nothing to tag (a negative example).
 
@@ -81,15 +84,23 @@ def _entity_list(value: Any) -> list[Any] | None:
     return value if isinstance(value, list) else None
 
 
-def _offset(value: Any) -> int | None:
+def parse_offset(value: Any) -> int | None:
+    """A character offset: an int, an integral float, or a string of ASCII
+    digits (optional leading ``-``). None for anything else — never raises."""
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
         return value
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
-        return int(value.strip())
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    if isinstance(value, str):
+        token = value.strip()
+        digits = token[1:] if token.startswith("-") else token
+        if digits.isascii() and digits.isdigit():
+            try:
+                return int(token)
+            except ValueError:
+                return None
     return None
 
 
@@ -100,7 +111,7 @@ def _clean_spans(text: str, raw: list[Any], type_map: dict[str, str]) -> list[di
         if not isinstance(item, dict):
             raise _SpanReject("bad_span", f"entity is not an object: {item!r}"[:200])
         ent_type = str(item.get("type") or item.get("label") or "").strip()
-        start, end = _offset(item.get("start")), _offset(item.get("end"))
+        start, end = parse_offset(item.get("start")), parse_offset(item.get("end"))
         if not ent_type or start is None or end is None:
             raise _SpanReject("bad_span", f"entity needs type + integer start/end: {item!r}"[:200])
         if start < 0 or end > len(text) or end <= start:

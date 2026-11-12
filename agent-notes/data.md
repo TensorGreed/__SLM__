@@ -1125,7 +1125,7 @@ generated from the document (they keep their rows), `predefined_split_service._d
   last: leading whitespace, or a span ending in trailing whitespace — the adapter strips the text, which
   would move the spans). Introspector: an `entity_list_json` column now ignores `[]` values and accepts
   `label` for `type`; text + entity-list → `span_offsets_passthrough` at 0.95 (0.9 for an unconventional
-  entity column name), 0.6 + a warning when sampled offsets don't fit the chosen text column. Tests:
+  entity column name). Proposal gate (`SPAN_FIT_MIN` 0.8): >= 80% of sampled spans are integer offsets inside the text (`parse_offset`, shared with the mapper — never raises) and, where spans carry `text`/`value`, >= 80% match; any misfit → 0.7 + warning; no span text at all → only a `type`-keyed list under `_SPAN_COLUMN_NAMES`, at 0.7; otherwise (time segments, event lists) no proposal. Offsets are code points (UTF-16 sources misalign after emoji; caught when spans carry text). Tests:
   `tests/test_span_offsets_import.py`.
 - **One span field**: `bio_to_spans` now writes `entities` (a list) by default — the field the
   structured-extraction adapter, `train_token_classification.row_to_example` and the eval handler read.

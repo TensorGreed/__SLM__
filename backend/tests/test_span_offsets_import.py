@@ -116,12 +116,79 @@ def test_introspector_proposes_span_offsets_mapper_even_with_negatives():
     assert proposal.confidence >= 0.8
 
 
-def test_introspector_flags_offsets_that_do_not_fit_the_text():
+def _span_hyps(sample):
+    return [h for h in detect_shape(sniff_columns(sample), sample) if h.mapper_id == "span_offsets_passthrough"]
+
+
+def test_offsets_that_mostly_do_not_fit_the_text_are_not_proposed():
     bad = {"text": "Short text here.", "entities": [{"type": "x", "start": 3, "end": 400}]}
-    sample = [ROW_A, bad]
-    hyps = [h for h in detect_shape(sniff_columns(sample), sample) if h.mapper_id == "span_offsets_passthrough"]
+    assert _span_hyps([ROW_A, bad]) == []
+
+
+def test_one_misfit_among_many_spans_proposes_below_the_gate():
+    bad = {"text": "Short text here.", "entities": [{"type": "x", "start": 3, "end": 400}]}
+    sample = [ROW_A, ROW_B, ROW_A, ROW_B, bad]  # 1 misfit of 7 spans
+    hyps = _span_hyps(sample)
+    assert hyps and hyps[0].confidence < 0.8 and hyps[0].warnings
+
+
+SPEECH = "Well, I think we should start the meeting now. Agreed, let's begin with the budget."
+
+
+def test_float_time_segments_are_not_proposed():
+    rows = [{"text": SPEECH, "segments": [{"label": "spk1", "start": 0.5, "end": 2.25}, {"label": "spk2", "start": 2.3, "end": 4.0}]}] * 3
+    assert sniff_columns(rows)["segments"].column_type == ENTITY_LIST_JSON
+    assert _span_hyps(rows) == []
+    assert propose_mapping(rows).mapper_id == "text_only"
+
+
+def test_integer_time_segments_without_span_text_are_not_proposed():
+    rows = [{"text": SPEECH, "segments": [{"label": "spk1", "start": 0, "end": 12}, {"label": "spk2", "start": 12, "end": 30}]}] * 3
+    assert _span_hyps(rows) == []
+    assert propose_mapping(rows).mapper_id == "text_only"
+
+
+def test_type_keyed_event_lists_without_span_text_are_not_proposed():
+    rows = [{"text": SPEECH, "events": [{"type": "pause", "start": 3, "end": 9}]}] * 3
+    assert _span_hyps(rows) == []
+
+
+def test_type_keyed_entities_without_span_text_need_force():
+    rows = [{"text": TEXT_A, "entities": [{"type": "email", "start": 9, "end": 25}]}] * 3
+    hyps = _span_hyps(rows)
     assert hyps and hyps[0].confidence < 0.8
-    assert hyps[0].warnings
+    assert "can't be checked" in hyps[0].warnings[0]
+
+
+@pytest.mark.parametrize("bad", ["--3", "\u00b2", "1.5", 1.5, True, None, "x"])
+def test_odd_offsets_are_rejected_not_raised(bad):
+    accepted, rejected = _run([{"text": "Some text", "entities": [{"type": "x", "start": bad, "end": 4}]}])
+    assert accepted == []
+    assert [r.reason for r in rejected] == ["bad_span"]
+
+
+def test_string_and_integral_float_offsets_are_read():
+    accepted, rejected = _run([{"text": "Some text", "entities": [{"type": "x", "start": "0", "end": 4.0}]}])
+    assert rejected == []
+    assert accepted[0].payload["entities"][0] == {"type": "x", "start": 0, "end": 4, "text": "Some"}
+
+
+EMOJI_TEXT = "Hi \U0001F600 mail jane@example.com now"
+
+
+def test_code_point_offsets_after_an_emoji_are_kept():
+    start = EMOJI_TEXT.index("jane")
+    row = {"text": EMOJI_TEXT, "entities": [{"type": "email", "start": start, "end": start + 16, "text": "jane@example.com"}]}
+    accepted, rejected = _run([row])
+    assert rejected == []
+    assert accepted[0].payload["entities"][0]["start"] == start
+
+
+def test_utf16_offsets_after_an_emoji_are_caught_by_the_span_text():
+    start = EMOJI_TEXT.index("jane") + 1  # UTF-16 counts the emoji as two units
+    row = {"text": EMOJI_TEXT, "entities": [{"type": "email", "start": start, "end": start + 16, "text": "jane@example.com"}]}
+    accepted, rejected = _run([row])
+    assert [r.reason for r in rejected] == ["span_text_mismatch"]
 
 
 def test_preview_end_to_end_from_jsonl(tmp_path: Path):

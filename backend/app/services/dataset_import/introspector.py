@@ -40,6 +40,12 @@ CONFIDENCE_HIGH: float = 0.8
 Below this the CLI requires ``--force`` and the UI shows a warning."""
 
 
+# span_offsets_passthrough: the share of sampled spans that must be integer
+# offsets inside the text (and, where they carry text, match it).
+SPAN_FIT_MIN: float = 0.8
+_SPAN_COLUMN_NAMES = {"entities", "spans", "annotations", "entity_spans", "mentions"}
+
+
 # ── Column types ──────────────────────────────────────────────────────
 
 
@@ -689,15 +695,23 @@ def detect_shape(
 
     # ── span_offsets_passthrough (spans with character offsets) ──
     # A text column + a list of {type, start, end} dicts: the span shape
-    # itself. Confidence drops below the auto-run gate when the sample's
-    # offsets don't fit its text (offsets into some other column).
+    # itself — but {label, start, end} lists are also time segments, event
+    # lists, token-index annotations. Proposed only when the sample shows
+    # character offsets into the text: integer offsets inside it on most
+    # spans AND, where spans carry their text (``text`` / ``value``), that
+    # text equals ``text[start:end]`` on most of them. Spans that carry no
+    # text can't be checked: proposed only for a ``type``-keyed list under a
+    # span-like column name, and below the auto-run gate.
     if entity_columns and text_columns:
+        from app.services.dataset_import.mappers.span_offsets_passthrough import parse_offset
+
         text_sig = next((s for s in text_columns if s.name.lower() == "text"), None) or next(
             (s for s in text_columns if s.name.lower() in {"full_text", "content", "document", "body", "sentence"}),
             text_columns[0],
         )
         for ent_sig in entity_columns:
-            checked = misfit = 0
+            checked = fit = with_text = text_match = 0
+            label_keyed = False
             for row in sample_rows:
                 text, ents = row.get(text_sig.name), row.get(ent_sig.name)
                 if not isinstance(text, str) or not isinstance(ents, list):
@@ -706,24 +720,38 @@ def detect_shape(
                     if not isinstance(ent, dict):
                         continue
                     checked += 1
-                    try:
-                        start, end = int(ent.get("start")), int(ent.get("end"))
-                    except (TypeError, ValueError):
-                        misfit += 1
+                    label_keyed = label_keyed or "type" not in ent
+                    start, end = parse_offset(ent.get("start")), parse_offset(ent.get("end"))
+                    if start is None or end is None or start < 0 or end > len(text) or end <= start:
                         continue
+                    fit += 1
                     span_text = ent.get("text") if ent.get("text") is not None else ent.get("value")
-                    if start < 0 or end > len(text) or end <= start or (
-                        span_text is not None and text[start:end] != str(span_text)
-                    ):
-                        misfit += 1
+                    if span_text is not None:
+                        with_text += 1
+                        text_match += int(text[start:end] == str(span_text))
+            if not checked or fit / checked < SPAN_FIT_MIN:
+                continue
+            if with_text and text_match / with_text < SPAN_FIT_MIN:
+                continue
+            span_named = ent_sig.name.lower() in _SPAN_COLUMN_NAMES
             warnings_spans: list[str] = []
-            confidence = 0.95 if ent_sig.name.lower() in {"entities", "spans", "annotations"} else 0.9
-            if misfit:
-                confidence = 0.6
+            if with_text:
+                confidence = 0.95 if span_named else 0.9
+                misfit = checked - fit + with_text - text_match
+                if misfit:
+                    confidence = 0.7
+                    warnings_spans.append(
+                        f"{misfit} of {checked} sampled spans don't fit '{text_sig.name}' "
+                        "(offset out of range or span text differs) — check the text column"
+                    )
+            elif span_named and not label_keyed:
+                confidence = 0.7
                 warnings_spans.append(
-                    f"{misfit} of {checked} sampled spans don't fit '{text_sig.name}' "
-                    "(offset out of range or span text differs) — check the text column"
+                    "the spans carry no text, so the offsets can't be checked against "
+                    f"'{text_sig.name}' — confirm they are character offsets into it"
                 )
+            else:
+                continue
             hypotheses.append(
                 ShapeHypothesis(
                     mapper_id="span_offsets_passthrough",
