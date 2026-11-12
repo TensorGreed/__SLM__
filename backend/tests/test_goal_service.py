@@ -444,6 +444,20 @@ class GoalServiceApiTests(unittest.TestCase):
         self.assertEqual(ev["recipe_pack_id"], "evalpack.rag_protocol.discipline")
         self.assertNotIn("min_citation_rate", {g["gate_id"] for g in ev["gate_breakdown"]})
 
+    def test_general_default_recipe_pack_is_not_suggested(self):
+        # Most recipes name evalpack.general.default while a project with no
+        # preference resolves to its domain-profile pack; that is not a
+        # suggestion worth showing on every project.
+        pid = self._create_project()
+        asyncio.run(self._apply_recipe(pid, "generic-sft"))
+        asyncio.run(self._seed_rag_eval_result(pid, pass_rate=0.62, metrics={"f1": 0.62}))
+        resolved = self.client.get(f"/api/projects/{pid}/evaluation/pack-preference").json()
+        self.assertNotEqual(resolved["active_pack_id"], "evalpack.general.default")
+        comp = {c["id"]: c for c in self.client.get(f"/api/projects/{pid}/goal/progress").json()["components"]}
+        ev = comp["eval_pass_rate"]
+        self.assertEqual(ev["gate_breakdown_pack_id"], resolved["active_pack_id"])
+        self.assertIsNone(ev["recipe_pack_id"])
+
     async def _seed_rag_eval_result(
         self, project_id: int, pass_rate: float, metrics: dict[str, float],
     ) -> None:

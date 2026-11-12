@@ -289,16 +289,28 @@ async def _gating_pack(db: AsyncSession, project_id: int) -> tuple[dict[str, Any
 
 async def _eval_rules_provenance(db: AsyncSession, project: Project) -> dict[str, Any]:
     """Which rule set the ledger's breakdown comes from, plus the selected
-    recipe's suggested rule set when it differs (so the UI can say the
-    recipe's rules are not the ones gating, and how to switch)."""
+    recipe's suggested rule set when it is task-specific (not the general
+    default) and differs (so the UI can say the recipe's rules are not the
+    ones gating, and how to switch)."""
     pack, source = await _gating_pack(db, int(project.id))
     pack_id = str((pack or {}).get("pack_id") or "") or None
     recipe = project.selected_recipe if isinstance(project.selected_recipe, dict) else {}
     recipe_pack_id = str(recipe.get("eval_pack_id") or "") or None
+    from app.services.evaluation_pack_service import DEFAULT_EVALUATION_PACK_ID
+
+    # Only a recipe that carries a task-specific pack is a suggestion worth
+    # showing. Most recipes name the general default, while a project with
+    # no preference resolves to its domain-profile pack — telling every such
+    # project to switch to the generic gates would be noise (and bad advice).
+    suggest = (
+        recipe_pack_id
+        and recipe_pack_id != DEFAULT_EVALUATION_PACK_ID
+        and recipe_pack_id != pack_id
+    )
     return {
         "gate_breakdown_pack_id": pack_id,
         "gate_breakdown_pack_source": source,
-        "recipe_pack_id": recipe_pack_id if recipe_pack_id and recipe_pack_id != pack_id else None,
+        "recipe_pack_id": recipe_pack_id if suggest else None,
     }
 
 
