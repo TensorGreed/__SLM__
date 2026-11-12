@@ -530,9 +530,9 @@ describe('GoldSetPanel — entries filter + mix summary', { retry: 2 }, () => {
         });
     });
 
-    it('code-review: manual add form shows (no LLM generator) and submits a Q+A row', async () => {
+    it('code-review: input-output form keeps a multi-line diff and hides the trap toggle', async () => {
         // code-review has no LLM answer-key generator, but hand entry must
-        // not depend on one. Its rows are input → output pairs, stored as Q+A.
+        // not depend on one. Its rows are input -> output pairs, stored as Q+A.
         installGetRouter({ recipeId: 'code-review', entries: [makeQaEntry({ question: '+ x == null', answer: 'Use ===.' })] });
         apiMock.post.mockResolvedValue({ data: { id: 3 } });
         renderPanel(<GoldSetPanel projectId={7} />);
@@ -541,11 +541,15 @@ describe('GoldSetPanel — entries filter + mix summary', { retry: 2 }, () => {
         expect(screen.queryByTestId('llm-gold-generate-stub')).not.toBeInTheDocument();
         await screen.findByTestId('gold-entry-row-0');
         expect(screen.getByText(/x == null/)).toBeInTheDocument();
-        expect(screen.getByText(/Use ===\./)).toBeInTheDocument();
 
-        fireEvent.change(screen.getByTestId('gold-add-question'), {
-            target: { value: '+ if (a == null) return;' },
-        });
+        // Labels fit the task; no hallucination-trap toggle.
+        expect(screen.getByLabelText('Input')).toBe(screen.getByTestId('gold-add-question'));
+        expect(screen.getByText('Expected output')).toBeInTheDocument();
+        expect(screen.queryByTestId('gold-add-trap')).not.toBeInTheDocument();
+        expect(screen.getByTestId('gold-add-question').tagName).toBe('TEXTAREA');
+
+        const diff = ' function f(a) {\n-  if (a == null) return;\n+  if (a === null) return;\n }';
+        fireEvent.change(screen.getByTestId('gold-add-question'), { target: { value: diff } });
         fireEvent.change(screen.getByTestId('gold-add-answer'), {
             target: { value: 'Prefer === for the null check.' },
         });
@@ -555,12 +559,31 @@ describe('GoldSetPanel — entries filter + mix summary', { retry: 2 }, () => {
             expect(apiMock.post).toHaveBeenCalledWith(
                 '/projects/7/gold/add',
                 expect.objectContaining({
-                    question: '+ if (a == null) return;',
+                    question: diff,
                     answer: 'Prefer === for the null check.',
                     dataset_type: 'gold_dev',
                 }),
             );
         });
+        const body = (apiMock.post.mock.calls.at(-1) as unknown[])[1] as Record<string, unknown>;
+        expect(String(body.question).split('\n')).toHaveLength(4);
+        expect(body).not.toHaveProperty('is_hallucination_trap');
+    });
+
+    it('generic-sft: hand entry uses the input-output form', async () => {
+        installGetRouter({ recipeId: 'generic-sft', entries: [] });
+        renderPanel(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+        expect(screen.getByLabelText('Input')).toBeInTheDocument();
+        expect(screen.queryByTestId('gold-add-trap')).not.toBeInTheDocument();
+    });
+
+    it('qa-sft keeps the Question label and the trap toggle', async () => {
+        installGetRouter({ recipeId: 'qa-sft', entries: [] });
+        renderPanel(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+        expect(screen.getByLabelText('Question')).toBeInTheDocument();
+        expect(screen.getByTestId('gold-add-trap')).toBeInTheDocument();
     });
 
     it('recipe with no hand-entry shape still hides the add form', async () => {

@@ -6,6 +6,10 @@
  *
  * Field shapes per recipe:
  *   * qa-sft         → Question + Answer + difficulty + trap toggle
+ *                      (``variant="input-output"``: Input + Expected output +
+ *                      difficulty, no trap toggle — free-form input → output
+ *                      recipes that store rows as Q+A). Both fields are
+ *                      multi-line so pasted diffs / documents keep their lines.
  *   * classification → Text + Label (combobox of known labels)
  *   * span-extraction→ Text + Entities JSON editor (live validation)
  *   * summarization  → Document (long) + Summary
@@ -51,6 +55,12 @@ export interface GoldAddPayload {
 
 interface Props {
     recipeId: GoldRowRecipe;
+    /** Only for ``recipeId="qa-sft"``. ``input-output`` is a recipe that
+     *  borrows the Q+A row shape (one input text → one output text) but is
+     *  not a Q&A task: neutral labels, the input is sent untrimmed (leading
+     *  whitespace is meaningful in a diff), and the hallucination-trap
+     *  toggle is hidden (it has no meaning there). */
+    variant?: 'qa' | 'input-output';
     /** Existing classification labels (extracted from the current
      *  gold rows) — populates the combobox so users tend to reuse
      *  the existing label vocabulary instead of inventing new ones
@@ -143,6 +153,7 @@ function validateSpansJson(jsonText: string, text: string): SpanJsonValidation {
 
 export default function GoldEntryAddForm({
     recipeId,
+    variant = 'qa',
     knownLabels = [],
     knownSpanTypes = [],
     onAdd,
@@ -188,7 +199,7 @@ export default function GoldEntryAddForm({
         setSelectionStart(null); setSelectionEnd(null); setSelectionType('');
         setDoc(''); setSummary('');
         setSubmitError(null);
-    }, [recipeId]);
+    }, [recipeId, variant]);
 
     // Editing the source text invalidates any captured offsets —
     // a selection of [8:24] meant "jane@example.com" in the old
@@ -387,6 +398,7 @@ export default function GoldEntryAddForm({
         recipeId, submitting, question, answer, text, label,
         spanText, spanValidation.error, doc, summary,
     ]);
+    const inputOutput = variant === 'input-output';
 
     const handleSubmit = async () => {
         if (!canSubmit) return;
@@ -395,12 +407,20 @@ export default function GoldEntryAddForm({
         let payload: GoldAddPayload;
         switch (recipeId) {
             case 'qa-sft':
-                payload = {
-                    question: question.trim(),
-                    answer: answer.trim(),
-                    difficulty,
-                    is_hallucination_trap: isTrap,
-                };
+                payload = variant === 'input-output'
+                    ? {
+                        // Untrimmed: a diff's leading context space / line
+                        // breaks are part of the input.
+                        question,
+                        answer: answer.trim(),
+                        difficulty,
+                    }
+                    : {
+                        question: question.trim(),
+                        answer: answer.trim(),
+                        difficulty,
+                        is_hallucination_trap: isTrap,
+                    };
                 break;
             case 'classification':
                 payload = { text: text.trim(), label: label.trim() };
@@ -446,20 +466,24 @@ export default function GoldEntryAddForm({
             {recipeId === 'qa-sft' && (
                 <>
                     <div className="form-group">
-                        <label className="form-label">Question</label>
-                        <input
-                            className="input"
-                            placeholder="Enter a question..."
+                        <label className="form-label" htmlFor="gold-add-question-input">
+                            {inputOutput ? 'Input' : 'Question'}
+                        </label>
+                        <textarea
+                            id="gold-add-question-input"
+                            className="input gold-textarea"
+                            rows={inputOutput ? 6 : 2}
+                            placeholder={inputOutput ? 'Paste the input exactly as the model will see it...' : 'Enter a question...'}
                             value={question}
                             onChange={(e) => setQuestion(e.target.value)}
                             data-testid="gold-add-question"
                         />
                     </div>
                     <div className="form-group">
-                        <label className="form-label">Expected Answer</label>
+                        <label className="form-label">{inputOutput ? 'Expected output' : 'Expected Answer'}</label>
                         <textarea
                             className="input gold-textarea"
-                            placeholder="Expected answer..."
+                            placeholder={inputOutput ? 'Expected output...' : 'Expected answer...'}
                             value={answer}
                             onChange={(e) => setAnswer(e.target.value)}
                             data-testid="gold-add-answer"
@@ -478,18 +502,20 @@ export default function GoldEntryAddForm({
                             <option value="medium">Medium</option>
                             <option value="hard">Hard</option>
                         </select>
-                        <label
-                            className="form-label"
-                            style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-                        >
-                            <input
-                                type="checkbox"
-                                checked={isTrap}
-                                onChange={(e) => setIsTrap(e.target.checked)}
-                                data-testid="gold-add-trap"
-                            />
-                            Hallucination Trap
-                        </label>
+                        {!inputOutput && (
+                            <label
+                                className="form-label"
+                                style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={isTrap}
+                                    onChange={(e) => setIsTrap(e.target.checked)}
+                                    data-testid="gold-add-trap"
+                                />
+                                Hallucination Trap
+                            </label>
+                        )}
                     </div>
                 </>
             )}

@@ -35,22 +35,30 @@ const SUPPORTED_LLM_GOLD_RECIPES = new Set([
  *  mapped to the row shape they use. Independent of LLM support above:
  *  hand entry needs no generator (``POST /gold/add`` is recipe-agnostic),
  *  so a recipe can be here without being in SUPPORTED_LLM_GOLD_RECIPES.
- *  Recipes whose rows are a plain input → output pair (the ``qa-pair``
- *  adapter, e.g. code-review) use the Q+A shape — that is what the
- *  answer-key scorer reads, and a top-level ``review`` key would collide
- *  with the human-review block. */
+ *  Free-form ``instruction_sft`` recipes (one input text → one output
+ *  text: code-review, generic-sft) store rows as Q+A — that is what the
+ *  answer-key scorer and the leakage scan read, and code-review's own
+ *  ``review`` column name would collide with the human-review block.
+ *  They use the form's ``input-output`` variant (Input / Expected
+ *  output, no hallucination-trap toggle). */
 const ANSWER_KEY_ROW_SHAPE: Readonly<Record<string, GoldRowRecipe>> = {
     'qa-sft': 'qa-sft',
     classification: 'classification',
     'span-extraction': 'span-extraction',
     summarization: 'summarization',
     'code-review': 'qa-sft',
+    'generic-sft': 'qa-sft',
 };
 
 function answerKeyRowShape(recipeId: string | null | undefined): GoldRowRecipe | null {
     return recipeId && Object.prototype.hasOwnProperty.call(ANSWER_KEY_ROW_SHAPE, recipeId)
         ? ANSWER_KEY_ROW_SHAPE[recipeId]
         : null;
+}
+
+/** A recipe that borrows the Q+A shape without being a Q&A task. */
+function isBorrowedQaShape(recipeId: string | null | undefined): boolean {
+    return answerKeyRowShape(recipeId) === 'qa-sft' && recipeId !== 'qa-sft';
 }
 
 
@@ -681,6 +689,7 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                 {addFormShape ? (
                     <GoldEntryAddForm
                         recipeId={addFormShape}
+                        variant={isBorrowedQaShape(recipeId) ? 'input-output' : 'qa'}
                         knownLabels={knownClassificationLabels}
                         knownSpanTypes={knownSpanTypes}
                         onAdd={handleAddRow}

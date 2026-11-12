@@ -423,8 +423,12 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `SUPPORTED_LLM_GOLD_RECIPES` (mirrors `gold_llm_service.SUPPORTED_RECIPES`) shows the LLM generator;
   `ANSWER_KEY_ROW_SHAPE` (recipe → row shape) shows the manual add form + picks the row renderer.
   Hand entry needs no generator (`POST /gold/add` is recipe-agnostic, only `EMPTY_GOLD_ROW` is
-  rejected), so `code-review` is in the second map only, as the Q+A shape (its `qa-pair` adapter
-  input → output; a top-level `review` key would collide with `gold_review_service.REVIEW_KEY`).
+  rejected), so `code-review` and `generic-sft` are in the second map only. Free-form
+  `instruction_sft` recipes (one input text → one output text) store rows as Q+A (what the scorer
+  and leakage scan read; code-review's `review` column name would collide with
+  `gold_review_service.REVIEW_KEY`) and get `GoldEntryAddForm variant="input-output"`: Input /
+  Expected output labels, input sent untrimmed, no hallucination-trap toggle. The Question / Input
+  field is a textarea for every Q+A form, so pasted multi-line text keeps its line breaks.
   A recipe in neither map shows the "Choose a task type" hint.
 - **Train↔gold leakage** — `data_health_service.scan_train_gold_leakage`
   is the honesty guard on the eval gate: it scans GOLD_DEV/GOLD_TEST
