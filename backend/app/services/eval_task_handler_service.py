@@ -60,6 +60,16 @@ def strip_code_fences(text: str) -> str:
     return "\n".join(lines).strip()
 
 
+# Bumped whenever span_set scoring or its eval prompt changes, so a cached
+# base-model result scored the old way is never paired with a new tuned eval
+# (post_training_eval_service._baseline_scoring_matches). Results without it
+# predate version 2.
+#   2 (2026-11-12): bare-list references / predictions read as
+#     {"entities": [...]} (a list reference used to parse as its first span,
+#     so gold was empty), and list references no longer name prompt fields.
+SPAN_SET_SCORING_VERSION = 2
+
+
 @dataclass
 class EvalContext:
     """Read-only context passed to every handler call.
@@ -1670,6 +1680,7 @@ class StructuredExtractionHandler:
         if total == 0:
             return {
                 "scoring_mode": self.SCORING_MODE_SPAN_SET,
+                "span_set_scoring_version": SPAN_SET_SCORING_VERSION,
                 "precision": 0.0,
                 "recall": 0.0,
                 "f1": 0.0,
@@ -1826,6 +1837,7 @@ class StructuredExtractionHandler:
 
         return {
             "scoring_mode": self.SCORING_MODE_SPAN_SET,
+            "span_set_scoring_version": SPAN_SET_SCORING_VERSION,
             "precision": round(precision, 4),
             "recall": round(recall, 4),
             "f1": round(f1, 4),

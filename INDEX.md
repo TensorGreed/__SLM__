@@ -1223,6 +1223,7 @@ session-start guidance.
 - `backend/tests/test_span_packaging.py` — Epic P5 — packaging a span (token-classification) model:
 - `backend/tests/test_span_refine.py` — Refine weak types: the latest span_set evaluation names the types under
 - `backend/tests/test_span_relabel.py` — Answer key from a second model: relabel a split's texts (unchanged),
+- `backend/tests/test_span_set_scoring_version.py` — span_set results carry ``span_set_scoring_version``; a base-model result
 - `backend/tests/test_span_thresholds.py` — Per-type score thresholds tuned on the validation split (P1t), with
 - `backend/tests/test_span_type_definitions.py` — Entity-type definitions: one labelling convention for every model that
 - `backend/tests/test_split_content_hash.py` — Prepared-split content hash (answer-key identity that survives a re-stamp).

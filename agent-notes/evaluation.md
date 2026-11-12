@@ -1232,3 +1232,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `test_post_training_lift_eval.py`, `test_code_example_scoring.py`, `test_eval_summary.py`; frontend `unjudgedNotice.test.ts`,
   `EvalSummaryCard`, `NotificationBell`, `JudgeModelCard`, `SftLiftPanel` tests. Known limits: a local CLI timeout counts as
   transient (a prompt that always exceeds the timeout can stop a healthy judge after 3 such rows).
+
+## span_set scoring version (2026-11-12)
+
+- `eval_task_handler_service.SPAN_SET_SCORING_VERSION` (2) is stamped as `metrics.span_set_scoring_version` on every
+  span_set result. Bump it whenever span_set scoring or its eval prompt changes. `_baseline_scoring_matches` rejects
+  a cached span_set base result without the current version, so the lift check re-runs the base model instead of
+  pairing an old-scorer bar with a new tuned eval. The baseline *experiment* (`find_or_create_baseline_experiment`)
+  is still reused; only its cached results are skipped. Version 2 = bare-list references/predictions read as
+  `{"entities": [...]}` (v1 read a list reference as its first span: gold empty, so old numbers on bare-list
+  splits were vacuous) + list references no longer name prompt fields. Older results stay as recorded and are not
+  comparable to v2 ones. Tests: `tests/test_span_set_scoring_version.py`.

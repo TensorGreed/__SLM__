@@ -222,9 +222,16 @@ def _baseline_judge_matches(result: EvalResult, judge_label: str | None) -> bool
 
 def _baseline_scoring_matches(result: EvalResult, fingerprint: str | None, tool_call_fingerprint: str | None = None) -> bool:
     """A cached remediation / structured-plan result stands only if it was scored under the current scoring config;
+    a ``span_set`` result only if it carries the current ``span_set_scoring_version``;
     a ``tool_call`` result only if its ``tool_call_fingerprint`` (handler version + catalog + flags + settings)
     equals the current one (a result without one is never reused)."""
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
+    if metrics.get("scoring_mode") == "span_set":
+        # Scored (and prompted) under an older span_set version: re-run the base.
+        from app.services.eval_task_handler_service import SPAN_SET_SCORING_VERSION
+
+        if metrics.get("span_set_scoring_version") != SPAN_SET_SCORING_VERSION:
+            return False
     if metrics.get("scoring_mode") == "tool_call":
         if tool_call_fingerprint is None or metrics.get("tool_call_fingerprint") != tool_call_fingerprint:
             return False
