@@ -182,6 +182,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   this version" on `DataStudioDatasetVersionsPanel` both call activate (retrain
   then opens Training, which reads the now-active version). The active version
   defaults to the latest prepared run when none is explicitly activated.
+  Content hashes (2026-11-12): `_write_prepared_splits` also returns
+  `split_content_hash` per split; the manifest gains `content_hashes`
+  `{train, val, test}` beside `file_hashes`, and each new DatasetVersion manifest
+  `content_sha256`. The hash ignores only the `_source_document_id` /
+  `_source_document` stamps (a predefined re-import changes them, so the file
+  sha changes while the rows don't); old manifests are not backfilled. Readers:
+  Compare's answer-key identity and the lift check's base cache
+  (`agent-notes/evaluation.md`).
 - **Generic intake (Wave 2a)** — `app/utils/tabular_io.py` is the ONE reader
   for row files (CSV/TSV/JSON(L)/XLSX/Parquet; encoding: utf-8 → charset_normalizer
   only when it finds a non-Latin script → cp1252 → latin-1; delimiter sniffed).

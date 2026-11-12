@@ -47,10 +47,14 @@ def tearDownModule():  # noqa: N802 - unittest hook
         _client_cm.__exit__(None, None, None)
 
 
-def _rows_78(before: bool) -> dict:
+def _rows_78(before: bool, *, other_split: bool = False) -> dict:
     """78 rows scored 0/1 on ``correct``: rows 0-1 B fixed (A 0 -> B 1),
-    rows 2-8 B broke (A 1 -> B 0), rows 9-78 unchanged (half right)."""
+    rows 2-8 B broke (A 1 -> B 0), rows 9-78 unchanged (half right).
+    ``other_split``: the last row is a different question (another split), so
+    the two results' row keys differ -- identical keys would mean the same rows."""
     keys = [f"row{i:02d}" for i in range(78)]
+    if other_split:
+        keys[-1] = "new77"
     correct = []
     for i in range(78):
         if i < 2:
@@ -317,7 +321,7 @@ class CompareRowEvidenceTests(unittest.TestCase):
             a={"metrics": {"exact_match": A_EM}, "day": 5,
                "details": {"dataset": {"sha256": "a" * 64, "version": 3}, "row_scores": _rows_78(True)}},
             b={"metrics": {"exact_match": B_EM}, "day": 21,
-               "details": {"dataset": {"sha256": "b" * 64, "version": 5}, "row_scores": _rows_78(False)}},
+               "details": {"dataset": {"sha256": "b" * 64, "version": 5}, "row_scores": _rows_78(False, other_split=True)}},
         )
         body = _compare(pid, a, b)
         ev = body["row_evidence"]
@@ -338,7 +342,7 @@ class CompareRowEvidenceTests(unittest.TestCase):
         # the newest version then), B on day 20 (v5). Inferred hashes differ.
         pid, a, b = _seed(
             a={"metrics": {"exact_match": A_EM}, "day": 5, "details": {"row_scores": _rows_78(True)}},
-            b={"metrics": {"exact_match": B_EM}, "day": 20, "details": {"row_scores": _rows_78(False)}},
+            b={"metrics": {"exact_match": B_EM}, "day": 20, "details": {"row_scores": _rows_78(False, other_split=True)}},
         )
         body = _compare(pid, a, b)
         ev = body["row_evidence"]
@@ -358,7 +362,7 @@ class CompareRowEvidenceTests(unittest.TestCase):
         pid, a, b = _seed(
             a={"metrics": {"exact_match": A_EM}, "day": 5, "details": {"row_scores": _rows_78(True)}},
             b={"metrics": {"exact_match": B_EM}, "day": 21,
-               "details": {"dataset": {"sha256": "b" * 64, "version": 5}, "row_scores": _rows_78(False)}},
+               "details": {"dataset": {"sha256": "b" * 64, "version": 5}, "row_scores": _rows_78(False, other_split=True)}},
         )
         ev = _compare(pid, a, b)["row_evidence"]
         self.assertEqual(ev["message"], "answer key may differ: split v3 vs v5 (v3 inferred from eval time)")
@@ -385,7 +389,7 @@ class CompareRowEvidenceTests(unittest.TestCase):
             a={"metrics": {"exact_match": A_EM}, "day": 5,
                "details": {"dataset": {"sha256": "a" * 64, "version": 3}, "row_scores": _rows_78(True)}},
             b={"metrics": {"exact_match": B_EM}, "day": 21,
-               "details": {"dataset": {"sha256": "b" * 64, "version": 5}, "row_scores": _rows_78(False)}},
+               "details": {"dataset": {"sha256": "b" * 64, "version": 5}, "row_scores": _rows_78(False, other_split=True)}},
         )
         job_id = _add_job(pid, a, JobStatus.RUNNING)
         try:
@@ -490,5 +494,7 @@ class AnswerKeyStampTests(unittest.TestCase):
                     return matched, missing
 
             matched, missing = asyncio.run(_go())
-        self.assertEqual(matched, {"sha256": sha, "version": 1})
-        self.assertEqual(missing, {"sha256": None, "version": None})
+        self.assertEqual({k: matched[k] for k in ("sha256", "version")}, {"sha256": sha, "version": 1})
+        self.assertRegex(matched["content_sha256"], "^[0-9a-f]{64}$")
+        self.assertRegex(matched["eval_input_sha256"], "^[0-9a-f]{64}$")
+        self.assertEqual(missing, {"sha256": None, "content_sha256": None, "eval_input_sha256": None, "version": None})

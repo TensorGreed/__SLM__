@@ -1214,6 +1214,7 @@ session-start guidance.
 - `backend/tests/test_span_relabel.py` — Answer key from a second model: relabel a split's texts (unchanged),
 - `backend/tests/test_span_thresholds.py` — Per-type score thresholds tuned on the validation split (P1t), with
 - `backend/tests/test_span_type_definitions.py` — Entity-type definitions: one labelling convention for every model that
+- `backend/tests/test_split_content_hash.py` — Prepared-split content hash (answer-key identity that survives a re-stamp).
 - `backend/tests/test_split_defaults.py` — Wave 2d — safe data defaults a newcomer doesn't have to know about.
 - `backend/tests/test_split_keep_test.py` — split_dataset(keep_test=True): the active test rows stay verbatim, the
 - `backend/tests/test_sprint1.py` — _(no docstring)_

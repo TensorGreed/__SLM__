@@ -206,7 +206,7 @@ export default function CompareRowEvidence({
                 </p>
             )}
             {ev.comparability?.notes.map((note) => (
-                <p key={note} className="eval-compare__evidence-note">{note}</p>
+                <p key={note} className="eval-compare__evidence-note" data-testid="eval-compare-evidence-note">{note}</p>
             ))}
             {(ev.comparability?.caveats ?? []).map((caveat) => (
                 <p key={caveat} className="eval-compare__evidence-caveat" data-testid="eval-compare-evidence-caveat">{caveat}</p>

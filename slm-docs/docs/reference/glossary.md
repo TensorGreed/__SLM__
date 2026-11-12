@@ -56,6 +56,10 @@ Stage 10. Quantises / prunes a trained checkpoint. Methods: GGUF-Q4, GGUF-Q8, ON
 
 The 0.8 floor the [Schema introspection](#schema-introspection) pipeline applies before `--auto` will pick a mapping for you. Below the threshold, the CLI refuses to proceed unless you pass `--force`; the UI surfaces a warning banner asking for explicit confirmation. Encodes the "no silent auto-mapping" rule from the dataset-import plan — the proposal can be wrong, so the user always confirms before rows land in a project.
 
+## Content hash
+
+A fingerprint of a prepared split's rows that ignores which uploaded file they were stamped with. Re-importing the same train / val / test files writes new bytes (each row records the new document's id), so the file hash changes while the content hash doesn't. Compare uses it to recognise the same answer key ("test file re-stamped (metadata only)"), and the lift check reuses a cached base-model result when the content hash and the prepared settings the eval reads are unchanged. Stored as `content_hashes` in the prepared manifest and `content_sha256` on each split version and eval result.
+
 ## Contract version
 
 A version pin on a plugin contract, e.g. `slm.data_adapter/v3`. A plugin declaring an older version is rejected by the loader. See [Plugin contracts](../extensions/contracts.md).

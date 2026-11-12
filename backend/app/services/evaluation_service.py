@@ -4161,6 +4161,10 @@ async def run_heldout_evaluation(
         # of the file read and the split version whose manifest matches it.
         "sha256": answer_key["sha256"],
         "version": answer_key["version"],
+        # Same rows whatever the source-document stamps say, and those rows + the
+        # prepared-manifest fields the eval reads (lift-check base cache, Compare).
+        "content_sha256": answer_key.get("content_sha256"),
+        "eval_input_sha256": answer_key.get("eval_input_sha256"),
     }
     details["inference"] = {
         "model_path": model_ref,

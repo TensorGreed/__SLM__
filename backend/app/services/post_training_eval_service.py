@@ -276,6 +276,45 @@ async def _reusable_baseline_result(
     decoding, so a fresh-enough result is exact, not approximate).
     ``scoring_fingerprint`` (remediation evals): the result must have been scored under the
     same detector / checks / retrieval / extra-field schema."""
+    found, _basis = await _reusable_baseline_result_with_basis(
+        db, baseline_exp, project_id, judge_label=judge_label, decoding=decoding,
+        scoring_fingerprint=scoring_fingerprint, tool_call_fingerprint=tool_call_fingerprint, checked=checked,
+    )
+    return found
+
+
+def _current_eval_input_sha256(project_id: int) -> str | None:
+    """``eval_input_sha256`` of the live ``prepared/test.jsonl`` + manifest
+    (``dataset_service.eval_input_identity``); None when unreadable."""
+    from app.services.dataset_service import eval_input_identity
+    from app.services.eval_task_handler_service import read_prepared_manifest
+
+    path = Path(settings.DATA_DIR) / "projects" / str(project_id) / "prepared" / "test.jsonl"
+    try:
+        return eval_input_identity(path, read_prepared_manifest(project_id))["eval_input_sha256"]
+    except OSError:
+        return None
+
+
+async def _reusable_baseline_result_with_basis(
+    db: AsyncSession,
+    baseline_exp: Experiment,
+    project_id: int,
+    *,
+    judge_label: str | None = None,
+    decoding: str = "neutral",
+    scoring_fingerprint: str | None = None,
+    tool_call_fingerprint: str | None = None,
+    checked: dict[str, Any] | None = None,
+) -> tuple[EvalResult | None, str | None]:
+    """``_reusable_baseline_result`` plus why it may be reused: ``"mtime"``
+    (newer than the test file) or ``"content"`` (older than a rewrite of the
+    test file, but its recorded ``details.dataset.eval_input_sha256`` -- the
+    rows with source stamps stripped + the prepared-manifest fields the eval
+    reads -- equals the live file's, e.g. a re-import that only re-stamped the
+    rows). The judge / decoding / scoring checks apply to both."""
+    import asyncio
+
     result = await db.execute(
         select(EvalResult)
         .where(EvalResult.experiment_id == baseline_exp.id)
@@ -284,17 +323,28 @@ async def _reusable_baseline_result(
         .limit(_REUSE_SCAN)
     )
     split_mtime = await _test_split_mtime(project_id)
+    current_input: list[str | None] = []  # computed once, only when a candidate predates the file
     for candidate in result.scalars().all():
         if candidate.created_at is None:
             continue
         created = candidate.created_at
         if created.tzinfo is None:
             created = created.replace(tzinfo=timezone.utc)
+        details = candidate.details if isinstance(candidate.details, dict) else {}
+        basis = "mtime"
         if split_mtime is not None and created < split_mtime:
-            return None  # this and every older result predate the split
+            # Predates the file: reusable only when the eval input is unchanged (a metadata-only
+            # rewrite). Skip, not stop -- an older result may still match.
+            recorded = (details.get("dataset") or {}).get("eval_input_sha256") if isinstance(details.get("dataset"), dict) else None
+            if not isinstance(recorded, str):
+                continue
+            if not current_input:
+                current_input.append(await asyncio.to_thread(_current_eval_input_sha256, project_id))
+            if current_input[0] is None or recorded != current_input[0]:
+                continue
+            basis = "content"
         # Results recorded before per-row scores were kept can't be paired row by
         # row with the fine-tuned eval ("within noise?") — re-run the base once.
-        details = candidate.details if isinstance(candidate.details, dict) else {}
         if not isinstance(details.get("row_scores"), dict):
             continue
         if not _baseline_judge_matches(candidate, judge_label):
@@ -303,8 +353,8 @@ async def _reusable_baseline_result(
             continue
         if not _baseline_scoring_matches(candidate, scoring_fingerprint, tool_call_fingerprint):
             continue
-        return candidate
-    return None
+        return candidate, basis
+    return None, None
 
 
 def choose_baseline_bar(neutral_metrics: Any, model_metrics: Any) -> dict[str, Any]:
@@ -440,7 +490,8 @@ async def _baseline_bar(
     (the Pub 17 reader's base + passages fell 0.551 → 0.331 without the
     penalty), nor for one decoded worse than BrewSLM decodes the run.
     Both results are kept and marked (``details.baseline_bar``) so the lift
-    summary reads the chosen one. Returns (bar result, both reused, bar)."""
+    summary reads the chosen one. Returns (bar result, both reused, bar,
+    reuse basis: "mtime" | "content" | None)."""
     import asyncio
 
     from app.services.decoding_settings import MODEL_DECODING, model_decoding_differs
@@ -461,11 +512,12 @@ async def _baseline_bar(
         normalize_policy(common.get("checked_decoding")),
         runtime_config=getattr(project_row, "runtime_config", None),
     ))
-    neutral = await _reusable_baseline_result(
+    neutral, neutral_basis = await _reusable_baseline_result_with_basis(
         db, baseline_exp, project_id, judge_label=judge_label, scoring_fingerprint=scoring_fp,
         tool_call_fingerprint=tool_fp, checked=checked,
     )
     reused = neutral is not None
+    bases = [neutral_basis]
     if neutral is None:
         await report(fractions[0], f"Evaluating base model {short_model_name(base_model)}")
         neutral = await run_heldout_evaluation(
@@ -482,10 +534,11 @@ async def _baseline_bar(
         bar = {"chosen": "neutral", "metric_id": None, "neutral": None, "model": None, "reason": reason}
         own_result = None
     else:
-        own_result = await _reusable_baseline_result(
+        own_result, own_basis = await _reusable_baseline_result_with_basis(
             db, baseline_exp, project_id, judge_label=judge_label, decoding=MODEL_DECODING,
             scoring_fingerprint=scoring_fp, tool_call_fingerprint=tool_fp, checked=checked,
         )
+        bases.append(own_basis)
         if own_result is None:
             reused = False
             await report(
@@ -504,7 +557,10 @@ async def _baseline_bar(
     chosen = own_result if bar["chosen"] == "model" else neutral
     await _mark_bar_results(db, baseline_exp, chosen, neutral if chosen is own_result else own_result, bar)
     await db.commit()
-    return chosen, reused, bar
+    # Why the cached base result(s) stood: "content" when any was reused across a metadata-only
+    # rewrite of the test file (same eval input), else "mtime"; None when the base was re-run.
+    basis = None if not reused else ("content" if "content" in bases else "mtime")
+    return chosen, reused, bar, basis
 
 
 async def _resolve_lift_judge(db: AsyncSession, project: Project):
@@ -745,7 +801,7 @@ async def run_post_training_lift_eval(
         db, project_id, exp.base_model, source="post_training.auto_lift"
     )
     await db.commit()
-    baseline_result, baseline_reused, baseline_bar = await _baseline_bar(
+    baseline_result, baseline_reused, baseline_bar, baseline_reuse_basis = await _baseline_bar(
         db, baseline_exp=baseline_exp, project_id=project_id, base_model=exp.base_model, common=common,
         judge_label=answer_judge.label if answer_judge else None, report=_report, fractions=(0.1, 0.3),
     )
@@ -781,6 +837,7 @@ async def run_post_training_lift_eval(
         "baseline_experiment_id": baseline_exp.id,
         "baseline_eval_result_id": getattr(baseline_result, "id", None),
         "baseline_reused": baseline_reused,
+        "baseline_reuse_basis": baseline_reuse_basis,
         "baseline_bar": baseline_bar,
         "trained_eval_result_id": getattr(trained_result, "id", None),
         "lift_status": summary.get("status"),
@@ -903,7 +960,7 @@ async def _run_seed_group_lift_eval(
         db, project.id, leader.base_model, source="post_training.auto_lift"
     )
     await db.commit()
-    baseline_result, baseline_reused, baseline_bar = await _baseline_bar(
+    baseline_result, baseline_reused, baseline_bar, baseline_reuse_basis = await _baseline_bar(
         db, baseline_exp=baseline_exp, project_id=project.id, base_model=leader.base_model, common=common,
         judge_label=answer_judge.label if answer_judge else None, report=report, fractions=(0.05, 0.1),
     )
@@ -964,6 +1021,7 @@ async def _run_seed_group_lift_eval(
         "baseline_experiment_id": baseline_exp.id,
         "baseline_eval_result_id": getattr(baseline_result, "id", None),
         "baseline_reused": baseline_reused,
+        "baseline_reuse_basis": baseline_reuse_basis,
         "baseline_bar": baseline_bar,
         "trained_eval_result_id": None,
         "lift_status": "ok" if headline else "no_overlap",

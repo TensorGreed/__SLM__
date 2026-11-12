@@ -16,8 +16,12 @@ older run with the lift check (``post_training_eval_service``) on the
 current answer key and judge.
 
 Also stamps the answer-key identity a held-out eval records
-(``answer_key_stamp``: the test file's sha256 + the split version it
-matches), so later comparisons don't have to infer it.
+(``answer_key_stamp``: the test file's sha256, its content hash, the
+eval-input hash + the split version it matches), so later comparisons don't
+have to infer it. A file re-stamped with new source-document ids (same rows)
+is the same answer key: the content hashes match (an older result's content
+hash is looked up among the retained split snapshots by file hash), or,
+when no content hash can be had, both evals scored identical row keys.
 """
 
 from __future__ import annotations
@@ -56,17 +60,28 @@ NO_ROW_SCORES_MESSAGE = "no per-row scores (evaluated before per-row capture)"
 
 
 async def answer_key_stamp(db: AsyncSession, dataset: Dataset, path: Path) -> dict[str, Any]:
-    """``{"sha256", "version"}`` of the held-out file an eval is about to read:
-    its content hash and the split version (``DatasetVersion.version``) whose
-    manifest recorded that hash, or None when no version matches (an edited
-    file, an answer key without versions). Never raises."""
-    from app.services.dataset_service import _sha256_file
+    """``{"sha256", "content_sha256", "eval_input_sha256", "version"}`` of the
+    held-out file an eval is about to read: its file hash, its content hash
+    (``dataset_service.split_content_hash``: the same rows whatever the
+    source-document stamps say), the eval-input hash (content + the prepared
+    manifest fields the eval reads, ``dataset_service.eval_input_identity``)
+    and the split version (``DatasetVersion.version``) whose manifest
+    recorded that file hash -- else that content hash -- or None when no
+    version matches (an edited file, an answer key without versions). Never
+    raises."""
+    from app.services.dataset_service import _sha256_file, eval_input_identity
+    from app.services.eval_task_handler_service import read_prepared_manifest
 
-    stamp: dict[str, Any] = {"sha256": None, "version": None}
+    stamp: dict[str, Any] = {"sha256": None, "content_sha256": None, "eval_input_sha256": None, "version": None}
     try:
         stamp["sha256"] = await asyncio.to_thread(_sha256_file, path)
     except OSError:
         return stamp
+    try:
+        manifest = await asyncio.to_thread(read_prepared_manifest, int(dataset.project_id))
+        stamp.update(await asyncio.to_thread(eval_input_identity, path, manifest))
+    except Exception:  # noqa: BLE001 - a stamp must never fail the eval
+        pass
     try:
         rows = await db.execute(
             select(DatasetVersion)
@@ -74,14 +89,73 @@ async def answer_key_stamp(db: AsyncSession, dataset: Dataset, path: Path) -> di
             .order_by(desc(DatasetVersion.version))
             .limit(50)
         )
-        for version in rows.scalars().all():
-            manifest = version.manifest if isinstance(version.manifest, dict) else {}
-            if manifest.get("sha256") == stamp["sha256"]:
-                stamp["version"] = int(version.version)
-                break
+        manifests = [(v, v.manifest if isinstance(v.manifest, dict) else {}) for v in rows.scalars().all()]
+        match = next((v for v, m in manifests if m.get("sha256") == stamp["sha256"]), None)
+        if match is None and stamp["content_sha256"]:
+            match = next((v for v, m in manifests if m.get("content_sha256") == stamp["content_sha256"]), None)
+        if match is not None:
+            stamp["version"] = int(match.version)
     except Exception:  # noqa: BLE001 - a stamp must never fail the eval
         pass
     return stamp
+
+
+# --------------------------------------------------------------------------
+# Content hash of an older result's file, found among the retained snapshots.
+# --------------------------------------------------------------------------
+
+# Split file a held-out dataset type reads (only prepared splits are snapshotted).
+_SPLIT_FILE_FOR_TYPE: dict[str, str] = {"test": "test.jsonl", "validation": "val.jsonl", "train": "train.jsonl"}
+
+# (path, mtime_ns, size, keep_stamps) -> (file sha256, content sha256). In memory only.
+_FILE_HASH_MEMO: dict[tuple[str, int, int, bool], tuple[str, str]] = {}
+_FILE_HASH_MEMO_MAX = 512
+
+
+def _hashes_of(path: Path, keep_stamps: bool) -> tuple[str, str] | None:
+    from app.services.dataset_service import _sha256_file, split_content_hash
+
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    key = (str(path), int(st.st_mtime_ns), int(st.st_size), keep_stamps)
+    hit = _FILE_HASH_MEMO.get(key)
+    if hit is not None:
+        return hit
+    try:
+        value = (_sha256_file(path), split_content_hash(path, keep_source_stamps=keep_stamps))
+    except OSError:
+        return None
+    if len(_FILE_HASH_MEMO) >= _FILE_HASH_MEMO_MAX:
+        _FILE_HASH_MEMO.clear()
+    _FILE_HASH_MEMO[key] = value
+    return value
+
+
+def content_hash_for_file_sha(
+    project_id: int, dataset_type: str | None, file_sha: str | None, *, keep_stamps: bool = False
+) -> str | None:
+    """The content hash of the split file whose bytes hashed to ``file_sha``,
+    for results stamped before content hashes existed. ``DatasetVersion.file_path``
+    points at the live file (overwritten since), so the bytes are looked for in
+    the live file and the retained ``prepared/versions/*/`` snapshots (pruned to
+    the newest few). Read-only -- nothing is written back -- and memoised in
+    memory by (path, mtime, size); None when no retained file has that hash."""
+    from app.services.dataset_service import _prep_dir, list_prepared_version_snapshots
+
+    name = _SPLIT_FILE_FOR_TYPE.get(str(dataset_type or ""))
+    if not name or not file_sha:
+        return None
+    prep = _prep_dir(project_id)
+    candidates = [prep / name] + [
+        prep / "versions" / str(v) / name for v in list_prepared_version_snapshots(project_id)
+    ]
+    for path in candidates:
+        hashes = _hashes_of(path, keep_stamps)
+        if hashes is not None and hashes[0] == file_sha:
+            return hashes[1]
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -116,9 +190,20 @@ async def _answer_key(db: AsyncSession, er: EvalResult) -> dict[str, Any]:
         "version_source": None,
         "inferred_sha256": None,
     }
+    for key in ("content_sha256", "eval_input_sha256"):
+        out[key] = dataset.get(key) if isinstance(dataset.get(key), str) else None
+    out["content_source"] = "recorded" if out["content_sha256"] else None
+    out["inferred_content_sha256"] = None
     if out["version"] is not None:
         out["version_source"] = "recorded"
-    if out["sha256"] is not None or dataset_id is None or er.created_at is None:
+    remediation = _metrics(er).get("scoring_mode") == "remediation"
+    if out["sha256"] is not None:
+        if out["content_sha256"] is None and dataset_id is not None:
+            # Stamped before content hashes: look for the file's bytes in the retained snapshots.
+            out["content_sha256"] = await _snapshot_content_hash(db, dataset_id, out, out["sha256"], remediation)
+            out["content_source"] = "snapshot" if out["content_sha256"] else None
+        return out
+    if dataset_id is None or er.created_at is None:
         return out
     try:
         row = (
@@ -137,7 +222,32 @@ async def _answer_key(db: AsyncSession, er: EvalResult) -> dict[str, Any]:
         out["version_source"] = "inferred"
         if isinstance(manifest.get("sha256"), str):
             out["inferred_sha256"] = manifest["sha256"]
+        # The inferred version's content hash: from its manifest (written since
+        # content hashes exist; source stamps stripped, so not for remediation),
+        # else from a retained snapshot with the same bytes.
+        if isinstance(manifest.get("content_sha256"), str) and not remediation:
+            out["inferred_content_sha256"] = manifest["content_sha256"]
+        elif out["inferred_sha256"]:
+            out["inferred_content_sha256"] = await _snapshot_content_hash(
+                db, dataset_id, out, out["inferred_sha256"], remediation
+            )
     return out
+
+
+async def _snapshot_content_hash(
+    db: AsyncSession, dataset_id: int, key: dict[str, Any], file_sha: str, remediation: bool
+) -> str | None:
+    try:
+        ds = await db.get(Dataset, dataset_id)
+        if ds is None:
+            return None
+        dtype = getattr(ds.dataset_type, "value", ds.dataset_type)
+        return await asyncio.to_thread(
+            content_hash_for_file_sha, int(ds.project_id), str(dtype or key.get("dataset_type") or ""), file_sha,
+            keep_stamps=remediation,
+        )
+    except Exception:  # noqa: BLE001 - provenance is best-effort
+        return None
 
 
 def _judge(er: EvalResult) -> dict[str, Any]:
@@ -232,6 +342,16 @@ def _format_before_check(metrics: dict[str, Any]) -> bool:
     return isinstance(block, dict) and block.get("enabled") is True
 
 
+def _row_keys_sha256(er: EvalResult) -> str | None:
+    import hashlib
+
+    rows = _details(er).get("row_scores")
+    keys = rows.get("keys") if isinstance(rows, dict) else None
+    if not isinstance(keys, list) or not keys:
+        return None
+    return hashlib.sha256("\n".join(sorted(str(k) for k in keys)).encode("utf-8")).hexdigest()
+
+
 async def eval_provenance(db: AsyncSession, exp: Experiment, er: EvalResult | None) -> dict[str, Any]:
     """What one side of a comparison was scored against — shown on both
     Compare cards so the user can see exactly what was compared."""
@@ -245,6 +365,7 @@ async def eval_provenance(db: AsyncSession, exp: Experiment, er: EvalResult | No
             "judge": None,
             "scoring": None,
             "has_row_scores": False,
+            "row_keys_sha256": None,
             "checked_decoding": None,
         }
     return {
@@ -256,6 +377,9 @@ async def eval_provenance(db: AsyncSession, exp: Experiment, er: EvalResult | No
         "judge": _judge(er),
         "scoring": _scoring(er),
         "has_row_scores": isinstance(_details(er).get("row_scores"), dict),
+        # Which rows were scored (sha256 of the sorted per-row keys): identical lists mean the same
+        # questions and references, even when an older result has no content hash.
+        "row_keys_sha256": _row_keys_sha256(er),
         # Opt-in checked decoding: what the retries did (None when off; key absent before it existed).
         "checked_decoding": checked_decoding_summary(_metrics(er)),
     }
@@ -309,9 +433,46 @@ def _inferred_suffix(key_a: dict[str, Any], key_b: dict[str, Any], label_a: str,
     return ""
 
 
-def _answer_key_difference(key_a: dict[str, Any], key_b: dict[str, Any]) -> dict[str, Any] | None:
+RESTAMPED_NOTE = (
+    "Same answer key: the test file was re-stamped (metadata only) between the two evals; "
+    "its rows are identical, so the two evals are paired."
+)
+SAME_ROWS_NOTE = (
+    "Same answer key: same rows evaluated (every question and reference matches), although the "
+    "split file differs between the two evals."
+)
+
+
+def _content_identity(key_a: dict[str, Any], key_b: dict[str, Any]) -> dict[str, Any] | None:
+    """Same rows? ``{"same": bool, "inferred": bool, "settings_changed": bool}``
+    from the content / eval-input hashes, None when either side has none.
+    Both eval-input hashes recorded -> they decide (same rows + same
+    prepared settings the eval reads); otherwise the content hashes."""
+    ia, ib = key_a.get("eval_input_sha256"), key_b.get("eval_input_sha256")
+    ca = key_a.get("content_sha256") or key_a.get("inferred_content_sha256")
+    cb = key_b.get("content_sha256") or key_b.get("inferred_content_sha256")
+    inferred = not (key_a.get("content_sha256") and key_b.get("content_sha256"))
+    if ia and ib:
+        same_rows = bool(ca and cb and ca == cb)
+        return {"same": ia == ib, "inferred": False, "settings_changed": ia != ib and same_rows}
+    if ca and cb:
+        return {"same": ca == cb, "inferred": inferred, "settings_changed": False}
+    return None
+
+
+def _same_rows(rows_a: Any, rows_b: Any) -> bool:
+    return isinstance(rows_a, str) and rows_a == rows_b
+
+
+def _answer_key_difference(
+    key_a: dict[str, Any], key_b: dict[str, Any], *, rows_a: str | None = None, rows_b: str | None = None
+) -> dict[str, Any] | None:
     """``{message, a, b, inferred}`` when the two answer keys differ (or may),
-    None when they match, ``{"unknown": True}`` when it can't be told."""
+    None when they match, ``{"unknown": True}`` when it can't be told,
+    ``{"same": True, "note"}`` when the files differ but the rows don't:
+    the content (or eval-input) hashes match -- a re-stamp -- or, when
+    those can't be told, both evals scored exactly the same rows
+    (``rows_a`` / ``rows_b``: ``row_keys_sha256`` of each result)."""
     type_a, type_b = key_a.get("dataset_type"), key_b.get("dataset_type")
     if type_a and type_b and type_a != type_b:
         return {"message": f"different answer key: {answer_key_label(key_a)} vs {answer_key_label(key_b)}",
@@ -320,6 +481,19 @@ def _answer_key_difference(key_a: dict[str, Any], key_b: dict[str, Any]) -> dict
     sha_a = key_a.get("sha256") or key_a.get("inferred_sha256")
     sha_b = key_b.get("sha256") or key_b.get("inferred_sha256")
     inferred = not (key_a.get("sha256") and key_b.get("sha256"))
+    if sha_a and sha_b and sha_a != sha_b:
+        # Runs before the "split vA vs vB" branch: a re-stamp is the same answer key.
+        content = _content_identity(key_a, key_b)
+        if content is not None and content["same"]:
+            note = RESTAMPED_NOTE + (" (One side's content hash is inferred from eval time.)" if content["inferred"] else "")
+            return {"same": True, "note": note}
+        if content is not None and content["settings_changed"]:
+            return {"message": "different eval input: same test rows, but the prepared settings the eval reads "
+                               "(task profile, output schema, labels, prompt wiring) changed",
+                    "a": str(key_a.get("eval_input_sha256"))[:8], "b": str(key_b.get("eval_input_sha256"))[:8],
+                    "inferred": False}
+        if content is None and _same_rows(rows_a, rows_b):
+            return {"same": True, "note": SAME_ROWS_NOTE}
     if sha_a and sha_b:
         if sha_a == sha_b:
             return None
@@ -335,6 +509,8 @@ def _answer_key_difference(key_a: dict[str, Any], key_b: dict[str, Any]) -> dict
     if va is not None and vb is not None and key_a.get("dataset_id") == key_b.get("dataset_id"):
         if va == vb:
             return None
+        if _same_rows(rows_a, rows_b):
+            return {"same": True, "note": SAME_ROWS_NOTE}
         inferred = "inferred" in (key_a.get("version_source"), key_b.get("version_source"))
         lead = "answer key may differ" if inferred else "different answer key"
         return {"message": f"{lead}: split v{va} vs v{vb}" + _inferred_suffix(key_a, key_b, f"v{va}", f"v{vb}"),
@@ -378,8 +554,17 @@ def compare_provenance(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     def _diff(kind: str, message: str, a_value: Any, b_value: Any, inferred: bool = False) -> None:
         differences.append({"kind": kind, "message": message, "a": a_value, "b": b_value, "inferred": inferred})
 
-    key_diff = _answer_key_difference(a.get("answer_key") or {}, b.get("answer_key") or {})
-    if key_diff is not None and key_diff.get("unknown"):
+    # Identical row keys stand in for a content hash an older result lacks -- not for remediation,
+    # whose rows also pick passages by source document (a stamp the row keys don't see).
+    remediation = "remediation" in ((a.get("scoring") or {}).get("scoring_mode"), (b.get("scoring") or {}).get("scoring_mode"))
+    key_diff = _answer_key_difference(
+        a.get("answer_key") or {}, b.get("answer_key") or {},
+        rows_a=None if remediation else a.get("row_keys_sha256"),
+        rows_b=None if remediation else b.get("row_keys_sha256"),
+    )
+    if key_diff is not None and key_diff.get("same"):
+        notes.append(key_diff["note"])
+    elif key_diff is not None and key_diff.get("unknown"):
         notes.append(
             "Which answer-key version each eval used was not recorded; only rows both evals scored "
             "(same question and reference) are paired."

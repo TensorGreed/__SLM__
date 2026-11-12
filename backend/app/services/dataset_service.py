@@ -180,6 +180,89 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+# ── Split content hash (answer-key identity that survives a re-stamp) ──
+#
+# The file sha256 changes whenever a split file is rewritten, even when only
+# the provenance stamps changed (a predefined-split re-import re-stamps
+# every row with the NEW document's id / filename). The content hash keys on
+# what the rows say instead: each line is parsed, the stamp keys
+# ``_stamp_source_document`` writes are dropped (only those two -- other
+# ``_``-prefixed keys such as ``_source_dataset`` / ``_row_index`` can steer
+# prompting or scoring, so they stay), and the row is re-serialised as
+# canonical JSON. Row order counts (a ``max_samples`` eval reads the first N
+# rows). Blank lines are skipped, as every reader skips them; a line that
+# isn't valid JSON is hashed as its stripped raw text behind a marker, so
+# editing it still changes the hash. Computed from the re-read FILE both at
+# write time and at eval time, so the two always agree.
+SOURCE_STAMP_KEYS: frozenset[str] = frozenset({"_source_document_id", "_source_document"})
+
+# The prepared-manifest fields a held-out eval reads (handler choice, prompt
+# shape, labels, scoring mode / schema). Two evals of the same rows are the
+# same eval input only when these agree too: a re-split that keeps the rows
+# but changes, say, ``output_schema`` must not reuse a cached base result.
+EVAL_INPUT_MANIFEST_KEYS: tuple[str, ...] = (
+    "task_profile",
+    "output_schema",
+    "labels",
+    "subtask",
+    "tgt_lang",
+    "target_language",
+    "chat_template",
+    "adapter_id",
+    "adapter_config",
+    "field_mapping",
+)
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def split_content_hash(path: Path | str, *, keep_source_stamps: bool = False) -> str:
+    """sha256 of a prepared split's rows with the source-document stamps
+    removed (see ``SOURCE_STAMP_KEYS``). ``keep_source_stamps=True`` keeps
+    them: remediation evals match passages to a row by
+    ``_source_document_id``, so for that scoring mode the stamp IS input.
+    Raises ``OSError`` when the file can't be read."""
+    h = hashlib.sha256()
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                row = json.loads(text)
+            except ValueError:
+                h.update(("\x00invalid:" + text + "\n").encode("utf-8"))
+                continue
+            if isinstance(row, dict) and not keep_source_stamps:
+                row = {k: v for k, v in row.items() if k not in SOURCE_STAMP_KEYS}
+            h.update((_canonical_json(row) + "\n").encode("utf-8"))
+    return h.hexdigest()
+
+
+def manifest_scoring_mode(manifest: Any) -> str | None:
+    schema = manifest.get("output_schema") if isinstance(manifest, dict) else None
+    mode = str((schema or {}).get("scoring_mode") or "").strip().lower() if isinstance(schema, dict) else ""
+    return mode or None
+
+
+def eval_input_identity(path: Path | str, manifest: Any) -> dict[str, Any]:
+    """``{"content_sha256", "eval_input_sha256"}`` for a held-out file and the
+    prepared manifest the eval reads with it. ``eval_input_sha256`` = sha256
+    of the content hash + the canonical ``EVAL_INPUT_MANIFEST_KEYS`` subset:
+    the lift check's base-result cache and Compare treat two evals as the
+    same input only when it matches. For ``remediation`` the content hash
+    keeps the source stamps (they pick the row's passages). Raises
+    ``OSError`` when the file can't be read."""
+    manifest = manifest if isinstance(manifest, dict) else {}
+    remediation = manifest_scoring_mode(manifest) == "remediation"
+    content = split_content_hash(path, keep_source_stamps=remediation)
+    subset = {key: manifest[key] for key in EVAL_INPUT_MANIFEST_KEYS if key in manifest}
+    eval_input = hashlib.sha256((content + "\n" + _canonical_json(subset)).encode("utf-8")).hexdigest()
+    return {"content_sha256": content, "eval_input_sha256": eval_input}
+
+
 def _normalize_adapter_id(value: Any) -> str:
     token = str(value or "").strip().lower().replace("_", "-").replace(" ", "-")
     return token or DEFAULT_ADAPTER_ID
@@ -1592,15 +1675,18 @@ async def _write_prepared_splits(
     chat_template: str,
     source_types: list[str],
     version_extra: dict[str, Any] | None = None,
-) -> tuple[dict[str, str], dict[str, str], dict[str, int], int | None]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, int], int | None, dict[str, str]]:
     """Write ``prepared/{train,val,test}.jsonl`` and the per-split Dataset +
     DatasetVersion rows. Shared by the random split and the predefined-split
     import so both produce identical on-disk artefacts. ``version_extra`` is
     merged into each DatasetVersion manifest: ``{"all": {...}}`` for every
-    split, ``{"per_split": {"train": {...}}}`` for one."""
+    split, ``{"per_split": {"train": {...}}}`` for one. Returns (file paths,
+    file sha256s, DatasetVersion numbers, prepared version, content hashes --
+    ``split_content_hash`` of each file as written)."""
     prep_dir = _prep_dir(project_id)
     file_paths: dict[str, str] = {}
     file_hashes: dict[str, str] = {}
+    content_hashes: dict[str, str] = {}
     dataset_versions: dict[str, int] = {}
 
     for split_name, split_data in splits.items():
@@ -1610,6 +1696,7 @@ async def _write_prepared_splits(
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         file_paths[split_name] = str(file_path)
         file_hashes[split_name] = _sha256_file(file_path)
+        content_hashes[split_name] = split_content_hash(file_path)
 
         ds_type = {
             "train": DatasetType.TRAIN,
@@ -1647,6 +1734,8 @@ async def _write_prepared_splits(
             "chat_template": chat_template,
             "count": len(split_data),
             "sha256": file_hashes[split_name],
+            # Same rows whatever the source-document stamps say (Compare / lift-check cache).
+            "content_sha256": content_hashes[split_name],
             "source_types": source_types,
         }
         if version_extra:
@@ -1668,7 +1757,7 @@ async def _write_prepared_splits(
     # as the single version the snapshot + activate flow keys off.
     prepared_version = max(dataset_versions.values()) if dataset_versions else None
 
-    return file_paths, file_hashes, dataset_versions, prepared_version
+    return file_paths, file_hashes, dataset_versions, prepared_version, content_hashes
 
 
 def _finalize_prepared_manifest(
@@ -2076,7 +2165,7 @@ async def split_dataset(
         disjoint_report.setdefault("warnings", []).append(note)
         provenance_report.setdefault("warnings", []).append(note)
 
-    file_paths, file_hashes, dataset_versions, prepared_version = await _write_prepared_splits(
+    file_paths, file_hashes, dataset_versions, prepared_version, content_hashes = await _write_prepared_splits(
         db,
         project_id,
         splits,
@@ -2107,6 +2196,7 @@ async def split_dataset(
         },
         "file_paths": file_paths,
         "file_hashes": file_hashes,
+        "content_hashes": content_hashes,
         "dataset_versions": dataset_versions,
         "prepared_version": prepared_version,
         "chat_template": chat_template,

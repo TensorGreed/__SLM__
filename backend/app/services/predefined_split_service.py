@@ -938,7 +938,7 @@ async def import_predefined_split(
         wiring_config = {k: v for k, v in (enriched_config or {}).items() if k not in recipe_keys}
         await _persist_adapter_preference(db, project_id, resolved_adapter_id, wiring_config, mapping, task_profile)
         splits = {role: mapped.get(role, []) for role in SPLIT_ROLES}
-        file_paths, file_hashes, dataset_versions, prepared_version = await _write_prepared_splits(
+        file_paths, file_hashes, dataset_versions, prepared_version, content_hashes = await _write_prepared_splits(
             db, project_id, splits, seed=seed, chat_template=chat_template, source_types=[DatasetType.RAW.value],
             version_extra={
                 "all": {"split_source": SPLIT_SOURCE},
@@ -967,6 +967,7 @@ async def import_predefined_split(
             },
             "file_paths": file_paths,
             "file_hashes": file_hashes,
+            "content_hashes": content_hashes,
             "dataset_versions": dataset_versions,
             "prepared_version": prepared_version,
             "chat_template": chat_template,

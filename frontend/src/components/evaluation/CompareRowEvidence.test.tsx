@@ -95,6 +95,17 @@ describe('CompareRowEvidence', () => {
         expect(screen.queryByTestId('eval-compare-rescore')).not.toBeInTheDocument();
     });
 
+    it('a re-stamped answer key gives a verdict and says why the files differ', () => {
+        const note = 'Same answer key: the test file was re-stamped (metadata only) between the two evals; '
+            + 'its rows are identical, so the two evals are paired.';
+        render(<CompareRowEvidence projectId={5} evidence={withinNoise({
+            comparability: { comparable: true, differences: [], notes: [note] },
+        })} a={prov()} b={prov()} />);
+        expect(screen.getByTestId('eval-compare-evidence')).toHaveAttribute('data-verdict', 'within_noise');
+        expect(screen.getByTestId('eval-compare-evidence-note')).toHaveTextContent(note);
+        expect(screen.queryByTestId('eval-compare-evidence-diffs')).not.toBeInTheDocument();
+    });
+
     it('within noise: adds the detectable-difference line; a clear gain does not', () => {
         // Backend: s_d² = 0.112721 → gap 0.1065 (~11 pts), rows(5 pts) 354 (~360).
         const sizing = {

@@ -145,6 +145,14 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
             metrics["judge"] = dict(self.result_judge_block)
             if "score" in self.result_judge_block:
                 metrics["judge_correct"] = self.result_judge_block["score"]
+        details = {} if self.legacy_results else {
+            "row_scores": {"keys": [f"k{i}" for i in range(10)],
+                           # Base model: only row 0 right. Fine-tuned run: rows 0-7.
+                           "correct": [int(i == 0) if is_base else int(i < 8) for i in range(10)]},
+        }
+        if getattr(self, "stamp_eval_input", False):
+            # A real held-out eval stamps the eval-input hash of the file it read.
+            details["dataset"] = {"eval_input_sha256": svc._current_eval_input_sha256(kwargs["project_id"])}
         er = EvalResult(
             experiment_id=experiment_id,
             dataset_name=kwargs["dataset_name"],
@@ -153,11 +161,7 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
             pass_rate=score,
             # Real held-out evals record per-row scores (for pairing the
             # base and fine-tuned results row by row).
-            details={} if self.legacy_results else {
-                "row_scores": {"keys": [f"k{i}" for i in range(10)],
-                               # Base model: only row 0 right. Fine-tuned run: rows 0-7.
-                               "correct": [int(i == 0) if is_base else int(i < 8) for i in range(10)]},
-            },
+            details=details,
         )
         db.add(er)
         await db.flush()
@@ -632,6 +636,74 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
                 out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=second)
         self.assertTrue(out["baseline_reused"])
         self.assertEqual([c["model_path"] for c in self.eval_calls], [BASE, None, None])
+
+    # ── base-result reuse across a re-stamped test file (content hash) ──
+
+    def _write_split(self, pid: int, rows: list[dict], *, mtime_offset: float, manifest: dict | None = None) -> None:
+        import json
+        import os
+        import time
+
+        prep = Path(svc.settings.DATA_DIR) / "projects" / str(pid) / "prepared"
+        prep.mkdir(parents=True, exist_ok=True)
+        path = prep / "test.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        (prep / "manifest.json").write_text(json.dumps(manifest or {"task_profile": "qa"}), encoding="utf-8")
+        stamp = time.time() + mtime_offset
+        os.utime(path, (stamp, stamp))
+
+    async def _restamp_case(self, *, new_rows: list[dict], new_manifest: dict | None = None) -> dict:
+        rows = [{"question": f"q{i}", "answer": f"a{i}", "_source_document_id": 1, "_source_document": "test.jsonl"}
+                for i in range(3)]
+        pid = await self._project()
+        first, second = await self._run(pid), await self._run(pid)
+        self.stamp_eval_input = True
+        with mock.patch.object(svc.settings, "DATA_DIR", self.root / "data"), \
+                mock.patch("app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout):
+            self._write_split(pid, rows, mtime_offset=-3600)
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=first)
+            self.assertFalse(out["baseline_reused"])
+            self.assertIsNone(out["baseline_reuse_basis"])
+            # The test file is rewritten after the base eval (its mtime is newer).
+            self._write_split(pid, new_rows or rows, mtime_offset=3600, manifest=new_manifest)
+            async with self.sf() as db:
+                return await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=second)
+
+    async def test_restamped_test_file_with_the_same_rows_reuses_the_base(self):
+        # A re-import re-stamps every row with the new document's id: same rows, new bytes and mtime.
+        restamped = [{"question": f"q{i}", "answer": f"a{i}", "_source_document_id": 9, "_source_document": "new.jsonl"}
+                     for i in range(3)]
+        out = await self._restamp_case(new_rows=restamped)
+        self.assertTrue(out["baseline_reused"])
+        self.assertEqual(out["baseline_reuse_basis"], "content")
+        self.assertEqual([c["model_path"] for c in self.eval_calls], [BASE, None, None], "no second base eval")
+
+    async def test_changed_test_rows_re_run_the_base(self):
+        changed = [{"question": f"q{i}", "answer": f"other {i}"} for i in range(3)]
+        out = await self._restamp_case(new_rows=changed)
+        self.assertFalse(out["baseline_reused"])
+        self.assertEqual([c["model_path"] for c in self.eval_calls], [BASE, None, BASE, None])
+
+    async def test_same_rows_with_changed_eval_settings_re_run_the_base(self):
+        # The eval reads the prepared manifest too: a changed task profile / output schema is a new input.
+        for manifest in ({"task_profile": "classification"},
+                         {"task_profile": "qa", "output_schema": {"scoring_mode": "field_match"}}):
+            self.eval_calls = []
+            with self.subTest(manifest=manifest):
+                out = await self._restamp_case(new_rows=[], new_manifest=manifest)
+                self.assertFalse(out["baseline_reused"])
+                self.assertEqual([c["model_path"] for c in self.eval_calls], [BASE, None, BASE, None])
+
+    async def test_fresh_base_result_is_reused_on_the_mtime_rule(self):
+        pid = await self._project()
+        first, second = await self._run(pid), await self._run(pid)
+        with mock.patch("app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout):
+            async with self.sf() as db:
+                await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=first)
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=second)
+        self.assertEqual(out["baseline_reuse_basis"], "mtime")
 
     async def test_ineligible_run_raises_with_reason(self):
         pid = await self._project()

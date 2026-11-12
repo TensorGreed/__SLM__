@@ -47,7 +47,12 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   the model's own config. The lift check reuses a cached base-model result only
   when its recorded decoding equals the current one
   (`post_training_eval_service._baseline_decoding_matches`), so older baselines
-  are re-run once. Tests: `test_decoding_settings.py` (a tiny GPT-2 with a
+  are re-run once. A base result older than `prepared/test.jsonl` is still
+  reused when its `details.dataset.eval_input_sha256` equals the live file's
+  (`_current_eval_input_sha256`: same rows with source stamps stripped + the
+  manifest fields the eval reads), e.g. a re-import that only re-stamped the
+  rows; older non-matching candidates are skipped, not a stop. The Job result
+  carries `baseline_reuse_basis: "mtime" | "content" | None`. Tests: `test_decoding_settings.py` (a tiny GPT-2 with a
   penalised config: greedy == raw argmax chain; sampling builds no inherited
   warper), `test_post_training_lift_eval.py`.
 - **Strongest-baseline rule (2026-10-26)** — neutral decoding can cripple an
@@ -934,6 +939,21 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   (newest `DatasetVersion` of that dataset whose manifest `sha256` matches; None for an edited file / gold sets) via
   `answer_key_stamp`, before inference. Older results: version inferred = newest DatasetVersion of `details.dataset.id`
   created at or before the eval (`version_source: "inferred"`); its manifest hash goes to `inferred_sha256`, never `sha256`.
+- **Content hash (B1, 2026-11-12)**: the stamp also records `details.dataset.content_sha256`
+  (`dataset_service.split_content_hash`: rows re-read from the file, only `_source_document_id` / `_source_document`
+  stripped, canonical JSON, order kept; kept for `scoring_mode == "remediation"`, whose rows pick passages by source
+  document) and `eval_input_sha256` (content + the canonical `EVAL_INPUT_MANIFEST_KEYS` subset of `prepared/manifest.json`:
+  task_profile, output_schema, labels, subtask, target language, chat_template, adapter wiring). The version match falls back
+  to the manifest `content_sha256`. `_answer_key_difference`, BEFORE the "split vA vs vB" branch: file shas differ but
+  eval-input hashes (both recorded) or content hashes match → same answer key + the note "test file was re-stamped (metadata
+  only)" (`RESTAMPED_NOTE`; flows through `comparability.notes`); same content, different eval input → "different eval
+  input". Older results: a recorded file sha without content is looked up among the live file + retained
+  `prepared/versions/*/` snapshots by file sha (`content_hash_for_file_sha`, memoised in memory by path/mtime/size, never
+  written back; pruned snapshot → today's file-sha rule); the inferred path takes the inferred version's manifest
+  `content_sha256`. When no content hash can be had for a side, identical `row_scores.keys` (`row_keys_sha256` on the
+  provenance) mean the same rows (`SAME_ROWS_NOTE`) — never for remediation. Other file-sha readers are unchanged in B1:
+  `documents_qa_flow_service` flow summary `test_sha256` / `val_sha256`, the data-studio lineage `manifest_file_hash` check,
+  `answer_key_label`. Tests: `tests/test_split_content_hash.py`.
 - **Re-score** (`rescore`): for not-comparable the side with the older eval; for missing row scores the side lacking them.
   `available` = `auto_lift_skip_reason(manual=True)` is None and the other side was scored on the test examples
   (`AUTO_LIFT_DATASET`); the button (after a GPU confirm) posts the existing `POST /evaluation/summary/lift-check` (base +
