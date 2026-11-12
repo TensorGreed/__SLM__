@@ -5,6 +5,13 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - **Evaluation** — `evaluation_service` runs eval packs; results land in
   `EvalResult` rows. Failure clusters, remediation plans, post-eval
   decision engine for reroute recommendations.
+  **Built-in rule sets** (`evaluation_pack_service._BUILTIN_EVALUATION_PACKS`): general.default,
+  classification.default, quality.strict, fast.iteration, domain.*, rag_protocol.discipline. Every
+  `Recipe.eval_pack_id` and every shipped template / demo manifest's `evaluation_preferred_pack_id`
+  must resolve (`tests/test_classification_default_pack.py` guards both) — an unknown id silently
+  empties the readiness ledger's gate breakdown and makes the resolver fall back with a warning.
+  `classification.default` reuses the general specs unchanged and only defaults the profile to
+  classification, so projects that used to fall back are gated identically.
   **UI vocabulary (Wave 3b-5, labels only — APIs/ids/keys keep the old names):**
   gold set → *answer key* (GOLD_DEV = practice, GOLD_TEST = final); prepared
   TEST split → *test examples*; probe pack → *built-in checks*; behavioral

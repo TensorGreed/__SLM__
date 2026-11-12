@@ -911,6 +911,7 @@ session-start guidance.
 - `backend/tests/test_checkpoint_registry.py` — Unit tests for the warm-start checkpoint registry (Track 1, Epic B).
 - `backend/tests/test_checkpoint_resume_real.py` — Resume a real (external-runtime) run from one of its Trainer checkpoints.
 - `backend/tests/test_classification_adapter_prompt_wrap.py` — β-fix tests — classification-label adapter writes the production
+- `backend/tests/test_classification_default_pack.py` — The built-in ``evalpack.classification.default`` pack.
 - `backend/tests/test_classification_inference_path.py` — Classification-aware inference path (fix #3).
 - `backend/tests/test_classification_training_launch.py` — Epic G phase G1.5 — classification samples must be trainable.
 - `backend/tests/test_classifier_head_eval_dispatch.py` — δ-fix tests — classifier-head dispatch on held-out eval.

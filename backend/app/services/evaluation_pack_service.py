@@ -619,6 +619,30 @@ _BUILTIN_EVALUATION_PACKS: list[dict[str, Any]] = [
         "default_task_profile": "instruction_sft",
         "task_specs": _default_task_specs_for_pack("general"),
     },
+    # Classification default. The classification recipe, the
+    # classification project templates and demo samples all name this
+    # id; before it existed they resolved with a "not available;
+    # falling back" warning. It carries the general pack's task specs
+    # unchanged (so every eval type is gated exactly as under
+    # evalpack.general.default — no project that used to fall back
+    # sees a threshold move) and only defaults the task profile to
+    # classification (accuracy + macro-F1 gates).
+    {
+        "pack_id": "evalpack.classification.default",
+        "display_name": "Classification Default Gates",
+        "description": (
+            "Accuracy and macro-F1 gates for label-prediction projects "
+            "(one label per input). Same thresholds as the general "
+            "default pack; defaults the task profile to classification. "
+            "Promote to evalpack.quality.strict for release-candidate runs."
+        ),
+        "version": "1.0.0",
+        "owner": "platform",
+        "tags": ["classification", "default", "task-aware", "small-model"],
+        "contract_version": EVALUATION_PACK_CONTRACT_VERSION,
+        "default_task_profile": "classification",
+        "task_specs": _default_task_specs_for_pack("general"),
+    },
     {
         "pack_id": "evalpack.quality.strict",
         "display_name": "Quality Strict Gates",
