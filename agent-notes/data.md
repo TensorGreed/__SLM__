@@ -1114,3 +1114,16 @@ write when the docs have no rows) and the DB rows. The three data-health autofix
 mtime-based (`auto_rag_service.document_index_status`: cleaned.jsonl newer than `bm25_index.json`), so the rewrite alone marks
 it stale. Not touched: `.chunks.jsonl` sidecars (only autofix unlinks them), derived synthetic / prepared datasets already
 generated from the document (they keep their rows), `predefined_split_service._discard_registered` (documents never cleaned).
+
+## Span rows: import, field names, empty-span negatives (2026-11-12)
+
+- **Span-offset import**: mapper `span_offsets_passthrough` (`dataset_import/mappers/`): `{text, entities:
+  [{type|label, start, end, text|value}]}` (entities may be a JSON string, or `{"entities": [...]}`) →
+  payload `{text, entities}` with offsets kept exactly (missing span text = `text[start:end]`;
+  `entity_type_map` renames types). An empty list is a valid negative row. Rejects `parse_error
+  empty_text missing_entities bad_span span_out_of_range span_text_mismatch text_edge_whitespace` (the
+  last: leading whitespace, or a span ending in trailing whitespace — the adapter strips the text, which
+  would move the spans). Introspector: an `entity_list_json` column now ignores `[]` values and accepts
+  `label` for `type`; text + entity-list → `span_offsets_passthrough` at 0.95 (0.9 for an unconventional
+  entity column name), 0.6 + a warning when sampled offsets don't fit the chosen text column. Tests:
+  `tests/test_span_offsets_import.py`.

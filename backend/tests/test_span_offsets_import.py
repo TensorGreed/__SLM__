@@ -1,0 +1,146 @@
+"""Span-offset JSONL import: ``{text, entities: [{type, start, end, text}]}``
+rows go through the import wizard / CLI as span rows with the offsets kept
+exactly (``span_offsets_passthrough`` + the introspector rule that proposes it).
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from app.services.dataset_import import resolve_mapper
+from app.services.dataset_import.introspector import (
+    ENTITY_LIST_JSON,
+    detect_shape,
+    propose_mapping,
+    sniff_columns,
+)
+from app.services.dataset_import.protocols import ImportContext, RejectedRow, TransformedRow
+from app.services.dataset_import.service import preview_import
+
+
+TEXT_A = "Write to jane@example.com before Friday, please."
+ROW_A = {
+    "id": "a1",
+    "text": TEXT_A,
+    "entities": [{"type": "email", "start": 9, "end": 25, "text": "jane@example.com"}],
+}
+TEXT_B = "Order 4471 shipped from the north warehouse today."
+ROW_B = {
+    "id": "b2",
+    "text": TEXT_B,
+    "entities": [
+        {"type": "order_id", "start": 6, "end": 10, "text": "4471"},
+        {"type": "place", "start": 28, "end": 43},
+    ],
+}
+ROW_NEG = {"id": "n3", "text": "Nothing to tag in this ordinary sentence at all.", "entities": []}
+
+
+def _ctx() -> ImportContext:
+    return ImportContext(
+        project_id=0, project_task_profile=None, source_id="jsonl",
+        mapper_id="span_offsets_passthrough", locator="jsonl:/tmp/x.jsonl",
+    )
+
+
+def _run(rows, field_map=None):
+    mapper = resolve_mapper("span_offsets_passthrough")
+    out = list(mapper.transform(rows, field_map or {}, ctx=_ctx()))
+    accepted = [o for o in out if isinstance(o, TransformedRow)]
+    rejected = [o for o in out if isinstance(o, RejectedRow)]
+    return accepted, rejected
+
+
+def test_offsets_are_kept_exactly():
+    accepted, rejected = _run([ROW_A, ROW_B])
+    assert rejected == []
+    a, b = (r.payload for r in accepted)
+    assert a["text"] == TEXT_A
+    assert a["entities"] == [{"type": "email", "start": 9, "end": 25, "text": "jane@example.com"}]
+    # A span without its text gets text[start:end]; offsets untouched.
+    assert b["entities"][1] == {"type": "place", "start": 28, "end": 43, "text": TEXT_B[28:43]}
+    for payload in (a, b):
+        for ent in payload["entities"]:
+            assert payload["text"][ent["start"]:ent["end"]] == ent["text"]
+    assert accepted[0].row_key == "jsonl-a1"
+
+
+def test_zero_entity_row_is_accepted_as_a_negative():
+    accepted, rejected = _run([ROW_NEG])
+    assert rejected == []
+    assert accepted[0].payload == {"text": ROW_NEG["text"], "entities": []}
+
+
+def test_json_string_entities_and_type_map():
+    row = {"body": TEXT_A, "spans": json.dumps({"entities": ROW_A["entities"]})}
+    accepted, rejected = _run(
+        [row], {"text_field": "body", "entities_field": "spans", "entity_type_map": {"email": "contact"}}
+    )
+    assert rejected == []
+    assert accepted[0].payload["entities"][0]["type"] == "contact"
+    assert accepted[0].payload["entities"][0]["start"] == 9
+
+
+@pytest.mark.parametrize(
+    "row, reason",
+    [
+        ({"text": "", "entities": []}, "empty_text"),
+        ({"text": "Some text here"}, "missing_entities"),
+        ({"text": "Some text here", "entities": "not json"}, "missing_entities"),
+        ({"text": "Some text", "entities": [{"type": "x", "start": 2, "end": 99}]}, "span_out_of_range"),
+        ({"text": "Some text", "entities": [{"type": "x", "start": 0, "end": 4, "text": "Sxme"}]}, "span_text_mismatch"),
+        ({"text": "Some text", "entities": [{"start": 0, "end": 4}]}, "bad_span"),
+        ({"text": "  Some text", "entities": [{"type": "x", "start": 2, "end": 6}]}, "text_edge_whitespace"),
+        ({"__parse_error__": "bad line"}, "parse_error"),
+    ],
+)
+def test_bad_rows_are_rejected_with_a_reason(row, reason):
+    accepted, rejected = _run([row])
+    assert accepted == []
+    assert [r.reason for r in rejected] == [reason]
+
+
+def test_introspector_proposes_span_offsets_mapper_even_with_negatives():
+    sample = [ROW_A, ROW_NEG, ROW_B]
+    sigs = sniff_columns(sample)
+    assert sigs["entities"].column_type == ENTITY_LIST_JSON
+    proposal = propose_mapping(sample)
+    assert proposal is not None
+    assert proposal.mapper_id == "span_offsets_passthrough"
+    assert proposal.target_task_profile == "structured_extraction"
+    assert proposal.field_map["text_field"] == "text"
+    assert proposal.field_map["entities_field"] == "entities"
+    assert proposal.confidence >= 0.8
+
+
+def test_introspector_flags_offsets_that_do_not_fit_the_text():
+    bad = {"text": "Short text here.", "entities": [{"type": "x", "start": 3, "end": 400}]}
+    sample = [ROW_A, bad]
+    hyps = [h for h in detect_shape(sniff_columns(sample), sample) if h.mapper_id == "span_offsets_passthrough"]
+    assert hyps and hyps[0].confidence < 0.8
+    assert hyps[0].warnings
+
+
+def test_preview_end_to_end_from_jsonl(tmp_path: Path):
+    path = tmp_path / "spans.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in (ROW_A, ROW_B, ROW_NEG)) + "\n")
+    result = preview_import(
+        project_id=0, project_task_profile=None, locator=f"jsonl:{path}",
+        mapper_id="span_offsets_passthrough", field_map={},
+    )
+    assert result.rejected_count == 0
+    assert result.target_task_profile == "structured_extraction"
+    assert [r.payload["entities"] for r in result.accepted_rows][0] == ROW_A["entities"]
+
+
+def test_label_and_value_keys_are_read_in_place_of_type_and_text():
+    row = {"source_text": TEXT_A, "mask": [{"label": "email", "start": 9, "end": 25, "value": "jane@example.com"}]}
+    proposal = propose_mapping([row, {"source_text": ROW_NEG["text"], "mask": []}])
+    assert proposal.mapper_id == "span_offsets_passthrough"
+    assert proposal.field_map == {"text_field": "source_text", "entities_field": "mask"}
+    accepted, rejected = _run([row], proposal.field_map)
+    assert rejected == []
+    assert accepted[0].payload["entities"] == [{"type": "email", "start": 9, "end": 25, "text": "jane@example.com"}]

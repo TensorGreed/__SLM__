@@ -47,6 +47,7 @@ _SYSTEM_PROMPT = (
     "BrewSLM target mapper that best fits. Mappers and their "
     "expectations:\n\n"
     "- bio_to_spans: BIO-tagged NER (tokens + labels columns).\n"
+    "- span_offsets_passthrough: text + a list of {type, start, end} character-offset spans.\n"
     "- label_to_classification: {text, label} sentiment / intent.\n"
     "- text_only: single text column, no labels (LM pretraining).\n"
     "- qa_pair_passthrough: {question, answer}.\n"

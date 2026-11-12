@@ -413,6 +413,7 @@ Pluggable transform that turns raw source rows into one of BrewSLM's canonical t
 | Mapper id | Target task profile | Use when the row carries… |
 |---|---|---|
 | `bio_to_spans` | `structured_extraction` (span_set) | BIO-tagged tokens + labels (NER / PII) |
+| `span_offsets_passthrough` | `structured_extraction` (span_set) | text + a list of `{type, start, end}` character-offset spans (offsets kept exactly; an empty list is a negative row) |
 | `label_to_classification` | `classification` | `{text, label}` |
 | `text_only` | `language_modeling` | a single text column, no labels |
 | `qa_pair_passthrough` | `qa` | `{question, answer}` |

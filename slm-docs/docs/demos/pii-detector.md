@@ -247,16 +247,15 @@ target-bearing synthetic rows at a 30–80:1 ratio. The split manifest's
 ### 2. HuggingFace / Kaggle imports (when you have ready-shaped data)
 
 **Heads-up on dataset format compatibility**: not every HF / Kaggle
-dataset shape has a matching mapper. The platform ships eight mappers
-(`qa_pair_passthrough`, `label_to_classification`, `bio_to_spans`,
-`chat_messages_passthrough`, `preference_pair`, `kv_to_structured`,
-`rag_passthrough`, `text_only`) covering most public datasets, but
-**inline-character-span formats like `ai4privacy/pii-masking-200k`'s
-`{source_text, privacy_mask: [{value, label, start, end}]}` shape do
-not have a mapper today** — the import wizard will surface
-"Unable to normalize imported records". For datasets in that shape, use
-path 1 (synthetic generation) instead; for datasets that match a
-shipped mapper, see below.
+dataset shape has a matching mapper. The platform ships mappers for the
+common shapes (`qa_pair_passthrough`, `label_to_classification`,
+`bio_to_spans`, `span_offsets_passthrough`, `chat_messages_passthrough`,
+`preference_pair`, `kv_to_structured`, `rag_passthrough`, `text_only`).
+Inline character-span formats — a text column plus a list of
+`{type|label, start, end, text|value}` — go through
+`span_offsets_passthrough`, which keeps the offsets exactly and rejects
+any span whose offsets don't fit the text (see the
+[mapper catalog](../workflows/data-ingestion.md#generic-dataset-import-pipeline-sources--mappers)).
 
 #### HuggingFace datasets
 

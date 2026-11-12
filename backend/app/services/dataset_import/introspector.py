@@ -116,14 +116,15 @@ def _is_bio_tag_list(value: Any) -> bool:
 
 def _is_entity_list_json(value: Any) -> bool:
     """True when value is a list of `{type, start, end, …}` dicts —
-    NER-style annotations already in the canonical span shape."""
+    NER-style annotations already in the canonical span shape (``label``
+    is accepted in place of ``type``)."""
 
     if not isinstance(value, list) or not value:
         return False
     for item in value:
         if not isinstance(item, dict):
             return False
-        if "type" not in item or "start" not in item or "end" not in item:
+        if ("type" not in item and "label" not in item) or "start" not in item or "end" not in item:
             return False
     return True
 
@@ -267,7 +268,10 @@ def _classify_column(
             confidence=0.98,
             sample_value=non_empty[0],
         )
-    if all(_is_entity_list_json(v) for v in non_empty):
+    # An empty list is a row with nothing to tag (a negative example): it
+    # neither confirms nor contradicts the entity-list reading.
+    entity_values = [v for v in non_empty if v != []]
+    if entity_values and all(_is_entity_list_json(v) for v in entity_values):
         return ColumnSignature(
             name=name,
             column_type=ENTITY_LIST_JSON,
@@ -612,7 +616,7 @@ def detect_shape(
     specific ``mapper_id`` to bypass detection entirely.
 
     Detection rules cover the Phase B + C mappers — bio_to_spans,
-    label_to_classification, chat_messages_passthrough, preference_pair,
+    span_offsets_passthrough, label_to_classification, chat_messages_passthrough, preference_pair,
     rag_passthrough, qa_pair_passthrough, text_only. The
     ``kv_to_structured`` mapper isn't detection-eligible (it requires
     an explicit ``fields`` list the introspector can't infer); the UI
@@ -635,6 +639,9 @@ def detect_shape(
     ]
     chat_columns = [
         s for s in signatures.values() if s.column_type == CHAT_MESSAGES
+    ]
+    entity_columns = [
+        s for s in signatures.values() if s.column_type == ENTITY_LIST_JSON
     ]
 
     # ── bio_to_spans (NER) ──
@@ -677,6 +684,57 @@ def detect_shape(
                         f"BIO-tagged labels column '{labels_sig.name}' of "
                         "matching length"
                     ),
+                )
+            )
+
+    # ── span_offsets_passthrough (spans with character offsets) ──
+    # A text column + a list of {type, start, end} dicts: the span shape
+    # itself. Confidence drops below the auto-run gate when the sample's
+    # offsets don't fit its text (offsets into some other column).
+    if entity_columns and text_columns:
+        text_sig = next((s for s in text_columns if s.name.lower() == "text"), None) or next(
+            (s for s in text_columns if s.name.lower() in {"full_text", "content", "document", "body", "sentence"}),
+            text_columns[0],
+        )
+        for ent_sig in entity_columns:
+            checked = misfit = 0
+            for row in sample_rows:
+                text, ents = row.get(text_sig.name), row.get(ent_sig.name)
+                if not isinstance(text, str) or not isinstance(ents, list):
+                    continue
+                for ent in ents:
+                    if not isinstance(ent, dict):
+                        continue
+                    checked += 1
+                    try:
+                        start, end = int(ent.get("start")), int(ent.get("end"))
+                    except (TypeError, ValueError):
+                        misfit += 1
+                        continue
+                    span_text = ent.get("text") if ent.get("text") is not None else ent.get("value")
+                    if start < 0 or end > len(text) or end <= start or (
+                        span_text is not None and text[start:end] != str(span_text)
+                    ):
+                        misfit += 1
+            warnings_spans: list[str] = []
+            confidence = 0.95 if ent_sig.name.lower() in {"entities", "spans", "annotations"} else 0.9
+            if misfit:
+                confidence = 0.6
+                warnings_spans.append(
+                    f"{misfit} of {checked} sampled spans don't fit '{text_sig.name}' "
+                    "(offset out of range or span text differs) — check the text column"
+                )
+            hypotheses.append(
+                ShapeHypothesis(
+                    mapper_id="span_offsets_passthrough",
+                    target_task_profile="structured_extraction",
+                    field_map={"text_field": text_sig.name, "entities_field": ent_sig.name},
+                    confidence=confidence,
+                    rationale=(
+                        f"detected text column '{text_sig.name}' + entity list "
+                        f"'{ent_sig.name}' of {{type, start, end}} character-offset spans"
+                    ),
+                    warnings=warnings_spans,
                 )
             )
 

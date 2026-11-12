@@ -17,6 +17,9 @@ registers itself at import time. Catalog:
   (AlignmentHandler — DPO / ORPO).
 - ``rag_passthrough`` — ``{question, context, answer}`` triples
   (RAGHandler — grounded QA).
+- ``span_offsets_passthrough`` — text + an entity list with character
+  offsets → span rows, offsets kept exactly
+  (StructuredExtractionHandler / span_set scoring).
 - ``kv_to_structured`` — flat key-value extractions
   (StructuredExtractionHandler / field_match scoring — invoices /
   forms / receipts).
@@ -58,5 +61,8 @@ from app.services.dataset_import.mappers import (  # noqa: F401
 )
 from app.services.dataset_import.mappers import (  # noqa: F401
     rag_passthrough as _rag_passthrough,
+)
+from app.services.dataset_import.mappers import (  # noqa: F401
+    span_offsets_passthrough as _span_offsets_passthrough,
 )
 from app.services.dataset_import.mappers import text_only as _text_only  # noqa: F401

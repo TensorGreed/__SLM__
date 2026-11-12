@@ -181,6 +181,7 @@ session-start guidance.
 - `backend/app/services/dataset_import/mappers/preference_pair.py` — Preference-pair mapper — ``{prompt, chosen, rejected}`` → AlignmentHandler.
 - `backend/app/services/dataset_import/mappers/qa_pair_passthrough.py` — QA-pair passthrough — ``{question, answer}`` → QAHandler shape.
 - `backend/app/services/dataset_import/mappers/rag_passthrough.py` — RAG-passthrough mapper — ``{question, context, answer}`` → RAGHandler.
+- `backend/app/services/dataset_import/mappers/span_offsets_passthrough.py` — Span-offset passthrough: text + an entity list with character offsets → span rows.
 - `backend/app/services/dataset_import/mappers/text_only.py` — Text-only mapper — single-column passthrough for plain LM training.
 - `backend/app/services/dataset_import/plugin_loader.py` — Plugin loader for custom dataset-import mappers (Phase H).
 - `backend/app/services/dataset_import/protocols.py` — Protocols + dataclasses for the dataset-import pipeline.
@@ -1213,6 +1214,7 @@ session-start guidance.
 - `backend/tests/test_span_custom_patterns.py` — Custom infotypes: a span project's own identifier formats as regexes —
 - `backend/tests/test_span_eval_sizing.py` — Per-type answer-key sizing (P6): how many reference spans a type needs
 - `backend/tests/test_span_eval_summary.py` — The eval summary of a token-classification run (kind="span_eval"): its
+- `backend/tests/test_span_offsets_import.py` — Span-offset JSONL import: ``{text, entities: [{type, start, end, text}]}``
 - `backend/tests/test_span_packaging.py` — Epic P5 — packaging a span (token-classification) model:
 - `backend/tests/test_span_refine.py` — Refine weak types: the latest span_set evaluation names the types under
 - `backend/tests/test_span_relabel.py` — Answer key from a second model: relabel a split's texts (unchanged),
