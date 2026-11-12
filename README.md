@@ -19,9 +19,9 @@ This repository contains the FastAPI backend and React frontend.
 
 ### Prerequisites
 
-- Python 3.11+
-- Node.js 18+
-- Redis (required for queued training/compression/remote-import jobs)
+- Python 3.11+ (CI runs 3.12)
+- Node.js 20.19+ or 22.12+ (Vite 7 requires one of these)
+- Redis plus a Celery worker (step 2) for real training and for queued compression / remote-import jobs: the default `TRAINING_BACKEND=external` dispatches training through Celery, and without a worker a run stays queued. `TRAINING_BACKEND=simulate` with `ALLOW_SIMULATED_TRAINING=true` needs neither.
 - Optional GPU/CUDA for real training and inference benchmarking
 
 ### 1. Backend API
@@ -44,7 +44,10 @@ pip install -r requirements.txt
 # pip install -r requirements-gpu-cu128.txt
 cp .env.example .env
 
-# Recommended whenever you pull latest backend schema changes on an existing DB:
+# Fresh SQLite DB: start uvicorn once (tables auto-create), stop it, then run
+# `alembic stamp head` once. Do not run `alembic upgrade head` on a DB that was
+# never stamped: some older migrations use ALTER COLUMN, which SQLite refuses.
+# After that, whenever you pull backend schema changes:
 # alembic upgrade head
 
 uvicorn app.main:app --reload --port 8000
@@ -73,7 +76,7 @@ PY
 
 ### 2. Worker (Celery)
 
-Run this in a second terminal if you want queued jobs (training external runtime, compression, remote imports):
+Run this in a second terminal. Real training needs it (the default `TRAINING_BACKEND=external` runtime dispatches through Celery), as do compression and remote imports:
 
 ```bash
 cd backend
@@ -95,8 +98,8 @@ npm run dev
 
 1. Open `http://localhost:5173/login`
 2. If OIDC is configured, use **Sign in with SSO**
-3. Otherwise use local login:
-   - Username: any value (new users are auto-provisioned)
+3. Otherwise use local login (auth is on by default: `AUTH_ENABLED=true`):
+   - Username: `admin` (the bootstrap user from `AUTH_BOOTSTRAP_USERNAME`). Any other new username is auto-created as an engineer with no project access.
    - Password: `API_KEY` from `backend/.env` (default `sk-mock-admin-key`)
 4. Create a project and walk tabs:
    - Data -> Cleaning -> Gold Set -> Synthetic -> Dataset Prep -> Tokenization -> Training -> Evaluation -> Compression -> Export
@@ -550,7 +553,7 @@ Common backend env vars (see `backend/.env.example`):
 
 ### Auth and security
 
-- `AUTH_ENABLED`
+- `AUTH_ENABLED` (default: `true`)
 - `AUTH_BOOTSTRAP_API_KEY`
 - `AUTH_BOOTSTRAP_USERNAME` (default: `admin`)
 - `AUTH_BOOTSTRAP_ROLE` (default: `admin`)
@@ -687,6 +690,8 @@ Run migrations:
 cd backend
 alembic upgrade head
 ```
+
+On a brand-new SQLite DB, do not start with `upgrade head` (some early migrations use `ALTER COLUMN`, which SQLite refuses). Start the backend once so `ALLOW_SQLITE_AUTOCREATE` creates the tables, stop it, run `alembic stamp head` once, and use `upgrade head` from then on.
 
 Create a new migration:
 
