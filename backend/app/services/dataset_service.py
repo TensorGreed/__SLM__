@@ -35,6 +35,7 @@ from app.services.domain_hook_service import (
 from app.services.data_adapter_service import (
     DEFAULT_ADAPTER_ID,
     list_data_adapter_catalog,
+    harmonize_span_targets,
     map_record_with_adapter,
     unmappable_reason,
     normalize_task_profile,
@@ -2188,6 +2189,9 @@ async def split_dataset(
             eval_duplicates_removed = before - sum(len(splits[n]) for n in ("train", "val", "test"))
             splits["test"] = list(splits["test"]) + unique_eval
             eval_routed = len(unique_eval)
+    # One span target format per project (bare-list rows join a project
+    # whose rows already train on {"entities": [...]}).
+    span_format_report = harmonize_span_targets(splits["train"], splits["val"], splits["test"])
     provenance_report = provenance_service.prepared_provenance(
         prov_state["usage_context"], splits, prov_state,
         eval_routed_to_test=eval_routed, eval_not_added_pinned_test=eval_not_added,
@@ -2266,6 +2270,9 @@ async def split_dataset(
     # own splits get a manifest identical to before.
     if await _accepted_test_role_documents(db, project_id):
         manifest["predefined_test_active"] = True
+    # Only when bare-list span rows were rewritten to the project's wrapped format.
+    if span_format_report:
+        manifest["span_target_format"] = span_format_report
     _finalize_prepared_manifest(project_id, manifest, prepared_version)
 
     return manifest

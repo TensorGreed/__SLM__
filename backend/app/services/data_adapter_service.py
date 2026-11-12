@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import copy
 import importlib
 import inspect
@@ -1457,6 +1458,50 @@ def span_entity_list(value: Any) -> list[Any] | None:
     if isinstance(value, list) and all(_is_span_dict(item) for item in value):
         return value
     return None
+
+
+_PROMPT_HEAD = re.compile(r"^Extract [^\n]*\n(?:Reply with a single JSON object, nothing else\.\n)?Input: ")
+
+
+def _span_target_form(row: dict[str, Any]) -> str | None:
+    """``"wrapped"`` (target ``{"entities": [...]}``), ``"list"`` (target
+    ``[...]``) or None (not a structured-extraction span row)."""
+    if row.get("_adapter_id") not in (None, "structured-extraction"):
+        return None
+    target = row.get("answer")
+    if not isinstance(target, str) or span_entity_list(target) is None:
+        return None
+    return "wrapped" if target.strip().startswith("{") else "list"
+
+
+def harmonize_span_targets(*row_groups: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """One output format per project. Span rows reach the structured-extraction
+    adapter in two forms: a bare list (``entities`` / ``spans``) trains on
+    ``[...]``, while rows whose target was written wrapped (``entities_json``,
+    or ``answer`` / ``target_text`` = ``{"entities": [...]}``, as the demo
+    bundles do) train on ``{"entities": [...]}``. When a project's prepared rows
+    hold both, the bare-list rows are rewritten to the wrapped form — target,
+    ``structured_output`` and the prompt header the wrapped rows were built with
+    — so every row trains (and is scored) on one format. Rows already wrapped,
+    and projects with a single format, are left exactly as they are. Mutates
+    the rows in place; returns ``{"converted", "format"}`` or None."""
+    rows = [row for group in row_groups for row in group if isinstance(row, dict)]
+    forms = [(row, _span_target_form(row)) for row in rows]
+    wrapped = [row for row, form in forms if form == "wrapped"]
+    bare = [row for row, form in forms if form == "list"]
+    if not wrapped or not bare:
+        return None
+    head_match = _PROMPT_HEAD.match(str(wrapped[0].get("source_text") or ""))
+    for row in bare:
+        payload = {"entities": span_entity_list(row["answer"])}
+        target = json.dumps(payload, ensure_ascii=False)
+        row["answer"] = target
+        row["structured_output"] = payload
+        row["target_text"] = f" {target}"
+        own = _PROMPT_HEAD.match(str(row.get("source_text") or ""))
+        if head_match and own:
+            row["source_text"] = head_match.group(0) + row["source_text"][own.end():]
+    return {"converted": len(bare), "format": "wrapped"}
 
 
 def _legacy_span_payload(record: dict[str, Any]) -> Any:

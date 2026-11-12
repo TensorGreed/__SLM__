@@ -792,6 +792,10 @@ async def import_predefined_split(
                  for v in rejected_report.values()) else {})},
         )
     lines = {role: pf.lines for role, pf in parsed.items()}
+    # One span target format across the imported splits (data_adapter_service).
+    from app.services.data_adapter_service import harmonize_span_targets
+
+    harmonize_span_targets(*mapped.values())
 
     # 3. Exact-input leakage between splits, keyed on the adapter-mapped input computed in
     # step 2 (every row mapped, else step 2 failed, so ``keys[role][i]`` is ``rows[i]``'s).
