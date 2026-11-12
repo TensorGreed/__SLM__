@@ -22,6 +22,7 @@ import SpanThresholdTuner from './SpanThresholdTuner';
 import type { TuneThresholdsResult } from '../../api/spanThresholds';
 import { retrievalLabel } from './retrievalLabel';
 import { retrievalRowText, retrievalSplitText } from './retrievalSplit';
+import { unjudgedNoticeText } from './unjudgedNotice';
 import { toast } from '../../stores/toastStore';
 import { useJobsStore } from '../../stores/jobsStore';
 import './EvalSummaryCard.css';
@@ -575,9 +576,16 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
             )}
             {summary.judge && (
                 <p className="eval-summary__judge" data-testid="eval-summary-judge">
-                    Judged by <code>{summary.judge.judge || 'a judge model'}</code>: {summary.judge.correct} correct, {summary.judge.partial} partial,{' '}
-                    {summary.judge.wrong} wrong of {summary.judge.judged} answers
-                    {summary.judge.unjudged ? ` (${summary.judge.unjudged} unjudged)` : ''}. The judge reads the question, the
+                    {summary.judge.judged > 0 ? (
+                        <>
+                            Judged by <code>{summary.judge.judge || 'a judge model'}</code>: {summary.judge.correct} correct, {summary.judge.partial} partial,{' '}
+                            {summary.judge.wrong} wrong of {summary.judge.judged} answers
+                            {summary.judge.unjudged ? ` (${summary.judge.unjudged} unjudged)` : ''}.
+                        </>
+                    ) : (
+                        <>The judge <code>{summary.judge.judge || 'a judge model'}</code> scored none of the answers.</>
+                    )}{' '}
+                    The judge reads the question, the
                     answer key and the model's answer and grades the facts, not the wording — token F1 is still shown below.
                     {summary.judge.trust && (
                         <>
@@ -593,6 +601,11 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                             )}
                         </>
                     )}
+                </p>
+            )}
+            {unjudgedNoticeText(summary.judge, summary.eval_result_id) && (
+                <p className="eval-summary__judge eval-summary__unjudged" role="status" data-testid="eval-summary-unjudged">
+                    {unjudgedNoticeText(summary.judge, summary.eval_result_id)}
                 </p>
             )}
             {summary.judge?.retrieval && (

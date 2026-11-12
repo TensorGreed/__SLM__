@@ -1107,3 +1107,67 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - Tests: `tests/test_eval_model_release.py` (automatic GC off; a fake loader reproduces the frame cycle; weakref to the
   fake model is dead after a call, after a failing call, after a `heldout_evaluation` Job that succeeds or fails, and a
   second Job's load never sees the first model alive).
+
+## Judge resilience: unjudged rows, circuit breaker (A1)
+
+- **Guard** (`services/judge_call_guard.py`): `classify_judge_error` -> transient (`SynthBackendTransientError`,
+  `CloudLlmError.transient` / `status_code` 408/409/425/429/5xx, httpx `TransportError` / 5xx `HTTPStatusError`, walking
+  `__cause__` through `SynthBackendError` wrappers) or permanent (everything else). `JudgeCallGuard` (one per judge loop)
+  retries transient failures `JUDGE_TRANSIENT_RETRIES` times (backoff 10 s x 3^n +-20%; 0 for a backend with
+  `retries_internally`, i.e. the command backend, carried on `ResolvedJudge.retries_internally`); a per-label `JudgeCircuit`
+  (process-wide registry, `threading.Lock`; a celery worker has its own) opens after `JUDGE_BREAKER_CONSECUTIVE` (3) transient
+  failures in a row or > `JUDGE_BREAKER_ERROR_RATE` of the last `JUDGE_BREAKER_WINDOW` calls. Mode `stop` (default): the
+  run's remaining uncached rows -> `judge_unreachable`, no call; cache hits still apply. Mode `wait` (opt-in, per project):
+  probe every `JUDGE_OUTAGE_PROBE_SECONDS` up to `max_wait_seconds`, Job message "judge unreachable (...) — retrying ~HH:MM ET",
+  resume on success, else stop. Every NEW run's first call is a probe (single attempt if the circuit is open), so the
+  fine-tuned leg after a tripped base leg costs one call; an open circuit is half-open after `JUDGE_BREAKER_COOLDOWN_SECONDS`.
+  Permanent errors and unparseable replies never count. `LlmBudgetExceeded` / cancel propagate. `JUDGE_BREAKER_ENABLED=false`
+  (or project `breaker: false`) = the old march (retries still apply).
+- **Opt-in per call site** (`resilience=` kwarg on `judge_predictions` / `judge_retrieval` / `judge_dialogues`, `guard=` on
+  `judge_rows_with_rubric`; default None = unchanged). ON: held-out eval only — `_safe_judge_answers(resilience=True)` (answer
+  + remediation + retrieval), `_judge_code_example_predictions`, the dialogue judge, the structured-plan rubric. OFF: pipeline
+  eval (`_run_heldout_judges`), Auto-RAG (`auto_rag_ab`, thread path; it only copies `status` / `unjudged_reasons` /
+  `coverage`), the teacher-answer filter (unjudged answers pass through, so a breaker skip would be a silent pass — it may
+  adopt the guard only once it fails loudly below a coverage floor), probe / review-assist / calibration / relabel judges.
+- **Threads**: the rubric grades in `asyncio.to_thread`; it gets a `threaded=True` guard: stop mode only, never touches the Job
+  handle (whose methods open sessions on the main loop's engine), cancel via a `threading.Event` that `_watch_cancel` sets from
+  the main loop (`JudgeCancelled` -> `CancelledError`). The async guard uses the Job handle only when running on the loop that
+  created it (`JobProgressHandle.loop`).
+- **Per-row state, only on unjudged rows** (a run without failures is byte-identical): `row_judge_status: "unjudged"`,
+  `row_judge_unjudged_reason` (`judge_unreachable` / `transient_error` / `unparseable` / `permanent_error`),
+  `row_judge_error` (<=200 chars); retrieval `row_retrieval_*` likewise; rubric `row_rubric_unjudged_reason` /
+  `row_rubric_error`; code examples `_code_example_judge.unjudged_reason`. Written by every `judge_predictions` caller (the
+  judge was asked); only the guard (breaker / retries) is opt-in. **Snapshot, only when unjudged > 0**: `status`
+  (`partial` | `paused` = breaker stopped it), `unjudged_reasons`, `coverage`, `breaker {tripped, tripped_at_row (0-based),
+  consecutive, last_error_kind, last_error, mode, waited_seconds}`.
+- **Scoring (D2, new evals only; stored results untouched)**: `_prediction_unscored` (new) = a scored code example with
+  `row_code_example_pass` None for ANY reason (judge off, `disabled_for_project`, no judge, no verdict — was `correct=1`), or
+  `row_judge_status == "unjudged"` where `judge_decides_row`. `_prediction_failed` returns False for the latter (was the
+  exact-match fallback). `row_scores.correct` is then None (pairing skips it), the row is out of `failed_count` /
+  `failures_preview`, and `eval_predictions` records omit `correct`. Rows the judge was never asked about keep exact match
+  (`test_answer_judge.py` pins both). Pipeline eval: a `correct` None row -> `unscored_reason: "row_unscored"`.
+- **Re-judge inputs** (for A2, written now): `eval_predictions` records get `judge_pending {status, reason, task, label,
+  content_key, question?, reference?, prediction?}` for unjudged rows and `checks_passed` (parses + checks + citations) for
+  scored code examples.
+- **Lift**: `_baseline_judge_matches` refuses a base result whose answer / code-example / rubric block is incomplete
+  (`judge_call_guard.snapshot_incomplete`: paused, any outage reason, or judged 0 with unjudged > 0) -> the base is re-run
+  (A2 replaces this with a no-GPU re-judge). Unparseable-only gaps still reuse.
+- **Job results** (`job_result_fields`, only when rows were unjudged): `judge_status`, `judge_unjudged`, `judge_judged`,
+  `judge_unjudged_reasons`, `judge_label`, `judge_eval_result_id` — on `heldout_evaluation` (`_summarize_eval_result`), the
+  lift check (both legs, seeds, head-only) and workflow eval steps. Bell `judgeWarningText`: "Done, with a warning: judge
+  incomplete by X — N of M rows unjudged (...) (eval #id)"; a lift check then shows no better / worse verdict.
+- **Summary**: `_judge_block` now emits for `score: null` when the judge was asked about rows (every row unjudged in an outage)
+  and passes `status` / `unjudged_reasons` / `coverage` / `breaker`. `EvalSummaryCard` + `unjudgedNotice.ts`: counts by reason,
+  where it stopped, judge label + eval id, "re-run the eval when the judge is reachable again" (no re-judge promise); no notice
+  for results stored before reasons existed (no `status`).
+- **Settings**: `config.py` `JUDGE_*`; project `runtime_config["eval_judge"]["resilience"] = {breaker, mode, max_wait_seconds}`
+  (`normalize_project_resilience`, clamped, max wait <= 24 h). `PUT /eval-judge` MERGES the block (a judge change keeps
+  `resilience`; `resilience: {}` resets it); GET returns `resilience {stored, breaker, mode, max_wait_seconds, consecutive}`.
+  UI: `JudgeModelCard` "When the judge is unreachable" (collapsed `<details>`).
+- **Left for A2 / A3**: the `eval_rejudge` Job + endpoint + `UnjudgedRowsPanel` (+ `unjudged_only` predictions filter), the
+  lift check re-judging an incomplete base without the GPU, Auto-RAG / passages verdicts saying "judge incomplete", the guard
+  on Auto-RAG (thread path) and on the teacher filter (needs a loud failure first); A3 the pre-judge checkpoint (a cancel /
+  crash during judging still loses the answers today). Tests: `test_judge_call_guard.py`, `test_eval_unjudged_scoring.py`,
+  additions in `test_answer_judge.py`, `test_command_backend.py`, `test_rubric_service.py`, `test_dialogue_eval.py`,
+  `test_post_training_lift_eval.py`, `test_code_example_scoring.py`; frontend `unjudgedNotice.test.ts`, `EvalSummaryCard`,
+  `NotificationBell`, `JudgeModelCard` tests.

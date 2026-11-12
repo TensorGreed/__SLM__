@@ -297,7 +297,9 @@ class JudgeTests(unittest.TestCase):
         self.assertEqual(instruction, ces.JUDGE_INSTRUCTION)
         self.assertEqual(preds[0]["_code_example_judge"]["verdict"], "correct")
         self.assertEqual(preds[1]["_code_example_judge"]["verdict"], "wrong")
-        self.assertEqual(preds[2]["_code_example_judge"], {"unscored": "judge_no_verdict", "label": "stub:judge"})
+        # An unjudged row also says why (judge resilience A1).
+        self.assertEqual(preds[2]["_code_example_judge"],
+                         {"unscored": "judge_no_verdict", "label": "stub:judge", "unjudged_reason": "unparseable"})
         self.assertNotIn("_code_example_judge", preds[3])
         for p in preds:  # the answer judge's own per-row keys are not written by this judge
             self.assertNotIn("row_judge_verdict", p)

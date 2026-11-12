@@ -172,15 +172,57 @@ class EvalServiceHooksTests(unittest.TestCase):
         rows = [
             {"prompt": "Q1", "reference": LONG, "prediction": "paraphrase", "row_exact_match": 0.0, "row_f1": 0.2, "row_judge_score": 1.0},
             {"prompt": "Q2", "reference": LONG, "prediction": "half", "row_exact_match": 0.0, "row_f1": 0.5, "row_judge_score": 0.5},
-            {"prompt": "Q3", "reference": LONG, "prediction": "?", "row_exact_match": 0.0, "row_f1": 0.1},
+            # The judge was asked and gave no verdict (it was unreachable): unscored, not failed (D2).
+            {"prompt": "Q3", "reference": LONG, "prediction": "?", "row_exact_match": 0.0, "row_f1": 0.1,
+             "row_judge_status": "unjudged", "row_judge_unjudged_reason": "judge_unreachable"},
+            # The judge was never asked (judge off / not a long-answer task): exact match decides, as before.
+            {"prompt": "Q4", "reference": LONG, "prediction": "?", "row_exact_match": 0.0, "row_f1": 0.1},
         ]
         self.assertFalse(_prediction_failed(rows[0]), "a correct paraphrase is not a failure once judged")
         self.assertTrue(_prediction_failed(rows[1]))
-        self.assertTrue(_prediction_failed(rows[2]), "unjudged rows fall back to exact match")
+        self.assertFalse(_prediction_failed(rows[2]), "a row the judge left unjudged is unscored, not failed")
+        self.assertTrue(_prediction_failed(rows[3]), "rows the judge never saw fall back to exact match")
         scores = _row_scores_for_pairing(rows)
-        self.assertEqual(scores["correct"], [1, 0, 0])
-        self.assertEqual(scores["f1"], [0.2, 0.5, 0.1])
-        self.assertEqual(scores["judge_correct"], [1.0, 0.5, None])
+        self.assertEqual(scores["correct"], [1, 0, None, 0])
+        self.assertEqual(scores["f1"], [0.2, 0.5, 0.1, 0.1])
+        self.assertEqual(scores["judge_correct"], [1.0, 0.5, None, None])
+
+    def test_unscored_code_example_rows_are_neither_failed_nor_correct(self):
+        """Bug 2: a scored code example without a pass verdict -- for EVERY reason (judge off for the
+        project, no judge, no verdict) -- is unscored (correct None), never counted correct."""
+        from app.services.evaluation_service import _prediction_failed, _prediction_unscored, _row_scores_for_pairing
+
+        rows = []
+        for reason in ("disabled_for_project", "no_judge_available", "judge_no_verdict", "judge_disabled"):
+            rows.append({"prompt": f"task {reason}", "reference": "{}", "prediction": "{}",
+                         "row_code_example_pass": None, "row_code_example_judge_unscored": reason})
+        rows.append({"prompt": "passed", "reference": "{}", "prediction": "{}", "row_code_example_pass": True})
+        rows.append({"prompt": "failed", "reference": "{}", "prediction": "{}", "row_code_example_pass": False})
+        for row in rows[:4]:
+            self.assertFalse(_prediction_failed(row))
+            self.assertTrue(_prediction_unscored(row))
+        self.assertEqual(_row_scores_for_pairing(rows)["correct"], [None, None, None, None, 1, 0])
+
+    def test_judge_block_shows_an_all_unjudged_eval(self):
+        from app.services.eval_summary_service import _judge_block
+
+        metrics = {"judge": {
+            "judge": "command", "metric": "judge_correct", "judged": 0, "unjudged": 80,
+            "counts": {"correct": 0, "partial": 0, "wrong": 0}, "score": None, "judge_calls": 3,
+            "judge_cached": 0, "status": "paused",
+            "unjudged_reasons": {"transient_error": 3, "judge_unreachable": 77}, "coverage": 0.0,
+            "breaker": {"tripped": True, "tripped_at_row": 2, "last_error_kind": "connection error"},
+        }}
+        block = _judge_block(metrics)
+        self.assertIsNotNone(block, "the card must be able to say every row is unjudged")
+        self.assertIsNone(block["score"])
+        self.assertEqual(block["status"], "paused")
+        self.assertEqual(block["unjudged_reasons"]["judge_unreachable"], 77)
+        self.assertEqual(block["breaker"]["tripped_at_row"], 2)
+        self.assertIsNone(_judge_block({"judge": {"skipped": "no_judge_available"}}))
+        complete = _judge_block({"judge": {"judge": "j", "judged": 3, "unjudged": 0, "score": 1.0,
+                                           "counts": {"correct": 3}}})
+        self.assertNotIn("status", complete, "a complete run's block is unchanged")
 
     def test_safe_judge_answers_skips_short_answers_and_missing_judge(self):
         from app.services.evaluation_service import _safe_judge_answers
@@ -215,6 +257,34 @@ class EvalServiceHooksTests(unittest.TestCase):
         self.assertEqual(snap["score"], 1.0)
         self.assertEqual(snap["judge"], "fake")
         self.assertEqual(rows[0]["row_judge_verdict"], "correct")
+
+    def test_safe_judge_answers_with_resilience_stops_on_an_outage(self):
+        """Held-out eval opts in: an unreachable judge is called 3 times, not once per row; every row
+        is still annotated (unjudged with a reason) and the snapshot says the judge stopped."""
+        from app.services import judge_call_guard as jcg
+        from app.services.evaluation_service import _safe_judge_answers
+
+        calls = []
+
+        async def judge(q, r, p):
+            calls.append(q)
+            from app.services.synth_backends.base import SynthBackendTransientError
+
+            raise SynthBackendTransientError("connection_failed")
+
+        jcg.reset_registry()
+        self.addCleanup(jcg.reset_registry)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(judge_svc.settings, "DATA_DIR", Path(tmp)), \
+                mock.patch.object(jcg.settings, "JUDGE_TRANSIENT_RETRIES", 0):
+            rows = [{"prompt": f"q{i}", "reference": LONG, "prediction": "x"} for i in range(8)]
+            snap = asyncio.run(_safe_judge_answers(
+                _FakeDb(), project_id=1, task_profile="rag_qa", predictions=rows,
+                judge=ResolvedJudge(label="down:judge", judge=judge), resilience=True,
+            ))
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(snap["status"], "paused")
+        self.assertEqual(snap["unjudged"], 8)
+        self.assertTrue(all(r["row_judge_status"] == "unjudged" for r in rows))
 
     def test_lift_pairing_skips_unjudged_rows(self):
         from app.models.experiment import EvalResult

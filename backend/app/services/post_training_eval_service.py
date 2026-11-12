@@ -191,6 +191,13 @@ def _baseline_judge_matches(result: EvalResult, judge_label: str | None) -> bool
     if judge_label is None:
         return True
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
+    # A base result the judge left incomplete (unreachable: paused / transient failures / no verdict at
+    # all) is no bar: its unjudged rows would pair as nothing. Re-run it (a re-judge without the GPU is
+    # a later phase).
+    from app.services.judge_call_guard import snapshot_incomplete
+
+    if any(snapshot_incomplete(metrics.get(k)) for k in ("judge", "code_example_judge", "rubric")):
+        return False
     if metrics.get("scoring_mode") == "structured_plan":
         # The rubric judge (if the project has a rubric) is stamped in the rubric block; the scoring
         # fingerprint carries the rest.
@@ -830,10 +837,15 @@ async def run_post_training_lift_eval(
         if isinstance(full, dict)
         else None
     )
+    from app.services.judge_call_guard import job_result_fields
+
     return {
         "experiment_id": experiment_id,
         "base_model": exp.base_model,
         "evidence": evidence,
+        # Only when the judge left rows unjudged on either leg: the bell says "judge incomplete" and
+        # gives no lift verdict.
+        **job_result_fields(trained_result, baseline_result),
         "baseline_experiment_id": baseline_exp.id,
         "baseline_eval_result_id": getattr(baseline_result, "id", None),
         "baseline_reused": baseline_reused,
@@ -864,12 +876,15 @@ async def run_head_only_evaluation(
         **({"checked_decoding": checked_override} if checked_override is not None else {}),
     )
     await db.commit()
+    from app.services.judge_call_guard import job_result_fields
+
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
     return {
         "kind": "head_eval",
         "experiment_id": experiment.id,
         "base_model": experiment.base_model,
         "trained_eval_result_id": result.id,
+        **job_result_fields(result),
         "lift_status": "no_baseline",
         "reason": "encoder base model: an untrained classifier head is no baseline",
         "accuracy": metrics.get("accuracy"),
@@ -966,6 +981,7 @@ async def _run_seed_group_lift_eval(
     )
 
     seeds: list[dict[str, Any]] = []
+    seed_results: list[Any] = []
     for idx, child in enumerate(children):
         fraction = 0.15 + 0.75 * idx / len(children)
         await report(fraction, f"Evaluating seed {child.seed_value} (run #{child.id}, {idx + 1}/{len(children)})")
@@ -973,6 +989,7 @@ async def _run_seed_group_lift_eval(
             db=db, experiment_id=child.id, model_path=None, **common
         )
         await db.commit()
+        seed_results.append(trained_result)
         summary = await compute_sft_lift_summary(db, project.id, experiment_id=child.id)
         headline = next(
             (row for row in summary.get("metric_lifts") or [] if row.get("is_headline")), None
@@ -986,6 +1003,8 @@ async def _run_seed_group_lift_eval(
         })
 
     await report(0.95, "Computing lift across seeds")
+    from app.services.judge_call_guard import job_result_fields
+
     scored = [s for s in seeds if s["headline"]]
     metric_ids = {s["headline"]["metric_id"] for s in scored}
     seed_evidence = None
@@ -1018,6 +1037,7 @@ async def _run_seed_group_lift_eval(
         # Row-level evidence is per seed (``seeds[i].headline.evidence``);
         # the bell leads with the seed spread.
         "evidence": None,
+        **job_result_fields(*seed_results, baseline_result),
         "baseline_experiment_id": baseline_exp.id,
         "baseline_eval_result_id": getattr(baseline_result, "id", None),
         "baseline_reused": baseline_reused,

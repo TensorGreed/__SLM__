@@ -9,8 +9,10 @@ read as "not stored" everywhere.
 
 One record per row::
 
-    {row_key, row_index, prompt | history, reference, prediction, correct, row_exact_match?, row_f1?,
+    {row_key, row_index, prompt | history, reference, prediction, correct? (absent when unscored), row_exact_match?, row_f1?,
      judge?: {scale: "verdict", task, label, verdict, score, reason, content_key, question?, reference?, prediction?},
+     judge_pending?: {status: "unjudged", reason, task, label, content_key, question?, reference?, prediction?},
+     checks_passed?: bool (scored code examples: parses + checks + citations, the parts the judge doesn't decide),
      rubric?: {scale: "rubric", label, passed, weighted, critical_failed, rubric_sha, content_key, question?, passages?}}
 
 ``row_key`` is the row's key in ``details.row_scores.keys``. ``judge`` / ``rubric`` carry what that judge
@@ -135,6 +137,48 @@ def _judge_record(
     }
 
 
+def _judge_pending_record(
+    p: dict[str, Any], *, scoring_mode: str | None, answer_label: str | None, parse_json: Callable[[Any], Any] | None,
+) -> dict[str, Any] | None:
+    """What a later re-judge needs for a row the answer judge was asked about but left without a verdict
+    (``row_judge_status`` "unjudged", or a code example whose judge annotation carries an
+    ``unjudged_reason``): the task, the judge, the reason and the judged texts. None otherwise."""
+    from app.services.answer_judge_service import content_key
+
+    ann = p.get("_code_example_judge")
+    if isinstance(ann, dict) and ann.get("unjudged_reason"):
+        from app.services import code_example_scoring as ces
+
+        view = ces.judge_view(p, parse_json) if parse_json is not None else None
+        task, reason, label = "code_example", ann["unjudged_reason"], ann.get("label")
+    elif p.get("row_judge_status") == "unjudged":
+        view = _answer_view(p, scoring_mode, parse_json)
+        task = "remediation" if str(scoring_mode or "") == "remediation" else "answer"
+        reason, label = p.get("row_judge_unjudged_reason"), answer_label
+    else:
+        return None
+    if view is None:
+        return None
+    question, reference, prediction = (str(v or "") for v in view)
+    return {
+        "status": "unjudged", "reason": str(reason or ""), "task": task, "label": str(label or ""),
+        "content_key": content_key(question, reference, prediction, task),
+        **_view_extras(p, question, reference, prediction),
+    }
+
+
+def _code_example_checks_passed(p: dict[str, Any]) -> bool | None:
+    """A scored code example's deterministic parts (parses, checks, citations) all passed: the judge's
+    verdict alone decides its pass. None for other rows."""
+    if "row_code_example_pass" not in p:
+        return None
+    return (
+        p.get("row_code_example_output_parses") is True
+        and p.get("row_code_example_checks_pass") is not False
+        and p.get("row_code_example_citations_valid") is not False
+    )
+
+
 def _rubric_record(p: dict[str, Any], *, rubric_label: str | None, rubric_sha: str | None) -> dict[str, Any] | None:
     if not isinstance(p.get("row_rubric_passed"), bool):
         return None
@@ -210,6 +254,17 @@ def build_records(
             judge = None
         if judge:
             rec["judge"] = judge
+        else:
+            try:
+                pending = _judge_pending_record(p, scoring_mode=scoring_mode, answer_label=answer_label, parse_json=parse_json)
+            except Exception as exc:  # noqa: BLE001
+                _LOG.debug("eval predictions: pending judge view skipped: %s", exc)
+                pending = None
+            if pending:
+                rec["judge_pending"] = pending
+        checks_passed = _code_example_checks_passed(p)
+        if checks_passed is not None:
+            rec["checks_passed"] = checks_passed
         try:
             rubric = _rubric_record(p, rubric_label=rubric_label, rubric_sha=rubric_sha)
         except Exception as exc:  # noqa: BLE001

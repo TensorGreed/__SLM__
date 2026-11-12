@@ -240,6 +240,34 @@ class DialogueJudgeEndToEnd(unittest.TestCase):
         # the judge saw the gold history as its question
         self.assertTrue(judge.calls[0][0].startswith("system: You are terse.\nuser: What colour"))
 
+    def test_unreachable_dialogue_judge_reports_why_turns_are_unjudged(self):
+        """Judge resilience A1: the per-turn judge runs under the guard -- an unreachable judge leaves
+        the turns unjudged with a reason (and stops calling once the breaker opens)."""
+        from unittest import mock
+
+        import httpx
+
+        from app.services import judge_call_guard as jcg
+
+        jcg.reset_registry()
+        self.addCleanup(jcg.reset_registry)
+        calls = []
+
+        async def down(question, reference, prediction, instruction=None):
+            calls.append(question)
+            raise httpx.ConnectError("EAI_AGAIN")
+
+        with mock.patch.object(jcg.settings, "JUDGE_TRANSIENT_RETRIES", 0):
+            out = run_eval([CHAT_ROW, SINGLE_ROW], dialogue_judge=True,
+                           answer_judge=ResolvedJudge(label="down-dialogue", judge=down))
+        summary = out.result.metrics["dialogue_judge"]
+        self.assertEqual(summary["rows"], 0)
+        self.assertEqual(summary["unjudged"], 3)
+        self.assertEqual(summary["status"], "paused", "3 failed turns in a row open the breaker")
+        self.assertEqual(summary["unjudged_reasons"], {"transient_error": 3})
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(summary["coverage"], 0.0)
+
     def test_judged_rows_go_to_a_side_file_not_the_result(self):
         out = run_eval([CHAT_ROW, SINGLE_ROW], dialogue_judge=True,
                        answer_judge=ResolvedJudge(label="stub", judge=_Judge()))

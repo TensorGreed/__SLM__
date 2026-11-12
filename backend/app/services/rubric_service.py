@@ -367,18 +367,30 @@ def _call_complete(fn: Callable[..., Any], prompt: str, schema: dict) -> str | N
     return result if isinstance(result, str) else None
 
 
-def judge_rows_with_rubric(rows: list[dict[str, Any]], rubric: Rubric, resolved: Any, *, cache: Any, view: Callable[[dict], tuple]) -> dict[str, Any]:
+def judge_rows_with_rubric(
+    rows: list[dict[str, Any]], rubric: Rubric, resolved: Any, *, cache: Any, view: Callable[[dict], tuple],
+    guard: Any = None,
+) -> dict[str, Any]:
     """Score every row against ``rubric`` with ``resolved.complete`` (synchronous: call off the event
     loop). ``view(row) -> (scenario, reference_text, prediction_text, passages)``. Sets ``row_rubric_*``
-    on each row; a row whose answer cannot be parsed after one retry is "unjudged" (not a failure).
-    ``LlmBudgetExceeded`` propagates. Returns ``{"rubric": {...summary...}}``."""
+    on each row; a row whose answer cannot be parsed after one retry is "unjudged" (not a failure), with
+    ``row_rubric_unjudged_reason`` (``judge_call_guard`` reasons) and the summary's ``unjudged_reasons``.
+    ``LlmBudgetExceeded`` propagates.
+
+    ``guard`` (opt-in, a thread-mode ``judge_call_guard.JudgeCallGuard``): each call goes through
+    ``guard.call_sync`` -- transient failures retried, an open breaker leaves the rest
+    ``judge_unreachable`` without a call; a permanent error or unparseable reply still gets the second
+    attempt. Returns ``{"rubric": {...summary...}}``."""
+    from app.services import judge_call_guard as jcg
+
     label = str(getattr(resolved, "label", "") or "")
     complete = getattr(resolved, "complete", None)
     schema = rubric_response_schema(rubric)
+    reasons: dict[str, int] = {}
     judged = unjudged = critical_fail_rows = passed_rows = 0
     weighted_sum = 0.0
     per = {c.id: {"sum": 0, "n": 0, "low": 0} for c in rubric.criteria}
-    for row in rows:
+    for index, row in enumerate(rows):
         scenario, reference, prediction, passages = view(row)
         scenario, reference, prediction = str(scenario or ""), str(reference or ""), str(prediction or "")
         key = _cache_key(label, rubric, scenario, reference, prediction, passages)
@@ -388,23 +400,43 @@ def judge_rows_with_rubric(rows: list[dict[str, Any]], rubric: Rubric, resolved:
             cached = {cid: v for cid, v in entry["rubric_scores"].items() if isinstance(v, dict)}
             if all(c.id in cached and isinstance(cached[c.id].get("score"), int) for c in rubric.criteria):
                 scores = cached
+        reason: str | None = None
+        error: str | None = None
         if scores is None and complete is not None:
             prompt = build_rubric_prompt(rubric, scenario=scenario, reference=reference, prediction=prediction, passages=passages)
             for _attempt in range(2):
-                try:
-                    raw = _call_complete(complete, prompt, schema)
-                except llm_budget_guard.LlmBudgetExceeded:
-                    raise
-                except Exception:  # noqa: BLE001 - a flaky judge call is an unjudged row, not a dead eval
-                    raw = None
+                if guard is not None:
+                    outcome = guard.call_sync(_call_complete, complete, prompt, schema, row=index)
+                    raw, error = outcome.result, outcome.error or error
+                    reason = outcome.reason
+                    if reason in jcg.OUTAGE_REASONS:
+                        break  # the guard already retried (or the breaker is open): no second attempt
+                else:
+                    try:
+                        raw = _call_complete(complete, prompt, schema)
+                        reason = None
+                    except llm_budget_guard.LlmBudgetExceeded:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 - a flaky judge call is an unjudged row, not a dead eval
+                        raw = None
+                        reason, error = jcg.reason_for_exception(exc), f"{type(exc).__name__}: {exc}"
                 scores = parse_rubric_scores(raw, rubric)
                 if scores is not None:
                     if cache is not None and hasattr(cache, "set_raw"):
                         cache.set_raw(key, {"verdict": "rubric", "rubric_scores": scores})
                     break
+                if reason is None:
+                    reason = jcg.REASON_UNPARSEABLE
+        elif scores is None:
+            reason = "no_judge"
         if scores is None:
             unjudged += 1
+            reason = reason or jcg.REASON_UNPARSEABLE
+            reasons[reason] = reasons.get(reason, 0) + 1
             row["row_rubric_status"] = "unjudged"
+            row["row_rubric_unjudged_reason"] = reason
+            if error:
+                row["row_rubric_error"] = str(error)[:200]
             row.pop("row_rubric_scores", None)
             row.pop("row_rubric_weighted", None)
             row.pop("row_rubric_critical_failed", None)
@@ -425,6 +457,8 @@ def judge_rows_with_rubric(rows: list[dict[str, Any]], rubric: Rubric, resolved:
         row["row_rubric_critical_failed"] = item["critical_failed"]
         row["row_rubric_passed"] = item["passed"]
         row["row_rubric_status"] = "judged"
+        row.pop("row_rubric_unjudged_reason", None)
+        row.pop("row_rubric_error", None)
     if cache is not None and hasattr(cache, "flush"):
         cache.flush()
     return {
@@ -435,6 +469,9 @@ def judge_rows_with_rubric(rows: list[dict[str, Any]], rubric: Rubric, resolved:
             "judge": label,
             "judged": judged,
             "unjudged": unjudged,
+            # Only when rows were left unjudged (a run without failures is unchanged).
+            **({"unjudged_reasons": {k: v for k, v in reasons.items() if v}} if unjudged else {}),
+            **({"breaker": guard.breaker_block} if guard is not None and guard.breaker_block else {}),
             "mean_weighted": round(weighted_sum / judged, 4) if judged else None,
             "pass_rate": round(passed_rows / judged, 4) if judged else None,
             "critical_fail_count": critical_fail_rows,

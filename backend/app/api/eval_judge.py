@@ -8,10 +8,10 @@ with the billing of each option (local / metered API credits / subscription).
 """
 
 import os
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -23,9 +23,20 @@ _CLOUD_PROVIDERS = ("anthropic", "openai", "deepseek")
 _CLOUD_LABELS = {"anthropic": "Anthropic", "openai": "OpenAI", "deepseek": "DeepSeek"}
 
 
+class JudgeResilienceUpdate(BaseModel):
+    """What happens when the judge is unreachable (``judge_call_guard``). Unset fields keep the
+    install default (``JUDGE_BREAKER_ENABLED`` / ``JUDGE_OUTAGE_MODE`` / ``JUDGE_OUTAGE_MAX_WAIT_SECONDS``)."""
+
+    breaker: bool | None = None
+    mode: Literal["stop", "wait"] | None = None
+    max_wait_seconds: float | None = Field(default=None, ge=0, le=24 * 3600)
+
+
 class EvalJudgeUpdate(BaseModel):
     enabled: bool = True
     backend: str | None = None
+    # None = keep the stored block; {} = back to the install defaults.
+    resilience: JudgeResilienceUpdate | None = None
 
 
 def _billing_for_class(cls: Any) -> str:
@@ -119,7 +130,18 @@ async def _payload(db: AsyncSession, project: Project) -> dict[str, Any]:
     cfg = rc.get("eval_judge") if isinstance(rc.get("eval_judge"), dict) else {}
     backend = str(cfg.get("backend") or "").strip() or None
     resolved = await _resolved(db, project)
+    from app.services.judge_call_guard import normalize_project_resilience, resolve_resilience
+
+    effective = resolve_resilience(rc)
     return {
+        # When the judge is unreachable: the project's stored choices (``stored``) and what applies.
+        "resilience": {
+            "stored": normalize_project_resilience(cfg.get("resilience")),
+            "breaker": effective.breaker,
+            "mode": effective.mode,
+            "max_wait_seconds": effective.max_wait_seconds,
+            "consecutive": effective.consecutive,
+        },
         "trust": await _trust(db, project, resolved),
         "enabled": cfg.get("enabled") is not False,
         "backend": backend,
@@ -162,8 +184,19 @@ async def put_eval_judge(project_id: int, body: EvalJudgeUpdate, db: AsyncSessio
             validate_pin(backend)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+    from app.services.judge_call_guard import normalize_project_resilience
+
     cfg = dict(project.runtime_config or {})
-    cfg["eval_judge"] = {"enabled": bool(body.enabled), "backend": backend}
+    # Merge, never overwrite: other keys of the block (the resilience settings) survive a judge change.
+    block = dict(cfg.get("eval_judge") or {}) if isinstance(cfg.get("eval_judge"), dict) else {}
+    block.update({"enabled": bool(body.enabled), "backend": backend})
+    if body.resilience is not None:
+        resilience = normalize_project_resilience(body.resilience.model_dump(exclude_none=True))
+        if resilience:
+            block["resilience"] = resilience
+        else:
+            block.pop("resilience", None)
+    cfg["eval_judge"] = block
     project.runtime_config = cfg
     await db.commit()
     await db.refresh(project)

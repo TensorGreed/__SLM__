@@ -11,8 +11,11 @@ wrong (1 / 0.5 / 0). The mean is the metric; the per-row scores go into
 and reports evidence exactly as it does for F1.
 
 Best-effort by design: no judge reachable → the metric is absent and F1
-stays the headline; a judge error on a row → that row is "unjudged" and
-excluded (counted in the snapshot). Tests inject ``judge_fn``.
+stays the headline; a judge error on a row → that row is "unjudged" (with a
+reason) and excluded (counted in the snapshot). Held-out eval passes
+``resilience`` (``judge_call_guard``): transient failures are retried and an
+outage stops the calls instead of failing every remaining row slowly. Tests
+inject ``judge_fn``.
 
 Judge resolution (``resolve_answer_judge``): ``EVAL_JUDGE_BACKEND`` env
 (``none`` disables; ``ollama[:model]`` / ``teacher`` pick a local synth
@@ -333,6 +336,8 @@ class ResolvedJudge:
     # (``asyncio.to_thread``); the real ones drive the async client with ``run_sync``. Used by the
     # rubric judge; None for judges built without one (tests' fakes).
     complete: Callable[[str, "str | None", "dict | None", int], "str | None"] | None = None
+    # The backend retries a failed call itself (the command backend): the judge guard adds no retries.
+    retries_internally: bool = False
 
 
 def run_sync(coro: Any) -> Any:
@@ -548,7 +553,8 @@ async def _resolve_answer_judge(db: Any, project_id: int, project: Any = None) -
         return ResolvedJudge(label=await _backend_label(backend), judge=_judge_from_synth_backend(backend, requested),
                              retrieval_judge=_retrieval_judge_from_synth_backend(backend),
                              local=not getattr(backend, "sends_data_off_machine", False),
-                             complete=_complete_from_synth_backend(backend))
+                             complete=_complete_from_synth_backend(backend),
+                             retries_internally=bool(getattr(backend, "retries_internally", False)))
 
     # Nothing requested: a local model first, then a configured cloud judge.
     for cls in BACKEND_REGISTRY:
@@ -562,7 +568,8 @@ async def _resolve_answer_judge(db: Any, project_id: int, project: Any = None) -
                 return ResolvedJudge(label=await _backend_label(backend), judge=_judge_from_synth_backend(backend, cls.name),
                                      retrieval_judge=_retrieval_judge_from_synth_backend(backend),
                                      local=not getattr(backend, "sends_data_off_machine", False),
-                                     complete=_complete_from_synth_backend(backend))
+                                     complete=_complete_from_synth_backend(backend),
+                                     retries_internally=bool(getattr(backend, "retries_internally", False)))
         except Exception:  # noqa: BLE001
             continue
     cloud = await _cloud_config(db, project_id, None)
@@ -617,24 +624,38 @@ async def _judge_predictions(
     progress: Callable[[int, int], Awaitable[None]] | None = None,
     instruction: str | None = None,
     view: Callable[[dict[str, Any]], "tuple[str, str, str] | None"] | None = None,
+    resilience: Any = None,
 ) -> dict[str, Any]:
     """Annotate each prediction in place with ``row_judge_score`` /
     ``row_judge_verdict`` / ``row_judge_reason`` and return the snapshot
-    for ``metrics["judge"]``. Rows the judge couldn't score stay
-    unannotated and are counted as ``unjudged``.
+    for ``metrics["judge"]``. A row the judge was asked about but couldn't
+    score gets ``row_judge_status = "unjudged"`` + ``row_judge_unjudged_reason``
+    (``judge_call_guard.UNJUDGED_REASONS``) + ``row_judge_error`` (when one
+    was raised) and is counted as ``unjudged``; the snapshot then also
+    carries ``status`` / ``unjudged_reasons`` / ``coverage`` (/ ``breaker``).
+    A run where every asked row got a verdict is unchanged.
 
     ``instruction`` is a task rubric added to the judge prompt. ``view(prediction)`` maps a row to
     ``(question, reference, prediction)`` (default: its prompt / reference / prediction);
-    ``None`` skips the row (not counted)."""
+    ``None`` skips the row (not counted).
+
+    ``resilience`` (opt-in, ``judge_call_guard.JudgeResilience``): retry transient failures and stop
+    calling once the judge's breaker opens (rows left ``judge_unreachable``). None = every row is called
+    once, as before."""
+    from app.services import judge_call_guard as jcg
+
+    guard = jcg.new_guard(label, resilience)
     counts = {"correct": 0, "partial": 0, "wrong": 0}
     scores: list[float] = []
     unjudged = 0
+    reasons: dict[str, int] = {}
     calls = 0
     cached = 0
     tokens = 0
     for index, p in enumerate(predictions):
         if not isinstance(p, dict):
             unjudged += 1
+            reasons["invalid_row"] = reasons.get("invalid_row", 0) + 1
             continue
         if view is not None:
             viewed = view(p)
@@ -651,19 +672,33 @@ async def _judge_predictions(
             score, verdict, reason = hit
             cached += 1
         else:
+            args = (question, reference, prediction, instruction) if instruction else (question, reference, prediction)
             result = None
-            try:
-                if instruction:
-                    result = await judge(question, reference, prediction, instruction)
-                else:
-                    result = await judge(question, reference, prediction)
-            except llm_budget_guard.LlmBudgetExceeded:
-                raise  # the hard API budget ends the run; it is not a per-row failure
-            except Exception as exc:  # noqa: BLE001 — the judge never breaks the eval
-                _LOG.warning("answer judge failed on row %s: %s", index, exc)
-            calls += 1
+            reason: str | None = None
+            error: str | None = None
+            if guard is not None:
+                before = guard.calls
+                outcome = await guard.call(judge, *args, row=index)
+                calls += guard.calls - before
+                result, reason, error = outcome.result, outcome.reason, outcome.error
+                if reason is not None and reason != jcg.REASON_UNREACHABLE and error:
+                    _LOG.warning("answer judge failed on row %s: %s", index, error)
+            else:
+                try:
+                    result = await judge(*args)
+                except llm_budget_guard.LlmBudgetExceeded:
+                    raise  # the hard API budget ends the run; it is not a per-row failure
+                except Exception as exc:  # noqa: BLE001 — the judge never breaks the eval
+                    _LOG.warning("answer judge failed on row %s: %s", index, exc)
+                    reason, error = jcg.reason_for_exception(exc), f"{type(exc).__name__}: {exc}"
+                calls += 1
+                if result is None and reason is None:
+                    reason = jcg.REASON_UNPARSEABLE
             if result is None:
                 unjudged += 1
+                reason = reason or jcg.REASON_UNPARSEABLE
+                reasons[reason] = reasons.get(reason, 0) + 1
+                jcg.mark_unjudged(p, reason, error)
                 continue
             score, verdict, reason, row_tokens = result
             tokens += int(row_tokens or 0)
@@ -690,6 +725,7 @@ async def _judge_predictions(
         "judge_calls": calls,
         "judge_cached": cached,
         "judge_tokens": tokens,
+        **jcg.unjudged_fields(judged, unjudged, reasons, guard),
     }
 
 
@@ -700,6 +736,7 @@ async def _judge_retrieval(
     label: str,
     cache: AnswerJudgeCache | None = None,
     instruction: str | None = None,
+    resilience: Any = None,
 ) -> dict[str, Any]:
     """For each row ``{prompt, reference, passages: [str], row_judge_verdict?}``
     ask whether the retrieved passages contained the answer; annotate in
@@ -710,12 +747,21 @@ async def _judge_retrieval(
     verdict — the split of the wrong answers into ``wrong_missed``
     (retrieval missed it) and ``wrong_misread`` (retrieval found it, the
     model misread it), plus ``correct_missed`` (answered right without the
-    passage: the model knew it, or the judge was lenient)."""
+    passage: the model knew it, or the judge was lenient).
+
+    Unjudged rows and ``resilience`` work as in ``_judge_predictions``
+    (per-row keys ``row_retrieval_status`` / ``row_retrieval_unjudged_reason`` /
+    ``row_retrieval_error``)."""
+    from app.services import judge_call_guard as jcg
+
+    guard = jcg.new_guard(label, resilience)
     found = missed = unjudged = calls = cached = tokens = 0
+    reasons: dict[str, int] = {}
     wrong_missed = wrong_misread = correct_missed = 0
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             unjudged += 1
+            reasons["invalid_row"] = reasons.get("invalid_row", 0) + 1
             continue
         question = str(row.get("prompt") or "")
         reference = str(row.get("reference") or "")
@@ -730,19 +776,31 @@ async def _judge_retrieval(
                 verdict, passage, reason = hit
                 cached += 1
             else:
+                args = (question, reference, passages, instruction) if instruction else (question, reference, passages)
                 result = None
-                try:
-                    if instruction:
-                        result = await judge(question, reference, passages, instruction)
-                    else:
-                        result = await judge(question, reference, passages)
-                except llm_budget_guard.LlmBudgetExceeded:
-                    raise
-                except Exception as exc:  # noqa: BLE001 — never breaks the comparison
-                    _LOG.warning("retrieval judge failed on row %s: %s", index, exc)
-                calls += 1
+                reason: str | None = None
+                error: str | None = None
+                if guard is not None:
+                    before = guard.calls
+                    outcome = await guard.call(judge, *args, row=index)
+                    calls += guard.calls - before
+                    result, reason, error = outcome.result, outcome.reason, outcome.error
+                    if reason is not None and reason != jcg.REASON_UNREACHABLE and error:
+                        _LOG.warning("retrieval judge failed on row %s: %s", index, error)
+                else:
+                    try:
+                        result = await judge(*args)
+                    except llm_budget_guard.LlmBudgetExceeded:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 — never breaks the comparison
+                        _LOG.warning("retrieval judge failed on row %s: %s", index, exc)
+                        reason, error = jcg.reason_for_exception(exc), f"{type(exc).__name__}: {exc}"
+                    calls += 1
                 if result is None:
                     unjudged += 1
+                    reason = reason or jcg.REASON_UNPARSEABLE
+                    reasons[reason] = reasons.get(reason, 0) + 1
+                    jcg.mark_unjudged(row, reason, error, prefix="row_retrieval")
                     continue
                 verdict, passage, reason, row_tokens = result
                 tokens += int(row_tokens or 0)
@@ -779,6 +837,7 @@ async def _judge_retrieval(
         "judge_calls": calls,
         "judge_cached": cached,
         "judge_tokens": tokens,
+        **jcg.unjudged_fields(judged, unjudged, reasons, guard),
     }
 
 

@@ -88,6 +88,20 @@ def emit(text):
     else:
         sys.stdout.write(json.dumps({{"result": text, "usage": usage}}))
 
+if "[[CONNFAIL]]" in prompt:
+    # the shape a CLI prints when it cannot reach its API (tokens / durations included)
+    sys.stdout.write(json.dumps({{"type": "result", "is_error": True, "duration_ms": 170512, "num_turns": 1,
+                                  "api_error": "connection_failed",
+                                  "result": "API Error: Can't reach the API server (EAI_AGAIN)",
+                                  "usage": {{"input_tokens": 0, "output_tokens": 512}}}}))
+    sys.exit(1)
+if "[[PERMJSON]]" in prompt:
+    # a request error whose JSON carries numbers that look like 5xx codes
+    sys.stdout.write(json.dumps({{"type": "result", "is_error": True, "duration_ms": 503, "num_turns": 1,
+                                  "api_error": "invalid_request_error", "api_error_status": 400,
+                                  "result": "API Error: the prompt is too long",
+                                  "usage": {{"input_tokens": 500, "output_tokens": 512}}}}))
+    sys.exit(1)
 if "[[ISERR]]" in prompt:
     sys.stdout.write(json.dumps({{"is_error": True, "result": "model refused"}}))
     sys.exit(0)
@@ -397,6 +411,71 @@ class TestOutputParsing(CommandTestCase):
         self.assertEqual(backend.model, "opus")
         self.assertEqual(backend.timeout_seconds, 5.0)
         self.assertEqual(backend.binary, "fakecli")  # settings' argv, not the project's
+
+
+class TestTransientClassification(CommandTestCase):
+    """A failed call's class comes from the reply's structured fields (``api_error``), never from
+    regex-matching numbers inside the JSON; the usage-limit pause is unchanged."""
+
+    def test_connection_failure_raises_the_transient_error_after_retries(self):
+        from app.services.synth_backends import SynthBackendTransientError
+
+        with mock.patch.object(settings, "SYNTH_COMMAND_MAX_RETRIES", 1):
+            with self.assertRaises(SynthBackendTransientError):
+                self.run_async(CommandBackend().complete("[[CONNFAIL]]"))
+        self.assertEqual(len(self.fake.calls()), 2, "the backend's own retries are unchanged")
+        self.assertTrue(CommandBackend.retries_internally)
+
+    def test_permanent_json_error_with_5xx_looking_numbers_is_permanent(self):
+        from app.services import judge_call_guard as jcg
+        from app.services.synth_backends import SynthBackendTransientError
+
+        with mock.patch.object(settings, "SYNTH_COMMAND_MAX_RETRIES", 0):
+            with self.assertRaises(SynthBackendError) as ctx:
+                self.run_async(CommandBackend().complete("[[PERMJSON]]"))
+        self.assertNotIsInstance(ctx.exception, SynthBackendTransientError)
+        self.assertEqual(jcg.classify_judge_error(ctx.exception), jcg.PERMANENT)
+        self.assertFalse(command_module._is_transient_failure(
+            {"is_error": True, "api_error": "invalid_request_error", "usage": {"output_tokens": 512}, "duration_ms": 503},
+            "", "",
+        ))
+        self.assertTrue(command_module._is_transient_failure({"is_error": True, "api_error_status": 529}, "", ""))
+        self.assertTrue(command_module._is_transient_failure(None, "", "getaddrinfo EAI_AGAIN api.example"))
+
+    def test_unknown_failure_stays_a_plain_backend_error(self):
+        from app.services.synth_backends import SynthBackendTransientError
+
+        with mock.patch.object(settings, "SYNTH_COMMAND_MAX_RETRIES", 0):
+            with self.assertRaises(SynthBackendError) as ctx:
+                self.run_async(CommandBackend().complete("[[FAIL]]"))
+        self.assertNotIsInstance(ctx.exception, SynthBackendTransientError)
+
+    def test_timeout_is_transient(self):
+        from app.services.synth_backends import SynthBackendTransientError
+
+        self.cfg(sleep=5)
+        with mock.patch.object(settings, "SYNTH_COMMAND_TIMEOUT_SECONDS", 0.5), mock.patch.object(
+            settings, "SYNTH_COMMAND_MAX_RETRIES", 0
+        ):
+            with self.assertRaises(SynthBackendTransientError):
+                self.run_async(CommandBackend().complete("slow"))
+
+    def test_judge_guard_adds_no_retries_on_top_of_the_backend(self):
+        """The incident shape: every call fails to connect. The command judge already retries; the
+        guard adds none and its breaker stops the loop after the 3rd failed row."""
+        from app.services import judge_call_guard as jcg
+
+        jcg.reset_registry()
+        self.addCleanup(jcg.reset_registry)
+        backend = CommandBackend()
+        judge = answer_judge_service._judge_from_synth_backend(backend, "command")
+        rows = [{"prompt": f"[[CONNFAIL]] Q{i}", "reference": "r " * 10, "prediction": "p"} for i in range(6)]
+        cfg = jcg.resolve_resilience({}, retries_internally=True)
+        with mock.patch.object(settings, "SYNTH_COMMAND_MAX_RETRIES", 1):
+            snap = self.run_async(answer_judge_service.judge_predictions(rows, judge, label="command", resilience=cfg))
+        self.assertEqual(len(self.fake.calls()), 3 * 2, "3 rows x (1 call + 1 backend retry), then the breaker")
+        self.assertEqual(snap["unjudged_reasons"], {"transient_error": 3, "judge_unreachable": 3})
+        self.assertEqual(snap["status"], "paused")
 
 
 class TestBatching(CommandTestCase):
@@ -825,6 +904,27 @@ class TestBackendsAndJudgeApi(CommandTestCase):
 
         with mock.patch.dict(os.environ, {"EVAL_JUDGE_BACKEND": "ollama"}):
             self.assertEqual(client.get(f"/api/projects/{pid}/eval-judge").json()["env_override"], "ollama")
+
+    def test_eval_judge_put_keeps_the_resilience_block(self):
+        pid = _project_from_template()
+        with mock.patch.dict(os.environ, {"EVAL_JUDGE_BACKEND": ""}):
+            body = client.get(f"/api/projects/{pid}/eval-judge").json()
+            self.assertEqual(body["resilience"]["mode"], "stop")
+            self.assertTrue(body["resilience"]["breaker"])
+            put = client.put(f"/api/projects/{pid}/eval-judge", json={
+                "enabled": True, "backend": None, "resilience": {"mode": "wait", "max_wait_seconds": 7200},
+            })
+            self.assertEqual(put.status_code, 200, put.text)
+            self.assertEqual(put.json()["resilience"]["stored"], {"mode": "wait", "max_wait_seconds": 7200.0})
+            # Changing the judge alone (no resilience field) keeps the block.
+            again = client.put(f"/api/projects/{pid}/eval-judge", json={"enabled": True, "backend": "command"})
+            self.assertEqual(again.json()["resilience"]["stored"], {"mode": "wait", "max_wait_seconds": 7200.0})
+            self.assertEqual(again.json()["resilience"]["mode"], "wait")
+            # An empty block goes back to the install defaults.
+            reset = client.put(f"/api/projects/{pid}/eval-judge", json={"enabled": True, "backend": "command", "resilience": {}})
+            self.assertEqual(reset.json()["resilience"]["stored"], {})
+            bad = client.put(f"/api/projects/{pid}/eval-judge", json={"enabled": True, "resilience": {"mode": "forever"}})
+            self.assertEqual(bad.status_code, 422)
 
     def test_eval_judge_put_rejects_unknown_backend(self):
         pid = _project_from_template()

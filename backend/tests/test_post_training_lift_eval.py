@@ -494,6 +494,40 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
                 out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=fourth)
             self.assertFalse(out["baseline_reused"])
 
+    async def test_base_left_unjudged_by_an_outage_is_not_reused(self):
+        """Judge resilience A1: a base result whose judge was unreachable (breaker paused / no verdicts)
+        is no bar -- the next lift check re-runs the base; the Job result says the judge is incomplete
+        while a leg of it is."""
+        from app.services.answer_judge_service import ResolvedJudge
+
+        async def _noop(q, r, p):
+            return None
+
+        pid = await self._project()
+        first, second, third = [await self._run(pid) for _ in range(3)]
+        self.judge = ResolvedJudge(label="ollama:judge-a", judge=_noop)
+        paused = {"judge": "ollama:judge-a", "score": None, "judged": 0, "unjudged": 10, "status": "paused",
+                  "unjudged_reasons": {"transient_error": 3, "judge_unreachable": 7}}
+        with mock.patch("app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout):
+            self.result_judge_block = paused
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=first)
+            self.assertEqual(out["judge_status"], "paused")
+            self.assertEqual(out["judge_unjudged"], 10)
+            self.assertEqual(out["judge_unjudged_reasons"], {"transient_error": 3, "judge_unreachable": 7})
+            # The judge is back: the paused base is re-run, not reused.
+            self.result_judge_block = {"judge": "ollama:judge-a", "score": 0.5, "judged": 10, "unjudged": 0}
+            base_calls = sum(1 for c in self.eval_calls if c["model_path"] is not None)
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=second)
+            self.assertFalse(out["baseline_reused"])
+            self.assertEqual(sum(1 for c in self.eval_calls if c["model_path"] is not None), base_calls + 1)
+            self.assertNotIn("judge_status", out)
+            # A complete base is reused as before.
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=third)
+            self.assertTrue(out["baseline_reused"])
+
     async def test_short_answer_task_reuses_the_baseline_with_a_judge_configured(self):
         from app.services.answer_judge_service import ResolvedJudge
 

@@ -1,6 +1,7 @@
 """Evaluation framework service — metrics, safety, regression comparison."""
 
 import asyncio
+import contextlib
 import functools
 import gc
 import json
@@ -2960,6 +2961,11 @@ def _prediction_failed(prediction: dict[str, Any]) -> bool:
         # multi_option: the row_pass rule over verified options; None = excluded (an infrastructure
         # verifier error), neither failed nor correct (``_prediction_unscored``).
         return prediction["row_multi_option_pass"] is False
+    if prediction.get("row_judge_status") == "unjudged" and judge_decides_row(prediction):
+        # The judge was asked to decide this row and gave no verdict (outage, unparseable reply):
+        # unscored (``_prediction_unscored``), not failed -- exact match would fail every paraphrase.
+        # Rows the judge was never asked about (judge off / not a long-answer task) keep exact match.
+        return False
     judge_score = prediction.get("row_judge_score")
     if isinstance(judge_score, (int, float)) and not isinstance(judge_score, bool):
         # A judged long answer: wrong or partial is a failure; exact match
@@ -2975,9 +2981,17 @@ def _prediction_failed(prediction: dict[str, Any]) -> bool:
 
 
 def _prediction_unscored(prediction: dict[str, Any]) -> bool:
-    """A row the scorer excluded from its aggregate (``correct`` = None, so pairing skips it): today a
-    ``multi_option`` row whose verifier could not run."""
-    return "row_multi_option_pass" in prediction and prediction["row_multi_option_pass"] is None
+    """A row the scorer excluded from its aggregate (``correct`` = None, so pairing skips it): a
+    ``multi_option`` row whose verifier could not run, a scored code example without a pass verdict
+    (``row_code_example_pass`` None, whatever the reason: judge off, no judge, no verdict), and a row
+    the answer judge was asked to decide but left unjudged (``row_judge_status`` = "unjudged")."""
+    if "row_multi_option_pass" in prediction:
+        return prediction["row_multi_option_pass"] is None
+    if prediction.get("row_skipped"):
+        return False
+    if "row_code_example_pass" in prediction and prediction["row_code_example_pass"] is None:
+        return True
+    return prediction.get("row_judge_status") == "unjudged" and judge_decides_row(prediction)
 
 
 def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -2989,8 +3003,8 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
     ``keys`` identify a row by its prompt + reference so results pair up even
     if the two evals saw the rows in a different order or count. ``f1`` is
     the handler's per-row F1 where it records one; ``correct`` is 1 / 0 per
-    row (same rule as ``_prediction_failed``; None for a row the scorer excluded,
-    ``_prediction_unscored``). None when nothing is scorable.
+    row (same rule as ``_prediction_failed``), None for a row the scorer left
+    out (``_prediction_unscored``). None when nothing is scorable.
     """
     import hashlib
 
@@ -3446,10 +3460,16 @@ async def _judge_structured_plan_rubric(
     metrics: dict[str, Any],
     judge: "ResolvedJudge | None",
     judge_enabled: bool,
+    *,
+    resilience: bool = False,
 ) -> "str | None":
     """Grade every plan against the project's rubric (when it has one and the judge is enabled) off the
     event loop and fold the verdicts into the pass rate. Returns the judge label used (None = none).
-    No judge reachable: ``metrics["rubric"] = {"status": "no_judge", ...}`` and the pass ignores the rubric."""
+    No judge reachable: ``metrics["rubric"] = {"status": "no_judge", ...}`` and the pass ignores the rubric.
+
+    ``resilience=True`` (held-out eval): the worker thread grades under a thread-mode judge guard
+    (``judge_call_guard``: stop mode only, no Job handle or DB use from the thread); a cancel of the Job
+    reaches it through a ``threading.Event`` this loop sets."""
     from app.services import structured_plan_prompt as spp
     from app.services import structured_plan_scoring as sps
 
@@ -3482,17 +3502,61 @@ async def _judge_structured_plan_rubric(
     from app.services import llm_budget_guard
 
     await llm_budget_guard.refresh_if_stale()
+    guard = None
+    cancel_event = None
+    if resilience:
+        import threading
+
+        from app.services.judge_call_guard import JudgeCallGuard
+
+        cancel_event = threading.Event()
+        guard = JudgeCallGuard(
+            label=resolved.label, resilience=_judge_resilience(project, resolved, threaded=True),
+            threaded=True, cancel_event=cancel_event,
+        )
 
     def _grade() -> dict[str, Any]:
         with llm_budget_guard.cached_ledger_only():
             return judge_rows_with_rubric(
                 predictions, rubric, resolved,
                 cache=project_cache(project_id), view=lambda p: sps.rubric_view(p, parse_json),
+                **({"guard": guard} if guard is not None else {}),
             )
 
-    block = await asyncio.to_thread(_grade)
+    watcher = asyncio.ensure_future(_watch_cancel(cancel_event)) if cancel_event is not None else None
+    try:
+        block = await asyncio.to_thread(_grade)
+    except Exception as exc:
+        from app.services.judge_call_guard import JudgeCancelled
+
+        if isinstance(exc, JudgeCancelled):
+            raise asyncio.CancelledError() from exc  # the Job was cancelled while the thread graded
+        raise
+    finally:
+        if watcher is not None:
+            watcher.cancel()
+            with contextlib.suppress(BaseException):
+                await watcher
     sps.finalize_with_rubric(predictions, metrics, block)
     return resolved.label
+
+
+async def _watch_cancel(event: Any, interval: float = 2.0) -> None:
+    """On the main loop: set ``event`` when this Job is cancelled (a worker thread polls the event, never the
+    Job row -- the shared engine belongs to this loop)."""
+    from app.services import jobs_service
+
+    handle = jobs_service.current_job_handle.get()
+    if handle is None or getattr(handle, "loop", None) is not asyncio.get_running_loop():
+        return
+    while not event.is_set():
+        try:
+            if await handle.check_cancelled():
+                event.set()
+                return
+        except Exception:  # noqa: BLE001 - a status read never breaks the eval
+            pass
+        await asyncio.sleep(interval)
 
 
 async def _prepare_remediation_predictions(
@@ -3504,6 +3568,7 @@ async def _prepare_remediation_predictions(
     *,
     judge: "ResolvedJudge | None" = None,
     judge_enabled: bool = True,
+    resilience: bool = False,
 ) -> dict[str, Any] | None:
     """Before scoring a ``remediation`` eval: apply every patch and run the code checks in a worker
     thread (external checks can be slow), then -- when the project configures a detector -- run it
@@ -3531,7 +3596,7 @@ async def _prepare_remediation_predictions(
     except Exception as exc:  # noqa: BLE001
         logging.getLogger(__name__).warning("remediation preparation skipped: %s", exc)
     return await _judge_code_example_predictions(
-        db, project_id, task_handler, predictions, judge=judge, judge_enabled=judge_enabled,
+        db, project_id, task_handler, predictions, judge=judge, judge_enabled=judge_enabled, resilience=resilience,
     )
 
 
@@ -3543,12 +3608,16 @@ async def _judge_code_example_predictions(
     *,
     judge: "ResolvedJudge | None" = None,
     judge_enabled: bool = True,
+    resilience: bool = False,
 ) -> dict[str, Any] | None:
     """The answer judge's verdict on every held-out ``code_example`` row, annotated as
     ``_code_example_judge`` = ``{verdict, reason, label}`` or ``{unscored: <reason>, label}`` (the scorer
     never passes a row without a verdict). Uses the project's selected answer judge (whatever
     ``resolve_answer_judge`` picks: a pinned or local synth backend, a ``command:`` backend, a cloud
-    model) with ``code_example_scoring.JUDGE_INSTRUCTION``. None when there are no such rows."""
+    model) with ``code_example_scoring.JUDGE_INSTRUCTION``. None when there are no such rows.
+    A row the judge was asked about but left without a verdict is ``{unscored: "judge_no_verdict",
+    unjudged_reason, label}`` (``judge_call_guard`` reasons). ``resilience=True`` runs the judge under the
+    project's judge guard (held-out eval)."""
     from app.services import code_example_scoring as ces
 
     rows = [p for p in predictions if ces.row_context(p) is not None]
@@ -3577,6 +3646,7 @@ async def _judge_code_example_predictions(
         snapshot = await judge_predictions(
             proxies, resolved.judge, label=resolved.label, cache=project_cache(project_id),
             instruction=ces.JUDGE_INSTRUCTION, view=lambda proxy: ces.judge_view(proxy["_row"], parse_json),
+            resilience=_judge_resilience(project, resolved) if resilience else None,
         )
         for proxy in proxies:
             verdict = proxy.get("row_judge_verdict")
@@ -3585,7 +3655,10 @@ async def _judge_code_example_predictions(
                     "verdict": verdict, "reason": proxy.get("row_judge_reason"), "label": resolved.label,
                 }
             else:
-                proxy["_row"]["_code_example_judge"] = {"unscored": "judge_no_verdict", "label": resolved.label}
+                ann: dict[str, Any] = {"unscored": "judge_no_verdict", "label": resolved.label}
+                if proxy.get("row_judge_unjudged_reason"):
+                    ann["unjudged_reason"] = proxy["row_judge_unjudged_reason"]
+                proxy["_row"]["_code_example_judge"] = ann
         return snapshot
     except LlmBudgetExceeded:
         raise
@@ -3602,6 +3675,7 @@ async def _safe_judge_answers(
     predictions: list[dict[str, Any]],
     judge: "ResolvedJudge | None",
     scoring_mode: str | None = None,
+    resilience: bool = False,
 ) -> dict[str, Any]:
     """LLM-judge the held-out answers when the task is long-answer
     generative and a judge is reachable. Empty dict otherwise or on any
@@ -3611,7 +3685,11 @@ async def _safe_judge_answers(
     reference fix (a remediation rubric) unless the project turned it off
     (``runtime_config["remediation"]["judge"] = false``), and — when rows carry passages and
     the judge has a retrieval judge — checks whether the passages held the guidance
-    (``snapshot["retrieval"]``)."""
+    (``snapshot["retrieval"]``).
+
+    ``resilience=True`` (held-out eval): the judge runs under the project's judge guard
+    (``judge_call_guard``: transient failures retried, an outage stops the calls and leaves the
+    rest ``judge_unreachable``)."""
     from app.services.answer_judge_service import (
         judge_predictions,
         judge_retrieval,
@@ -3638,6 +3716,10 @@ async def _safe_judge_answers(
             resolved = await resolve_answer_judge(db, project_id, project)
         if resolved is None:
             return {"skipped": "no_judge_available"}
+        guard_cfg = None
+        if resilience:
+            project = project or await db.get(Project, project_id)
+            guard_cfg = _judge_resilience(project, resolved)
         if remediation:
             from app.services import remediation_scoring as rs
             from app.services.eval_task_handler_service import StructuredExtractionHandler
@@ -3646,6 +3728,7 @@ async def _safe_judge_answers(
             snapshot = await judge_predictions(
                 predictions, resolved.judge, label=resolved.label, cache=project_cache(project_id),
                 instruction=rs.JUDGE_INSTRUCTION, view=lambda p: rs.judge_view(p, parse_json),
+                resilience=guard_cfg,
             )
             rows = rs.retrieval_judge_rows(predictions, parse_json)
             if rows and resolved.retrieval_judge is not None:
@@ -3654,6 +3737,7 @@ async def _safe_judge_answers(
                         rows, resolved.retrieval_judge, label=resolved.label, cache=project_cache(project_id),
                         instruction="The reference is a fix for a code finding; a passage is 'found' when it holds "
                         "the guidance that fix follows.",
+                        resilience=guard_cfg,
                     )
                 except Exception as exc:  # noqa: BLE001 - best-effort
                     logging.getLogger(__name__).warning("retrieval judge skipped: %s", exc)
@@ -3671,10 +3755,22 @@ async def _safe_judge_answers(
 
         return await judge_predictions(
             predictions, resolved.judge, label=resolved.label, cache=project_cache(project_id), view=view,
+            resilience=guard_cfg,
         )
     except Exception as exc:  # noqa: BLE001
         logging.getLogger(__name__).warning("answer judge skipped: %s", exc)
         return {"skipped": f"error: {exc}"[:200]}
+
+
+def _judge_resilience(project: Any, resolved: Any, *, threaded: bool = False) -> Any:
+    """The judge guard settings for this project + judge (``judge_call_guard.resolve_resilience``)."""
+    from app.services.judge_call_guard import resolve_resilience
+
+    return resolve_resilience(
+        getattr(project, "runtime_config", None),
+        retries_internally=bool(getattr(resolved, "retries_internally", False)),
+        threaded=threaded,
+    )
 
 
 # Per-row extras a handler's ``build_prompts`` attaches to a pair that its scorer (or the UI) reads back
@@ -4021,6 +4117,7 @@ async def run_heldout_evaluation(
         code_example_judge = await _prepare_remediation_predictions(
             db, project_id, task_handler, eval_ctx, predictions,
             judge=answer_judge, judge_enabled=answer_judge_enabled and eval_type in ("exact_match", "f1"),
+            resilience=True,
         )
     elif heldout_scoring_mode == "structured_plan":
         await _prepare_structured_plan_predictions(task_handler, eval_ctx, predictions)
@@ -4105,7 +4202,8 @@ async def run_heldout_evaluation(
             from app.services.structured_plan_scoring import structured_plan_scoring_fingerprint
 
             judge_label = await _judge_structured_plan_rubric(
-                db, project_id, task_handler, predictions, metrics, answer_judge, answer_judge_enabled
+                db, project_id, task_handler, predictions, metrics, answer_judge, answer_judge_enabled,
+                resilience=True,
             )
             project_row = await db.get(Project, project_id)
             metrics["structured_plan_fingerprint"] = structured_plan_scoring_fingerprint(
@@ -4124,6 +4222,7 @@ async def run_heldout_evaluation(
         judge_snapshot = await _safe_judge_answers(
             db, project_id=project_id, task_profile=eval_ctx.task_profile,
             predictions=predictions, judge=answer_judge, scoring_mode=heldout_scoring_mode,
+            resilience=True,
         )
         if judge_snapshot:
             metrics["judge"] = judge_snapshot
@@ -4140,6 +4239,7 @@ async def run_heldout_evaluation(
                 metrics["dialogue_judge"] = await dialogue_eval_service.judge_dialogues(
                     pairs, predictions, replay_predictions, replay_pairs, dialogue_resolved,
                     cache=project_cache(project_id),
+                    resilience=_judge_resilience(await db.get(Project, project_id), dialogue_resolved),
                 )
                 metrics["dialogue_judge"]["replay_generations"] = len(replay_pairs)
             except LlmBudgetExceeded:

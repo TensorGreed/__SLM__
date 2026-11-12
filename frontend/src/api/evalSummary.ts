@@ -150,13 +150,29 @@ export interface EvalSummaryFailure {
 }
 
 /** The LLM judge's snapshot for the fine-tuned eval: who judged, how many
- *  answers were correct / partial / wrong. Null when the task isn't a
- *  long-answer one or no judge was reachable (F1 stays the headline). */
+ *  answers were correct / partial / wrong, and how many it left unjudged
+ *  (and why). Null when the task isn't a long-answer one or no judge was
+ *  resolved (F1 stays the headline). */
 export interface EvalSummaryJudge {
     judge: string | null;
-    score: number;
+    /** Null when the judge scored none of the rows (e.g. it was unreachable for the whole eval). */
+    score: number | null;
     judged: number;
     unjudged: number;
+    /** Only when rows were left unjudged: "paused" = the breaker stopped the calls. */
+    status?: 'partial' | 'paused' | null;
+    /** Unjudged rows by reason (judge_unreachable / transient_error / unparseable / permanent_error). */
+    unjudged_reasons?: Record<string, number> | null;
+    coverage?: number | null;
+    breaker?: {
+        tripped?: boolean;
+        tripped_at_row?: number | null;
+        consecutive?: number | null;
+        last_error_kind?: string | null;
+        last_error?: string | null;
+        mode?: string | null;
+        waited_seconds?: number | null;
+    } | null;
     correct: number;
     partial: number;
     wrong: number;

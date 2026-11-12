@@ -64,11 +64,29 @@ class CloudLlmResponse:
     stop_reason: str = ""
 
 
+# HTTP statuses that mean "the provider, not the request": worth retrying later.
+TRANSIENT_STATUS_CODES: frozenset[int] = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
+
+
+def is_transient_status(status_code: int | None) -> bool:
+    return status_code is not None and (int(status_code) in TRANSIENT_STATUS_CODES or 500 <= int(status_code) <= 599)
+
+
 class CloudLlmError(RuntimeError):
     """Raised when the upstream provider returns an unrecoverable
     error (bad API key, model not found, rate-limited, etc.). The
     message is safe to surface to end users — it never includes the
-    API key."""
+    API key.
+
+    ``status_code``: the provider's HTTP status (None when no response
+    came back). ``transient``: the failure is the network's or the
+    provider's (connection / DNS / timeout, 408 / 429 / 5xx), not the
+    request's — ``judge_call_guard`` retries those."""
+
+    def __init__(self, message: str = "", *, status_code: int | None = None, transient: bool | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.transient = bool(transient) if transient is not None else is_transient_status(status_code)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -150,6 +168,7 @@ async def call_openai_chat(
                 "The provider may be slow / unreachable, or the model id is "
                 "rejected. Try a known-good model (gpt-4o-mini / deepseek-chat) "
                 "to isolate.",
+                transient=isinstance(exc, httpx.TransportError),
             ) from exc
 
     elapsed = time.monotonic() - started
@@ -167,6 +186,7 @@ async def call_openai_chat(
         raise CloudLlmError(
             f"OpenAI-compat returned {resp.status_code} after {elapsed:.0f}s: "
             f"{body}",
+            status_code=resp.status_code,
         )
 
     data = resp.json()
@@ -340,6 +360,7 @@ async def call_anthropic_chat(
                 f"Anthropic request failed after {elapsed:.0f}s: "
                 f"{type(exc).__name__}. The provider may be slow / "
                 "unreachable, or the model id is rejected.",
+                transient=isinstance(exc, httpx.TransportError),
             ) from exc
 
     elapsed = time.monotonic() - started
@@ -353,6 +374,7 @@ async def call_anthropic_chat(
         raise CloudLlmError(
             f"Anthropic returned {resp.status_code} after {elapsed:.0f}s: "
             f"{body}",
+            status_code=resp.status_code,
         )
 
     data = resp.json()
@@ -435,11 +457,13 @@ async def _anthropic_batch_request(method: str, url: str, api_key: str, what: st
         try:
             resp = await client.request(method, url, headers=_anthropic_headers(api_key), **kwargs)
         except httpx.HTTPError as exc:
-            raise CloudLlmError(f"Anthropic batch {what} failed: {type(exc).__name__}.") from exc
+            raise CloudLlmError(
+                f"Anthropic batch {what} failed: {type(exc).__name__}.", transient=isinstance(exc, httpx.TransportError),
+            ) from exc
     if resp.status_code >= 400:
         body = resp.text[:400]
         _LOG.warning("anthropic batch %s returned HTTP %d: %s", what, resp.status_code, body[:200])
-        raise CloudLlmError(f"Anthropic batch {what} returned {resp.status_code}: {body}")
+        raise CloudLlmError(f"Anthropic batch {what} returned {resp.status_code}: {body}", status_code=resp.status_code)
     return resp
 
 

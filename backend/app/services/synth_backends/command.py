@@ -26,6 +26,12 @@ instruction in the prompt; the other two are ignored.
 Usage is recorded as ``subscription:<binary>`` (priced $0, shown apart from
 metered spend, never counted against the API budget).
 
+A network / provider failure (``api_error`` in ``SYNTH_COMMAND_TRANSIENT_API_ERRORS``,
+``api_error_status`` 408/425/5xx, ``SYNTH_COMMAND_TRANSIENT_REGEX`` on the failure
+text only, or a timeout) that outlasts the retries raises
+``SynthBackendTransientError``; ``retries_internally`` tells the eval judge guard
+not to add retries of its own.
+
 A usage-limit failure (``SYNTH_COMMAND_USAGE_LIMIT_REGEX`` on stdout+stderr)
 pauses ALL calls of the process (shared cool-down), publishes the running
 Job's message "waiting for usage window — resumes ~HH:MM UTC", then retries
@@ -51,7 +57,7 @@ from typing import Any, Awaitable, Callable
 from app.config import settings
 from app.services import sandbox_exec
 
-from .base import SynthBackendError
+from .base import SynthBackendError, SynthBackendTransientError
 
 _LOG = logging.getLogger(__name__)
 
@@ -171,6 +177,45 @@ class _Outcome:
     raw: str = ""
     # the usage window closed while this call waited for a slot: not run, ask again
     paused: bool = False
+    # the failure was the network's or the provider's (``_is_transient_failure``), not the request's
+    transient: bool = False
+
+
+def _transient_api_errors() -> set[str]:
+    raw = str(getattr(settings, "SYNTH_COMMAND_TRANSIENT_API_ERRORS", "") or "")
+    return {part.strip().lower() for part in raw.split(",") if part.strip()}
+
+
+def _is_transient_failure(data: Any, stdout: str, stderr: str) -> bool:
+    """Whether a failed CLI call failed for a transient reason (network / provider).
+
+    A JSON reply is classified from its structured fields: ``api_error`` in
+    ``SYNTH_COMMAND_TRANSIENT_API_ERRORS`` or an ``api_error_status`` of 408 /
+    425 / 5xx. The text pattern ``SYNTH_COMMAND_TRANSIENT_REGEX`` is matched
+    only against the failure TEXT (the reply's ``result`` message and stderr;
+    stdout only when it is not JSON) — never the whole JSON, whose token and
+    duration numbers could look like status codes."""
+    if isinstance(data, dict):
+        api_error = data.get("api_error")
+        if isinstance(api_error, str) and api_error.strip().lower() in _transient_api_errors():
+            return True
+        status = data.get("api_error_status")
+        try:
+            code = int(status) if status is not None and not isinstance(status, bool) else None
+        except (TypeError, ValueError):
+            code = None
+        if code is not None and (code in (408, 425) or 500 <= code <= 599):
+            return True
+        text = f"{data.get('result') if isinstance(data.get('result'), str) else ''}\n{stderr}"
+    else:
+        text = f"{stdout}\n{stderr}"
+    pattern = str(getattr(settings, "SYNTH_COMMAND_TRANSIENT_REGEX", "") or "")
+    if not pattern:
+        return False
+    try:
+        return re.search(pattern, text, re.IGNORECASE) is not None
+    except re.error:
+        return False
 
 
 def _dig(data: Any, path: str) -> Any:
@@ -215,6 +260,8 @@ class CommandBackend:
     # Prompts leave this machine (the CLI sends them to its vendor).
     sends_data_off_machine: bool = True
     billing: str = "subscription"
+    # ``_ask`` already retries a failed call (SYNTH_COMMAND_MAX_RETRIES): the judge guard adds none.
+    retries_internally: bool = True
 
     def __init__(self, *, model: str | None = None) -> None:
         argv = _argv_template()
@@ -343,7 +390,7 @@ class CommandBackend:
                                     await task
                                 with contextlib.suppress(Exception):
                                     await proc.wait()
-                                return _Outcome(False, error=f"timed out after {self.timeout_seconds:g}s")
+                                return _Outcome(False, error=f"timed out after {self.timeout_seconds:g}s", transient=True)
                             done, _pending = await asyncio.wait({task}, timeout=min(_CANCEL_POLL_SECONDS, remaining))
                             if done:
                                 out_b, err_b = task.result()
@@ -360,7 +407,12 @@ class CommandBackend:
                                 await proc.wait()
                         raise
             except OSError as exc:
-                return _Outcome(False, error=f"could not run {os.path.basename(argv[0])}: {exc}")
+                # A missing / non-executable binary is permanent; anything else (no memory, too many
+                # open files) is the machine's state at that moment.
+                return _Outcome(
+                    False, error=f"could not run {os.path.basename(argv[0])}: {exc}",
+                    transient=not isinstance(exc, (FileNotFoundError, PermissionError, NotADirectoryError)),
+                )
         stdout = out_b.decode("utf-8", "replace")
         stderr = err_b.decode("utf-8", "replace")
         raw = f"{stdout}\n{stderr}"
@@ -368,9 +420,11 @@ class CommandBackend:
         with contextlib.suppress(ValueError):
             data = json.loads(stdout)
         if proc.returncode != 0:
-            return _Outcome(False, error=f"exit {proc.returncode}: {_tail(stderr or stdout)}", raw=raw)
+            return _Outcome(False, error=f"exit {proc.returncode}: {_tail(stderr or stdout)}", raw=raw,
+                            transient=_is_transient_failure(data, stdout, stderr))
         if isinstance(data, dict) and data.get("is_error"):
-            return _Outcome(False, error=f"CLI reported an error: {_tail(str(data.get('result') or stdout))}", raw=raw)
+            return _Outcome(False, error=f"CLI reported an error: {_tail(str(data.get('result') or stdout))}", raw=raw,
+                            transient=_is_transient_failure(data, stdout, stderr))
         if output_path.lower() == "raw":
             text = stdout.strip()
         else:
@@ -482,7 +536,10 @@ class CommandBackend:
                 continue  # the same call again once the window reopens
             failures += 1
             if failures > self.max_retries:
-                raise SynthBackendError(f"Command backend ({self.binary}) failed: {outcome.error}")
+                # The LAST failure decides the class: a transient one (network / provider) is worth
+                # retrying later (``judge_call_guard``); anything else is the request's.
+                error_cls = SynthBackendTransientError if outcome.transient else SynthBackendError
+                raise error_cls(f"Command backend ({self.binary}) failed: {outcome.error}")
             await asyncio.sleep(float(settings.SYNTH_COMMAND_BACKOFF_SECONDS) * (2 ** (failures - 1)))
 
     # ── protocol ──

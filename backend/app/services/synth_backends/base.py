@@ -19,6 +19,13 @@ class SynthBackendError(RuntimeError):
     """Raised when no available backend can satisfy a request."""
 
 
+class SynthBackendTransientError(SynthBackendError):
+    """A failure of the network or the provider (connection refused / DNS /
+    timeout / overloaded / 5xx), not of the request: worth retrying later.
+    A subclass, so every ``except SynthBackendError`` still catches it
+    (``judge_call_guard.classify_judge_error`` reads the difference)."""
+
+
 @runtime_checkable
 class SynthBackend(Protocol):
     """One LLM transport (Ollama, configured teacher endpoint, …).

@@ -126,6 +126,47 @@ class Settings(BaseSettings):
     SYNTH_COMMAND_MAX_PAUSE_SECONDS: float = 28800.0
     SYNTH_COMMAND_ENV_PASSTHROUGH: str = ""
     SYNTH_COMMAND_PLAYBOOK_ROWS_PER_CALL: int = 25
+    # A failed CLI call whose JSON reply names one of these ``api_error`` values
+    # (or an ``api_error_status`` of 408 / 425 / 5xx) is a transient failure
+    # (``SynthBackendTransientError``): the network or the provider, not the
+    # request. Comma list, case-insensitive.
+    SYNTH_COMMAND_TRANSIENT_API_ERRORS: str = (
+        "connection_failed,connection_error,network_error,timeout,request_timeout,api_timeout,"
+        "overloaded,overloaded_error,server_error,internal_server_error,service_unavailable"
+    )
+    # Same, matched against the failure TEXT only (stderr, or the reply's
+    # ``result`` message) — never against the whole JSON reply, whose token and
+    # duration numbers would match a status-code pattern.
+    SYNTH_COMMAND_TRANSIENT_REGEX: str = (
+        "EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|"
+        "can't reach the api|could not resolve host|connection (?:error|refused|reset)|timed out|overloaded"
+    )
+
+    # ── Judge resilience (LLM judges in evals) ──────────────────────────
+    # judge_call_guard: a judge call that fails for a transient reason
+    # (connection, timeout, 408/429/5xx) is retried; after
+    # JUDGE_BREAKER_CONSECUTIVE transient failures in a row (or more than
+    # JUDGE_BREAKER_ERROR_RATE of the last JUDGE_BREAKER_WINDOW calls, with at
+    # least JUDGE_BREAKER_MIN_CALLS) the breaker opens and the remaining rows
+    # are left unjudged (``judge_unreachable``) without a call. false = every
+    # row is called as before. A project can override breaker / mode /
+    # max wait in runtime_config["eval_judge"]["resilience"].
+    JUDGE_BREAKER_ENABLED: bool = True
+    JUDGE_BREAKER_CONSECUTIVE: int = 3
+    JUDGE_BREAKER_WINDOW: int = 20
+    JUDGE_BREAKER_MIN_CALLS: int = 10
+    JUDGE_BREAKER_ERROR_RATE: float = 0.5
+    # An open breaker lets one probe call through after this long.
+    JUDGE_BREAKER_COOLDOWN_SECONDS: float = 300.0
+    # Extra attempts per row for a transient failure (0 for a backend that
+    # retries internally, e.g. the command backend), backoff base * 3^n ± 20%.
+    JUDGE_TRANSIENT_RETRIES: int = 2
+    JUDGE_RETRY_BACKOFF_SECONDS: float = 10.0
+    # When the breaker opens: "stop" (leave the rest unjudged) or "wait"
+    # (probe every JUDGE_OUTAGE_PROBE_SECONDS, up to the max wait, then stop).
+    JUDGE_OUTAGE_MODE: str = "stop"
+    JUDGE_OUTAGE_PROBE_SECONDS: float = 300.0
+    JUDGE_OUTAGE_MAX_WAIT_SECONDS: float = 3600.0
     # Cloud (metered) playbook runs over this many rows are chunked + checkpointed
     # the same way; each call's max_tokens is sized to its rows (up to the
     # provider's output ceiling, ``CloudLlmBackend.max_output_tokens``).

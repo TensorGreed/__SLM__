@@ -160,6 +160,14 @@ The [Autopilot decision log](../workflows/newbie-autopilot.md#decision-log) show
 
 **Fix**: check the LLM provider's status / quota / API key. The eval falls back to non-judge metrics; see the decision log for which pass/fail rules ran without the judge.
 
+### Judge unreachable during a held-out eval (rows unjudged)
+
+**Symptom**: the eval finishes "Done, with a warning: judge incomplete — N of M rows unjudged"; the eval summary says how many answers have no judge verdict and why (`not sent (the judge was unreachable)`, `connection or provider error`, …), and the judged score is missing or rests on fewer rows.
+
+**Why**: the judge model (a cloud API, a local server or a CLI) failed with a connection / timeout / 5xx error. A failed call is retried; after 3 failed calls in a row the eval stops asking it and leaves the remaining rows unjudged, so an outage costs minutes, not hours. Every answer is still saved, and unjudged rows count neither right nor wrong.
+
+**Fix**: check the judge's network / provider status, then re-run the eval. A lift check re-runs a base-model result whose judge was unreachable instead of reusing it. To wait out short outages instead, set **Settings → Judge model → When the judge is unreachable** to "Wait for the judge" (up to the longest wait you pick). `JUDGE_BREAKER_ENABLED=false` restores asking about every row.
+
 ### `eval_dataset_missing`
 
 **Symptom**: the pass/fail rule set (eval pack) referenced an answer key (gold set) that no longer exists.

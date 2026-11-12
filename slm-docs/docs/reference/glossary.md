@@ -486,6 +486,10 @@ Three-state outcome on a hyperparameter sweep, surfaced by `get_sweep_pareto` af
 
 Per-cell, `gate_passed ∈ {true, false, null}` and `gate_failed_ids` lists the specific gate IDs the cell missed. A pack with zero gates is treated as `not measurable` (gate_passed=null) — passing trivially when no gates exist is exactly the vanity behaviour the honesty pass prevents. See [Winner-vs-gate verdict](../workflows/training.md#winner-vs-gate-verdict).
 
+## Unjudged row
+
+A row the LLM judge was asked to score but left without a verdict, with the reason: `judge_unreachable` (the judge had stopped answering, so it was not asked), `transient_error` (a connection or provider error, after retries), `unparseable` (it replied without a verdict) or `permanent_error` (the request was refused). In a held-out eval an unjudged row counts neither right nor wrong: it is left out of the judged score, the pass / fail counts and the base-vs-fine-tuned pairing, and the eval summary says how many and why. A lift check does not reuse a base-model result whose judge was unreachable. Rows the judge was never asked about (judge off, short answers) keep exact match. See [Environment → judge resilience](../setup/environment.md#judge-resilience-llm-judges-in-evals).
+
 ## See also
 
 - [Reason-code taxonomy](../observability/failure-clusters.md#reason-code-taxonomy) — same table with more context.

@@ -23,6 +23,7 @@ import { metricDisplayName, shortEvidenceText } from '../evaluation/liftEvidence
 import { toast } from '../../stores/toastStore';
 import TrainingKillSwitch from './TrainingKillSwitch';
 import TrainingLossSparkline from './TrainingLossSparkline';
+import { unjudgedReasonsText } from '../evaluation/unjudgedNotice';
 import './NotificationBell.css';
 
 
@@ -123,7 +124,16 @@ function jobStatusLabel(job: Job): string {
  * the line entirely).
  */
 export function jobOutcomeSummary(job: Job): string | null {
-    const core = jobOutcomeSummaryCore(job);
+    let core = jobOutcomeSummaryCore(job);
+    // Any eval-running kind: the judge left rows unjudged (unreachable / no verdict). The Job
+    // succeeded, but its judged numbers are incomplete — say so first, and give a lift check
+    // no better / worse verdict.
+    const judgeWarning = job.status === 'succeeded' ? judgeWarningText((job.result || {}) as Record<string, unknown>) : null;
+    if (judgeWarning) {
+        core = job.kind === 'post_training_lift_eval'
+            ? `${judgeWarning} · no lift verdict until the eval is re-run`
+            : core ? `${judgeWarning} · ${core}` : judgeWarning;
+    }
     // Any kind: the jobs framework meters every runner's cloud-LLM calls
     // into result.tokens / cost_usd — also on a failed or cancelled Job
     // (tokens spent are spent).
@@ -132,6 +142,23 @@ export function jobOutcomeSummary(job: Job): string | null {
     if (job.status === 'succeeded') return core ? `${core} · ${spend}` : spend;
     if (job.status === 'failed' || job.status === 'cancelled') return `spent ${spend}`;
     return core;
+}
+
+/** "Done, with a warning: judge incomplete by <judge> — 80 of 80 rows unjudged (77 not sent …) (eval #12)"
+ *  from a Job result whose eval left rows unjudged (``judge_status`` is only set then), else null. */
+export function judgeWarningText(r: Record<string, unknown>): string | null {
+    if (typeof r.judge_status !== 'string') return null;
+    const unjudged = typeof r.judge_unjudged === 'number' ? r.judge_unjudged : null;
+    const judged = typeof r.judge_judged === 'number' ? r.judge_judged : null;
+    const counts = unjudged === null
+        ? 'some rows unjudged'
+        : judged !== null
+            ? `${unjudged} of ${unjudged + judged} rows unjudged`
+            : `${unjudged} row${unjudged === 1 ? '' : 's'} unjudged`;
+    const reasons = unjudgedReasonsText((r.judge_unjudged_reasons || null) as Record<string, number> | null);
+    const label = typeof r.judge_label === 'string' && r.judge_label ? ` by ${r.judge_label}` : '';
+    const id = typeof r.judge_eval_result_id === 'number' ? ` (eval #${r.judge_eval_result_id})` : '';
+    return `Done, with a warning: judge incomplete${label} — ${counts}${reasons ? ` (${reasons})` : ''}${id}`;
 }
 
 /** "12k tokens (~$0.04 at list price)" from a Job result that carries

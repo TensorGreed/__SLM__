@@ -259,6 +259,7 @@ session-start guidance.
 - `backend/app/services/json_pointer.py` — RFC 6901 JSON-pointer helpers shared by the probe runner, the schema bundle and structured-plan scoring.
 - `backend/app/services/json_schema_bundle.py` — Multi-file JSON-Schema bundles: validate offline, flatten for guided decoding, build minimal instances.
 - `backend/app/services/judge_calibration_service.py` — Judge calibration (V2): blind labels that say how far each review-assist judge can be trusted.
+- `backend/app/services/judge_call_guard.py` — Judge resilience: classify judge-call failures, retry transient ones, stop on an outage.
 - `backend/app/services/label_noise_scoring_service.py` — Quality-Lift phase 4 slice 1 — Label-noise scoring (Confident-Learning-lite).
 - `backend/app/services/label_taxonomy_service.py` — Label taxonomy: the project's controlled vocabulary of labels.
 - `backend/app/services/llm_budget_guard.py` — Hard API budget for metered cloud-LLM calls.
@@ -982,6 +983,7 @@ session-start guidance.
 - `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).
 - `backend/tests/test_eval_sizing.py` — Detectable difference + rows needed for any per-row metric (Epic W2).
 - `backend/tests/test_eval_summary.py` — Eval tab summary card (Wave 3b): verdict vs the base model, headline
+- `backend/tests/test_eval_unjudged_scoring.py` — Unjudged rows in a held-out eval (judge resilience A1), end to end on a throwaway engine.
 - `backend/tests/test_evaluation_adopt_gate.py` — Tests for the adopt-gate-from-cluster action (Gap #5 slice 3).
 - `backend/tests/test_evaluation_gate_catalog.py` — Unit tests for the eval-pack gate-options catalog + validator
 - `backend/tests/test_evaluation_per_class_gates.py` — Tests for the per-class metric flattener + endpoint (Gap #6 slice 1).
@@ -1015,6 +1017,7 @@ session-start guidance.
 - `backend/tests/test_json_extraction_scoring.py` — json-extraction: typed field_match scoring, null metrics, enum/type
 - `backend/tests/test_json_schema_bundle.py` — Multi-file JSON-Schema bundles: refs across files, offline-only, flattening parity, minimal instances.
 - `backend/tests/test_judge_calibration.py` — Judge calibration V2: blind stratified labels, stratum-weighted per-judge metrics, the label-source
+- `backend/tests/test_judge_call_guard.py` — Judge resilience (judge_call_guard): classification, retries, the breaker, unjudged state.
 - `backend/tests/test_label_noise_slice1.py` — Quality-Lift phase 4 slice 1 — Label-noise scan service + endpoints.
 - `backend/tests/test_label_taxonomy.py` — Label taxonomy: parsing layouts, crosswalk_from, validation codes,
 - `backend/tests/test_labelling_cost.py` — Labelling cost: prompt caching, usage + cost per relabel, convention-aware
@@ -1397,6 +1400,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/ToolCallMetricsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalLabel.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalSplit.test.ts` — _(no docstring)_
+- `frontend/src/components/evaluation/unjudgedNotice.test.ts` — _(no docstring)_
 - `frontend/src/components/export/ExportPanel.stages.test.tsx` — Ship stages (Epic U phase U5): the export panel splits by ``stage`` —
 - `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/export/GuidedJsonCard.test.tsx` — _(no docstring)_

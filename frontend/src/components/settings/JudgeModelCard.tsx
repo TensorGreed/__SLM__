@@ -7,7 +7,13 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-import { BILLING_LABELS, fetchEvalJudge, saveEvalJudge, type EvalJudgeState } from '../../api/evalJudge';
+import {
+    BILLING_LABELS,
+    fetchEvalJudge,
+    saveEvalJudge,
+    type EvalJudgeState,
+    type JudgeResilienceSettings,
+} from '../../api/evalJudge';
 import { extractApiErrorMessage } from '../../utils/apiError';
 import EvalJudgeTrustBadge from '../evaluation/EvalJudgeTrustBadge';
 import EvalJudgeCalibrationCard from './EvalJudgeCalibrationCard';
@@ -38,6 +44,19 @@ export default function JudgeModelCard({ projectId }: { projectId: number }) {
             setSaving(false);
         }
     }, [projectId]);
+
+    const saveResilience = useCallback(async (next: JudgeResilienceSettings) => {
+        if (!state) return;
+        setSaving(true);
+        setError(null);
+        try {
+            setState(await saveEvalJudge(projectId, { enabled: state.enabled, backend: state.backend, resilience: next }));
+        } catch (err) {
+            setError(extractApiErrorMessage(err, 'Could not save the judge settings.').message);
+        } finally {
+            setSaving(false);
+        }
+    }, [projectId, state]);
 
     if (failed) return null;
     if (!state) return <section className="card settings-section" data-testid="judge-model-card"><h3>Judge model</h3><p>Loading…</p></section>;
@@ -103,8 +122,104 @@ export default function JudgeModelCard({ projectId }: { projectId: number }) {
                     Plan rubric: <EvalJudgeTrustBadge trust={state.trust.rubric} what="plans" testId="judge-trust-rubric" />
                 </p>
             )}
+            {state.resilience && (
+                <JudgeOutageSettings
+                    resilience={state.resilience}
+                    saving={saving}
+                    onSave={(next) => { void saveResilience(next); }}
+                />
+            )}
             {error && <div className="settings-error" role="alert" data-testid="judge-error">{error}</div>}
             <EvalJudgeCalibrationCard projectId={projectId} />
         </section>
+    );
+}
+
+/** Max-wait choices for "wait for the judge" (seconds). */
+const MAX_WAIT_CHOICES: Array<[number, string]> = [
+    [900, '15 minutes'],
+    [3600, '1 hour'],
+    [7200, '2 hours'],
+    [14400, '4 hours'],
+    [28800, '8 hours'],
+];
+
+function waitLabel(seconds: number): string {
+    const hit = MAX_WAIT_CHOICES.find(([s]) => s === seconds);
+    if (hit) return hit[1];
+    return seconds >= 3600 ? `${Math.round((seconds / 3600) * 10) / 10} hours` : `${Math.round(seconds / 60)} minutes`;
+}
+
+/** "When the judge is unreachable": breaker on / off, stop or wait (up to N hours). Collapsed by default. */
+function JudgeOutageSettings({
+    resilience,
+    saving,
+    onSave,
+}: {
+    resilience: NonNullable<EvalJudgeState['resilience']>;
+    saving: boolean;
+    onSave: (next: JudgeResilienceSettings) => void;
+}) {
+    const stored = resilience.stored || {};
+    const update = (patch: JudgeResilienceSettings) => onSave({ ...stored, ...patch });
+    const waitChoices = MAX_WAIT_CHOICES.some(([s]) => s === resilience.max_wait_seconds)
+        ? MAX_WAIT_CHOICES
+        : [...MAX_WAIT_CHOICES, [resilience.max_wait_seconds, waitLabel(resilience.max_wait_seconds)] as [number, string]];
+    return (
+        <details className="settings-details" data-testid="judge-outage">
+            <summary>When the judge is unreachable</summary>
+            <p className="settings-hint">
+                A judge call that fails because of the network or the provider is retried. After {resilience.consecutive} failed
+                calls in a row the eval stops asking: every answer is still saved, and the rows the judge did not score are
+                left out of the score and the pass / fail counts, with the reason.
+            </p>
+            <label className="settings-row">
+                <input
+                    type="checkbox"
+                    checked={resilience.breaker}
+                    disabled={saving}
+                    onChange={(e) => update({ breaker: e.target.checked })}
+                    data-testid="judge-outage-breaker"
+                />
+                <span>
+                    <strong>Stop calling an unreachable judge</strong>
+                    <small>Off asks the judge about every row, however long each failure takes.</small>
+                </span>
+            </label>
+            <label className="settings-row">
+                <span>
+                    <strong>Then</strong>
+                    <select
+                        value={resilience.mode}
+                        disabled={saving || !resilience.breaker}
+                        onChange={(e) => update({ mode: e.target.value === 'wait' ? 'wait' : 'stop' })}
+                        aria-label="When the judge is unreachable"
+                        data-testid="judge-outage-mode"
+                    >
+                        <option value="stop">Leave the remaining rows unjudged</option>
+                        <option value="wait">Wait for the judge, checking every few minutes</option>
+                    </select>
+                </span>
+            </label>
+            {resilience.mode === 'wait' && resilience.breaker && (
+                <label className="settings-row">
+                    <span>
+                        <strong>Wait at most</strong>
+                        <select
+                            value={String(resilience.max_wait_seconds)}
+                            disabled={saving}
+                            onChange={(e) => update({ max_wait_seconds: Number(e.target.value) })}
+                            aria-label="Longest wait for the judge"
+                            data-testid="judge-outage-max-wait"
+                        >
+                            {waitChoices.map(([s, label]) => (
+                                <option key={s} value={String(s)}>{label}</option>
+                            ))}
+                        </select>
+                        <small>Then the remaining rows are left unjudged.</small>
+                    </span>
+                </label>
+            )}
+        </details>
     );
 }

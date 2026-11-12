@@ -261,7 +261,11 @@ async def _run_with_heartbeat(
 
 def _summarize_eval_result(result: Any, run_kwargs: dict[str, Any]) -> dict[str, Any]:
     """Pointer-only summary for the Job row — keeps the row cheap; the
-    full EvalResult is persisted by the service itself."""
+    full EvalResult is persisted by the service itself. When the judge left
+    rows unjudged the summary also carries ``judge_status`` & co.
+    (``judge_call_guard.job_result_fields``: the bell's "done, with a warning")."""
+    from app.services.judge_call_guard import job_result_fields
+
     return {
         "experiment_id": run_kwargs.get("experiment_id"),
         "dataset_name": run_kwargs.get("dataset_name"),
@@ -269,4 +273,5 @@ def _summarize_eval_result(result: Any, run_kwargs: dict[str, Any]) -> dict[str,
         "eval_result_id": getattr(result, "id", None),
         "pass_rate": getattr(result, "pass_rate", None),
         "max_samples": run_kwargs.get("max_samples"),
+        **job_result_fields(result),
     }

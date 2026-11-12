@@ -114,3 +114,16 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `llm_pricing.estimate_cost` prices that prefix at $0 BEFORE substring matching; `llm_spend_service.tally`
   adds `billing` per by_model row and `subscription_calls` / `subscription_tokens` totals. Never counted
   by the guard. See `agent-notes/data.md` for the backend's design.
+- **Transient vs permanent failures (judge resilience A1)** — `CloudLlmError(message, status_code=, transient=)`: `status_code`
+  is the provider's HTTP status (None when no response came back), `transient` is True for an `httpx.TransportError`
+  (connect / read timeout / DNS) and for 408 / 409 / 425 / 429 / 5xx (`cloud_llm_service.is_transient_status`). The command
+  backend classifies a failed call from the reply's structured fields (`api_error` in `SYNTH_COMMAND_TRANSIENT_API_ERRORS`,
+  `api_error_status` 408 / 425 / 5xx) and `SYNTH_COMMAND_TRANSIENT_REGEX` on the failure TEXT only (stderr / the `result`
+  message; never the whole JSON, whose `output_tokens: 512` would look like a 5xx); a timeout is transient. When its own
+  retries (`SYNTH_COMMAND_MAX_RETRIES`) run out on a transient failure it raises `SynthBackendTransientError` (a
+  `SynthBackendError` subclass, so every existing handler still catches it); `CommandBackend.retries_internally = True` tells
+  the eval judge guard to add no retries of its own. Ollama / vLLM / the cloud synth backend keep chaining the httpx /
+  `CloudLlmError` cause, which `judge_call_guard.classify_judge_error` walks. The usage-limit pause is unchanged and separate:
+  it pauses every CLI call of the process and never counts as a judge failure (its `\b429\b` default still matches the raw
+  stdout + stderr). The judge breaker (`agent-notes/evaluation.md`, "Judge resilience") only stops one eval's judge calls.
+

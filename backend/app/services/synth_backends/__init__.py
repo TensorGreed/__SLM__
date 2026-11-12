@@ -20,6 +20,7 @@ from __future__ import annotations
 from .base import (
     SynthBackend,
     SynthBackendError,
+    SynthBackendTransientError,
     pick_backend,
     pick_schema_aware_backend_describe,
 )
@@ -63,6 +64,7 @@ __all__ = [
     "OllamaBackend",
     "SynthBackend",
     "SynthBackendError",
+    "SynthBackendTransientError",
     "TeacherModelBackend",
     "TemplateBackend",
     "VllmBackend",

@@ -665,7 +665,7 @@ async def _score_slot(db: AsyncSession, sc: _StageCtx, units: list[Unit], scorer
             u.unscored_reason = "needs_judge"
         elif idx >= len(correct):
             u.unscored_reason = "scoring_error"
-        elif correct[idx] is None:  # the scorer excluded the row (e.g. its verifier could not run)
+        elif correct[idx] is None:  # the scorer excluded the row (its verifier could not run, or no judge verdict)
             u.unscored_reason = "row_unscored"
         else:
             u.correct = bool(correct[idx])

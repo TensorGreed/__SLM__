@@ -235,6 +235,8 @@ class AnswerJudgeUnchangedTests(unittest.TestCase):
         j = ajs.ResolvedJudge(label="x", judge=None)  # type: ignore[arg-type]
         self.assertIsNone(j.complete)
 
+
+
     def test_synth_backend_complete_wiring(self):
         seen = {}
 
@@ -248,6 +250,71 @@ class AnswerJudgeUnchangedTests(unittest.TestCase):
         fn = ajs._complete_from_synth_backend(B())
         self.assertEqual(fn("hello", "sys", {"type": "object"}, 600), "{}")
         self.assertEqual((seen["max_tokens"], seen["temperature"], seen["schema"]), (600, 0.0, {"type": "object"}))
+
+
+class UnjudgedReasonTests(unittest.TestCase):
+    def setUp(self):
+        self.r = parse_rubric(rubric_yaml())
+
+    def test_unjudged_rows_carry_a_reason(self):
+        fake = Fake(["garbage", "garbage", RuntimeError("boom"), RuntimeError("boom")])
+        rows = [{"scenario": "s1", "pred": "p1"}, {"scenario": "s2", "pred": "p2"}]
+        out = judge_rows_with_rubric(rows, self.r, fake, cache=None, view=view)["rubric"]
+        self.assertEqual(rows[0]["row_rubric_unjudged_reason"], "unparseable")
+        self.assertEqual(rows[1]["row_rubric_unjudged_reason"], "permanent_error")
+        self.assertIn("boom", rows[1]["row_rubric_error"])
+        self.assertEqual(out["unjudged_reasons"], {"unparseable": 1, "permanent_error": 1})
+
+    def test_a_clean_run_has_no_new_keys(self):
+        fake = Fake([scores_json(safety=5, clarity=4)])
+        rows = [{"scenario": "s1", "pred": "p1"}]
+        out = judge_rows_with_rubric(rows, self.r, fake, cache=None, view=view)["rubric"]
+        self.assertNotIn("unjudged_reasons", out)
+        self.assertNotIn("breaker", out)
+        self.assertNotIn("row_rubric_unjudged_reason", rows[0])
+
+    def test_guarded_thread_run_stops_on_an_outage_without_touching_the_job(self):
+        """The rubric grades in a worker thread (``asyncio.to_thread``) under a Job: with a thread-mode
+        guard an unreachable judge stops the calls after the 3rd row, and the Job handle (whose methods
+        use the main loop's DB engine) is never touched from the thread."""
+        import asyncio
+        import threading
+        from unittest import mock
+
+        import httpx
+
+        from app.services import jobs_service
+        from app.services import judge_call_guard as jcg
+
+        jcg.reset_registry()
+        self.addCleanup(jcg.reset_registry)
+        handle = mock.MagicMock()
+        touched = []
+        handle.check_cancelled.side_effect = lambda *a, **k: touched.append(threading.current_thread().name)
+        handle.set_message.side_effect = lambda *a, **k: touched.append(threading.current_thread().name)
+        fake = Fake([httpx.ConnectError("EAI_AGAIN")] * 50)
+        rows = [{"scenario": f"s{i}", "pred": f"p{i}"} for i in range(6)]
+
+        async def scenario():
+            token = jobs_service.current_job_handle.set(handle)
+            try:
+                guard = jcg.JudgeCallGuard(label="thread:judge", resilience=jcg.resolve_resilience(
+                    {"eval_judge": {"resilience": {"mode": "wait"}}}, threaded=True,
+                ), threaded=True, cancel_event=threading.Event())
+                guard.sleep = lambda s: None
+                return await asyncio.to_thread(
+                    judge_rows_with_rubric, rows, self.r, fake, cache=None, view=view, guard=guard,
+                )
+            finally:
+                jobs_service.current_job_handle.reset(token)
+
+        out = asyncio.run(scenario())["rubric"]
+        self.assertEqual(touched, [])
+        self.assertEqual(handle.method_calls, [])
+        self.assertEqual(out["unjudged"], 6)
+        self.assertEqual(out["unjudged_reasons"], {"transient_error": 3, "judge_unreachable": 3})
+        self.assertTrue(out["breaker"]["tripped"])
+        self.assertEqual(len(fake.calls), 3 * 3, "3 rows x (1 + 2 guard retries), then nothing")
 
 
 if __name__ == "__main__":

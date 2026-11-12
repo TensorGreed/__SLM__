@@ -118,6 +118,12 @@ class JobProgressHandle:
         self.last_message: str | None = None
         # The message shown before a usage-window pause (restored after it).
         self.pre_pause_message: str | None = None
+        # The event loop that owns this handle: its methods open sessions on the shared engine, so
+        # code running on another loop (a worker thread's ``asyncio.run``) must not call them.
+        try:
+            self.loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            self.loop = None
 
     async def set_message(self, message: str | None) -> None:
         """Publish a message, keeping the last fraction."""

@@ -981,8 +981,16 @@ async def _execute_local_evaluation_attempt(
             "eval_type": result.eval_type,
             "pass_rate": result.pass_rate,
             "metrics_keys": sorted(metrics.keys()),
+            **_eval_judge_fields(result),
         },
     }, ""
+
+
+def _eval_judge_fields(result: Any) -> dict[str, Any]:
+    """``judge_status`` & co. when the eval's judge left rows unjudged (``judge_call_guard``)."""
+    from app.services.judge_call_guard import job_result_fields
+
+    return job_result_fields(result)
 
 
 async def _execute_local_export_attempt(

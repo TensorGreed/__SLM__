@@ -11,6 +11,23 @@ export interface EvalJudgeOption {
     available: boolean;
 }
 
+/** What happens when the judge is unreachable (judge_call_guard). */
+export interface JudgeResilienceSettings {
+    breaker?: boolean;
+    mode?: 'stop' | 'wait';
+    max_wait_seconds?: number;
+}
+
+export interface JudgeResilienceState {
+    /** The project's own choices (empty = the install defaults apply). */
+    stored: JudgeResilienceSettings;
+    breaker: boolean;
+    mode: 'stop' | 'wait';
+    max_wait_seconds: number;
+    /** Failed calls in a row that stop the judge (install setting). */
+    consecutive: number;
+}
+
 /** GET/PUT /projects/{id}/eval-judge. */
 export interface EvalJudgeState {
     enabled: boolean;
@@ -21,6 +38,8 @@ export interface EvalJudgeState {
     options: EvalJudgeOption[];
     /** Judge calibration V4: how far the judge in use can be trusted (absent on older backends). */
     trust?: EvalJudgeTrustSummary | null;
+    /** When the judge is unreachable (absent on older backends). */
+    resilience?: JudgeResilienceState | null;
 }
 
 export async function fetchEvalJudge(projectId: number): Promise<EvalJudgeState> {
@@ -30,7 +49,7 @@ export async function fetchEvalJudge(projectId: number): Promise<EvalJudgeState>
 
 export async function saveEvalJudge(
     projectId: number,
-    body: { enabled: boolean; backend: string | null },
+    body: { enabled: boolean; backend: string | null; resilience?: JudgeResilienceSettings },
 ): Promise<EvalJudgeState> {
     const res = await api.put<EvalJudgeState>(`/projects/${projectId}/eval-judge`, body);
     return res.data;

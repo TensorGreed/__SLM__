@@ -39,6 +39,8 @@ You don't need to set anything for a first dev run — SQLite + simulated traini
 | `SYNTH_COMMAND_BACKOFF_SECONDS` | `5.0` | First backoff (doubles). |
 | `SYNTH_COMMAND_BATCH_SIZE` | `8` | Requests packed per CLI call. |
 | `SYNTH_COMMAND_USAGE_LIMIT_REGEX` | `usage limit\|rate limit\|429` | What marks a usage-limit failure. |
+| `SYNTH_COMMAND_TRANSIENT_API_ERRORS` | `connection_failed,…,service_unavailable` | `api_error` values in a failed CLI reply that mean the network or the provider failed (retry later), not the request. |
+| `SYNTH_COMMAND_TRANSIENT_REGEX` | `EAI_AGAIN\|ENOTFOUND\|…\|timed out\|overloaded` | The same, matched against the failure text only (stderr / the reply's `result`), never the whole JSON. |
 | `SYNTH_COMMAND_COOLDOWN_SECONDS` | `900` | Pause after a usage-limit failure. |
 | `SYNTH_COMMAND_MAX_PAUSE_SECONDS` | `28800` | Total pause per Job before failing. |
 | `SYNTH_COMMAND_ENV_PASSTHROUGH` | empty | Extra env var names forwarded to the CLI. |
@@ -48,6 +50,22 @@ You don't need to set anything for a first dev run — SQLite + simulated traini
 | `LLM_MONTHLY_BUDGET_USD` | unset | Account-wide hard cap on metered cloud-API spend per calendar month (UTC), all projects. |
 
 Details: [Synthetic-data backends](../extensions/synth-backends.md#command-local-cli-backend).
+
+### Judge resilience (LLM judges in evals)
+
+When the judge model that scores eval answers is unreachable, a held-out eval retries the failed call, then stops calling it and leaves the remaining rows **unjudged** (every answer is still saved). A project can change the breaker, the mode and the longest wait under **Settings → Judge model → When the judge is unreachable**.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `JUDGE_BREAKER_ENABLED` | `true` | `false` asks the judge about every row, however long each failure takes (the old behaviour). |
+| `JUDGE_BREAKER_CONSECUTIVE` | `3` | Failed calls in a row (connection, timeout, 408 / 429 / 5xx) that stop the judge. |
+| `JUDGE_BREAKER_WINDOW` / `JUDGE_BREAKER_MIN_CALLS` / `JUDGE_BREAKER_ERROR_RATE` | `20` / `10` / `0.5` | Also stop when more than this share of the last calls failed. |
+| `JUDGE_BREAKER_COOLDOWN_SECONDS` | `300` | A stopped judge lets one call through after this long. Every new eval also tries it once. |
+| `JUDGE_TRANSIENT_RETRIES` | `2` | Extra attempts for a failed call (none for the command backend, which retries itself). |
+| `JUDGE_RETRY_BACKOFF_SECONDS` | `10` | First wait between attempts (then ×3, ±20 %). |
+| `JUDGE_OUTAGE_MODE` | `stop` | `stop` leaves the remaining rows unjudged; `wait` checks the judge again every `JUDGE_OUTAGE_PROBE_SECONDS` and resumes when it answers. |
+| `JUDGE_OUTAGE_PROBE_SECONDS` | `300` | Time between checks in `wait` mode. |
+| `JUDGE_OUTAGE_MAX_WAIT_SECONDS` | `3600` | Longest wait in `wait` mode before stopping. |
 
 ## Auth variables
 

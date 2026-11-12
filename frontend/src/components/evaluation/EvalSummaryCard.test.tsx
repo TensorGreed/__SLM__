@@ -336,9 +336,34 @@ describe('EvalSummaryCard', () => {
         await screen.findByTestId('eval-summary');
         expect(screen.getByTestId('eval-summary-headline')).toHaveTextContent('judge: answer correct: 0.100 (base) → 0.450');
         expect(screen.getByTestId('eval-summary-judge')).toHaveTextContent('Judged by ollama:gemma4:12b: 6 correct, 5 partial, 8 wrong of 19 answers (1 unjudged)');
+        // A result stored before unjudged rows carried a reason: no notice.
+        expect(screen.queryByTestId('eval-summary-unjudged')).toBeNull();
         // older backends send no trust: no badge
         expect(screen.queryByTestId('eval-summary-judge-trust')).toBeNull();
         expect(screen.getByTestId('eval-summary-failures')).toHaveTextContent('Judge: wrong — Contradicts the consent requirement.');
+    });
+
+    it('shows an eval whose judge was unreachable for every row: no score, counts by reason, provenance', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                ...BETTER,
+                eval_result_id: 1391,
+                judge: {
+                    judge: 'command', score: null, judged: 0, unjudged: 80, correct: 0, partial: 0, wrong: 0,
+                    status: 'paused', unjudged_reasons: { transient_error: 3, judge_unreachable: 77 }, coverage: 0,
+                    breaker: { tripped: true, tripped_at_row: 2, last_error_kind: 'connection error', mode: 'stop' },
+                },
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={21} />);
+        await screen.findByTestId('eval-summary');
+        expect(screen.getByTestId('eval-summary-judge')).toHaveTextContent('The judge command scored none of the answers.');
+        const notice = screen.getByTestId('eval-summary-unjudged');
+        expect(notice).toHaveTextContent('80 of 80 answers have no judge verdict: 77 not sent (the judge was unreachable), 3 connection or provider error.');
+        expect(notice).toHaveTextContent('left out of the judged score and the pass / fail counts');
+        expect(notice).toHaveTextContent('The judge stopped at row 3 after failed calls (connection error).');
+        expect(notice).toHaveTextContent('(judge command · eval #1391)');
+        expect(notice).not.toHaveTextContent('Re-judge');
     });
 
     it('splits a passages run\'s wrong answers into retrieval missed vs the model misread', async () => {

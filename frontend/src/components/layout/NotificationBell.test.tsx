@@ -1012,3 +1012,37 @@ describe('NotificationBell pipeline_eval', () => {
         expect(locationAssignMock).toHaveBeenCalledWith('/pipelines/pl-ab12cd34?run=r-1');
     });
 });
+
+describe('NotificationBell judge-incomplete warning', () => {
+    const incomplete = {
+        judge_status: 'paused', judge_unjudged: 80, judge_judged: 0, judge_label: 'command', judge_eval_result_id: 1391,
+        judge_unjudged_reasons: { transient_error: 3, judge_unreachable: 77 },
+    };
+
+    it('a held-out eval that left rows unjudged is done, with a warning that names the judge and the eval', () => {
+        const job = jobFixture({ kind: 'heldout_evaluation', status: 'succeeded', result: { eval_result_id: 1391, ...incomplete } });
+        expect(jobOutcomeSummary(job as never)).toBe(
+            'Done, with a warning: judge incomplete by command — 80 of 80 rows unjudged '
+            + '(77 not sent (the judge was unreachable), 3 connection or provider error) (eval #1391)',
+        );
+    });
+
+    it('a lift check with an incomplete judge gives no lift verdict', () => {
+        const job = jobFixture({
+            kind: 'post_training_lift_eval', status: 'succeeded',
+            result: {
+                ...incomplete,
+                headline: { metric_id: 'judge_correct', baseline_value: 0.2, trained_value: 0.4, direction: 'improved' },
+                evidence: { verdict: 'better', better: 5, worse: 0 },
+            },
+        });
+        const text = jobOutcomeSummary(job as never) ?? '';
+        expect(text).toContain('judge incomplete');
+        expect(text).toContain('no lift verdict until the eval is re-run');
+        expect(text).not.toContain('better than base');
+    });
+
+    it('complete evals are unchanged', () => {
+        expect(jobOutcomeSummary(jobFixture({ kind: 'heldout_evaluation', status: 'succeeded', result: { eval_result_id: 3 } }) as never)).toBeNull();
+    });
+});

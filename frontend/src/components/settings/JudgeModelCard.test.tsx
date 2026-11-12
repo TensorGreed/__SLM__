@@ -70,6 +70,37 @@ describe('JudgeModelCard', () => {
         expect(screen.getByTestId('eval-judge-calibration-toggle')).toBeInTheDocument();
     });
 
+    it('edits what happens when the judge is unreachable, keeping the judge pick', async () => {
+        const resilience = { stored: {}, breaker: true, mode: 'stop', max_wait_seconds: 3600, consecutive: 3 };
+        apiMock.get.mockResolvedValue({ data: { ...STATE, backend: 'command', resilience } });
+        apiMock.put.mockResolvedValue({
+            data: { ...STATE, backend: 'command', resilience: { ...resilience, stored: { mode: 'wait' }, mode: 'wait' } },
+        });
+        render(<JudgeModelCard projectId={3} />);
+        const block = await screen.findByTestId('judge-outage');
+        expect(block).toHaveTextContent('After 3 failed calls in a row the eval stops asking');
+        expect(screen.queryByTestId('judge-outage-max-wait')).toBeNull();
+        await userEvent.selectOptions(screen.getByTestId('judge-outage-mode'), 'wait');
+        await waitFor(() => expect(apiMock.put).toHaveBeenCalledWith('/projects/3/eval-judge', {
+            enabled: true, backend: 'command', resilience: { mode: 'wait' },
+        }));
+        expect(await screen.findByTestId('judge-outage-max-wait')).toHaveValue('3600');
+        apiMock.put.mockResolvedValue({
+            data: { ...STATE, backend: 'command', resilience: { ...resilience, stored: { mode: 'wait', max_wait_seconds: 14400 }, mode: 'wait', max_wait_seconds: 14400 } },
+        });
+        await userEvent.selectOptions(screen.getByTestId('judge-outage-max-wait'), '14400');
+        await waitFor(() => expect(apiMock.put).toHaveBeenLastCalledWith('/projects/3/eval-judge', {
+            enabled: true, backend: 'command', resilience: { mode: 'wait', max_wait_seconds: 14400 },
+        }));
+    });
+
+    it('hides the outage block on older backends', async () => {
+        apiMock.get.mockResolvedValue({ data: STATE });
+        render(<JudgeModelCard projectId={3} />);
+        await screen.findByTestId('judge-resolved');
+        expect(screen.queryByTestId('judge-outage')).toBeNull();
+    });
+
     it('renders nothing when the judge settings cannot load', async () => {
         apiMock.get.mockRejectedValue(new Error('down'));
         const { container } = render(<JudgeModelCard projectId={3} />);

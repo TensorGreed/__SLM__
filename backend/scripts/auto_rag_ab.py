@@ -460,6 +460,8 @@ def _judge_comparison_rows(
                         "reason": pred["row_judge_reason"],
                     }
             out[arm] = {k: snap.get(k) for k in ("score", "counts", "judged", "unjudged", "judge_calls", "judge_cached")}
+            # Only present when rows were left unjudged (judge_call_guard reasons).
+            out[arm].update({k: snap[k] for k in ("status", "unjudged_reasons", "coverage") if k in snap})
             # Documents corpus: did the retrieved passages hold the answer?
             # Splits the wrong answers into "retrieval missed it" and
             # "retrieval found it, the model misread it".
@@ -478,6 +480,9 @@ def _judge_comparison_rows(
                     k: retrieval_snap.get(k)
                     for k in ("judged", "unjudged", "found", "missed", "found_rate", "wrong_missed", "wrong_misread", "correct_missed", "judge_calls", "judge_cached")
                 }
+                out[arm]["retrieval"].update(
+                    {k: retrieval_snap[k] for k in ("status", "unjudged_reasons", "coverage") if k in retrieval_snap}
+                )
         return out
 
     try:

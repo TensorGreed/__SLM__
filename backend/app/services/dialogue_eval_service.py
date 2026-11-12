@@ -143,15 +143,25 @@ async def judge_dialogues(
     judge: Any,
     *,
     cache: Any = None,
+    resilience: Any = None,
 ) -> dict[str, Any]:
     """Judge every assistant turn of every multi-turn row (see module doc).
+
+    ``resilience`` (opt-in, ``judge_call_guard.JudgeResilience``): retry transient failures and stop
+    calling once the judge's breaker opens. A turn left without a verdict is counted in ``unjudged``
+    and, by reason, in ``unjudged_reasons`` (with ``status`` / ``coverage`` / ``breaker``; only when
+    some turn was left unjudged).
 
     ``predictions[i]`` belongs to ``pairs[i]`` (its final turn); ``replay_predictions[j]``
     to ``replay_pairs[j]``. Annotates ``predictions[i]["dialogue_judge"]`` and returns the
     summary (``rows``, ``mean``, ``worst_turn_mean``, ``by_turn_index``, ``rows_not_replayed`` /
     ``replay_cap_hit``, plus judge label, call counts and cloud usage). A turn the judge couldn't score is left out of that
     row's numbers and counted in ``unjudged``."""
+    from app.services import judge_call_guard as jcg
     from app.services.answer_judge_service import cache_key
+
+    guard = jcg.new_guard(judge.label, resilience)
+    reasons: dict[str, int] = {}
 
     by_row: dict[int, dict[int, dict[str, Any]]] = {}
     for rp, pred in zip(replay_pairs, replay_predictions):
@@ -199,15 +209,27 @@ async def judge_dialogues(
                     cached += 1
                 else:
                     result = None
-                    try:
-                        result = await judge.judge(question, item["reference"], item["prediction"])
-                    except llm_budget_guard.LlmBudgetExceeded:
-                        raise
-                    except Exception as exc:  # noqa: BLE001 - the judge never breaks the eval
-                        _LOG.warning("dialogue judge failed on row %s turn %s: %s", pair_index, turn, exc)
-                    calls += 1
+                    reason: str | None = None
+                    if guard is not None:
+                        before = guard.calls
+                        outcome = await guard.call(judge.judge, question, item["reference"], item["prediction"], row=pair_index)
+                        calls += guard.calls - before
+                        result, reason = outcome.result, outcome.reason
+                        if reason not in (None, jcg.REASON_UNREACHABLE) and outcome.error:
+                            _LOG.warning("dialogue judge failed on row %s turn %s: %s", pair_index, turn, outcome.error)
+                    else:
+                        try:
+                            result = await judge.judge(question, item["reference"], item["prediction"])
+                        except llm_budget_guard.LlmBudgetExceeded:
+                            raise
+                        except Exception as exc:  # noqa: BLE001 - the judge never breaks the eval
+                            _LOG.warning("dialogue judge failed on row %s turn %s: %s", pair_index, turn, exc)
+                            reason = jcg.reason_for_exception(exc)
+                        calls += 1
                     if result is None:
                         unjudged += 1
+                        reason = reason or jcg.REASON_UNPARSEABLE
+                        reasons[reason] = reasons.get(reason, 0) + 1
                         continue
                     score, verdict, reason, row_tokens = result
                     tokens += int(row_tokens or 0)
@@ -245,6 +267,7 @@ async def judge_dialogues(
         "judge_calls": calls,
         "judge_cached": cached,
         "judge_tokens": tokens,
+        **jcg.unjudged_fields(sum(len(v) for v in per_turn.values()), unjudged, reasons, guard),
     }
     summary.update(meter.block())
     return summary

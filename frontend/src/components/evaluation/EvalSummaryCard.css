@@ -103,6 +103,14 @@
     color: var(--text-muted);
 }
 
+.eval-summary__unjudged {
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--color-warning-border);
+    border-radius: 6px;
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
+}
+
 .eval-summary__judge-verdict {
     margin-top: 0.25rem;
     font-size: 0.85rem;

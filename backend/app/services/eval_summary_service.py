@@ -520,11 +520,19 @@ async def span_eval_summary(db: AsyncSession, project_id: int, experiment: Exper
 
 
 def _judge_block(metrics: dict[str, Any]) -> dict[str, Any] | None:
+    """The answer judge's snapshot for the summary card. Present when the judge scored rows OR was asked
+    about rows it left unjudged -- an eval where EVERY row is unjudged (the judge was unreachable) has
+    ``score: null`` and still gets the block, so the card can say so. ``status`` / ``unjudged_reasons`` /
+    ``coverage`` / ``breaker`` only when rows were left unjudged (``judge_call_guard``)."""
     judge = metrics.get("judge")
-    if not isinstance(judge, dict) or judge.get("score") is None:
+    if not isinstance(judge, dict) or judge.get("skipped"):
+        return None
+    judged = int(judge.get("judged") or 0)
+    unjudged = int(judge.get("unjudged") or 0)
+    if judge.get("score") is None and not (judged + unjudged > 0 or judge.get("status")):
         return None
     counts = judge.get("counts") if isinstance(judge.get("counts"), dict) else {}
-    return {
+    block = {
         "judge": judge.get("judge"),
         "score": judge.get("score"),
         "judged": judge.get("judged"),
@@ -535,6 +543,10 @@ def _judge_block(metrics: dict[str, Any]) -> dict[str, Any] | None:
         "judge_calls": judge.get("judge_calls"),
         "judge_cached": judge.get("judge_cached"),
     }
+    for key in ("status", "unjudged_reasons", "coverage", "breaker"):
+        if judge.get(key) is not None:
+            block[key] = judge[key]
+    return block
 
 
 def passages_summary(project_id: int) -> dict[str, Any] | None:
